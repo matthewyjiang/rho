@@ -22,6 +22,7 @@ use rho_sdk::{
 use tokio::sync::oneshot;
 
 use super::{
+    delegation::OfferedDisplays,
     events::{
         cancelled_approval, ApprovalId, PlanApprovalId, PlanApprovalRequest, RunEnd, SessionEvent,
         TurnControl,
@@ -31,7 +32,6 @@ use super::{
     QuestionSupport,
 };
 use crate::{
-    app::headless_delegation::OfferedDisplays,
     display_transcript::DisplayTranscript,
     tools::plan_exit::{PlanPermissionAnswer, PlanPermissionReceiver, PlanPermissionRequest},
 };

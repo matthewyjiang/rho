@@ -26,12 +26,12 @@ use std::time::Instant;
 use rho_sdk::{BoundaryInputRequest, InputBoundary, Session, UserInput};
 use tokio::sync::mpsc;
 
-use super::{
-    boundary_results::BoundaryResults,
-    subagent_manager::{SubagentManager, SubagentNotification},
-    subagent_messaging::{NoticePermits, SubagentNotice},
-};
 use crate::{
+    app::{
+        boundary_results::BoundaryResults,
+        subagent_manager::{SubagentManager, SubagentNotification},
+        subagent_messaging::{NoticePermits, SubagentNotice},
+    },
     display_transcript::DisplayTranscript,
     session::SessionPersistence,
     tools::{
@@ -41,7 +41,7 @@ use crate::{
     },
 };
 
-pub(crate) struct HeadlessDelegation {
+pub(super) struct HeadlessDelegation {
     session_id: String,
     requests: mpsc::Receiver<BoundaryInputRequest>,
     subagents: Option<SubagentDelivery>,
@@ -75,17 +75,17 @@ struct SubagentDelivery {
 /// A notice binding kept between prompts. The binding stays installed, so a
 /// child can still queue `message_parent` text or an action request while no
 /// prompt runs, and notices a cancelled prompt never delivered reach the next.
-pub(crate) struct HeldNotices(SubagentDelivery);
+pub(super) struct HeldNotices(SubagentDelivery);
 
 /// The background work a headless prompt delivers and waits for.
-pub(crate) struct BackgroundSources<'a> {
-    pub(crate) subagents: Option<&'a SubagentManager>,
-    pub(crate) processes: Option<&'a ProcessManager>,
-    pub(crate) workflows: &'a WorkflowRunTracker,
+pub(super) struct BackgroundSources<'a> {
+    pub(super) subagents: Option<&'a SubagentManager>,
+    pub(super) processes: Option<&'a ProcessManager>,
+    pub(super) workflows: &'a WorkflowRunTracker,
 }
 
 impl<'a> BackgroundSources<'a> {
-    pub(crate) fn of(tools: &'a AppToolSet) -> Self {
+    pub(super) fn of(tools: &'a AppToolSet) -> Self {
         Self {
             subagents: tools.subagents(),
             processes: tools.processes(),
@@ -101,7 +101,7 @@ impl HeadlessDelegation {
     /// attach succeeds, so a failed attach keeps it for the next prompt.
     /// Subagents keep their artifacts in `storage`'s folder when it has one,
     /// and save their sessions as `persistence` says the session does.
-    pub(crate) fn attach(
+    pub(super) fn attach(
         session: &Session,
         sources: BackgroundSources<'_>,
         storage: Option<&crate::session::Session>,
@@ -138,19 +138,19 @@ impl HeadlessDelegation {
         })
     }
 
-    pub(crate) fn set_background_wait(&mut self, wait: BackgroundWait) {
+    pub(super) fn set_background_wait(&mut self, wait: BackgroundWait) {
         self.background_wait = wait;
     }
 
     /// Display rows for every delivery offered from now on. The host claims
     /// them as the run reports each input applied.
-    pub(crate) fn offered_displays(&mut self) -> OfferedDisplays {
+    pub(super) fn offered_displays(&mut self) -> OfferedDisplays {
         let (sender, receiver) = mpsc::unbounded_channel();
         self.displays = Some(sender);
         OfferedDisplays { receiver }
     }
 
-    pub(crate) async fn drive<T>(host: &mut Self, run: impl std::future::Future<Output = T>) -> T {
+    pub(super) async fn drive<T>(host: &mut Self, run: impl std::future::Future<Output = T>) -> T {
         let service = host.serve();
         tokio::pin!(service);
         let result = tokio::select! {
@@ -167,7 +167,7 @@ impl HeadlessDelegation {
 
     /// Ends this prompt but keeps its notice binding, with every notice not yet
     /// delivered, for the next [`Self::attach`].
-    pub(crate) fn hold_notices(mut self) -> Option<HeldNotices> {
+    pub(super) fn hold_notices(mut self) -> Option<HeldNotices> {
         self.subagents.take().map(HeldNotices)
     }
 
@@ -330,14 +330,14 @@ impl HeadlessDelegation {
 /// [`rho_sdk::RunEvent::BoundaryInputApplied`] that confirms it, so a host
 /// shows a result exactly where it entered the run and never shows one the
 /// runtime rejected.
-pub(crate) struct OfferedDisplays {
+pub(super) struct OfferedDisplays {
     receiver: mpsc::UnboundedReceiver<(UserInput, DisplayTranscript)>,
 }
 
 impl OfferedDisplays {
     /// Rows for the `input` a run applied. A rejected offer can only precede
     /// it, so older offers that do not match are discarded.
-    pub(crate) fn applied(&mut self, input: &UserInput) -> Option<DisplayTranscript> {
+    pub(super) fn applied(&mut self, input: &UserInput) -> Option<DisplayTranscript> {
         while let Ok((offered, display)) = self.receiver.try_recv() {
             if offered == *input {
                 return Some(display);
@@ -403,5 +403,5 @@ impl Drop for DeliveryReservation {
 }
 
 #[cfg(test)]
-#[path = "headless_delegation_tests.rs"]
+#[path = "delegation_tests.rs"]
 mod tests;

@@ -6,12 +6,14 @@ use std::{
 
 use rho_sdk::{hooks::HookHostLabels, provider::ModelProvider, SessionOptions};
 
-use super::{ensure_auto_classifier_model, ApprovalPolicy, SessionPermission, UnattendedApprovals};
+use super::{
+    ensure_auto_classifier_model, ApprovalPolicy, BackgroundWait, SessionPermission,
+    UnattendedApprovals,
+};
 use crate::{
     added_dirs::AddedDirs,
     app::{
         agent_binding::BoundAgent,
-        headless_delegation::BackgroundWait,
         session_assembly::{
             assemble_session, ApprovalInputs, BuiltSession, SessionAssembly, SessionAssemblyOptions,
         },

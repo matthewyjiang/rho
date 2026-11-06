@@ -36,9 +36,7 @@ use rho_providers::model::models_dev;
 
 use crate::{
     added_dirs::AddedDirs,
-    app::{
-        agent_binding::BoundAgent, headless_delegation::HeldNotices, session_assembly::BuiltSession,
-    },
+    app::{agent_binding::BoundAgent, session_assembly::BuiltSession},
     config::Config,
     permission::PermissionMode,
     tools::mcp::config::McpConfig,
@@ -49,6 +47,7 @@ mod approval_policy;
 mod build;
 mod compact;
 mod credentials;
+mod delegation;
 mod events;
 mod handle;
 mod mode;
@@ -81,6 +80,8 @@ pub(crate) use build::{
 };
 use credentials::SessionCredentials;
 pub(crate) use credentials::{CredentialFailure, Logouts};
+pub(crate) use delegation::BackgroundWait;
+use delegation::HeldNotices;
 pub(crate) use events::{
     cancelled_approval, ApprovalId, InsertedMessage, PlanApprovalId, PlanApprovalRequest, RunEnd,
     SessionEvent, TurnControl,

@@ -11,6 +11,7 @@ use rho_sdk::{model::ToolCall, RunOutcome, UserInput};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use super::{
+    delegation::{BackgroundSources, HeadlessDelegation, OfferedDisplays},
     events::{RunEnd, SessionEvent, TurnControl},
     persist::TurnCheckpoint,
     prompt_gate::ActiveWork,
@@ -18,10 +19,7 @@ use super::{
     title::TitleState,
     PromptScope, SessionRuntime,
 };
-use crate::{
-    app::headless_delegation::{BackgroundSources, HeadlessDelegation, OfferedDisplays},
-    config::Config,
-};
+use crate::config::Config;
 
 /// A model turn: `model` is what the run sends, `display` the prompt as the
 /// user sent it, which the turn saves for display. `calls` run as one host
