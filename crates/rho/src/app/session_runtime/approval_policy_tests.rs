@@ -12,7 +12,7 @@ use rho_sdk::{
     provider::{ScriptedProvider, ScriptedTurn},
     tool::{Tool, ToolContext, ToolError, ToolFuture, ToolInvocation, ToolOutput},
     ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, ApprovalSession,
-    CapabilityRequest, CapabilitySource, PathScope, PolicyDecision, UserInput,
+    CapabilityRequest, CapabilitySource, PathScope, PolicyDecision, UserInput, WorkspacePolicy,
 };
 use tokio::sync::mpsc;
 

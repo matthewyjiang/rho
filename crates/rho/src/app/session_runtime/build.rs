@@ -245,7 +245,7 @@ pub(super) async fn build_session(
         hook_host_labels: hook_labels.clone(),
         added_dirs,
         host_io: build.host.host_io.clone(),
-        extend_tools: |mut tools| {
+        extend_tools: |mut tools: AppToolSet| {
             if let Some(poster) = &build.host.parent_notices {
                 tools.add_bundle(crate::tools::message_parent_bundle(Arc::clone(poster)));
             }
