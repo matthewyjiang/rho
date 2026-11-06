@@ -2,7 +2,7 @@ use std::path::Path;
 
 use pretty_assertions::assert_eq;
 
-use super::{delete_target_in_roots, delete_targets_in_roots};
+use super::{delete_target_in_roots, delete_targets_in_roots, ChildSessionNotDeleted};
 use crate::session::{DeleteOptions, Session, SessionOrigin, SessionProvenance, SessionTarget};
 
 fn create_session(root: &Path, cwd: &Path, id: &str) -> Session {
@@ -136,6 +136,73 @@ fn delete_takes_child_sessions_recursively() {
             "{label}"
         );
     }
+}
+
+// Covers: a child session that refuses its delete stops its parent's: the
+// parent and the children after the refused one stay, the error names the
+// child and its parent, and the children deleted before it leave the index
+// even though the delete failed.
+// Owner: session deletion
+#[test]
+fn refused_child_session_keeps_its_parent() {
+    let sessions = tempfile::tempdir().unwrap();
+    let subagents = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let parent = SessionTarget::new("parent", workspace.path());
+    // Children are deleted oldest first, so in this order.
+    let ids = ["parent", "child-a", "child-b", "child-c"];
+    let paths = ids.map(|id| {
+        let provenance = match id {
+            "parent" => SessionOrigin::Interactive.into(),
+            _ => SessionProvenance {
+                origin: SessionOrigin::Subagent,
+                parent: Some(parent.clone()),
+            },
+        };
+        Session::create_with_id_in_root(sessions.path(), workspace.path(), id, None, provenance)
+            .unwrap()
+            .path()
+            .to_path_buf()
+    });
+    let refused = SessionTarget::new("child-b", workspace.path());
+
+    let error = delete_target_in_roots(
+        sessions.path(),
+        subagents.path(),
+        &parent,
+        &DeleteOptions {
+            force: false,
+            protected_session: Some(refused.clone()),
+        },
+    )
+    .unwrap_err();
+
+    let named = error
+        .downcast_ref::<ChildSessionNotDeleted>()
+        .map(|error| (error.child.clone(), error.parent.clone()));
+    let remaining = ids
+        .iter()
+        .zip(&paths)
+        .filter(|(_, path)| path.exists())
+        .map(|(id, _)| *id)
+        .collect::<Vec<_>>();
+    // Read the index directly: listing would reconcile leftover rows away.
+    let index = rusqlite::Connection::open(sessions.path().join("index.sqlite3")).unwrap();
+    let indexed = index
+        .prepare("select id from sessions order by id")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(
+        (named, remaining, indexed),
+        (
+            Some((refused, parent)),
+            vec!["parent", "child-b", "child-c"],
+            vec!["child-b".to_string(), "child-c".into(), "parent".into()],
+        )
+    );
 }
 
 // Covers: an exact workspace target cannot fall back to a same-id session in

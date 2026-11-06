@@ -102,7 +102,7 @@ impl SessionStore {
         })
     }
 
-    fn resolve_local(&self, id_prefix: &str) -> anyhow::Result<Option<ResolvedSession>> {
+    pub(super) fn resolve_local(&self, id_prefix: &str) -> anyhow::Result<Option<ResolvedSession>> {
         let dir = self.ensure_dir()?;
         let local = matching_session_files(&dir, id_prefix)?
             .into_iter()

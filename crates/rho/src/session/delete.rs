@@ -3,7 +3,7 @@
 
 use std::{
     collections::HashSet,
-    fs,
+    fmt, fs,
     io::ErrorKind,
     path::{Path, PathBuf},
 };
@@ -71,6 +71,30 @@ pub(crate) struct WorkspaceDeleteOutcome {
     pub(crate) failures: Vec<CleanupFailure>,
     pub(crate) kept_protected: Vec<SessionTarget>,
 }
+
+/// A child session's delete failed, which stops its parent's. Names both,
+/// so a refusal of the child does not read as one of its parent.
+#[derive(Debug)]
+struct ChildSessionNotDeleted {
+    child: SessionTarget,
+    parent: SessionTarget,
+    /// The child's own error, with its causes.
+    detail: String,
+}
+
+impl fmt::Display for ChildSessionNotDeleted {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "could not delete child session '{}' of '{}': {}",
+            short_id(&self.child.id),
+            short_id(&self.parent.id),
+            self.detail
+        )
+    }
+}
+
+impl std::error::Error for ChildSessionNotDeleted {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RunCleanup {
@@ -179,9 +203,9 @@ pub(super) fn delete_in_roots(
 ) -> anyhow::Result<DeleteOutcome> {
     let resolved = SessionStore::new(session_root, cwd).resolve(id_prefix)?;
     let mut batch = BatchDelete::open(session_root, subagents_root, options)?;
-    let outcome = batch.delete_resolved(resolved)?;
+    let outcome = batch.delete_resolved(resolved);
     batch.finish();
-    Ok(outcome)
+    outcome
 }
 
 pub(super) fn delete_target_in_roots(
@@ -191,9 +215,10 @@ pub(super) fn delete_target_in_roots(
     options: &DeleteOptions,
 ) -> anyhow::Result<DeleteOutcome> {
     let mut batch = BatchDelete::open(session_root, subagents_root, options)?;
-    let outcome = batch.delete_target(target)?;
+    let outcome = batch.delete_target(target);
+    // Even after a failure: child sessions deleted before it leave the index.
     batch.finish();
-    Ok(outcome)
+    outcome
 }
 
 pub(super) fn delete_targets_in_roots(
@@ -301,6 +326,15 @@ impl<'a> BatchDelete<'a> {
             .collect())
     }
 
+    /// Deletes child session `child`, or returns `None` when it is gone
+    /// since [`Self::child_sessions`] found it, as already deleted.
+    fn delete_child(&mut self, child: &SessionTarget) -> anyhow::Result<Option<DeleteOutcome>> {
+        match SessionStore::new(self.session_root, &child.cwd).resolve_local(&child.id)? {
+            Some(resolved) => self.delete_resolved(resolved).map(Some),
+            None => Ok(None),
+        }
+    }
+
     /// The runs linked to session `id` stored in `unit`, and the ones
     /// `--force` must delete while non-terminal. Fails when a non-terminal
     /// run would be deleted without `--force`.
@@ -378,6 +412,8 @@ impl<'a> BatchDelete<'a> {
         // Child sessions go first, each through this same delete, so a
         // failed one leaves its parent to retry. Check the parent's own
         // refusals before any of them, so a refused delete keeps them all.
+        // A child's refusal is found only when its turn comes: the children
+        // before it stay deleted, and deleting the parent again finishes.
         let children = self.child_sessions(&resolved)?;
         let mut child_runs = 0;
         let mut child_forced_run_ids = Vec::new();
@@ -386,7 +422,16 @@ impl<'a> BatchDelete<'a> {
             self.linked_runs(&unit, &resolved.id)?;
         }
         for child in &children {
-            let deleted = self.delete_target(child)?;
+            let deleted = self.delete_child(child).map_err(|error| {
+                anyhow::Error::new(ChildSessionNotDeleted {
+                    child: child.clone(),
+                    parent: SessionTarget::new(resolved.id.clone(), resolved.cwd.clone()),
+                    detail: format!("{error:#}"),
+                })
+            })?;
+            let Some(deleted) = deleted else {
+                continue;
+            };
             child_runs += deleted.deleted_run_count;
             child_forced_run_ids.extend(deleted.forced_run_ids);
             deleted_child_session_count += 1 + deleted.deleted_child_session_count;
