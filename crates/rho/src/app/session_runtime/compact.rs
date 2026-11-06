@@ -1,5 +1,6 @@
-//! `/compact`: compact history between turns and persist the result. The
-//! host reports it, as ACP does with a compaction card.
+//! `/compact`: compact history between turns and save the result, for the
+//! host to report however it shows compactions (ACP, for one, as a
+//! compaction card).
 
 use rho_sdk::{CancellationToken, CompactionOutcome};
 

@@ -115,9 +115,9 @@ pub(crate) enum SessionEvent {
 /// How the run left calls it never finished.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RunEnd {
-    /// It completed, was cancelled, or its stream ended without a terminal
-    /// event.
-    WithoutResult,
+    /// Its events ended: it completed, was cancelled, or its stream stopped
+    /// without a terminal event.
+    Ended,
     /// The turn failed with this message after the run started.
     Failed(String),
 }

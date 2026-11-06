@@ -17,7 +17,7 @@ use rho_sdk::{
 use tokio::sync::mpsc;
 
 use super::SessionHost;
-use crate::app::session_runtime::{HostStorage, OpenedSession, SessionPermission};
+use crate::app::session_runtime::{OpenedSession, SessionPermission, SessionStorage};
 use crate::{
     app::{
         acp::AcpClientPort,
@@ -131,7 +131,7 @@ async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
         &startup,
         OpenedSession {
             built,
-            storage: HostStorage::saved(stored),
+            storage: SessionStorage::saved(stored),
             agent: startup.agent.clone(),
             auth: startup.config.auth.clone(),
             host_mcp: Default::default(),

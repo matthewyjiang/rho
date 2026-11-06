@@ -31,7 +31,7 @@ use rho_sdk::{
 
 use super::{PromptGate, SessionHost};
 use crate::app::acp::host_features::{FormDialect, Forms};
-use crate::app::session_runtime::{HostStorage, OpenedSession, SessionPermission};
+use crate::app::session_runtime::{OpenedSession, SessionPermission, SessionStorage};
 use crate::{
     app::{acp::AcpStartup, session_assembly::BuiltSession},
     config::Config,
@@ -269,7 +269,7 @@ async fn host(
         &startup,
         OpenedSession {
             built,
-            storage: HostStorage::saved(stored),
+            storage: SessionStorage::saved(stored),
             agent: startup.agent.clone(),
             auth: startup.config.auth.clone(),
             host_mcp: Default::default(),

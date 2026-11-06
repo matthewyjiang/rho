@@ -4,10 +4,10 @@ use std::sync::{Arc, Mutex};
 
 use rho_sdk::CancellationToken;
 
-/// Carries cancellation for the session's current prompt. The host already
-/// serializes prompts (ACP with `try_lock` on its session slot), so this gate
-/// only has to cover the window between prompt entry and the run's token
-/// existing.
+/// Carries cancellation for the session's current prompt. A runtime runs one
+/// prompt at a time, since its host holds it exclusively for each (ACP, for
+/// one, takes its session slot with `try_lock`), so this gate only has to
+/// cover the window between prompt entry and the run's token existing.
 /// While `Starting`, a cancel trips the prompt token that `begin` returned,
 /// so command expansion can stop, and is replayed onto the run's token as
 /// soon as `activate` receives it. `cancel` is a no-op while idle.

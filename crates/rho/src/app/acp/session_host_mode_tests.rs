@@ -24,7 +24,7 @@ use rho_sdk::{
 };
 
 use super::super::SessionHost;
-use crate::app::session_runtime::{HostStorage, OpenedSession, SessionPermission};
+use crate::app::session_runtime::{OpenedSession, SessionPermission, SessionStorage};
 use crate::{
     app::{
         acp::{agent::RhoAcpAgent, AcpClientPort, AcpStartup},
@@ -86,7 +86,7 @@ async fn host(
         &startup,
         OpenedSession {
             built,
-            storage: HostStorage::saved(stored),
+            storage: SessionStorage::saved(stored),
             agent: startup.agent.clone(),
             auth: startup.config.auth.clone(),
             host_mcp: Default::default(),

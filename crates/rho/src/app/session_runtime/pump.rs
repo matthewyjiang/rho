@@ -193,7 +193,7 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                 let Some(event) = event else {
                     events_open = false;
                     withdraw_questions(&mut pending.questions, io);
-                    io.emit(SessionEvent::RunClosed { ending: RunEnd::WithoutResult });
+                    io.emit(SessionEvent::RunClosed { ending: RunEnd::Ended });
                     continue;
                 };
                 if let (RunEvent::BoundaryInputApplied { input, .. }, Some(displays)) =

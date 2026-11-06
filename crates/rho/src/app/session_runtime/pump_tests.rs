@@ -215,7 +215,7 @@ async fn cancel_settles_every_request_waiting_on_the_host() {
     assert_eq!(late_decision.await.unwrap(), cancelled_approval());
 
     harness.end_run();
-    assert_eq!(harness.next().await, Seen::RunClosed(RunEnd::WithoutResult));
+    assert_eq!(harness.next().await, Seen::RunClosed(RunEnd::Ended));
     harness.pump.await.unwrap().unwrap();
     assert!(
         harness.events.recv().await.is_none(),

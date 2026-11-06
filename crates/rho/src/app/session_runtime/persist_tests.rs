@@ -7,7 +7,7 @@ use rho_sdk::{
     SessionOptions,
 };
 
-use super::{HostStorage, SaveScope, TurnDisplay};
+use super::{SaveScope, SessionStorage, TurnDisplay};
 use crate::{
     app::{session_assembly::BuiltSession, session_runtime::SessionRuntime},
     config::Config,
@@ -20,7 +20,7 @@ use crate::{
 /// `storage`.
 async fn runtime(
     id: &str,
-    storage: HostStorage,
+    storage: SessionStorage,
     provider: Arc<dyn ModelProvider>,
     tools: AppToolSet,
 ) -> SessionRuntime {
@@ -79,7 +79,7 @@ async fn saves_retain_the_loaded_tool_schemas() {
         ));
         let mut tools = AppToolSet::disabled();
         tools.add_bundle(bundle());
-        let mut host = runtime(&id, HostStorage::saved(stored), provider.clone(), tools).await;
+        let mut host = runtime(&id, SessionStorage::saved(stored), provider.clone(), tools).await;
         let input = UserInput::text("load docs");
         let checkpoint = host.install_turn_checkpoint(&input, &input).unwrap();
         host.built

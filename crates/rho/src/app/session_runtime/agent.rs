@@ -184,7 +184,8 @@ impl SessionRuntime {
             .into());
         }
 
-        // T3 may select a model, mode and thought level before the first prompt.
+        // A host may select a model, mode and thought level before the first
+        // prompt, as T3 Code does.
         let mut base = model_scoped_config(&self.current_model(), process_config);
         base.permission_mode = self.permission.mode;
         base.reasoning = self.built.session.reasoning_level();

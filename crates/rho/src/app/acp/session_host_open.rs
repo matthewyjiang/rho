@@ -23,7 +23,8 @@ use crate::{
         acp::{AcpClientPort, AcpStartup},
         interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
         session_runtime::{
-            build_session, loaded_agent, session_config, split_assembly, HostStorage, OpenedSession,
+            build_session, loaded_agent, session_config, split_assembly, OpenedSession,
+            SessionStorage,
         },
     },
     config::Config,
@@ -81,7 +82,7 @@ impl SessionHost {
         )
         .await?;
         let (built, permission) = split_assembly(assembly, config.permission_mode);
-        let storage = HostStorage::deferred(
+        let storage = SessionStorage::deferred(
             cwd.to_path_buf(),
             built.session.id().to_string(),
             startup.agent.id().to_string(),
@@ -191,7 +192,7 @@ impl SessionHost {
             startup,
             OpenedSession {
                 built,
-                storage: HostStorage::saved(stored),
+                storage: SessionStorage::saved(stored),
                 agent,
                 // The restored child may use a different auth family than
                 // the process.

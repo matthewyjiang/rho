@@ -591,7 +591,7 @@ impl SessionHost {
     ) -> Self {
         use crate::app::{
             session_assembly::BuiltSession,
-            session_runtime::{HostStorage, SessionPermission},
+            session_runtime::{SessionPermission, SessionStorage},
         };
         let runtime = rho_sdk::Rho::builder()
             .provider_shared(Arc::clone(&provider))
@@ -603,7 +603,7 @@ impl SessionHost {
             .expect("test session");
         let id = session.id().to_string();
         let (store_root, store_id) = (root.to_path_buf(), id.clone());
-        let storage = HostStorage::unsaved(
+        let storage = SessionStorage::unsaved(
             root.to_path_buf(),
             Box::new(move || {
                 crate::session::Session::create_with_id_in_root_for_test(

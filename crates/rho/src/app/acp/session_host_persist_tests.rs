@@ -20,7 +20,7 @@ use crate::{
     app::{
         acp::{AcpClientPort, AcpStartup},
         session_assembly::BuiltSession,
-        session_runtime::{HostStorage, OpenedSession, SessionPermission},
+        session_runtime::{OpenedSession, SessionPermission, SessionStorage},
     },
     config::Config,
     diagnostics::RuntimeDiagnostics,
@@ -53,7 +53,7 @@ impl AcpClientPort for SilentPort {
 async fn host(
     workspace: &std::path::Path,
     id: &str,
-    storage: HostStorage,
+    storage: SessionStorage,
     provider: Arc<dyn ModelProvider>,
     tools: AppToolSet,
     startup: &AcpStartup,
@@ -119,9 +119,9 @@ fn provider_failure(message: &str) -> ScriptedTurn {
 }
 
 /// Storage for a new session `id` in `root`, created on first save.
-fn unsaved_storage(root: &std::path::Path, id: &str) -> HostStorage {
+fn unsaved_storage(root: &std::path::Path, id: &str) -> SessionStorage {
     let (root, id) = (root.to_path_buf(), id.to_owned());
-    HostStorage::unsaved(
+    SessionStorage::unsaved(
         root.clone(),
         Box::new(move || StoredSession::create_with_id_in_root_for_test(&root, &root, &id)),
     )
@@ -199,7 +199,7 @@ async fn unfinished_turn_is_on_disk_for_session_load() {
     let mut host = host(
         home.path(),
         &id,
-        HostStorage::saved(stored),
+        SessionStorage::saved(stored),
         provider,
         AppToolSet::disabled(),
         &startup,
@@ -259,7 +259,7 @@ async fn failed_refusal_rollback_keeps_live_and_saved_history_together() {
     let mut host = host(
         home.path(),
         &id,
-        HostStorage::saved(stored),
+        SessionStorage::saved(stored),
         provider,
         AppToolSet::disabled(),
         &startup,
@@ -323,7 +323,7 @@ async fn background_result_survives_a_failed_turn() {
     let mut host = host(
         home.path(),
         &id,
-        HostStorage::saved(stored),
+        SessionStorage::saved(stored),
         provider,
         tools,
         &startup,

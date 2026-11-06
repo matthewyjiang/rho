@@ -65,7 +65,7 @@ pub(crate) use events::{
     SessionEvent, TurnControl,
 };
 pub(crate) use mode::{ModeChangeError, SessionPermission};
-pub(crate) use persist::HostStorage;
+pub(crate) use persist::SessionStorage;
 pub(crate) use prompt_gate::{Closing, PromptGate, PromptGuard};
 pub(crate) use switch::ModelSwitchError;
 pub(crate) use title::TitleJob;
@@ -90,7 +90,7 @@ pub(crate) struct CurrentModel {
 /// A session a host opened, new or reopened, and the state it starts from.
 pub(crate) struct OpenedSession {
     pub(crate) built: BuiltSession,
-    pub(crate) storage: HostStorage,
+    pub(crate) storage: SessionStorage,
     /// The agent the session runs as: the launch agent, or for a reopened
     /// child the agent it was saved as.
     pub(crate) agent: BoundAgent,
@@ -112,7 +112,7 @@ pub(crate) struct OpenedSession {
 /// it talks to its client.
 pub(crate) struct SessionRuntime {
     built: BuiltSession,
-    storage: HostStorage,
+    storage: SessionStorage,
     agent: BoundAgent,
     build: SessionBuild,
     host_mcp: McpConfig,
@@ -296,7 +296,7 @@ pub(crate) fn split_assembly(
 impl SessionRuntime {
     /// A runtime around `built`, saved through `storage`, for a plain root
     /// agent with every tool whose workspace is the storage's.
-    pub(crate) fn for_tests(built: BuiltSession, storage: HostStorage, config: &Config) -> Self {
+    pub(crate) fn for_tests(built: BuiltSession, storage: SessionStorage, config: &Config) -> Self {
         use crate::{
             agent::{
                 AgentCapabilities, AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy,
@@ -363,7 +363,7 @@ impl SessionRuntime {
         &self.credentials
     }
 
-    pub(crate) fn storage(&self) -> &HostStorage {
+    pub(crate) fn storage(&self) -> &SessionStorage {
         &self.storage
     }
 

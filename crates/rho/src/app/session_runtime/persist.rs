@@ -53,7 +53,7 @@ pub(crate) type CreateStoredSession = Box<dyn Fn() -> anyhow::Result<StoredSessi
 
 /// A session's workspace and file. The file is absent until the first save
 /// of a new session.
-pub(crate) struct HostStorage {
+pub(crate) struct SessionStorage {
     cwd: PathBuf,
     file: SessionFile,
 }
@@ -63,7 +63,7 @@ enum SessionFile {
     Saved(StoredSession),
 }
 
-impl HostStorage {
+impl SessionStorage {
     /// Storage for a new session `id` in `cwd`, created on first save.
     pub(crate) fn deferred(
         cwd: PathBuf,

@@ -5,9 +5,9 @@
 //! loaded session that was never named gets its title then. Until it lands,
 //! or if it fails, the session is listed by its first message.
 //!
-//! The runtime only asks; the host takes the request once the prompt returns,
-//! runs it, and shows the title it saves (ACP as `session_info_update`, if
-//! the runtime that asked still owns the session).
+//! The runtime only asks: the host takes the request once the prompt returns,
+//! runs it, and shows the title it saves if the runtime that asked still
+//! owns the session (ACP, for example, as a `session_info_update`).
 
 use std::path::PathBuf;
 

@@ -4,7 +4,7 @@ use crate::{
     app::{
         active_prompt::ActivePrompt,
         session_assembly::BuiltSession,
-        session_runtime::{HostStorage, SessionPermission},
+        session_runtime::{SessionPermission, SessionStorage},
     },
     diagnostics::RuntimeDiagnostics,
     model_identity::PromptModel,
@@ -99,7 +99,7 @@ async fn model_prompt_switch_rebinds_advisor_with_live_history() {
         &startup,
         OpenedSession {
             built,
-            storage: HostStorage::saved(stored),
+            storage: SessionStorage::saved(stored),
             agent: startup.agent.clone(),
             auth: startup.config.auth.clone(),
             host_mcp: Default::default(),

@@ -261,7 +261,7 @@ impl<'a> Forwarding<'a> {
                 }
             }
             SessionEvent::RunClosed { ending } => match ending {
-                RunEnd::WithoutResult => {
+                RunEnd::Ended => {
                     let notifications = self
                         .target
                         .mapper

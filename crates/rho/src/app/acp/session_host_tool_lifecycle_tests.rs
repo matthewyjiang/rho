@@ -23,7 +23,7 @@ use rho_sdk::{
 use tokio::sync::Notify;
 
 use super::SessionHost;
-use crate::app::session_runtime::{HostStorage, OpenedSession, SessionPermission};
+use crate::app::session_runtime::{OpenedSession, SessionPermission, SessionStorage};
 use crate::{
     app::{acp::AcpClientPort, session_assembly::BuiltSession},
     config::Config,
@@ -168,7 +168,7 @@ async fn tool_calls_open_with_a_card_and_end_in_a_terminal_status() {
         &startup,
         OpenedSession {
             built,
-            storage: HostStorage::saved(stored),
+            storage: SessionStorage::saved(stored),
             agent: startup.agent.clone(),
             auth: startup.config.auth.clone(),
             host_mcp: Default::default(),

@@ -27,7 +27,7 @@ use crate::{
         session_assembly::{BuiltSession, SessionAssembly},
         session_runtime::{
             bind_delegated_agent, loaded_agent, loaded_agent_with, AgentTask, CommandRejected,
-            HostStorage, OpenedSession, SessionPermission, MODEL_OVERRIDE_METADATA,
+            OpenedSession, SessionPermission, SessionStorage, MODEL_OVERRIDE_METADATA,
         },
     },
     config::Config,
@@ -187,7 +187,7 @@ async fn host(cwd: &Path, startup: &AcpStartup) -> SessionHost {
         startup,
         OpenedSession {
             built,
-            storage: HostStorage::saved(stored),
+            storage: SessionStorage::saved(stored),
             agent: startup.agent.clone(),
             auth: startup.config.auth.clone(),
             host_mcp: Default::default(),
