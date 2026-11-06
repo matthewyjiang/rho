@@ -5,8 +5,9 @@
 //! advertised menus, permission card placeholders, the checklist the client
 //! last saw, T3 Code's wake watchers, and Herdr state. A prompt resolves its
 //! command here, then calls the runtime's core for it; a model turn runs
-//! beside a forwarder that shows the turn's events to the client and answers
-//! its requests (`session_host_forward.rs`).
+//! through the runtime with a view of this host (`session_host_turns.rs`)
+//! whose forwarder shows the turn's events to the client and answers its
+//! requests (`session_host_forward.rs`).
 
 use std::sync::atomic::AtomicU64;
 
@@ -20,14 +21,13 @@ use agent_client_protocol::{
 };
 use rho_providers::{credentials::available_auth_modes, model::catalog};
 use rho_sdk::UserInput;
-use tokio::sync::mpsc;
 
 use super::{
-    commands::{self, CommandScope, PromptAction},
+    commands::{self, AcpPrompt},
     config_options,
     events::EventMapper,
     fast_mode,
-    host_features::{Forms, Toggles},
+    host_features::{Forms, HostFeatures, Toggles},
     permission,
     prompt_acceptance::PromptAcceptance,
     signals::SessionSignals,
@@ -37,10 +37,11 @@ use super::{
 use crate::{
     app::{
         headless_delegation::BackgroundWait,
+        session_commands::{CommandScope, PromptCommand},
         session_runtime::{
             model_scoped_config, ChildAgents, CurrentModel, InsertedMessage, OpenedSession,
             PromptScope, QuestionSupport, SessionBuild, SessionHandle, SessionRuntime,
-            SettingChangeError, TitleJob, Turn, TurnIo, TurnOutcome, WorkflowStart,
+            SettingChangeError, TitleJob, Turn, TurnOutcome, WorkflowStart,
         },
         workflow_cli::discover::StartCommand,
     },
@@ -62,14 +63,15 @@ mod convert;
 mod forward;
 #[path = "session_host_open.rs"]
 mod open;
-#[path = "session_host_plan_exit.rs"]
-mod plan_exit;
+#[path = "session_host_turns.rs"]
+mod turns;
 #[path = "session_host_wake.rs"]
 mod wake;
 
 use convert::user_input_from_prompt;
 pub(super) use convert::RejectedDirectory;
 pub(super) use open::{History, ReopenRequest, Reopened};
+use turns::AcpTurns;
 
 /// A title one host asked for, not yet generated.
 pub(in crate::app::acp) struct PendingTitle {
@@ -94,7 +96,7 @@ pub(super) struct SessionHost {
     /// prompt wakes the idle thread instead of holding the prompt open.
     t3_wake: Option<T3Wake>,
     /// Optional features the host advertised at `initialize`.
-    host_features: super::HostFeatures,
+    host_features: HostFeatures,
     /// How the running prompt reports its inserted user message; set as
     /// each prompt starts, and back to [`PromptAcceptance::Implicit`] after.
     prompt_acceptance: PromptAcceptance,
@@ -145,10 +147,10 @@ impl SessionHost {
             )
             .await;
         let home = crate::paths::home_dir();
-        let scope = self.command_scope(home.as_deref(), &startup.config);
+        let scope = command_scope(&self.runtime, home.as_deref(), &startup.config);
         // A watcher a host restart cut off resumes its wait, whatever the prompt says.
         let action = if let Some(signal) = self.recorded_wake() {
-            Some(Ok(PromptAction::AwaitWake(signal)))
+            Some(Ok(AcpPrompt::AwaitWake(signal)))
         } else {
             // Expansion can wait on an MCP server, so a cancel drops it.
             tokio::select! {
@@ -159,10 +161,10 @@ impl SessionHost {
         };
         let shown = match action {
             None => Shown::delivered(Ok(PromptResponse::new(StopReason::Cancelled))),
-            Some(Ok(PromptAction::Turn {
+            Some(Ok(AcpPrompt::Shared(PromptCommand::Turn {
                 input: model,
                 calls,
-            })) => {
+            }))) => {
                 let model = match watcher_note {
                     Some(note) => append_text(model, note),
                     None => model,
@@ -174,19 +176,19 @@ impl SessionHost {
                 };
                 self.run_turn(&prompt, turn, &startup.config, client).await
             }
-            Some(Ok(PromptAction::Compact { instructions })) => {
+            Some(Ok(AcpPrompt::Shared(PromptCommand::Compact { instructions }))) => {
                 self.prompt_acceptance.accept(InsertedMessage::Unreplayed);
                 Shown::delivered(self.compact(&prompt, instructions, client).await)
             }
-            Some(Ok(PromptAction::StartWorkflow(start))) => Shown::delivered(
+            Some(Ok(AcpPrompt::Shared(PromptCommand::StartWorkflow(start)))) => Shown::delivered(
                 self.start_workflow(&prompt, &input, start, startup, client)
                     .await,
             ),
-            Some(Ok(PromptAction::RunAsAgent(task))) => {
+            Some(Ok(AcpPrompt::Shared(PromptCommand::RunAsAgent(task)))) => {
                 self.run_as_agent(&prompt, &input, task, startup, client)
                     .await
             }
-            Some(Ok(PromptAction::AwaitWake(signal))) => {
+            Some(Ok(AcpPrompt::AwaitWake(signal))) => {
                 self.prompt_acceptance.accept(InsertedMessage::Unreplayed);
                 Shown::delivered(self.await_wake(signal, &prompt, client).await)
             }
@@ -280,31 +282,8 @@ impl SessionHost {
         })
     }
 
-    fn command_scope<'a>(
-        &'a self,
-        home: Option<&'a std::path::Path>,
-        process_config: &'a Config,
-    ) -> CommandScope<'a> {
-        CommandScope {
-            cwd: self.runtime.cwd(),
-            home,
-            tools: self.runtime.tools(),
-            config: process_config,
-            permission_mode: self.runtime.permission_mode(),
-        }
-    }
-
     pub(super) fn config_options(&self, process_config: &Config) -> Vec<SessionConfigOption> {
-        advertised_config_options(
-            &self.runtime.current_model(),
-            process_config,
-            CurrentSettings {
-                permission_mode: self.runtime.permission_mode(),
-                reasoning: self.runtime.reasoning_level(),
-                fast: self.runtime.fast_mode(),
-            },
-            self.host_features.toggles,
-        )
+        runtime_config_options(&self.runtime, process_config, self.host_features.toggles)
     }
 
     /// Resolves and applies `session/set_config_option` on this host. The caller
@@ -372,20 +351,9 @@ impl SessionHost {
         }
     }
 
-    /// Signal tracking for the next update, starting from the checklist the
-    /// client last saw. Hand the checklist back as `sent_plan` once sent;
-    /// one that never comes back only costs a resend of the current list.
-    fn signals(&mut self) -> SessionSignals {
-        SessionSignals::new(
-            self.runtime.context_gauge(),
-            self.runtime.tools().todo_state(),
-            std::mem::take(&mut self.sent_plan),
-        )
-    }
-
-    /// A model turn, then the plan handoff when the turn answered
-    /// `exit_plan_mode`: the runtime decides it, and the host reports it and
-    /// runs the implementation turn it asks for.
+    /// A prompt's model turns (see [`SessionRuntime::run_prompt_turn`]):
+    /// `turn`, then the implementation turn an approved plan asks for, each
+    /// shown to `client` as it runs.
     async fn run_turn(
         &mut self,
         prompt: &PromptScope,
@@ -393,57 +361,23 @@ impl SessionHost {
         process_config: &Config,
         client: &dyn AcpClientPort,
     ) -> Shown<PromptResponse> {
-        let proposal = self
-            .forward_turn(prompt, turn, process_config, client)
-            .await;
-        let handoff = self
-            .runtime
-            .hand_off_plan(prompt, proposal.ended, process_config)
-            .await;
-        let answered = self
-            .report_plan_handoff(prompt, handoff, process_config, client)
-            .await;
-        // The proposal's miss came first, so it is the one reported.
-        Shown {
-            ended: answered.ended,
-            missed_update: proposal.missed_update.or(answered.missed_update),
-        }
-    }
-
-    /// Runs `turn` beside a forwarder that shows it to the client.
-    async fn forward_turn(
-        &mut self,
-        prompt: &PromptScope,
-        turn: Turn,
-        process_config: &Config,
-        client: &dyn AcpClientPort,
-    ) -> Shown<TurnOutcome> {
-        let (events, event_receiver) = mpsc::unbounded_channel();
-        let (control_sender, control) = mpsc::unbounded_channel();
-        // See `Forwarded::sent_plan` for when the checklist comes back.
-        let signals = self.signals();
-        let forwarder = forward::Forwarder {
+        let mut turns = AcpTurns {
             session_id: &self.acp_session_id,
             client,
             features: self.host_features,
-            mapper: EventMapper::new(
-                self.host_features,
-                self.runtime.cwd().to_path_buf(),
-                self.runtime.tools().mcp_report().tool_names(),
-            ),
-            signals,
             placeholders: &self.permission_placeholders,
             acceptance: &mut self.prompt_acceptance,
+            sent_plan: &mut self.sent_plan,
+            advertisements: &mut self.advertisements,
+            missed_update: None,
         };
-        let io = TurnIo { events, control };
-        let (result, forwarded) = tokio::join!(
-            self.runtime.run_turn(prompt, turn, io, process_config),
-            forwarder.forward(event_receiver, control_sender),
-        );
-        self.sent_plan = forwarded.sent_plan.unwrap_or_default();
+        let ended = self
+            .runtime
+            .run_prompt_turn(&mut turns, prompt, turn, process_config)
+            .await;
         Shown {
-            ended: result,
-            missed_update: forwarded.failure,
+            ended: ended.map(prompt_response),
+            missed_update: turns.missed_update,
         }
     }
 
@@ -474,6 +408,52 @@ impl SessionHost {
             }
         }
     }
+}
+
+/// Signal tracking for the next update, starting from the checklist the
+/// client last saw, which this takes from `sent_plan`. Hand the checklist
+/// back once sent; one that never comes back only costs a resend of the
+/// current list.
+fn session_signals(runtime: &SessionRuntime, sent_plan: &mut Vec<PlanEntry>) -> SessionSignals {
+    SessionSignals::new(
+        runtime.context_gauge(),
+        runtime.tools().todo_state(),
+        std::mem::take(sent_plan),
+    )
+}
+
+/// What commands can see of `runtime`'s session.
+fn command_scope<'a>(
+    runtime: &'a SessionRuntime,
+    home: Option<&'a std::path::Path>,
+    process_config: &'a Config,
+) -> CommandScope<'a> {
+    CommandScope {
+        cwd: runtime.cwd(),
+        home,
+        tools: runtime.tools(),
+        config: process_config,
+        permission_mode: runtime.permission_mode(),
+    }
+}
+
+/// Every option `runtime`'s session advertises now; see
+/// [`advertised_config_options`].
+fn runtime_config_options(
+    runtime: &SessionRuntime,
+    process_config: &Config,
+    toggles: Toggles,
+) -> Vec<SessionConfigOption> {
+    advertised_config_options(
+        &runtime.current_model(),
+        process_config,
+        CurrentSettings {
+            permission_mode: runtime.permission_mode(),
+            reasoning: runtime.reasoning_level(),
+            fast: runtime.fast_mode(),
+        },
+        toggles,
+    )
 }
 
 /// How every build of a session this host opens is set up: the launch

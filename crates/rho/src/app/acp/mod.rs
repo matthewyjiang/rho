@@ -20,7 +20,6 @@ mod prompt_acceptance;
 mod session_host;
 mod session_list;
 mod signals;
-mod skills;
 mod startup;
 mod t3_wake;
 mod thought_level;

@@ -1,9 +1,9 @@
 //! Shows one turn's [`SessionEvent`]s to the ACP client and answers the
 //! turn's requests with the client's replies.
 //!
-//! Runs beside [`SessionRuntime::run_turn`] for the whole turn. Run events
-//! become session updates in order, with the usage and checklist updates
-//! they imply. Approvals, plan approvals, and questions become client
+//! Runs beside the runtime's turn for the whole turn (see
+//! [`SessionRuntime::run_prompt_turn`]). Run events become session updates
+//! in order, with the usage and checklist updates they imply. Approvals, plan approvals, and questions become client
 //! requests, which a separate driver awaits beside the event stream: a
 //! pending request never holds back updates, and a reply reaches the turn
 //! even while an update is still being sent. A withdrawal drops its request. An update the client did
@@ -12,7 +12,7 @@
 //! ended settles anyway (see `TurnControl::HostFailed`), and the prompt
 //! fails with the delivery error.
 //!
-//! [`SessionRuntime::run_turn`]: crate::app::session_runtime::SessionRuntime::run_turn
+//! [`SessionRuntime::run_prompt_turn`]: crate::app::session_runtime::SessionRuntime::run_prompt_turn
 
 use std::{collections::HashMap, future::Future, pin::Pin, sync::atomic::AtomicU64};
 

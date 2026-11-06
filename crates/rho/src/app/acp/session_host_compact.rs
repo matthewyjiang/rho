@@ -6,7 +6,7 @@ use agent_client_protocol::schema::v1::{
     PromptResponse, SessionNotification, SessionUpdate, StopReason,
 };
 
-use super::{send_notification, SessionHost};
+use super::{send_notification, session_signals, SessionHost};
 use crate::app::{
     acp::{
         compaction_card::{outcome_summary, CompactionCard},
@@ -33,7 +33,7 @@ impl SessionHost {
         let result = self.runtime.compact(prompt, instructions).await;
         if let Ok(Some(_)) = &result {
             // The context meter follows the committed history.
-            let signals = self.signals();
+            let signals = session_signals(&self.runtime, &mut self.sent_plan);
             signals.send_usage(&self.acp_session_id, client).await;
             self.sent_plan = signals.into_sent_plan();
         }

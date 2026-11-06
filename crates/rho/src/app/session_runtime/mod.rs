@@ -13,14 +13,15 @@
 //! with [`SessionRuntime::begin_prompt`] (see `prompt.rs`), whose
 //! [`PromptScope`] every in-prompt call takes, so only a begun prompt runs
 //! the command cores (`/compact`, `/workflow:`, `/agent:` rebinds) or a
-//! model turn. A model turn is [`SessionRuntime::run_turn`]: the host passes
-//! a [`TurnIo`] and, while the turn runs, shows the [`SessionEvent`]s it
-//! sends and answers its requests with [`TurnControl`]s (see `events.rs`).
-//! The turn saves itself, runs the session hooks, keeps background work
-//! going across prompts, and asks to name the session. The host passes the
-//! turn's end through [`SessionRuntime::hand_off_plan`], runs the
-//! implementation turn it may ask for, and maps the prompt's end to its own
-//! reply.
+//! model turn. A host runs a prompt's model turn through
+//! [`SessionRuntime::run_prompt_turn`] (see `prompt_turn.rs`) with a
+//! [`TurnView`], which opens each turn's [`TurnIo`] and, while the turn runs,
+//! shows the [`SessionEvent`]s it sends and answers its requests with
+//! [`TurnControl`]s (see `events.rs`). The turn saves itself, runs the
+//! session hooks, keeps background work going across prompts, and asks to
+//! name the session; `run_prompt_turn` then hands off a plan the turn
+//! answered and runs the implementation turn it may ask for. The host maps
+//! the prompt's end to its own reply.
 //!
 //! A prompt's cancel goes through the runtime's [`SessionHandle`], which the
 //! host shares with whoever cancels prompts or retires the session, so a
@@ -49,9 +50,9 @@ mod events;
 mod handle;
 mod mode;
 mod persist;
-mod plan_exit;
 mod prompt;
 mod prompt_gate;
+mod prompt_turn;
 mod pump;
 mod session_tools;
 mod settings;
@@ -75,9 +76,9 @@ pub(crate) use events::{
 pub(crate) use handle::SessionHandle;
 pub(crate) use mode::SessionPermission;
 pub(crate) use persist::SessionStorage;
-pub(crate) use plan_exit::PlanHandoff;
 pub(crate) use prompt::PromptScope;
 pub(crate) use prompt_gate::Closing;
+pub(crate) use prompt_turn::{PlanReport, TurnView};
 pub(crate) use session_tools::SessionTools;
 pub(crate) use settings::SettingChangeError;
 pub(crate) use title::TitleJob;
