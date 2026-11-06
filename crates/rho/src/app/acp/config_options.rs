@@ -14,14 +14,9 @@ use rho_providers::model::display_name::model_display_name;
 use rho_providers::model::favorites;
 use rho_providers::provider::model_reference;
 
-pub(super) const MODEL_CONFIG_ID: &str = "model";
+use crate::session_runtime::CurrentModel;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct CurrentModel {
-    pub(super) provider: String,
-    pub(super) model: String,
-    pub(super) auth: String,
-}
+pub(super) const MODEL_CONFIG_ID: &str = "model";
 
 /// One flat `model` select: favorites first, `provider/model` value ids.
 ///

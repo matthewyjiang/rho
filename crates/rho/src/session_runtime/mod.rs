@@ -190,21 +190,21 @@ impl SessionRuntime {
         self.deferred_notice = Some(notice);
     }
 
-    pub(crate) fn built(&self) -> &BuiltSession {
-        &self.built
+    /// Runs a reopened session as the `agent` it was saved with, on its
+    /// `auth` profile: a restored child may differ from the launch agent in
+    /// both.
+    pub(crate) fn restore_agent(&mut self, agent: BoundAgent, auth: String) {
+        self.agent = agent;
+        self.auth = auth;
     }
 
-    pub(crate) fn storage(&self) -> &HostStorage {
-        &self.storage
+    pub(crate) fn built(&self) -> &BuiltSession {
+        &self.built
     }
 
     /// The session's workspace directory.
     pub(crate) fn cwd(&self) -> &Path {
         self.storage.cwd()
-    }
-
-    pub(crate) fn agent(&self) -> &BoundAgent {
-        &self.agent
     }
 
     pub(crate) fn permission_mode(&self) -> PermissionMode {
@@ -389,5 +389,13 @@ impl SessionRuntime {
 
     pub(crate) fn credentials_for_tests(&self) -> &SessionCredentials {
         &self.credentials
+    }
+
+    pub(crate) fn storage(&self) -> &HostStorage {
+        &self.storage
+    }
+
+    pub(crate) fn agent(&self) -> &BoundAgent {
+        &self.agent
     }
 }

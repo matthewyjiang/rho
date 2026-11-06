@@ -634,7 +634,7 @@ pub(super) fn session_apply_error(session: &rho_sdk::Session, error: rho_sdk::Er
 
 /// A command the prompt names but cannot run is the caller's to fix.
 fn prompt_error(error: anyhow::Error) -> AcpError {
-    match error.downcast::<super::commands::CommandRejected>() {
+    match error.downcast::<crate::session_runtime::CommandRejected>() {
         Ok(rejected) => AcpError::invalid_params().data(rejected.to_string()),
         Err(error) => host_error(error),
     }

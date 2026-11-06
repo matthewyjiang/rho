@@ -2,13 +2,16 @@
 //!
 //! ACP v1 answers a prompt when its turn ends, so nothing is reported early.
 //! ACP v2 answers once the message is inserted, with the message's ID, and
-//! requires a replay to reuse that ID. A prompt whose message is saved (a
-//! model turn, before its run starts, or a workflow start) is accepted as the
-//! save lands, with the ID replay derives from the saved row; see
-//! `SessionHost::save_prompt_rows`. A command that saves nothing, such as
-//! `/compact`, is accepted with a fresh ID, since nothing of it is replayed.
+//! requires a replay to reuse that ID. The session runtime reports when the
+//! message is inserted and the row a reload replays it as (see
+//! `session_runtime::MessageAcceptance`); the ID is the one replay derives
+//! from that row. A command that saves nothing, such as `/compact`, is
+//! accepted with a fresh ID, since nothing of it is replayed.
 
 use agent_client_protocol::schema::v1::MessageId;
+
+use super::events::EventMapper;
+use crate::session_runtime::{InsertedMessage, MessageAcceptance};
 
 /// Reports a prompt's user message, once, when the session inserts it.
 pub(super) enum PromptAcceptance {
@@ -20,22 +23,18 @@ pub(super) enum PromptAcceptance {
 }
 
 impl PromptAcceptance {
-    /// Whether the session must name the inserted message.
-    pub(super) fn wants_id(&self) -> bool {
-        matches!(self, Self::Report(_))
-    }
-
-    /// Reports `id`; later calls do nothing.
-    pub(super) fn accept(&mut self, id: MessageId) {
-        if let Self::Report(report) = std::mem::replace(self, Self::Implicit) {
-            report(id);
-        }
-    }
-
-    /// Reports a message that is not replayed, such as a local command.
-    pub(super) fn accept_unreplayed(&mut self) {
-        if self.wants_id() {
-            self.accept(MessageId::new(format!("rho-user-{}", uuid::Uuid::new_v4())));
+    /// The runtime's acceptance, naming the inserted message as replay will.
+    pub(super) fn into_runtime(self) -> MessageAcceptance {
+        match self {
+            Self::Implicit => MessageAcceptance::Implicit,
+            Self::Report(report) => MessageAcceptance::Report(Box::new(move |message| {
+                report(match message {
+                    InsertedMessage::Saved(origin) => EventMapper::saved_message_id(&origin),
+                    InsertedMessage::Unreplayed => {
+                        MessageId::new(format!("rho-user-{}", uuid::Uuid::new_v4()))
+                    }
+                })
+            })),
         }
     }
 }

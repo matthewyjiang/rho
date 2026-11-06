@@ -15,17 +15,26 @@ use rho_sdk::{
     SessionOptions, UserInput,
 };
 
-use super::*;
+use super::super::SessionHost;
 use crate::{
     agent::{
-        AgentCapabilities, AgentCatalogSources, AgentId, ModelPolicy, PromptPolicy, ToolCapability,
-        ToolPolicy,
+        AgentCapabilities, AgentCatalog, AgentCatalogSources, AgentDefinition, AgentId,
+        AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolCapability, ToolPolicy,
     },
-    app::{acp::session_host::mode::SessionPermission, session_assembly::BuiltSession},
+    app::{
+        acp::{AcpClientPort, AcpStartup},
+        agent_binding::{AgentBinder, AgentInvocation, AgentRole, ModelOverride},
+        session_assembly::{BuiltSession, SessionAssembly},
+    },
+    config::Config,
     diagnostics::RuntimeDiagnostics,
     herdr::HerdrReporter,
     permission::PermissionMode,
     session::Session as StoredSession,
+    session_runtime::{
+        bind_delegated_agent, loaded_agent, loaded_agent_with, AgentTask, CommandRejected,
+        HostStorage, SessionPermission, MODEL_OVERRIDE_METADATA,
+    },
     tools::sdk_registry::{AppToolSet, ToolSetOptions},
 };
 
@@ -176,7 +185,7 @@ async fn host(cwd: &Path, startup: &AcpStartup) -> SessionHost {
     SessionHost::from_built(
         crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id())),
         built,
-        super::super::persist::HostStorage::saved(stored),
+        HostStorage::saved(stored),
         Default::default(),
         SessionPermission {
             mode: PermissionMode::Supervised,
@@ -184,7 +193,7 @@ async fn host(cwd: &Path, startup: &AcpStartup) -> SessionHost {
             workspace_root: cwd.to_path_buf(),
         },
         startup,
-        Vec::new(),
+        Default::default(),
     )
 }
 
@@ -208,7 +217,7 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
     };
     for model_override in [None, Some("@review")] {
         let mut host = host(cwd.path(), &startup).await;
-        let id = host.built.session.id().clone();
+        let id = host.runtime.built().session.id().clone();
         let child = catalog()
             .unwrap()
             .find("acp-child")
@@ -222,7 +231,7 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
             "host-selected-model"
         };
         let port = LaunchPort {
-            stored: host.storage.file().unwrap().clone(),
+            stored: host.runtime.storage().file().unwrap().clone(),
             expected_override: model_override.map(|_| {
                 serde_json::json!({
                     "provider": "test-override",
@@ -233,7 +242,8 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
         };
         // T3 picks a thought level before the child's first prompt; the rebind
         // must keep it because the definition sets none.
-        host.built
+        host.runtime
+            .built()
             .session
             .set_reasoning_level(ReasoningLevel::High)
             .unwrap();
@@ -257,7 +267,7 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
                         base.model = "call-model".into();
                         base.auth = "test-auth".into();
                     }
-                    bind_delegated_agent(child, /*model_override*/ None, &startup, &base)
+                    bind_delegated_agent(child, /*model_override*/ None, &startup.agent, &base)
                 },
                 async |agent, config, id| {
                     assert_eq!(config.reasoning, ReasoningLevel::High);
@@ -278,7 +288,8 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
             .await
             .unwrap();
         let inventory: BTreeSet<_> = host
-            .built
+            .runtime
+            .built()
             .tools
             .tools()
             .iter()
@@ -289,11 +300,12 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
             BTreeSet::from(["codemode".into(), "read_file".into(), "tool_search".into()])
         );
         assert_eq!(response.stop_reason, StopReason::EndTurn);
-        assert_eq!(host.built.session.id(), &id);
-        assert_eq!(host.current_model().model, expected_model);
-        assert_eq!(host.permission.mode, PermissionMode::Supervised);
+        assert_eq!(host.runtime.built().session.id(), &id);
+        assert_eq!(host.runtime.current_model().model, expected_model);
+        assert_eq!(host.runtime.permission_mode(), PermissionMode::Supervised);
         let child_identity = host
-            .storage
+            .runtime
+            .storage()
             .file()
             .unwrap()
             .stored_agent_identity()
@@ -301,17 +313,20 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
             .unwrap();
         assert_eq!(
             child_identity,
-            ("acp-child".into(), host.agent.fingerprint().to_string())
+            (
+                "acp-child".into(),
+                host.runtime.agent().fingerprint().to_string()
+            )
         );
         if model_override.is_some() {
-            let stored = host.storage.file().unwrap();
+            let stored = host.runtime.storage().file().unwrap();
             for rebound_auth in ["test-auth", "fallback-auth"] {
                 let result = loaded_agent_with(
-                    &startup,
+                    &startup.agent,
                     stored,
                     startup.config.clone(),
                     catalog,
-                    |definition, selection, startup, base| {
+                    |definition, selection, launch_agent, base| {
                         assert_eq!(
                             selection,
                             Some(ModelOverride::Saved {
@@ -328,7 +343,10 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
                             ..base.clone()
                         };
                         bind_delegated_agent(
-                            definition, /*model_override*/ None, startup, &base,
+                            definition,
+                            /*model_override*/ None,
+                            launch_agent,
+                            &base,
                         )
                     },
                 );
@@ -341,12 +359,16 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
                 }
                 let (loaded, config) = result.unwrap();
                 assert_eq!(loaded.fingerprint(), fingerprint);
-                assert_eq!(loaded.rho_capabilities(), host.agent.rho_capabilities());
+                assert_eq!(
+                    loaded.rho_capabilities(),
+                    host.runtime.agent().rho_capabilities()
+                );
                 assert_eq!(config.model, expected_model);
             }
         } else {
             assert_eq!(
-                host.storage
+                host.runtime
+                    .storage()
                     .file()
                     .unwrap()
                     .session_metadata(MODEL_OVERRIDE_METADATA)
@@ -370,11 +392,15 @@ async fn rebind_rejects_nonfresh_sessions_without_replacing_them() {
         (1, Vec::new()),
     ] {
         let mut host = host(cwd.path(), &startup).await;
-        host.completed_runs = completed_runs;
+        host.runtime.set_completed_runs_for_tests(completed_runs);
         for message in history {
-            host.built.session.append_message(message).unwrap();
+            host.runtime
+                .built()
+                .session
+                .append_message(message)
+                .unwrap();
         }
-        let before = host.built.session.snapshot();
+        let before = host.runtime.built().session.snapshot();
         let input = UserInput::text("task");
         let error = host
             .run_as_agent_with(
@@ -392,7 +418,7 @@ async fn rebind_rejects_nonfresh_sessions_without_replacing_them() {
             .await
             .unwrap_err();
         assert!(error.downcast_ref::<CommandRejected>().is_some());
-        assert_eq!(host.built.session.snapshot(), before);
+        assert_eq!(host.runtime.built().session.snapshot(), before);
         host.shutdown().await;
     }
 }
@@ -444,7 +470,7 @@ fn load_restores_the_child_binding_or_fails() {
         )
         .unwrap();
 
-    let (agent, _) = loaded_agent(&startup, &child, startup.config.clone(), catalog).unwrap();
+    let (agent, _) = loaded_agent(&startup.agent, &child, startup.config.clone(), catalog).unwrap();
     assert_eq!(agent.fingerprint(), definition.fingerprint());
     assert_eq!(
         agent.rho_capabilities(),
@@ -453,7 +479,7 @@ fn load_restores_the_child_binding_or_fails() {
 
     let root_dir = tempfile::tempdir().unwrap();
     let root = session(root_dir.path());
-    let (agent, _) = loaded_agent(&startup, &root, startup.config.clone(), catalog).unwrap();
+    let (agent, _) = loaded_agent(&startup.agent, &root, startup.config.clone(), catalog).unwrap();
     assert_eq!(agent.fingerprint(), startup.agent.fingerprint());
 
     std::fs::write(
@@ -473,7 +499,7 @@ fn load_restores_the_child_binding_or_fails() {
         );
     child.save_snapshot(&snapshot, &[]).unwrap();
     assert!(loaded_agent_with(
-        &startup,
+        &startup.agent,
         &child,
         startup.config.clone(),
         catalog,

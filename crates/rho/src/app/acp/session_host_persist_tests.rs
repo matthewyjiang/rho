@@ -15,8 +15,7 @@ use rho_sdk::{
     ProviderError, ProviderErrorKind, Retryability, SessionOptions,
 };
 
-use super::super::{mode::SessionPermission, SessionHost};
-use super::{HostStorage, SaveScope, TurnDisplay};
+use super::SessionHost;
 use crate::{
     app::{
         acp::{AcpClientPort, AcpStartup},
@@ -26,6 +25,7 @@ use crate::{
     diagnostics::RuntimeDiagnostics,
     display_transcript::{DisplayRow, DisplayTranscript},
     session::{NoSessionFound, Session as StoredSession},
+    session_runtime::{HostStorage, SessionPermission},
     tools::{sdk_registry::AppToolSet, workflow_tracker::WorkflowFinishedSnapshot},
 };
 
@@ -89,7 +89,7 @@ async fn host(
             workspace_root: workspace.to_path_buf(),
         },
         startup,
-        Vec::new(),
+        Default::default(),
     )
 }
 
@@ -265,7 +265,7 @@ async fn failed_refusal_rollback_keeps_live_and_saved_history_together() {
         .await
         .expect_err("the rollback's leaf commit fails");
     send(&mut host, &id, "follow-up", &startup).await.unwrap();
-    let live = host.built.session.history();
+    let live = host.runtime.built().session.history();
     host.shutdown().await;
 
     let (_, histories) =
@@ -404,12 +404,14 @@ async fn accepted_user_message_ids_survive_replay() {
             .await
             .unwrap();
     }
-    host.acceptance = recording(&accepted);
-    host.save_prompt_rows(
-        Message::user_text("/workflow:nightly"),
-        &[Message::assistant_text("started")],
-    )
-    .unwrap();
+    host.runtime
+        .set_acceptance(recording(&accepted).into_runtime());
+    host.runtime
+        .save_prompt_rows(
+            Message::user_text("/workflow:nightly"),
+            &[Message::assistant_text("started")],
+        )
+        .unwrap();
     host.shutdown().await;
 
     let (stored, _) =

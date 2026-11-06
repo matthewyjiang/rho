@@ -22,7 +22,8 @@ use rho_sdk::{
 };
 use tokio::sync::Notify;
 
-use super::{mode::SessionPermission, persist::HostStorage, SessionHost};
+use super::SessionHost;
+use crate::session_runtime::{HostStorage, SessionPermission};
 use crate::{
     app::{acp::AcpClientPort, session_assembly::BuiltSession},
     config::Config,
@@ -173,7 +174,7 @@ async fn tool_calls_open_with_a_card_and_end_in_a_terminal_status() {
             workspace_root: home.path().to_path_buf(),
         },
         &startup,
-        Vec::new(),
+        Default::default(),
     );
     let gate = host.cancel_handle();
     let port = RecordingPort::default();

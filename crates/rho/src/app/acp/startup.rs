@@ -21,7 +21,7 @@ use rho_providers::auth::browser::BrowserAvailability;
 
 use super::{
     agent::RhoAcpAgent,
-    auth::{self, CredentialFailure, CredentialStoreChoice, SignIn},
+    auth::{self, CredentialStoreChoice, SignIn},
     auth_login::LoginFlight,
     host_features::NegotiatedFeatures,
     AcpClientPort,
@@ -30,6 +30,7 @@ use crate::{
     app::{bootstrap, config_repository::ConfigRepository},
     cli::Cli,
     credential_store::AppCredentialStore,
+    session_runtime::CredentialFailure,
 };
 
 /// Builds the agent, or answers the error every waiting request gets.

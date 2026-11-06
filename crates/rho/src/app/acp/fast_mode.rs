@@ -11,7 +11,8 @@ use agent_client_protocol::{
 use rho_providers::providers::fast_mode::{supports_fast_mode, GROK_4_7};
 use rho_sdk::model::ServiceTier;
 
-use super::{config_options::CurrentModel, host_features::Toggles};
+use super::host_features::Toggles;
+use crate::session_runtime::CurrentModel;
 
 pub(super) const FAST_MODE_ID: &str = "fast_mode";
 const ON: &str = "on";

@@ -29,8 +29,9 @@ use rho_sdk::{
     HostChoice, HostInputRequest, HostQuestion, SelectionMode, SessionOptions,
 };
 
-use super::{mode::SessionPermission, PromptGate, SessionHost};
+use super::{PromptGate, SessionHost};
 use crate::app::acp::host_features::{FormDialect, Forms};
+use crate::session_runtime::{HostStorage, SessionPermission};
 use crate::{
     app::{acp::AcpStartup, session_assembly::BuiltSession},
     config::Config,
@@ -266,7 +267,7 @@ async fn host(
     let mut host = SessionHost::from_built(
         crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id())),
         built,
-        super::persist::HostStorage::saved(stored),
+        HostStorage::saved(stored),
         Default::default(),
         SessionPermission {
             mode: initial,
@@ -274,7 +275,7 @@ async fn host(
             workspace_root: home.to_path_buf(),
         },
         &startup,
-        Vec::new(),
+        Default::default(),
     );
     host.set_permission_mode(mode, &config).await.unwrap();
     (host, startup, scripted)
@@ -436,7 +437,7 @@ async fn keeping_planning_stays_in_plan_mode_without_another_turn() {
         (
             response.stop_reason,
             *port.plan_prompts.lock().unwrap(),
-            host.permission.mode,
+            host.runtime.permission_mode(),
             port.mode_updates(),
             provider.recorded_requests().len(),
         ),
@@ -481,7 +482,7 @@ async fn a_cancel_before_the_handoff_keeps_plan_mode() {
     assert_eq!(
         (
             response.stop_reason,
-            host.permission.mode,
+            host.runtime.permission_mode(),
             port.mode_updates(),
             provider.recorded_requests().len(),
         ),

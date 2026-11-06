@@ -3,51 +3,19 @@
 //! store `rho login` saves to.
 //!
 //! Providers capture credentials when built, so deleting them alone would
-//! leave live sessions signed in. Each logout bumps [`Logouts`]; a session
-//! whose provider read credentials before the latest logout rebuilds it from
-//! the store before its next prompt, which then fails `auth_required` like a
-//! refused credential does.
+//! leave live sessions signed in. Each logout bumps the connection's
+//! [`Logouts`](crate::session_runtime::Logouts); a session whose provider
+//! read credentials before the latest logout rebuilds it from the store
+//! before its next prompt, which then fails `auth_required` like a refused
+//! credential does.
 
-use std::{
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-};
+use std::path::PathBuf;
 
 use agent_client_protocol::Error as AcpError;
 use rho_providers::{auth::login_dispatch::ProviderAuthentication, provider};
 
 use super::auth_login::open_credential_store;
 use crate::{app::config_repository::ConfigRepository, credential_store::AppCredentialStore};
-
-/// How many logouts this connection has completed. Shared by the agent, which
-/// records each one, and its session hosts, which compare against it.
-/// `pub(in crate::app)` only so launch can build [`super::AcpStartup`].
-#[derive(Clone, Debug, Default)]
-pub(in crate::app) struct Logouts(Arc<AtomicU64>);
-
-/// A [`Logouts`] reading, taken before a provider reads credentials.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct LogoutCount(u64);
-
-impl Logouts {
-    pub(super) fn count(&self) -> LogoutCount {
-        LogoutCount(self.0.load(Ordering::Acquire))
-    }
-
-    /// Call once the credentials are deleted, so a provider that read them
-    /// first holds an older count.
-    pub(super) fn record(&self) {
-        self.0.fetch_add(1, Ordering::Release);
-    }
-
-    /// Whether a logout finished after `read` was taken.
-    pub(super) fn since(&self, read: LogoutCount) -> bool {
-        self.count() != read
-    }
-}
 
 /// Deletes auth profile `auth`'s stored credentials, and forgets the login
 /// of `provider` when it is logged in through its endpoint (Ollama), whose

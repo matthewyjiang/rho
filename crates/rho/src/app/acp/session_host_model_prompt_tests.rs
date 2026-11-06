@@ -101,33 +101,37 @@ async fn model_prompt_switch_rebinds_advisor_with_live_history() {
             workspace_root: home.path().to_path_buf(),
         },
         &startup,
-        Vec::new(),
+        Default::default(),
     );
     let next: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
         ModelIdentity::new("test", "test", "next"),
         Vec::new(),
     ));
     let expected = host
-        .built
+        .runtime
+        .built()
         .prompt_template
         .as_ref()
         .unwrap()
         .build(&PromptModel::from_sdk_identity(&next.identity()))
         .unwrap();
-    let read = host.credentials.before_read();
-    host.switch_provider(next, &config, read).unwrap();
+    let read = host.runtime.credentials_for_tests().before_read();
+    host.runtime.switch_provider(next, &config, read).unwrap();
     assert_eq!(advisor.system_prompt(), Some(expected.text.clone()));
     assert_eq!(
-        &host.built.session.history()[..2],
+        &host.runtime.built().session.history()[..2],
         &[
             Message::System(expected.text),
             Message::user_text("retained conversation"),
         ]
     );
     assert_eq!(
-        host.built.prompt.provenance,
+        host.runtime.built().prompt.provenance,
         expected.model_prompt.as_ref().map(Into::into)
     );
-    assert_eq!(host.built.diagnostics.prompt_sources(), expected.sources);
+    assert_eq!(
+        host.runtime.built().diagnostics.prompt_sources(),
+        expected.sources
+    );
     host.shutdown().await;
 }

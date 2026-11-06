@@ -4,7 +4,8 @@ use agent_client_protocol::schema::v1::{
 use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
 
-use super::{host_mcp_config, overlay_host_mcp};
+use super::host_mcp_config;
+use crate::session_runtime::overlay_host_mcp;
 use crate::tools::mcp::config::{McpConfig, McpSamplingPolicy, McpTransport};
 
 /// Projects a converted config onto what a host controls: each accepted
@@ -129,12 +130,15 @@ fn host_servers_convert_to_session_config() {
 // Covers: a host entry owns its name for the session. An invalid replacement
 // must not fall back to the configured server's endpoint and credentials, and
 // a repeated host name keeps only its last entry, valid or not.
-// Owner: ACP host MCP overlay
+// Owner: ACP host MCP conversion, through the session runtime's overlay
 #[test]
 fn host_entries_own_their_name_over_config_servers() {
     let configured = || {
         let mut config = McpConfig::default();
-        overlay_host_mcp(&mut config, &[http("bridge", "https://config.example/mcp")]);
+        overlay_host_mcp(
+            &mut config,
+            host_mcp_config(&[http("bridge", "https://config.example/mcp")]),
+        );
         config
     };
     let cases = [
@@ -181,7 +185,7 @@ fn host_entries_own_their_name_over_config_servers() {
     ];
     for (label, servers, expected) in cases {
         let mut config = configured();
-        overlay_host_mcp(&mut config, &servers);
+        overlay_host_mcp(&mut config, host_mcp_config(&servers));
         assert_eq!(summary(&config), expected, "{label}");
     }
 }

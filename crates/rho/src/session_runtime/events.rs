@@ -19,6 +19,15 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ApprovalId(pub(super) u64);
 
+#[cfg(test)]
+impl ApprovalId {
+    /// The id a turn gives its `n`th approval, counting from 0, for host
+    /// tests that play the turn.
+    pub(crate) fn nth_for_tests(n: u64) -> Self {
+        Self(n)
+    }
+}
+
 /// One plan approval a turn asked for, unique within the turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct PlanApprovalId(pub(super) u64);

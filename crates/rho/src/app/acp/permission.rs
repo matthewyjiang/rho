@@ -10,7 +10,8 @@ use agent_client_protocol::Error as AcpError;
 
 use crate::{
     permission::PermissionMode,
-    tools::plan_exit::{self, PlanPermissionAnswer, PlanPermissionRequest},
+    session_runtime::{cancelled_approval, PlanApprovalRequest},
+    tools::plan_exit::{self, PlanPermissionAnswer},
 };
 use rho_sdk::CapabilityKind;
 
@@ -97,9 +98,7 @@ pub(super) fn permission_request(
 
 pub(super) fn decision_for(outcome: &RequestPermissionOutcome) -> rho_sdk::ApprovalDecision {
     match outcome {
-        RequestPermissionOutcome::Cancelled => rho_sdk::ApprovalDecision::Deny {
-            reason: "permission request cancelled".into(),
-        },
+        RequestPermissionOutcome::Cancelled => cancelled_approval(),
         RequestPermissionOutcome::Selected(selected) => match selected.option_id.0.as_ref() {
             OPTION_ALLOW_ONCE => rho_sdk::ApprovalDecision::AllowOnce,
             OPTION_ALLOW_ALWAYS => rho_sdk::ApprovalDecision::AllowForSession,
@@ -152,7 +151,7 @@ fn tool_kind_for_capability(kind: CapabilityKind) -> ToolKind {
 /// so hosts show what each choice grants; "keep planning" rejects.
 pub(super) fn plan_approval_request(
     session_id: &SessionId,
-    request: &PlanPermissionRequest,
+    request: &PlanApprovalRequest,
 ) -> RequestPermissionRequest {
     let mut options = request
         .targets

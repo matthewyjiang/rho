@@ -80,7 +80,7 @@ impl PromptGate {
         token
     }
 
-    pub(crate) fn activate(&self, token: CancellationToken) {
+    pub(super) fn activate(&self, token: CancellationToken) {
         let mut slot = self.slot();
         let closed = matches!(slot.state, PromptGateState::Closed(_));
         // A prompt can run more than one turn (plan approval runs the

@@ -25,13 +25,13 @@ impl SessionHost {
         process_config: &Config,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
-        let Some(decision) = self.built.tools.take_plan_exit_decision() else {
+        let Some(decision) = self.runtime.take_plan_exit_decision() else {
             return result;
         };
         // A cancel that lands after the proposal settled, such as during its
         // final usage update, still cancels the handoff. Checked right before
         // the switch commits; a later cancel stops only the implementation.
-        let cancelled = self.prompt_gate.is_cancelled();
+        let cancelled = self.runtime.prompt_gate().is_cancelled();
         let result = result.map(|mut response| {
             if cancelled {
                 response.stop_reason = StopReason::Cancelled;
@@ -42,7 +42,7 @@ impl SessionHost {
             Ok(response) if turn_answered(response.stop_reason) => ProposalTurn::Completed,
             Ok(_) | Err(_) => ProposalTurn::Unfinished,
         };
-        let target = match decision.resolve(turn, self.permission.mode) {
+        let target = match decision.resolve(turn, self.runtime.permission_mode()) {
             PlanExitResolution::Apply(target) => target,
             PlanExitResolution::Keep(notice) => {
                 self.plan_notice(notice, client).await;

@@ -23,7 +23,8 @@ use rho_sdk::{
     CapabilityRequest, CapabilitySource, PathScope, SessionOptions,
 };
 
-use super::{super::SessionHost, SessionPermission};
+use super::super::SessionHost;
+use crate::session_runtime::{HostStorage, SessionPermission};
 use crate::{
     app::{
         acp::{agent::RhoAcpAgent, AcpClientPort, AcpStartup},
@@ -83,7 +84,7 @@ async fn host(
     SessionHost::from_built(
         crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id())),
         built,
-        super::super::persist::HostStorage::saved(stored),
+        HostStorage::saved(stored),
         Default::default(),
         SessionPermission {
             mode: config.permission_mode,
@@ -91,7 +92,7 @@ async fn host(
             workspace_root: home.to_path_buf(),
         },
         &startup,
-        Vec::new(),
+        Default::default(),
     )
 }
 
@@ -433,8 +434,8 @@ async fn set_mode_changes_tool_authorization_and_keeps_the_conversation() {
     tools.add_bundle(StaticToolBundle::new(vec![Arc::new(WriteProbe)]));
     let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home.path());
     let mut host = host(home.path(), &config, probe_turns(cases.len()), tools).await;
-    let session_id = host.built.session.id().clone();
-    let history = host.built.session.history();
+    let session_id = host.runtime.built().session.id().clone();
+    let history = host.runtime.built().session.history();
     let port = ApprovingPort::default();
 
     for (mode, host_prompts, status) in cases {
@@ -451,9 +452,9 @@ async fn set_mode_changes_tool_authorization_and_keeps_the_conversation() {
         .await
         .unwrap();
         assert_eq!(port.take(), (host_prompts, vec![status]), "{mode:?}");
-        assert_eq!(host.built.session.id(), &session_id, "{mode:?}");
+        assert_eq!(host.runtime.built().session.id(), &session_id, "{mode:?}");
         assert_eq!(
-            host.built.session.history()[..history.len()],
+            host.runtime.built().session.history()[..history.len()],
             history[..],
             "{mode:?}"
         );
@@ -476,7 +477,7 @@ async fn set_mode_auto_without_classifier_keeps_the_previous_mode() {
         .expect_err("auto needs a classifier model");
 
     assert_eq!(error.code, ErrorCode::InvalidParams);
-    assert_eq!(host.permission.mode, PermissionMode::Bypass);
+    assert_eq!(host.runtime.permission_mode(), PermissionMode::Bypass);
     host.shutdown().await;
 }
 
@@ -506,13 +507,13 @@ async fn mode_config_option_switches_the_permission_mode() {
         panic!("expected a select option, got {:?}", mode.kind);
     };
     assert_eq!(select.current_value.0.as_ref(), "plan");
-    assert_eq!(host.permission.mode, PermissionMode::Plan);
+    assert_eq!(host.runtime.permission_mode(), PermissionMode::Plan);
 
     let error = host
         .set_config_option(request("yolo"), &config, &home.path().join("config.toml"))
         .await
         .expect_err("unknown mode");
     assert_eq!(error.code, ErrorCode::InvalidParams);
-    assert_eq!(host.permission.mode, PermissionMode::Plan);
+    assert_eq!(host.runtime.permission_mode(), PermissionMode::Plan);
     host.shutdown().await;
 }

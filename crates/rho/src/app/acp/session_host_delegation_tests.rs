@@ -16,7 +16,8 @@ use rho_sdk::{
 };
 use tokio::sync::mpsc;
 
-use super::{mode::SessionPermission, persist::HostStorage, SessionHost};
+use super::SessionHost;
+use crate::session_runtime::{HostStorage, SessionPermission};
 use crate::{
     app::{
         acp::AcpClientPort,
@@ -136,7 +137,7 @@ async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
             workspace_root: home.path().to_path_buf(),
         },
         &startup,
-        Vec::new(),
+        Default::default(),
     );
     let gate = host.cancel_handle();
     let (sender, mut chunks) = mpsc::unbounded_channel();
