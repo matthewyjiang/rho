@@ -3,9 +3,12 @@
 //! protocol.
 //!
 //! This module owns the daemon's process plumbing: file layout and
-//! permissions ([`DaemonPaths`]), the single-instance lock, the listener, and
-//! client connection and auto-spawn. Protocol framing and the handshake live in
-//! `rho-protocol`; the `rho daemon` CLI lives in `app::daemon_cli`.
+//! permissions ([`DaemonPaths`]), the single-instance lock, the listener and
+//! accept loop, and client connection and auto-spawn. It never learns what a
+//! session is: what the daemon answers comes from the `rho_protocol::Service`
+//! its caller passes in, which `app::daemon_host` implements. Protocol framing
+//! and the handshake live in `rho-protocol`; `app::daemon_cli` wires the host
+//! to this transport.
 //!
 //! Configuration is read per session when a session is created, so config
 //! edits apply to new sessions without a restart. Daemon-level settings (the
@@ -22,6 +25,8 @@ mod server;
               until then production code never spawns and tests never use ProcessSpawner"
 )]
 mod spawn;
+#[cfg(test)]
+mod test_support;
 
 pub(crate) use client::{cli_client_info, connect, ConnectError};
 pub(crate) use lock::{acquire as acquire_lock, terminate_recorded_daemon, wait_until_released};

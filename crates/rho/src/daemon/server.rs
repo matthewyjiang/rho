@@ -1,13 +1,14 @@
-//! The daemon's socket listener and its protocol service.
+//! The daemon's socket listener and accept loop. What the daemon answers
+//! comes from the [`Service`] its caller passes to [`BoundDaemon::serve`].
 
 use std::{
     fs, io,
     os::unix::fs::PermissionsExt,
     sync::Arc,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
-use rho_protocol::{DaemonInfo, DaemonStatus, ServerInfo, Service, PROTOCOL_VERSION};
+use rho_protocol::{DaemonInfo, ServerInfo, Service, PROTOCOL_VERSION};
 use rho_sdk::CancellationToken;
 use tokio::{
     net::{UnixListener, UnixStream},
@@ -24,7 +25,6 @@ pub(crate) struct BoundDaemon {
     listener: UnixListener,
     paths: DaemonPaths,
     started_at: u64,
-    started: Instant,
     // Held until `serve` returns, after the socket and info file are removed.
     _lock: DaemonLock,
 }
@@ -70,32 +70,35 @@ pub(crate) fn bind(paths: &DaemonPaths, lock: DaemonLock) -> io::Result<BoundDae
         listener,
         paths: paths.clone(),
         started_at,
-        started: Instant::now(),
         _lock: lock,
     })
 }
 
 impl BoundDaemon {
-    /// Accepts connections until `shutdown` is cancelled, by `rho/daemon/stop`
-    /// or by the caller (for example on a signal).
+    /// Unix seconds when the daemon bound its socket, as published in the
+    /// info file.
+    pub(crate) fn started_at(&self) -> u64 {
+        self.started_at
+    }
+
+    /// Accepts connections and routes their requests to `service` until
+    /// `shutdown` is cancelled, by the service (on `rho/daemon/stop`) or by
+    /// the caller (for example on a signal).
     ///
     /// Shutdown is graceful: stop accepting, let every connection finish the
     /// response it is writing, then remove the socket and info file and
     /// release the lock.
-    pub(crate) async fn serve(self, shutdown: CancellationToken) -> io::Result<()> {
+    pub(crate) async fn serve<Svc: Service + 'static>(
+        self,
+        service: Arc<Svc>,
+        shutdown: CancellationToken,
+    ) -> io::Result<()> {
         let Self {
             listener,
             paths,
-            started_at,
-            started,
+            started_at: _,
             _lock,
         } = self;
-        let service = Arc::new(DaemonService {
-            socket: paths.socket.clone(),
-            started_at,
-            started,
-            shutdown: shutdown.clone(),
-        });
         let info = Arc::new(ServerInfo {
             daemon: DaemonInfo {
                 version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -187,33 +190,6 @@ fn is_transient_accept_error(error: &io::Error) -> bool {
             | io::ErrorKind::Interrupted
             | io::ErrorKind::WouldBlock
     )
-}
-
-struct DaemonService {
-    socket: std::path::PathBuf,
-    started_at: u64,
-    started: Instant,
-    shutdown: CancellationToken,
-}
-
-impl Service for DaemonService {
-    fn status(&self) -> DaemonStatus {
-        DaemonStatus {
-            pid: std::process::id(),
-            version: env!("CARGO_PKG_VERSION").to_owned(),
-            protocol: PROTOCOL_VERSION,
-            started_at: self.started_at,
-            uptime_secs: self.started.elapsed().as_secs(),
-            // Agent jobs arrive with the session methods.
-            jobs: 0,
-            socket: self.socket.clone(),
-        }
-    }
-
-    fn stop(&self) {
-        tracing::info!("stop requested");
-        self.shutdown.cancel();
-    }
 }
 
 #[cfg(test)]

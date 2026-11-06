@@ -1,19 +1,22 @@
 //! CLI handler for `rho daemon`.
 //!
-//! This is the boundary that reads process environment (`RHO_HOME`,
-//! `XDG_RUNTIME_DIR`, `RHO_LOG`, `JOURNAL_STREAM`); `crate::daemon` takes the
-//! resolved values. `status` and `stop` never start a daemon.
+//! `rho daemon run` wires the daemon host (`app::daemon_host`) to the generic
+//! transport (`crate::daemon`). This is also the boundary that reads process
+//! environment (`RHO_HOME`, `XDG_RUNTIME_DIR`, `RHO_LOG`, `JOURNAL_STREAM`);
+//! `crate::daemon` takes the resolved values. `status` and `stop` never start
+//! a daemon.
 
 use crate::cli::{Command, DaemonCommand};
 
 #[cfg(unix)]
 use {
+    super::daemon_host::DaemonHost,
     crate::daemon::{self, cli_client_info, DaemonPaths},
     crate::logging::{self, LogSink},
     anyhow::Context,
     rho_protocol::{methods, ClientError, DaemonStatus, StatusParams, StopParams},
     rho_sdk::CancellationToken,
-    std::time::Duration,
+    std::{sync::Arc, time::Duration},
 };
 
 #[cfg(not(unix))]
@@ -86,6 +89,11 @@ async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
     }
 
     let shutdown = CancellationToken::new();
+    let host = Arc::new(DaemonHost::new(
+        paths.socket.clone(),
+        bound.started_at(),
+        shutdown.clone(),
+    ));
     let on_signal = shutdown.clone();
     let signal_task = tokio::spawn(async move {
         tokio::select! {
@@ -99,7 +107,7 @@ async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
             () = on_signal.cancelled() => {}
         }
     });
-    let served = bound.serve(shutdown).await;
+    let served = bound.serve(host, shutdown).await;
     signal_task.abort();
     Ok(served?)
 }

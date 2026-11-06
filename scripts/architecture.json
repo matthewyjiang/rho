@@ -15,6 +15,11 @@
       "path": "crates/rho-providers/src/credentials",
       "modules": ["model"],
       "reason": "keep credentials independent from model runtime metadata"
+    },
+    {
+      "path": "crates/rho/src/daemon",
+      "modules": ["app", "session", "tui"],
+      "reason": "the daemon is generic transport; what it answers comes from the Service its caller passes in (app::daemon_host)"
     }
   ],
   "forbidden_package_dependencies": [
