@@ -4,7 +4,7 @@
 //!
 //! Providers capture credentials when built, so deleting them alone would
 //! leave live sessions signed in. Each logout bumps the connection's
-//! [`Logouts`](crate::session_runtime::Logouts); a session whose provider
+//! [`Logouts`](crate::app::session_runtime::Logouts); a session whose provider
 //! read credentials before the latest logout rebuilds it from the store
 //! before its next prompt, which then fails `auth_required` like a refused
 //! credential does.

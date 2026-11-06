@@ -9,8 +9,10 @@ use rho_sdk::{
 
 use super::{HostStorage, SaveScope, TurnDisplay};
 use crate::{
-    app::session_assembly::BuiltSession, config::Config, diagnostics::RuntimeDiagnostics,
-    session::Session as StoredSession, session_runtime::SessionRuntime,
+    app::{session_assembly::BuiltSession, session_runtime::SessionRuntime},
+    config::Config,
+    diagnostics::RuntimeDiagnostics,
+    session::Session as StoredSession,
     tools::sdk_registry::AppToolSet,
 };
 

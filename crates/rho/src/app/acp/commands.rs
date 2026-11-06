@@ -29,12 +29,14 @@ use super::{
 };
 use crate::{
     agent::{AgentCatalog, AgentRuntimeSpec},
-    app::workflow_cli::discover::{self as workflows, StartCommand},
+    app::{
+        session_runtime::{AgentTask, CommandRejected},
+        workflow_cli::discover::{self as workflows, StartCommand},
+    },
     commands::{init_turn, CommandId, CommandInvocation, CommandParseError, COMMANDS},
     config::Config,
     permission::PermissionMode,
     prompt_templates,
-    session_runtime::{AgentTask, CommandRejected},
     tools::{
         mcp::prompt_command::{self, McpPromptCommand},
         sdk_registry::AppToolSet,

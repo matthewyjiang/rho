@@ -22,8 +22,10 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::Forwarder;
 use crate::{
-    app::acp::{events::EventMapper, signals::SessionSignals, AcpClientPort, HostFeatures},
-    session_runtime::{cancelled_approval, ApprovalId, SessionEvent, TurnControl},
+    app::{
+        acp::{events::EventMapper, signals::SessionSignals, AcpClientPort, HostFeatures},
+        session_runtime::{cancelled_approval, ApprovalId, SessionEvent, TurnControl},
+    },
     tools::todo::TodoState,
 };
 

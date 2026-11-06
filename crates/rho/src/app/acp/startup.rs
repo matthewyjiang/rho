@@ -27,10 +27,9 @@ use super::{
     AcpClientPort,
 };
 use crate::{
-    app::{bootstrap, config_repository::ConfigRepository},
+    app::{bootstrap, config_repository::ConfigRepository, session_runtime::CredentialFailure},
     cli::Cli,
     credential_store::AppCredentialStore,
-    session_runtime::CredentialFailure,
 };
 
 /// Builds the agent, or answers the error every waiting request gets.

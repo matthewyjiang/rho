@@ -5,7 +5,7 @@ use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
 
 use super::host_mcp_config;
-use crate::session_runtime::overlay_host_mcp;
+use crate::app::session_runtime::overlay_host_mcp;
 use crate::tools::mcp::config::{McpConfig, McpSamplingPolicy, McpTransport};
 
 /// Projects a converted config onto what a host controls: each accepted

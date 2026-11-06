@@ -55,7 +55,7 @@ mod shutdown;
 #[path = "interactive_runtime_start.rs"]
 mod start;
 #[path = "interactive_runtime_startup.rs"]
-pub(crate) mod startup;
+pub(super) mod startup;
 #[path = "interactive_runtime_tree.rs"]
 mod tree;
 #[path = "interactive_runtime_workspace_rewind.rs"]

@@ -14,14 +14,14 @@ use tokio::{
 
 use super::{pump, ApprovalSource, EventSource, PumpSources};
 use crate::{
-    permission::PermissionMode,
-    session_runtime::{
+    app::session_runtime::{
         events::{
             cancelled_approval, ApprovalId, PlanApprovalId, RunEnd, SessionEvent, TurnControl,
         },
         turn::TurnIo,
         QuestionSupport,
     },
+    permission::PermissionMode,
     tools::plan_exit::{PlanPermissionAnswer, PlanPermissionRequest},
 };
 

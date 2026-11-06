@@ -31,7 +31,7 @@ use rho_sdk::{
 
 use super::{PromptGate, SessionHost};
 use crate::app::acp::host_features::{FormDialect, Forms};
-use crate::session_runtime::{HostStorage, SessionPermission};
+use crate::app::session_runtime::{HostStorage, SessionPermission};
 use crate::{
     app::{acp::AcpStartup, session_assembly::BuiltSession},
     config::Config,

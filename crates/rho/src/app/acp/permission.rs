@@ -9,8 +9,8 @@ use agent_client_protocol::schema::v1::{
 use agent_client_protocol::Error as AcpError;
 
 use crate::{
+    app::session_runtime::{cancelled_approval, PlanApprovalRequest},
     permission::PermissionMode,
-    session_runtime::{cancelled_approval, PlanApprovalRequest},
     tools::plan_exit::{self, PlanPermissionAnswer},
 };
 use rho_sdk::CapabilityKind;

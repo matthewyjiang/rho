@@ -14,7 +14,7 @@ use rho_providers::model::display_name::model_display_name;
 use rho_providers::model::favorites;
 use rho_providers::provider::model_reference;
 
-use crate::session_runtime::CurrentModel;
+use crate::app::session_runtime::CurrentModel;
 
 pub(super) const MODEL_CONFIG_ID: &str = "model";
 

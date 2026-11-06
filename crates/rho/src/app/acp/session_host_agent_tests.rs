@@ -25,16 +25,16 @@ use crate::{
         acp::{AcpClientPort, AcpStartup},
         agent_binding::{AgentBinder, AgentInvocation, AgentRole, ModelOverride},
         session_assembly::{BuiltSession, SessionAssembly},
+        session_runtime::{
+            bind_delegated_agent, loaded_agent, loaded_agent_with, AgentTask, CommandRejected,
+            HostStorage, SessionPermission, MODEL_OVERRIDE_METADATA,
+        },
     },
     config::Config,
     diagnostics::RuntimeDiagnostics,
     herdr::HerdrReporter,
     permission::PermissionMode,
     session::Session as StoredSession,
-    session_runtime::{
-        bind_delegated_agent, loaded_agent, loaded_agent_with, AgentTask, CommandRejected,
-        HostStorage, SessionPermission, MODEL_OVERRIDE_METADATA,
-    },
     tools::sdk_registry::{AppToolSet, ToolSetOptions},
 };
 

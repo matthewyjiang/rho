@@ -9,7 +9,7 @@
 //! not take fails the turn: the forwarder tells the runtime once and then
 //! only closes the run's cards, best effort.
 //!
-//! [`SessionRuntime::run_turn`]: crate::session_runtime::SessionRuntime::run_turn
+//! [`SessionRuntime::run_turn`]: crate::app::session_runtime::SessionRuntime::run_turn
 
 use std::{collections::HashMap, future::Future, pin::Pin, sync::atomic::AtomicU64};
 
@@ -24,8 +24,8 @@ use rho_sdk::{HostInputId, HostInputRefusal};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use super::send_notification;
-use crate::{
-    app::acp::{
+use crate::app::{
+    acp::{
         elicitation,
         events::{EventMapper, RunEnding},
         host_features::{Forms, HostFeatures},

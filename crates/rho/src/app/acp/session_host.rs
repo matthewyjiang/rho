@@ -39,18 +39,19 @@ use super::{
 };
 use crate::{
     app::{
-        headless_delegation::BackgroundWait, session_assembly::BuiltSession,
+        headless_delegation::BackgroundWait,
+        session_assembly::BuiltSession,
+        session_runtime::{
+            model_scoped_config, ChildAgents, CurrentModel, HostStorage, MessageAcceptance,
+            ModelSwitchError, PromptGate, PromptGuard, QuestionSupport, RuntimeParts, SessionBuild,
+            SessionPermission, SessionRuntime, TitleJob, Turn, TurnIo, TurnOutcome, WorkflowStart,
+        },
         workflow_cli::discover::StartCommand,
     },
     config::Config,
     credential_store::AppCredentialStore,
     herdr::{HerdrReporter, HerdrSession, HerdrState},
     permission::PermissionMode,
-    session_runtime::{
-        model_scoped_config, ChildAgents, CurrentModel, HostStorage, MessageAcceptance,
-        ModelSwitchError, PromptGate, PromptGuard, QuestionSupport, RuntimeParts, SessionBuild,
-        SessionPermission, SessionRuntime, TitleJob, Turn, TurnIo, TurnOutcome, WorkflowStart,
-    },
     tools::mcp::config::McpConfig,
 };
 
@@ -107,7 +108,7 @@ pub(super) struct SessionHost {
 impl SessionHost {
     /// Runs one `session/prompt`: a slash command or a model turn. A
     /// command that cannot run fails with
-    /// [`crate::session_runtime::CommandRejected`]. `startup` supplies
+    /// [`crate::app::session_runtime::CommandRejected`]. `startup` supplies
     /// process defaults and the available root capabilities when a fresh
     /// session binds an agent definition.
     ///

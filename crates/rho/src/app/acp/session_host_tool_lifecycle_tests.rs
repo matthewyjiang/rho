@@ -23,7 +23,7 @@ use rho_sdk::{
 use tokio::sync::Notify;
 
 use super::SessionHost;
-use crate::session_runtime::{HostStorage, SessionPermission};
+use crate::app::session_runtime::{HostStorage, SessionPermission};
 use crate::{
     app::{acp::AcpClientPort, session_assembly::BuiltSession},
     config::Config,

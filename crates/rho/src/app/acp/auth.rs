@@ -18,7 +18,7 @@ use rho_providers::{
 };
 
 use super::host_features::{Forms, HostFeatures};
-use crate::session_runtime::CredentialFailure;
+use crate::app::session_runtime::CredentialFailure;
 
 /// Whether a credential store has been chosen. A login must know where to
 /// save, so until the choice is made `authenticate` asks it as a form, and

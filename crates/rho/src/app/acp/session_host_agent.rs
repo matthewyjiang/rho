@@ -6,7 +6,7 @@ use agent_client_protocol::schema::v1::PromptResponse;
 use rho_sdk::UserInput;
 
 use super::{AcpClientPort, AcpStartup, SessionHost};
-use crate::session_runtime::AgentTask;
+use crate::app::session_runtime::AgentTask;
 
 impl SessionHost {
     /// Rebinds a fresh child for `task`, then submits only the task to the

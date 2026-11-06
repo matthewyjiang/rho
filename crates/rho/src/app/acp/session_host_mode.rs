@@ -4,7 +4,7 @@
 use agent_client_protocol::Error as AcpError;
 
 use super::{host_apply_error, SessionHost};
-use crate::{config::Config, permission::PermissionMode, session_runtime::ModeChangeError};
+use crate::{app::session_runtime::ModeChangeError, config::Config, permission::PermissionMode};
 
 impl SessionHost {
     /// Applies `mode` to later prompts. The caller holds the host slot lock,

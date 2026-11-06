@@ -20,12 +20,12 @@ use crate::{
     app::{
         acp::{AcpClientPort, AcpStartup},
         session_assembly::BuiltSession,
+        session_runtime::{HostStorage, SessionPermission},
     },
     config::Config,
     diagnostics::RuntimeDiagnostics,
     display_transcript::{DisplayRow, DisplayTranscript},
     session::{NoSessionFound, Session as StoredSession},
-    session_runtime::{HostStorage, SessionPermission},
     tools::{sdk_registry::AppToolSet, workflow_tracker::WorkflowFinishedSnapshot},
 };
 

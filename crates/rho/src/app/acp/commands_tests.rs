@@ -6,7 +6,7 @@ use rho_sdk::{model::ContentBlock, UserInput};
 use serde_json::json;
 
 use super::{available_commands, resolve, CommandScope, PromptAction};
-use crate::session_runtime::AgentTask;
+use crate::app::session_runtime::AgentTask;
 use crate::{
     agent::{AgentCapabilities, ToolCapability},
     config::Config,

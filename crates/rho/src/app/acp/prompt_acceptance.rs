@@ -11,7 +11,7 @@
 use agent_client_protocol::schema::v1::MessageId;
 
 use super::events::EventMapper;
-use crate::session_runtime::{InsertedMessage, MessageAcceptance};
+use crate::app::session_runtime::{InsertedMessage, MessageAcceptance};
 
 /// Reports a prompt's user message, once, when the session inserts it.
 pub(super) enum PromptAcceptance {

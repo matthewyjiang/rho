@@ -15,7 +15,7 @@ use super::model_prompt_metadata::{ModelPromptProvenance, KEY};
 const SOURCES_KEY: &str = "rho.prompt_sources";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct ActivePrompt {
+pub(super) struct ActivePrompt {
     pub system: SystemPrompt,
     pub provenance: Option<ModelPromptProvenance>,
     /// Only fresh startup hydration may re-render these cached bytes. A saved

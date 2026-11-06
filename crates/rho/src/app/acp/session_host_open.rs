@@ -22,11 +22,13 @@ use crate::{
     app::{
         acp::{AcpClientPort, AcpStartup},
         interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
+        session_runtime::{
+            build_session, loaded_agent, session_config, split_assembly, HostStorage,
+        },
     },
     config::Config,
     permission::PermissionMode,
     session::Session as StoredSession,
-    session_runtime::{build_session, loaded_agent, session_config, split_assembly, HostStorage},
     tools::{mcp::config::McpConfig, sdk_registry::AppToolSet},
 };
 

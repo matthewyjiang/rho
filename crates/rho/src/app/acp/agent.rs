@@ -12,7 +12,7 @@ use super::{
     session_host::{History, ReopenRequest, Reopened, SessionHost},
     AcpClientPort, AcpStartup,
 };
-use crate::session_runtime::{Closing, PromptGate};
+use crate::app::session_runtime::{Closing, PromptGate};
 use agent_client_protocol::schema::v1::{AgentAuthCapabilities, LogoutCapabilities};
 use agent_client_protocol::schema::v1::{
     DeleteSessionRequest, DeleteSessionResponse, ResumeSessionRequest, ResumeSessionResponse,
@@ -634,7 +634,7 @@ pub(super) fn session_apply_error(session: &rho_sdk::Session, error: rho_sdk::Er
 
 /// A command the prompt names but cannot run is the caller's to fix.
 fn prompt_error(error: anyhow::Error) -> AcpError {
-    match error.downcast::<crate::session_runtime::CommandRejected>() {
+    match error.downcast::<crate::app::session_runtime::CommandRejected>() {
         Ok(rejected) => AcpError::invalid_params().data(rejected.to_string()),
         Err(error) => host_error(error),
     }

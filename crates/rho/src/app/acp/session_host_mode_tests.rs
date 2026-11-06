@@ -24,7 +24,7 @@ use rho_sdk::{
 };
 
 use super::super::SessionHost;
-use crate::session_runtime::{HostStorage, SessionPermission};
+use crate::app::session_runtime::{HostStorage, SessionPermission};
 use crate::{
     app::{
         acp::{agent::RhoAcpAgent, AcpClientPort, AcpStartup},
