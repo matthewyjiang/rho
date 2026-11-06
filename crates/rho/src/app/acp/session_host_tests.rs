@@ -188,8 +188,9 @@ fn select_current(option: &SessionConfigOption) -> &str {
     }
 }
 
-// Covers: a refused thought level or fast mode must reach the client as the
-// ACP error it can act on: fix the request, or resend once the turn ends.
+// Covers: a refused setting change (permission mode, model, thought level,
+// or fast mode) must reach the client as the ACP error it can act on: fix
+// the request, resend once the turn ends, or report the agent's failure.
 // Owner: acp session host
 #[test]
 fn setting_errors_map_to_acp_errors() {

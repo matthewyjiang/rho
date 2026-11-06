@@ -71,13 +71,12 @@ pub(crate) use events::{
     SessionEvent, TurnControl,
 };
 pub(crate) use handle::SessionHandle;
-pub(crate) use mode::{ModeChangeError, SessionPermission};
+pub(crate) use mode::SessionPermission;
 pub(crate) use persist::SessionStorage;
 pub(crate) use plan_exit::PlanHandoff;
 pub(crate) use prompt::PromptScope;
 pub(crate) use prompt_gate::Closing;
 pub(crate) use settings::SettingChangeError;
-pub(crate) use switch::ModelSwitchError;
 pub(crate) use title::TitleJob;
 pub(crate) use turn::{Turn, TurnIo, TurnOutcome};
 pub(crate) use workflow::WorkflowStart;

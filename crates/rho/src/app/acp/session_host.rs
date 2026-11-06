@@ -38,9 +38,9 @@ use crate::{
     app::{
         headless_delegation::BackgroundWait,
         session_runtime::{
-            model_scoped_config, ChildAgents, CurrentModel, InsertedMessage, ModelSwitchError,
-            OpenedSession, PromptScope, QuestionSupport, SessionBuild, SessionHandle,
-            SessionRuntime, SettingChangeError, TitleJob, Turn, TurnIo, TurnOutcome, WorkflowStart,
+            model_scoped_config, ChildAgents, CurrentModel, InsertedMessage, OpenedSession,
+            PromptScope, QuestionSupport, SessionBuild, SessionHandle, SessionRuntime,
+            SettingChangeError, TitleJob, Turn, TurnIo, TurnOutcome, WorkflowStart,
         },
         workflow_cli::discover::StartCommand,
     },
@@ -60,8 +60,6 @@ mod compact;
 mod convert;
 #[path = "session_host_forward.rs"]
 mod forward;
-#[path = "session_host_mode.rs"]
-mod mode;
 #[path = "session_host_open.rs"]
 mod open;
 #[path = "session_host_plan_exit.rs"]
@@ -258,6 +256,20 @@ impl SessionHost {
         ))
     }
 
+    /// Applies `mode` to later prompts (`session/set_mode`, or the `mode`
+    /// config option). The caller holds the host slot lock, so no prompt is
+    /// in flight. On error the session keeps its old mode.
+    pub(super) async fn set_permission_mode(
+        &mut self,
+        mode: PermissionMode,
+        process_config: &Config,
+    ) -> Result<(), AcpError> {
+        self.runtime
+            .set_permission_mode(mode, process_config)
+            .await
+            .map_err(|error| setting_error(&self.acp_session_id, error))
+    }
+
     pub(super) fn handle(&self) -> SessionHandle {
         self.runtime.handle()
     }
@@ -314,12 +326,7 @@ impl SessionHost {
         self.runtime
             .switch_model(&selection, process_config, config_path)
             .await
-            .map_err(|error| match error {
-                ModelSwitchError::UnsupportedReasoning { .. } => {
-                    AcpError::invalid_params().data(error.to_string())
-                }
-                ModelSwitchError::Apply(_) => host_apply_error(error),
-            })?;
+            .map_err(|error| setting_error(&self.acp_session_id, error))?;
         Ok(self.config_options(process_config))
     }
 
@@ -593,18 +600,16 @@ fn prompt_response(outcome: TurnOutcome) -> PromptResponse {
     PromptResponse::new(stop)
 }
 
-/// A refused thought level or fast mode is the host's to fix or, on a busy
-/// session, to send again.
+/// The ACP error for every refused setting change: permission mode, model,
+/// thought level, or fast mode. An unsupported setting is the client's to
+/// fix, a busy session's to send again once its turn ends, and a failed
+/// apply is the agent's.
 fn setting_error(session_id: &SessionId, error: SettingChangeError) -> AcpError {
     match error {
         SettingChangeError::Unsupported(_) => AcpError::invalid_params().data(error.to_string()),
         SettingChangeError::Busy => super::agent::busy_session(session_id),
-        SettingChangeError::Apply(_) => host_apply_error(error),
+        SettingChangeError::Apply(_) => AcpError::internal_error().data(error.to_string()),
     }
-}
-
-fn host_apply_error(error: impl ToString) -> AcpError {
-    AcpError::internal_error().data(error.to_string())
 }
 
 /// `input` with `text` as a final block.
@@ -705,6 +710,10 @@ mod tests;
 #[cfg(test)]
 #[path = "session_host_delegation_tests.rs"]
 mod delegation_tests;
+
+#[cfg(test)]
+#[path = "session_host_mode_tests.rs"]
+mod mode_tests;
 
 #[cfg(test)]
 #[path = "session_host_tool_lifecycle_tests.rs"]

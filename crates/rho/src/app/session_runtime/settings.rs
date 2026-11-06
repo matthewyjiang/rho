@@ -1,5 +1,6 @@
 //! A session's reasoning level and fast mode: per-session choices a host
-//! applies between prompts, which later turns use.
+//! applies between prompts, which later turns use. Also the one error every
+//! setting change returns, these and the permission mode and model switches.
 
 use std::sync::Arc;
 
@@ -18,17 +19,23 @@ use crate::{
     config::Config,
 };
 
-/// Why a reasoning level or fast mode change did not apply. The session
-/// keeps its old setting either way.
+/// Why a setting change (permission mode, model, reasoning level, or fast
+/// mode) did not apply. The session keeps its old setting either way.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SettingChangeError {
-    /// The current model cannot take the setting. The requester can fix it.
+    /// The session's config or model cannot take the setting, such as auto
+    /// mode without a classifier model, or a reasoning level the model
+    /// lacks. The requester can fix it.
     #[error("{0}")]
     Unsupported(String),
-    /// A turn is running; the change can be sent again once it ends.
+    /// The SDK refused the change as `SessionBusy`: a run holds the session.
+    /// Defensive: the setters take `&mut self`, which a host holds only
+    /// between prompts, so no run is normally in flight. The change can be
+    /// sent again once the run ends.
     #[error("the session has a running turn")]
     Busy,
-    /// Applying the setting failed.
+    /// Applying the setting failed: rebuilding the SDK runtime, building or
+    /// installing a provider, or saving the change.
     #[error("{0}")]
     Apply(anyhow::Error),
 }

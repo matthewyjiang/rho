@@ -23,7 +23,7 @@ use rho_sdk::{
     CapabilityRequest, CapabilitySource, PathScope, SessionOptions,
 };
 
-use super::super::SessionHost;
+use super::SessionHost;
 use crate::app::session_runtime::{OpenedSession, SessionPermission, SessionStorage};
 use crate::{
     app::{
