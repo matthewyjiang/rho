@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use rho_sdk::SessionOptions;
+use rho_sdk::{model::Message, SessionOptions};
 
 use super::{
     agent::loaded_agent,
@@ -251,5 +251,26 @@ impl SessionRuntime {
             cwd: &self.permission.workspace_root,
             tools: self.tools(),
         })
+    }
+
+    /// Whether the session's history holds a conversation. The SDK stores
+    /// its initial system prompt and context in history; those alone are
+    /// not one. A session opened new, or reopened from a file saved before
+    /// its first prompt reached the model, holds none.
+    pub(crate) fn has_conversation(&self) -> bool {
+        self.built
+            .session
+            .history()
+            .iter()
+            .any(|message| match message {
+                Message::System(_) | Message::ModelContext(_) | Message::ReasoningShift(_) => false,
+                Message::User(_)
+                | Message::Assistant(_)
+                | Message::EnrichedAssistant(_)
+                | Message::AbortedAssistant(_)
+                | Message::ToolResult(_)
+                | Message::CompactionSummary(_)
+                | Message::BoundaryInput(_) => true,
+            })
     }
 }
