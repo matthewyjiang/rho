@@ -8,7 +8,7 @@
 //! beside a forwarder that shows the turn's events to the client and answers
 //! its requests (`session_host_forward.rs`).
 
-use std::sync::atomic::AtomicU64;
+use std::{future::Future, sync::atomic::AtomicU64};
 
 use agent_client_protocol::{
     schema::v1::{
@@ -39,9 +39,10 @@ use crate::{
         headless_delegation::BackgroundWait,
         session_commands::{CommandScope, PromptCommand},
         session_runtime::{
-            model_scoped_config, ChildAgents, CurrentModel, InsertedMessage, OpenedSession,
-            PromptScope, QuestionSupport, SessionBuild, SessionHandle, SessionRuntime,
-            SettingChangeError, TitleJob, Turn, TurnIo, TurnOutcome, WorkflowStart,
+            model_scoped_config, run_prompt_turn, ChildAgents, CurrentModel, InsertedMessage,
+            OpenedSession, PlanReport, PromptScope, QuestionSupport, SessionBuild, SessionHandle,
+            SessionRuntime, SettingChangeError, TitleJob, Turn, TurnHost, TurnIo, TurnOutcome,
+            WorkflowStart,
         },
         workflow_cli::discover::StartCommand,
     },
@@ -384,9 +385,9 @@ impl SessionHost {
         )
     }
 
-    /// A model turn, then the plan handoff when the turn answered
-    /// `exit_plan_mode`: the runtime decides it, and the host reports it and
-    /// runs the implementation turn it asks for.
+    /// A prompt's model turns (see [`run_prompt_turn`]): `turn`, then the
+    /// implementation turn an approved plan asks for, each shown to
+    /// `client` as it runs.
     async fn run_turn(
         &mut self,
         prompt: &PromptScope,
@@ -394,57 +395,16 @@ impl SessionHost {
         process_config: &Config,
         client: &dyn AcpClientPort,
     ) -> Shown<PromptResponse> {
-        let proposal = self
-            .forward_turn(prompt, turn, process_config, client)
-            .await;
-        let handoff = self
-            .runtime
-            .hand_off_plan(prompt, proposal.ended, process_config)
-            .await;
-        let answered = self
-            .report_plan_handoff(prompt, handoff, process_config, client)
-            .await;
-        // The proposal's miss came first, so it is the one reported.
-        Shown {
-            ended: answered.ended,
-            missed_update: proposal.missed_update.or(answered.missed_update),
-        }
-    }
-
-    /// Runs `turn` beside a forwarder that shows it to the client.
-    async fn forward_turn(
-        &mut self,
-        prompt: &PromptScope,
-        turn: Turn,
-        process_config: &Config,
-        client: &dyn AcpClientPort,
-    ) -> Shown<TurnOutcome> {
-        let (events, event_receiver) = mpsc::unbounded_channel();
-        let (control_sender, control) = mpsc::unbounded_channel();
-        // See `Forwarded::sent_plan` for when the checklist comes back.
-        let signals = self.signals();
-        let forwarder = forward::Forwarder {
-            session_id: &self.acp_session_id,
+        let mut turns = AcpTurns {
+            host: self,
             client,
-            features: self.host_features,
-            mapper: EventMapper::new(
-                self.host_features,
-                self.runtime.cwd().to_path_buf(),
-                self.runtime.tools().mcp_report().tool_names(),
-            ),
-            signals,
-            placeholders: &self.permission_placeholders,
-            acceptance: &mut self.prompt_acceptance,
+            process_config,
         };
-        let io = TurnIo { events, control };
-        let (result, forwarded) = tokio::join!(
-            self.runtime.run_turn(prompt, turn, io, process_config),
-            forwarder.forward(event_receiver, control_sender),
-        );
-        self.sent_plan = forwarded.sent_plan.unwrap_or_default();
+        let end = run_prompt_turn(&mut turns, prompt, turn, process_config).await;
+        // The first turn's miss came first, so it is the one reported.
         Shown {
-            ended: result,
-            missed_update: forwarded.failure,
+            ended: end.ended.map(prompt_response),
+            missed_update: end.turn.or(end.implementation.flatten()),
         }
     }
 
@@ -474,6 +434,62 @@ impl SessionHost {
                 Ok(PromptResponse::new(StopReason::EndTurn))
             }
         }
+    }
+}
+
+/// One prompt's model turns on `host`, shown to `client`.
+struct AcpTurns<'a> {
+    host: &'a mut SessionHost,
+    client: &'a dyn AcpClientPort,
+    process_config: &'a Config,
+}
+
+impl TurnHost for AcpTurns<'_> {
+    /// The first update of the turn the client missed, if any.
+    type Shown = Option<String>;
+
+    fn runtime(&mut self) -> &mut SessionRuntime {
+        &mut self.host.runtime
+    }
+
+    /// Shows the turn through a forwarder (`session_host_forward.rs`).
+    fn open_turn(
+        &mut self,
+    ) -> (
+        &mut SessionRuntime,
+        TurnIo,
+        impl Future<Output = Self::Shown> + Send,
+    ) {
+        let (events, event_receiver) = mpsc::unbounded_channel();
+        let (control_sender, control) = mpsc::unbounded_channel();
+        let host = &mut *self.host;
+        // See `Forwarded::sent_plan` for when the checklist comes back.
+        let signals = host.signals();
+        let forwarder = forward::Forwarder {
+            session_id: &host.acp_session_id,
+            client: self.client,
+            features: host.host_features,
+            mapper: EventMapper::new(
+                host.host_features,
+                host.runtime.cwd().to_path_buf(),
+                host.runtime.tools().mcp_report().tool_names(),
+            ),
+            signals,
+            placeholders: &host.permission_placeholders,
+            acceptance: &mut host.prompt_acceptance,
+        };
+        let sent_plan = &mut host.sent_plan;
+        let showing = async move {
+            let forwarded = forwarder.forward(event_receiver, control_sender).await;
+            *sent_plan = forwarded.sent_plan.unwrap_or_default();
+            forwarded.failure
+        };
+        (&mut host.runtime, TurnIo { events, control }, showing)
+    }
+
+    fn report_plan(&mut self, report: PlanReport) -> impl Future<Output = ()> + Send {
+        self.host
+            .report_plan(report, self.process_config, self.client)
     }
 }
 

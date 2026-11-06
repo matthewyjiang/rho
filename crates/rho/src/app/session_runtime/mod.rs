@@ -52,6 +52,7 @@ mod persist;
 mod plan_exit;
 mod prompt;
 mod prompt_gate;
+mod prompt_turn;
 mod pump;
 mod session_tools;
 mod settings;
@@ -75,9 +76,9 @@ pub(crate) use events::{
 pub(crate) use handle::SessionHandle;
 pub(crate) use mode::SessionPermission;
 pub(crate) use persist::SessionStorage;
-pub(crate) use plan_exit::PlanHandoff;
 pub(crate) use prompt::PromptScope;
 pub(crate) use prompt_gate::Closing;
+pub(crate) use prompt_turn::{run_prompt_turn, PlanReport, TurnHost};
 pub(crate) use session_tools::SessionTools;
 pub(crate) use settings::SettingChangeError;
 pub(crate) use title::TitleJob;

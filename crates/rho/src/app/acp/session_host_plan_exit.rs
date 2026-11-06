@@ -1,40 +1,24 @@
-//! Reports the runtime's plan handoff (see [`PlanHandoff`]) at the end of the
-//! turn that proposed the plan, and runs the implementation turn in the same
-//! `session/prompt` when the runtime switched modes.
+//! Shows the runtime's plan handoff (see [`PlanReport`]) in the prompt whose
+//! turn answered the plan.
 
-use agent_client_protocol::schema::v1::{
-    CurrentModeUpdate, PromptResponse, SessionNotification, SessionUpdate,
-};
+use agent_client_protocol::schema::v1::{CurrentModeUpdate, SessionNotification, SessionUpdate};
 
-use super::{
-    permission, prompt_response, send_notification, AcpClientPort, Config, EventMapper,
-    SessionHost, Shown,
-};
-use crate::app::session_runtime::{PlanHandoff, PromptScope};
+use super::{permission, send_notification, AcpClientPort, Config, EventMapper, SessionHost};
+use crate::app::session_runtime::PlanReport;
 
 impl SessionHost {
-    /// Shows `handoff` and answers `prompt` with how it ended: the end the
-    /// handoff carries, or the implementation turn's once the mode switched,
-    /// with what the client missed of that turn.
-    pub(super) async fn report_plan_handoff(
+    /// Shows `report`: the notice, after a mode update and refreshed menus
+    /// when the mode switched. Updates the client misses are logged; the
+    /// prompt goes on either way.
+    pub(super) async fn report_plan(
         &mut self,
-        prompt: &PromptScope,
-        handoff: PlanHandoff,
+        report: PlanReport,
         process_config: &Config,
         client: &dyn AcpClientPort,
-    ) -> Shown<PromptResponse> {
-        match handoff {
-            PlanHandoff::Ended { notice, ended } => {
-                if let Some(notice) = notice {
-                    self.plan_notice(&notice, client).await;
-                }
-                Shown::delivered(ended.map(prompt_response))
-            }
-            PlanHandoff::Switched {
-                mode,
-                notice,
-                implementation,
-            } => {
+    ) {
+        let notice = match report {
+            PlanReport::Kept { notice } => notice,
+            PlanReport::Switched { mode, notice } => {
                 // Hosts learn of agent-initiated switches only from these
                 // updates; the config option form follows from the refresh.
                 let update = SessionNotification::new(
@@ -47,20 +31,10 @@ impl SessionHost {
                     tracing::warn!(%error, "could not send ACP mode update");
                 }
                 self.refresh_advertisements(process_config, client).await;
-                self.plan_notice(&notice, client).await;
-                let implemented = self
-                    .forward_turn(prompt, implementation, process_config, client)
-                    .await;
-                Shown {
-                    ended: implemented.ended.map(prompt_response),
-                    missed_update: implemented.missed_update,
-                }
+                notice
             }
-        }
-    }
-
-    async fn plan_notice(&self, text: &str, client: &dyn AcpClientPort) {
-        let notice = EventMapper::info_notice(&self.acp_session_id, self.host_features, text);
+        };
+        let notice = EventMapper::info_notice(&self.acp_session_id, self.host_features, &notice);
         if let Err(error) = send_notification(client, notice).await {
             tracing::debug!(%error, "could not send ACP plan notice");
         }

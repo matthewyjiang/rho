@@ -1,7 +1,7 @@
 //! Plan approval's handoff: once the turn that proposed a plan ends, an
 //! approved plan switches the session's permission mode and the prompt goes
 //! on with the implementation turn, as the TUI queues it right after the
-//! proposal.
+//! proposal. `prompt_turn.rs` runs that sequence for every host.
 
 use rho_sdk::UserInput;
 
@@ -16,19 +16,19 @@ const IMPLEMENT_PLAN: &str = "Implement the approved plan now. Follow the plan a
 
 /// How a prompt goes on after the turn that may have answered
 /// `exit_plan_mode`.
-pub(crate) enum PlanHandoff {
+pub(super) enum PlanHandoff {
     /// The prompt ends as `ended` says, in the mode it had. `ended` is the
     /// proposing turn's own end, except that a cancel which landed before
     /// the switch ends it `Ok(TurnOutcome::Cancelled)`; a failed turn stays
-    /// failed. `notice`, for the host to show the user, says why an answered
+    /// failed. `notice`, for the user, says why an answered
     /// plan did not switch: it was not approved, the turn did not complete,
     /// or the switch failed. It is `None` when the turn answered no plan.
     Ended {
         notice: Option<String>,
         ended: anyhow::Result<TurnOutcome>,
     },
-    /// The session is now in `mode`. Show `notice`, then run
-    /// `implementation` as the prompt's next turn; its end is the prompt's.
+    /// The session is now in `mode`, as `notice` tells the user.
+    /// `implementation` is the prompt's next turn; its end is the prompt's.
     Switched {
         mode: PermissionMode,
         notice: String,
@@ -38,13 +38,13 @@ pub(crate) enum PlanHandoff {
 
 impl SessionRuntime {
     /// Applies the answer to `exit_plan_mode` that `prompt`'s turn, which
-    /// ended as `proposal`, recorded. Call once the host has shown that
+    /// ended as `proposal`, recorded. Called once the host has shown that
     /// turn. `proposal` is how the turn itself ended: an update the host
     /// failed to show does not change it, since the turn was saved either
     /// way. A cancel that lands before the switch commits, such as during
     /// the host's last update of the proposal, still cancels the handoff; a
     /// later one stops only the implementation turn.
-    pub(crate) async fn hand_off_plan(
+    pub(super) async fn hand_off_plan(
         &mut self,
         prompt: &PromptScope,
         proposal: anyhow::Result<TurnOutcome>,
