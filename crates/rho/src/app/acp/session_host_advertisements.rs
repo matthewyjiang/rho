@@ -8,9 +8,10 @@ use agent_client_protocol::schema::v1::{
 };
 
 use super::{
-    command_scope, commands, runtime_config_options, send_notification, AcpClientPort, Config,
-    SessionHost, SessionRuntime, Toggles,
+    commands, runtime_config_options, send_notification, AcpClientPort, Config, SessionHost,
+    SessionRuntime, Toggles,
 };
+use crate::app::session_commands::CommandScope;
 
 /// The last payloads advertised to this host. Refresh caches advance only after
 /// successful delivery. New/load seed them under the publication guard, which
@@ -107,5 +108,5 @@ impl SessionHost {
 
 fn discovered_commands(runtime: &SessionRuntime, process_config: &Config) -> Vec<AvailableCommand> {
     let home = crate::paths::home_dir();
-    commands::available_commands(&command_scope(runtime, home.as_deref(), process_config))
+    commands::available_commands(&CommandScope::of(runtime, home.as_deref(), process_config))
 }

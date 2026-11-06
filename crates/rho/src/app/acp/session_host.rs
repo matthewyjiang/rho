@@ -149,7 +149,7 @@ impl SessionHost {
             )
             .await;
         let home = crate::paths::home_dir();
-        let scope = command_scope(&self.runtime, home.as_deref(), &startup.config);
+        let scope = CommandScope::of(&self.runtime, home.as_deref(), &startup.config);
         // A watcher a host restart cut off resumes its wait, whatever the prompt says.
         let action = if let Some(signal) = self.recorded_wake() {
             Some(Ok(AcpPrompt::AwaitWake(signal)))
@@ -408,21 +408,6 @@ fn session_signals(runtime: &SessionRuntime, sent_plan: &mut Vec<PlanEntry>) -> 
         runtime.tools().todo_state(),
         std::mem::take(sent_plan),
     )
-}
-
-/// What commands can see of `runtime`'s session.
-fn command_scope<'a>(
-    runtime: &'a SessionRuntime,
-    home: Option<&'a std::path::Path>,
-    process_config: &'a Config,
-) -> CommandScope<'a> {
-    CommandScope {
-        cwd: runtime.cwd(),
-        home,
-        tools: runtime.tools(),
-        config: process_config,
-        permission_mode: runtime.permission_mode(),
-    }
 }
 
 /// Every option `runtime`'s session advertises now; see
