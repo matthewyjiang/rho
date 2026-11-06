@@ -148,10 +148,11 @@ impl SessionRole {
         }
     }
 
-    /// The session that delegated this one, which its usage names.
-    pub(super) fn usage_parent(&self) -> Option<rho_sdk::SessionId> {
+    /// The session that delegated this one, which its usage and status
+    /// name.
+    pub(crate) fn parent(&self) -> Option<&rho_sdk::SessionId> {
         match self {
-            Self::Subagent { parent } => Some(parent.clone()),
+            Self::Subagent { parent } => Some(parent),
             Self::Interactive | Self::Acp | Self::Run | Self::WorkflowNode => None,
         }
     }
@@ -241,7 +242,7 @@ pub(super) async fn build_session(
         agent,
         max_steps: *max_steps,
         usage_purpose: role.usage_purpose(),
-        usage_parent_session_id: role.usage_parent(),
+        usage_parent_session_id: role.parent().cloned(),
         hook_host_labels: hook_labels.clone(),
         added_dirs,
         host_io: build.host.host_io.clone(),

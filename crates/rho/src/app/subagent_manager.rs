@@ -53,7 +53,8 @@ struct AgentEntry {
     task_fallback: Option<String>,
     started: Instant,
     handle: AgentRunHandle,
-    session_id: Option<String>,
+    /// The parent session the run reports to.
+    session_id: String,
     observed: bool,
     explicitly_observed: bool,
     /// Whether this run's terminal cost has already been folded into a parent
@@ -259,7 +260,7 @@ impl SubagentManager {
                     .map(str::to_owned),
                 started: Instant::now(),
                 handle,
-                session_id: Some(session_id),
+                session_id,
                 observed: false,
                 explicitly_observed: false,
                 cost_accounted: false,
@@ -276,7 +277,7 @@ impl SubagentManager {
         let mut entries = self.inner.lock().expect("delegated registry lock");
         let mut total = 0u64;
         for entry in entries.values_mut() {
-            if entry.cost_accounted || entry.session_id.as_deref() != Some(session_id) {
+            if entry.cost_accounted || entry.session_id != session_id {
                 continue;
             }
             let status = entry.handle.status();
@@ -339,7 +340,7 @@ impl SubagentManager {
                 task_fallback: None,
                 started: Instant::now(),
                 handle,
-                session_id: Some(session_id.into()),
+                session_id: session_id.into(),
                 observed: false,
                 explicitly_observed: false,
                 cost_accounted: false,
@@ -391,7 +392,7 @@ impl SubagentManager {
     /// A finished row leaves once its result is observed, so the rail drops it
     /// in the same repaint that lands the result in the transcript. Until then
     /// runs owned by `session_id` keep showing their verdict. Runs it will never
-    /// receive (other or no parent session) keep a recent `finished_at` window.
+    /// receive (another parent session's) keep a recent `finished_at` window.
     ///
     /// Host UI only. `list()` stays the full agent-facing registry.
     pub(crate) fn rail_summaries(&self, session_id: &str) -> Vec<SubagentSnapshot> {
@@ -406,7 +407,7 @@ impl SubagentManager {
                     if entry.observed {
                         return None;
                     }
-                    if entry.session_id.as_deref() == Some(session_id) {
+                    if entry.session_id == session_id {
                         return Some(snapshot);
                     }
                     let finished_at = snapshot.status.finished_at?;
@@ -426,9 +427,7 @@ impl SubagentManager {
             .lock()
             .expect("delegated registry lock")
             .values()
-            .any(|entry| {
-                entry.session_id.as_deref() == Some(session_id) && !entry.handle.is_complete()
-            })
+            .any(|entry| entry.session_id == session_id && !entry.handle.is_complete())
     }
 
     /// True while this session still has an undelivered child.
@@ -437,7 +436,7 @@ impl SubagentManager {
             .lock()
             .expect("delegated registry lock")
             .values()
-            .any(|entry| entry.session_id.as_deref() == Some(session_id) && !entry.observed)
+            .any(|entry| entry.session_id == session_id && !entry.observed)
     }
 
     /// Waits for any current child to finish without marking its result delivered.
@@ -449,7 +448,7 @@ impl SubagentManager {
             // this registry lock is held, and their wait returns immediately.
             entries
                 .values()
-                .filter(|entry| entry.session_id.as_deref() == Some(session_id) && !entry.observed)
+                .filter(|entry| entry.session_id == session_id && !entry.observed)
                 .map(|entry| entry.handle.clone())
                 .collect::<Vec<_>>()
         };
@@ -470,7 +469,7 @@ impl SubagentManager {
         let mut notifications = entries
             .iter_mut()
             .filter_map(|(id, entry)| {
-                if entry.observed || entry.session_id.as_deref() != Some(session_id) {
+                if entry.observed || entry.session_id != session_id {
                     return None;
                 }
                 let snapshot = entry.snapshot(id);

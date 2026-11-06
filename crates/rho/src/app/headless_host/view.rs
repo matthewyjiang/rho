@@ -49,17 +49,27 @@ pub(crate) struct HeadlessView<'a> {
 }
 
 impl<'a> HeadlessView<'a> {
-    pub(crate) fn new(
-        reporter: Option<&'a mut RunReporter>,
-        jsonl: Option<&'a mut JsonlAdapter>,
-    ) -> Self {
+    /// A view that shows nothing until told where to.
+    pub(crate) fn new() -> Self {
         Self {
-            reporter,
-            jsonl,
+            reporter: None,
+            jsonl: None,
             steering: None,
             parent: None,
             output_failure: None,
         }
+    }
+
+    /// Also keeps `reporter`'s status file and event log.
+    pub(crate) fn reporting_to(mut self, reporter: &'a mut RunReporter) -> Self {
+        self.reporter = Some(reporter);
+        self
+    }
+
+    /// Also writes each run event to stdout as `adapter`'s JSONL stream.
+    pub(crate) fn streaming_jsonl(mut self, adapter: &'a mut JsonlAdapter) -> Self {
+        self.jsonl = Some(adapter);
+        self
     }
 
     /// Publishes each run's steering port to `slot`.

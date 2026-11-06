@@ -436,13 +436,7 @@ impl AgentExecutor {
         } = MessagingSupport::for_runtime(bound.runtime());
 
         let mut initial = bound.artifact_identity().starting_status();
-        initial.parent_session_id = match &role {
-            SessionRole::Subagent { parent } => Some(parent.to_string()),
-            SessionRole::Interactive
-            | SessionRole::Acp
-            | SessionRole::Run
-            | SessionRole::WorkflowNode => None,
-        };
+        initial.parent_session_id = role.parent().map(ToString::to_string);
         // Executor owns the Starting boundary; sinks continue_from it.
         // Write Starting here so the handle can observe status before the task runs.
         subagent::initialize_status(&output_file, &initial)?;

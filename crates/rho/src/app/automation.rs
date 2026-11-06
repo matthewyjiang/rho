@@ -183,7 +183,6 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
                 startup.cwd.clone(),
                 &prompt_text,
                 /* stream_output */ startup.output == OutputFormat::Text,
-                None,
             )
         })
         .transpose();
@@ -255,7 +254,13 @@ async fn run_session(
         added_dirs: startup.added_dirs.clone(),
         logouts: &logouts,
     };
-    let mut view = HeadlessView::new(reporter, jsonl);
+    let mut view = HeadlessView::new();
+    if let Some(reporter) = reporter {
+        view = view.reporting_to(reporter);
+    }
+    if let Some(adapter) = jsonl {
+        view = view.streaming_jsonl(adapter);
+    }
     let herdr = &startup.herdr;
     let open = async {
         let runtime = SessionRuntime::open_new(opening, rho_sdk::SessionId::new()).await?;

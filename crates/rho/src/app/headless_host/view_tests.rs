@@ -335,7 +335,7 @@ async fn questions_go_to_a_listening_parent_or_are_declined() {
             tool.clone(),
         )
         .await;
-        let mut view = HeadlessView::new(None, None).with_parent_questions(parent);
+        let mut view = HeadlessView::new().with_parent_questions(parent);
         view.bind(&runtime);
 
         let reply = timeout(TEST_BUDGET, run_prompt(&mut runtime, &mut view, &config))
@@ -368,7 +368,7 @@ async fn a_question_waiting_on_the_parent_does_not_stall_the_run() {
     )
     .await;
     let parent = parent_of(&bridge);
-    let mut view = HeadlessView::new(None, None).with_parent_questions(Some(parent));
+    let mut view = HeadlessView::new().with_parent_questions(Some(parent));
     view.bind(&runtime);
 
     let parent_side = async {
@@ -467,7 +467,7 @@ async fn a_run_that_crosses_its_compaction_threshold_compacts_and_finishes() {
         shared,
     )
     .await;
-    let mut view = HeadlessView::new(None, None);
+    let mut view = HeadlessView::new();
     view.bind(&runtime);
 
     let reply = timeout(TEST_BUDGET, run_prompt(&mut runtime, &mut view, &config))

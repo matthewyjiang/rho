@@ -99,7 +99,7 @@ async fn a_stopped_prompt_ends_its_session_once_as_failed() {
     let cancellation = RunCancellation::new();
     cancellation.cancel();
     let mut stops = Stops::default().or_cancelled(cancellation);
-    let mut view = HeadlessView::new(None, None);
+    let mut view = HeadlessView::new();
 
     let end = timeout(
         TEST_BUDGET,

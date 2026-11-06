@@ -20,7 +20,6 @@ fn reporter_discards_partial_text_when_provider_attempt_resets() {
         root.path().to_path_buf(),
         "review",
         /* stream_output */ false,
-        None,
     )
     .unwrap();
 

@@ -23,15 +23,18 @@ pub(crate) struct RunReporter {
 }
 
 impl RunReporter {
+    /// Starts `rho run --output-file`'s status file at `path`, which no
+    /// parent in this process watches.
     pub(crate) fn new(
         path: PathBuf,
         identity: RunArtifactIdentity,
         cwd: PathBuf,
         prompt: &str,
         stream_output: bool,
-        status_tx: Option<tokio::sync::watch::Sender<RunStatus>>,
     ) -> anyhow::Result<Self> {
-        let sink = crate::run_artifacts::RunArtifactSink::open(path, &identity, prompt, status_tx)?;
+        let sink = crate::run_artifacts::RunArtifactSink::open(
+            path, &identity, prompt, /*status_tx*/ None,
+        )?;
         Ok(Self {
             sink,
             // MCP tools connect with the session, after this reporter exists.
@@ -44,22 +47,24 @@ impl RunReporter {
         })
     }
 
-    /// Resume after the executor already wrote the Starting boundary.
+    /// Resume after the executor already wrote the Starting boundary,
+    /// publishing each status to the parent's `status_tx` and taking the
+    /// title the parent names the run with from `live_title`.
     pub(crate) fn continue_from(
         path: PathBuf,
         started_status: RunStatus,
         cwd: PathBuf,
         prompt: &str,
-        status_tx: Option<tokio::sync::watch::Sender<RunStatus>>,
-        live_title: Option<crate::run_artifacts::LiveRunTitle>,
+        status_tx: tokio::sync::watch::Sender<RunStatus>,
+        live_title: crate::run_artifacts::LiveRunTitle,
         steering_slot: Option<SteeringSlot>,
     ) -> anyhow::Result<Self> {
         let sink = crate::run_artifacts::RunArtifactSink::continue_from(
             path,
             started_status,
             prompt,
-            status_tx,
-            live_title,
+            Some(status_tx),
+            Some(live_title),
         )?;
         Ok(Self {
             sink,

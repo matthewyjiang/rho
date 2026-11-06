@@ -103,8 +103,8 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         started_status,
         cwd.clone(),
         &prompt,
-        Some(status_tx),
-        Some(live_title),
+        status_tx,
+        live_title,
         // Temporary(handle-steering): goes once the parent steers through the
         // session's handle.
         steering_slot.clone(),
@@ -177,7 +177,8 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         anyhow::Ok(runtime)
     };
     // Temporary(handle-steering): the slot goes with the reporter's.
-    let mut view = HeadlessView::new(Some(&mut reporter), /*jsonl*/ None)
+    let mut view = HeadlessView::new()
+        .reporting_to(&mut reporter)
         .with_steering(steering_slot)
         .with_parent_questions(questions);
     // The child's status file keeps the title its prompt was given; the

@@ -90,7 +90,7 @@ impl SessionRuntime {
                     compaction: CompactionConfig::from(&config),
                     context_window: model_context_window(&config.provider, &config.model),
                     usage_purpose: role.usage_purpose(),
-                    usage_parent_session_id: role.usage_parent(),
+                    usage_parent_session_id: role.parent().cloned(),
                     usage_recording: self.built.runtime.usage_recording(),
                     hook_host_labels: hook_labels.clone(),
                     hooks: self.built.hooks.as_ref(),
