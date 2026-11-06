@@ -161,6 +161,7 @@ def walk(
             # Matches every value the others do not; what it matches grows
             # with them, so it has no facts of its own.
             if isinstance(variant, dict) and variant.get(OTHER):
+                check_other(node, variant, path)
                 open_ = True
                 continue
             variant_values = variant_labels(variant, index)
@@ -205,6 +206,26 @@ def walk_children(
         walk(defs, node["items"], (*path, "[]"), out, refs)
     if isinstance(node.get("additionalProperties"), dict):
         walk(defs, node["additionalProperties"], (*path, "{}"), out, refs)
+
+
+def check_other(node: dict, variant: dict, path: Where) -> None:
+    """Fails unless `variant` matches every value its enum does not list:
+    any string, or any object with a string tag, beside the other variants
+    under `anyOf` (under `oneOf`, a listed value would match twice)."""
+    shape = {key: value for key, value in variant.items() if key not in ANNOTATIONS | {OTHER}}
+    properties = shape.get("properties", {})
+    any_string = shape == {"type": "string"}
+    any_tag = (
+        shape.keys() == {"type", "properties", "required"}
+        and shape["type"] == "object"
+        and list(properties.values()) == [{"type": "string"}]
+        and shape["required"] == list(properties)
+    )
+    if "anyOf" not in node or not (any_string or any_tag):
+        raise ValueError(
+            f"{render(path)}: its {OTHER} variant must be any string or any tagged object, "
+            "under anyOf"
+        )
 
 
 def resolve(
@@ -278,9 +299,14 @@ def breaking_changes(baseline: dict[Where, Fact], current: dict[Where, Fact]) ->
         else:
             problems.append(f"{render(path)}: {describe(old)} became {describe(new)}")
     for path, new in current.items():
+        if path in baseline or not isinstance(new, Required):
+            continue
         # `path` is `(*parent, ".field", " required")`.
-        if path not in baseline and new == Required(True) and path[:-2] in baseline:
+        parent = baseline.get(path[:-2])
+        if parent is not None and new.required:
             problems.append(f"{render(path[:-1])}: added as required")
+        elif isinstance(parent, Shape) and parent.closed:
+            problems.append(f"{render(path[:-1])}: added to an object that refuses unknown fields")
     return problems
 
 

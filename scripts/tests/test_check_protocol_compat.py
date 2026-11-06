@@ -126,6 +126,24 @@ def cap_twice(document: dict) -> None:
     text["allOf"] = [{"maxLength": 3}]
 
 
+def narrow_other(document: dict) -> None:
+    """The open enum's catch-all back to the literal it replaces."""
+    enum = defs(document)["DetachReason"]
+    other = next(variant for variant in enum["anyOf"] if "x-rho-other" in variant)
+    other["const"] = "unknown"
+
+
+def other_under_one_of(document: dict) -> None:
+    enum = defs(document)["JobKind"]
+    enum["oneOf"] = enum.pop("anyOf")
+
+
+def narrow_other_tag(document: dict) -> None:
+    enum = defs(document)["ToolContent"]
+    other = next(variant for variant in enum["anyOf"] if "x-rho-other" in variant)
+    other["properties"]["type"]["const"] = "unknown"
+
+
 class CompatibilityTests(unittest.TestCase):
     def check(self, current: dict) -> list[str]:
         return check_protocol_compat.check(RELEASED, current, "the release")
@@ -234,6 +252,24 @@ class CompatibilityTests(unittest.TestCase):
                 "method rho/session/prompt params.text: the check does not model two values of maxLength",
             ),
             (
+                "an open enum's catch-all narrowed",
+                narrow_other,
+                "notification rho/session/detached params.reason: its x-rho-other variant must be "
+                "any string or any tagged object, under anyOf",
+            ),
+            (
+                "an open enum under oneOf",
+                other_under_one_of,
+                'method rho/job/list result.jobs[].kind: its x-rho-other variant must be '
+                "any string or any tagged object, under anyOf",
+            ),
+            (
+                "an open tagged enum's catch-all tag narrowed",
+                narrow_other_tag,
+                'notification rho/session/event params.event <type="tool_call">.content[]: its '
+                "x-rho-other variant must be any string or any tagged object, under anyOf",
+            ),
+            (
                 "a recursive type",
                 recursive_type,
                 "method rho/session/attach params.after.next: Cursor contains itself; "
@@ -244,6 +280,19 @@ class CompatibilityTests(unittest.TestCase):
                 with self.assertRaises(ValueError) as raised:
                     self.check(changed(change))
                 self.assertEqual(str(raised.exception), expected)
+
+    def test_a_field_added_to_a_closed_object_needs_a_major(self) -> None:
+        closed = changed(refuse_unknown_fields, minor=0)
+        with_field = copy.deepcopy(closed)
+        defs(with_field)["HelloResponse"]["properties"]["uptime"] = {"type": ["integer", "null"]}
+        with_field["protocol"]["minor"] += 1
+        self.assertEqual(
+            check_protocol_compat.check(closed, with_field, "the release"),
+            [
+                "method rho/hello result.uptime: added to an object that refuses unknown fields "
+                "(needs a new protocol major)"
+            ],
+        )
 
     def test_the_version_never_goes_down(self) -> None:
         released = changed(lambda _: None, minor=3)
