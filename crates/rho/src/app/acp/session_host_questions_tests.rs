@@ -31,7 +31,7 @@ use rho_sdk::{
 
 use super::{PromptGate, SessionHost};
 use crate::app::acp::host_features::{FormDialect, Forms};
-use crate::app::session_runtime::{HostStorage, SessionPermission};
+use crate::app::session_runtime::{HostStorage, OpenedSession, SessionPermission};
 use crate::{
     app::{acp::AcpStartup, session_assembly::BuiltSession},
     config::Config,
@@ -266,16 +266,21 @@ async fn host(
     };
     let mut host = SessionHost::from_built(
         crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id())),
-        built,
-        HostStorage::saved(stored),
-        Default::default(),
-        SessionPermission {
-            mode: initial,
-            writes: Default::default(),
-            workspace_root: home.to_path_buf(),
-        },
         &startup,
-        Default::default(),
+        OpenedSession {
+            built,
+            storage: HostStorage::saved(stored),
+            agent: startup.agent.clone(),
+            auth: startup.config.auth.clone(),
+            host_mcp: Default::default(),
+            added_dirs: Default::default(),
+            permission: SessionPermission {
+                mode: initial,
+                writes: Default::default(),
+                workspace_root: home.to_path_buf(),
+            },
+            reopen_notice: None,
+        },
     );
     host.set_permission_mode(mode, &config).await.unwrap();
     (host, startup, scripted)

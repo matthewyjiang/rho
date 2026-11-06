@@ -20,7 +20,7 @@ use crate::{
     app::{
         acp::{AcpClientPort, AcpStartup},
         session_assembly::BuiltSession,
-        session_runtime::{HostStorage, SessionPermission},
+        session_runtime::{HostStorage, OpenedSession, SessionPermission},
     },
     config::Config,
     diagnostics::RuntimeDiagnostics,
@@ -80,16 +80,21 @@ async fn host(
     };
     SessionHost::from_built(
         crate::app::acp::client_io::ClientIo::local(SessionId::new(id)),
-        built,
-        storage,
-        Default::default(),
-        SessionPermission {
-            mode: config.permission_mode,
-            writes: Default::default(),
-            workspace_root: workspace.to_path_buf(),
-        },
         startup,
-        Default::default(),
+        OpenedSession {
+            built,
+            storage,
+            agent: startup.agent.clone(),
+            auth: startup.config.auth.clone(),
+            host_mcp: Default::default(),
+            added_dirs: Default::default(),
+            permission: SessionPermission {
+                mode: config.permission_mode,
+                writes: Default::default(),
+                workspace_root: workspace.to_path_buf(),
+            },
+            reopen_notice: None,
+        },
     )
 }
 

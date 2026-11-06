@@ -23,7 +23,7 @@ use crate::{
         acp::{AcpClientPort, AcpStartup},
         interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
         session_runtime::{
-            build_session, loaded_agent, session_config, split_assembly, HostStorage,
+            build_session, loaded_agent, session_config, split_assembly, HostStorage, OpenedSession,
         },
     },
     config::Config,
@@ -88,7 +88,18 @@ impl SessionHost {
             startup.agent.fingerprint().to_string(),
         );
         Ok(Self::from_built(
-            io, built, storage, added_dirs, permission, startup, host_mcp,
+            io,
+            startup,
+            OpenedSession {
+                built,
+                storage,
+                agent: startup.agent.clone(),
+                auth: startup.config.auth.clone(),
+                host_mcp,
+                added_dirs,
+                permission,
+                reopen_notice: None,
+            },
         ))
     }
 
@@ -165,7 +176,7 @@ impl SessionHost {
                 return Err(error);
             }
         }
-        let load_notice = built
+        let reopen_notice = built
             .prompt_template
             .is_some()
             .then(|| {
@@ -175,21 +186,22 @@ impl SessionHost {
                 )
             })
             .flatten();
-        let mut host = Self::from_built(
+        Ok(Self::from_built(
             io,
-            built,
-            HostStorage::saved(stored),
-            added_dirs,
-            permission,
             startup,
-            host_mcp,
-        );
-        if let Some(notice) = load_notice {
-            host.runtime.defer_notice(notice);
-        }
-        // The restored child may use a different auth family than the process.
-        host.runtime.restore_agent(agent, config.auth);
-        Ok(host)
+            OpenedSession {
+                built,
+                storage: HostStorage::saved(stored),
+                agent,
+                // The restored child may use a different auth family than
+                // the process.
+                auth: config.auth,
+                host_mcp,
+                added_dirs,
+                permission,
+                reopen_notice,
+            },
+        ))
     }
 }
 

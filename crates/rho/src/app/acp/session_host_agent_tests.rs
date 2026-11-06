@@ -27,7 +27,7 @@ use crate::{
         session_assembly::{BuiltSession, SessionAssembly},
         session_runtime::{
             bind_delegated_agent, loaded_agent, loaded_agent_with, AgentTask, CommandRejected,
-            HostStorage, SessionPermission, MODEL_OVERRIDE_METADATA,
+            HostStorage, OpenedSession, SessionPermission, MODEL_OVERRIDE_METADATA,
         },
     },
     config::Config,
@@ -184,16 +184,21 @@ async fn host(cwd: &Path, startup: &AcpStartup) -> SessionHost {
     .await;
     SessionHost::from_built(
         crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id())),
-        built,
-        HostStorage::saved(stored),
-        Default::default(),
-        SessionPermission {
-            mode: PermissionMode::Supervised,
-            writes: Default::default(),
-            workspace_root: cwd.to_path_buf(),
-        },
         startup,
-        Default::default(),
+        OpenedSession {
+            built,
+            storage: HostStorage::saved(stored),
+            agent: startup.agent.clone(),
+            auth: startup.config.auth.clone(),
+            host_mcp: Default::default(),
+            added_dirs: Default::default(),
+            permission: SessionPermission {
+                mode: PermissionMode::Supervised,
+                writes: Default::default(),
+                workspace_root: cwd.to_path_buf(),
+            },
+            reopen_notice: None,
+        },
     )
 }
 

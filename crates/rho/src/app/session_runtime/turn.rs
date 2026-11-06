@@ -123,7 +123,7 @@ impl SessionRuntime {
         };
         let result = match saved {
             Ok(()) => {
-                if let Some(text) = self.deferred_notice.take() {
+                if let Some(text) = self.reopen_notice.take() {
                     io.emit(SessionEvent::Notice { text });
                 }
                 self.drive_run(&checkpoint, model, calls, displays, io)

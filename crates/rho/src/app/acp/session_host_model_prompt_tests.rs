@@ -1,7 +1,11 @@
 use super::*;
 use crate::{
     agent::{AgentCapabilities, ToolCapability},
-    app::active_prompt::ActivePrompt,
+    app::{
+        active_prompt::ActivePrompt,
+        session_assembly::BuiltSession,
+        session_runtime::{HostStorage, SessionPermission},
+    },
     diagnostics::RuntimeDiagnostics,
     model_identity::PromptModel,
     prompt,
@@ -92,16 +96,21 @@ async fn model_prompt_switch_rebinds_advisor_with_live_history() {
     let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home.path());
     let mut host = SessionHost::from_built(
         crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id())),
-        built,
-        HostStorage::saved(stored),
-        Default::default(),
-        SessionPermission {
-            mode: config.permission_mode,
-            writes: Default::default(),
-            workspace_root: home.path().to_path_buf(),
-        },
         &startup,
-        Default::default(),
+        OpenedSession {
+            built,
+            storage: HostStorage::saved(stored),
+            agent: startup.agent.clone(),
+            auth: startup.config.auth.clone(),
+            host_mcp: Default::default(),
+            added_dirs: Default::default(),
+            permission: SessionPermission {
+                mode: config.permission_mode,
+                writes: Default::default(),
+                workspace_root: home.path().to_path_buf(),
+            },
+            reopen_notice: None,
+        },
     );
     let next: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
         ModelIdentity::new("test", "test", "next"),

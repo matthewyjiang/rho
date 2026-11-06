@@ -87,25 +87,25 @@ pub(crate) struct CurrentModel {
     pub(crate) auth: String,
 }
 
-/// What a host supplies to start a runtime around a built session.
-pub(crate) struct RuntimeParts {
+/// A session a host opened, new or reopened, and the state it starts from.
+pub(crate) struct OpenedSession {
     pub(crate) built: BuiltSession,
     pub(crate) storage: HostStorage,
+    /// The agent the session runs as: the launch agent, or for a reopened
+    /// child the agent it was saved as.
     pub(crate) agent: BoundAgent,
-    pub(crate) build: SessionBuild,
+    /// The auth profile the session's provider uses, which a reopened child
+    /// may take from its saved selection.
+    pub(crate) auth: String,
     /// The host's own MCP servers, overlaid on the process config whenever
     /// the session is built again.
     pub(crate) host_mcp: McpConfig,
     /// Launch `--add-dir` values plus the host's own roots.
     pub(crate) added_dirs: AddedDirs,
     pub(crate) permission: SessionPermission,
-    /// The auth profile the session's provider uses.
-    pub(crate) auth: String,
-    /// The host's logout count. The provider has just read credentials.
-    pub(crate) logouts: Logouts,
-    /// Whether background work holds a prompt open or the host wakes the
-    /// idle session when it finishes.
-    pub(crate) background_wait: BackgroundWait,
+    /// A notice found while reopening, such as a changed model prompt,
+    /// reported with the first turn.
+    pub(crate) reopen_notice: Option<String>,
 }
 
 /// One session's runtime: everything a host keeps for a session except how
@@ -137,26 +137,33 @@ pub(crate) struct SessionRuntime {
     unsaved_compaction: bool,
     /// A notice found while reopening, reported with the first turn, because
     /// hosts such as T3 Code discard live updates while a load is in flight.
-    deferred_notice: Option<String>,
+    reopen_notice: Option<String>,
     /// Child notice binding kept between prompts, since children outlive them.
     held_notices: Option<HeldNotices>,
     background_wait: BackgroundWait,
 }
 
 impl SessionRuntime {
-    pub(crate) fn new(parts: RuntimeParts) -> Self {
-        let RuntimeParts {
+    /// A runtime for `opened`, built as `build` says. `logouts` is the
+    /// host's logout count; the session's provider has just read
+    /// credentials. `background_wait` says whether background work holds a
+    /// prompt open or the host wakes the idle session when it finishes.
+    pub(crate) fn new(
+        opened: OpenedSession,
+        build: SessionBuild,
+        logouts: &Logouts,
+        background_wait: BackgroundWait,
+    ) -> Self {
+        let OpenedSession {
             built,
             storage,
             agent,
-            build,
+            auth,
             host_mcp,
             added_dirs,
             permission,
-            auth,
-            logouts,
-            background_wait,
-        } = parts;
+            reopen_notice,
+        } = opened;
         built.tools.bind_recall(storage.file());
         Self {
             built,
@@ -167,30 +174,17 @@ impl SessionRuntime {
             added_dirs,
             permission,
             auth,
-            credentials: SessionCredentials::just_read(&logouts),
+            credentials: SessionCredentials::just_read(logouts),
             prompt_gate: Arc::new(PromptGate::new()),
             completed_runs: 0,
             title_requested: false,
             pending_title: None,
             replaced: Arc::new(AtomicBool::new(false)),
             unsaved_compaction: false,
-            deferred_notice: None,
+            reopen_notice,
             held_notices: None,
             background_wait,
         }
-    }
-
-    /// Holds `notice` for the next turn to report before its run starts.
-    pub(crate) fn defer_notice(&mut self, notice: String) {
-        self.deferred_notice = Some(notice);
-    }
-
-    /// Runs a reopened session as the `agent` it was saved with, on its
-    /// `auth` profile: a restored child may differ from the launch agent in
-    /// both.
-    pub(crate) fn restore_agent(&mut self, agent: BoundAgent, auth: String) {
-        self.agent = agent;
-        self.auth = auth;
     }
 
     pub(crate) fn built(&self) -> &BuiltSession {
@@ -337,11 +331,22 @@ impl SessionRuntime {
         )
         .expect("bind test agent");
         let workspace_root = storage.cwd().to_path_buf();
-        Self::new(RuntimeParts {
-            built,
-            storage,
-            agent: agent.clone(),
-            build: SessionBuild {
+        Self::new(
+            OpenedSession {
+                built,
+                storage,
+                agent: agent.clone(),
+                auth: config.auth.clone(),
+                host_mcp: McpConfig::default(),
+                added_dirs: AddedDirs::default(),
+                permission: SessionPermission {
+                    mode: config.permission_mode,
+                    writes: Default::default(),
+                    workspace_root: workspace_root.clone(),
+                },
+                reopen_notice: None,
+            },
+            SessionBuild {
                 config_path: workspace_root.join("rho-test-config.toml"),
                 no_system_prompt: false,
                 no_tools: false,
@@ -352,17 +357,9 @@ impl SessionRuntime {
                 launch_agent: agent,
                 host_io: Default::default(),
             },
-            host_mcp: McpConfig::default(),
-            added_dirs: AddedDirs::default(),
-            permission: SessionPermission {
-                mode: config.permission_mode,
-                writes: Default::default(),
-                workspace_root,
-            },
-            auth: config.auth.clone(),
-            logouts: Logouts::default(),
-            background_wait: BackgroundWait::HoldPrompt,
-        })
+            &Logouts::default(),
+            BackgroundWait::HoldPrompt,
+        )
     }
 
     /// Pretends the runtime already completed `runs` turns.

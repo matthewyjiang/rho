@@ -40,11 +40,10 @@ use super::{
 use crate::{
     app::{
         headless_delegation::BackgroundWait,
-        session_assembly::BuiltSession,
         session_runtime::{
-            model_scoped_config, ChildAgents, CurrentModel, HostStorage, InsertedMessage,
-            ModelSwitchError, PromptGate, PromptGuard, QuestionSupport, RuntimeParts, SessionBuild,
-            SessionPermission, SessionRuntime, TitleJob, Turn, TurnIo, TurnOutcome, WorkflowStart,
+            model_scoped_config, ChildAgents, CurrentModel, InsertedMessage, ModelSwitchError,
+            OpenedSession, PromptGate, PromptGuard, QuestionSupport, SessionBuild, SessionRuntime,
+            TitleJob, Turn, TurnIo, TurnOutcome, WorkflowStart,
         },
         workflow_cli::discover::StartCommand,
     },
@@ -52,7 +51,6 @@ use crate::{
     credential_store::AppCredentialStore,
     herdr::{HerdrReporter, HerdrSession, HerdrState},
     permission::PermissionMode,
-    tools::mcp::config::McpConfig,
 };
 
 #[path = "session_host_advertisements.rs"]
@@ -356,14 +354,11 @@ impl SessionHost {
         let _ = herdr.release().await;
     }
 
+    /// The host for `opened`, talking to its client through `client_io`.
     fn from_built(
         client_io: super::client_io::ClientIo,
-        built: BuiltSession,
-        storage: HostStorage,
-        added_dirs: crate::added_dirs::AddedDirs,
-        permission: SessionPermission,
         startup: &AcpStartup,
-        host_mcp: McpConfig,
+        opened: OpenedSession,
     ) -> Self {
         let t3_wake = match startup.host {
             AcpHost::Generic => None,
@@ -375,22 +370,15 @@ impl SessionHost {
                 }
             },
         };
-        let build = session_build(startup, &client_io);
-        let runtime = SessionRuntime::new(RuntimeParts {
-            built,
-            storage,
-            agent: startup.agent.clone(),
-            build,
-            host_mcp,
-            added_dirs,
-            permission,
-            auth: startup.config.auth.clone(),
-            logouts: startup.logouts.clone(),
-            background_wait: match t3_wake {
+        let runtime = SessionRuntime::new(
+            opened,
+            session_build(startup, &client_io),
+            &startup.logouts,
+            match t3_wake {
                 Some(_) => BackgroundWait::HostWakes,
                 None => BackgroundWait::HoldPrompt,
             },
-        });
+        );
         Self {
             acp_session_id: client_io.session_id.clone(),
             client_io,
@@ -593,6 +581,10 @@ impl SessionHost {
         id: rho_sdk::SessionId,
         provider: Arc<dyn rho_sdk::provider::ModelProvider>,
     ) -> Self {
+        use crate::app::{
+            session_assembly::BuiltSession,
+            session_runtime::{HostStorage, SessionPermission},
+        };
         let runtime = rho_sdk::Rho::builder()
             .provider_shared(Arc::clone(&provider))
             .build()
@@ -631,12 +623,17 @@ impl SessionHost {
         };
         Self::from_built(
             super::client_io::ClientIo::local(SessionId::new(id)),
-            built,
-            storage,
-            Default::default(),
-            permission,
             startup,
-            McpConfig::default(),
+            OpenedSession {
+                built,
+                storage,
+                agent: startup.agent.clone(),
+                auth: startup.config.auth.clone(),
+                host_mcp: Default::default(),
+                added_dirs: Default::default(),
+                permission,
+                reopen_notice: None,
+            },
         )
     }
 }
