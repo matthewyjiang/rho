@@ -1,10 +1,12 @@
 //! The UI-free session runtime: one per thread, owning a built session, its
 //! file, and the state between prompts.
 //!
-//! A host drives it and shows what it reports, holding it exclusively for
-//! each prompt or setting change. Nothing here knows a wire protocol or a
-//! client: hosts parse their own requests and map the runtime's results,
-//! events, and errors back to theirs.
+//! A host opens it with [`SessionRuntime::open_new`] or
+//! [`SessionRuntime::reopen`] (see `open.rs`), drives it, and shows what it
+//! reports, holding it exclusively for each prompt or setting change.
+//! Nothing here knows a wire protocol or a client: hosts parse their own
+//! requests and map the runtime's results, events, and errors back to
+//! theirs.
 //!
 //! Between prompts a host calls the runtime's settings cores directly:
 //! permission mode, model and provider switches, reasoning level, and fast
@@ -43,12 +45,14 @@ use crate::{
 };
 
 mod agent;
+mod approval_policy;
 mod build;
 mod compact;
 mod credentials;
 mod events;
 mod handle;
 mod mode;
+mod open;
 mod persist;
 mod prompt;
 mod prompt_gate;
@@ -63,10 +67,13 @@ mod title;
 mod turn;
 mod workflow;
 
+pub(crate) use agent::AgentTask;
 #[cfg(test)]
 pub(in crate::app) use agent::{bind_delegated_agent, loaded_agent_with, MODEL_OVERRIDE_METADATA};
-pub(crate) use agent::{loaded_agent, AgentTask};
-pub(crate) use build::{build_session, session_config, ChildAgents, QuestionSupport, SessionBuild};
+pub(crate) use approval_policy::ApprovalPolicy;
+#[cfg(test)]
+pub(in crate::app) use build::session_config;
+pub(crate) use build::{ChildAgents, QuestionSupport, RunShape, SessionBuild, SessionRole};
 use credentials::SessionCredentials;
 pub(crate) use credentials::{CredentialFailure, Logouts};
 pub(crate) use events::{
@@ -75,6 +82,7 @@ pub(crate) use events::{
 };
 pub(crate) use handle::SessionHandle;
 pub(crate) use mode::SessionPermission;
+pub(crate) use open::{SavedHistory, SessionOpening};
 pub(crate) use persist::SessionStorage;
 pub(crate) use prompt::PromptScope;
 pub(crate) use prompt_gate::Closing;
@@ -101,28 +109,29 @@ pub(crate) struct CurrentModel {
     pub(crate) auth: String,
 }
 
-/// A session a host opened, new or reopened, and the state it starts from.
-pub(crate) struct OpenedSession {
+/// A session opened new or reopened (see `open.rs`), and the state it
+/// starts from.
+struct OpenedSession {
     /// How the session was built, kept so an agent rebind builds the same
     /// way.
-    pub(crate) build: SessionBuild,
-    pub(crate) built: BuiltSession,
-    pub(crate) storage: SessionStorage,
+    build: SessionBuild,
+    built: BuiltSession,
+    storage: SessionStorage,
     /// The agent the session runs as: the launch agent, or for a reopened
     /// child the agent it was saved as.
-    pub(crate) agent: BoundAgent,
+    agent: BoundAgent,
     /// The auth profile the session's provider uses, which a reopened child
     /// may take from its saved selection.
-    pub(crate) auth: String,
+    auth: String,
     /// The host's own MCP servers, overlaid on the process config whenever
     /// the session is built again.
-    pub(crate) host_mcp: McpConfig,
+    host_mcp: McpConfig,
     /// Launch `--add-dir` values plus the host's own roots.
-    pub(crate) added_dirs: AddedDirs,
-    pub(crate) permission: SessionPermission,
+    added_dirs: AddedDirs,
+    permission: SessionPermission,
     /// A notice found while reopening, such as a changed model prompt,
     /// reported with the first turn.
-    pub(crate) reopen_notice: Option<String>,
+    reopen_notice: Option<String>,
 }
 
 /// One session's runtime: everything a host keeps for a session except how
@@ -159,7 +168,7 @@ pub(crate) struct SessionRuntime {
 impl SessionRuntime {
     /// A runtime for `opened`. `logouts` is the host's logout count; the
     /// session's provider has just read credentials.
-    pub(crate) fn new(opened: OpenedSession, logouts: &Logouts) -> Self {
+    fn new(opened: OpenedSession, logouts: &Logouts) -> Self {
         let OpenedSession {
             build,
             built,

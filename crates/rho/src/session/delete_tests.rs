@@ -3,10 +3,10 @@ use std::path::Path;
 use pretty_assertions::assert_eq;
 
 use super::{delete_target_in_roots, delete_targets_in_roots};
-use crate::session::{DeleteOptions, Session, SessionTarget};
+use crate::session::{DeleteOptions, Session, SessionOrigin, SessionTarget};
 
 fn create_session(root: &Path, cwd: &Path, id: &str) -> Session {
-    Session::create_with_id_in_root(root, cwd, id, None).unwrap()
+    Session::create_with_id_in_root(root, cwd, id, None, SessionOrigin::Interactive).unwrap()
 }
 
 // Covers: an exact workspace target cannot fall back to a same-id session in

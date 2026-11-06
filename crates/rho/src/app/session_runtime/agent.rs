@@ -272,7 +272,7 @@ impl SessionRuntime {
 /// or missing definition fails the load rather than widening the child to
 /// the root's tools. `catalog` discovers definitions only for delegated
 /// sessions.
-pub(crate) fn loaded_agent(
+pub(super) fn loaded_agent(
     launch_agent: &BoundAgent,
     stored: &StoredSession,
     config: Config,

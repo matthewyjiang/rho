@@ -13,9 +13,10 @@ use serde_json::Value;
 
 use super::{call_card, notify, text_chunk, EventMapper, UNNAMED_TOOL_TITLE};
 use crate::{
+    app::session_runtime::SessionTools,
     display_transcript::DisplayTranscript,
     session::tree::{DisplayRowOrigin, ProjectedMessage},
-    tools::{mcp::exported_name::McpToolNames, sdk_registry::AppToolSet},
+    tools::mcp::exported_name::McpToolNames,
 };
 
 /// Hosts with their own transcript use this marker to avoid duplicating it.
@@ -25,7 +26,7 @@ pub(super) fn history(
     session_id: &SessionId,
     messages: &[ProjectedMessage],
     cwd: &Path,
-    tool_set: &AppToolSet,
+    tool_set: SessionTools<'_>,
 ) -> Vec<SessionNotification> {
     let mcp_tools = tool_set.mcp_report().tool_names();
     let mut replay = Replay {
@@ -70,7 +71,7 @@ struct Replay<'a> {
     cwd: &'a Path,
     /// The session's tools. Saved calls keep no metadata, so each tool
     /// reports what it would at start, as it does live.
-    tool_set: &'a AppToolSet,
+    tool_set: SessionTools<'a>,
     /// `tool_set`'s MCP names, computed once: they identify MCP calls,
     /// whose capped names cannot be decoded.
     mcp_tools: &'a McpToolNames,

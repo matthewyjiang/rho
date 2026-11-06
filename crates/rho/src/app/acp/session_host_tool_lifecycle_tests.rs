@@ -23,7 +23,7 @@ use rho_sdk::{
 use tokio::sync::Notify;
 
 use super::SessionHost;
-use crate::app::session_runtime::{OpenedSession, SessionPermission, SessionStorage};
+use crate::app::session_runtime::{SessionPermission, SessionStorage};
 use crate::{
     app::{acp::AcpClientPort, session_assembly::BuiltSession},
     config::Config,
@@ -164,24 +164,15 @@ async fn tool_calls_open_with_a_card_and_end_in_a_terminal_status() {
     let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home.path());
     let acp_session_id = SessionId::new(stored.id());
     let io = crate::app::acp::client_io::ClientIo::local(acp_session_id.clone());
-    let build = crate::app::acp::session_host::session_build(&startup, &io);
-    let mut host = SessionHost::from_built(
+    let mut host = SessionHost::for_tests(
         io,
         &startup,
-        OpenedSession {
-            build,
-            built,
-            storage: SessionStorage::saved(stored),
-            agent: startup.agent.clone(),
-            auth: startup.config.auth.clone(),
-            host_mcp: Default::default(),
-            added_dirs: Default::default(),
-            permission: SessionPermission {
-                mode: config.permission_mode,
-                writes: Default::default(),
-                workspace_root: home.path().to_path_buf(),
-            },
-            reopen_notice: None,
+        built,
+        SessionStorage::saved(stored),
+        SessionPermission {
+            mode: config.permission_mode,
+            writes: Default::default(),
+            workspace_root: home.path().to_path_buf(),
         },
     );
     let gate = host.handle();

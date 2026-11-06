@@ -8,7 +8,9 @@
 //! The runtime only asks, from the turn: the host takes the request once the
 //! prompt returns, runs it, and shows the title it saves if the runtime that
 //! asked still owns the session (ACP, for example, as a
-//! `session_info_update`).
+//! `session_info_update`). Nothing else runs the job, so a headless host
+//! (`rho run`, a subagent) that exits after its prompt awaits it first, or
+//! the session keeps no title.
 
 use std::path::PathBuf;
 
@@ -107,6 +109,13 @@ impl SessionRuntime {
     /// The title a turn of the last prompt asked for. Take it as soon as
     /// the prompt returns; one a prompt dropped mid-await left behind is
     /// taken after the next.
+    ///
+    /// Taking the job is the only request: the runtime never asks again,
+    /// and the title exists only once [`TitleJob::generate`] finishes. A
+    /// long-lived host may run it in the background; a host that exits
+    /// after the prompt, such as `rho run`, must await it before exiting,
+    /// or the title is lost.
+    #[must_use = "the session is titled only once the taken job runs"]
     pub(crate) fn take_title(&mut self) -> Option<TitleJob> {
         let (state, job) = match std::mem::replace(&mut self.title, TitleState::Asked) {
             TitleState::Unasked => (TitleState::Unasked, None),

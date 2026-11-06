@@ -10,6 +10,7 @@ use serde_json::json;
 use super::history;
 use crate::{
     agent::{AgentCapabilities, ToolCapability},
+    app::session_runtime::SessionTools,
     config::Config,
     diagnostics::RuntimeDiagnostics,
     session::tree::{DisplayRowOrigin, NodeId, ProjectedMessage},
@@ -30,7 +31,7 @@ fn raw_replay(messages: &[Message]) -> Vec<SessionNotification> {
         &SessionId::new("s1"),
         &saved_rows(messages),
         std::path::Path::new(""),
-        &AppToolSet::disabled(),
+        SessionTools::of_tool_set_for_tests(&AppToolSet::disabled()),
     )
 }
 
@@ -333,7 +334,7 @@ fn replayed_calls_take_their_kind_from_the_session_tools() {
         &SessionId::new("s1"),
         &messages,
         std::path::Path::new(""),
-        &tool_set,
+        SessionTools::of_tool_set_for_tests(&tool_set),
     )
     .into_iter()
     .filter_map(|notification| match notification.update {

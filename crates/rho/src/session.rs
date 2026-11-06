@@ -93,6 +93,29 @@ pub struct SessionSummary {
     pub added_dirs: Vec<PathBuf>,
 }
 
+/// Which host created a session, recorded on its header when its file is
+/// created for future listing filters (a person's sessions vs headless
+/// ones).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SessionOrigin {
+    /// The interactive TUI.
+    Interactive,
+    /// An ACP client, such as Zed or T3 Code.
+    Acp,
+    /// `rho run`.
+    Run,
+    /// A Rho subagent a parent session started.
+    Subagent,
+    /// An agent node of a workflow run.
+    WorkflowNode,
+    /// A host a later Rho records that this one does not know. Reading it
+    /// leniently keeps such sessions listable and resumable; this binary
+    /// never creates it.
+    #[serde(other)]
+    Unknown,
+}
+
 /// Exact identity for a session within its owning workspace.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SessionTarget {
@@ -658,23 +681,33 @@ impl Session {
         delete::delete_in_roots(session_root, subagents_root, cwd, id_prefix, &options)
     }
 
+    /// Creates the file of session `id`, which `origin`'s host started as
+    /// the agent `agent_id` with `agent_fingerprint`.
     pub(crate) fn create_with_id(
         cwd: &Path,
         id: &str,
         agent_id: &str,
         agent_fingerprint: &str,
+        origin: SessionOrigin,
     ) -> anyhow::Result<Self> {
         Self::create_with_id_in_root(
             &session_root()?,
             cwd,
             id,
             Some((agent_id, agent_fingerprint)),
+            origin,
         )
     }
 
     #[cfg(test)]
     pub(crate) fn create_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Self> {
-        Self::create_with_id_in_root(session_root, cwd, &Uuid::new_v4().to_string(), None)
+        Self::create_with_id_in_root(
+            session_root,
+            cwd,
+            &Uuid::new_v4().to_string(),
+            None,
+            SessionOrigin::Interactive,
+        )
     }
 
     #[cfg(test)]
@@ -683,7 +716,7 @@ impl Session {
         cwd: &Path,
         id: &str,
     ) -> anyhow::Result<Self> {
-        Self::create_with_id_in_root(session_root, cwd, id, None)
+        Self::create_with_id_in_root(session_root, cwd, id, None, SessionOrigin::Interactive)
     }
 
     #[cfg(test)]
@@ -698,6 +731,7 @@ impl Session {
             cwd,
             &Uuid::new_v4().to_string(),
             Some((agent_id, agent_fingerprint)),
+            SessionOrigin::Interactive,
         )
     }
 
@@ -706,13 +740,14 @@ impl Session {
         cwd: &Path,
         id: &str,
         agent: Option<(&str, &str)>,
+        origin: SessionOrigin,
     ) -> anyhow::Result<Self> {
         let store = SessionStore::new(session_root, cwd);
         let id = id.to_string();
         let created_at = unix_timestamp_secs();
         let path = store.create_path(&id, created_at)?;
         let session = Self::from_parts(session_root, cwd, id.clone(), path)?;
-        session.append_session_metadata(id, created_at, agent)?;
+        session.append_session_metadata(id, created_at, agent, origin)?;
         Ok(session)
     }
 

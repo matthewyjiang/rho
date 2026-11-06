@@ -1,35 +1,29 @@
-//! Opening ACP sessions: `session/new` builds a host whose file waits for
-//! its first save, and `session/load` and `session/resume` restore a saved
-//! one, `session/load` also replaying its display history to the client.
-//! All take the host's `additionalDirectories` as the session's added
-//! directories.
+//! Opening ACP sessions: `session/new` opens a new runtime, whose file
+//! waits for its first save, and `session/load` and `session/resume` reopen
+//! a saved one, `session/load` also replaying its display history to the
+//! client. The runtime decides how a session opens; this side turns the
+//! requests into its parameters and the results into ACP's. All take the
+//! host's `additionalDirectories` as the session's added directories.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use agent_client_protocol::schema::v1::{
     LoadSessionRequest, LoadSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
     ResumeSessionRequest, ResumeSessionResponse, SessionConfigOption, SessionId, SessionModeState,
 };
-use rho_sdk::SessionOptions;
 
 use super::{
     super::{client_io::ClientIo, host_mcp::host_mcp_config, permission},
     convert::{session_added_dirs, validate_session_cwd, workspace_cwd},
-    send_notification, session_build, EventMapper, SessionHost,
+    send_notification, session_build, EventMapper, HostBuild, SessionHost,
 };
 use crate::{
-    added_dirs::AddedDirs,
     app::{
         acp::{AcpClientPort, AcpStartup},
-        interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
-        session_runtime::{
-            build_session, loaded_agent, session_config, OpenedSession, SessionStorage,
-        },
+        session_runtime::{SavedHistory, SessionOpening, SessionRuntime},
     },
     config::Config,
     permission::PermissionMode,
-    session::Session as StoredSession,
-    tools::{mcp::config::McpConfig, sdk_registry::AppToolSet},
 };
 
 impl SessionHost {
@@ -41,71 +35,39 @@ impl SessionHost {
         let root = std::fs::canonicalize(cwd)?;
         let added_dirs =
             session_added_dirs(&startup.added_dirs, &request.additional_directories, &root)?;
-        let host_mcp = host_mcp_config(&request.mcp_servers);
-        let config = session_config(&startup.config, &host_mcp);
-        let host = Self::unsaved(
+        let sdk_id = rho_sdk::SessionId::new();
+        let io = ClientIo::new(
             startup,
-            &config,
+            SessionId::new(sdk_id.as_str()),
             cwd,
-            added_dirs,
-            rho_sdk::SessionId::new(),
             &request.additional_directories,
-            host_mcp,
+        );
+        let HostBuild { build, t3_wake } = session_build(startup, &io);
+        let runtime = SessionRuntime::open_new(
+            SessionOpening {
+                build,
+                process_config: &startup.config,
+                host_mcp: host_mcp_config(&request.mcp_servers),
+                cwd,
+                added_dirs,
+                logouts: &startup.logouts,
+            },
+            sdk_id,
         )
         .await?;
+        let host = Self::from_runtime(io, startup, runtime, t3_wake);
         let response = NewSessionResponse::new(host.acp_session_id.clone())
             .modes(mode_state(host.runtime.permission_mode()))
             .config_options(host.config_options(&startup.config));
         Ok((host, response))
     }
 
-    /// A host for session `sdk_id` with no saved turns. Its file is created
-    /// by the first save, so a session the host never prompts leaves none.
-    async fn unsaved(
-        startup: &AcpStartup,
-        config: &Config,
-        cwd: &Path,
-        added_dirs: AddedDirs,
-        sdk_id: rho_sdk::SessionId,
-        host_dirs: &[PathBuf],
-        host_mcp: McpConfig,
-    ) -> anyhow::Result<Self> {
-        let io = ClientIo::new(startup, SessionId::new(sdk_id.as_str()), cwd, host_dirs);
-        let build = session_build(startup, &io);
-        let (built, permission) =
-            build_session(&build, &startup.agent, config, cwd, &added_dirs, |_| {
-                Ok(session_options_for_id(sdk_id))
-            })
-            .await?;
-        let storage = SessionStorage::deferred(
-            cwd.to_path_buf(),
-            built.session.id().to_string(),
-            startup.agent.id().to_string(),
-            startup.agent.fingerprint().to_string(),
-        );
-        Ok(Self::from_built(
-            io,
-            startup,
-            OpenedSession {
-                build,
-                built,
-                storage,
-                agent: startup.agent.clone(),
-                auth: startup.config.auth.clone(),
-                host_mcp,
-                added_dirs,
-                permission,
-                reopen_notice: None,
-            },
-        ))
-    }
-
     /// Restores a saved session for `session/load` or `session/resume`,
     /// sending its display history as `history` says.
     ///
     /// A session created by `session/new` has no file until its first
-    /// prompt, so an id with no saved session anywhere is restored as that
-    /// empty session, as it was when `session/new` wrote the file eagerly.
+    /// prompt, so an id with no saved session anywhere reopens as that
+    /// empty session, as it did when `session/new` wrote the file eagerly.
     pub(in crate::app::acp) async fn reopen(
         startup: &AcpStartup,
         request: ReopenRequest,
@@ -118,82 +80,34 @@ impl SessionHost {
         let root = std::fs::canonicalize(cwd)?;
         let added_dirs =
             session_added_dirs(&startup.added_dirs, &request.additional_directories, &root)?;
-        let host_mcp = host_mcp_config(&request.mcp_servers);
-        let config = session_config(&startup.config, &host_mcp);
-        let (stored, _) =
-            match StoredSession::open_by_id_with_histories(cwd, request.session_id.0.as_ref()) {
-                Ok(opened) => opened,
-                Err(error) if error.is::<crate::session::NoSessionFound>() => {
-                    let Ok(sdk_id) = rho_sdk::SessionId::from_string(request.session_id.0.as_ref())
-                    else {
-                        return Err(error);
-                    };
-                    return Self::unsaved(
-                        startup,
-                        &config,
-                        cwd,
-                        added_dirs,
-                        sdk_id,
-                        &request.additional_directories,
-                        host_mcp,
-                    )
-                    .await;
-                }
-                Err(error) => return Err(error),
-            };
-        let (agent, config) = loaded_agent(&startup.agent, &stored, config, || {
-            Ok(crate::agent::AgentCatalog::discover(cwd)?)
-        })?;
         let io = ClientIo::new(
             startup,
             request.session_id.clone(),
             cwd,
             &request.additional_directories,
         );
-        let build = session_build(startup, &io);
-        let (built, permission) =
-            build_session(&build, &agent, &config, cwd, &added_dirs, |provider| {
-                let snapshot = stored
-                    .snapshot_for_resume(provider.identity(), prompt_cache_key(stored.id()))?;
-                Ok(SessionOptions::from_snapshot(snapshot))
-            })
-            .await?;
-        if let History::Replay(client) = history {
-            let replay_result =
-                replay_display_history(&request.session_id, &stored, cwd, &built.tools, client)
-                    .await;
-            if let Err(error) = replay_result {
-                built.teardown().await;
-                return Err(error);
+        let HostBuild { build, t3_wake } = session_build(startup, &io);
+        let opening = SessionOpening {
+            build,
+            process_config: &startup.config,
+            host_mcp: host_mcp_config(&request.mcp_servers),
+            cwd,
+            added_dirs,
+            logouts: &startup.logouts,
+        };
+        let runtime = SessionRuntime::reopen(opening, request.session_id.0.as_ref()).await?;
+        let replayed = match (history, runtime.saved_history()) {
+            (History::Replay(client), Some(saved)) => {
+                replay_display_history(&request.session_id, saved, client).await
             }
+            // A session reopened new has nothing saved to replay.
+            (History::Replay(_), None) | (History::Skip, _) => Ok(()),
+        };
+        if let Err(error) = replayed {
+            runtime.shutdown().await;
+            return Err(error);
         }
-        let reopen_notice = built
-            .prompt_template
-            .is_some()
-            .then(|| {
-                crate::app::model_prompt_metadata::change_notice(
-                    &built.session.snapshot(),
-                    built.prompt.loaded.as_ref(),
-                )
-            })
-            .flatten();
-        Ok(Self::from_built(
-            io,
-            startup,
-            OpenedSession {
-                build,
-                built,
-                storage: SessionStorage::saved(stored),
-                agent,
-                // The restored child may use a different auth family than
-                // the process.
-                auth: config.auth,
-                host_mcp,
-                added_dirs,
-                permission,
-                reopen_notice,
-            },
-        ))
+        Ok(Self::from_runtime(io, startup, runtime, t3_wake))
     }
 }
 
@@ -274,15 +188,15 @@ fn mode_state(mode: PermissionMode) -> SessionModeState {
     SessionModeState::new(permission::mode_id(mode), permission::mode_list())
 }
 
+/// Sends `saved`'s display history to `client` as session `session_id`'s
+/// replay.
 async fn replay_display_history(
     session_id: &SessionId,
-    stored: &StoredSession,
-    cwd: &Path,
-    tool_set: &AppToolSet,
+    saved: SavedHistory<'_>,
     client: &dyn AcpClientPort,
 ) -> anyhow::Result<()> {
-    let messages = stored.active_display_history()?;
-    for notification in EventMapper::replay_history(session_id, &messages, cwd, tool_set) {
+    let rows = saved.display_rows()?;
+    for notification in EventMapper::replay_history(session_id, &rows, saved.cwd(), saved.tools()) {
         send_notification(client, notification).await?;
     }
     Ok(())

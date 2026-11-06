@@ -24,7 +24,7 @@ use rho_sdk::{
 };
 
 use super::SessionHost;
-use crate::app::session_runtime::{OpenedSession, SessionPermission, SessionStorage};
+use crate::app::session_runtime::{SessionPermission, SessionStorage};
 use crate::{
     app::{
         acp::{agent::RhoAcpAgent, AcpClientPort, AcpStartup},
@@ -82,24 +82,15 @@ async fn host(
     };
     let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home);
     let io = crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id()));
-    let build = crate::app::acp::session_host::session_build(&startup, &io);
-    SessionHost::from_built(
+    SessionHost::for_tests(
         io,
         &startup,
-        OpenedSession {
-            build,
-            built,
-            storage: SessionStorage::saved(stored),
-            agent: startup.agent.clone(),
-            auth: startup.config.auth.clone(),
-            host_mcp: Default::default(),
-            added_dirs: Default::default(),
-            permission: SessionPermission {
-                mode: config.permission_mode,
-                writes: Default::default(),
-                workspace_root: home.to_path_buf(),
-            },
-            reopen_notice: None,
+        built,
+        SessionStorage::saved(stored),
+        SessionPermission {
+            mode: config.permission_mode,
+            writes: Default::default(),
+            workspace_root: home.to_path_buf(),
         },
     )
 }

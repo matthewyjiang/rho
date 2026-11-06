@@ -508,6 +508,7 @@ fn write_session_file(root: &Path, cwd: &Path, id: &str, timestamp: u64, prompts
         agent_id: None,
         agent_fingerprint: None,
         agent_role: crate::session::agent_identity::SessionAgentRole::Root,
+        origin: None,
     }];
     entries.extend(prompts.iter().map(|prompt| SessionEntry::Message {
         timestamp: timestamp.to_string(),
@@ -989,4 +990,57 @@ fn set_generated_title_does_not_overwrite_manual_title() {
         .find(|summary| summary.id == id)
         .expect("session summary");
     assert_eq!(summary.title.as_deref(), Some("manual name"));
+}
+
+// Covers: a session file keeps the host that created it on its header,
+// recorded for future listing filters, including after a fresh session is
+// rebound to a delegated agent and its header rewritten; and a header naming
+// a host only a later Rho knows still opens.
+// Owner: session file header
+#[test]
+fn the_header_keeps_the_origin_the_session_was_created_with() {
+    /// What happens to the file between creating and reopening it.
+    type Edit = fn(&Session);
+    let cases: [(&str, Edit, SessionOrigin); 3] = [
+        ("as created", |_| {}, SessionOrigin::Acp),
+        (
+            "rebound to a delegated agent",
+            |session| {
+                session
+                    .rebind_fresh_delegated_agent("child", "child-fingerprint", None)
+                    .unwrap();
+            },
+            SessionOrigin::Acp,
+        ),
+        (
+            "written by a later Rho",
+            |session| {
+                let header = fs::read_to_string(session.path()).unwrap();
+                let later = header.replacen(r#""origin":"acp""#, r#""origin":"something_new""#, 1);
+                assert_ne!(later, header, "the header records its origin");
+                fs::write(session.path(), later).unwrap();
+            },
+            SessionOrigin::Unknown,
+        ),
+    ];
+    for (label, edit, expected) in cases {
+        let root = temp_session_root();
+        let cwd = temp_cwd();
+        let session = Session::create_with_id_in_root(
+            &root,
+            &cwd,
+            "acp-session",
+            Some(("rho", "fingerprint")),
+            SessionOrigin::Acp,
+        )
+        .unwrap();
+        edit(&session);
+        let (session, _) = Session::open_by_id_in_root(&root, &cwd, "acp-session")
+            .unwrap_or_else(|error| panic!("{label}: {error:#}"));
+        let origin = match read_entries(session.path()).unwrap().into_iter().next() {
+            Some(SessionEntry::Session { origin, .. }) => origin,
+            _ => panic!("the file starts with its header"),
+        };
+        assert_eq!(origin, Some(expected), "{label}");
+    }
 }

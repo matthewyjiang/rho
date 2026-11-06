@@ -1,30 +1,33 @@
 use std::{
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use rho_sdk::{provider::ModelProvider, ApprovalSession, SessionOptions};
+use rho_sdk::{hooks::HookHostLabels, provider::ModelProvider, SessionOptions};
 
-use super::SessionPermission;
+use super::{ApprovalPolicy, SessionPermission};
 use crate::{
     added_dirs::AddedDirs,
     app::{
         agent_binding::BoundAgent,
         automation::ensure_headless_auto_classifier_model,
         headless_delegation::BackgroundWait,
-        interactive_runtime::startup::{
-            approval_channel_for, ApprovalChannel, ApprovalChannelOptions,
-        },
         session_assembly::{
-            assemble_session, ApprovalInputs, BuiltSession, SessionApproval, SessionAssembly,
-            SessionAssemblyOptions,
+            assemble_session, ApprovalInputs, BuiltSession, SessionAssembly, SessionAssemblyOptions,
         },
         tools_prompt::McpSamplingSupport,
     },
     config::Config,
     credential_store::AppCredentialStore,
     diagnostics::RuntimeDiagnostics,
-    tools::{host_io::HostIo, mcp::config::McpConfig, plan_exit::PlanExitHost},
+    session::SessionOrigin,
+    tools::{
+        host_io::HostIo,
+        mcp::{config::McpConfig, McpAuthorizationMode},
+        plan_exit::PlanExitHost,
+        sdk_registry::AppToolSet,
+    },
 };
 
 /// What a host gives every session build of one session: process flags,
@@ -50,6 +53,93 @@ pub(crate) struct SessionBuild {
     /// What the session's host does for its tools, shared by every tool set
     /// the session builds.
     pub(crate) host_io: HostIo,
+    /// What the session is for and how each of its runs is shaped.
+    pub(crate) run: RunShape,
+    /// Instructions appended to the session's system prompt, kept when a
+    /// model prompt replaces the rest, such as a child's contract with its
+    /// parent. Not part of the [`RunShape`]: it lives in the built prompt,
+    /// which a permission mode rebuild reuses.
+    pub(crate) prompt_suffix: Option<&'static str>,
+    /// Whether an MCP server's browser login may wait for a person.
+    pub(crate) mcp_authorization: McpAuthorizationMode,
+    /// Who answers the session's approval requests.
+    pub(crate) approvals: ApprovalPolicy,
+}
+
+/// What a session is for and how each of its runs is shaped. Every SDK
+/// runtime the session builds, when it opens and again for a permission
+/// mode change, takes all of it: each build site destructures it whole, so
+/// a new knob cannot reach one and miss the other.
+#[derive(Clone)]
+pub(crate) struct RunShape {
+    /// What the session is for, which decides whose work its model usage
+    /// is recorded as and the origin a new session's file records.
+    pub(crate) role: SessionRole,
+    /// The most model steps one run may take; `None` keeps the configured
+    /// step limit. `rho run --max-steps` and an agent's step limit set it.
+    pub(crate) max_steps: Option<NonZeroUsize>,
+    /// Labels every hook envelope of the session carries, such as a
+    /// workflow node's.
+    pub(crate) hook_labels: HookHostLabels,
+}
+
+/// What a session is for. Its model usage is recorded as an agent's or a
+/// subagent's from it, a delegated child's usage and hooks also naming the
+/// session that started it, and a new session's file records its origin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SessionRole {
+    /// A person's session in the interactive TUI.
+    #[expect(dead_code, reason = "the TUI builds on the runtime in a later PR")]
+    Interactive,
+    /// An ACP client's session, such as Zed's or T3 Code's.
+    Acp,
+    /// `rho run`'s session.
+    #[expect(dead_code, reason = "rho run builds on the runtime in the next PR")]
+    Run,
+    /// A Rho subagent `parent` started through the `agent` tool. Every host
+    /// binds its session as the subagent manager's parent before its first
+    /// turn, so a subagent always has one; only workflow nodes run
+    /// parentless.
+    #[expect(
+        dead_code,
+        reason = "Rho subagents build on the runtime in the next PR"
+    )]
+    Subagent { parent: rho_sdk::SessionId },
+    /// An agent node of a workflow run, which no session started.
+    #[expect(
+        dead_code,
+        reason = "workflow nodes build on the runtime in the next PR"
+    )]
+    WorkflowNode,
+}
+
+impl SessionRole {
+    /// The usage purpose the session's requests are recorded under.
+    pub(super) fn usage_purpose(&self) -> &'static str {
+        match self {
+            Self::Interactive | Self::Acp | Self::Run => "agent",
+            Self::Subagent { .. } | Self::WorkflowNode => "subagent",
+        }
+    }
+
+    /// The session that delegated this one, which its usage names.
+    pub(super) fn usage_parent(&self) -> Option<rho_sdk::SessionId> {
+        match self {
+            Self::Subagent { parent } => Some(parent.clone()),
+            Self::Interactive | Self::Acp | Self::Run | Self::WorkflowNode => None,
+        }
+    }
+
+    /// The host a new session's file records it was created by.
+    pub(super) fn origin(&self) -> SessionOrigin {
+        match self {
+            Self::Interactive => SessionOrigin::Interactive,
+            Self::Acp => SessionOrigin::Acp,
+            Self::Run => SessionOrigin::Run,
+            Self::Subagent { .. } => SessionOrigin::Subagent,
+            Self::WorkflowNode => SessionOrigin::WorkflowNode,
+        }
+    }
 }
 
 /// Whether a host can put a question to a person, such as through an ACP
@@ -73,11 +163,11 @@ pub(crate) enum ChildAgents {
 }
 
 /// Builds a session as `build` says, with the permission state of
-/// `config`'s mode, for an [`super::OpenedSession`] or an agent rebind.
+/// `config`'s mode, for opening a session (see `open.rs`) or an agent rebind.
 /// `config` is the session's config: the process config plus the host's MCP
 /// servers. `added_dirs` is the session's set: launch `--add-dir` values,
 /// plus the host's own roots.
-pub(crate) async fn build_session(
+pub(super) async fn build_session(
     build: &SessionBuild,
     agent: &BoundAgent,
     config: &Config,
@@ -96,6 +186,11 @@ pub(crate) async fn build_session(
         QuestionSupport::Available => true,
         QuestionSupport::Unavailable => false,
     };
+    let RunShape {
+        role,
+        max_steps,
+        hook_labels,
+    } = &build.run;
     let SessionAssembly {
         built,
         workspace_root,
@@ -115,15 +210,13 @@ pub(crate) async fn build_session(
         },
         mcp_sampling: McpSamplingSupport::Unavailable,
         tool_source_attach: crate::app::tools_prompt::ToolSourceAttach::Connect,
-        // A runtime has no terminal for a person to finish an MCP login in;
-        // ACP's stdin, for one, is its protocol pipe.
-        mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
+        mcp_authorization: build.mcp_authorization,
         diagnostics: &build.diagnostics,
         agent,
-        max_steps: None,
-        usage_purpose: "agent",
-        usage_parent_session_id: None,
-        hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+        max_steps: *max_steps,
+        usage_purpose: role.usage_purpose(),
+        usage_parent_session_id: role.usage_parent(),
+        hook_host_labels: hook_labels.clone(),
         added_dirs,
         host_io: build.host_io.clone(),
         extend_tools: |mut tools| {
@@ -137,33 +230,10 @@ pub(crate) async fn build_session(
                     );
                 }
             }
-            // Plan approval goes through a permission prompt, which every
-            // host answers, so leaving plan mode never depends on asking
-            // questions. Like the TUI, only Rho-runtime agents get it.
-            if !build.no_tools && agent.rho_capabilities().is_some() {
-                tools.with_plan_exit_host(config, PlanExitHost::Permission)
-            } else {
-                tools
-            }
+            with_plan_exit(tools, build, agent, config)
         },
-        system_prompt_suffix: None,
-        approval: |inputs: ApprovalInputs| {
-            let ApprovalChannel {
-                handler, receiver, ..
-            } = approval_channel_for(
-                inputs.config.permission_mode,
-                ApprovalChannelOptions {
-                    config: inputs.config,
-                    workspace_path: inputs.workspace_root,
-                    usage_recording: inputs.usage_recording,
-                    session_writes: inputs.session_writes,
-                },
-            );
-            Ok(SessionApproval {
-                session: handler.map(ApprovalSession::from_shared),
-                receiver,
-            })
-        },
+        system_prompt_suffix: build.prompt_suffix,
+        approval: |inputs: ApprovalInputs| Ok(build.approvals.wire(inputs)),
         session_options,
     })
     .await?;
@@ -177,6 +247,24 @@ pub(crate) async fn build_session(
         workspace_root,
     };
     Ok((built, permission))
+}
+
+/// `tools` with `exit_plan_mode` when `build` offers it to `agent`. Plan
+/// approval goes through a permission prompt, which every host that answers
+/// approvals answers, so leaving plan mode never depends on asking
+/// questions. Like the TUI, only Rho-runtime agents get it; like `rho run`,
+/// an unattended session does not.
+pub(super) fn with_plan_exit(
+    tools: AppToolSet,
+    build: &SessionBuild,
+    agent: &BoundAgent,
+    config: &Config,
+) -> AppToolSet {
+    if !build.no_tools && agent.rho_capabilities().is_some() && build.approvals.offers_plan_exit() {
+        tools.with_plan_exit_host(config, PlanExitHost::Permission)
+    } else {
+        tools
+    }
 }
 
 /// The process config with the host's MCP servers merged in.

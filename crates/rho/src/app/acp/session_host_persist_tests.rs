@@ -27,7 +27,7 @@ use crate::{
     app::{
         acp::{AcpClientPort, AcpStartup},
         session_assembly::BuiltSession,
-        session_runtime::{OpenedSession, SessionPermission, SessionStorage},
+        session_runtime::{SessionPermission, SessionStorage},
     },
     config::Config,
     diagnostics::RuntimeDiagnostics,
@@ -86,24 +86,15 @@ async fn host(
         diagnostics: RuntimeDiagnostics::new(config),
     };
     let io = crate::app::acp::client_io::ClientIo::local(SessionId::new(id));
-    let build = crate::app::acp::session_host::session_build(startup, &io);
-    SessionHost::from_built(
+    SessionHost::for_tests(
         io,
         startup,
-        OpenedSession {
-            build,
-            built,
-            storage,
-            agent: startup.agent.clone(),
-            auth: startup.config.auth.clone(),
-            host_mcp: Default::default(),
-            added_dirs: Default::default(),
-            permission: SessionPermission {
-                mode: config.permission_mode,
-                writes: Default::default(),
-                workspace_root: workspace.to_path_buf(),
-            },
-            reopen_notice: None,
+        built,
+        storage,
+        SessionPermission {
+            mode: config.permission_mode,
+            writes: Default::default(),
+            workspace_root: workspace.to_path_buf(),
         },
     )
 }
@@ -514,7 +505,7 @@ async fn accepted_user_message_ids_survive_replay() {
         &SessionId::new(&*id),
         &stored.active_display_history().unwrap(),
         home.path(),
-        &AppToolSet::disabled(),
+        crate::app::session_runtime::SessionTools::of_tool_set_for_tests(&AppToolSet::disabled()),
     ) {
         if let agent_client_protocol::schema::v1::SessionUpdate::UserMessageChunk(chunk) =
             notification.update
