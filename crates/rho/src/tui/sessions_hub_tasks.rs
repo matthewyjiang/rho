@@ -121,10 +121,11 @@ pub(super) async fn next_sessions_task(
     output
 }
 
-/// Lists and groups every saved session. Blocking: reconciles the session
-/// index and stats every workspace directory.
+/// Lists and groups every saved session (see [`hub_groups`] for which it
+/// shows). Blocking: reconciles the session index and stats every
+/// workspace directory.
 fn load_hub_groups(current_cwd: &Path) -> anyhow::Result<Vec<HubGroup>> {
-    let sessions = Session::list_all(SessionListing::PersonFacing)?;
+    let sessions = Session::list_all(SessionListing::Everything)?;
     let mut missing_directories = HashSet::new();
     for cwd in sessions.iter().map(|session| &session.cwd) {
         if !missing_directories.contains(cwd) && Session::workspace_directory_is_missing(cwd)? {

@@ -119,6 +119,14 @@ pub(crate) enum SessionOrigin {
     Unknown,
 }
 
+impl SessionSummary {
+    /// Whether person-facing listings show this session: its origin is
+    /// person-facing, or the file predates origins.
+    pub(crate) fn is_person_facing(&self) -> bool {
+        self.origin.is_none_or(SessionOrigin::is_person_facing)
+    }
+}
+
 impl SessionOrigin {
     /// Whether a person had the session, so person-facing listings show
     /// it. A script's `rho run` and a parent's subagents and workflow nodes
@@ -181,10 +189,7 @@ pub(crate) enum SessionListing {
 impl SessionListing {
     fn retain(self, sessions: &mut Vec<SessionSummary>) {
         match self {
-            Self::PersonFacing => {
-                sessions
-                    .retain(|session| session.origin.is_none_or(SessionOrigin::is_person_facing));
-            }
+            Self::PersonFacing => sessions.retain(SessionSummary::is_person_facing),
             Self::Everything => {}
         }
     }
