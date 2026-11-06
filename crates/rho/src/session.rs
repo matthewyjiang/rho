@@ -91,11 +91,13 @@ pub struct SessionSummary {
     pub last_user_message: Option<String>,
     /// Added directories as last saved, some possibly gone since.
     pub added_dirs: Vec<PathBuf>,
+    /// The host that created the session; `None` for a file written before
+    /// origins were recorded.
+    pub origin: Option<SessionOrigin>,
 }
 
 /// Which host created a session, recorded on its header when its file is
-/// created for future listing filters (a person's sessions vs headless
-/// ones).
+/// created so listings can tell a person's sessions from child ones.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SessionOrigin {
@@ -114,6 +116,41 @@ pub(crate) enum SessionOrigin {
     /// never creates it.
     #[serde(other)]
     Unknown,
+}
+
+impl SessionOrigin {
+    /// Whether another session started this one. A person reaches a child
+    /// session through the parent that ran it, so person-facing listings
+    /// leave it out; opening it by id still works.
+    pub(crate) fn is_child(self) -> bool {
+        match self {
+            Self::Subagent | Self::WorkflowNode => true,
+            Self::Interactive | Self::Acp | Self::Run | Self::Unknown => false,
+        }
+    }
+}
+
+/// Which saved sessions a listing returns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SessionListing {
+    /// The sessions a person picks from: pickers, `rho sessions`,
+    /// `--continue` and ACP lists. Child sessions are left out (see
+    /// [`SessionOrigin::is_child`]); files older than origins are kept.
+    PersonFacing,
+    /// Every saved session, child sessions included: exact-id lookups and
+    /// bulk deletes that must not strand a child's files.
+    IncludingChildren,
+}
+
+impl SessionListing {
+    fn retain(self, sessions: &mut Vec<SessionSummary>) {
+        match self {
+            Self::PersonFacing => {
+                sessions.retain(|session| !session.origin.is_some_and(SessionOrigin::is_child));
+            }
+            Self::IncludingChildren => {}
+        }
+    }
 }
 
 /// Exact identity for a session within its owning workspace.
@@ -351,14 +388,10 @@ impl Session {
         let store = SessionStore::new(session_root, cwd);
         let resolved = store.resolve(id_prefix)?;
         let (record, tree) = resolved.summary_with_tree(cwd)?;
-        let title = Self::list_in_root(session_root, cwd)
+        let title = SessionStore::new(session_root, &resolved.cwd)
+            .title(&resolved.id)
             .ok()
-            .and_then(|summaries| {
-                summaries
-                    .into_iter()
-                    .find(|summary| summary.id == resolved.id)
-                    .and_then(|summary| summary.title)
-            });
+            .flatten();
 
         let messages = match tree.active_leaf_id() {
             Some(active_leaf_id) => persistence::insert_interrupted_display_placeholders(
@@ -446,13 +479,15 @@ impl Session {
         Ok(())
     }
 
-    pub fn list(cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
-        Self::list_in_root(&session_root()?, cwd)
+    /// Lists `listing`'s sessions in workspace `cwd`, newest first.
+    pub(crate) fn list(cwd: &Path, listing: SessionListing) -> anyhow::Result<Vec<SessionSummary>> {
+        Self::list_in_root(&session_root()?, cwd, listing)
     }
 
-    /// Lists sessions across every workspace under the session root.
-    pub fn list_all() -> anyhow::Result<Vec<SessionSummary>> {
-        Self::list_all_in_root(&session_root()?)
+    /// Lists `listing`'s sessions across every workspace under the session
+    /// root, newest first.
+    pub(crate) fn list_all(listing: SessionListing) -> anyhow::Result<Vec<SessionSummary>> {
+        Self::list_all_in_root(&session_root()?, listing)
     }
 
     /// Lists sessions whose recorded workspace path is no longer a directory.
@@ -601,16 +636,23 @@ impl Session {
         SessionStore::new(session_root, &resolved.cwd).title(&resolved.id)
     }
 
-    fn list_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
-        SessionStore::new(session_root, cwd).list()
+    fn list_in_root(
+        session_root: &Path,
+        cwd: &Path,
+        listing: SessionListing,
+    ) -> anyhow::Result<Vec<SessionSummary>> {
+        let mut sessions = SessionStore::new(session_root, cwd).list()?;
+        listing.retain(&mut sessions);
+        Ok(sessions)
     }
 
     #[cfg(test)]
     pub(crate) fn list_in_root_for_test(
         session_root: &Path,
         cwd: &Path,
+        listing: SessionListing,
     ) -> anyhow::Result<Vec<SessionSummary>> {
-        Self::list_in_root(session_root, cwd)
+        Self::list_in_root(session_root, cwd, listing)
     }
 
     #[cfg(test)]
@@ -633,8 +675,13 @@ impl Session {
         Self::set_generated_title_in_root(session_root, cwd, id_prefix, title)
     }
 
-    pub(crate) fn list_all_in_root(session_root: &Path) -> anyhow::Result<Vec<SessionSummary>> {
-        index::list_all_sessions(session_root)
+    pub(crate) fn list_all_in_root(
+        session_root: &Path,
+        listing: SessionListing,
+    ) -> anyhow::Result<Vec<SessionSummary>> {
+        let mut sessions = index::list_all_sessions(session_root)?;
+        listing.retain(&mut sessions);
+        Ok(sessions)
     }
 
     #[cfg(test)]

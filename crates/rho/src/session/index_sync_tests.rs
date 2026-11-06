@@ -612,6 +612,7 @@ fn test_index_record(id: &str, path: &str, first_user: &str) -> SessionIndexReco
             first_user_message: Some(first_user.into()),
             last_user_message: Some(first_user.into()),
             added_dirs: Vec::new(),
+            origin: None,
         },
         file_size: Some(10),
         file_mtime: Some(10),

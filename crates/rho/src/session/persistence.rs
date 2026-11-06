@@ -523,7 +523,7 @@ impl Session {
             agent_role: SessionAgentRole::Root,
             origin: Some(origin),
         })?;
-        let _ = index::record_created(self, created_at);
+        let _ = index::record_created(self, created_at, origin);
         Ok(())
     }
 

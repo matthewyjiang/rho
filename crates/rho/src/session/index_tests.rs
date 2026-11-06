@@ -22,10 +22,19 @@ pub(super) fn insert_placeholder_session(connection: &Connection, id: &str) {
 
 const INDEX_V0: &str = include_str!("fixtures/index-v0.sql");
 const INDEX_V1: &str = include_str!("fixtures/index-v1.sql");
+const INDEX_V2: &str = include_str!("fixtures/index-v2.sql");
 
+// Covers: every older index migrates, keeps titles (which transcripts cannot
+// rebuild), and drops its rows' file stamps so the next sync re-summarizes
+// them, backfilling tree facts and header origins.
+// Owner: session index
 #[test]
 fn every_supported_index_fixture_migrates_transactionally() {
-    for (source_version, fixture) in [(0, INDEX_V0), (1, INDEX_V1)] {
+    for (source_version, fixture, title) in [
+        (0, INDEX_V0, None),
+        (1, INDEX_V1, Some("fixture title")),
+        (2, INDEX_V2, Some("fixture title")),
+    ] {
         let mut connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(fixture).unwrap();
         let before: u32 = connection
@@ -38,25 +47,18 @@ fn every_supported_index_fixture_migrates_transactionally() {
         let after: u32 = connection
             .query_row("pragma user_version", [], |row| row.get(0))
             .unwrap();
-        let title: Option<String> = connection
+        let row: (Option<String>, Option<i64>) = connection
             .query_row(
-                "select title from sessions where id = 'fixture-session'",
+                "select title, file_size from sessions where id = 'fixture-session'",
                 [],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(after, INDEX_SCHEMA_VERSION);
-        if source_version == 1 {
-            assert_eq!(title.as_deref(), Some("fixture title"));
-            let file_size: Option<i64> = connection
-                .query_row(
-                    "select file_size from sessions where id = 'fixture-session'",
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            assert_eq!(file_size, None);
-        }
+        assert_eq!(
+            (after, row),
+            (INDEX_SCHEMA_VERSION, (title.map(str::to_owned), None)),
+            "migrating index version {source_version}"
+        );
         validate_index_columns(&connection).unwrap();
     }
 }

@@ -21,7 +21,7 @@ use super::persistence::{
     EXPLICIT_TREE_VERSION, SESSION_VERSION,
 };
 use super::snapshot_delta::StoredSnapshotDelta;
-use super::{SessionIndexRecord, SessionSummary};
+use super::{SessionIndexRecord, SessionOrigin, SessionSummary};
 
 /// Where a projected display row was saved: row `row` of node `node`, a
 /// compaction node's notice following its saved rows. Unique to one insertion
@@ -269,6 +269,7 @@ pub(crate) struct SessionTree {
     active_leaf_id: Option<NodeId>,
     session_id: Option<String>,
     cwd: Option<PathBuf>,
+    origin: Option<SessionOrigin>,
     created_at: Option<u64>,
     updated_at: Option<u64>,
     version: Option<u32>,
@@ -692,6 +693,7 @@ impl SessionTree {
                 added_dirs: crate::added_dirs::saved_dirs(
                     self.newest_node_metadata(crate::added_dirs::METADATA_KEY),
                 ),
+                origin: self.origin,
             },
             file_size,
             file_mtime,
@@ -718,6 +720,7 @@ impl SessionTree {
                 id,
                 cwd,
                 timestamp,
+                origin,
                 ..
             } => {
                 validate_session_version(version, Path::new("session"))?;
@@ -733,6 +736,7 @@ impl SessionTree {
                 }
                 self.version = Some(version);
                 self.cwd = Some(cwd);
+                self.origin = origin;
                 if let Some(created) = parse_timestamp(&timestamp) {
                     self.created_at = Some(created);
                 }

@@ -6,13 +6,13 @@ use std::{
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
-const INDEX_SCHEMA_VERSION: u32 = 2;
+const INDEX_SCHEMA_VERSION: u32 = 3;
 
 use super::persistence::{
     clamp_u64_to_i64, read_session_cwd, session_dir_in_root, session_file_stats,
     session_id_from_path, summarize_session_file, workspace_key, SessionUnit,
 };
-use super::{Session, SessionIndexRecord, SessionSummary};
+use super::{Session, SessionIndexRecord, SessionOrigin, SessionSummary};
 
 #[path = "index_connection.rs"]
 mod connection;
@@ -33,7 +33,7 @@ pub(super) fn list_workspace_sessions(
     let workspace_key = workspace_key(cwd);
     let mut statement = connection.prepare(
         "select id, path, cwd, created_at, updated_at, message_count,
-                title, first_user_message, last_user_message, added_dirs
+                title, first_user_message, last_user_message, added_dirs, origin
          from sessions
          where workspace_key = ?1
          order by updated_at desc, created_at desc, id asc",
@@ -385,7 +385,11 @@ pub(super) fn sync_session_file(
     Ok(())
 }
 
-pub(super) fn record_created(session: &Session, created_at: u64) -> anyhow::Result<()> {
+pub(super) fn record_created(
+    session: &Session,
+    created_at: u64,
+    origin: SessionOrigin,
+) -> anyhow::Result<()> {
     let connection = open_index(&session.session_root)?;
     let connection = connection
         .lock()
@@ -403,6 +407,7 @@ pub(super) fn record_created(session: &Session, created_at: u64) -> anyhow::Resu
             first_user_message: None,
             last_user_message: None,
             added_dirs: Vec::new(),
+            origin: Some(origin),
         },
         file_size,
         file_mtime,
@@ -565,8 +570,12 @@ fn migrate_index_with_hook(
         &transaction,
         "effective_format_version integer not null default 1",
     )?;
-    if version < 2 {
-        // Force the next workspace sync to backfill tree facts for existing rows.
+    // Versioned, unlike the columns above: an older Rho that indexed a child
+    // session would leave its origin unset, listing it as a person's.
+    ensure_column(&transaction, "origin text")?;
+    if version < 3 {
+        // Force the next workspace sync to re-summarize existing rows,
+        // backfilling tree facts (version 2) and header origins (version 3).
         transaction.execute("update sessions set file_size = null", [])?;
     }
     validate_index_columns(&transaction)?;
@@ -618,6 +627,7 @@ fn validate_index_columns(connection: &Connection) -> anyhow::Result<()> {
         "branch_count",
         "active_leaf_id",
         "effective_format_version",
+        "origin",
     ];
     validate_columns(connection, REQUIRED_COLUMNS)
 }
@@ -815,8 +825,9 @@ fn upsert_record(
             node_count,
             branch_count,
             active_leaf_id,
-            effective_format_version
-         ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            effective_format_version,
+            origin
+         ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
          on conflict(workspace_key, id) do update set
             cwd = excluded.cwd,
             path = excluded.path,
@@ -832,7 +843,8 @@ fn upsert_record(
             node_count = excluded.node_count,
             branch_count = excluded.branch_count,
             active_leaf_id = excluded.active_leaf_id,
-            effective_format_version = excluded.effective_format_version",
+            effective_format_version = excluded.effective_format_version,
+            origin = excluded.origin",
         params![
             workspace_key,
             cwd,
@@ -851,6 +863,7 @@ fn upsert_record(
             clamp_u64_to_i64(record.branch_count),
             record.active_leaf_id.as_deref(),
             record.effective_format_version,
+            record.summary.origin.map(encode_origin),
         ],
     )?;
     Ok(())
@@ -960,7 +973,20 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary>
         added_dirs: StampedDirs::decode(row.get(9)?)
             .map(|stamped| stamped.dirs)
             .unwrap_or_default(),
+        origin: row.get::<_, Option<String>>(10)?.and_then(decode_origin),
     })
+}
+
+/// The `origin` column holds the header's origin as the header encodes it.
+fn encode_origin(origin: SessionOrigin) -> String {
+    // A fieldless enum always serializes.
+    serde_json::to_string(&origin).unwrap_or_default()
+}
+
+/// Reads the `origin` column; an origin this Rho does not know decodes as
+/// [`SessionOrigin::Unknown`], like it does on the header.
+fn decode_origin(column: String) -> Option<SessionOrigin> {
+    serde_json::from_str(&column).ok()
 }
 
 #[cfg(test)]

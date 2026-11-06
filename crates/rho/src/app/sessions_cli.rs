@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::{
     cli::SessionsCommand,
     export::{self, ExportWriteOptions},
-    session::{is_cross_project, DeleteOptions, Session, SessionSummary},
+    session::{is_cross_project, DeleteOptions, Session, SessionListing, SessionSummary},
 };
 
 pub(super) fn run(command: &SessionsCommand) -> anyhow::Result<()> {
@@ -24,9 +24,9 @@ pub(super) fn run(command: &SessionsCommand) -> anyhow::Result<()> {
             json,
         } => {
             let mut sessions = if *all_projects {
-                Session::list_all()?
+                Session::list_all(SessionListing::PersonFacing)?
             } else {
-                Session::list(&cwd)?
+                Session::list(&cwd, SessionListing::PersonFacing)?
             };
             if let Some(query) = search.as_deref() {
                 sessions.retain(|session| session_matches(session, query));
@@ -432,6 +432,7 @@ mod tests {
             first_user_message: Some("please fix auth".into()),
             last_user_message: Some("retry".into()),
             added_dirs: Vec::new(),
+            origin: None,
         };
         assert!(session_matches(&session, "aaaa"));
         assert!(session_matches(&session, "LOGIN"));

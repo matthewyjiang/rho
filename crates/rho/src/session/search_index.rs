@@ -21,6 +21,7 @@ use super::{
     layout::{self, SessionUnit},
     search_evidence::Extractor,
     workspace_scope::Workspace,
+    SessionOrigin,
 };
 
 #[cfg(test)]
@@ -51,7 +52,7 @@ pub(super) fn open(root: &Path) -> anyhow::Result<Connection> {
     Ok(database.into_connection())
 }
 
-const SCHEMA_VERSION: u32 = 3;
+const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, thiserror::Error)]
 enum OpenError {
@@ -80,7 +81,8 @@ fn migrate(connection: &mut Connection) -> Result<(), OpenError> {
         "create table if not exists files (
              key text primary key, path text not null, id text not null,
              cwd text not null, worktree text not null, repo text not null,
-             size integer not null, stamp text not null, omitted integer not null);
+             size integer not null, stamp text not null, omitted integer not null,
+             child integer not null default 0);
          create index if not exists files_repo on files(repo);
          create unique index if not exists files_path on files(path);
          create index if not exists files_worktree on files(worktree);
@@ -102,8 +104,18 @@ fn migrate(connection: &mut Connection) -> Result<(), OpenError> {
     )?;
     if version > 0 {
         // Version 1 anchors identified positions without binding their contents;
-        // version 2 indexed the sessions tool's own calls and results. Discard
-        // the derived evidence and cursor to rebuild with current extraction.
+        // version 2 indexed the sessions tool's own calls and results; version 3
+        // did not mark child sessions. Discard the derived evidence and cursor
+        // to rebuild with current extraction.
+        let marks_children: bool = transaction.query_row(
+            "select exists(select 1 from pragma_table_info('files') where name='child')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !marks_children {
+            transaction
+                .execute_batch("alter table files add column child integer not null default 0;")?;
+        }
         transaction.execute_batch("delete from files; delete from cursor; delete from pending;")?;
     }
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -415,12 +427,16 @@ fn index_file(
         path.starts_with(layout::session_dir_in_root(root, &cwd)),
         "session workspace mismatch"
     );
+    // A header without an origin predates them; an unreadable one is not a
+    // child either, so its evidence stays searchable.
+    let child = serde_json::from_value::<SessionOrigin>(header["origin"].clone())
+        .is_ok_and(SessionOrigin::is_child);
     let workspace = resolve_workspace(&cwd, indexed);
     let path_string = path.to_string_lossy();
     let key = hex::encode(Sha256::digest(path_string.as_bytes()));
     connection.execute(
-        "insert into files(key,path,id,cwd,worktree,repo,size,stamp,omitted) values(?1,?2,?3,?4,?5,?6,?7,?8,0)",
-        params![key, path_string, id, cwd.to_string_lossy(), workspace.worktree.to_string_lossy(), workspace.repo.to_string_lossy(), stamp.size, stamp.modified],
+        "insert into files(key,path,id,cwd,worktree,repo,size,stamp,omitted,child) values(?1,?2,?3,?4,?5,?6,?7,?8,0,?9)",
+        params![key, path_string, id, cwd.to_string_lossy(), workspace.worktree.to_string_lossy(), workspace.repo.to_string_lossy(), stamp.size, stamp.modified, child],
     )?;
     let mut offset = header_bytes;
     let mut omitted = 0;

@@ -15,8 +15,8 @@ use tokio::task::{JoinError, JoinHandle};
 use super::sessions_hub_groups::{hub_groups, HubGroup, Placement};
 use super::{session_picker, statusline::path::compact_cwd, App, ComposerMode, Entry, Session};
 use crate::session::{
-    CleanupOutcome, DeleteOptions, DeleteOutcome, SessionSummary, SessionTarget, Workspace,
-    WorkspaceDeleteOutcome,
+    CleanupOutcome, DeleteOptions, DeleteOutcome, SessionListing, SessionSummary, SessionTarget,
+    Workspace, WorkspaceDeleteOutcome,
 };
 
 /// Sessions a confirmed delete removes.
@@ -124,7 +124,7 @@ pub(super) async fn next_sessions_task(
 /// Lists and groups every saved session. Blocking: reconciles the session
 /// index and stats every workspace directory.
 fn load_hub_groups(current_cwd: &Path) -> anyhow::Result<Vec<HubGroup>> {
-    let sessions = Session::list_all()?;
+    let sessions = Session::list_all(SessionListing::PersonFacing)?;
     let mut missing_directories = HashSet::new();
     for cwd in sessions.iter().map(|session| &session.cwd) {
         if !missing_directories.contains(cwd) && Session::workspace_directory_is_missing(cwd)? {
@@ -196,7 +196,9 @@ impl App {
                 let report = request.run(options);
                 let relisted = match origin {
                     DeleteOrigin::Hub => Relisted::Hub(load_hub_groups(&current_cwd)),
-                    DeleteOrigin::Resume => Relisted::Resume(Session::list(&current_cwd)),
+                    DeleteOrigin::Resume => {
+                        Relisted::Resume(Session::list(&current_cwd, SessionListing::PersonFacing))
+                    }
                 };
                 TaskOutput::Delete { report, relisted }
             }),

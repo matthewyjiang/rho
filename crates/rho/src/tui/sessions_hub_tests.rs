@@ -20,6 +20,7 @@ fn summary(id: &str, cwd: &str, updated_at: u64) -> SessionSummary {
         first_user_message: Some(format!("first {id}")),
         last_user_message: Some(format!("last {id}")),
         added_dirs: Vec::new(),
+        origin: None,
     }
 }
 
