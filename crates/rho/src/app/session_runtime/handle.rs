@@ -34,14 +34,14 @@ impl SessionHandle {
 
     /// A handle on no runtime, for host tests that publish an empty slot.
     #[cfg(test)]
-    pub(crate) fn detached_for_tests() -> Self {
+    pub(in crate::app) fn detached_for_tests() -> Self {
         Self::new()
     }
 
     /// Starts a prompt as the runtime does, for host tests that hold a slot
     /// with no runtime behind it. The prompt lasts until the scope drops.
     #[cfg(test)]
-    pub(crate) fn start_prompt_for_tests(&self) -> super::PromptScope {
+    pub(in crate::app) fn begin_prompt_scope_for_tests(&self) -> super::PromptScope {
         super::PromptScope::begin(self)
     }
 

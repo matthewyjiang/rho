@@ -1,10 +1,10 @@
 //! The UI-free session runtime: one per thread, owning a built session, its
 //! file, and the state between prompts.
 //!
-//! A host drives it and shows what it reports. ACP (`app::acp`) is the host
-//! today; the daemon and `rho run` host it next. Nothing here knows a wire
-//! protocol: hosts parse their own requests and map the runtime's results and
-//! errors back to theirs.
+//! A host drives it and shows what it reports, holding it exclusively for
+//! each prompt or setting change. Nothing here knows a wire protocol or a
+//! client: hosts parse their own requests and map the runtime's results,
+//! events, and errors back to theirs.
 //!
 //! Between prompts a host calls the runtime's settings cores directly:
 //! permission mode, model and provider switches, reasoning level, and fast
@@ -17,9 +17,10 @@
 //! a [`TurnIo`] and, while the turn runs, shows the [`SessionEvent`]s it
 //! sends and answers its requests with [`TurnControl`]s (see `events.rs`).
 //! The turn saves itself, runs the session hooks, keeps background work
-//! going across prompts, and asks to name the session; the host only maps
-//! the [`TurnOutcome`] to its own reply, and runs the plan handoff's
-//! implementation turn when [`SessionRuntime::hand_off_plan`] asks.
+//! going across prompts, and asks to name the session. The host passes the
+//! turn's end through [`SessionRuntime::hand_off_plan`], runs the
+//! implementation turn it may ask for, and maps the prompt's end to its own
+//! reply.
 //!
 //! A prompt's cancel goes through the runtime's [`SessionHandle`], which the
 //! host shares with whoever cancels prompts or retires the session, so a
@@ -265,7 +266,7 @@ impl ContextGauge {
     /// A gauge on `session` whose model is configured with
     /// `configured_window`, for host tests that have no runtime.
     #[cfg(test)]
-    pub(crate) fn of_session_for_tests(
+    pub(in crate::app) fn of_session_for_tests(
         session: rho_sdk::Session,
         configured_window: Option<u64>,
     ) -> Self {

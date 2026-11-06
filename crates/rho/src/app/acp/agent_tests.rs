@@ -263,7 +263,7 @@ async fn prompt_waits_only_behind_a_cancelled_prompt() {
         ("cancelled prompt", true, true),
     ] {
         let live = vacant_session();
-        let _prompt = live.handle.start_prompt_for_tests();
+        let _prompt = live.handle.begin_prompt_scope_for_tests();
         if cancelled {
             live.handle.cancel();
         }
@@ -357,7 +357,7 @@ async fn prompt_queued_during_replacement_moves_to_the_successor() {
         .lock()
         .await
         .insert(session_id.clone(), Arc::clone(&previous));
-    let _prompt = previous.handle.start_prompt_for_tests();
+    let _prompt = previous.handle.begin_prompt_scope_for_tests();
     previous.handle.cancel();
     let held = previous.host.lock().await;
     let successor_held = replacement.host.lock().await;
@@ -785,7 +785,7 @@ async fn prompt_queued_before_close_ends_cancelled_without_a_turn() {
     let session_id = SessionId::new(id.as_str());
     let live = agent.live_session(&session_id).await.unwrap();
     // A cancelled turn still winding down holds the host.
-    let _prompt = live.handle.start_prompt_for_tests();
+    let _prompt = live.handle.begin_prompt_scope_for_tests();
     live.handle.cancel();
     let held = live.host.lock().await;
 
