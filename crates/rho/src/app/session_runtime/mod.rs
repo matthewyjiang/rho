@@ -43,6 +43,7 @@ use crate::{
 };
 
 mod agent;
+mod approval_policy;
 mod build;
 mod compact;
 mod credentials;
@@ -66,6 +67,7 @@ mod workflow;
 #[cfg(test)]
 pub(in crate::app) use agent::{bind_delegated_agent, loaded_agent_with, MODEL_OVERRIDE_METADATA};
 pub(crate) use agent::{loaded_agent, AgentTask};
+pub(crate) use approval_policy::ApprovalPolicy;
 pub(crate) use build::{
     build_session, session_config, ChildAgents, QuestionSupport, SessionBuild, UsageAttribution,
 };

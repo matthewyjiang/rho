@@ -4,21 +4,17 @@ use std::{
     sync::Arc,
 };
 
-use rho_sdk::{hooks::HookHostLabels, provider::ModelProvider, ApprovalSession, SessionOptions};
+use rho_sdk::{hooks::HookHostLabels, provider::ModelProvider, SessionOptions};
 
-use super::SessionPermission;
+use super::{ApprovalPolicy, SessionPermission};
 use crate::{
     added_dirs::AddedDirs,
     app::{
         agent_binding::BoundAgent,
         automation::ensure_headless_auto_classifier_model,
         headless_delegation::BackgroundWait,
-        interactive_runtime::startup::{
-            approval_channel_for, ApprovalChannel, ApprovalChannelOptions,
-        },
         session_assembly::{
-            assemble_session, ApprovalInputs, BuiltSession, SessionApproval, SessionAssembly,
-            SessionAssemblyOptions,
+            assemble_session, ApprovalInputs, BuiltSession, SessionAssembly, SessionAssemblyOptions,
         },
         tools_prompt::McpSamplingSupport,
     },
@@ -69,6 +65,8 @@ pub(crate) struct SessionBuild {
     pub(crate) prompt_suffix: Option<&'static str>,
     /// Whether an MCP server's browser login may wait for a person.
     pub(crate) mcp_authorization: McpAuthorizationMode,
+    /// Who answers the session's approval requests.
+    pub(crate) approvals: ApprovalPolicy,
 }
 
 /// Whose work a session's model usage is recorded as. A delegated child's
@@ -188,32 +186,20 @@ pub(crate) async fn build_session(
                 }
             }
             // Plan approval goes through a permission prompt, which every
-            // host answers, so leaving plan mode never depends on asking
-            // questions. Like the TUI, only Rho-runtime agents get it.
-            if !build.no_tools && agent.rho_capabilities().is_some() {
+            // host that answers approvals answers, so leaving plan mode never
+            // depends on asking questions. Like the TUI, only Rho-runtime
+            // agents get it; like `rho run`, an unattended session does not.
+            if !build.no_tools
+                && agent.rho_capabilities().is_some()
+                && build.approvals.offers_plan_exit()
+            {
                 tools.with_plan_exit_host(config, PlanExitHost::Permission)
             } else {
                 tools
             }
         },
         system_prompt_suffix: build.prompt_suffix,
-        approval: |inputs: ApprovalInputs| {
-            let ApprovalChannel {
-                handler, receiver, ..
-            } = approval_channel_for(
-                inputs.config.permission_mode,
-                ApprovalChannelOptions {
-                    config: inputs.config,
-                    workspace_path: inputs.workspace_root,
-                    usage_recording: inputs.usage_recording,
-                    session_writes: inputs.session_writes,
-                },
-            );
-            Ok(SessionApproval {
-                session: handler.map(ApprovalSession::from_shared),
-                receiver,
-            })
-        },
+        approval: |inputs: ApprovalInputs| Ok(build.approvals.wire(inputs)),
         session_options,
     })
     .await?;

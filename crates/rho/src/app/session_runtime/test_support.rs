@@ -10,8 +10,8 @@ use rho_sdk::{
 };
 
 use super::{
-    ChildAgents, Logouts, OpenedSession, QuestionSupport, SessionBuild, SessionPermission,
-    SessionRuntime, SessionStorage, UsageAttribution,
+    ApprovalPolicy, ChildAgents, Logouts, OpenedSession, QuestionSupport, SessionBuild,
+    SessionPermission, SessionRuntime, SessionStorage, UsageAttribution,
 };
 use crate::{
     agent::{
@@ -152,6 +152,7 @@ impl SessionRuntime {
                     hook_labels: Default::default(),
                     prompt_suffix: None,
                     mcp_authorization: McpAuthorizationMode::NonInteractive,
+                    approvals: ApprovalPolicy::Host,
                 },
                 built,
                 storage,

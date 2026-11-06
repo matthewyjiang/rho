@@ -39,9 +39,10 @@ use crate::{
         headless_delegation::BackgroundWait,
         session_commands::{CommandScope, PromptCommand},
         session_runtime::{
-            model_scoped_config, ChildAgents, CurrentModel, InsertedMessage, OpenedSession,
-            PromptScope, QuestionSupport, SessionBuild, SessionHandle, SessionRuntime,
-            SettingChangeError, TitleJob, Turn, TurnOutcome, UsageAttribution, WorkflowStart,
+            model_scoped_config, ApprovalPolicy, ChildAgents, CurrentModel, InsertedMessage,
+            OpenedSession, PromptScope, QuestionSupport, SessionBuild, SessionHandle,
+            SessionRuntime, SettingChangeError, TitleJob, Turn, TurnOutcome,
+            UsageAttribution, WorkflowStart,
         },
         workflow_cli::discover::StartCommand,
     },
@@ -488,6 +489,8 @@ fn session_build(startup: &AcpStartup, io: &super::client_io::ClientIo) -> Sessi
         // An ACP agent has no terminal for a person to finish an MCP login
         // in: its stdin is the protocol pipe.
         mcp_authorization: McpAuthorizationMode::NonInteractive,
+        // A person answers through the client's permission prompts.
+        approvals: ApprovalPolicy::Host,
     }
 }
 

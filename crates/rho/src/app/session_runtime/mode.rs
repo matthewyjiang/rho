@@ -4,16 +4,16 @@
 
 use std::path::PathBuf;
 
-use rho_sdk::{ApprovalSession, SessionOptions};
+use rho_sdk::SessionOptions;
 
 use super::{model_context_window, model_scoped_config, SessionRuntime, SettingChangeError};
 use crate::{
     app::{
         automation::ensure_headless_auto_classifier_model,
-        interactive_runtime::startup::{approval_channel_for, ApprovalChannelOptions},
         policy::AppPolicy,
         runtime_builder::{build_runtime_with_max_steps, RuntimeBuildOptions},
         sdk_config::WorkspaceOptions,
+        session_assembly::ApprovalInputs,
     },
     compaction::CompactionConfig,
     config::Config,
@@ -53,15 +53,12 @@ impl SessionRuntime {
             .writes
             .clone()
             .carried_across(self.permission.mode, mode);
-        let channel = approval_channel_for(
-            mode,
-            ApprovalChannelOptions {
-                config: config.clone(),
-                workspace_path: self.permission.workspace_root.clone(),
-                usage_recording: self.built.runtime.usage_recording(),
-                session_writes: writes.clone(),
-            },
-        );
+        let approval = self.build.approvals.wire(ApprovalInputs {
+            config: config.clone(),
+            workspace_root: self.permission.workspace_root.clone(),
+            usage_recording: self.built.runtime.usage_recording(),
+            session_writes: writes.clone(),
+        });
         // `exit_plan_mode` is offered only in plan mode; the rebuilt runtime
         // must see the tool list of the mode it serves.
         self.built.tools.set_plan_exit_registered(mode);
@@ -77,7 +74,7 @@ impl SessionRuntime {
                     tools: &self.built.tools,
                     workspace,
                     workspace_policy: AppPolicy::for_mode(mode, writes.clone()),
-                    approval_session: channel.handler.map(ApprovalSession::from_shared),
+                    approval_session: approval.session,
                     system_prompt: self.built.prompt.system.clone(),
                     reasoning: self.built.session.reasoning_level(),
                     service_tier: self.built.session.service_tier(),
@@ -118,7 +115,7 @@ impl SessionRuntime {
 
         let previous = std::mem::replace(&mut self.built.runtime, runtime);
         self.built.session = session;
-        self.built.approval_receiver = channel.receiver;
+        self.built.approval_receiver = approval.receiver;
         if let Some(advisor) = self.built.tools.advisor() {
             advisor.bind_session(self.built.session.clone());
         }
