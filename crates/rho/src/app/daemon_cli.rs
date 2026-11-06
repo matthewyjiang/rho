@@ -29,7 +29,7 @@ pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
     let rho_home = crate::paths::rho_dir()?;
     let paths = DaemonPaths::resolve(&rho_home, |name| std::env::var_os(name))?;
     match command.unwrap_or(DaemonCommand::Run) {
-        DaemonCommand::Run => run_foreground(&paths).await,
+        DaemonCommand::Run => run_foreground(&paths, &rho_home).await,
         DaemonCommand::Status { json } => status(&paths, json).await,
         DaemonCommand::Stop => stop(&paths).await,
     }
@@ -56,7 +56,7 @@ pub(super) fn runs_daemon(command: Option<&Command>) -> bool {
 const DAEMON_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[cfg(unix)]
-async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
+async fn run_foreground(paths: &DaemonPaths, rho_home: &std::path::Path) -> anyhow::Result<()> {
     paths.prepare_runtime_dir()?;
     // Read once: changing the filter or the sink needs a daemon restart.
     let filter = std::env::var("RHO_LOG")
@@ -101,6 +101,7 @@ async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
         paths.socket.clone(),
         bound.started_at(),
         shutdown.clone(),
+        rho_home,
     ));
     let on_signal = shutdown.clone();
     // The first signal asks for a graceful shutdown. Shutdown waits for every
