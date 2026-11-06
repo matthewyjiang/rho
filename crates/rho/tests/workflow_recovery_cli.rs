@@ -17,10 +17,11 @@ use tempfile::TempDir;
 const MODE_ENV: &str = "RHO_AUTOMATION_TEST_MODE";
 const COMMAND_ENV: &str = "RHO_AUTOMATION_TEST_COMMAND";
 /// The `process-then-delay` fixture holds its second model request for 30 s,
-/// and a `sleep 30` process holds a `process-then-reply` prompt as long. The
-/// first test, both of its earlier rows and every run included, measured
-/// 0.25-0.28 s over 5 local runs. Giving up before those 30 s end keeps a
-/// missing save a clear failure instead of a run that quietly completes.
+/// and a process that lives as long as the test's workspace holds a
+/// `process-then-reply` prompt. The continue test, every row and run
+/// included, measured 0.37-0.42 s over 5 local runs, and the reply test
+/// 0.12-0.14 s. Giving up well before 30 s keeps a missing save a clear
+/// failure instead of a run that quietly completes.
 const SAVE_DEADLINE: Duration = Duration::from_secs(25);
 /// The fixture's reply when no response is configured.
 const FIXTURE_REPLY: &str = "fixture response";
@@ -171,11 +172,17 @@ fn killed_agent_node_with_its_reply_saved_finishes_without_the_model() {
     let plan_id = plan(&root);
     // Turn one starts a process and turn two replies; the live process holds
     // the prompt after the reply is saved, so the run is killed there.
+    // The killed run leaves its process behind, so it ends with the
+    // workspace instead of outliving the test.
+    let holds_prompt = format!(
+        "while [ -d '{}' ]; do sleep 0.1; done",
+        root.path().display()
+    );
     let save = kill_after_save(
         &root,
         &plan_id,
         "process-then-reply",
-        "sleep 30",
+        &holds_prompt,
         FIXTURE_REPLY,
     );
 
