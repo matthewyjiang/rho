@@ -9,7 +9,7 @@ use crate::app::daemon_host::jobs::{JobId, JobRecord, JobState, TurnEnd};
 fn record(state: JobState) -> JobRecord {
     JobRecord {
         state,
-        ..JobRecord::new_thread(PathBuf::from("/work/project"), rho_sdk::SessionId::new())
+        ..JobRecord::new_session(PathBuf::from("/work/workspace"), rho_sdk::SessionId::new())
     }
 }
 

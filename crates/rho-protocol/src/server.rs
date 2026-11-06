@@ -13,11 +13,11 @@ use tokio::{
 
 use crate::{
     methods::{
-        Hello, JobsList, JobsListParams, JobsListResponse, Method, Status, Stop, ThreadCancel,
-        ThreadCancelParams, ThreadCancelResponse, ThreadCreate, ThreadCreateParams,
-        ThreadCreateResponse, ThreadPrompt, ThreadPromptParams, ThreadPromptResponse, ThreadSteer,
-        ThreadSteerParams, ThreadSteerResponse, DAEMON_STATUS, DAEMON_STOP, HELLO, JOBS_LIST,
-        THREAD_CANCEL, THREAD_CREATE, THREAD_PROMPT, THREAD_STEER,
+        Hello, JobsList, JobsListParams, JobsListResponse, Method, SessionCancel,
+        SessionCancelParams, SessionCancelResponse, SessionNew, SessionNewParams,
+        SessionNewResponse, SessionPrompt, SessionPromptParams, SessionPromptResponse,
+        SessionSteer, SessionSteerParams, SessionSteerResponse, Status, Stop, DAEMON_STATUS,
+        DAEMON_STOP, HELLO, JOBS_LIST, SESSION_CANCEL, SESSION_NEW, SESSION_PROMPT, SESSION_STEER,
     },
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
     MessageWriter, Request, RequestId, Response, RpcError, StatusParams, StopParams, StopResponse,
@@ -52,35 +52,34 @@ pub trait Service: Send + Sync {
     /// not cancel it.
     fn stop(&self) -> impl Future<Output = ()> + Send;
 
-    /// Handles `rho/thread/create`: open a thread's session and register its
-    /// job.
-    fn create_thread(
+    /// Handles `rho/session/new`: open a session and register its job.
+    fn new_session(
         &self,
-        params: ThreadCreateParams,
-    ) -> impl Future<Output = Result<ThreadCreateResponse, RpcError>> + Send;
+        params: SessionNewParams,
+    ) -> impl Future<Output = Result<SessionNewResponse, RpcError>> + Send;
 
-    /// Handles `rho/thread/prompt`: start a turn the service runs in a task
+    /// Handles `rho/session/prompt`: start a turn the service runs in a task
     /// of its own, resolving once the turn has saved its prompt (see
-    /// [`ThreadPromptResponse`]). The turn outlives the request and the
+    /// [`SessionPromptResponse`]). The turn outlives the request and the
     /// connection.
-    fn prompt_thread(
+    fn prompt_session(
         &self,
-        params: ThreadPromptParams,
-    ) -> impl Future<Output = Result<ThreadPromptResponse, RpcError>> + Send;
+        params: SessionPromptParams,
+    ) -> impl Future<Output = Result<SessionPromptResponse, RpcError>> + Send;
 
-    /// Handles `rho/thread/cancel`: ask the thread's turn in progress to
+    /// Handles `rho/session/cancel`: ask the session's turn in progress to
     /// stop, without waiting for it to end.
-    fn cancel_thread(
+    fn cancel_session(
         &self,
-        params: ThreadCancelParams,
-    ) -> impl Future<Output = Result<ThreadCancelResponse, RpcError>> + Send;
+        params: SessionCancelParams,
+    ) -> impl Future<Output = Result<SessionCancelResponse, RpcError>> + Send;
 
-    /// Handles `rho/thread/steer`: queue input for the running turn,
+    /// Handles `rho/session/steer`: queue input for the running turn,
     /// without waiting for the turn to apply it.
-    fn steer_thread(
+    fn steer_session(
         &self,
-        params: ThreadSteerParams,
-    ) -> impl Future<Output = Result<ThreadSteerResponse, RpcError>> + Send;
+        params: SessionSteerParams,
+    ) -> impl Future<Output = Result<SessionSteerResponse, RpcError>> + Send;
 
     /// Answers `rho/jobs/list`.
     fn list_jobs(&self) -> impl Future<Output = JobsListResponse> + Send;
@@ -277,10 +276,10 @@ enum Route {
 enum ServiceCall {
     Status,
     Stop,
-    CreateThread(ThreadCreateParams),
-    PromptThread(ThreadPromptParams),
-    CancelThread(ThreadCancelParams),
-    SteerThread(ThreadSteerParams),
+    NewSession(SessionNewParams),
+    PromptSession(SessionPromptParams),
+    CancelSession(SessionCancelParams),
+    SteerSession(SessionSteerParams),
     ListJobs,
 }
 
@@ -330,10 +329,10 @@ impl ServiceCall {
         match method {
             DAEMON_STATUS => decode_params::<Status>(params).map(|StatusParams {}| Self::Status),
             DAEMON_STOP => decode_params::<Stop>(params).map(|StopParams {}| Self::Stop),
-            THREAD_CREATE => decode_params::<ThreadCreate>(params).map(Self::CreateThread),
-            THREAD_PROMPT => decode_params::<ThreadPrompt>(params).map(Self::PromptThread),
-            THREAD_CANCEL => decode_params::<ThreadCancel>(params).map(Self::CancelThread),
-            THREAD_STEER => decode_params::<ThreadSteer>(params).map(Self::SteerThread),
+            SESSION_NEW => decode_params::<SessionNew>(params).map(Self::NewSession),
+            SESSION_PROMPT => decode_params::<SessionPrompt>(params).map(Self::PromptSession),
+            SESSION_CANCEL => decode_params::<SessionCancel>(params).map(Self::CancelSession),
+            SESSION_STEER => decode_params::<SessionSteer>(params).map(Self::SteerSession),
             JOBS_LIST => decode_params::<JobsList>(params).map(|JobsListParams {}| Self::ListJobs),
             method => Err(RpcError::new(
                 ErrorCode::MethodNotFound,
@@ -349,17 +348,17 @@ impl ServiceCall {
                 service.stop().await;
                 encode_result::<Stop>(&StopResponse {})
             }
-            Self::CreateThread(params) => {
-                encode_result::<ThreadCreate>(&service.create_thread(params).await?)
+            Self::NewSession(params) => {
+                encode_result::<SessionNew>(&service.new_session(params).await?)
             }
-            Self::PromptThread(params) => {
-                encode_result::<ThreadPrompt>(&service.prompt_thread(params).await?)
+            Self::PromptSession(params) => {
+                encode_result::<SessionPrompt>(&service.prompt_session(params).await?)
             }
-            Self::CancelThread(params) => {
-                encode_result::<ThreadCancel>(&service.cancel_thread(params).await?)
+            Self::CancelSession(params) => {
+                encode_result::<SessionCancel>(&service.cancel_session(params).await?)
             }
-            Self::SteerThread(params) => {
-                encode_result::<ThreadSteer>(&service.steer_thread(params).await?)
+            Self::SteerSession(params) => {
+                encode_result::<SessionSteer>(&service.steer_session(params).await?)
             }
             Self::ListJobs => encode_result::<JobsList>(&service.list_jobs().await),
         }

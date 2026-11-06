@@ -1,12 +1,12 @@
 //! Jobs: every unit of agent work the daemon knows, including the ones an
-//! earlier daemon ran. A thread is a job; subagent and workflow runs become
-//! jobs in a later protocol minor (#1658).
+//! earlier daemon ran. A session's turns are a job; subagent and workflow
+//! runs become jobs in a later protocol minor (#1658).
 
 use std::{fmt, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::Method;
+use super::{Method, SessionId};
 
 /// List every job the daemon knows.
 pub const JOBS_LIST: &str = "rho/jobs/list";
@@ -46,8 +46,8 @@ impl fmt::Display for JobId {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum JobKind {
-    /// A conversation the daemon hosts; see [`super::THREAD_CREATE`].
-    Thread,
+    /// The turns of a session the daemon hosts; see [`super::SESSION_NEW`].
+    Session,
     /// A kind a newer daemon sends that this crate does not know. Reading it
     /// leniently keeps the rest of the job list usable; daemons never send
     /// it.
@@ -55,7 +55,8 @@ pub enum JobKind {
     Unknown,
 }
 
-/// Where a job is. A thread's state is that of its current or last turn.
+/// Where a job is. A session job's state is that of its current or last
+/// turn.
 /// Protocol minors may add states.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,7 +67,7 @@ pub enum JobState {
     Running,
     /// The turn waits for an approval, a plan approval, or a question to be
     /// answered. Nothing is auto-denied because no client is attached; until
-    /// clients can answer (#1660), only [`super::THREAD_CANCEL`] ends the
+    /// clients can answer (#1660), only [`super::SESSION_CANCEL`] ends the
     /// wait.
     WaitingForInput,
     Completed,
@@ -89,11 +90,11 @@ pub struct JobSummary {
     pub kind: JobKind,
     pub state: JobState,
     /// The workspace the job runs in.
-    pub project_root: PathBuf,
+    pub workspace: PathBuf,
     /// The job that started this one; `None` for a job a client started.
     pub parent: Option<JobId>,
     /// The session the job writes.
-    pub session_id: String,
+    pub session: SessionId,
     /// Unix time, in seconds, when the job was created.
     pub created_at: u64,
     /// Unix time, in seconds, of the job's last state change.

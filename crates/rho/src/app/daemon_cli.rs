@@ -53,9 +53,9 @@ pub(super) fn runs_daemon(command: Option<&Command>) -> bool {
 /// acknowledges the request.
 //
 // Tripwire. Measured with the debug binary from `rho daemon stop` to process
-// exit with no threads, 15 runs each: median 20 ms idle, max 44 ms with all
+// exit with no sessions, 15 runs each: median 20 ms idle, max 44 ms with all
 // 24 cores saturated. A daemon with turns under way also waits up to
-// `DRAIN_TIMEOUT` (4 s, in `daemon_host::threads`) for them to save, which
+// `DRAIN_TIMEOUT` (4 s, in `daemon_host::sessions`) for them to save, which
 // this covers: that wait runs from the stop request. Draining that lets turns
 // finish (#1661) needs its own budget.
 #[cfg(unix)]
@@ -160,14 +160,14 @@ async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
     );
     // Still holding the lock, so no other daemon starts, and `rho daemon
     // stop` keeps waiting, until the turns are saved and recorded.
-    host.stop_threads(stop_requested).await;
+    host.stop_sessions(stop_requested).await;
     signal_task.abort();
     Ok(served.release()?)
 }
 
-/// Opens the credential store every thread's provider reads, once, as the
+/// Opens the credential store every session's provider reads, once, as the
 /// daemon starts: like every rho process, the daemon opens it at startup.
-/// A config that does not load is logged, and threads then fail to open
+/// A config that does not load is logged, and sessions then fail to open
 /// with the same error.
 #[cfg(unix)]
 fn open_credential_store() {

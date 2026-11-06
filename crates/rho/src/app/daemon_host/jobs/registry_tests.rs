@@ -39,7 +39,7 @@ fn startup_interrupts_the_turns_a_dead_daemon_left_open() {
     for (saved, after) in cases {
         let record = JobRecord {
             state: saved,
-            ..JobRecord::new_thread(PathBuf::from("/work"), rho_sdk::SessionId::new())
+            ..JobRecord::new_session(PathBuf::from("/work"), rho_sdk::SessionId::new())
         };
         expected.push((record.id.clone(), after));
         store.write(&record).unwrap();
@@ -54,14 +54,14 @@ fn startup_interrupts_the_turns_a_dead_daemon_left_open() {
 }
 
 // Covers: a turn starts only on a job with none under way, so a second
-// prompt to a running or waiting thread is refused as busy and leaves it as
+// prompt to a running or waiting session is refused as busy and leaves it as
 // it was, and an unknown job is reported as unknown.
 // Owner: daemon job registry.
 #[test]
 fn a_turn_starts_only_when_none_is_in_progress() {
     let home = TempDir::new().unwrap();
     let registry = JobRegistry::open(JobStore::open(home.path()).unwrap());
-    let job = JobRecord::new_thread(PathBuf::from("/work"), rho_sdk::SessionId::new());
+    let job = JobRecord::new_session(PathBuf::from("/work"), rho_sdk::SessionId::new());
     let id = job.id.clone();
     registry.register(job).unwrap();
 

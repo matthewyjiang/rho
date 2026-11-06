@@ -1,6 +1,6 @@
 //! A job's state and the events that move it.
 //!
-//! A thread job's state is the state of its current or last turn: `idle`
+//! A session job's state is the state of its current or last turn: `idle`
 //! before its first prompt, `running` while a turn runs,
 //! `waiting_for_input` while that turn waits on an approval, a plan
 //! approval, or a question, and then how the turn ended. A new prompt
@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Where a job is in its life. See the module docs for what each state
-/// means for a thread.
+/// means for a session job.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(in crate::app::daemon_host) enum JobState {

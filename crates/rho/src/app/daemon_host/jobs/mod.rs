@@ -1,8 +1,9 @@
 //! The daemon's job registry: every unit of agent work the daemon knows,
 //! with its state, where it runs, and the session it writes.
 //!
-//! A job today is a thread (see `threads/`). Subagent runs and workflow runs
-//! join as jobs with their own kinds when the daemon hosts them (#1658).
+//! A job today is the turns of a session the daemon hosts (see
+//! `sessions/`). Subagent runs and workflow runs join as jobs with their own
+//! kinds when the daemon hosts them (#1658).
 //! A job's state moves only through the events in `state.rs`, and every
 //! transition rewrites the job's durable record (see `store.rs`), so a
 //! daemon that restarts lists the jobs its predecessor ran and marks the
@@ -76,8 +77,8 @@ impl From<JobId> for String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum JobKind {
-    /// A conversation the daemon hosts: one session, prompted turn by turn.
-    Thread,
+    /// The turns of a session the daemon hosts, prompted one by one.
+    Session,
 }
 
 /// What the daemon knows about one job, as its record file holds it.
@@ -87,8 +88,8 @@ pub(super) struct JobRecord {
     pub(super) kind: JobKind,
     pub(super) state: JobState,
     /// The workspace the job runs in, canonicalized.
-    pub(super) project_root: PathBuf,
-    /// The job that started this one, such as a subagent's thread; `None`
+    pub(super) workspace: PathBuf,
+    /// The job that started this one, such as a subagent run's parent; `None`
     /// for a job a client started.
     pub(super) parent: Option<JobId>,
     /// The session the job writes.
@@ -100,15 +101,15 @@ pub(super) struct JobRecord {
 }
 
 impl JobRecord {
-    /// A new thread job on `session_id` in `project_root`, before its
-    /// first turn.
-    pub(super) fn new_thread(project_root: PathBuf, session_id: rho_sdk::SessionId) -> Self {
+    /// A new job for the turns of session `session_id` in `workspace`,
+    /// before its first turn.
+    pub(super) fn new_session(workspace: PathBuf, session_id: rho_sdk::SessionId) -> Self {
         let now = unix_now();
         Self {
             id: JobId::generate(),
-            kind: JobKind::Thread,
+            kind: JobKind::Session,
             state: JobState::Idle,
-            project_root,
+            workspace,
             parent: None,
             session_id,
             created_at: now,

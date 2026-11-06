@@ -5,7 +5,7 @@
 //! with it: `waiting_for_input` while an approval, plan approval, or question
 //! is open, `running` otherwise. Nothing answers those requests yet: no
 //! client can attach to a turn until #1657 and none answers until #1660, so
-//! a turn that asks parks until `rho/thread/cancel` withdraws its requests.
+//! a turn that asks parks until `rho/session/cancel` withdraws its requests.
 //! A request is never denied because no client is attached. The events
 //! themselves are dropped until #1657 buffers them for clients.
 
@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::{
     super::jobs::{JobEvent, JobId, JobRegistry, TurnEnd},
-    LiveThread,
+    LiveSession,
 };
 use crate::{
     app::session_runtime::{
@@ -53,11 +53,10 @@ impl PromptStart {
     }
 }
 
-/// One turn of a thread whose job already recorded the turn's start.
+/// One turn of a session whose job already recorded the turn's start.
 pub(super) struct TurnTask {
-    pub(super) job: JobId,
     pub(super) jobs: Arc<JobRegistry>,
-    pub(super) thread: Arc<LiveThread>,
+    pub(super) session: Arc<LiveSession>,
     /// Cancelled once the daemon stops: a turn cancelled then was
     /// interrupted, not cancelled by a client.
     pub(super) stopping: CancellationToken,
@@ -78,22 +77,21 @@ impl TurnTask {
 
     async fn run(self, text: String, started: oneshot::Sender<PromptStart>) {
         let Self {
-            job,
             jobs,
-            thread,
+            session,
             stopping,
             cancel,
         } = self;
         // Locked for the whole turn and released only after the turn's end
         // is recorded, so the daemon's stop, which waits for the lock, finds
-        // every turn it waited for recorded. Free once the thread's last
+        // every turn it waited for recorded. Free once the session's last
         // turn recorded its end, apart from the moment it takes to release.
-        let mut runtime = thread.runtime.lock().await;
+        let mut runtime = session.runtime.lock().await;
         // Declared after the lock, so even a panic records the end (see
         // `DaemonView`'s drop) before the lock is released.
-        let mut view = DaemonView::new(job, jobs, started);
+        let mut view = DaemonView::new(session.job.clone(), jobs, started);
         let ended = match &mut *runtime {
-            Some(runtime) => run_turn(runtime, &mut view, text, &thread.config, &cancel).await,
+            Some(runtime) => run_turn(runtime, &mut view, text, &session.config, &cancel).await,
             // Only the daemon's stop takes the runtime, after its last turn.
             None => Ok(TurnOutcome::Cancelled),
         };
@@ -119,7 +117,7 @@ async fn run_turn(
     // A cancel sent before the prompt began only tripped `cancel`: the turn
     // ends here, before it saves the prompt or calls the model, and dropping
     // `scope` ends the prompt. A cancel from here on reaches the prompt
-    // through the thread's handle.
+    // through the session's handle.
     if cancel.is_cancelled() {
         return Ok(TurnOutcome::Cancelled);
     }
@@ -137,7 +135,7 @@ async fn run_turn(
 /// when its task stops without ending it.
 const UNEXPECTED_STOP: &str = "the turn stopped unexpectedly; see the daemon log";
 
-/// Shows a thread's turn to its job: the job's state follows the requests
+/// Shows a session's turn to its job: the job's state follows the requests
 /// the turn has open, and the request that sent the prompt learns how the
 /// turn began.
 ///

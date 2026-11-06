@@ -31,7 +31,7 @@ const RECORD_SUFFIX: &str = ".json";
 impl JobStore {
     /// The store in the daemon's `state_dir`, its directory created 0700,
     /// or an existing one closed to group and others: records name the
-    /// user's projects and sessions.
+    /// user's workspaces and sessions.
     pub(in crate::app::daemon_host) fn open(state_dir: &Path) -> io::Result<Self> {
         let dir = state_dir.join("jobs");
         fs::DirBuilder::new()

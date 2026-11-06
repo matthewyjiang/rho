@@ -1,12 +1,13 @@
-//! The threads the daemon hosts: one session each, prompted turn by turn,
-//! whose turns run in the daemon and outlive the client that sent them.
+//! The sessions the daemon hosts, prompted turn by turn, whose turns run in
+//! the daemon and outlive the client that sent them.
 //!
-//! A live thread owns its [`SessionRuntime`] and the [`SessionHandle`] that
-//! cancels and steers it without waiting for the turn. A thread loaded from
-//! an earlier daemon's record has no runtime here: it is listed, but
-//! prompting it is refused until reopening lands (#1661).
+//! A loaded session owns its [`SessionRuntime`] and the [`SessionHandle`]
+//! that cancels and steers it without waiting for the turn, and its turns
+//! are one job in the registry. Requests name the session by its session
+//! id. A session this daemon has not loaded, such as one an earlier daemon
+//! ran or one the TUI saved, is refused until reopening lands (#1661).
 //!
-//! Once the daemon stops, it refuses new threads and prompts, cancels the
+//! Once the daemon stops, it refuses new sessions and prompts, cancels the
 //! turns under way, waits for them to save, and records them interrupted.
 
 use std::{
@@ -16,22 +17,23 @@ use std::{
 };
 
 use rho_protocol::{
-    ErrorCode, RpcError, ThreadCancelParams, ThreadCancelResponse, ThreadCreateParams,
-    ThreadCreateResponse, ThreadPromptParams, ThreadPromptResponse, ThreadSteerParams,
-    ThreadSteerResponse,
+    ErrorCode, RpcError, SessionCancelParams, SessionCancelResponse, SessionNewParams,
+    SessionNewResponse, SessionPromptParams, SessionPromptResponse, SessionSteerParams,
+    SessionSteerResponse,
 };
-use rho_sdk::{CancellationToken, UserInput};
+use rho_sdk::{CancellationToken, SessionId, UserInput};
 
 use super::jobs::{JobId, JobRecord, JobRegistry, StartTurnError};
 use crate::{
     app::session_runtime::{Closing, Logouts, SessionHandle, SessionRuntime, SteerError},
     config::Config,
+    session::Session,
 };
 
 mod open;
 mod turn;
 
-use open::{open_thread, OpenedThread, ThreadWorkspace};
+use open::{open_session, OpenedSession, Workspace};
 use turn::{PromptStart, TurnTask};
 
 /// How long the daemon's stop waits for its turns to save once it was
@@ -44,33 +46,37 @@ use turn::{PromptStart, TurnTask};
 // the daemon go. Draining that waits for turns to finish is #1661's to size.
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(4);
 
-/// Every thread the daemon runs, and the job registry that records them.
-pub(super) struct Threads {
+/// Every session the daemon has loaded, and the job registry that records
+/// their turns.
+pub(super) struct Sessions {
     jobs: Arc<JobRegistry>,
-    live: Mutex<HashMap<JobId, Arc<LiveThread>>>,
-    /// The daemon's logouts, which every thread's credentials follow.
+    live: Mutex<HashMap<SessionId, Arc<LiveSession>>>,
+    /// The daemon's logouts, which every session's credentials follow.
     logouts: Logouts,
     /// Cancelled once the daemon stops.
     stopping: CancellationToken,
 }
 
-/// A thread this daemon opened.
-struct LiveThread {
+/// A session this daemon loaded.
+struct LiveSession {
+    /// The job that records the session's turns.
+    job: JobId,
     /// Held by the turn under way; taken when the daemon stops.
     runtime: tokio::sync::Mutex<Option<SessionRuntime>>,
     handle: SessionHandle,
-    /// The config the thread was opened with, which each turn reads.
+    /// The config the session was opened with, which each turn reads.
     config: Config,
-    /// The cancel of the thread's current or last turn. A prompt replaces it
-    /// as its turn starts, and a cancel trips it and the thread's handle,
-    /// both under this lock, so a cancel never reaches a turn it did not see
-    /// start.
+    /// The cancel of the session's current or last turn. A prompt replaces
+    /// it as its turn starts, and a cancel trips it and the session's
+    /// handle, both under this lock, so a cancel never reaches a turn it did
+    /// not see start.
     turn_cancel: Mutex<CancellationToken>,
 }
 
-impl LiveThread {
-    fn new(runtime: SessionRuntime, config: Config) -> Self {
+impl LiveSession {
+    fn new(job: JobId, runtime: SessionRuntime, config: Config) -> Self {
         Self {
+            job,
             handle: runtime.handle(),
             runtime: tokio::sync::Mutex::new(Some(runtime)),
             config,
@@ -87,8 +93,8 @@ impl LiveThread {
     }
 }
 
-impl Threads {
-    /// The threads of a daemon whose stop cancels `stopping`.
+impl Sessions {
+    /// The sessions of a daemon whose stop cancels `stopping`.
     pub(super) fn new(jobs: Arc<JobRegistry>, stopping: CancellationToken) -> Self {
         Self {
             jobs,
@@ -98,28 +104,28 @@ impl Threads {
         }
     }
 
-    /// Opens a new thread on a new session in `cwd`.
-    pub(super) async fn create(
+    /// Opens a new session in `cwd` and registers the job of its turns.
+    pub(super) async fn open(
         &self,
-        params: ThreadCreateParams,
-    ) -> Result<ThreadCreateResponse, RpcError> {
+        params: SessionNewParams,
+    ) -> Result<SessionNewResponse, RpcError> {
         self.refuse_when_stopping()?;
-        let workspace = ThreadWorkspace::parse(&params.cwd)?;
-        let OpenedThread { runtime, config } = open_thread(&workspace, &self.logouts)
+        let workspace = Workspace::parse(&params.cwd)?;
+        let OpenedSession { runtime, config } = open_session(&workspace, &self.logouts)
             .await
             .map_err(|error| {
                 RpcError::new(
-                    ErrorCode::ThreadOpenFailed,
-                    format!("could not open thread: {error:#}"),
+                    ErrorCode::SessionOpenFailed,
+                    format!("could not open session: {error:#}"),
                 )
             })?;
-        let session_id = runtime.session_id().clone();
+        let session = runtime.session_id().clone();
         let record =
-            JobRecord::new_thread(runtime.workspace_root().to_path_buf(), session_id.clone());
+            JobRecord::new_session(runtime.workspace_root().to_path_buf(), session.clone());
         let job = record.id.clone();
         // Checked, recorded, and added under the lock the stop drains the
-        // threads under, so a thread opened while the daemon stops is closed
-        // here, neither left running nor recorded.
+        // sessions under, so a session opened while the daemon stops is
+        // closed here, neither left running nor recorded.
         let refused = {
             let mut live = self.live();
             if self.stopping.is_cancelled() {
@@ -127,11 +133,12 @@ impl Threads {
             } else if let Err(error) = self.jobs.register(record) {
                 let error = RpcError::new(
                     ErrorCode::InternalError,
-                    format!("could not record thread: {error}"),
+                    format!("could not record session: {error}"),
                 );
                 Some((runtime, error))
             } else {
-                live.insert(job.clone(), Arc::new(LiveThread::new(runtime, config)));
+                let loaded = LiveSession::new(job.clone(), runtime, config);
+                live.insert(session.clone(), Arc::new(loaded));
                 None
             }
         };
@@ -139,32 +146,36 @@ impl Threads {
             runtime.shutdown().await;
             return Err(error);
         }
-        tracing::info!(%job, session = %session_id, "opened thread");
-        Ok(ThreadCreateResponse {
-            thread: (&job).into(),
-            session_id: session_id.into_string(),
+        tracing::info!(%session, %job, "opened session");
+        Ok(SessionNewResponse {
+            session: rho_protocol::SessionId::new(session.into_string()),
         })
     }
 
-    /// Starts a turn of `text` on a thread and returns once the turn saved
+    /// Starts a turn of `text` on a session and returns once the turn saved
     /// its prompt. The turn runs in a daemon task from then on.
     pub(super) async fn prompt(
         &self,
-        params: ThreadPromptParams,
-    ) -> Result<ThreadPromptResponse, RpcError> {
+        params: SessionPromptParams,
+    ) -> Result<SessionPromptResponse, RpcError> {
         self.refuse_when_stopping()?;
-        let (job, thread) = self.live_thread(&params.thread)?;
+        let session = self.live_session(&params.session).await?;
         let cancel = {
-            let mut turn_cancel = thread.turn_cancel();
-            match self.jobs.start_turn(&job) {
+            let mut turn_cancel = session.turn_cancel();
+            match self.jobs.start_turn(&session.job) {
                 Ok(()) => {}
                 Err(StartTurnError::Busy) => {
                     return Err(RpcError::new(
-                        ErrorCode::ThreadBusy,
-                        "thread already has a turn in progress",
+                        ErrorCode::SessionBusy,
+                        "session already has a turn in progress",
                     ))
                 }
-                Err(StartTurnError::Unknown(_)) => return Err(not_found()),
+                Err(StartTurnError::Unknown(_)) => {
+                    return Err(RpcError::new(
+                        ErrorCode::InternalError,
+                        format!("session's job {} is not recorded", session.job),
+                    ))
+                }
             }
             *turn_cancel = CancellationToken::new();
             turn_cancel.clone()
@@ -173,9 +184,8 @@ impl Threads {
         // end apart from this request: the transport joins every request it
         // read, but this one stops waiting once the daemon stops.
         let start = TurnTask {
-            job,
             jobs: Arc::clone(&self.jobs),
-            thread,
+            session,
             stopping: self.stopping.clone(),
             cancel,
         }
@@ -186,7 +196,7 @@ impl Threads {
         tokio::select! {
             biased;
             start = start => match start {
-                Ok(PromptStart::Saved) => Ok(ThreadPromptResponse {}),
+                Ok(PromptStart::Saved) => Ok(SessionPromptResponse {}),
                 Ok(PromptStart::Cancelled) => Err(RpcError::new(
                     ErrorCode::TurnCancelled,
                     "the turn was cancelled before it started",
@@ -200,56 +210,59 @@ impl Threads {
         }
     }
 
-    /// Cancels a thread's turn, if one is under way, even one that has not
+    /// Cancels a session's turn, if one is under way, even one that has not
     /// begun its prompt yet.
-    pub(super) fn cancel(
+    pub(super) async fn cancel(
         &self,
-        params: ThreadCancelParams,
-    ) -> Result<ThreadCancelResponse, RpcError> {
-        let (_, thread) = self.live_thread(&params.thread)?;
+        params: SessionCancelParams,
+    ) -> Result<SessionCancelResponse, RpcError> {
+        let session = self.live_session(&params.session).await?;
         // Both under the `turn_cancel` lock, which a prompt takes to start
         // its turn, so the handle's cancel cannot reach a turn started after
         // this cancel. Lock order: `turn_cancel`, then the prompt gate's
         // slot inside `handle.cancel()`; nothing takes them the other way.
-        let turn_cancel = thread.turn_cancel();
+        let turn_cancel = session.turn_cancel();
         turn_cancel.cancel();
-        thread.handle.cancel();
+        session.handle.cancel();
         drop(turn_cancel);
-        Ok(ThreadCancelResponse {})
+        Ok(SessionCancelResponse {})
     }
 
     /// Stages `text` for the running turn's next model request. The receipt
     /// is dropped: the turn reports what it applied with its events.
-    pub(super) fn steer(&self, params: ThreadSteerParams) -> Result<ThreadSteerResponse, RpcError> {
-        let (_, thread) = self.live_thread(&params.thread)?;
-        match thread.handle.steer(UserInput::text(params.text)) {
-            Ok(_receipt) => Ok(ThreadSteerResponse {}),
+    pub(super) async fn steer(
+        &self,
+        params: SessionSteerParams,
+    ) -> Result<SessionSteerResponse, RpcError> {
+        let session = self.live_session(&params.session).await?;
+        match session.handle.steer(UserInput::text(params.text)) {
+            Ok(_receipt) => Ok(SessionSteerResponse {}),
             Err(SteerError::NotRunning) => Err(RpcError::new(
-                ErrorCode::ThreadNotRunning,
-                "thread has no running turn to steer",
+                ErrorCode::TurnNotRunning,
+                "session has no running turn to steer",
             )),
             Err(SteerError::Refused(error)) => Err(RpcError::new(
                 ErrorCode::SteerRefused,
-                format!("could not steer thread: {error}"),
+                format!("could not steer session: {error}"),
             )),
         }
     }
 
-    /// Stops every thread for the daemon's exit. Call once `stopping` is
-    /// cancelled: no thread opens or turn starts after that. Cancels each
+    /// Stops every session for the daemon's exit. Call once `stopping` is
+    /// cancelled: no session opens or turn starts after that. Cancels each
     /// turn, waits until [`DRAIN_TIMEOUT`] after `stop_requested` for the
-    /// turns to save and the sessions to tear down, and records every job
+    /// turns to save and the runtimes to tear down, and records every job
     /// still under way as interrupted.
     pub(super) async fn stop(&self, stop_requested: tokio::time::Instant) {
-        let threads: Vec<_> = self.live().drain().map(|(_, thread)| thread).collect();
-        for thread in &threads {
+        let sessions: Vec<_> = self.live().drain().map(|(_, session)| session).collect();
+        for session in &sessions {
             // The turn stops as one its client lost, so the session keeps
             // what a later daemon resumes (#1661).
-            thread.handle.close(Closing::Disconnected);
+            session.handle.close(Closing::Disconnected);
         }
-        let teardowns = threads.iter().map(|thread| async {
-            // Free once the thread's turn saved and recorded its end.
-            let runtime = thread.runtime.lock().await.take();
+        let teardowns = sessions.iter().map(|session| async {
+            // Free once the session's turn saved and recorded its end.
+            let runtime = session.runtime.lock().await.take();
             if let Some(runtime) = runtime {
                 runtime.shutdown().await;
             }
@@ -268,19 +281,34 @@ impl Threads {
         self.jobs.interrupt_unfinished();
     }
 
-    /// The live thread `id` names. A thread an earlier daemon ran is known
-    /// but not loaded.
-    fn live_thread(&self, id: &rho_protocol::JobId) -> Result<(JobId, Arc<LiveThread>), RpcError> {
-        let job = JobId::parse(id.as_str()).map_err(|_| not_found())?;
-        if let Some(thread) = self.live().get(&job) {
-            return Ok((job, Arc::clone(thread)));
+    /// The loaded session `id` names. A session that is not loaded is
+    /// `SessionNotLoaded` when the session store has it saved, in any
+    /// workspace, and `SessionNotFound` otherwise.
+    async fn live_session(
+        &self,
+        id: &rho_protocol::SessionId,
+    ) -> Result<Arc<LiveSession>, RpcError> {
+        let id = SessionId::from_string(id.as_str()).map_err(|_| not_found())?;
+        // The guard drops with this statement, before anything awaits.
+        let live = self.live().get(&id).cloned();
+        if let Some(session) = live {
+            return Ok(session);
         }
-        match self.jobs.get(&job) {
-            Some(_) => Err(RpcError::new(
-                ErrorCode::ThreadNotLoaded,
-                "thread is not loaded in this daemon",
+        // A blocking scan of the session index, on the refusal path only.
+        let saved = tokio::task::spawn_blocking(move || Session::exists_anywhere(id.as_str()))
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(|saved| saved);
+        match saved {
+            Ok(true) => Err(RpcError::new(
+                ErrorCode::SessionNotLoaded,
+                "session is not loaded in this daemon",
             )),
-            None => Err(not_found()),
+            Ok(false) => Err(not_found()),
+            Err(error) => Err(RpcError::new(
+                ErrorCode::InternalError,
+                format!("could not look up session: {error:#}"),
+            )),
         }
     }
 
@@ -292,7 +320,7 @@ impl Threads {
         }
     }
 
-    fn live(&self) -> MutexGuard<'_, HashMap<JobId, Arc<LiveThread>>> {
+    fn live(&self) -> MutexGuard<'_, HashMap<SessionId, Arc<LiveSession>>> {
         // The map is only inserted into and drained, so a panic cannot leave
         // it half-changed.
         self.live.lock().unwrap_or_else(PoisonError::into_inner)
@@ -300,7 +328,7 @@ impl Threads {
 }
 
 fn not_found() -> RpcError {
-    RpcError::new(ErrorCode::ThreadNotFound, "no such thread")
+    RpcError::new(ErrorCode::SessionNotFound, "no such session")
 }
 
 fn stopping() -> RpcError {

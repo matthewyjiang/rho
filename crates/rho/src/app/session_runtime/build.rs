@@ -130,7 +130,7 @@ pub(crate) enum SessionRole {
     Interactive,
     /// An ACP client's session, such as Zed's or T3 Code's.
     Acp,
-    /// A thread the rho daemon hosts, which its clients prompt.
+    /// A session the rho daemon hosts, which its clients prompt.
     Daemon,
     /// `rho run`'s session.
     Run,

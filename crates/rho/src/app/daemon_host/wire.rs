@@ -14,7 +14,7 @@ impl From<&JobId> for wire::JobId {
 impl From<JobKind> for wire::JobKind {
     fn from(kind: JobKind) -> Self {
         match kind {
-            JobKind::Thread => Self::Thread,
+            JobKind::Session => Self::Session,
         }
     }
 }
@@ -39,7 +39,7 @@ impl From<JobRecord> for wire::JobSummary {
             id,
             kind,
             state,
-            project_root,
+            workspace,
             parent,
             session_id,
             created_at,
@@ -49,9 +49,9 @@ impl From<JobRecord> for wire::JobSummary {
             id: (&id).into(),
             kind: kind.into(),
             state: (&state).into(),
-            project_root,
+            workspace,
             parent: parent.as_ref().map(Into::into),
-            session_id: session_id.into_string(),
+            session: wire::SessionId::new(session_id.into_string()),
             created_at,
             updated_at,
             error: match state {

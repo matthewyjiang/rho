@@ -33,7 +33,7 @@ fn all_events() -> [JobEvent; 7] {
 // Covers: every (state, event) pair: a prompt starts a turn from idle or
 // any ended state, a running turn opens and settles input, and ends, with
 // how it ended, from either; everything else is refused with the pair
-// named, including a second prompt on a running thread, a turn ending
+// named, including a second prompt on a running session, a turn ending
 // twice, and a turn ending before it started.
 // Owner: daemon job state machine.
 #[test]

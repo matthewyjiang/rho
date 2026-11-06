@@ -452,7 +452,7 @@ pub(super) struct SettledConfig {
 
 /// Settles the config a session of `agent` runs with. Every Rho launch
 /// settles its bound agent here: the CLI, ACP, subagents, and daemon
-/// threads.
+/// sessions.
 ///
 /// The agent's own config, which may pin a model and reasoning, replaces
 /// `config` (kept for an agent on another runtime); that model's

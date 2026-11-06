@@ -13,7 +13,7 @@ use crate::{
     app::{
         daemon_host::{
             jobs::{JobId, JobRecord, JobRegistry, JobState, JobStore, TurnEnd},
-            threads::LiveThread,
+            sessions::LiveSession,
         },
         session_runtime::{
             unattended_runtime_on, ApprovalId, HangUntilCancel, InsertedMessage, PlanApprovalId,
@@ -95,7 +95,7 @@ fn inserted() -> SessionEvent {
 
 /// A job in `jobs` whose turn has started.
 fn started_job(jobs: &JobRegistry) -> JobId {
-    let record = JobRecord::new_thread(PathBuf::from("/work"), rho_sdk::SessionId::new());
+    let record = JobRecord::new_session(PathBuf::from("/work"), rho_sdk::SessionId::new());
     let job = record.id.clone();
     jobs.register(record).unwrap();
     jobs.start_turn(&job).unwrap();
@@ -131,12 +131,12 @@ struct EndCase {
     start: Option<PromptStart>,
 }
 
-// Covers: a thread's job is waiting_for_input exactly while some approval,
+// Covers: a session's job is waiting_for_input exactly while some approval,
 // plan approval, or question of its turn is open, whichever kind and in
 // whatever order they open and close, including across the model turns a
 // plan handoff splits a turn into, and running otherwise; and the prompt
 // request is answered once the turn saved its message, not before.
-// Owner: daemon thread turn view.
+// Owner: daemon session turn view.
 #[tokio::test]
 async fn the_job_waits_for_input_while_any_request_is_open() {
     let saved = || Some(PromptStart::Saved);
@@ -273,7 +273,7 @@ impl Release {
 // saving leaves the request to the daemon's stop; a view dropped without an
 // end, as by a panicking turn task, records the turn failed and tells a
 // request still waiting so.
-// Owner: daemon thread turn view.
+// Owner: daemon session turn view.
 #[tokio::test]
 async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
     let failed = || TurnEnd::Failed("provider refused the request".into());
@@ -357,7 +357,7 @@ async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
 // cancelled before it saves the prompt or calls the model (whose provider
 // would wait for a cancel), so the prompt request learns it was cancelled
 // and the session holds no message.
-// Owner: daemon thread turn task.
+// Owner: daemon session turn task.
 #[tokio::test]
 async fn a_cancel_before_the_prompt_begins_saves_nothing() {
     let root = TempDir::new().unwrap();
@@ -376,16 +376,15 @@ async fn a_cancel_before_the_prompt_begins_saves_nothing() {
         provider,
     )
     .await;
-    let thread = Arc::new(LiveThread::new(runtime, config));
     let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
     let job = started_job(&jobs);
+    let session = Arc::new(LiveSession::new(job.clone(), runtime, config));
     let cancel = rho_sdk::CancellationToken::new();
     cancel.cancel();
 
     let start = TurnTask {
-        job: job.clone(),
         jobs: Arc::clone(&jobs),
-        thread: Arc::clone(&thread),
+        session: Arc::clone(&session),
         stopping: rho_sdk::CancellationToken::new(),
         cancel,
     }
@@ -395,7 +394,7 @@ async fn a_cancel_before_the_prompt_begins_saves_nothing() {
         .expect("the cancelled turn answers")
         .ok();
     // Released once the turn recorded its end.
-    let messages = thread
+    let messages = session
         .runtime
         .lock()
         .await

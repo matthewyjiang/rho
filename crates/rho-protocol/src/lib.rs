@@ -26,8 +26,9 @@
 //! # Methods
 //!
 //! [`methods`] lists every method with its params and result types. A
-//! thread's turn runs in the daemon and outlives the connection that started
-//! it; a client that reconnects follows it through [`methods::JOBS_LIST`].
+//! session's turn runs in the daemon and outlives the connection that
+//! started it; a client that reconnects follows it through
+//! [`methods::JOBS_LIST`].
 //!
 //! # Versioning
 //!
@@ -50,9 +51,9 @@ pub use jsonrpc::{
 };
 pub use methods::{
     ClientInfo, DaemonInfo, DaemonStatus, HelloParams, HelloResponse, JobId, JobKind, JobState,
-    JobSummary, JobsListParams, JobsListResponse, StatusParams, StopParams, StopResponse,
-    ThreadCancelParams, ThreadCancelResponse, ThreadCreateParams, ThreadCreateResponse,
-    ThreadPromptParams, ThreadPromptResponse, ThreadSteerParams, ThreadSteerResponse,
+    JobSummary, JobsListParams, JobsListResponse, SessionCancelParams, SessionCancelResponse,
+    SessionId, SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
+    SessionSteerParams, SessionSteerResponse, StatusParams, StopParams, StopResponse,
 };
 pub use server::{serve_connection, ServerInfo, Service};
 pub use version::{ProtocolVersion, VersionFix, VersionMismatch, PROTOCOL_VERSION};

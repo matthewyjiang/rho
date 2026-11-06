@@ -1,7 +1,7 @@
-//! Opening a thread's session. The config is the user's global config,
-//! read when the thread is created, so a config edit applies to the next
-//! thread without a daemon restart; the agents and instructions are those
-//! of the thread's workspace, as `rho` launched there would find them.
+//! Opening a new session. The config is the user's global config, read
+//! when the session is opened, so a config edit applies to the next session
+//! without a daemon restart; the agents and instructions are those of the
+//! session's workspace, as `rho` launched there would find them.
 //!
 //! The session runs as the default agent with the configured permission
 //! mode. Its host answers approvals and questions (both reach the daemon as
@@ -40,11 +40,11 @@ use crate::{
     tools::{host_io::HostIo, mcp::McpAuthorizationMode},
 };
 
-/// The directory a thread runs in: an existing directory, canonicalized.
+/// The directory a session works in: an existing directory, canonicalized.
 /// Parsed once from the request's `cwd`.
-pub(super) struct ThreadWorkspace(PathBuf);
+pub(super) struct Workspace(PathBuf);
 
-impl ThreadWorkspace {
+impl Workspace {
     /// The workspace `cwd` names. A relative path, a path that does not
     /// resolve, and one that is not a directory are invalid params.
     pub(super) fn parse(cwd: &Path) -> Result<Self, RpcError> {
@@ -65,20 +65,20 @@ impl ThreadWorkspace {
     }
 }
 
-/// A thread's session, open, and the config it runs with.
-pub(super) struct OpenedThread {
+/// A session, open, and the config it runs with.
+pub(super) struct OpenedSession {
     pub(super) runtime: SessionRuntime,
     /// The config the session was built with, which every prompt reads.
     pub(super) config: Config,
 }
 
-/// Opens a new, saved session in `workspace` for a thread. Its file is
-/// written with its first prompt.
-pub(super) async fn open_thread(
-    workspace: &ThreadWorkspace,
+/// Opens a new, saved session in `workspace`. Its file is written with its
+/// first prompt.
+pub(super) async fn open_session(
+    workspace: &Workspace,
     logouts: &Logouts,
-) -> anyhow::Result<OpenedThread> {
-    let ThreadWorkspace(cwd) = workspace;
+) -> anyhow::Result<OpenedSession> {
+    let Workspace(cwd) = workspace;
     let repository = ConfigRepository::new(None);
     let config_path = repository.configured_path()?;
     let config = repository.load()?;
@@ -109,7 +109,7 @@ pub(super) async fn open_thread(
         host: HostCapabilities {
             questions: QuestionSupport::Available,
             children: ChildAgents::InProcess,
-            // Nothing wakes an idle thread yet, so background work holds the
+            // Nothing wakes an idle session yet, so background work holds the
             // turn open, as it does for `rho run`.
             background_wait: BackgroundWait::HoldPrompt,
             host_io: HostIo::default(),
@@ -138,7 +138,7 @@ pub(super) async fn open_thread(
         SessionPersistence::Saved,
     ))
     .await?;
-    Ok(OpenedThread { runtime, config })
+    Ok(OpenedSession { runtime, config })
 }
 
 /// The default agent of `cwd`'s catalog, bound as a person's root session

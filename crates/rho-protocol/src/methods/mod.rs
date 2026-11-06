@@ -9,17 +9,17 @@
 //! | [`HELLO`] | [`HelloParams`] | [`HelloResponse`] |
 //! | [`DAEMON_STATUS`] | [`StatusParams`] | [`DaemonStatus`] |
 //! | [`DAEMON_STOP`] | [`StopParams`] | [`StopResponse`] |
-//! | [`THREAD_CREATE`] | [`ThreadCreateParams`] | [`ThreadCreateResponse`] |
-//! | [`THREAD_PROMPT`] | [`ThreadPromptParams`] | [`ThreadPromptResponse`] |
-//! | [`THREAD_CANCEL`] | [`ThreadCancelParams`] | [`ThreadCancelResponse`] |
-//! | [`THREAD_STEER`] | [`ThreadSteerParams`] | [`ThreadSteerResponse`] |
+//! | [`SESSION_NEW`] | [`SessionNewParams`] | [`SessionNewResponse`] |
+//! | [`SESSION_PROMPT`] | [`SessionPromptParams`] | [`SessionPromptResponse`] |
+//! | [`SESSION_CANCEL`] | [`SessionCancelParams`] | [`SessionCancelResponse`] |
+//! | [`SESSION_STEER`] | [`SessionSteerParams`] | [`SessionSteerResponse`] |
 //! | [`JOBS_LIST`] | [`JobsListParams`] | [`JobsListResponse`] |
 
 use serde::{de::DeserializeOwned, Serialize};
 
 mod daemon;
 mod jobs;
-mod thread;
+mod session;
 
 pub use daemon::{
     ClientInfo, DaemonInfo, DaemonStatus, Hello, HelloParams, HelloResponse, Status, StatusParams,
@@ -28,11 +28,11 @@ pub use daemon::{
 pub use jobs::{
     JobId, JobKind, JobState, JobSummary, JobsList, JobsListParams, JobsListResponse, JOBS_LIST,
 };
-pub use thread::{
-    ThreadCancel, ThreadCancelParams, ThreadCancelResponse, ThreadCreate, ThreadCreateParams,
-    ThreadCreateResponse, ThreadPrompt, ThreadPromptParams, ThreadPromptResponse, ThreadSteer,
-    ThreadSteerParams, ThreadSteerResponse, THREAD_CANCEL, THREAD_CREATE, THREAD_PROMPT,
-    THREAD_STEER,
+pub use session::{
+    SessionCancel, SessionCancelParams, SessionCancelResponse, SessionId, SessionNew,
+    SessionNewParams, SessionNewResponse, SessionPrompt, SessionPromptParams,
+    SessionPromptResponse, SessionSteer, SessionSteerParams, SessionSteerResponse, SESSION_CANCEL,
+    SESSION_NEW, SESSION_PROMPT, SESSION_STEER,
 };
 
 /// A request method with typed params and result.

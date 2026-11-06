@@ -3,15 +3,15 @@
 use std::sync::Arc;
 
 use rho_protocol::{
-    DaemonStatus, ErrorCode, JobsListResponse, RpcError, Service, ThreadCancelParams,
-    ThreadCancelResponse, ThreadCreateParams, ThreadCreateResponse, ThreadPromptParams,
-    ThreadPromptResponse, ThreadSteerParams, ThreadSteerResponse, PROTOCOL_VERSION,
+    DaemonStatus, ErrorCode, JobsListResponse, RpcError, Service, SessionCancelParams,
+    SessionCancelResponse, SessionNewParams, SessionNewResponse, SessionPromptParams,
+    SessionPromptResponse, SessionSteerParams, SessionSteerResponse, PROTOCOL_VERSION,
 };
 use rho_sdk::CancellationToken;
 
 /// Answers `status` with [`test_status`] and, like the real host, stops the
 /// daemon on `rho/daemon/stop` by cancelling its shutdown token. It hosts no
-/// threads.
+/// sessions.
 pub(super) struct StubHost {
     shutdown: CancellationToken,
 }
@@ -46,20 +46,26 @@ impl Service for StubHost {
         self.shutdown.cancel();
     }
 
-    async fn create_thread(&self, _: ThreadCreateParams) -> Result<ThreadCreateResponse, RpcError> {
-        Err(no_threads())
+    async fn new_session(&self, _: SessionNewParams) -> Result<SessionNewResponse, RpcError> {
+        Err(no_sessions())
     }
 
-    async fn prompt_thread(&self, _: ThreadPromptParams) -> Result<ThreadPromptResponse, RpcError> {
-        Err(no_threads())
+    async fn prompt_session(
+        &self,
+        _: SessionPromptParams,
+    ) -> Result<SessionPromptResponse, RpcError> {
+        Err(no_sessions())
     }
 
-    async fn cancel_thread(&self, _: ThreadCancelParams) -> Result<ThreadCancelResponse, RpcError> {
-        Err(no_threads())
+    async fn cancel_session(
+        &self,
+        _: SessionCancelParams,
+    ) -> Result<SessionCancelResponse, RpcError> {
+        Err(no_sessions())
     }
 
-    async fn steer_thread(&self, _: ThreadSteerParams) -> Result<ThreadSteerResponse, RpcError> {
-        Err(no_threads())
+    async fn steer_session(&self, _: SessionSteerParams) -> Result<SessionSteerResponse, RpcError> {
+        Err(no_sessions())
     }
 
     async fn list_jobs(&self) -> JobsListResponse {
@@ -67,6 +73,9 @@ impl Service for StubHost {
     }
 }
 
-fn no_threads() -> RpcError {
-    RpcError::new(ErrorCode::ThreadNotFound, "the stub host hosts no threads")
+fn no_sessions() -> RpcError {
+    RpcError::new(
+        ErrorCode::SessionNotFound,
+        "the stub host hosts no sessions",
+    )
 }

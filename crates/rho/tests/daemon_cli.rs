@@ -1,5 +1,5 @@
 //! `rho daemon` through the real binary: its lifecycle (status, single
-//! instance, and stop) here, and the threads it hosts in [`threads`].
+//! instance, and stop) here, and the sessions it hosts in [`sessions`].
 #![cfg(unix)]
 
 use std::{
@@ -13,8 +13,8 @@ use serde_json::Value;
 #[path = "support/daemon_harness.rs"]
 mod harness;
 
-#[path = "support/daemon_threads.rs"]
-mod threads;
+#[path = "support/daemon_sessions.rs"]
+mod sessions;
 
 use harness::{DaemonProcess, DaemonSandbox};
 

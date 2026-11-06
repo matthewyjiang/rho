@@ -41,7 +41,7 @@ error_codes! {
         /// The daemon does not implement the method.
         MethodNotFound = -32601,
         /// The method exists but its params do not match its schema, or a
-        /// param is invalid, such as a thread's `cwd` that is not an
+        /// param is invalid, such as a session's `cwd` that is not an
         /// existing directory.
         InvalidParams = -32602,
         /// The daemon failed while handling a valid request.
@@ -52,33 +52,33 @@ error_codes! {
         /// `rho/hello` named an incompatible protocol major. `data` is a
         /// [`crate::VersionMismatch`] saying which side must change.
         VersionMismatch = -32001,
-        /// No thread has the id the request named.
-        ThreadNotFound = -32002,
-        /// The thread is known only from the record an earlier daemon
-        /// wrote; this daemon has no session open for it, so it cannot take
-        /// a prompt, a cancel, or steering.
-        ThreadNotLoaded = -32003,
-        /// The thread already has a turn running or waiting for input.
+        /// No session has the id the request named: the daemon has none
+        /// loaded and the session store has none saved.
+        SessionNotFound = -32002,
+        /// The session exists but this daemon has not loaded it, so it
+        /// cannot take a prompt, a cancel, or steering.
+        SessionNotLoaded = -32003,
+        /// The session already has a turn running or waiting for input.
         /// Prompt again once it ends.
-        ThreadBusy = -32004,
-        /// The thread has no running model turn to steer.
-        ThreadNotRunning = -32005,
+        SessionBusy = -32004,
+        /// The session has no running model turn to steer.
+        TurnNotRunning = -32005,
         /// The running turn refused the steering input, as when its
         /// command queue is full.
         SteerRefused = -32006,
-        /// The daemon is stopping: it starts no new threads or turns, and a
-        /// prompt still waiting for its turn to start when the stop begins
-        /// is answered with this.
+        /// The daemon is stopping: it opens no new sessions and starts no
+        /// new turns, and a prompt still waiting for its turn to start when
+        /// the stop begins is answered with this.
         DaemonStopping = -32007,
-        /// The daemon could not open the thread's session, for example
-        /// because the config or the default agent is invalid.
-        ThreadOpenFailed = -32008,
+        /// The daemon could not open the session, for example because the
+        /// config or the default agent is invalid.
+        SessionOpenFailed = -32008,
         /// The turn failed before its prompt was saved, for example
         /// because the provider's credentials could not be read. The
         /// message says why.
         TurnFailed = -32009,
         /// The turn was cancelled before its prompt was saved, as when
-        /// `rho/thread/cancel` arrives before the turn begins.
+        /// `rho/session/cancel` arrives before the turn begins.
         TurnCancelled = -32010,
     }
 }

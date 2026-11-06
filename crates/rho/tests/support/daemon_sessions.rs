@@ -1,4 +1,4 @@
-//! Threads the daemon hosts, through the real binary and its socket: a
+//! Sessions the daemon hosts, through the real binary and its socket: a
 //! turn outlives the client that started it, and every way a turn can end
 //! early is recorded on its job.
 
@@ -10,9 +10,9 @@ use std::{
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{JobsList, ThreadCancel, ThreadCreate, ThreadPrompt},
-    Client, ClientError, ClientInfo, ErrorCode, JobId, JobKind, JobState, JobSummary,
-    JobsListParams, ThreadCancelParams, ThreadCreateParams, ThreadPromptParams,
+    methods::{JobsList, SessionCancel, SessionNew, SessionPrompt},
+    Client, ClientError, ClientInfo, ErrorCode, JobKind, JobState, JobSummary, JobsListParams,
+    SessionCancelParams, SessionId, SessionNewParams, SessionPromptParams,
 };
 use tokio::net::UnixStream;
 
@@ -24,7 +24,7 @@ const DEADLINE: Duration = Duration::from_secs(60);
 
 /// The reply the fixture provider gives, which the test finds in the
 /// session file.
-const REPLY: &str = "reply saved by the daemon thread";
+const REPLY: &str = "reply saved by the daemon session";
 
 const CONFIG: &str = r#"provider = "xai"
 model = "grok-fixture"
@@ -37,7 +37,7 @@ provider = "disabled"
 
 struct Sandbox {
     daemon: DaemonSandbox,
-    /// The thread's workspace, canonicalized as the daemon records it.
+    /// The session's workspace, canonicalized as the daemon records it.
     workspace: PathBuf,
 }
 
@@ -92,7 +92,7 @@ impl Sandbox {
     async fn try_connect(&self) -> Option<Client<UnixStream>> {
         let stream = UnixStream::connect(self.daemon.socket()).await.ok()?;
         let client = ClientInfo {
-            name: "daemon-threads-test".into(),
+            name: "daemon-sessions-test".into(),
             version: "0".into(),
         };
         Client::handshake(stream, client)
@@ -105,11 +105,11 @@ impl Sandbox {
         self.daemon.daemon_log()
     }
 
-    /// The records saved in session `session_id`'s file.
-    fn session_records(&self, session_id: &str) -> Vec<serde_json::Value> {
+    /// The records saved in `session`'s file.
+    fn session_records(&self, session: &SessionId) -> Vec<serde_json::Value> {
         // Each session is a directory named for its id, below its
         // workspace's.
-        let suffix = format!("_{session_id}");
+        let suffix = format!("_{session}");
         let session = std::fs::read_dir(self.daemon.home().join("sessions"))
             .unwrap()
             .flatten()
@@ -117,7 +117,7 @@ impl Sandbox {
             .flatten()
             .flatten()
             .find(|entry| entry.file_name().to_string_lossy().ends_with(&suffix))
-            .unwrap_or_else(|| panic!("no session directory for {session_id}"))
+            .unwrap_or_else(|| panic!("no session directory for {session}"))
             .path();
         std::fs::read_to_string(session.join("session.jsonl"))
             .unwrap()
@@ -127,20 +127,23 @@ impl Sandbox {
     }
 }
 
-async fn create_thread(client: &mut Client<UnixStream>, workspace: &Path) -> (JobId, String) {
-    let created = client
-        .request::<ThreadCreate>(&ThreadCreateParams {
+async fn new_session(client: &mut Client<UnixStream>, workspace: &Path) -> SessionId {
+    client
+        .request::<SessionNew>(&SessionNewParams {
             cwd: workspace.to_path_buf(),
         })
         .await
-        .unwrap();
-    (created.thread, created.session_id)
+        .unwrap()
+        .session
 }
 
-async fn prompt(client: &mut Client<UnixStream>, thread: &JobId) -> Result<(), Option<ErrorCode>> {
+async fn prompt(
+    client: &mut Client<UnixStream>,
+    session: &SessionId,
+) -> Result<(), Option<ErrorCode>> {
     client
-        .request::<ThreadPrompt>(&ThreadPromptParams {
-            thread: thread.clone(),
+        .request::<SessionPrompt>(&SessionPromptParams {
+            session: session.clone(),
             text: "hello".into(),
         })
         .await
@@ -151,12 +154,12 @@ async fn prompt(client: &mut Client<UnixStream>, thread: &JobId) -> Result<(), O
         })
 }
 
-/// Polls `rho/jobs/list` until `thread` is in a state other than running
-/// or waiting for input, and returns the job then.
+/// Polls `rho/jobs/list` until the job of `session`'s turns is in a state
+/// other than running or waiting for input, and returns the job then.
 async fn settled_job(
     sandbox: &Sandbox,
     client: &mut Client<UnixStream>,
-    thread: &JobId,
+    session: &SessionId,
 ) -> JobSummary {
     sandbox
         .daemon
@@ -168,8 +171,8 @@ async fn settled_job(
             let job = jobs
                 .jobs
                 .into_iter()
-                .find(|job| &job.id == thread)
-                .expect("the daemon lists the thread");
+                .find(|job| &job.session == session)
+                .expect("the daemon lists the session's job");
             match job.state {
                 JobState::Running | JobState::WaitingForInput => None,
                 JobState::Idle
@@ -185,41 +188,44 @@ async fn settled_job(
 
 // Covers: a prompt returns once its turn saved the prompt, the turn runs on in the
 // daemon after the client that sent it disconnects, a new client sees its
-// job completed with the thread's workspace and session, and the session
-// file holds the model's reply.
-// Owner: daemon thread hosting.
+// job completed with the session's workspace and id, and the session file
+// holds the model's reply. A session id no session has is not found.
+// Owner: daemon session hosting.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_turn_outlives_the_client_that_prompted_it() {
     let sandbox = Sandbox::new();
     let (_daemon, mut client) = sandbox.start_daemon("fixed").await;
-    let (thread, session_id) = create_thread(&mut client, &sandbox.workspace).await;
-    assert_eq!(prompt(&mut client, &thread).await, Ok(()));
+    let session = new_session(&mut client, &sandbox.workspace).await;
+    assert_eq!(prompt(&mut client, &session).await, Ok(()));
     drop(client);
 
     let mut client = sandbox.connect().await;
-    let job = settled_job(&sandbox, &mut client, &thread).await;
+    let job = settled_job(&sandbox, &mut client, &session).await;
+    let unknown = prompt(&mut client, &SessionId::new("no-such-session")).await;
 
     assert_eq!(
         (
             job.state,
             job.kind,
-            job.project_root,
+            job.workspace,
             job.parent,
-            job.session_id.as_str(),
-            job.error
+            job.session,
+            job.error,
+            unknown
         ),
         (
             JobState::Completed,
-            JobKind::Thread,
+            JobKind::Session,
             sandbox.workspace.clone(),
             None,
-            session_id.as_str(),
-            None
+            session.clone(),
+            None,
+            Err(Some(ErrorCode::SessionNotFound))
         ),
         "log:\n{}",
         sandbox.daemon_log()
     );
-    let records = sandbox.session_records(&session_id);
+    let records = sandbox.session_records(&session);
     assert!(
         records
             .iter()
@@ -231,7 +237,7 @@ async fn a_turn_outlives_the_client_that_prompted_it() {
 /// How a test ends a turn the fixture holds open.
 #[derive(Clone, Copy, Debug)]
 enum Ending {
-    /// `rho/thread/cancel`.
+    /// `rho/session/cancel`.
     Cancel,
     /// `rho daemon stop`, then a new daemon.
     Stop,
@@ -239,13 +245,13 @@ enum Ending {
     Kill,
 }
 
-// Covers: a turn cancelled through `rho/thread/cancel` is recorded
-// cancelled and its thread takes the next prompt; a turn the daemon's stop
+// Covers: a turn cancelled through `rho/session/cancel` is recorded
+// cancelled and its session takes the next prompt; a turn the daemon's stop
 // interrupts is recorded interrupted, within `rho daemon stop`'s wait; a
 // turn whose daemon died is recorded interrupted by the next daemon. A
-// thread from an earlier daemon is listed but refuses prompts as not
-// loaded.
-// Owner: daemon thread hosting and job records.
+// session an earlier daemon saved is listed with its job but refuses
+// prompts as not loaded.
+// Owner: daemon session hosting and job records.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_turn_ended_early_is_recorded_on_its_job() {
     let cases = [
@@ -253,26 +259,26 @@ async fn a_turn_ended_early_is_recorded_on_its_job() {
         (
             Ending::Stop,
             JobState::Interrupted,
-            Err(Some(ErrorCode::ThreadNotLoaded)),
+            Err(Some(ErrorCode::SessionNotLoaded)),
         ),
         (
             Ending::Kill,
             JobState::Interrupted,
-            Err(Some(ErrorCode::ThreadNotLoaded)),
+            Err(Some(ErrorCode::SessionNotLoaded)),
         ),
     ];
     for (ending, expected_state, expected_next_prompt) in cases {
         let sandbox = Sandbox::new();
         // The fixture holds each turn until it is cancelled.
         let (mut daemon, mut client) = sandbox.start_daemon("delay").await;
-        let (thread, _) = create_thread(&mut client, &sandbox.workspace).await;
-        assert_eq!(prompt(&mut client, &thread).await, Ok(()), "{ending:?}");
+        let session = new_session(&mut client, &sandbox.workspace).await;
+        assert_eq!(prompt(&mut client, &session).await, Ok(()), "{ending:?}");
 
         let (_daemon, mut client) = match ending {
             Ending::Cancel => {
                 client
-                    .request::<ThreadCancel>(&ThreadCancelParams {
-                        thread: thread.clone(),
+                    .request::<SessionCancel>(&SessionCancelParams {
+                        session: session.clone(),
                     })
                     .await
                     .unwrap();
@@ -295,8 +301,8 @@ async fn a_turn_ended_early_is_recorded_on_its_job() {
                 sandbox.start_daemon("delay").await
             }
         };
-        let state = settled_job(&sandbox, &mut client, &thread).await.state;
-        let next_prompt = prompt(&mut client, &thread).await;
+        let state = settled_job(&sandbox, &mut client, &session).await.state;
+        let next_prompt = prompt(&mut client, &session).await;
 
         assert_eq!(
             (state, next_prompt),

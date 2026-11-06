@@ -35,40 +35,37 @@ fn test_info() -> ServerInfo {
     }
 }
 
-/// The error every test service answers thread requests with.
-fn no_such_thread() -> RpcError {
-    RpcError::new(ErrorCode::ThreadNotFound, "no such thread")
+/// The error every test service answers session requests with.
+fn no_such_session() -> RpcError {
+    RpcError::new(ErrorCode::SessionNotFound, "no such session")
 }
 
-/// The thread and job methods of a test service that hosts no threads.
-macro_rules! hosts_no_threads {
+/// The session and job methods of a test service that hosts no sessions.
+macro_rules! hosts_no_sessions {
     () => {
-        async fn create_thread(
-            &self,
-            _: ThreadCreateParams,
-        ) -> Result<ThreadCreateResponse, RpcError> {
-            Err(no_such_thread())
+        async fn new_session(&self, _: SessionNewParams) -> Result<SessionNewResponse, RpcError> {
+            Err(no_such_session())
         }
 
-        async fn prompt_thread(
+        async fn prompt_session(
             &self,
-            _: ThreadPromptParams,
-        ) -> Result<ThreadPromptResponse, RpcError> {
-            Err(no_such_thread())
+            _: SessionPromptParams,
+        ) -> Result<SessionPromptResponse, RpcError> {
+            Err(no_such_session())
         }
 
-        async fn cancel_thread(
+        async fn cancel_session(
             &self,
-            _: ThreadCancelParams,
-        ) -> Result<ThreadCancelResponse, RpcError> {
-            Err(no_such_thread())
+            _: SessionCancelParams,
+        ) -> Result<SessionCancelResponse, RpcError> {
+            Err(no_such_session())
         }
 
-        async fn steer_thread(
+        async fn steer_session(
             &self,
-            _: ThreadSteerParams,
-        ) -> Result<ThreadSteerResponse, RpcError> {
-            Err(no_such_thread())
+            _: SessionSteerParams,
+        ) -> Result<SessionSteerResponse, RpcError> {
+            Err(no_such_session())
         }
 
         async fn list_jobs(&self) -> JobsListResponse {
@@ -87,7 +84,7 @@ impl Service for FakeService {
 
     async fn stop(&self) {}
 
-    hosts_no_threads!();
+    hosts_no_sessions!();
 }
 
 /// Panics in `status`, as a handler bug would.
@@ -104,7 +101,7 @@ impl Service for PanickingService {
 
     async fn stop(&self) {}
 
-    hosts_no_threads!();
+    hosts_no_sessions!();
 }
 
 /// `status` answers only once the test releases it. `stop` resolves the
@@ -137,7 +134,7 @@ impl Service for GatedService {
         self.shutdown_seen.notified().await;
     }
 
-    hosts_no_threads!();
+    hosts_no_sessions!();
 }
 
 fn hello_line(id: i64, protocol: ProtocolVersion) -> String {
@@ -264,20 +261,20 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
             vec![(id(1), Err(Some(ErrorCode::InvalidParams)))],
         ),
         (
-            "thread params are decoded and service errors pass through",
+            "session params are decoded and service errors pass through",
             vec![
                 hello_line(1, PROTOCOL_VERSION),
-                request_line(2, THREAD_PROMPT),
+                request_line(2, SESSION_PROMPT),
                 request_with_params(
                     3,
-                    THREAD_PROMPT,
-                    serde_json::json!({"thread": "t", "text": "hi", "later_field": 1}),
+                    SESSION_PROMPT,
+                    serde_json::json!({"session": "s", "text": "hi", "later_field": 1}),
                 ),
             ],
             vec![
                 (id(1), Ok(())),
                 (id(2), Err(Some(ErrorCode::InvalidParams))),
-                (id(3), Err(Some(ErrorCode::ThreadNotFound))),
+                (id(3), Err(Some(ErrorCode::SessionNotFound))),
             ],
         ),
         (
