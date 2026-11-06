@@ -459,6 +459,20 @@ fn replay_ends_with_the_current_plan() {
     );
 }
 
+// Covers: replaying the saved rows again after a turn that saved nothing
+// yields nothing, so the daemon keeps that turn's live events in resets
+// instead of cutting them for an empty save.
+// Owner: session event live and replay mapping
+#[test]
+fn a_replay_with_no_new_rows_reports_nothing_saved() {
+    let tool_set = AppToolSet::disabled();
+    let tools = || SessionTools::of_tool_set_for_tests(&tool_set);
+    let rows = saved_rows(&[Message::Assistant(vec![call_block("call")])]);
+    let mut live = LiveEvents::new(Path::new("/work"), tools());
+    assert!(live.replay(&rows, Path::new("/work"), tools()).is_some());
+    assert_eq!(live.replay(&rows, Path::new("/work"), tools()), None);
+}
+
 // Covers: a provider id the saved transcript already used is numbered live
 // as replay numbers it, so the live call opens its own card rather than
 // updating the saved one, and a client reset after the turn saves sees the

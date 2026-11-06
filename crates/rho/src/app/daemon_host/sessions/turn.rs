@@ -123,8 +123,11 @@ fn save_transcript(session: &LoadedSession, runtime: &SessionRuntime) {
     };
     match saved.display_rows() {
         Ok(rows) => {
-            let replayed = session.live().replay(&rows, saved.cwd(), saved.tools());
-            session.feed.end_turn(replayed);
+            // A turn that saved no rows stays in the buffer, as one whose
+            // rows could not be read does, until a later turn saves.
+            if let Some(replayed) = session.live().replay(&rows, saved.cwd(), saved.tools()) {
+                session.feed.end_turn(replayed);
+            }
         }
         Err(error) => tracing::warn!(
             job = %session.job,

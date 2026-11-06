@@ -142,24 +142,33 @@ impl LiveEvents {
 
     /// The wire events that replay the rows of `rows`, the session's saved
     /// display rows, that this mapper has not replayed yet (see
-    /// [`replay::replay`]).
+    /// [`replay::replay`]); `None` when no row is new, so nothing saved since
+    /// the last replay.
     pub(crate) fn replay(
         &mut self,
         rows: &[ProjectedMessage],
         workspace: &Path,
         tools: SessionTools<'_>,
-    ) -> Vec<WireEvent> {
+    ) -> Option<Vec<WireEvent>> {
         let from = std::mem::replace(&mut self.replayed_rows, rows.len());
-        let Some(new) = rows.get(from..) else {
+        match rows.get(from..) {
+            Some([]) => None,
+            Some(new) => Some(replay::replay(
+                new,
+                workspace,
+                tools,
+                &mut self.replayed_ids,
+            )),
             // Display rows only grow along a daemon session's branch.
-            tracing::warn!(
-                from,
-                rows = rows.len(),
-                "a session's saved rows shrank; its replay keeps the rows it had"
-            );
-            return Vec::new();
-        };
-        replay::replay(new, workspace, tools, &mut self.replayed_ids)
+            None => {
+                tracing::warn!(
+                    from,
+                    rows = rows.len(),
+                    "a session's saved rows shrank; its replay keeps the rows it had"
+                );
+                None
+            }
+        }
     }
 
     /// The wire events for `event`, in order; empty for events the wire does
