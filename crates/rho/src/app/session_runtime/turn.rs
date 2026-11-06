@@ -31,6 +31,10 @@ pub(crate) struct Turn {
 /// returns: a turn whose control channel closes fails, since nothing can
 /// answer its requests any more.
 pub(crate) struct TurnIo {
+    /// Where the turn reports what happens. Unbounded on purpose: the run
+    /// never waits for a slow host to take an event, as the pump that
+    /// forwarded events itself once did. A host that buffers per subscriber,
+    /// such as the daemon's ring buffer, bounds its own backlog.
     pub(crate) events: UnboundedSender<SessionEvent>,
     pub(crate) control: UnboundedReceiver<TurnControl>,
     /// When the turn saves the prompt's user message.
