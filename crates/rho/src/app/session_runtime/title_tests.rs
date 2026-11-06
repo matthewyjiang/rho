@@ -39,10 +39,7 @@ async fn only_an_answered_turn_asks_for_a_title() {
     ] {
         let root = tempfile::tempdir().unwrap();
         let mut runtime = runtime_on(root.path(), &config, provider).await;
-        let prompt = runtime
-            .begin_prompt(&config, &root.path().join("config.toml"))
-            .await
-            .unwrap();
+        let prompt = runtime.begin_prompt(&config).await.unwrap();
         if cancel {
             runtime.handle().cancel();
         }

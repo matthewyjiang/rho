@@ -7,8 +7,6 @@
 //! background work. The run id goes into context now, so the model can check
 //! on it with the `workflow` tool in the meantime.
 
-use std::path::Path;
-
 use rho_sdk::{model::Message, CancellationToken, UserInput};
 
 use super::{InsertedMessage, PromptScope, SessionRuntime};
@@ -49,7 +47,6 @@ impl SessionRuntime {
         display: &UserInput,
         start: StartCommand,
         process_config: &Config,
-        config_path: &Path,
     ) -> anyhow::Result<WorkflowStart> {
         let source = start.workflow.relative_path.clone();
         let failed = |error: anyhow::Error| anyhow::anyhow!("could not start {source}: {error:#}");
@@ -58,7 +55,7 @@ impl SessionRuntime {
 
         let ops = WorkflowOps::open(
             self.storage.cwd().to_path_buf(),
-            Some(config_path.to_path_buf()),
+            Some(self.build.config_path.clone()),
         )
         .map_err(failed)?;
         // The same ceiling the session's own workflow tool gives its runs.
@@ -96,7 +93,7 @@ impl SessionRuntime {
         workflow_cli::spawn_background_run(
             run,
             RecoveryDecision::NormalResume,
-            Some(config_path.to_path_buf()),
+            Some(self.build.config_path.clone()),
             Some(tracker),
         )
         .await

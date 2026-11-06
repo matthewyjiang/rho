@@ -7,8 +7,6 @@
 //! failure for the next prompt to renew, and a turn that reached the model's
 //! answer asks to name the session (see `title.rs`).
 
-use std::path::Path;
-
 use rho_sdk::CancellationToken;
 
 use super::{prompt_gate::PromptGeneration, SessionHandle, SessionRuntime};
@@ -81,7 +79,6 @@ impl SessionRuntime {
     pub(crate) async fn begin_prompt(
         &mut self,
         process_config: &Config,
-        config_path: &Path,
     ) -> anyhow::Result<PromptScope> {
         if self.unsaved_compaction {
             anyhow::bail!(
@@ -89,8 +86,7 @@ impl SessionRuntime {
             );
         }
         let scope = PromptScope::begin(&self.handle);
-        self.renew_stale_credentials(process_config, config_path)
-            .await?;
+        self.renew_stale_credentials(process_config).await?;
         Ok(scope)
     }
 }

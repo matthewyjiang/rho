@@ -59,10 +59,7 @@ impl SessionHost {
             )>,
         >,
     {
-        let prompt = self
-            .runtime
-            .begin_prompt(&startup.config, &startup.config_path)
-            .await?;
+        let prompt = self.runtime.begin_prompt(&startup.config).await?;
         self.runtime
             .rebind_agent_with(&prompt, &task, &startup.config, bind, build)
             .await?;

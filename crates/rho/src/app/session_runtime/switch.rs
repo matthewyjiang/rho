@@ -1,7 +1,7 @@
 //! Provider and model switches for one idle session: a host's model
 //! selection, and the rebuild that renews stale credentials.
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use rho_providers::{
     model::{catalog::ModelSelection, models_dev, ReasoningRequestSource},
@@ -29,7 +29,6 @@ impl SessionRuntime {
         &mut self,
         selection: &ModelSelection,
         process_config: &Config,
-        config_path: &Path,
     ) -> Result<(), SettingChangeError> {
         let current = self.current_model();
         if model_reference(&selection.provider, &selection.model)
@@ -47,8 +46,9 @@ impl SessionRuntime {
                 .map_err(SettingChangeError::Apply)?;
             let read = self.credentials.before_read();
             // A keyless login lives in config, which `logout` edits on disk.
-            let login_config = crate::app::endpoint_login::with_disk_login(&config, config_path)
-                .map_err(SettingChangeError::Apply)?;
+            let login_config =
+                crate::app::endpoint_login::with_disk_login(&config, &self.build.config_path)
+                    .map_err(SettingChangeError::Apply)?;
             let provider = build_provider_from_config_ensuring_catalog(
                 &login_config,
                 Arc::new(AppCredentialStore),

@@ -161,10 +161,7 @@ async fn the_plan_handoff_follows_the_decision_and_the_turn() {
     for (label, turns, answer, cancel_before_handoff, expected, mode_after) in cases {
         let root = tempfile::tempdir().unwrap();
         let mut runtime = plan_mode_runtime(root.path(), &config, turns).await;
-        let prompt = runtime
-            .begin_prompt(&config, &root.path().join("config.toml"))
-            .await
-            .unwrap();
+        let prompt = runtime.begin_prompt(&config).await.unwrap();
         let (events, mut shown) = mpsc::unbounded_channel();
         let (controls, control) = mpsc::unbounded_channel();
         let answer_plans = async move {

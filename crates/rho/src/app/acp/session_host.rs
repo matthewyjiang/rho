@@ -131,10 +131,7 @@ impl SessionHost {
         startup: &AcpStartup,
     ) -> anyhow::Result<PromptResponse> {
         let input = user_input_from_prompt(&request.prompt)?;
-        let prompt = self
-            .runtime
-            .begin_prompt(&startup.config, &startup.config_path)
-            .await?;
+        let prompt = self.runtime.begin_prompt(&startup.config).await?;
         self.refresh_advertisements(&startup.config, client).await;
         let watcher_note = self.wake_prompt_started(&input);
         let _ = self
@@ -224,7 +221,6 @@ impl SessionHost {
         &mut self,
         request: SetSessionConfigOptionRequest,
         process_config: &Config,
-        config_path: &std::path::Path,
     ) -> Result<SetSessionConfigOptionResponse, AcpError> {
         match request.config_id.0.as_ref() {
             permission::MODE_CONFIG_ID => {
@@ -246,8 +242,7 @@ impl SessionHost {
             }
             _ => {
                 return Ok(SetSessionConfigOptionResponse::new(
-                    self.set_model_option(&request, process_config, config_path)
-                        .await?,
+                    self.set_model_option(&request, process_config).await?,
                 ));
             }
         }
@@ -318,13 +313,12 @@ impl SessionHost {
         &mut self,
         request: &SetSessionConfigOptionRequest,
         process_config: &Config,
-        config_path: &std::path::Path,
     ) -> Result<Vec<SessionConfigOption>, AcpError> {
         let current = self.runtime.current_model();
         let available_auths = available_auth_modes(&AppCredentialStore);
         let selection = config_options::resolve_model_value(request, &current, &available_auths)?;
         self.runtime
-            .switch_model(&selection, process_config, config_path)
+            .switch_model(&selection, process_config)
             .await
             .map_err(|error| setting_error(&self.acp_session_id, error))?;
         Ok(self.config_options(process_config))
@@ -466,13 +460,7 @@ impl SessionHost {
     ) -> anyhow::Result<PromptResponse> {
         let started = self
             .runtime
-            .start_workflow(
-                prompt,
-                display,
-                start,
-                &startup.config,
-                &startup.config_path,
-            )
+            .start_workflow(prompt, display, start, &startup.config)
             .await?;
         match started {
             WorkflowStart::Cancelled => Ok(PromptResponse::new(StopReason::Cancelled)),

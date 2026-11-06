@@ -160,7 +160,6 @@ impl SessionRuntime {
     pub(super) async fn renew_stale_credentials(
         &mut self,
         process_config: &Config,
-        config_path: &std::path::Path,
     ) -> anyhow::Result<()> {
         if !self.credentials.stale() {
             return Ok(());
@@ -172,7 +171,8 @@ impl SessionRuntime {
         // editor's terminal login.
         AppCredentialStore::reread_external_logins();
         // A keyless login lives in config, which `logout` edits on disk.
-        let login_config = crate::app::endpoint_login::with_disk_login(&config, config_path)?;
+        let login_config =
+            crate::app::endpoint_login::with_disk_login(&config, &self.build.config_path)?;
         let provider = build_provider_from_config_ensuring_catalog(
             &login_config,
             Arc::new(AppCredentialStore),
