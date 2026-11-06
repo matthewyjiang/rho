@@ -166,11 +166,10 @@ impl RunStatus {
         Some(Duration::from_secs(end - started))
     }
 
-    /// Moves a queued run to Starting, stamping [`Self::started_at`]: it has
-    /// capacity and is launching.
+    /// Moves a queued run to Starting: it has capacity and is launching.
+    /// [`Self::started_at`] stays the spawn, so elapsed time keeps counting.
     pub fn start_now(&mut self) {
         self.state = RunState::Starting;
-        self.started_at = Some(unix_now_secs());
         self.last_activity = Some("starting".into());
     }
 
