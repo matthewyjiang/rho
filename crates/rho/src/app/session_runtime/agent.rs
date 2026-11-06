@@ -12,11 +12,9 @@ use super::{
     model_scoped_config, split_assembly, CommandRejected, SessionRuntime,
 };
 use crate::{
-    agent::{AgentCatalog, AgentDefinition, AgentRuntimeSpec},
+    agent::{AgentCatalog, AgentDefinition},
     app::{
-        agent_binding::{
-            AgentBinder, AgentInvocation, AgentRole, BoundAgent, BoundRuntime, ModelOverride,
-        },
+        agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundAgent, ModelOverride},
         interactive_runtime::startup::session_options_for_id,
         session_assembly::SessionAssembly,
     },
@@ -191,19 +189,10 @@ impl SessionRuntime {
         base.permission_mode = self.permission.mode;
         base.reasoning = self.built.session.reasoning_level();
         let bound = bind(&base)?;
-        let config = match bound.runtime() {
-            BoundRuntime::Rho { config, .. } => session_config(config, &self.host_mcp),
-            BoundRuntime::ClaudeCli { .. }
-            | BoundRuntime::Cursor { .. }
-            | BoundRuntime::Antigravity { .. } => {
-                return Err(CommandRejected(format!(
-                    "{} runs on {}, which an ACP session cannot host",
-                    bound.id(),
-                    bound.definition().runtime.runtime()
-                ))
-                .into());
-            }
-        };
+        let config = session_config(
+            bound.rho_config().ok_or_else(|| not_a_rho_agent(&bound))?,
+            &self.host_mcp,
+        );
         let id = self.built.session.id().clone();
         let saved_override = task
             .model_override
@@ -322,7 +311,7 @@ pub(crate) fn loaded_agent_with(
     let config = bound
         .rho_config()
         .cloned()
-        .ok_or_else(|| anyhow::anyhow!("agent '{stored_id}' is not a Rho agent"))?;
+        .ok_or_else(|| not_a_rho_agent(&bound))?;
     if let Some(saved) = model_override {
         anyhow::ensure!(
             (config.provider.as_str(), config.model.as_str(), config.auth.as_str())
@@ -335,26 +324,14 @@ pub(crate) fn loaded_agent_with(
 }
 
 /// Both fresh rebinding and resume must enforce the delegated tool boundary:
-/// the child gets at most `launch_agent`'s tools.
+/// the child gets at most `launch_agent`'s tools. Callers refuse a bound
+/// agent that does not run on Rho.
 pub(crate) fn bind_delegated_agent(
     definition: AgentDefinition,
     model_override: Option<ModelOverride<'_>>,
     launch_agent: &BoundAgent,
     base: &Config,
 ) -> anyhow::Result<BoundAgent> {
-    match &definition.runtime {
-        AgentRuntimeSpec::Rho { .. } => {}
-        AgentRuntimeSpec::ClaudeCli(_)
-        | AgentRuntimeSpec::Cursor(_)
-        | AgentRuntimeSpec::Antigravity(_) => {
-            return Err(CommandRejected(format!(
-                "{} runs on {}, which an ACP session cannot host",
-                definition.id,
-                definition.runtime.runtime()
-            ))
-            .into());
-        }
-    }
     AgentBinder::bind_with_model_override(
         Arc::new(definition),
         AgentInvocation {
@@ -364,4 +341,14 @@ pub(crate) fn bind_delegated_agent(
         base,
         model_override,
     )
+}
+
+/// Why a session cannot run `bound`: it runs on another runtime, such as
+/// Claude Code.
+fn not_a_rho_agent(bound: &BoundAgent) -> CommandRejected {
+    CommandRejected(format!(
+        "{} runs on {}, which a Rho session cannot run",
+        bound.id(),
+        bound.definition().runtime.runtime()
+    ))
 }
