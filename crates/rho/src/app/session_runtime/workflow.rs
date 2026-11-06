@@ -7,11 +7,9 @@
 //! background work. The run id goes into context now, so the model can check
 //! on it with the `workflow` tool in the meantime.
 
-use std::path::Path;
-
 use rho_sdk::{model::Message, CancellationToken, UserInput};
 
-use super::{InsertedMessage, SessionRuntime};
+use super::{InsertedMessage, PromptScope, SessionRuntime};
 use crate::{
     agent::{AgentCapabilities, ToolCapability},
     app::{
@@ -37,26 +35,27 @@ pub(crate) enum WorkflowStart {
 }
 
 impl SessionRuntime {
-    /// Plans `start`, launches its run, records the run id in context, and
-    /// saves the prompt. `display` is the command as the user sent it.
+    /// Plans `start` within `prompt`, launches its run, records the run id
+    /// in context, and saves the prompt. `display` is the command as the
+    /// user sent it.
     ///
     /// A cancel stops planning. Once the run exists it keeps going: cancel
     /// it with the `workflow` tool or the CLI, like any background run.
     pub(crate) async fn start_workflow(
         &mut self,
+        prompt: &PromptScope,
         display: &UserInput,
         start: StartCommand,
         process_config: &Config,
-        config_path: &Path,
     ) -> anyhow::Result<WorkflowStart> {
         let source = start.workflow.relative_path.clone();
         let failed = |error: anyhow::Error| anyhow::anyhow!("could not start {source}: {error:#}");
         let cancel = CancellationToken::new();
-        self.prompt_gate.activate(cancel.clone());
+        prompt.activate(cancel.clone());
 
         let ops = WorkflowOps::open(
             self.storage.cwd().to_path_buf(),
-            Some(config_path.to_path_buf()),
+            Some(self.build.config_path.clone()),
         )
         .map_err(failed)?;
         // The same ceiling the session's own workflow tool gives its runs.
@@ -94,7 +93,7 @@ impl SessionRuntime {
         workflow_cli::spawn_background_run(
             run,
             RecoveryDecision::NormalResume,
-            Some(config_path.to_path_buf()),
+            Some(self.build.config_path.clone()),
             Some(tracker),
         )
         .await

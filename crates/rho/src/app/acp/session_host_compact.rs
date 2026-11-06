@@ -7,17 +7,22 @@ use agent_client_protocol::schema::v1::{
 };
 
 use super::{send_notification, SessionHost};
-use crate::app::acp::{
-    compaction_card::{outcome_summary, CompactionCard},
-    events::EventMapper,
-    AcpClientPort,
+use crate::app::{
+    acp::{
+        compaction_card::{outcome_summary, CompactionCard},
+        events::EventMapper,
+        AcpClientPort,
+    },
+    session_runtime::PromptScope,
 };
 
 impl SessionHost {
-    /// Compacts with optional `instructions` on what to keep. A card opens
-    /// before the work starts and closes with its outcome, error, or cancel.
+    /// Compacts within `prompt`, with optional `instructions` on what to
+    /// keep. A card opens before the work starts and closes with its
+    /// outcome, error, or cancel.
     pub(super) async fn compact(
         &mut self,
+        prompt: &PromptScope,
         instructions: Option<String>,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
@@ -25,7 +30,7 @@ impl SessionHost {
         if let Some(card) = &card {
             self.send_update(client, card.in_progress()).await?;
         }
-        let result = self.runtime.compact(instructions).await;
+        let result = self.runtime.compact(prompt, instructions).await;
         if let Ok(Some(_)) = &result {
             // The context meter follows the committed history.
             let signals = self.signals();

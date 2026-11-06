@@ -1,6 +1,6 @@
 use pretty_assertions::assert_eq;
 
-use super::ModeChangeError;
+use super::SettingChangeError;
 use crate::{
     app::session_runtime::test_support::idle_runtime, config::Config, permission::PermissionMode,
 };
@@ -25,7 +25,10 @@ async fn set_mode_auto_without_classifier_keeps_the_previous_mode() {
         .await
         .expect_err("auto needs a classifier model");
 
-    assert!(matches!(error, ModeChangeError::Unsupported(_)), "{error}");
+    assert!(
+        matches!(error, SettingChangeError::Unsupported(_)),
+        "{error}"
+    );
     assert_eq!(runtime.permission_mode(), PermissionMode::Bypass);
     runtime.shutdown().await;
 }

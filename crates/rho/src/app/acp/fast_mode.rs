@@ -1,5 +1,6 @@
 //! The `fast_mode` session config option: the ACP counterpart of the TUI's
-//! `/fast`. It toggles the session's priority service tier for later turns.
+//! `/fast`. This advertises and parses it; the session runtime applies it
+//! (`SessionRuntime::set_fast_mode`).
 
 use agent_client_protocol::{
     schema::v1::{
@@ -8,8 +9,7 @@ use agent_client_protocol::{
     },
     Error as AcpError,
 };
-use rho_providers::providers::fast_mode::{supports_fast_mode, GROK_4_7};
-use rho_sdk::model::ServiceTier;
+use rho_providers::providers::fast_mode::supports_fast_mode;
 
 use super::host_features::Toggles;
 use crate::app::session_runtime::CurrentModel;
@@ -28,13 +28,12 @@ const OFF: &str = "off";
 /// the saved preference again when a later switch lands on a fast model.
 pub(super) fn config_options(
     current: &CurrentModel,
-    service_tier: Option<ServiceTier>,
+    fast: bool,
     toggles: Toggles,
 ) -> Vec<SessionConfigOption> {
     if !supports_fast_mode(&current.provider, &current.model, &current.auth) {
         return Vec::new();
     }
-    let fast = is_fast(service_tier);
     let option = match toggles {
         Toggles::Boolean => SessionConfigOption::boolean(FAST_MODE_ID, "Fast mode", fast),
         Toggles::Select => SessionConfigOption::select(
@@ -73,37 +72,6 @@ pub(super) fn parse_fast_mode_request(
             None => Err(AcpError::invalid_params().data("fast_mode requires a select value id")),
         },
     }
-}
-
-/// Applies a host-selected fast mode to the idle session. Turning it on for a
-/// model without fast mode is rejected, even when a tier kept across a model
-/// switch already matches, as `/fast on` does; turning it off always succeeds.
-pub(super) fn apply_fast_mode(
-    session: &rho_sdk::Session,
-    current: &CurrentModel,
-    enabled: bool,
-) -> Result<(), AcpError> {
-    if enabled && !supports_fast_mode(&current.provider, &current.model, &current.auth) {
-        let message = if current.provider == "xai" && current.model == GROK_4_7 {
-            "fast mode for xai/grok-4.7 requires SpaceXAI OAuth".to_string()
-        } else {
-            format!(
-                "fast mode is not available for {}/{}",
-                current.provider, current.model
-            )
-        };
-        return Err(AcpError::invalid_params().data(message));
-    }
-    if enabled == is_fast(session.service_tier()) {
-        return Ok(());
-    }
-    session
-        .set_service_tier(enabled.then_some(ServiceTier::Priority))
-        .map_err(|error| super::agent::session_apply_error(session, error))
-}
-
-fn is_fast(service_tier: Option<ServiceTier>) -> bool {
-    service_tier == Some(ServiceTier::Priority)
 }
 
 #[cfg(test)]

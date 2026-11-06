@@ -163,10 +163,13 @@ async fn tool_calls_open_with_a_card_and_end_in_a_terminal_status() {
     };
     let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home.path());
     let acp_session_id = SessionId::new(stored.id());
+    let io = crate::app::acp::client_io::ClientIo::local(acp_session_id.clone());
+    let build = crate::app::acp::session_host::session_build(&startup, &io);
     let mut host = SessionHost::from_built(
-        crate::app::acp::client_io::ClientIo::local(acp_session_id.clone()),
+        io,
         &startup,
         OpenedSession {
+            build,
             built,
             storage: SessionStorage::saved(stored),
             agent: startup.agent.clone(),
@@ -181,7 +184,7 @@ async fn tool_calls_open_with_a_card_and_end_in_a_terminal_status() {
             reopen_notice: None,
         },
     );
-    let gate = host.cancel_handle();
+    let gate = host.handle();
     let port = RecordingPort::default();
     let prompt =
         |text: &str| PromptRequest::new(acp_session_id.clone(), vec![AcpContentBlock::from(text)]);

@@ -11,7 +11,10 @@ use rho_sdk::{
 };
 
 use super::SessionSignals;
-use crate::tools::todo::{TodoItem, TodoList, TodoState, TodoStatus};
+use crate::{
+    app::session_runtime::ContextGauge,
+    tools::todo::{TodoItem, TodoList, TodoState, TodoStatus},
+};
 
 async fn session() -> rho_sdk::Session {
     let runtime = rho_sdk::Rho::builder()
@@ -59,7 +62,11 @@ fn tool_finished() -> RunEvent {
 async fn finished_tools_send_the_checklist_only_when_it_changed() {
     let todo = TodoState::default();
     todo.replace(list(&[("read", TodoStatus::Completed)]));
-    let mut signals = SessionSignals::new(session().await, todo.clone(), None, Vec::new());
+    let mut signals = SessionSignals::new(
+        ContextGauge::of_session_for_tests(session().await, /*configured_window*/ None),
+        todo.clone(),
+        Vec::new(),
+    );
     let steps = [
         (
             "restored list the client has not seen",
@@ -116,8 +123,11 @@ async fn finished_tools_send_the_checklist_only_when_it_changed() {
 #[tokio::test]
 async fn usage_reports_the_known_window_or_zero() {
     for (window, size) in [(Some(200_000), 200_000), (None, 0)] {
-        let mut signals =
-            SessionSignals::new(session().await, TodoState::default(), window, Vec::new());
+        let mut signals = SessionSignals::new(
+            ContextGauge::of_session_for_tests(session().await, window),
+            TodoState::default(),
+            Vec::new(),
+        );
         let step = RunEvent::StepStarted {
             step: 1,
             context_estimate: rho_sdk::ContextEstimate::from_estimated_tokens(1_234),

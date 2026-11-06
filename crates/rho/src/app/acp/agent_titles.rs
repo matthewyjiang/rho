@@ -14,34 +14,32 @@
 //! failed load the title may still precede the load's error response, and
 //! one sent just before Rho reads a load request can cross it on the wire.
 
-use std::sync::Arc;
-
 use agent_client_protocol::schema::v1::{
     SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
 };
 
-use super::{super::session_host::PendingTitle, AcpClientPort, PromptGate, RhoAcpAgent};
+use super::{super::session_host::PendingTitle, AcpClientPort, RhoAcpAgent};
+use crate::app::session_runtime::SessionHandle;
 
 impl RhoAcpAgent {
     /// Generates the title `pending` asks for and sends it through `port`.
     pub(super) async fn report_title(&self, pending: PendingTitle, port: &dyn AcpClientPort) {
         let PendingTitle {
             session_id,
-            asking_gate,
+            asking,
             job,
         } = pending;
         if let Some(title) = job.generate().await {
-            self.send_title(&session_id, &asking_gate, title, port)
-                .await;
+            self.send_title(&session_id, &asking, title, port).await;
         }
     }
 
-    /// Sends `title` for `session_id` if `asking_gate`, the prompt gate of
-    /// the host that asked for it, is still the one published under the ID.
+    /// Sends `title` for `session_id` if `asking`, the runtime handle of the
+    /// host that asked for it, is still the one published under the ID.
     async fn send_title(
         &self,
         session_id: &SessionId,
-        asking_gate: &Arc<PromptGate>,
+        asking: &SessionHandle,
         title: String,
         port: &dyn AcpClientPort,
     ) {
@@ -52,7 +50,7 @@ impl RhoAcpAgent {
             .lock()
             .await
             .get(session_id)
-            .is_some_and(|live| Arc::ptr_eq(&live.cancel, asking_gate));
+            .is_some_and(|live| live.handle.same_runtime(asking));
         if !published {
             return;
         }

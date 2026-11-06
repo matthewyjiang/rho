@@ -127,10 +127,13 @@ async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
         diagnostics: RuntimeDiagnostics::new(&config),
     };
     let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home.path());
+    let io = crate::app::acp::client_io::ClientIo::local(SessionId::new(id.as_str()));
+    let build = crate::app::acp::session_host::session_build(&startup, &io);
     let mut host = SessionHost::from_built(
-        crate::app::acp::client_io::ClientIo::local(SessionId::new(id.as_str())),
+        io,
         &startup,
         OpenedSession {
+            build,
             built,
             storage: SessionStorage::saved(stored),
             agent: startup.agent.clone(),
@@ -145,7 +148,7 @@ async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
             reopen_notice: None,
         },
     );
-    let gate = host.cancel_handle();
+    let gate = host.handle();
     let (sender, mut chunks) = mpsc::unbounded_channel();
     let port = ChunkPort(sender);
     let prompt = |text: &str| {

@@ -23,7 +23,7 @@ use rho_sdk::{
     CapabilityRequest, CapabilitySource, PathScope, SessionOptions,
 };
 
-use super::super::SessionHost;
+use super::SessionHost;
 use crate::app::session_runtime::{OpenedSession, SessionPermission, SessionStorage};
 use crate::{
     app::{
@@ -81,10 +81,13 @@ async fn host(
         diagnostics: RuntimeDiagnostics::new(config),
     };
     let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home);
+    let io = crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id()));
+    let build = crate::app::acp::session_host::session_build(&startup, &io);
     SessionHost::from_built(
-        crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id())),
+        io,
         &startup,
         OpenedSession {
+            build,
             built,
             storage: SessionStorage::saved(stored),
             agent: startup.agent.clone(),
@@ -397,13 +400,13 @@ async fn mode_change_reaching_a_replaced_host_fails_without_applying() {
         assert!(futures_util::poll!(&mut change).is_pending(), "{request:?}");
         // `publish` marks the old session replaced before it queues for the
         // host, so the change gets the host first and must see the flag.
-        replaced.store(true, std::sync::atomic::Ordering::Release);
+        replaced.mark_replaced();
         drop(held);
         assert_eq!(change.await, Err(ErrorCode::InvalidRequest), "{request:?}");
 
         // As after a failed load, the session stays published; it must still
         // be supervised, so the write asks the host.
-        replaced.store(false, std::sync::atomic::Ordering::Release);
+        replaced.reclaim();
         let port = Arc::new(ApprovingPort::default());
         agent
             .prompt(
@@ -439,8 +442,8 @@ async fn set_mode_changes_tool_authorization_and_keeps_the_conversation() {
     tools.add_bundle(StaticToolBundle::new(vec![Arc::new(WriteProbe)]));
     let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home.path());
     let mut host = host(home.path(), &config, probe_turns(cases.len()), tools).await;
-    let session_id = host.runtime.built().session.id().clone();
-    let history = host.runtime.built().session.history();
+    let session_id = host.runtime.session_id().clone();
+    let history = host.runtime.history_for_tests();
     let port = ApprovingPort::default();
 
     for (mode, host_prompts, status) in cases {
@@ -457,9 +460,9 @@ async fn set_mode_changes_tool_authorization_and_keeps_the_conversation() {
         .await
         .unwrap();
         assert_eq!(port.take(), (host_prompts, vec![status]), "{mode:?}");
-        assert_eq!(host.runtime.built().session.id(), &session_id, "{mode:?}");
+        assert_eq!(host.runtime.session_id(), &session_id, "{mode:?}");
         assert_eq!(
-            host.runtime.built().session.history()[..history.len()],
+            host.runtime.history_for_tests()[..history.len()],
             history[..],
             "{mode:?}"
         );
@@ -481,7 +484,7 @@ async fn mode_config_option_switches_the_permission_mode() {
         |value: &str| SetSessionConfigOptionRequest::new(session_id.clone(), "mode", value);
 
     let response = host
-        .set_config_option(request("plan"), &config, &home.path().join("config.toml"))
+        .set_config_option(request("plan"), &config)
         .await
         .unwrap();
     let mode = response
@@ -496,7 +499,7 @@ async fn mode_config_option_switches_the_permission_mode() {
     assert_eq!(host.runtime.permission_mode(), PermissionMode::Plan);
 
     let error = host
-        .set_config_option(request("yolo"), &config, &home.path().join("config.toml"))
+        .set_config_option(request("yolo"), &config)
         .await
         .expect_err("unknown mode");
     assert_eq!(error.code, ErrorCode::InvalidParams);

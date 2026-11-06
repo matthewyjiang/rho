@@ -14,12 +14,9 @@ use crate::{
         AgentCapabilities, AgentCatalog, AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy,
         PromptPolicy, ToolCapability, ToolPolicy,
     },
-    app::{
-        session_assembly::SessionAssembly,
-        session_runtime::{
-            test_support::{idle_built, idle_runtime, root_agent},
-            CommandRejected,
-        },
+    app::session_runtime::{
+        test_support::{idle_built, idle_runtime, root_agent},
+        CommandRejected, SessionPermission,
     },
     config::Config,
     permission::PermissionMode,
@@ -165,8 +162,10 @@ async fn rebind_rejects_nonfresh_sessions_without_replacing_them() {
         }
         let before = runtime.built.session.snapshot();
         let input = UserInput::text("task");
+        let prompt = runtime.begin_prompt(&config).await.unwrap();
         let error = runtime
             .rebind_agent_with(
+                &prompt,
                 &AgentTask {
                     agent_id: "child".into(),
                     model_override: None,
@@ -178,6 +177,7 @@ async fn rebind_rejects_nonfresh_sessions_without_replacing_them() {
             )
             .await
             .unwrap_err();
+        drop(prompt);
         assert!(error.downcast_ref::<CommandRejected>().is_some());
         assert_eq!(runtime.built.session.snapshot(), before);
         runtime.shutdown().await;
@@ -209,8 +209,10 @@ async fn rebind_keeps_the_host_mcp_servers() {
         },
     };
     let built_with = Mutex::new(None);
+    let prompt = runtime.begin_prompt(&config).await.unwrap();
     runtime
         .rebind_agent_with(
+            &prompt,
             &AgentTask {
                 agent_id: "child".into(),
                 model_override: None,
@@ -220,15 +222,17 @@ async fn rebind_keeps_the_host_mcp_servers() {
             |base| bind_delegated_agent(child, /*model_override*/ None, &launch_agent, base),
             async |_, config, id| {
                 *built_with.lock().unwrap() = Some(config.clone());
-                Ok(SessionAssembly {
-                    built: idle_built(&config, id).await,
+                let permission = SessionPermission {
+                    mode: config.permission_mode,
+                    writes: Default::default(),
                     workspace_root: cwd.path().to_path_buf(),
-                    session_writes: Default::default(),
-                })
+                };
+                Ok((idle_built(&config, id).await, permission))
             },
         )
         .await
         .unwrap();
+    drop(prompt);
     let built_with = built_with
         .into_inner()
         .unwrap()

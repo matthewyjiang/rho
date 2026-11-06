@@ -27,7 +27,9 @@ use crate::{
             events::EventMapper, prompt_acceptance::PromptAcceptance, signals::SessionSignals,
             AcpClientPort, HostFeatures,
         },
-        session_runtime::{cancelled_approval, ApprovalId, SessionEvent, TurnControl},
+        session_runtime::{
+            cancelled_approval, ApprovalId, ContextGauge, SessionEvent, TurnControl,
+        },
     },
     tools::todo::TodoState,
 };
@@ -159,7 +161,11 @@ async fn permission_request_does_not_block_event_drain() {
         client: &port,
         features: HostFeatures::default(),
         mapper: EventMapper::new(HostFeatures::default(), PathBuf::new(), Default::default()),
-        signals: SessionSignals::new(session().await, TodoState::default(), None, Vec::new()),
+        signals: SessionSignals::new(
+            ContextGauge::of_session_for_tests(session().await, /*configured_window*/ None),
+            TodoState::default(),
+            Vec::new(),
+        ),
         placeholders: &placeholders,
         acceptance: &mut acceptance,
     };
@@ -220,7 +226,11 @@ async fn reply_reaches_the_turn_while_an_update_is_sent() {
         client: &port,
         features: HostFeatures::default(),
         mapper: EventMapper::new(HostFeatures::default(), PathBuf::new(), Default::default()),
-        signals: SessionSignals::new(session().await, TodoState::default(), None, Vec::new()),
+        signals: SessionSignals::new(
+            ContextGauge::of_session_for_tests(session().await, /*configured_window*/ None),
+            TodoState::default(),
+            Vec::new(),
+        ),
         placeholders: &placeholders,
         acceptance: &mut acceptance,
     };

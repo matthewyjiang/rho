@@ -1,14 +1,14 @@
 //! Provider and model switches for one idle session: a host's model
 //! selection, and the rebuild that renews stale credentials.
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use rho_providers::{
     model::{catalog::ModelSelection, models_dev, ReasoningRequestSource},
     provider::model_reference,
 };
 
-use super::{credentials::LogoutCount, model_context_window, SessionRuntime};
+use super::{credentials::LogoutCount, model_context_window, SessionRuntime, SettingChangeError};
 use crate::{
     app::conversation_switch::{
         apply_conversation_switch, resolve_model_switch_reasoning, ConversationSwitch,
@@ -19,28 +19,17 @@ use crate::{
     credential_store::{build_provider_from_config_ensuring_catalog, AppCredentialStore},
 };
 
-/// Why a model switch did not apply.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum ModelSwitchError {
-    /// The new model cannot keep the session's reasoning level. The
-    /// requester can fix it.
-    #[error("reasoning level '{level}' is not supported for '{model}'")]
-    UnsupportedReasoning { level: String, model: String },
-    /// Building or installing the provider, or saving the switch, failed.
-    #[error("{0}")]
-    Apply(anyhow::Error),
-}
-
 impl SessionRuntime {
     /// Switches the session to `selection`'s model and auth, keeping its
     /// reasoning level, then saves a call override's new selection. The host
-    /// holds the runtime between prompts, so none is in flight.
+    /// holds the runtime between prompts, so none is in flight. A new model
+    /// that cannot keep the reasoning level is
+    /// [`SettingChangeError::Unsupported`].
     pub(crate) async fn switch_model(
         &mut self,
         selection: &ModelSelection,
         process_config: &Config,
-        config_path: &Path,
-    ) -> Result<(), ModelSwitchError> {
+    ) -> Result<(), SettingChangeError> {
         let current = self.current_model();
         if model_reference(&selection.provider, &selection.model)
             != model_reference(&current.provider, &current.model)
@@ -54,22 +43,23 @@ impl SessionRuntime {
             config.auth = selection.auth.clone();
             config.reasoning = reasoning;
             self.validate_model_override_switch(&config)
-                .map_err(ModelSwitchError::Apply)?;
+                .map_err(SettingChangeError::Apply)?;
             let read = self.credentials.before_read();
             // A keyless login lives in config, which `logout` edits on disk.
-            let login_config = crate::app::endpoint_login::with_disk_login(&config, config_path)
-                .map_err(ModelSwitchError::Apply)?;
+            let login_config =
+                crate::app::endpoint_login::with_disk_login(&config, &self.build.config_path)
+                    .map_err(SettingChangeError::Apply)?;
             let provider = build_provider_from_config_ensuring_catalog(
                 &login_config,
                 Arc::new(AppCredentialStore),
             )
             .await
-            .map_err(|error| ModelSwitchError::Apply(error.into()))?;
+            .map_err(|error| SettingChangeError::Apply(error.into()))?;
             self.switch_provider(provider, &config, read)
-                .map_err(ModelSwitchError::Apply)?;
+                .map_err(SettingChangeError::Apply)?;
         }
         self.persist_model_override().map_err(|error| {
-            ModelSwitchError::Apply(anyhow::anyhow!(
+            SettingChangeError::Apply(anyhow::anyhow!(
                 "model changed but could not save session: {error}"
             ))
         })
@@ -139,7 +129,7 @@ impl SessionRuntime {
 fn resolve_switch_reasoning(
     selection: &ModelSelection,
     requested: rho_sdk::ReasoningLevel,
-) -> Result<rho_sdk::ReasoningLevel, ModelSwitchError> {
+) -> Result<rho_sdk::ReasoningLevel, SettingChangeError> {
     let capabilities =
         models_dev::current_reasoning_capabilities(&selection.provider, &selection.model);
     match resolve_model_switch_reasoning(
@@ -149,10 +139,12 @@ fn resolve_switch_reasoning(
         ModelSwitchReasoningPolicy::PreserveExplicit,
     ) {
         Ok(resolved) => Ok(resolved.effective),
-        Err(level) => Err(ModelSwitchError::UnsupportedReasoning {
-            level: level.to_string(),
-            model: model_reference(&selection.provider, &selection.model),
-        }),
+        Err(level) => {
+            let model = model_reference(&selection.provider, &selection.model);
+            Err(SettingChangeError::Unsupported(format!(
+                "reasoning level '{level}' is not supported for '{model}'"
+            )))
+        }
     }
 }
 

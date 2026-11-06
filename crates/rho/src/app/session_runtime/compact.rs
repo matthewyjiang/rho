@@ -4,22 +4,33 @@
 
 use rho_sdk::{CancellationToken, CompactionOutcome};
 
-use super::SessionRuntime;
+use super::{PromptScope, SessionRuntime};
 
 impl SessionRuntime {
-    /// Compacts with optional `instructions` on what to keep, and saves the
-    /// result; `None` when it was cancelled first.
-    ///
+    /// Compacts within `prompt`, with optional `instructions` on what to
+    /// keep, and saves the result; `None` when it was cancelled first. A
+    /// failure on the provider's credentials has the next prompt renew them.
+    pub(crate) async fn compact(
+        &mut self,
+        prompt: &PromptScope,
+        instructions: Option<String>,
+    ) -> anyhow::Result<Option<CompactionOutcome>> {
+        let result = self.compact_and_save(prompt, instructions).await;
+        self.note_credential_failure(&result);
+        result
+    }
+
     /// The SDK commits replacement history before `compact` returns, so the
     /// work runs as a task: a cancel aborts it only while it is still running.
     /// A task that already finished has committed, and its outcome is saved
     /// like any other, as the TUI's abort does.
-    pub(crate) async fn compact(
+    async fn compact_and_save(
         &mut self,
+        prompt: &PromptScope,
         instructions: Option<String>,
     ) -> anyhow::Result<Option<CompactionOutcome>> {
         let cancel = CancellationToken::new();
-        self.prompt_gate.activate(cancel.clone());
+        prompt.activate(cancel.clone());
         let session = self.built.session.clone();
         let mut task = tokio::spawn(async move {
             match instructions {

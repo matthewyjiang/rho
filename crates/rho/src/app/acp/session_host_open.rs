@@ -23,8 +23,7 @@ use crate::{
         acp::{AcpClientPort, AcpStartup},
         interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
         session_runtime::{
-            build_session, loaded_agent, session_config, split_assembly, OpenedSession,
-            SessionStorage,
+            build_session, loaded_agent, session_config, OpenedSession, SessionStorage,
         },
     },
     config::Config,
@@ -72,16 +71,12 @@ impl SessionHost {
         host_mcp: McpConfig,
     ) -> anyhow::Result<Self> {
         let io = ClientIo::new(startup, SessionId::new(sdk_id.as_str()), cwd, host_dirs);
-        let assembly = build_session(
-            &session_build(startup, &io),
-            &startup.agent,
-            config,
-            cwd,
-            &added_dirs,
-            |_| Ok(session_options_for_id(sdk_id)),
-        )
-        .await?;
-        let (built, permission) = split_assembly(assembly, config.permission_mode);
+        let build = session_build(startup, &io);
+        let (built, permission) =
+            build_session(&build, &startup.agent, config, cwd, &added_dirs, |_| {
+                Ok(session_options_for_id(sdk_id))
+            })
+            .await?;
         let storage = SessionStorage::deferred(
             cwd.to_path_buf(),
             built.session.id().to_string(),
@@ -92,6 +87,7 @@ impl SessionHost {
             io,
             startup,
             OpenedSession {
+                build,
                 built,
                 storage,
                 agent: startup.agent.clone(),
@@ -154,20 +150,14 @@ impl SessionHost {
             cwd,
             &request.additional_directories,
         );
-        let assembly = build_session(
-            &session_build(startup, &io),
-            &agent,
-            &config,
-            cwd,
-            &added_dirs,
-            |provider| {
+        let build = session_build(startup, &io);
+        let (built, permission) =
+            build_session(&build, &agent, &config, cwd, &added_dirs, |provider| {
                 let snapshot = stored
                     .snapshot_for_resume(provider.identity(), prompt_cache_key(stored.id()))?;
                 Ok(SessionOptions::from_snapshot(snapshot))
-            },
-        )
-        .await?;
-        let (built, permission) = split_assembly(assembly, config.permission_mode);
+            })
+            .await?;
         if let History::Replay(client) = history {
             let replay_result =
                 replay_display_history(&request.session_id, &stored, cwd, &built.tools, client)
@@ -191,6 +181,7 @@ impl SessionHost {
             io,
             startup,
             OpenedSession {
+                build,
                 built,
                 storage: SessionStorage::saved(stored),
                 agent,

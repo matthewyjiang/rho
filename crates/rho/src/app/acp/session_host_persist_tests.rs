@@ -85,10 +85,13 @@ async fn host(
         prompt: Default::default(),
         diagnostics: RuntimeDiagnostics::new(config),
     };
+    let io = crate::app::acp::client_io::ClientIo::local(SessionId::new(id));
+    let build = crate::app::acp::session_host::session_build(startup, &io);
     SessionHost::from_built(
-        crate::app::acp::client_io::ClientIo::local(SessionId::new(id)),
+        io,
         startup,
         OpenedSession {
+            build,
             built,
             storage,
             agent: startup.agent.clone(),
@@ -355,7 +358,7 @@ async fn failed_refusal_rollback_keeps_live_and_saved_history_together() {
         .await
         .expect_err("the rollback's leaf commit fails");
     send(&mut host, &id, "follow-up", &startup).await.unwrap();
-    let live = host.runtime.built().session.history();
+    let live = host.runtime.history_for_tests();
     host.shutdown().await;
 
     let (_, histories) =

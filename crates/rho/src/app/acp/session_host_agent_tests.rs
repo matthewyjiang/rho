@@ -24,7 +24,7 @@ use crate::{
     app::{
         acp::{AcpClientPort, AcpStartup},
         agent_binding::{AgentBinder, AgentInvocation, AgentRole, ModelOverride},
-        session_assembly::{BuiltSession, SessionAssembly},
+        session_assembly::BuiltSession,
         session_runtime::{
             bind_delegated_agent, loaded_agent_with, AgentTask, OpenedSession, SessionPermission,
             SessionStorage, MODEL_OVERRIDE_METADATA,
@@ -182,10 +182,13 @@ async fn host(cwd: &Path, startup: &AcpStartup) -> SessionHost {
         AppToolSet::disabled(),
     )
     .await;
+    let io = crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id()));
+    let build = crate::app::acp::session_host::session_build(startup, &io);
     SessionHost::from_built(
-        crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id())),
+        io,
         startup,
         OpenedSession {
+            build,
             built,
             storage: SessionStorage::saved(stored),
             agent: startup.agent.clone(),
@@ -223,7 +226,7 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
     };
     for model_override in [None, Some("@review")] {
         let mut host = host(cwd.path(), &startup).await;
-        let id = host.runtime.built().session.id().clone();
+        let id = host.runtime.session_id().clone();
         let child = catalog()
             .unwrap()
             .find("acp-child")
@@ -249,9 +252,7 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
         // T3 picks a thought level before the child's first prompt; the rebind
         // must keep it because the definition sets none.
         host.runtime
-            .built()
-            .session
-            .set_reasoning_level(ReasoningLevel::High)
+            .set_reasoning_level(ReasoningLevel::High, &startup.config)
             .unwrap();
         let display = UserInput::text("/agent:acp-child inspect the parser");
         let response = host
@@ -284,20 +285,19 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
                         RuntimeDiagnostics::new(&config),
                         ToolSetOptions::new(agent.rho_capabilities().unwrap().clone()),
                     );
-                    Ok(SessionAssembly {
-                        built: scripted_built(&config, id, tools).await,
+                    let permission = SessionPermission {
+                        mode: config.permission_mode,
+                        writes: Default::default(),
                         workspace_root: cwd.path().to_path_buf(),
-                        session_writes: Default::default(),
-                    })
+                    };
+                    Ok((scripted_built(&config, id, tools).await, permission))
                 },
             )
             .await
-            .unwrap()
-            .response;
+            .unwrap();
         let inventory: BTreeSet<_> = host
             .runtime
-            .built()
-            .tools
+            .tool_set_for_tests()
             .tools()
             .iter()
             .map(|tool| tool.spec().name)
@@ -307,7 +307,7 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
             BTreeSet::from(["codemode".into(), "read_file".into(), "tool_search".into()])
         );
         assert_eq!(response.stop_reason, StopReason::EndTurn);
-        assert_eq!(host.runtime.built().session.id(), &id);
+        assert_eq!(host.runtime.session_id(), &id);
         assert_eq!(host.runtime.current_model().model, expected_model);
         assert_eq!(host.runtime.permission_mode(), PermissionMode::Supervised);
         let child_identity = host

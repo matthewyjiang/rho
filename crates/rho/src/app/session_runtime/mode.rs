@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use rho_sdk::{ApprovalSession, SessionOptions};
 
-use super::{model_context_window, model_scoped_config, SessionRuntime};
+use super::{model_context_window, model_scoped_config, SessionRuntime, SettingChangeError};
 use crate::{
     app::{
         automation::ensure_headless_auto_classifier_model,
@@ -30,33 +30,23 @@ pub(crate) struct SessionPermission {
     pub(crate) workspace_root: PathBuf,
 }
 
-/// Why a permission mode change did not apply. The session keeps its old
-/// mode either way.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum ModeChangeError {
-    /// The mode cannot run with this session's config, such as auto mode
-    /// without a classifier model. The requester can fix it.
-    #[error("{0}")]
-    Unsupported(anyhow::Error),
-    /// Rebuilding the SDK runtime for the mode failed.
-    #[error("{0}")]
-    Rebuild(anyhow::Error),
-}
-
 impl SessionRuntime {
     /// Applies `mode` to later prompts. The host holds the runtime between
-    /// prompts, so none is in flight. On error the session keeps its old mode.
+    /// prompts, so none is in flight. On error the session keeps its old
+    /// mode: a mode this session's config cannot run, such as auto without
+    /// a classifier model, is [`SettingChangeError::Unsupported`].
     pub(crate) async fn set_permission_mode(
         &mut self,
         mode: PermissionMode,
         process_config: &Config,
-    ) -> Result<(), ModeChangeError> {
+    ) -> Result<(), SettingChangeError> {
         if self.permission.mode == mode {
             return Ok(());
         }
         let mut config = model_scoped_config(&self.current_model(), process_config);
         config.permission_mode = mode;
-        ensure_headless_auto_classifier_model(&config).map_err(ModeChangeError::Unsupported)?;
+        ensure_headless_auto_classifier_model(&config)
+            .map_err(|error| SettingChangeError::Unsupported(error.to_string()))?;
 
         let writes = self
             .permission
@@ -80,7 +70,7 @@ impl SessionRuntime {
                 root: self.permission.workspace_root.clone(),
             }
             .build_workspace(&self.added_dirs)
-            .map_err(|error| ModeChangeError::Rebuild(error.into()))?;
+            .map_err(|error| SettingChangeError::Apply(error.into()))?;
             let runtime = build_runtime(RuntimeBuildOptions {
                 provider: std::sync::Arc::clone(&self.built.provider),
                 tools: &self.built.tools,
@@ -100,7 +90,7 @@ impl SessionRuntime {
                 diagnostics: self.built.diagnostics.clone(),
                 recall: self.built.tools.recall_store(),
             })
-            .map_err(|error| ModeChangeError::Rebuild(error.into()))?;
+            .map_err(|error| SettingChangeError::Apply(error.into()))?;
             match runtime
                 .rebind_session(SessionOptions::from_snapshot(self.built.session.snapshot()))
                 .await
@@ -108,7 +98,7 @@ impl SessionRuntime {
                 Ok(session) => Ok((runtime, session)),
                 Err(error) => {
                     runtime.shutdown();
-                    Err(ModeChangeError::Rebuild(error.into()))
+                    Err(SettingChangeError::Apply(error.into()))
                 }
             }
         }

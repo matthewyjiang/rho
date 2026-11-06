@@ -1,37 +1,40 @@
 //! The UI-free session runtime: one per thread, owning a built session, its
 //! file, and the state between prompts.
 //!
-//! A host drives it and shows what it reports. ACP (`app::acp`) is the host
-//! today; the daemon and `rho run` host it next. Nothing here knows a wire
-//! protocol: hosts parse their own requests and map the runtime's results and
-//! errors back to theirs.
+//! A host drives it and shows what it reports, holding it exclusively for
+//! each prompt or setting change. Nothing here knows a wire protocol or a
+//! client: hosts parse their own requests and map the runtime's results,
+//! events, and errors back to theirs.
 //!
-//! Between prompts a host calls the runtime's settings and command cores
-//! directly: permission mode, model and provider switches, `/compact`,
-//! `/workflow:`, `/agent:` rebinds, and the session title. A model turn is
-//! [`SessionRuntime::run_turn`]: the host passes a [`TurnIo`] and, while the
-//! turn runs, shows the [`SessionEvent`]s it sends and answers its requests
-//! with [`TurnControl`]s (see `events.rs`). The turn saves itself, runs the
-//! session hooks, and keeps background work going across prompts; the host
-//! only maps the [`TurnOutcome`] to its own reply.
+//! Between prompts a host calls the runtime's settings cores directly:
+//! permission mode, model and provider switches, reasoning level, and fast
+//! mode. Hosts read the session only through narrow accessors, never the
+//! SDK session itself, so all changes go through the runtime. A prompt starts
+//! with [`SessionRuntime::begin_prompt`] (see `prompt.rs`), whose
+//! [`PromptScope`] every in-prompt call takes, so only a begun prompt runs
+//! the command cores (`/compact`, `/workflow:`, `/agent:` rebinds) or a
+//! model turn. A model turn is [`SessionRuntime::run_turn`]: the host passes
+//! a [`TurnIo`] and, while the turn runs, shows the [`SessionEvent`]s it
+//! sends and answers its requests with [`TurnControl`]s (see `events.rs`).
+//! The turn saves itself, runs the session hooks, keeps background work
+//! going across prompts, and asks to name the session. The host passes the
+//! turn's end through [`SessionRuntime::hand_off_plan`], runs the
+//! implementation turn it may ask for, and maps the prompt's end to its own
+//! reply.
 //!
-//! A prompt's cancel goes through the [`PromptGate`], which the host may
-//! share with whoever cancels prompts, so a cancel that arrives while a
-//! prompt is still starting cancels its run once it exists.
+//! A prompt's cancel goes through the runtime's [`SessionHandle`], which the
+//! host shares with whoever cancels prompts or retires the session, so a
+//! cancel that arrives while a prompt is still starting cancels its run once
+//! it exists.
 
-use std::{
-    path::Path,
-    sync::{atomic::AtomicBool, Arc},
-};
+use std::path::Path;
 
 use rho_providers::model::models_dev;
 
 use crate::{
     added_dirs::AddedDirs,
     app::{
-        agent_binding::BoundAgent,
-        headless_delegation::HeldNotices,
-        session_assembly::{BuiltSession, SessionAssembly},
+        agent_binding::BoundAgent, headless_delegation::HeldNotices, session_assembly::BuiltSession,
     },
     config::Config,
     permission::PermissionMode,
@@ -43,10 +46,15 @@ mod build;
 mod compact;
 mod credentials;
 mod events;
+mod handle;
 mod mode;
 mod persist;
+mod plan_exit;
+mod prompt;
 mod prompt_gate;
 mod pump;
+mod session_tools;
+mod settings;
 mod switch;
 #[cfg(test)]
 mod test_support;
@@ -64,11 +72,16 @@ pub(crate) use events::{
     cancelled_approval, ApprovalId, InsertedMessage, PlanApprovalId, PlanApprovalRequest, RunEnd,
     SessionEvent, TurnControl,
 };
-pub(crate) use mode::{ModeChangeError, SessionPermission};
+pub(crate) use handle::SessionHandle;
+pub(crate) use mode::SessionPermission;
 pub(crate) use persist::SessionStorage;
-pub(crate) use prompt_gate::{Closing, PromptGate, PromptGuard};
-pub(crate) use switch::ModelSwitchError;
+pub(crate) use plan_exit::PlanHandoff;
+pub(crate) use prompt::PromptScope;
+pub(crate) use prompt_gate::Closing;
+pub(crate) use session_tools::SessionTools;
+pub(crate) use settings::SettingChangeError;
 pub(crate) use title::TitleJob;
+use title::TitleState;
 pub(crate) use turn::{Turn, TurnIo, TurnOutcome};
 pub(crate) use workflow::WorkflowStart;
 
@@ -89,6 +102,9 @@ pub(crate) struct CurrentModel {
 
 /// A session a host opened, new or reopened, and the state it starts from.
 pub(crate) struct OpenedSession {
+    /// How the session was built, kept so an agent rebind builds the same
+    /// way.
+    pub(crate) build: SessionBuild,
     pub(crate) built: BuiltSession,
     pub(crate) storage: SessionStorage,
     /// The agent the session runs as: the launch agent, or for a reopened
@@ -122,15 +138,12 @@ pub(crate) struct SessionRuntime {
     permission: SessionPermission,
     auth: String,
     credentials: SessionCredentials,
-    prompt_gate: Arc<PromptGate>,
+    /// Cancels this runtime's prompts and marks it replaced; see
+    /// [`Self::handle`].
+    handle: SessionHandle,
     completed_runs: u64,
-    /// Whether this runtime asked the title agent to name the session.
-    title_requested: bool,
-    /// The title the last prompt asked for, until the host takes it.
-    pending_title: Option<TitleJob>,
-    /// Set once a successor owns the session file; see
-    /// [`Self::replaced_flag`].
-    replaced: Arc<AtomicBool>,
+    /// How far this runtime got asking to name the session.
+    title: TitleState,
     /// Set when a compaction rewrote live state but could not be saved.
     /// Later prompts are refused so the session never diverges further
     /// from its file; a reload starts a fresh runtime from storage.
@@ -143,11 +156,11 @@ pub(crate) struct SessionRuntime {
 }
 
 impl SessionRuntime {
-    /// A runtime for `opened`, built as `build` says. `logouts` is the
-    /// host's logout count; the session's provider has just read
-    /// credentials.
-    pub(crate) fn new(opened: OpenedSession, build: SessionBuild, logouts: &Logouts) -> Self {
+    /// A runtime for `opened`. `logouts` is the host's logout count; the
+    /// session's provider has just read credentials.
+    pub(crate) fn new(opened: OpenedSession, logouts: &Logouts) -> Self {
         let OpenedSession {
+            build,
             built,
             storage,
             agent,
@@ -168,19 +181,33 @@ impl SessionRuntime {
             permission,
             auth,
             credentials: SessionCredentials::just_read(logouts),
-            prompt_gate: Arc::new(PromptGate::new()),
+            handle: SessionHandle::new(),
             completed_runs: 0,
-            title_requested: false,
-            pending_title: None,
-            replaced: Arc::new(AtomicBool::new(false)),
+            title: TitleState::Unasked,
             unsaved_compaction: false,
             reopen_notice,
             held_notices: None,
         }
     }
 
-    pub(crate) fn built(&self) -> &BuiltSession {
-        &self.built
+    pub(crate) fn session_id(&self) -> &rho_sdk::SessionId {
+        self.built.session.id()
+    }
+
+    /// A read-only view of the session's tools; see [`SessionTools`].
+    pub(crate) fn tools(&self) -> SessionTools<'_> {
+        SessionTools::of(&self.built.tools)
+    }
+
+    /// Reads the session's context fill against its current model's
+    /// window, including while a turn runs. Take a new gauge after a model
+    /// switch.
+    pub(crate) fn context_gauge(&self) -> ContextGauge {
+        let current = self.current_model();
+        ContextGauge {
+            session: self.built.session.clone(),
+            configured_window: model_context_window(&current.provider, &current.model),
+        }
     }
 
     /// The session's workspace directory.
@@ -192,38 +219,11 @@ impl SessionRuntime {
         self.permission.mode
     }
 
-    /// The gate that cancels this session's prompts. Hosts that publish a
-    /// session share it, so they can tell this runtime from a successor.
-    pub(crate) fn cancel_handle(&self) -> Arc<PromptGate> {
-        Arc::clone(&self.prompt_gate)
-    }
-
-    pub(crate) fn prompt_gate(&self) -> &PromptGate {
-        &self.prompt_gate
-    }
-
-    /// Set it once another runtime owns the session file, so this one no
-    /// longer writes it.
-    pub(crate) fn replaced_flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.replaced)
-    }
-
-    /// Fails when a compaction rewrote live state that could not be saved,
-    /// which leaves the session refusing prompts until it is reloaded.
-    pub(crate) fn ensure_saved_state(&self) -> anyhow::Result<()> {
-        if self.unsaved_compaction {
-            anyhow::bail!(
-                "could not continue session: its compacted context was not saved; load the session again"
-            );
-        }
-        Ok(())
-    }
-
-    /// The answer to `exit_plan_mode` that the last turn recorded, if any.
-    pub(crate) fn take_plan_exit_decision(
-        &self,
-    ) -> Option<crate::tools::plan_exit::PlanExitDecision> {
-        self.built.tools.take_plan_exit_decision()
+    /// The handle that cancels this runtime's prompts, retires it, and
+    /// hands its file to a successor. Hosts that publish a session share it,
+    /// so they can tell this runtime from a successor.
+    pub(crate) fn handle(&self) -> SessionHandle {
+        self.handle.clone()
     }
 
     pub(crate) fn current_model(&self) -> CurrentModel {
@@ -236,15 +236,9 @@ impl SessionRuntime {
         }
     }
 
-    /// The configured context window of the current model.
-    pub(crate) fn context_window(&self) -> Option<u64> {
-        let current = self.current_model();
-        model_context_window(&current.provider, &current.model)
-    }
-
     /// Cancels any prompt and tears the session down.
     pub(crate) async fn shutdown(self) {
-        self.prompt_gate.cancel();
+        self.handle.cancel();
         self.built.teardown().await;
     }
 
@@ -254,6 +248,48 @@ impl SessionRuntime {
             rho_sdk::hooks::HookSessionFailureKind::RunFailed,
             message,
         );
+    }
+}
+
+/// Reads one session's context fill and the window it fills, and nothing
+/// that changes the session. A host keeps it while a turn runs, when the
+/// runtime itself is busy.
+#[derive(Clone)]
+pub(crate) struct ContextGauge {
+    session: rho_sdk::Session,
+    /// The configured window of the session's model when the gauge was
+    /// taken.
+    configured_window: Option<u64>,
+}
+
+impl ContextGauge {
+    /// A gauge on `session` whose model is configured with
+    /// `configured_window`, for host tests that have no runtime.
+    #[cfg(test)]
+    pub(in crate::app) fn of_session_for_tests(
+        session: rho_sdk::Session,
+        configured_window: Option<u64>,
+    ) -> Self {
+        Self {
+            session,
+            configured_window,
+        }
+    }
+
+    pub(crate) fn estimate(&self) -> rho_sdk::ContextEstimate {
+        self.session.context_estimate()
+    }
+
+    /// The context window `estimate` fills: the configured window of the
+    /// session's model, else the one the provider reported with `estimate`,
+    /// as the TUI context meter measures it. `None` when neither knows.
+    pub(crate) fn window_for(&self, estimate: rho_sdk::ContextEstimate) -> Option<u64> {
+        self.configured_window
+            .or(estimate.reported_context_window())
+    }
+
+    pub(crate) fn session_id(&self) -> &rho_sdk::SessionId {
+        self.session.id()
     }
 }
 
@@ -269,25 +305,4 @@ pub(crate) fn model_scoped_config(current: &CurrentModel, process_config: &Confi
 fn model_context_window(provider: &str, model: &str) -> Option<u64> {
     models_dev::cached_model_metadata(provider, model)
         .and_then(|metadata| metadata.display_context_window())
-}
-
-/// Splits an assembly into the built session and the permission state for
-/// `mode`.
-pub(crate) fn split_assembly(
-    assembly: SessionAssembly,
-    mode: PermissionMode,
-) -> (BuiltSession, SessionPermission) {
-    let SessionAssembly {
-        built,
-        workspace_root,
-        session_writes,
-    } = assembly;
-    (
-        built,
-        SessionPermission {
-            mode,
-            writes: session_writes,
-            workspace_root,
-        },
-    )
 }
