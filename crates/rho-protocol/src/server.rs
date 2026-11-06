@@ -1,5 +1,6 @@
-//! Daemon side of a connection: the handshake gate, concurrent dispatch, and
-//! the single writer every outgoing message goes through.
+//! Daemon side of a connection: the handshake gate, concurrent dispatch,
+//! session forwarding, and the single writer every outgoing message goes
+//! through.
 
 use std::{future::Future, sync::Arc};
 
@@ -7,18 +8,23 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::mpsc,
+    sync::{mpsc, OwnedSemaphorePermit},
     task::JoinSet,
 };
 
 use crate::{
+    forward::Forwarders,
+    jsonrpc,
     methods::{
-        Hello, JobList, JobListParams, JobListResponse, Method, SessionCancel, SessionCancelParams,
-        SessionCancelResponse, SessionNew, SessionNewParams, SessionNewResponse, SessionPrompt,
-        SessionPromptParams, SessionPromptResponse, SessionSteer, SessionSteerParams,
-        SessionSteerResponse, Status, Stop, DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST,
-        SESSION_CANCEL, SESSION_NEW, SESSION_PROMPT, SESSION_STEER,
+        Hello, JobList, JobListParams, JobListResponse, Method, SessionAttach, SessionAttachParams,
+        SessionAttachResponse, SessionCancel, SessionCancelParams, SessionCancelResponse,
+        SessionDetach, SessionDetachParams, SessionDetachResponse, SessionNew, SessionNewParams,
+        SessionNewResponse, SessionPrompt, SessionPromptParams, SessionPromptResponse,
+        SessionSteer, SessionSteerParams, SessionSteerResponse, Status, Stop, DAEMON_STATUS,
+        DAEMON_STOP, HELLO, JOB_LIST, SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH, SESSION_NEW,
+        SESSION_PROMPT, SESSION_STEER,
     },
+    subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
     MessageWriter, Request, RequestId, Response, RpcError, StatusParams, StopParams, StopResponse,
     VersionMismatch, PROTOCOL_VERSION,
@@ -42,6 +48,10 @@ use crate::{
 ///
 /// A fallible method's error is sent to the client as is; use the
 /// [`ErrorCode`] that names the failure.
+///
+/// `rho/session/detach` has no method: the connection answers it by
+/// dropping that session's [`Subscription`], which the publisher sees as
+/// [`crate::Published::Gone`].
 pub trait Service: Send + Sync {
     /// Answers `rho/daemon/status`.
     fn status(&self) -> impl Future<Output = DaemonStatus> + Send;
@@ -81,6 +91,17 @@ pub trait Service: Send + Sync {
         params: SessionSteerParams,
     ) -> impl Future<Output = Result<SessionSteerResponse, RpcError>> + Send;
 
+    /// Handles `rho/session/attach`: subscribe this connection to the
+    /// session's events (see [`crate::subscription()`]). The connection sends
+    /// the response, then forwards the subscription's events until the
+    /// publisher ends it, the client detaches or attaches the session again,
+    /// or the connection ends. Events published before this resolves follow
+    /// the response.
+    fn attach_session(
+        &self,
+        params: SessionAttachParams,
+    ) -> impl Future<Output = Result<(SessionAttachResponse, Subscription), RpcError>> + Send;
+
     /// Answers `rho/job/list`.
     fn list_jobs(&self) -> impl Future<Output = JobListResponse> + Send;
 }
@@ -92,20 +113,27 @@ pub struct ServerInfo {
     pub capabilities: Vec<String>,
 }
 
-/// Messages queued for the connection's writer.
+/// Messages queued for the connection's writer, written in queue order.
 ///
-/// Unbounded: everything queued answers a request the peer sent, so the
-/// queue grows only while the peer sends requests faster than it reads the
-/// answers. The socket is private to the daemon's user, so only a buggy
-/// frontend does that, and it costs memory rather than correctness.
+/// Responses are unbounded: each answers a request the peer sent, so they
+/// grow only while the peer sends requests faster than it reads the answers.
+/// The socket is private to the daemon's user, so only a buggy frontend does
+/// that, and it costs memory rather than correctness. A request's answer
+/// never waits behind events.
 ///
-/// Pushed events (#1657) change that premise. Before they reuse this writer,
-/// the connection needs a handle a subscriber holds without keeping the
-/// writer alive (today the writer ends only when every sender is gone),
-/// services need to know which connection is calling, and a subscriber that
-/// falls behind must be visible to the fan-out rather than queued without
-/// end.
-type Outbox = mpsc::UnboundedSender<Message>;
+/// Notifications are bounded: each holds one of the connection's
+/// [`crate::forward::NOTIFICATION_QUEUE`] permits until written, so a client
+/// that stops reading stalls its forwarders, and their publishers report
+/// the lag, instead of growing this queue. One queue for both keeps write
+/// order equal to queue order, which the forwarders' ordering rests on.
+pub(crate) type Outbox = mpsc::UnboundedSender<Outgoing>;
+
+/// One message for the connection's writer.
+pub(crate) enum Outgoing {
+    Response(Response),
+    /// Holds its queue permit until written.
+    Notification(jsonrpc::Notification, OwnedSemaphorePermit),
+}
 
 /// Serves one connection until the peer stops sending or `shutdown`
 /// resolves.
@@ -121,11 +149,21 @@ type Outbox = mpsc::UnboundedSender<Message>;
 /// take effect before another sends the second only after the first's
 /// response arrives.
 ///
+/// `rho/session/attach` answers, then forwards the session's events as
+/// `rho/session/event` notifications, and `rho/session/detached` when the
+/// publisher closes with a reason. Attaching a session again replaces its
+/// forwarder; `rho/session/detach` stops it. Events a forwarder queued come
+/// before the response that replaced or stopped it, and none come after.
+///
 /// When the peer stops sending, a write fails, or `shutdown` resolves, the
 /// connection stops reading, lets every request it has already read run to
 /// completion, writes the responses it still can, and closes. That is how
-/// the `rho/daemon/stop` acknowledgement reaches the client although the stop
-/// itself resolves `shutdown`.
+/// the `rho/daemon/stop` acknowledgement reaches the client although the
+/// stop itself resolves `shutdown`. Its forwarders send what their
+/// publishers have already published, and the reason of each publisher
+/// already closed, then end; they never wait for more, so a service that
+/// closes its publishers before `shutdown` resolves tells every attached
+/// client why it was detached.
 ///
 /// Recoverable protocol errors (bad JSON, invalid messages, unknown methods)
 /// get an error response and the connection continues; framing errors end it
@@ -147,18 +185,26 @@ where
     let (reader, writer) = tokio::io::split(stream);
     let (outbox, inbox) = mpsc::unbounded_channel();
     let mut calls = JoinSet::new();
+    let forwarders = Arc::new(Forwarders::new());
     // The writer ends once every sender is gone (the reader's when it stops
-    // reading, and each call's when that call has answered) or a write
-    // fails.
+    // reading, each forwarder's when the reader stops them, and each call's
+    // when that call has answered) or a write fails.
     let (read, write) = tokio::join!(
-        read_requests(
-            MessageReader::new(reader),
-            info,
-            service,
-            outbox,
-            shutdown,
-            &mut calls,
-        ),
+        async {
+            let read = read_requests(
+                MessageReader::new(reader),
+                info,
+                service,
+                outbox,
+                shutdown,
+                &mut calls,
+                &forwarders,
+            )
+            .await;
+            // Unlike calls, forwarders end with the connection.
+            forwarders.end_all().await;
+            read
+        },
         write_messages(MessageWriter::new(writer), inbox),
     );
     // After a failed write, calls may still be running; their answers go
@@ -177,6 +223,7 @@ async fn read_requests<R, Svc>(
     outbox: Outbox,
     shutdown: impl Future<Output = ()>,
     calls: &mut JoinSet<()>,
+    forwarders: &Arc<Forwarders>,
 ) -> Result<(), FrameError>
 where
     R: AsyncRead + Unpin,
@@ -199,7 +246,7 @@ where
             Ok(None) => return Ok(()),
             Err(error @ FrameError::LineTooLong { .. }) => {
                 // Best effort: tell the peer why the connection is closing.
-                let _ = outbox.send(Message::Response(Response {
+                let _ = outbox.send(Outgoing::Response(Response {
                     id: None,
                     outcome: Err(RpcError::new(ErrorCode::InvalidRequest, error.to_string())),
                 }));
@@ -220,13 +267,20 @@ where
                             outbox: outbox.clone(),
                         };
                         let service = Arc::clone(&service);
-                        calls.spawn(async move {
-                            let outcome = call.run(&*service).await;
-                            responder.send(outcome);
-                        });
+                        let forwarders = Arc::clone(forwarders);
+                        calls.spawn(
+                            async move { call.run(&*service, responder, &forwarders).await },
+                        );
                         // A finished call stays in the set until joined.
                         while calls.try_join_next().is_some() {}
                         continue;
+                    }
+                    Ok(Route::Detach(SessionDetachParams { session })) => {
+                        forwarders.detach(&session);
+                        Response {
+                            id: Some(id),
+                            outcome: encode_result::<SessionDetach>(&SessionDetachResponse {}),
+                        }
                     }
                     Err(error) => Response {
                         id: Some(id),
@@ -234,14 +288,14 @@ where
                     },
                 }
             }
-            // Protocol 1.0 defines no client notifications and the daemon
-            // sends no requests, so neither needs a reply.
+            // Clients send no notifications and the daemon sends no
+            // requests, so neither needs a reply.
             Ok(Message::Notification(_) | Message::Response(_)) => continue,
             Err(error) => error.to_response(),
         };
         // A send fails only once the writer is gone, which the next
         // iteration observes.
-        let _ = outbox.send(Message::Response(response));
+        let _ = outbox.send(Outgoing::Response(response));
     }
 }
 
@@ -249,10 +303,16 @@ where
 /// fails. Returning drops `inbox`, which tells the reader to stop.
 async fn write_messages<W: AsyncWrite + Unpin>(
     mut writer: MessageWriter<W>,
-    mut inbox: mpsc::UnboundedReceiver<Message>,
+    mut inbox: mpsc::UnboundedReceiver<Outgoing>,
 ) -> Result<(), FrameError> {
-    while let Some(message) = inbox.recv().await {
-        writer.write(&message).await?;
+    while let Some(outgoing) = inbox.recv().await {
+        match outgoing {
+            Outgoing::Response(response) => writer.write(&Message::Response(response)).await?,
+            // The permit returns to the queue once the line is written.
+            Outgoing::Notification(notification, _permit) => {
+                writer.write(&Message::Notification(notification)).await?;
+            }
+        }
     }
     Ok(())
 }
@@ -270,6 +330,9 @@ enum Route {
     Answered(Value),
     /// The service answers it, in its own task.
     Call(ServiceCall),
+    /// `rho/session/detach`: the connection stops that session's forwarder
+    /// and answers in place.
+    Detach(SessionDetachParams),
 }
 
 /// A post-handshake request whose params decoded, waiting for the service.
@@ -280,12 +343,13 @@ enum ServiceCall {
     PromptSession(SessionPromptParams),
     CancelSession(SessionCancelParams),
     SteerSession(SessionSteerParams),
+    AttachSession(SessionAttachParams),
     ListJobs,
 }
 
 impl Connection {
-    /// Answers the handshake and protocol errors in place and hands service
-    /// methods to [`ServiceCall`].
+    /// Answers the handshake, protocol errors, and detaches in place, and
+    /// hands service methods to [`ServiceCall`].
     fn route(
         &mut self,
         method: &str,
@@ -317,6 +381,9 @@ impl Connection {
                 ErrorCode::InvalidRequest,
                 format!("{HELLO} was already accepted on this connection"),
             )),
+            (Self::Ready, SESSION_DETACH) => {
+                decode_params::<SessionDetach>(params).map(Route::Detach)
+            }
             (Self::Ready, method) => ServiceCall::decode(method, params).map(Route::Call),
         }
     }
@@ -333,6 +400,7 @@ impl ServiceCall {
             SESSION_PROMPT => decode_params::<SessionPrompt>(params).map(Self::PromptSession),
             SESSION_CANCEL => decode_params::<SessionCancel>(params).map(Self::CancelSession),
             SESSION_STEER => decode_params::<SessionSteer>(params).map(Self::SteerSession),
+            SESSION_ATTACH => decode_params::<SessionAttach>(params).map(Self::AttachSession),
             JOB_LIST => decode_params::<JobList>(params).map(|JobListParams {}| Self::ListJobs),
             method => Err(RpcError::new(
                 ErrorCode::MethodNotFound,
@@ -341,27 +409,51 @@ impl ServiceCall {
         }
     }
 
-    async fn run<Svc: Service>(self, service: &Svc) -> Result<Value, RpcError> {
-        match self {
+    /// Runs the call and answers it through `responder`; an attach then
+    /// starts forwarding through `forwarders`.
+    async fn run<Svc: Service>(
+        self,
+        service: &Svc,
+        responder: Responder,
+        forwarders: &Arc<Forwarders>,
+    ) {
+        let outcome = match self {
+            Self::AttachSession(params) => {
+                let session = params.session.clone();
+                let (response, subscription) = match service.attach_session(params).await {
+                    Ok(attached) => attached,
+                    Err(error) => return responder.send(Err(error)),
+                };
+                let result = match encode_result::<SessionAttach>(&response) {
+                    Ok(result) => result,
+                    Err(error) => return responder.send(Err(error)),
+                };
+                let outbox = responder.outbox.clone();
+                forwarders.attach(session, subscription, outbox, move || {
+                    responder.send(Ok(result));
+                });
+                return;
+            }
             Self::Status => encode_result::<Status>(&service.status().await),
             Self::Stop => {
                 service.stop().await;
                 encode_result::<Stop>(&StopResponse {})
             }
             Self::NewSession(params) => {
-                encode_result::<SessionNew>(&service.new_session(params).await?)
+                encode_outcome::<SessionNew>(service.new_session(params).await)
             }
             Self::PromptSession(params) => {
-                encode_result::<SessionPrompt>(&service.prompt_session(params).await?)
+                encode_outcome::<SessionPrompt>(service.prompt_session(params).await)
             }
             Self::CancelSession(params) => {
-                encode_result::<SessionCancel>(&service.cancel_session(params).await?)
+                encode_outcome::<SessionCancel>(service.cancel_session(params).await)
             }
             Self::SteerSession(params) => {
-                encode_result::<SessionSteer>(&service.steer_session(params).await?)
+                encode_outcome::<SessionSteer>(service.steer_session(params).await)
             }
             Self::ListJobs => encode_result::<JobList>(&service.list_jobs().await),
-        }
+        };
+        responder.send(outcome);
     }
 }
 
@@ -384,7 +476,7 @@ impl Responder {
     fn answer(&mut self, outcome: Result<Value, RpcError>) {
         if let Some(id) = self.id.take() {
             // Fails only once the writer is gone; then nobody can hear it.
-            let _ = self.outbox.send(Message::Response(Response {
+            let _ = self.outbox.send(Outgoing::Response(Response {
                 id: Some(id),
                 outcome,
             }));
@@ -412,6 +504,11 @@ fn decode_params<M: Method>(params: Option<Value>) -> Result<M::Params, RpcError
 /// Encodes `M`'s result, the type [`crate::Client::request`] decodes.
 fn encode_result<M: Method>(result: &M::Result) -> Result<Value, RpcError> {
     encode(result)
+}
+
+/// Encodes a fallible call's outcome as `M`'s result.
+fn encode_outcome<M: Method>(outcome: Result<M::Result, RpcError>) -> Result<Value, RpcError> {
+    encode_result::<M>(&outcome?)
 }
 
 /// Fails only for values JSON cannot hold, such as a non-UTF-8 path.

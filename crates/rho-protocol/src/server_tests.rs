@@ -2,12 +2,19 @@ use std::time::Duration;
 
 use pretty_assertions::assert_eq;
 use tokio::{
-    io::{duplex, AsyncWriteExt},
+    io::{duplex, AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf},
     sync::Notify,
+    task::JoinHandle,
 };
 
 use super::*;
-use crate::{ProtocolVersion, RequestId};
+use crate::{
+    methods::{
+        DetachReason, JobState, Replay, Seq, SessionDetachedParams, SessionEvent,
+        SessionEventParams, SessionId, StreamId, SESSION_DETACHED, SESSION_EVENT,
+    },
+    subscription, ProtocolVersion, Published, Publisher, RequestId,
+};
 
 /// Failure bound for each response a test waits for. The tests synchronize
 /// on the responses themselves, never on time.
@@ -74,6 +81,18 @@ macro_rules! hosts_no_sessions {
     };
 }
 
+/// The attach method of a test service that hosts no sessions.
+macro_rules! attaches_nothing {
+    () => {
+        async fn attach_session(
+            &self,
+            _: SessionAttachParams,
+        ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
+            Err(no_such_session())
+        }
+    };
+}
+
 /// Answers every request at once.
 struct FakeService;
 
@@ -85,6 +104,7 @@ impl Service for FakeService {
     async fn stop(&self) {}
 
     hosts_no_sessions!();
+    attaches_nothing!();
 }
 
 /// Panics in `status`, as a handler bug would.
@@ -102,6 +122,7 @@ impl Service for PanickingService {
     async fn stop(&self) {}
 
     hosts_no_sessions!();
+    attaches_nothing!();
 }
 
 /// `status` answers only once the test releases it. `stop` resolves the
@@ -135,6 +156,7 @@ impl Service for GatedService {
     }
 
     hosts_no_sessions!();
+    attaches_nothing!();
 }
 
 fn hello_line(id: i64, protocol: ProtocolVersion) -> String {
@@ -278,6 +300,14 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
             ],
         ),
         (
+            "detach answers although nothing is attached",
+            vec![
+                hello_line(1, PROTOCOL_VERSION),
+                request_with_params(2, SESSION_DETACH, serde_json::json!({"session": "s"})),
+            ],
+            vec![(id(1), Ok(())), (id(2), Ok(()))],
+        ),
+        (
             "parse errors keep the connection open",
             vec![
                 "not json".into(),
@@ -354,4 +384,311 @@ async fn requests_run_concurrently_and_shutdown_answers_those_in_flight() {
     assert_eq!(next_outcome(&mut reader).await, Some((id(2), Ok(()))));
     assert_eq!(next_outcome(&mut reader).await, None);
     server.await.unwrap().unwrap();
+}
+
+fn notice(seq: u64) -> SessionEvent {
+    SessionEvent::Notice {
+        text: format!("event {seq}"),
+    }
+}
+
+/// Hosts every session. An attach publishes events 1 to `early` into a
+/// subscription of `backlog` events, hands its publisher to the test, and
+/// answers. `status` answers once the test releases it.
+struct AttachService {
+    backlog: usize,
+    early: u64,
+    publishers: mpsc::UnboundedSender<Publisher>,
+    release_status: Notify,
+}
+
+impl AttachService {
+    fn new(backlog: usize, early: u64) -> (Arc<Self>, mpsc::UnboundedReceiver<Publisher>) {
+        let (publishers, receiver) = mpsc::unbounded_channel();
+        let service = Self {
+            backlog,
+            early,
+            publishers,
+            release_status: Notify::new(),
+        };
+        (Arc::new(service), receiver)
+    }
+}
+
+impl Service for AttachService {
+    async fn status(&self) -> DaemonStatus {
+        self.release_status.notified().await;
+        test_status()
+    }
+
+    async fn stop(&self) {}
+
+    hosts_no_sessions!();
+
+    async fn attach_session(
+        &self,
+        _: SessionAttachParams,
+    ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
+        let (publisher, subscription) = subscription(self.backlog, Vec::new());
+        for seq in 1..=self.early {
+            // A case with `early` over `backlog` lags here on purpose.
+            let _ = publisher.try_publish(Seq(seq), notice(seq));
+        }
+        self.publishers.send(publisher).unwrap();
+        let response = SessionAttachResponse {
+            stream: StreamId::new("stream"),
+            replay: Replay::Reset,
+            state: JobState::Idle,
+        };
+        Ok((response, subscription))
+    }
+}
+
+/// One message the daemon sent, reduced to what the attach tests compare.
+#[derive(Debug, PartialEq)]
+enum Seen {
+    Response(Outcome),
+    Event(SessionEventParams),
+    Detached(SessionDetachedParams),
+}
+
+fn answered(id: i64) -> Seen {
+    Seen::Response((Some(RequestId::Number(id)), Ok(())))
+}
+
+fn event(seq: u64) -> Seen {
+    Seen::Event(SessionEventParams {
+        session: SessionId::new("s"),
+        seq: Seq(seq),
+        event: notice(seq),
+    })
+}
+
+fn detached(reason: DetachReason) -> Seen {
+    Seen::Detached(SessionDetachedParams {
+        session: SessionId::new("s"),
+        reason,
+    })
+}
+
+fn session_line(id: i64, method: &str) -> String {
+    request_with_params(id, method, serde_json::json!({"session": "s"}))
+}
+
+/// The client end of one served connection.
+struct Peer {
+    reader: MessageReader<ReadHalf<DuplexStream>>,
+    writer: WriteHalf<DuplexStream>,
+    server: JoinHandle<Result<(), FrameError>>,
+}
+
+impl Peer {
+    fn connect<Svc: Service + 'static>(service: Arc<Svc>) -> Self {
+        let (client, server) = duplex(64 * 1024);
+        let server = tokio::spawn(async move {
+            let info = test_info();
+            serve_connection(server, &info, service, std::future::pending()).await
+        });
+        let (read, writer) = tokio::io::split(client);
+        Self {
+            reader: MessageReader::new(read),
+            writer,
+            server,
+        }
+    }
+
+    async fn send(&mut self, line: String) {
+        send_lines(&mut self.writer, &[line]).await;
+    }
+
+    /// The next message, or `None` once the daemon closes.
+    async fn read(&mut self) -> Option<Seen> {
+        let line = tokio::time::timeout(RESPONSE_DEADLINE, self.reader.read_line())
+            .await
+            .expect("the daemon sends or closes within RESPONSE_DEADLINE")
+            .unwrap()?;
+        Some(match Message::parse(&line).unwrap() {
+            Message::Response(Response { id, outcome }) => {
+                Seen::Response((id, outcome.map(drop).map_err(|error| error.error_code())))
+            }
+            Message::Notification(jsonrpc::Notification { method, params }) => {
+                let params = params.expect("notification params");
+                match method.as_str() {
+                    SESSION_EVENT => Seen::Event(serde_json::from_value(params).unwrap()),
+                    SESSION_DETACHED => Seen::Detached(serde_json::from_value(params).unwrap()),
+                    other => panic!("unexpected notification {other}"),
+                }
+            }
+            Message::Request(request) => panic!("unexpected request {request:?}"),
+        })
+    }
+
+    /// The next `count` messages, failing the test if the daemon closes
+    /// first.
+    async fn take(&mut self, count: usize) -> Vec<Seen> {
+        let mut seen = Vec::new();
+        for _ in 0..count {
+            seen.push(self.read().await.expect("the daemon sends before closing"));
+        }
+        seen
+    }
+
+    /// Stops sending, as a client that leaves does.
+    async fn close_input(&mut self) {
+        self.writer.shutdown().await.unwrap();
+    }
+
+    /// Every message until the daemon closes; call after [`Self::close_input`].
+    async fn remaining(mut self) -> Vec<Seen> {
+        let mut seen = Vec::new();
+        while let Some(message) = self.read().await {
+            seen.push(message);
+        }
+        self.server.await.unwrap().unwrap();
+        seen
+    }
+}
+
+/// What the test does with the attach's publisher once it has it.
+enum Then {
+    Publish(u64),
+    Drop,
+    Close(DetachReason),
+}
+
+// Covers: an attach's response precedes every event, even ones published
+// before the service answered; events arrive in seq order; a subscription
+// that lags, or a publisher that closes with a reason, ends with
+// `rho/session/detached` carrying that reason after the queued events.
+// Owner: protocol server forwarding.
+#[tokio::test]
+async fn attach_answers_then_forwards_events_and_the_detach_reason() {
+    let cases = [
+        (
+            "events follow the response in seq order",
+            8,
+            2,
+            Then::Publish(3),
+            vec![answered(1), answered(2), event(1), event(2), event(3)],
+        ),
+        (
+            "a full subscription detaches the client as lagged",
+            2,
+            3,
+            Then::Drop,
+            vec![
+                answered(1),
+                answered(2),
+                event(1),
+                event(2),
+                detached(DetachReason::Lagged),
+            ],
+        ),
+        (
+            "a closed publisher detaches the client with its reason",
+            8,
+            1,
+            Then::Close(DetachReason::DaemonStopping),
+            vec![
+                answered(1),
+                answered(2),
+                event(1),
+                detached(DetachReason::DaemonStopping),
+            ],
+        ),
+    ];
+    for (name, backlog, early, then, expected) in cases {
+        let (service, mut publishers) = AttachService::new(backlog, early);
+        let mut peer = Peer::connect(service);
+        peer.send(hello_line(1, PROTOCOL_VERSION)).await;
+        peer.send(session_line(2, SESSION_ATTACH)).await;
+        let publisher = publishers.recv().await.unwrap();
+        match then {
+            Then::Publish(seq) => assert_eq!(publisher.try_publish(Seq(seq), notice(seq)), Ok(())),
+            Then::Drop => drop(publisher),
+            Then::Close(reason) => publisher.close(reason),
+        }
+
+        assert_eq!(peer.take(expected.len()).await, expected, "{name}");
+        peer.close_input().await;
+        assert_eq!(peer.remaining().await, Vec::new(), "{name}");
+    }
+}
+
+// Covers: attaching a session again stops the earlier forwarder, and
+// `rho/session/detach` stops the current one, so no event of a replaced or
+// detached subscription reaches the client after the response that ended it.
+// Owner: protocol server forwarding.
+#[tokio::test]
+async fn reattach_replaces_and_detach_stops_the_forwarder() {
+    let (service, mut publishers) = AttachService::new(8, 0);
+    let mut peer = Peer::connect(service);
+    peer.send(hello_line(1, PROTOCOL_VERSION)).await;
+    peer.send(session_line(2, SESSION_ATTACH)).await;
+    assert_eq!(peer.take(2).await, vec![answered(1), answered(2)]);
+    let replaced = publishers.recv().await.unwrap();
+    peer.send(session_line(3, SESSION_ATTACH)).await;
+    assert_eq!(peer.take(1).await, vec![answered(3)]);
+    let current = publishers.recv().await.unwrap();
+
+    // The replaced forwarder may not have dropped its subscription yet, so
+    // this can succeed; it must still never be sent.
+    let _ = replaced.try_publish(Seq(1), notice(101));
+    assert_eq!(current.try_publish(Seq(1), notice(1)), Ok(()));
+    assert_eq!(peer.take(1).await, vec![event(1)]);
+
+    peer.send(session_line(4, SESSION_DETACH)).await;
+    assert_eq!(peer.take(1).await, vec![answered(4)]);
+    let _ = current.try_publish(Seq(2), notice(2));
+    peer.close_input().await;
+    assert_eq!(peer.remaining().await, Vec::new());
+}
+
+// Covers: when the client leaves, the connection drops its subscriptions at
+// once (the publisher sees it gone) while a call already read still answers,
+// and a live subscription does not keep the connection open.
+// Owner: protocol server forwarding.
+#[tokio::test]
+async fn leaving_stops_forwarders_while_calls_in_flight_still_answer() {
+    let (service, mut publishers) = AttachService::new(8, 0);
+    let mut peer = Peer::connect(Arc::clone(&service));
+    peer.send(hello_line(1, PROTOCOL_VERSION)).await;
+    peer.send(session_line(2, SESSION_ATTACH)).await;
+    assert_eq!(peer.take(2).await, vec![answered(1), answered(2)]);
+    let publisher = publishers.recv().await.unwrap();
+
+    peer.send(request_line(3, DAEMON_STATUS)).await;
+    peer.close_input().await;
+    tokio::time::timeout(RESPONSE_DEADLINE, publisher.closed())
+        .await
+        .expect("the connection drops the subscription within RESPONSE_DEADLINE");
+    assert_eq!(
+        publisher.try_publish(Seq(1), notice(1)),
+        Err(Published::Gone)
+    );
+    service.release_status.notify_one();
+    assert_eq!(peer.remaining().await, vec![answered(3)]);
+}
+
+// Covers: as the connection ends, a forwarder still sends what its publisher
+// already published and the reason of a publisher already closed, so a
+// service that closes its publishers before ending connections tells each
+// client why it was detached.
+// Owner: protocol server forwarding.
+#[tokio::test]
+async fn ending_sends_what_was_published_and_why_the_publisher_closed() {
+    let (service, mut publishers) = AttachService::new(8, 0);
+    let mut peer = Peer::connect(service);
+    peer.send(hello_line(1, PROTOCOL_VERSION)).await;
+    peer.send(session_line(2, SESSION_ATTACH)).await;
+    assert_eq!(peer.take(2).await, vec![answered(1), answered(2)]);
+    let publisher = publishers.recv().await.unwrap();
+
+    assert_eq!(publisher.try_publish(Seq(1), notice(1)), Ok(()));
+    publisher.close(DetachReason::DaemonStopping);
+    peer.close_input().await;
+    assert_eq!(
+        peer.remaining().await,
+        vec![event(1), detached(DetachReason::DaemonStopping)]
+    );
 }

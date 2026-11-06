@@ -14,11 +14,19 @@ daemon and its frontends: the Rho TUI, rho-ui, the `rho acp` adapter, and MCP.
   response arrives. When the client stops sending or the daemon shuts down,
   the daemon answers every request it has already read, then closes the
   connection.
+- A client that attaches to a session receives its events as
+  `rho/session/event` notifications, never before the attach response, until
+  it detaches. A client that falls a whole backlog behind gets
+  `rho/session/detached` and reattaches with its cursor; a turn never waits
+  on a client. As a connection closes, the events already published to it,
+  and the reason of a publisher that already closed, still reach the client.
 - `serve_connection` implements the daemon side around a `Service` with one
-  async method per protocol method.
+  async method per protocol method, fed by one `subscription` per attached
+  session. `Client` implements the frontend side: overlapping requests, and
+  the daemon's notifications on a separate `Notifications` stream.
 - The [`methods`](https://docs.rs/rho-protocol/latest/rho_protocol/methods/)
-  module lists every method with its params and result. A session's turns run
-  in the daemon and outlive the client that started them.
+  module lists every method and notification with its params and result. A
+  session's turns run in the daemon and outlive the client that started them.
 - No dependency on `rho-sdk`, so an SDK major never breaks a frontend build.
 
 ```rust
@@ -30,7 +38,7 @@ async fn print_status(stream: UnixStream) -> Result<(), ClientError> {
         name: "my-frontend".into(),
         version: "0.1.0".into(),
     };
-    let (mut client, hello) = Client::handshake(stream, client_info).await?;
+    let (client, _notifications, hello) = Client::handshake(stream, client_info).await?;
     println!("connected to rho {}", hello.daemon.version);
     let status = client.request::<methods::Status>(&StatusParams {}).await?;
     println!("daemon pid {}", status.pid);

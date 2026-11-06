@@ -364,6 +364,12 @@ impl<W: AsyncWrite + Unpin> MessageWriter<W> {
         self.inner.flush().await?;
         Ok(())
     }
+
+    /// Ends the stream, so the peer reads end of stream once it has every
+    /// message written before.
+    pub(crate) async fn shutdown(&mut self) -> std::io::Result<()> {
+        self.inner.shutdown().await
+    }
 }
 
 #[cfg(test)]
