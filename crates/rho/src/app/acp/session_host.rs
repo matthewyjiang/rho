@@ -41,7 +41,7 @@ use crate::{
         session_runtime::{
             model_scoped_config, ChildAgents, CurrentModel, InsertedMessage, OpenedSession,
             PromptScope, QuestionSupport, SessionBuild, SessionHandle, SessionRuntime,
-            SettingChangeError, TitleJob, Turn, TurnOutcome, WorkflowStart,
+            SettingChangeError, TitleJob, Turn, TurnOutcome, UsageAttribution, WorkflowStart,
         },
         workflow_cli::discover::StartCommand,
     },
@@ -49,6 +49,7 @@ use crate::{
     credential_store::AppCredentialStore,
     herdr::{HerdrReporter, HerdrSession, HerdrState},
     permission::PermissionMode,
+    tools::mcp::McpAuthorizationMode,
 };
 
 #[path = "session_host_advertisements.rs"]
@@ -480,6 +481,13 @@ fn session_build(startup: &AcpStartup, io: &super::client_io::ClientIo) -> Sessi
         },
         launch_agent: startup.agent.clone(),
         host_io: io.host_io(),
+        max_steps: None,
+        usage: UsageAttribution::Root,
+        hook_labels: Default::default(),
+        prompt_suffix: None,
+        // An ACP agent has no terminal for a person to finish an MCP login
+        // in: its stdin is the protocol pipe.
+        mcp_authorization: McpAuthorizationMode::NonInteractive,
     }
 }
 

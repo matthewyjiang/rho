@@ -66,7 +66,9 @@ mod workflow;
 #[cfg(test)]
 pub(in crate::app) use agent::{bind_delegated_agent, loaded_agent_with, MODEL_OVERRIDE_METADATA};
 pub(crate) use agent::{loaded_agent, AgentTask};
-pub(crate) use build::{build_session, session_config, ChildAgents, QuestionSupport, SessionBuild};
+pub(crate) use build::{
+    build_session, session_config, ChildAgents, QuestionSupport, SessionBuild, UsageAttribution,
+};
 use credentials::SessionCredentials;
 pub(crate) use credentials::{CredentialFailure, Logouts};
 pub(crate) use events::{

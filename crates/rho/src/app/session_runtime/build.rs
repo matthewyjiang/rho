@@ -1,9 +1,10 @@
 use std::{
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use rho_sdk::{provider::ModelProvider, ApprovalSession, SessionOptions};
+use rho_sdk::{hooks::HookHostLabels, provider::ModelProvider, ApprovalSession, SessionOptions};
 
 use super::SessionPermission;
 use crate::{
@@ -24,7 +25,11 @@ use crate::{
     config::Config,
     credential_store::AppCredentialStore,
     diagnostics::RuntimeDiagnostics,
-    tools::{host_io::HostIo, mcp::config::McpConfig, plan_exit::PlanExitHost},
+    tools::{
+        host_io::HostIo,
+        mcp::{config::McpConfig, McpAuthorizationMode},
+        plan_exit::PlanExitHost,
+    },
 };
 
 /// What a host gives every session build of one session: process flags,
@@ -50,6 +55,53 @@ pub(crate) struct SessionBuild {
     /// What the session's host does for its tools, shared by every tool set
     /// the session builds.
     pub(crate) host_io: HostIo,
+    /// The most model steps one run may take; `None` keeps the configured
+    /// step limit. `rho run --max-steps` and an agent's step limit set it.
+    pub(crate) max_steps: Option<NonZeroUsize>,
+    /// Whose work the session's model usage is recorded as.
+    pub(crate) usage: UsageAttribution,
+    /// Labels every hook envelope of the session carries, such as a
+    /// workflow node's.
+    pub(crate) hook_labels: HookHostLabels,
+    /// Instructions appended to the session's system prompt, kept when a
+    /// model prompt replaces the rest, such as a child's contract with its
+    /// parent.
+    pub(crate) prompt_suffix: Option<&'static str>,
+    /// Whether an MCP server's browser login may wait for a person.
+    pub(crate) mcp_authorization: McpAuthorizationMode,
+}
+
+/// Whose work a session's model usage is recorded as. A delegated child's
+/// usage and hooks also name the session that asked for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum UsageAttribution {
+    /// A session a person or host started, such as ACP's or `rho run`'s.
+    Root,
+    /// A delegated child. `parent` is the session that started it; a
+    /// workflow node has none.
+    #[expect(
+        dead_code,
+        reason = "Rho subagents and workflow nodes build on the runtime in the next PR"
+    )]
+    Subagent { parent: Option<rho_sdk::SessionId> },
+}
+
+impl UsageAttribution {
+    /// The usage purpose the session's requests are recorded under.
+    pub(super) fn purpose(&self) -> &'static str {
+        match self {
+            Self::Root => "agent",
+            Self::Subagent { .. } => "subagent",
+        }
+    }
+
+    /// The session that delegated this one, if any.
+    pub(super) fn parent(&self) -> Option<rho_sdk::SessionId> {
+        match self {
+            Self::Root => None,
+            Self::Subagent { parent } => parent.clone(),
+        }
+    }
 }
 
 /// Whether a host can put a question to a person, such as through an ACP
@@ -115,15 +167,13 @@ pub(crate) async fn build_session(
         },
         mcp_sampling: McpSamplingSupport::Unavailable,
         tool_source_attach: crate::app::tools_prompt::ToolSourceAttach::Connect,
-        // A runtime has no terminal for a person to finish an MCP login in;
-        // ACP's stdin, for one, is its protocol pipe.
-        mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
+        mcp_authorization: build.mcp_authorization,
         diagnostics: &build.diagnostics,
         agent,
-        max_steps: None,
-        usage_purpose: "agent",
-        usage_parent_session_id: None,
-        hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+        max_steps: build.max_steps,
+        usage_purpose: build.usage.purpose(),
+        usage_parent_session_id: build.usage.parent(),
+        hook_host_labels: build.hook_labels.clone(),
         added_dirs,
         host_io: build.host_io.clone(),
         extend_tools: |mut tools| {
@@ -146,7 +196,7 @@ pub(crate) async fn build_session(
                 tools
             }
         },
-        system_prompt_suffix: None,
+        system_prompt_suffix: build.prompt_suffix,
         approval: |inputs: ApprovalInputs| {
             let ApprovalChannel {
                 handler, receiver, ..

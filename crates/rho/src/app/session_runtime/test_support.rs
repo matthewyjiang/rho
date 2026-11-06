@@ -11,7 +11,7 @@ use rho_sdk::{
 
 use super::{
     ChildAgents, Logouts, OpenedSession, QuestionSupport, SessionBuild, SessionPermission,
-    SessionRuntime, SessionStorage,
+    SessionRuntime, SessionStorage, UsageAttribution,
 };
 use crate::{
     agent::{
@@ -26,7 +26,7 @@ use crate::{
     config::Config,
     diagnostics::RuntimeDiagnostics,
     session::Session as StoredSession,
-    tools::sdk_registry::AppToolSet,
+    tools::{mcp::McpAuthorizationMode, sdk_registry::AppToolSet},
 };
 
 /// A plain root agent, `rho`, with every host tool, bound on `config`.
@@ -147,6 +147,11 @@ impl SessionRuntime {
                     background_wait: BackgroundWait::HoldPrompt,
                     launch_agent: agent.clone(),
                     host_io: Default::default(),
+                    max_steps: None,
+                    usage: UsageAttribution::Root,
+                    hook_labels: Default::default(),
+                    prompt_suffix: None,
+                    mcp_authorization: McpAuthorizationMode::NonInteractive,
                 },
                 built,
                 storage,

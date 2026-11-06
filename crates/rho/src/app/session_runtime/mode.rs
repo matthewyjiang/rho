@@ -12,7 +12,7 @@ use crate::{
         automation::ensure_headless_auto_classifier_model,
         interactive_runtime::startup::{approval_channel_for, ApprovalChannelOptions},
         policy::AppPolicy,
-        runtime_builder::{build_runtime, RuntimeBuildOptions},
+        runtime_builder::{build_runtime_with_max_steps, RuntimeBuildOptions},
         sdk_config::WorkspaceOptions,
     },
     compaction::CompactionConfig,
@@ -71,25 +71,28 @@ impl SessionRuntime {
             }
             .build_workspace(&self.added_dirs)
             .map_err(|error| SettingChangeError::Apply(error.into()))?;
-            let runtime = build_runtime(RuntimeBuildOptions {
-                provider: std::sync::Arc::clone(&self.built.provider),
-                tools: &self.built.tools,
-                workspace,
-                workspace_policy: AppPolicy::for_mode(mode, writes.clone()),
-                approval_session: channel.handler.map(ApprovalSession::from_shared),
-                system_prompt: self.built.prompt.system.clone(),
-                reasoning: self.built.session.reasoning_level(),
-                service_tier: self.built.session.service_tier(),
-                compaction: CompactionConfig::from(&config),
-                context_window: model_context_window(&config.provider, &config.model),
-                usage_purpose: "agent",
-                usage_parent_session_id: None,
-                usage_recording: self.built.runtime.usage_recording(),
-                hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-                hooks: self.built.hooks.as_ref(),
-                diagnostics: self.built.diagnostics.clone(),
-                recall: self.built.tools.recall_store(),
-            })
+            let runtime = build_runtime_with_max_steps(
+                RuntimeBuildOptions {
+                    provider: std::sync::Arc::clone(&self.built.provider),
+                    tools: &self.built.tools,
+                    workspace,
+                    workspace_policy: AppPolicy::for_mode(mode, writes.clone()),
+                    approval_session: channel.handler.map(ApprovalSession::from_shared),
+                    system_prompt: self.built.prompt.system.clone(),
+                    reasoning: self.built.session.reasoning_level(),
+                    service_tier: self.built.session.service_tier(),
+                    compaction: CompactionConfig::from(&config),
+                    context_window: model_context_window(&config.provider, &config.model),
+                    usage_purpose: self.build.usage.purpose(),
+                    usage_parent_session_id: self.build.usage.parent(),
+                    usage_recording: self.built.runtime.usage_recording(),
+                    hook_host_labels: self.build.hook_labels.clone(),
+                    hooks: self.built.hooks.as_ref(),
+                    diagnostics: self.built.diagnostics.clone(),
+                    recall: self.built.tools.recall_store(),
+                },
+                self.build.max_steps,
+            )
             .map_err(|error| SettingChangeError::Apply(error.into()))?;
             match runtime
                 .rebind_session(SessionOptions::from_snapshot(self.built.session.snapshot()))
