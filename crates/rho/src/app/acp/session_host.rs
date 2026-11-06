@@ -23,7 +23,7 @@ use rho_sdk::UserInput;
 use tokio::sync::mpsc;
 
 use super::{
-    commands::{self, CommandScope, PromptAction},
+    commands::{self, AcpPrompt},
     config_options,
     events::EventMapper,
     fast_mode,
@@ -37,6 +37,7 @@ use super::{
 use crate::{
     app::{
         headless_delegation::BackgroundWait,
+        session_commands::{CommandScope, PromptCommand},
         session_runtime::{
             model_scoped_config, ChildAgents, CurrentModel, InsertedMessage, OpenedSession,
             PromptScope, QuestionSupport, SessionBuild, SessionHandle, SessionRuntime,
@@ -148,7 +149,7 @@ impl SessionHost {
         let scope = self.command_scope(home.as_deref(), &startup.config);
         // A watcher a host restart cut off resumes its wait, whatever the prompt says.
         let action = if let Some(signal) = self.recorded_wake() {
-            Some(Ok(PromptAction::AwaitWake(signal)))
+            Some(Ok(AcpPrompt::AwaitWake(signal)))
         } else {
             // Expansion can wait on an MCP server, so a cancel drops it.
             tokio::select! {
@@ -159,10 +160,10 @@ impl SessionHost {
         };
         let shown = match action {
             None => Shown::delivered(Ok(PromptResponse::new(StopReason::Cancelled))),
-            Some(Ok(PromptAction::Turn {
+            Some(Ok(AcpPrompt::Shared(PromptCommand::Turn {
                 input: model,
                 calls,
-            })) => {
+            }))) => {
                 let model = match watcher_note {
                     Some(note) => append_text(model, note),
                     None => model,
@@ -174,19 +175,19 @@ impl SessionHost {
                 };
                 self.run_turn(&prompt, turn, &startup.config, client).await
             }
-            Some(Ok(PromptAction::Compact { instructions })) => {
+            Some(Ok(AcpPrompt::Shared(PromptCommand::Compact { instructions }))) => {
                 self.prompt_acceptance.accept(InsertedMessage::Unreplayed);
                 Shown::delivered(self.compact(&prompt, instructions, client).await)
             }
-            Some(Ok(PromptAction::StartWorkflow(start))) => Shown::delivered(
+            Some(Ok(AcpPrompt::Shared(PromptCommand::StartWorkflow(start)))) => Shown::delivered(
                 self.start_workflow(&prompt, &input, start, startup, client)
                     .await,
             ),
-            Some(Ok(PromptAction::RunAsAgent(task))) => {
+            Some(Ok(AcpPrompt::Shared(PromptCommand::RunAsAgent(task)))) => {
                 self.run_as_agent(&prompt, &input, task, startup, client)
                     .await
             }
-            Some(Ok(PromptAction::AwaitWake(signal))) => {
+            Some(Ok(AcpPrompt::AwaitWake(signal))) => {
                 self.prompt_acceptance.accept(InsertedMessage::Unreplayed);
                 Shown::delivered(self.await_wake(signal, &prompt, client).await)
             }
