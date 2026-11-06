@@ -37,7 +37,7 @@ use crate::{
     },
     config::Config,
     permission::PermissionMode,
-    tools::{mcp::config::McpConfig, sdk_registry::AppToolSet},
+    tools::mcp::config::McpConfig,
 };
 
 mod agent;
@@ -52,6 +52,7 @@ mod plan_exit;
 mod prompt;
 mod prompt_gate;
 mod pump;
+mod session_tools;
 mod settings;
 mod switch;
 #[cfg(test)]
@@ -76,6 +77,7 @@ pub(crate) use persist::SessionStorage;
 pub(crate) use plan_exit::PlanHandoff;
 pub(crate) use prompt::PromptScope;
 pub(crate) use prompt_gate::Closing;
+pub(crate) use session_tools::SessionTools;
 pub(crate) use settings::SettingChangeError;
 pub(crate) use title::TitleJob;
 pub(crate) use turn::{Turn, TurnIo, TurnOutcome};
@@ -193,10 +195,9 @@ impl SessionRuntime {
         self.built.session.id()
     }
 
-    /// The session's tools, for hosts that list what the session offers or
-    /// run host-delegation tools of their own, such as T3 Code's watchers.
-    pub(crate) fn tools(&self) -> &AppToolSet {
-        &self.built.tools
+    /// A read-only view of the session's tools; see [`SessionTools`].
+    pub(crate) fn tools(&self) -> SessionTools<'_> {
+        SessionTools::of(&self.built.tools)
     }
 
     /// Reads the session's context fill, including while a turn runs.

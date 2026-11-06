@@ -26,9 +26,12 @@ use rho_sdk::{
 use serde_json::{json, Value};
 use tokio::task::JoinHandle;
 
-use crate::tools::{
-    mcp::exported_name::namespaced_tool_name, process::ProcessManager, sdk_registry::AppToolSet,
-    workflow_tracker::WorkflowRunTracker,
+use crate::{
+    app::session_runtime::SessionTools,
+    tools::{
+        mcp::exported_name::namespaced_tool_name, process::ProcessManager,
+        workflow_tracker::WorkflowRunTracker,
+    },
 };
 
 /// The watcher's prompt command. Not advertised, so hosts never offer it.
@@ -134,7 +137,7 @@ pub(super) struct Background {
 }
 
 impl Background {
-    pub(super) fn of(tools: &AppToolSet, session_id: String) -> Self {
+    pub(super) fn of(tools: SessionTools<'_>, session_id: String) -> Self {
         Self {
             session_id,
             processes: tools.processes().cloned(),
@@ -250,7 +253,7 @@ impl T3Wake {
     /// next message.
     pub(super) async fn prompt_ended(
         &mut self,
-        tools: &AppToolSet,
+        tools: SessionTools<'_>,
         background: Background,
     ) -> anyhow::Result<()> {
         if !background.outstanding() {
@@ -282,7 +285,11 @@ impl Drop for T3Wake {
 }
 
 /// Delegates a watcher titled after the running work.
-async fn arm(tools: &AppToolSet, signal_dir: &Path, labels: &[String]) -> anyhow::Result<Watcher> {
+async fn arm(
+    tools: SessionTools<'_>,
+    signal_dir: &Path,
+    labels: &[String],
+) -> anyhow::Result<Watcher> {
     let delegate = t3_tool(tools, "delegate_task")?;
     let (signal, lock) = WakeSignal::create(signal_dir)?;
     let arguments = json!({
@@ -324,7 +331,7 @@ async fn arm(tools: &AppToolSet, signal_dir: &Path, labels: &[String]) -> anyhow
 /// Cancels a watcher whose work was delivered in-prompt, so it exits by
 /// cancel rather than by a released lock. Best effort: a leftover watcher
 /// only costs an idle child in T3's panel until this parent ends.
-async fn retire(tools: &AppToolSet, mut watcher: Watcher) -> EndedWatcher {
+async fn retire(tools: SessionTools<'_>, mut watcher: Watcher) -> EndedWatcher {
     if let Some(notifier) = watcher.notifier.take() {
         notifier.quiet();
     }
@@ -355,7 +362,7 @@ async fn retire(tools: &AppToolSet, mut watcher: Watcher) -> EndedWatcher {
     }
 }
 
-fn t3_tool(tools: &AppToolSet, name: &str) -> anyhow::Result<Arc<dyn Tool>> {
+fn t3_tool(tools: SessionTools<'_>, name: &str) -> anyhow::Result<Arc<dyn Tool>> {
     tools
         .tool_named(&namespaced_tool_name(SERVER, name))
         .ok_or_else(|| anyhow::anyhow!("MCP server `{SERVER}` provides no `{name}` tool"))

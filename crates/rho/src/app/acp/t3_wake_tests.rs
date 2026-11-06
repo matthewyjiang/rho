@@ -7,9 +7,12 @@ use rho_sdk::{
 };
 
 use super::*;
-use crate::tools::{
-    process::ProcessLimits,
-    sdk_registry::{AppToolSet, StaticToolBundle},
+use crate::{
+    app::session_runtime::SessionTools,
+    tools::{
+        process::ProcessLimits,
+        sdk_registry::{AppToolSet, StaticToolBundle},
+    },
 };
 
 #[cfg(unix)]
@@ -116,7 +119,10 @@ impl Fixture {
 
     async fn prompt_ended(&mut self) {
         self.wake
-            .prompt_ended(&self.tools, self.background.clone())
+            .prompt_ended(
+                SessionTools::of_tool_set_for_tests(&self.tools),
+                self.background.clone(),
+            )
             .await
             .unwrap();
     }

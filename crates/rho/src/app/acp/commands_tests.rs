@@ -6,7 +6,7 @@ use rho_sdk::{model::ContentBlock, UserInput};
 use serde_json::json;
 
 use super::{available_commands, resolve, CommandScope, PromptAction};
-use crate::app::session_runtime::AgentTask;
+use crate::app::session_runtime::{AgentTask, SessionTools};
 use crate::{
     agent::{AgentCapabilities, ToolCapability},
     config::Config,
@@ -103,7 +103,7 @@ impl Fixture {
         CommandScope {
             cwd: self.workspace.path(),
             home: Some(self.home.path()),
-            tools: &self.tools,
+            tools: SessionTools::of_tool_set_for_tests(&self.tools),
             config: &self.config,
             permission_mode: crate::permission::PermissionMode::Supervised,
         }

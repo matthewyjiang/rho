@@ -30,7 +30,7 @@ use super::{
 use crate::{
     agent::{AgentCatalog, AgentRuntimeSpec},
     app::{
-        session_runtime::{AgentTask, CommandRejected},
+        session_runtime::{AgentTask, CommandRejected, SessionTools},
         workflow_cli::discover::{self as workflows, StartCommand},
     },
     commands::{init_turn, CommandId, CommandInvocation, CommandParseError, COMMANDS},
@@ -39,7 +39,6 @@ use crate::{
     prompt_templates,
     tools::{
         mcp::prompt_command::{self, McpPromptCommand},
-        sdk_registry::AppToolSet,
         workflow as workflow_tool,
     },
 };
@@ -53,7 +52,7 @@ const BUILT_IN: [CommandId; 2] = [CommandId::Compact, CommandId::Init];
 pub(super) struct CommandScope<'a> {
     pub(super) cwd: &'a Path,
     pub(super) home: Option<&'a Path>,
-    pub(super) tools: &'a AppToolSet,
+    pub(super) tools: SessionTools<'a>,
     pub(super) config: &'a Config,
     pub(super) permission_mode: PermissionMode,
 }

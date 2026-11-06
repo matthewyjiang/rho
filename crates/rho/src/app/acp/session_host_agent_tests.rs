@@ -297,7 +297,7 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
             .unwrap();
         let inventory: BTreeSet<_> = host
             .runtime
-            .tools()
+            .tool_set_for_tests()
             .tools()
             .iter()
             .map(|tool| tool.spec().name)
