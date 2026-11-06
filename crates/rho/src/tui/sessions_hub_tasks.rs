@@ -282,11 +282,18 @@ impl App {
             DeleteReport::One { target, result } => {
                 let short = session_picker::short_session_id(&target.id);
                 match result {
-                    Ok(outcome) if outcome.deleted_run_count > 0 => format!(
-                        "deleted session {short} and {}",
-                        plural(outcome.deleted_run_count, "related run")
-                    ),
-                    Ok(_) => format!("deleted session {short}"),
+                    Ok(outcome) => {
+                        let mut notice = format!("deleted session {short}");
+                        for (count, noun) in [
+                            (outcome.deleted_child_session_count, "child session"),
+                            (outcome.deleted_run_count, "related run"),
+                        ] {
+                            if count > 0 {
+                                notice.push_str(&format!(" and {}", plural(count, noun)));
+                            }
+                        }
+                        notice
+                    }
                     Err(error) => {
                         self.insert_entry(&Entry::Error(format!(
                             "could not delete session: {error}"

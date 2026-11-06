@@ -514,6 +514,7 @@ fn write_session_file(root: &Path, cwd: &Path, id: &str, timestamp: u64, prompts
         agent_fingerprint: None,
         agent_role: crate::session::agent_identity::SessionAgentRole::Root,
         origin: None,
+        parent_session: None,
     }];
     entries.extend(prompts.iter().map(|prompt| SessionEntry::Message {
         timestamp: timestamp.to_string(),
@@ -1039,7 +1040,7 @@ fn the_header_keeps_the_origin_the_session_was_created_with() {
             &cwd,
             "acp-session",
             Some(("rho", "fingerprint")),
-            SessionOrigin::Acp,
+            SessionOrigin::Acp.into(),
         )
         .unwrap();
         edit(&session);
@@ -1090,7 +1091,8 @@ fn person_facing_listings_leave_out_runs_and_child_sessions() {
     let root = temp_session_root();
     let cwd = temp_cwd();
     for (id, origin, rewritten, ..) in cases {
-        let session = Session::create_with_id_in_root(&root, &cwd, id, None, origin).unwrap();
+        let session =
+            Session::create_with_id_in_root(&root, &cwd, id, None, origin.into()).unwrap();
         if let Some(rewritten) = rewritten {
             let header = fs::read_to_string(session.path()).unwrap();
             let edited = header.replacen(r#","origin":"interactive""#, rewritten, 1);

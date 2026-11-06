@@ -3,10 +3,105 @@ use std::path::Path;
 use pretty_assertions::assert_eq;
 
 use super::{delete_target_in_roots, delete_targets_in_roots};
-use crate::session::{DeleteOptions, Session, SessionOrigin, SessionTarget};
+use crate::session::{DeleteOptions, Session, SessionOrigin, SessionProvenance, SessionTarget};
 
 fn create_session(root: &Path, cwd: &Path, id: &str) -> Session {
-    Session::create_with_id_in_root(root, cwd, id, None, SessionOrigin::Interactive).unwrap()
+    Session::create_with_id_in_root(root, cwd, id, None, SessionOrigin::Interactive.into()).unwrap()
+}
+
+// Covers: deleting a session deletes the child sessions it started and
+// theirs, wherever they were saved, and nothing else; deleting a child keeps
+// its parent; a batch that also names a child deleted with its parent
+// reports no failure for it.
+// Owner: session deletion
+#[test]
+fn delete_takes_child_sessions_recursively() {
+    // (label, targets, expected (deleted id, child sessions deleted with it),
+    // expected remaining ids)
+    let cases: [(&str, &[&str], Vec<(&str, usize)>, Vec<&str>); 3] = [
+        (
+            "parent",
+            &["parent"],
+            vec![("parent", 2)],
+            vec!["other-root", "sibling"],
+        ),
+        (
+            "child",
+            &["child"],
+            vec![("child", 1)],
+            vec!["parent", "other-root", "sibling"],
+        ),
+        (
+            "parent and child",
+            &["parent", "child"],
+            vec![("parent", 2)],
+            vec!["other-root", "sibling"],
+        ),
+    ];
+    for (label, targets, expected_deleted, expected_remaining) in cases {
+        let sessions = tempfile::tempdir().unwrap();
+        let subagents = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        // A subagent can run in another workspace, such as a worktree.
+        let elsewhere = tempfile::tempdir().unwrap();
+        // (id, workspace, parent)
+        let tree = [
+            ("parent", workspace.path(), None),
+            ("child", workspace.path(), Some("parent")),
+            ("grandchild", elsewhere.path(), Some("child")),
+            ("other-root", workspace.path(), None),
+            ("sibling", workspace.path(), Some("other-root")),
+        ];
+        let paths = tree.map(|(id, cwd, parent)| {
+            let provenance = match parent {
+                Some(parent) => SessionProvenance {
+                    origin: SessionOrigin::Subagent,
+                    parent: Some(parent.to_string()),
+                },
+                None => SessionOrigin::Interactive.into(),
+            };
+            let session =
+                Session::create_with_id_in_root(sessions.path(), cwd, id, None, provenance)
+                    .unwrap();
+            (id, session.path().to_path_buf())
+        });
+        let targets = targets
+            .iter()
+            .map(|target| {
+                let (id, cwd, _) = tree.iter().find(|(id, ..)| id == target).unwrap();
+                SessionTarget::new(*id, *cwd)
+            })
+            .collect::<Vec<_>>();
+
+        let outcome = delete_targets_in_roots(
+            sessions.path(),
+            subagents.path(),
+            &targets,
+            &DeleteOptions::default(),
+        )
+        .unwrap();
+
+        let deleted = outcome
+            .deleted
+            .iter()
+            .map(|item| (item.id.as_str(), item.deleted_child_session_count))
+            .collect::<Vec<_>>();
+        let failed = outcome
+            .failures
+            .iter()
+            .map(|item| item.error.as_str())
+            .collect::<Vec<_>>();
+        let remaining = paths
+            .iter()
+            .filter(|(_, path)| path.exists())
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            (deleted, failed, remaining),
+            (expected_deleted, Vec::<&str>::new(), expected_remaining),
+            "{label}"
+        );
+    }
 }
 
 // Covers: an exact workspace target cannot fall back to a same-id session in

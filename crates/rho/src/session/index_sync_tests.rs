@@ -586,6 +586,7 @@ fn session_transcript_contents(cwd: &Path, id: &str, created_at: u64, prompt: &s
         agent_fingerprint: None,
         agent_role: crate::session::agent_identity::SessionAgentRole::Root,
         origin: None,
+        parent_session: None,
     };
     let message = SessionEntry::Message {
         timestamp: created_at.to_string(),
@@ -620,5 +621,6 @@ fn test_index_record(id: &str, path: &str, first_user: &str) -> SessionIndexReco
         branch_count: 0,
         active_leaf_id: None,
         effective_format_version: 3,
+        parent_session: None,
     }
 }

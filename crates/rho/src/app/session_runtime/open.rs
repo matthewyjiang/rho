@@ -155,7 +155,7 @@ impl SessionRuntime {
                 built.session.id().to_string(),
                 agent.id().to_string(),
                 agent.fingerprint().to_string(),
-                build.run.role.origin(),
+                build.run.role.provenance(),
             ),
             NewStorage::Ephemeral => SessionStorage::ephemeral(cwd.to_path_buf()),
         };

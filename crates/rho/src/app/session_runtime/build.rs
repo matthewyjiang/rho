@@ -21,7 +21,7 @@ use crate::{
     config::Config,
     credential_store::AppCredentialStore,
     diagnostics::RuntimeDiagnostics,
-    session::SessionOrigin,
+    session::{SessionOrigin, SessionProvenance},
     tools::{
         host_io::HostIo,
         mcp::{config::McpConfig, McpAuthorizationMode},
@@ -157,14 +157,21 @@ impl SessionRole {
         }
     }
 
-    /// The host a new session's file records it was created by.
-    pub(super) fn origin(&self) -> SessionOrigin {
-        match self {
+    /// Where a new session's file records it came from: the host that
+    /// created it and, for a subagent, its parent, so deleting the parent
+    /// deletes it too. A workflow node records no parent: the workflow
+    /// runtime does not know the session that started its run, if any.
+    pub(super) fn provenance(&self) -> SessionProvenance {
+        let origin = match self {
             Self::Interactive => SessionOrigin::Interactive,
             Self::Acp => SessionOrigin::Acp,
             Self::Run => SessionOrigin::Run,
             Self::Subagent { .. } => SessionOrigin::Subagent,
             Self::WorkflowNode => SessionOrigin::WorkflowNode,
+        };
+        SessionProvenance {
+            origin,
+            parent: self.parent().map(ToString::to_string),
         }
     }
 }

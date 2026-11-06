@@ -45,6 +45,7 @@ fn pure_legacy_replace_history_uses_display_not_model_replacement() {
                 agent_fingerprint: None,
                 agent_role: crate::session::agent_identity::SessionAgentRole::Root,
                 origin: None,
+                parent_session: None,
             },
             SessionEntry::Message {
                 timestamp: "101".into(),
@@ -102,6 +103,7 @@ fn summarize_prefers_display_message_over_model_message() {
                 agent_fingerprint: None,
                 agent_role: crate::session::agent_identity::SessionAgentRole::Root,
                 origin: None,
+                parent_session: None,
             },
             SessionEntry::Message {
                 timestamp: "201".into(),
@@ -198,6 +200,7 @@ fn summarize_counts_incomplete_active_display() {
                 agent_fingerprint: None,
                 agent_role: crate::session::agent_identity::SessionAgentRole::Root,
                 origin: None,
+                parent_session: None,
             },
             SessionEntry::Message {
                 timestamp: "301".into(),
@@ -253,6 +256,7 @@ fn v4_tree_session_summary_matches_active_display() {
                 agent_fingerprint: None,
                 agent_role: crate::session::agent_identity::SessionAgentRole::Root,
                 origin: None,
+                parent_session: None,
             },
             SessionEntry::Node {
                 node: SessionNode {

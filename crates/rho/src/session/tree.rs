@@ -270,6 +270,7 @@ pub(crate) struct SessionTree {
     session_id: Option<String>,
     cwd: Option<PathBuf>,
     origin: Option<SessionOrigin>,
+    parent_session: Option<String>,
     created_at: Option<u64>,
     updated_at: Option<u64>,
     version: Option<u32>,
@@ -701,6 +702,7 @@ impl SessionTree {
             branch_count: facts.branch_count as u64,
             active_leaf_id: facts.active_leaf_id.map(|id| id.to_string()),
             effective_format_version: self.effective_format_version(),
+            parent_session: self.parent_session.clone(),
         })
     }
 
@@ -721,6 +723,7 @@ impl SessionTree {
                 cwd,
                 timestamp,
                 origin,
+                parent_session,
                 ..
             } => {
                 validate_session_version(version, Path::new("session"))?;
@@ -737,6 +740,7 @@ impl SessionTree {
                 self.version = Some(version);
                 self.cwd = Some(cwd);
                 self.origin = origin;
+                self.parent_session = parent_session;
                 if let Some(created) = parse_timestamp(&timestamp) {
                     self.created_at = Some(created);
                 }

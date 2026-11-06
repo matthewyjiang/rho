@@ -219,23 +219,17 @@ fn delete_one(cwd: &Path, id_prefix: &str, force: bool, yes: bool) -> anyhow::Re
         );
     }
 
+    let counted = |count: usize, noun: &str| match count {
+        0 => String::new(),
+        1 => format!(" and 1 {noun}"),
+        count => format!(" and {count} {noun}s"),
+    };
     println!(
-        "deleted session {} ({}){}",
+        "deleted session {} ({}){}{}",
         short_id(&outcome.id),
         crate::paths::display(&outcome.cwd),
-        if outcome.deleted_run_count > 0 {
-            format!(
-                " and {} related run{}",
-                outcome.deleted_run_count,
-                if outcome.deleted_run_count == 1 {
-                    ""
-                } else {
-                    "s"
-                }
-            )
-        } else {
-            String::new()
-        }
+        counted(outcome.deleted_child_session_count, "child session"),
+        counted(outcome.deleted_run_count, "related run"),
     );
     Ok(())
 }

@@ -44,7 +44,7 @@ use crate::{
     app::active_prompt::ActivePrompt,
     session::{
         tree::{DisplayRowOrigin, NodeId},
-        Session as StoredSession, SessionOrigin, SessionPersistence,
+        Session as StoredSession, SessionPersistence, SessionProvenance,
     },
     tools::todo::TodoState,
 };
@@ -68,19 +68,25 @@ enum SessionFile {
 
 impl SessionStorage {
     /// Storage for a new session `id` in `cwd`, created on first save and
-    /// tagged with the `origin` that opened it.
+    /// recording the `provenance` that opened it.
     pub(crate) fn deferred(
         cwd: PathBuf,
         id: String,
         agent_id: String,
         fingerprint: String,
-        origin: SessionOrigin,
+        provenance: SessionProvenance,
     ) -> Self {
         let file_cwd = cwd.clone();
         Self::unsaved(
             cwd,
             Box::new(move || {
-                StoredSession::create_with_id(&file_cwd, &id, &agent_id, &fingerprint, origin)
+                StoredSession::create_with_id(
+                    &file_cwd,
+                    &id,
+                    &agent_id,
+                    &fingerprint,
+                    provenance.clone(),
+                )
             }),
         )
     }

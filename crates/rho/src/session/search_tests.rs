@@ -425,7 +425,7 @@ fn scope_and_current_exclusion_apply_to_search_and_read() {
         project.path(),
         "scripted-run",
         None,
-        SessionOrigin::Run,
+        SessionOrigin::Run.into(),
     )
     .unwrap();
     hidden
