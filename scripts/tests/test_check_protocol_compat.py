@@ -8,13 +8,17 @@ from collections.abc import Callable
 from scripts import check_protocol_compat
 
 RELEASED = json.loads((check_protocol_compat.ROOT / check_protocol_compat.SCHEMA).read_text())
+MAJOR, MINOR = check_protocol_compat.version(RELEASED)
 
 
-def changed(change: Callable[[dict], None], minor: int = 1) -> dict:
-    """The committed schema with `change` applied, at protocol `1.<minor>`."""
+def changed(change: Callable[[dict], None], *, major: int = 0, minor: int = 1) -> dict:
+    """The committed schema with `change` applied, its version raised by
+    `major` and `minor`; a new major starts its minors at 0."""
     document = copy.deepcopy(RELEASED)
     change(document)
-    document["protocol"]["minor"] = minor
+    document["protocol"] = (
+        {"major": MAJOR + major, "minor": 0} if major else {"major": MAJOR, "minor": MINOR + minor}
+    )
     return document
 
 
@@ -112,24 +116,23 @@ class CompatibilityTests(unittest.TestCase):
             with self.subTest(name):
                 problems = self.check(changed(change))
                 self.assertIn(f"{expected} (needs a new protocol major)", problems)
-                self.assertEqual(self.check(changed(change) | {"protocol": {"major": 2, "minor": 0}}), [])
+                self.assertEqual(self.check(changed(change, major=1)), [])
 
     def test_any_change_but_a_description_needs_a_new_minor(self) -> None:
         self.assertEqual(
             self.check(changed(add_method, minor=0)),
             [
-                "the protocol changed since the release but PROTOCOL_VERSION is still 1.0; "
-                "raise the minor"
+                "the protocol changed since the release but PROTOCOL_VERSION is still "
+                f"{MAJOR}.{MINOR}; raise the minor"
             ],
         )
         self.assertEqual(self.check(changed(reword, minor=0)), [])
 
     def test_the_version_never_goes_down(self) -> None:
-        current = changed(lambda _: None, minor=0)
         released = changed(lambda _: None, minor=3)
         self.assertEqual(
-            check_protocol_compat.check(released, current, "the release"),
-            ["PROTOCOL_VERSION 1.0 is below the release's 1.3"],
+            check_protocol_compat.check(released, RELEASED, "the release"),
+            [f"PROTOCOL_VERSION {MAJOR}.{MINOR} is below the release's {MAJOR}.{MINOR + 3}"],
         )
 
 
