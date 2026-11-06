@@ -497,7 +497,9 @@ fn replayed_display_rows_become_finished_tool_cards() {
             message: transcript.display_message(),
         }],
         Path::new(""),
-        &crate::tools::sdk_registry::AppToolSet::disabled(),
+        crate::app::session_runtime::SessionTools::of_tool_set_for_tests(
+            &crate::tools::sdk_registry::AppToolSet::disabled(),
+        ),
     )
     .into_iter()
     .map(|notification| match notification.update {

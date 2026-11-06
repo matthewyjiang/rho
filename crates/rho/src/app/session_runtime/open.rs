@@ -4,17 +4,17 @@
 //! a session nobody prompts leaves none. That makes "nothing saved under
 //! this id" a session that was opened but never prompted, so reopening it
 //! opens it new again under the same id. A reopened session runs as the
-//! agent it was saved as, and its host may show the saved conversation to
-//! its client before the runtime takes over.
+//! agent it was saved as, and its host may show its saved conversation to
+//! its client before the first prompt.
 
-use std::{future::Future, path::Path};
+use std::path::Path;
 
 use rho_sdk::SessionOptions;
 
 use super::{
     agent::loaded_agent,
     build::{build_session, session_config},
-    Logouts, OpenedSession, SessionBuild, SessionRuntime, SessionStorage,
+    Logouts, OpenedSession, SessionBuild, SessionRuntime, SessionStorage, SessionTools,
 };
 use crate::{
     added_dirs::AddedDirs,
@@ -22,7 +22,7 @@ use crate::{
     app::interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
     config::Config,
     session::{tree::ProjectedMessage, NoSessionFound, Session as StoredSession},
-    tools::{mcp::config::McpConfig, sdk_registry::AppToolSet},
+    tools::mcp::config::McpConfig,
 };
 
 /// Where and how a host opens one session.
@@ -43,12 +43,12 @@ pub(crate) struct SessionOpening<'a> {
     pub(crate) logouts: &'a Logouts,
 }
 
-/// A reopened session's saved conversation, which its host may show its
-/// client before the runtime takes over.
+/// A saved session's conversation, which its host may show its client,
+/// such as when it reopens the session.
 pub(crate) struct SavedHistory<'a> {
     stored: &'a StoredSession,
     cwd: &'a Path,
-    tools: &'a AppToolSet,
+    tools: SessionTools<'a>,
 }
 
 impl<'a> SavedHistory<'a> {
@@ -57,13 +57,14 @@ impl<'a> SavedHistory<'a> {
         self.stored.active_display_history()
     }
 
-    /// The session's workspace, which the rows' paths are relative to.
+    /// The workspace the session was opened in, which the rows' paths are
+    /// shown relative to.
     pub(crate) fn cwd(&self) -> &'a Path {
         self.cwd
     }
 
     /// The session's tools, which describe the calls the rows show.
-    pub(crate) fn tool_set(&self) -> &'a AppToolSet {
+    pub(crate) fn tools(&self) -> SessionTools<'a> {
         self.tools
     }
 }
@@ -113,21 +114,12 @@ impl SessionRuntime {
     }
 
     /// Reopens the session saved as `id` in the opening's workspace, as the
-    /// agent it was saved as and keeping the origin its file records.
-    /// `replay` gets its saved conversation once the session is built; a
-    /// replay that fails fails the reopen.
+    /// agent it was saved as and keeping the origin its file records. Its
+    /// host may then show its [`Self::saved_history`].
     ///
-    /// An `id` nothing was saved under opens new under that id, without a
-    /// replay: it names a session opened but never prompted.
-    pub(crate) async fn reopen<Replay, Replayed>(
-        opening: SessionOpening<'_>,
-        id: &str,
-        replay: Replay,
-    ) -> anyhow::Result<Self>
-    where
-        Replay: FnOnce(SavedHistory<'_>) -> Replayed,
-        Replayed: Future<Output = anyhow::Result<()>>,
-    {
+    /// An `id` nothing was saved under opens new under that id, with no
+    /// saved history: it names a session opened but never prompted.
+    pub(crate) async fn reopen(opening: SessionOpening<'_>, id: &str) -> anyhow::Result<Self> {
         let stored = match StoredSession::open_by_id_with_histories(opening.cwd, id) {
             Ok((stored, _)) => stored,
             Err(error) if error.is::<NoSessionFound>() => {
@@ -159,16 +151,6 @@ impl SessionRuntime {
                 Ok(SessionOptions::from_snapshot(snapshot))
             })
             .await?;
-        let replayed = replay(SavedHistory {
-            stored: &stored,
-            cwd,
-            tools: &built.tools,
-        })
-        .await;
-        if let Err(error) = replayed {
-            built.teardown().await;
-            return Err(error);
-        }
         // Reported with the first turn, because hosts such as T3 Code
         // discard live updates while a load is in flight.
         let reopen_notice = built
@@ -197,5 +179,15 @@ impl SessionRuntime {
             },
             logouts,
         ))
+    }
+
+    /// The session's saved conversation, or `None` while nothing is saved:
+    /// a new session before its first save.
+    pub(crate) fn saved_history(&self) -> Option<SavedHistory<'_>> {
+        Some(SavedHistory {
+            stored: self.storage.file()?,
+            cwd: &self.permission.workspace_root,
+            tools: self.tools(),
+        })
     }
 }

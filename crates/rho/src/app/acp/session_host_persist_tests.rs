@@ -505,7 +505,7 @@ async fn accepted_user_message_ids_survive_replay() {
         &SessionId::new(&*id),
         &stored.active_display_history().unwrap(),
         home.path(),
-        &AppToolSet::disabled(),
+        crate::app::session_runtime::SessionTools::of_tool_set_for_tests(&AppToolSet::disabled()),
     ) {
         if let agent_client_protocol::schema::v1::SessionUpdate::UserMessageChunk(chunk) =
             notification.update

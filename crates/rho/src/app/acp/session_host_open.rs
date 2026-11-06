@@ -5,7 +5,7 @@
 //! requests into its parameters and the results into ACP's. All take the
 //! host's `additionalDirectories` as the session's added directories.
 
-use std::{future::Future, path::PathBuf};
+use std::path::PathBuf;
 
 use agent_client_protocol::schema::v1::{
     LoadSessionRequest, LoadSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
@@ -95,21 +95,18 @@ impl SessionHost {
             added_dirs,
             logouts: &startup.logouts,
         };
-        let session_id = &request.session_id;
-        let runtime = match history {
-            History::Replay(client) => {
-                SessionRuntime::reopen(opening, session_id.0.as_ref(), |saved| {
-                    replay_display_history(session_id, &saved, client)
-                })
-                .await?
+        let runtime = SessionRuntime::reopen(opening, request.session_id.0.as_ref()).await?;
+        let replayed = match (history, runtime.saved_history()) {
+            (History::Replay(client), Some(saved)) => {
+                replay_display_history(&request.session_id, saved, client).await
             }
-            History::Skip => {
-                SessionRuntime::reopen(opening, session_id.0.as_ref(), |_| {
-                    std::future::ready(anyhow::Ok(()))
-                })
-                .await?
-            }
+            // A session reopened new has nothing saved to replay.
+            (History::Replay(_), None) | (History::Skip, _) => Ok(()),
         };
+        if let Err(error) = replayed {
+            runtime.shutdown().await;
+            return Err(error);
+        }
         Ok(Self::from_runtime(io, startup, runtime, t3_wake))
     }
 }
@@ -192,19 +189,15 @@ fn mode_state(mode: PermissionMode) -> SessionModeState {
 }
 
 /// Sends `saved`'s display history to `client` as session `session_id`'s
-/// replay. The rows are mapped now, so the send borrows only `client`.
-fn replay_display_history<'c>(
+/// replay.
+async fn replay_display_history(
     session_id: &SessionId,
-    saved: &SavedHistory<'_>,
-    client: &'c dyn AcpClientPort,
-) -> impl Future<Output = anyhow::Result<()>> + 'c {
-    let notifications = saved
-        .display_rows()
-        .map(|rows| EventMapper::replay_history(session_id, &rows, saved.cwd(), saved.tool_set()));
-    async move {
-        for notification in notifications? {
-            send_notification(client, notification).await?;
-        }
-        Ok(())
+    saved: SavedHistory<'_>,
+    client: &dyn AcpClientPort,
+) -> anyhow::Result<()> {
+    let rows = saved.display_rows()?;
+    for notification in EventMapper::replay_history(session_id, &rows, saved.cwd(), saved.tools()) {
+        send_notification(client, notification).await?;
     }
+    Ok(())
 }
