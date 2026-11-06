@@ -149,6 +149,7 @@ pub(super) fn test_build(config: &Config, workspace_root: &Path) -> SessionBuild
             host_io: Default::default(),
             mcp_authorization: McpAuthorizationMode::NonInteractive,
             approvals: ApprovalPolicy::Host,
+            parent_notices: None,
         },
         run: RunShape {
             role: SessionRole::Acp,

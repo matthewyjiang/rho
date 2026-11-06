@@ -6,7 +6,7 @@ use std::{
 
 use rho_sdk::{hooks::HookHostLabels, provider::ModelProvider, SessionOptions};
 
-use super::{ensure_auto_classifier_model, ApprovalPolicy, SessionPermission};
+use super::{ensure_auto_classifier_model, ApprovalPolicy, SessionPermission, UnattendedApprovals};
 use crate::{
     added_dirs::AddedDirs,
     app::{
@@ -15,6 +15,7 @@ use crate::{
         session_assembly::{
             assemble_session, ApprovalInputs, BuiltSession, SessionAssembly, SessionAssemblyOptions,
         },
+        subagent_messaging::NoticePoster,
         tools_prompt::McpSamplingSupport,
     },
     config::Config,
@@ -77,6 +78,27 @@ pub(crate) struct HostCapabilities {
     pub(crate) mcp_authorization: McpAuthorizationMode,
     /// Who answers the session's approval requests.
     pub(crate) approvals: ApprovalPolicy,
+    /// The parent a delegated child posts notices to, which gives the
+    /// session the `message_parent` tools.
+    pub(crate) parent_notices: Option<Arc<dyn NoticePoster>>,
+}
+
+impl HostCapabilities {
+    /// A host nobody watches live (`rho run`, Rho subagents, workflow
+    /// nodes): it asks nobody, the session decides its approvals with
+    /// `approvals`, its children run in this process, and background work
+    /// holds the prompt open, since nothing wakes the session after it.
+    pub(crate) fn unattended(approvals: UnattendedApprovals) -> Self {
+        Self {
+            questions: QuestionSupport::Unavailable,
+            children: ChildAgents::InProcess,
+            background_wait: BackgroundWait::HoldPrompt,
+            host_io: HostIo::default(),
+            mcp_authorization: McpAuthorizationMode::from_process(),
+            approvals: ApprovalPolicy::Unattended(approvals),
+            parent_notices: None,
+        }
+    }
 }
 
 /// What a session is for and how each of its runs is shaped. Every SDK
@@ -233,6 +255,9 @@ pub(super) async fn build_session(
         added_dirs,
         host_io: build.host.host_io.clone(),
         extend_tools: |mut tools| {
+            if let Some(poster) = &build.host.parent_notices {
+                tools.add_bundle(crate::tools::message_parent_bundle(Arc::clone(poster)));
+            }
             match build.host.children {
                 ChildAgents::InProcess => {}
                 ChildAgents::HostThreads => {

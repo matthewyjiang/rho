@@ -498,6 +498,7 @@ fn session_build(startup: &AcpStartup, io: &super::client_io::ClientIo) -> HostB
             mcp_authorization: McpAuthorizationMode::NonInteractive,
             // A person answers through the client's permission prompts.
             approvals: ApprovalPolicy::Host,
+            parent_notices: None,
         },
         run: RunShape {
             role: SessionRole::Acp,
