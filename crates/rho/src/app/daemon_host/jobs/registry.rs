@@ -3,7 +3,10 @@
 use std::{
     collections::BTreeMap,
     io,
-    sync::{Mutex, MutexGuard, PoisonError},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex, MutexGuard, PoisonError,
+    },
 };
 
 use super::{
@@ -24,6 +27,20 @@ use super::{
 pub(in crate::app::daemon_host) struct JobRegistry {
     store: JobStore,
     jobs: Mutex<BTreeMap<JobId, JobRecord>>,
+    /// Set, under the `jobs` lock, once the daemon's stop recorded its
+    /// unfinished jobs; no job is added after.
+    closed: AtomicBool,
+}
+
+/// Why a job was not added.
+#[derive(Debug, thiserror::Error)]
+pub(in crate::app::daemon_host) enum RegisterError {
+    /// The daemon is stopping and takes no new jobs.
+    #[error("the daemon is stopping")]
+    Closed,
+    /// The job's file could not be written.
+    #[error(transparent)]
+    Io(#[from] io::Error),
 }
 
 /// No job has this id.
@@ -68,16 +85,23 @@ impl JobRegistry {
                     .map(|record| (record.id.clone(), record))
                     .collect(),
             ),
+            closed: AtomicBool::new(false),
         };
-        registry.interrupt_unfinished();
+        registry.interrupt_unfinished(&mut registry.lock());
         registry
     }
 
     /// Adds `record` and writes its file. Fails when the file cannot be
     /// written, and then the job is not added: a job the daemon could not
     /// record would vanish at its next restart.
-    pub(in crate::app::daemon_host) fn register(&self, record: JobRecord) -> io::Result<()> {
+    pub(in crate::app::daemon_host) fn register(
+        &self,
+        record: JobRecord,
+    ) -> Result<(), RegisterError> {
         let mut jobs = self.lock();
+        if self.closed.load(Ordering::Relaxed) {
+            return Err(RegisterError::Closed);
+        }
         self.store.write(&record)?;
         jobs.insert(record.id.clone(), record);
         Ok(())
@@ -129,11 +153,18 @@ impl JobRegistry {
         Ok(record.state.clone())
     }
 
-    /// Records every turn still under way as interrupted: at startup, for
-    /// the turns a dead daemon left open, and as the daemon stops, for the
-    /// turns that did not save in time.
-    pub(in crate::app::daemon_host) fn interrupt_unfinished(&self) {
+    /// For the daemon's stop, once its turns saved: records every job
+    /// still under way as interrupted, and takes no new job after, so a
+    /// run a workflow drive starts during the stop is not left listed as
+    /// running (#1658).
+    pub(in crate::app::daemon_host) fn close(&self) {
         let mut jobs = self.lock();
+        self.closed.store(true, Ordering::Relaxed);
+        self.interrupt_unfinished(&mut jobs);
+    }
+
+    /// Records every job in `jobs` with a turn under way as interrupted.
+    fn interrupt_unfinished(&self, jobs: &mut BTreeMap<JobId, JobRecord>) {
         for record in jobs.values_mut() {
             // Refused exactly for the jobs with no turn under way.
             if apply(record, JobEvent::TurnEnded(TurnEnd::Interrupted)).is_ok() {

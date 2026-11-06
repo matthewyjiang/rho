@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use super::{JobRegistry, StartTurnError};
+use super::{JobRegistry, RegisterError, StartTurnError};
 use crate::app::daemon_host::jobs::{JobEvent, JobId, JobRecord, JobState, JobStore, TurnEnd};
 
 fn states(records: Vec<JobRecord>) -> Vec<(JobId, JobState)> {
@@ -93,4 +93,35 @@ fn a_turn_starts_only_when_none_is_in_progress() {
         registry.get(&id).map(|record| record.state),
         Some(JobState::WaitingForInput)
     );
+}
+
+// Covers: the daemon's stop records a running job as interrupted, on disk
+// too, and refuses every job registered after it, so a run started during
+// the stop is never left listed as running.
+// Owner: daemon job registry stop.
+#[test]
+fn a_closed_registry_interrupts_its_turns_and_takes_no_new_jobs() {
+    let home = TempDir::new().unwrap();
+    let store = JobStore::open(home.path()).unwrap();
+    let registry = JobRegistry::open(store.clone());
+    let job = |state| JobRecord {
+        state,
+        ..JobRecord::new_session(
+            JobId::generate(),
+            PathBuf::from("/work"),
+            rho_sdk::SessionId::new(),
+        )
+    };
+    let running = job(JobState::Running);
+    let expected = vec![(running.id.clone(), JobState::Ended(TurnEnd::Interrupted))];
+    registry.register(running).unwrap();
+
+    registry.close();
+
+    assert!(matches!(
+        registry.register(job(JobState::Queued)),
+        Err(RegisterError::Closed)
+    ));
+    assert_eq!(states(registry.list()), expected);
+    assert_eq!(states(store.load().unwrap()), expected);
 }

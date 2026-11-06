@@ -13,11 +13,10 @@ use std::{
 use {
     crate::agent::AgentDefinition,
     crate::app::{
-        agent_concurrency::AgentConcurrency,
         agent_executor::{AgentExecutor, AgentLaunchRequest, AgentRunHandle},
         subagent_host_input::{SubagentHostInputBridge, SubagentHostInputRequest},
         subagent_messaging::{SubagentNotice, SubagentNoticeBridge},
-        subagent_pool::{StartedSubagent, SubagentObserver, SubagentPool},
+        subagent_pool::{ChildObserver, StartedSubagent, SubagentPool},
     },
     crate::session::SessionPersistence,
     crate::subagent::{self, RunStatus},
@@ -102,7 +101,7 @@ pub struct SubagentManager {
     parent: Arc<Mutex<ParentBinding>>,
     /// Hears of each run this manager starts, when the host shares its
     /// pool (see `subagent_pool`).
-    observer: Option<Arc<dyn SubagentObserver>>,
+    observer: Option<Arc<dyn ChildObserver>>,
 }
 
 /// The session a manager's subagents report to.
@@ -128,16 +127,7 @@ impl SubagentManager {
         cwd: PathBuf,
         pool: SubagentPool,
     ) -> Self {
-        let (concurrency, observer) = match pool {
-            SubagentPool::Own => (
-                AgentConcurrency::from_config(config.agent_concurrency),
-                None,
-            ),
-            SubagentPool::Shared {
-                concurrency,
-                observer,
-            } => (concurrency, Some(observer)),
-        };
+        let (concurrency, observer) = pool.into_parts(config.agent_concurrency);
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
             executor: AgentExecutor::new(
@@ -316,13 +306,7 @@ impl SubagentManager {
             }
         };
         if let Some(observer) = &self.observer {
-            observer.started(StartedSubagent {
-                run_id: id.clone(),
-                session: handle.session().cloned(),
-                workspace: cwd.to_path_buf(),
-                status: handle.clone_status_watch(),
-                queue: handle.queue(),
-            });
+            observer.subagent_started(StartedSubagent::of(id.clone(), cwd.to_path_buf(), &handle));
         }
         self.inner.lock().expect("delegated registry lock").insert(
             id.clone(),

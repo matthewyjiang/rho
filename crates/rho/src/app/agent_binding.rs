@@ -639,6 +639,10 @@ fn bind_rho_capabilities(
         // before bind when no parent bridge can answer.
         capabilities.remove(&ToolCapability::Agent);
         capabilities.remove(&ToolCapability::Agents);
+        // A workflow run's agent nodes are agents too, which would take
+        // capacity outside the budget and job tree of the session that
+        // started this child (#1658).
+        capabilities.remove(&ToolCapability::Workflow);
         // The advisor reviews the root session. A child run has its own
         // session and nothing to review.
         capabilities.remove(&ToolCapability::Advisor);
@@ -708,10 +712,11 @@ fn bind_rho_capabilities(
 fn may_omit_unavailable_tool(tool: &ToolCapability, role: AgentRole) -> bool {
     match tool {
         ToolCapability::Questionnaire => true,
-        ToolCapability::Agent | ToolCapability::Agents | ToolCapability::Advisor => {
-            matches!(role, AgentRole::Delegated | AgentRole::Workflow)
-        }
-        ToolCapability::Rho | ToolCapability::Workflow => matches!(role, AgentRole::Workflow),
+        ToolCapability::Agent
+        | ToolCapability::Agents
+        | ToolCapability::Advisor
+        | ToolCapability::Workflow => matches!(role, AgentRole::Delegated | AgentRole::Workflow),
+        ToolCapability::Rho => matches!(role, AgentRole::Workflow),
         _ => false,
     }
 }

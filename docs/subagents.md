@@ -226,7 +226,7 @@ Child-to-parent `message_parent` notices keep their existing notification displa
 
 ## Binding and security
 
-Every invocation goes through the same binder. Rho-runtime agents resolve aliases and tool capabilities against the host. Claude-cli agents are delegated-only and keep Claude's model/tool vocabulary. Delegated Rho agents cannot recurse through `agent`/`agents`.
+Every invocation goes through the same binder. Rho-runtime agents resolve aliases and tool capabilities against the host. Claude-cli agents are delegated-only and keep Claude's model/tool vocabulary. Delegated Rho agents cannot recurse through `agent`/`agents`, or start workflow runs, whose agent nodes would run outside the parent session's agent budget.
 
 Details: [Binding and security](/subagents/binding-and-security).
 

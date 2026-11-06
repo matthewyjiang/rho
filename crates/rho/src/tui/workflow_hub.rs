@@ -783,7 +783,13 @@ impl App {
             self.set_status("workflow already running");
             return Ok(());
         }
-        match workflow_cli::spawn_background_run(run, recovery, config_path, Some(tracker)).await {
+        let background = workflow_cli::BackgroundRun {
+            cwd: self.info.runtime.cwd.clone(),
+            config_path,
+            pool: crate::app::subagent_pool::SubagentPool::Own,
+            tracker,
+        };
+        match workflow_cli::spawn_background_run(run, recovery, background).await {
             Ok(_) => {
                 let (model, display) = crate::tools::workflow_tracker::start_context_prompts(
                     &run_id.to_string(),

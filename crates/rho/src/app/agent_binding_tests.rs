@@ -71,7 +71,8 @@ fn credentials(available: &[&str]) -> MemoryCredentialStore {
 
 // Covers: delegated children keep questionnaire (all tools or an explicit
 // allowlist) only when the host offers it, listing it without a bridge is not
-// fatal, recursive tools are dropped rather than fatal, and workflow agents
+// fatal, recursive tools (including workflow, whose nodes are agents) are
+// dropped rather than fatal, and workflow agents
 // lose orchestration and questionnaire.
 // Owner: delegated and workflow agent binding.
 #[test]
@@ -109,8 +110,8 @@ fn bound_capabilities_narrow_by_role_and_what_the_host_offers() {
         (
             "delegated allowlist omits recursive tools",
             AgentRole::Delegated,
-            allow(&["read_file", "agent", "agents", "advisor"]),
-            capability_set(&["read_file", "agent", "agents", "advisor"]),
+            allow(&["read_file", "agent", "agents", "advisor", "workflow"]),
+            capability_set(&["read_file", "agent", "agents", "advisor", "workflow"]),
             &["read_file"][..],
         ),
         (

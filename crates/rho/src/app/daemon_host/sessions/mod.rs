@@ -356,7 +356,7 @@ impl Sessions {
                 "turns did not save within DRAIN_TIMEOUT of the stop request; exiting anyway"
             );
         }
-        self.jobs.interrupt_unfinished();
+        self.jobs.close();
     }
 
     /// The loaded session `id` names. A well-formed id this daemon has not

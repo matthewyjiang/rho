@@ -3,7 +3,7 @@
 
 use rho_protocol as wire;
 
-use super::jobs::{JobId, JobKind, JobRecord, JobState, TurnEnd};
+use super::jobs::{JobId, JobRecord, JobState, JobSubject, TurnEnd};
 use crate::app::agent_concurrency::{Budget, QueuePlace};
 
 /// A session id as the wire sends it.
@@ -22,15 +22,6 @@ pub(super) fn session_from_wire(
 impl From<&JobId> for wire::JobId {
     fn from(id: &JobId) -> Self {
         Self::new(id.as_str())
-    }
-}
-
-impl From<JobKind> for wire::JobKind {
-    fn from(kind: JobKind) -> Self {
-        match kind {
-            JobKind::Session => Self::Session,
-            JobKind::Subagent => Self::Subagent,
-        }
     }
 }
 
@@ -74,21 +65,30 @@ pub(super) fn state_event(state: &JobState) -> wire::SessionEvent {
 pub(super) fn job_summary(record: JobRecord, queue: Option<QueuePlace>) -> wire::JobSummary {
     let JobRecord {
         id,
-        kind,
+        subject,
         state,
         workspace,
         parent,
-        session,
         created_at,
         updated_at,
     } = record;
+    let (kind, session, workflow_run) = match subject {
+        JobSubject::Session { session } => (wire::JobKind::Session, Some(session), None),
+        JobSubject::Subagent { session } => (wire::JobKind::Subagent, session, None),
+        JobSubject::Workflow { workflow_run } => (
+            wire::JobKind::Workflow,
+            None,
+            Some(workflow_run.to_string()),
+        ),
+    };
     wire::JobSummary {
         id: (&id).into(),
-        kind: kind.into(),
+        kind,
         state: (&state).into(),
         workspace,
         parent: parent.as_ref().map(Into::into),
         session: session.map(session_to_wire),
+        workflow_run,
         created_at,
         updated_at,
         error: failure(&state),

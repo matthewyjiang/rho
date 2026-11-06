@@ -38,6 +38,29 @@ hosted = false
 provider = "disabled"
 "#;
 
+/// A one-node workflow whose agent replies from the fixture provider.
+const WORKFLOW: &str = r#"def build(inputs):
+    return workflow(name = "daemon-run", nodes = [
+        agent(
+            name = "inspect",
+            agent = "fixture",
+            prompt = "inspect the workspace",
+            access = "mutating",
+            timeout_seconds = 600,
+            max_output_bytes = 100000,
+        ),
+    ])
+
+WORKFLOW = define(inputs = {}, build = build)
+"#;
+
+const WORKFLOW_AGENT: &str = "---
+description: Fixture agent for a daemon workflow run
+---
+
+Do the task.
+";
+
 struct Sandbox {
     daemon: DaemonSandbox,
     /// The session's workspace, canonicalized as the daemon records it.
@@ -76,7 +99,15 @@ impl Sandbox {
     /// Starts `rho daemon run` with the fixture in `mode` and connects to
     /// it once it answers.
     async fn start_daemon(&self, mode: &str) -> (DaemonProcess, Client) {
-        let daemon = DaemonProcess(self.rho(mode).args(["daemon", "run"]).spawn().unwrap());
+        // Outside every session's workspace, as a service manager starts it,
+        // so nothing a session runs can lean on the daemon's own directory.
+        let daemon = DaemonProcess(
+            self.rho(mode)
+                .current_dir(self.daemon.home())
+                .args(["daemon", "run"])
+                .spawn()
+                .unwrap(),
+        );
         // A daemon killed earlier left its socket file behind, so wait for
         // one that answers rather than one that exists.
         let client = self
@@ -310,6 +341,69 @@ async fn a_subagent_is_a_child_job_of_its_session() {
             .any(|record| record.to_string().contains(REPLY)),
         "the subagent saved its reply: {records:#?}"
     );
+}
+
+// Covers: a workflow run a daemon session starts is driven in the daemon in
+// the session's workspace, not the daemon's directory, and is listed as a
+// child job of the session's job, completed once the run succeeded; each of
+// its agent nodes is a subagent job whose parent is the workflow job.
+// Owner: daemon workflow jobs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_workflow_run_is_a_child_job_of_its_session() {
+    let sandbox = Sandbox::new();
+    let workflows = sandbox.workspace.join("wf");
+    std::fs::create_dir_all(workflows.join("agents")).unwrap();
+    std::fs::write(workflows.join("main.star"), WORKFLOW).unwrap();
+    std::fs::write(workflows.join("agents/fixture.md"), WORKFLOW_AGENT).unwrap();
+    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let session = new_session(&client, &sandbox.workspace).await;
+    let call = serde_json::json!({
+        "id": "start",
+        "name": "workflow",
+        "arguments": {"action": "start", "file": "wf/main.star"},
+    });
+    client
+        .request::<SessionPrompt>(&SessionPromptParams {
+            session: session.clone(),
+            text: call.to_string(),
+        })
+        .await
+        .unwrap();
+
+    let parent = settled_job(&sandbox, &client, &session).await;
+    let workflow = settled(&sandbox, &client, |job| {
+        job.parent.as_ref() == Some(&parent.id)
+    })
+    .await;
+    let node = settled(&sandbox, &client, |job| {
+        job.parent.as_ref() == Some(&workflow.id)
+    })
+    .await;
+    let log = sandbox.daemon_log();
+    assert_eq!(
+        (
+            (parent.state, workflow.kind, workflow.state, workflow.error),
+            (node.kind, node.state, node.error),
+            (workflow.workspace, node.workspace),
+        ),
+        (
+            (
+                JobState::Completed,
+                JobKind::Workflow,
+                JobState::Completed,
+                None
+            ),
+            (JobKind::Subagent, JobState::Completed, None),
+            (sandbox.workspace.clone(), sandbox.workspace.clone()),
+        ),
+        "log:\n{log}"
+    );
+    // The run the tool started is the only one under the daemon's home.
+    let runs: Vec<String> = std::fs::read_dir(sandbox.daemon.home().join("workflows/runs"))
+        .unwrap()
+        .map(|run| run.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(workflow.workflow_run.map(|run| vec![run]), Some(runs));
 }
 
 // Covers: a turn cancelled through `rho/session/cancel` is recorded

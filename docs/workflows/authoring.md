@@ -157,7 +157,7 @@ All node constructors accept these common fields:
 | `needs` | Nodes that must reach terminal state first |
 | `when` | Optional typed condition |
 | `allow_failure` | Let this failure avoid failing the whole workflow |
-| `timeout_seconds` | Required positive frozen process or agent timeout |
+| `timeout_seconds` | Required positive frozen process or agent timeout; an agent's includes any wait for a slot in the agent budget |
 | `max_output_bytes` | Required positive frozen retained-output limit |
 | `output` | Optional typed output schema |
 

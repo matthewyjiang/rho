@@ -6,7 +6,7 @@ use rho_tools::cancellation::RunCancellation;
 use tempfile::TempDir;
 use tokio::sync::watch;
 
-use super::{next_event, Subagents};
+use super::{next_event, workflow_end, Subagents};
 use crate::{
     app::{
         agent_binding::CapacityClass,
@@ -87,6 +87,20 @@ fn a_subagent_job_follows_its_run() {
     }
 }
 
+// Covers: a workflow drive that stopped without an end was interrupted
+// when the daemon is stopping, and failed otherwise.
+// Owner: daemon workflow jobs.
+#[test]
+fn a_workflow_drive_without_an_end_is_interrupted_only_by_a_stop() {
+    assert_eq!(
+        (workflow_end(None, true), workflow_end(None, false)),
+        (
+            TurnEnd::Interrupted,
+            TurnEnd::Failed("the workflow run stopped without an end".into()),
+        )
+    );
+}
+
 /// Yields until job `id` is in `state`.
 async fn wait_for_state(registry: &JobRegistry, id: &JobId, state: JobState) {
     for _ in 0..10_000 {
@@ -127,7 +141,7 @@ async fn a_child_job_reports_its_queue_place_until_it_runs() {
         .expect("a run of another session holds the only slot");
     let queued = concurrency.join(CapacityClass::Rho);
     let (status_tx, status_rx) = watch::channel(status(RunState::Queued));
-    observer.started(StartedSubagent {
+    observer.subagent_started(StartedSubagent {
         run_id: "run-1".into(),
         session: Some(rho_sdk::SessionId::new()),
         workspace: PathBuf::from("/work"),
