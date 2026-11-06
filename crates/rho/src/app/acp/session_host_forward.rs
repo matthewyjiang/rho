@@ -7,7 +7,9 @@
 //! requests, which wait concurrently so a pending one never holds back the
 //! event stream; a withdrawal drops its request. An update the client did
 //! not take fails the turn: the forwarder tells the runtime once and then
-//! only closes the run's cards, best effort.
+//! only closes the run's cards, best effort. A turn whose run already
+//! ended settles anyway (see `TurnControl::HostFailed`), and the prompt
+//! fails with the delivery error.
 //!
 //! [`SessionRuntime::run_turn`]: crate::app::session_runtime::SessionRuntime::run_turn
 
@@ -132,13 +134,15 @@ impl<'a> Forwarder<'a> {
 
 impl<'a> Forwarding<'a> {
     async fn show(&mut self, event: SessionEvent) {
-        if self.failure.is_some() {
-            // The turn is failing; close the run's cards if the client still
-            // listens, and leave everything else.
-            if let SessionEvent::RunClosed {
-                ending: RunEnd::Failed(message),
-            } = &event
-            {
+        if let Some(failure) = self.failure.clone() {
+            // The turn is failing, or its run ended before the turn saw the
+            // failure: close the run's cards if the client still listens,
+            // and leave everything else.
+            if let SessionEvent::RunClosed { ending } = &event {
+                let message = match ending {
+                    RunEnd::Failed(message) => message,
+                    RunEnd::Ended => &failure,
+                };
                 self.close_failed(message).await;
             }
             return;

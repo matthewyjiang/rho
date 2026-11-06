@@ -108,7 +108,9 @@ pub(crate) enum SessionEvent {
     RunClosed { ending: RunEnd },
     /// The run ended, whether it completed, was cancelled, or failed, with
     /// `context` as its settled context estimate. Sent before the turn is
-    /// saved; not sent when the host failed the turn.
+    /// saved; not sent when the host failed the turn. By then the turn reads
+    /// no more controls, so a delivery failure the host reports later does
+    /// not fail the turn; see [`TurnControl::HostFailed`].
     RunFinished { context: ContextEstimate },
 }
 
@@ -138,7 +140,14 @@ pub(crate) enum TurnControl {
         answer: Result<HostInputResponse, HostInputRefusal>,
     },
     /// The host could not deliver what the turn reported. The turn cancels
-    /// its run and fails with `message`.
+    /// its run and fails with `message`, if it still reads controls: it
+    /// stops once the run's events ended ([`SessionEvent::RunClosed`]) and
+    /// nothing waits on the host. A failure that arrives later does not
+    /// fail the turn, which is saved and, when its run completed, reported
+    /// to `session_completed` as usual. So a host that falls behind or goes
+    /// away, such as a dead subscriber, never fails a finished turn; it
+    /// reports the failure to its own client instead, as ACP fails the
+    /// prompt.
     HostFailed { message: String },
 }
 
