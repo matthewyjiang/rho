@@ -129,22 +129,13 @@ pub(crate) enum SessionRole {
     /// An ACP client's session, such as Zed's or T3 Code's.
     Acp,
     /// `rho run`'s session.
-    #[expect(dead_code, reason = "rho run builds on the runtime in the next PR")]
     Run,
     /// A Rho subagent `parent` started through the `agent` tool. Every host
     /// binds its session as the subagent manager's parent before its first
     /// turn, so a subagent always has one; only workflow nodes run
     /// parentless.
-    #[expect(
-        dead_code,
-        reason = "Rho subagents build on the runtime in the next PR"
-    )]
     Subagent { parent: rho_sdk::SessionId },
     /// An agent node of a workflow run, which no session started.
-    #[expect(
-        dead_code,
-        reason = "workflow nodes build on the runtime in the next PR"
-    )]
     WorkflowNode,
 }
 

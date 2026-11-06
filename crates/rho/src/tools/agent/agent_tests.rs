@@ -368,6 +368,10 @@ async fn concurrent_background_launches_register_together() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
+    manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
+        "session-1",
+        None,
+    ));
     let tool = AgentTool::new(manager.clone(), root.path(), /*catalog*/ None);
     let first = call_agent(
         &tool,

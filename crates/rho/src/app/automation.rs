@@ -1,32 +1,40 @@
+//! `rho run`: one prompt on a saved session with no person watching, its
+//! events written as text or as the versioned JSONL stream (see
+//! `automation_protocol.rs`), ending with a documented exit code.
+//!
+//! The session runs on the headless host (`headless_host.rs`); this module
+//! owns what is `rho run`'s own: reading the prompt, resolving its slash
+//! command, the terminal event, and the exit code.
+
 use std::{
     fmt,
     io::{self, Read, Write},
     num::NonZeroUsize,
     path::PathBuf,
-    sync::Arc,
     time::Duration,
 };
 
-use rho_sdk::UserInput;
-
-use {
-    crate::cli::{Command, OutputFormat},
-    crate::config::Config,
-    crate::diagnostics::RuntimeDiagnostics,
-    crate::herdr::{HerdrReporter, HerdrState},
-    crate::permission::{PermissionMode, SessionWriteLog},
-    crate::permission_classifier_handler::ClassifierApprovalHandler,
-    crate::subagent::{RunState, RunStatus},
-};
+use rho_sdk::{CancellationToken, UserInput};
 
 use super::{
     agent_binding::BoundAgent,
     automation_protocol::{write_event, JsonlAdapter, TerminalReason, WireEvent},
-    headless_run::{self, HeadlessRunDeps, HostInputResponder},
-    session_assembly::{
-        assemble_session, ApprovalInputs, SessionApproval, SessionAssembly, SessionAssemblyOptions,
+    headless_host::{
+        cancel_on_stop, until_stopped, HeadlessView, PromptEnd, RunReporter, StopCause, Stops,
+    },
+    session_commands::{self, BuiltInCommand, CommandScope, CommandSet, PromptCommand},
+    session_runtime::{
+        CommandRejected, HostCapabilities, Logouts, RunShape, SessionBuild, SessionLaunch,
+        SessionOpening, SessionRole, SessionRuntime, TitleJob, Turn, TurnOutcome,
+        UnattendedApprovals,
     },
     shutdown_signal::{ShutdownSignal, ShutdownSignals},
+};
+use crate::{
+    cli::{Command, OutputFormat},
+    config::Config,
+    diagnostics::RuntimeDiagnostics,
+    herdr::{HerdrReporter, HerdrState},
 };
 
 mod terminal;
@@ -92,28 +100,14 @@ impl fmt::Display for AutomationInterrupted {
 
 impl std::error::Error for AutomationInterrupted {}
 
-#[derive(Debug)]
-struct SubagentCancelled;
-
-impl fmt::Display for SubagentCancelled {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("subagent cancellation requested")
-    }
-}
-
-impl std::error::Error for SubagentCancelled {}
-
+/// What `rho run` was launched with.
 pub(super) struct Startup<'a> {
     pub config: &'a Config,
     pub config_path: PathBuf,
     pub cwd: PathBuf,
     pub no_system_prompt: bool,
-    /// Launch-owned instructions appended after the agent and workspace prompt.
-    pub system_prompt_suffix: Option<&'a str>,
     pub no_tools: bool,
     pub no_subagents: bool,
-    pub usage_purpose: &'static str,
-    pub parent_session_id: Option<rho_sdk::SessionId>,
     pub agent: BoundAgent,
     pub output_file: Option<PathBuf>,
     pub output: OutputFormat,
@@ -121,37 +115,16 @@ pub(super) struct Startup<'a> {
     pub timeout: Option<Duration>,
     pub diagnostics: RuntimeDiagnostics,
     pub herdr: HerdrReporter,
-    pub host_input: Option<Arc<dyn HostInputResponder>>,
-    /// Non-blocking parent notices for background delegated Rho agents.
-    pub notice_poster: Option<Arc<dyn super::subagent_messaging::NoticePoster>>,
-    /// Receives the live steering port once the Rho session starts.
-    pub steering_slot: Option<super::subagent_messaging::SteeringSlot>,
-    pub approval_session: Option<rho_sdk::ApprovalSession>,
-    pub approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
-    pub hook_host_labels: rho_sdk::hooks::HookHostLabels,
-    pub checkpoint: Option<SessionCheckpoint>,
     /// Directories added to the workspace scope beyond `cwd`.
     pub added_dirs: crate::added_dirs::AddedDirs,
-    /// What the host does in place of local disk, such as serving files.
-    pub host_io: crate::tools::host_io::HostIo,
 }
 
-/// Step checkpoints for one headless run.
-///
-/// The session saves to `store` at every step boundary. With `resume`, the run
-/// restores that snapshot and continues it instead of sending the prompt.
-#[derive(Clone)]
-pub(crate) struct SessionCheckpoint {
-    pub(crate) store: Arc<dyn rho_sdk::SessionStore>,
-    pub(crate) resume: Option<rho_sdk::SessionSnapshot>,
-}
-
-/// What a headless run sends before its first model request.
-pub(super) enum RunEntry {
-    Prompt(String),
-    /// Continue restored history; see [`rho_sdk::Session::continue_history`].
-    Resume,
-}
+/// The commands `rho run` runs. `/compact` is not among them: a run's
+/// session is new, so there is nothing to compact.
+const RUN_COMMANDS: CommandSet = CommandSet {
+    built_ins: &[BuiltInCommand::Init],
+    sessions_label: "rho run",
+};
 
 pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Option<String>> {
     match command {
@@ -199,7 +172,7 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
         .map(|timeout| tokio::time::Instant::now() + timeout);
     // Before any run state is published, so a signal during startup is held
     // for the run to handle instead of killing the process mid-setup.
-    let mut shutdown = ShutdownSignals::install()?;
+    let mut stops = Stops::on_signals(ShutdownSignals::install()?).or_at(deadline);
     // The reporter exists before anything that can fail, so a parent process
     // watching the output file always sees a terminal state, including startup failures.
     let reporter_result = startup
@@ -226,43 +199,175 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
         }
     };
 
-    let cancellation = rho_tools::cancellation::RunCancellation::default();
-    let (result, timed_out) = if let Some(deadline) = deadline {
-        let future = run_session_with_output(
-            prompt_text,
-            &startup,
-            &mut shutdown,
-            reporter.as_mut(),
-            Some(cancellation.clone()),
-            jsonl.as_mut(),
-        );
-        tokio::pin!(future);
-        tokio::select! {
-            result = &mut future => (result, false),
-            () = tokio::time::sleep_until(deadline) => {
-                cancellation.cancel();
-                (future.await, true)
-            }
-        }
-    } else {
-        (
-            run_session_with_output(
-                prompt_text,
-                &startup,
-                &mut shutdown,
-                reporter.as_mut(),
-                None,
-                jsonl.as_mut(),
-            )
-            .await,
-            false,
-        )
-    };
-    let terminal = classify_run_terminal(result, timed_out);
+    let (end, title) = run_session(
+        prompt_text,
+        &startup,
+        &mut stops,
+        reporter.as_mut(),
+        jsonl.as_mut(),
+    )
+    .await;
+    let terminal = classify_run_terminal(end);
     if let Some(reporter) = reporter.as_mut() {
-        reporter.finish_terminal(&terminal);
+        match &terminal {
+            RunTerminal::Completed(outcome) => reporter.finish_ok(outcome),
+            RunTerminal::MaxSteps(_) | RunTerminal::Timeout | RunTerminal::Interrupted(_) => {
+                reporter.finish_stopped();
+            }
+            RunTerminal::Failed(error) => reporter.finish_error(error),
+        }
     }
-    emit_and_exit_terminal(terminal, &mut jsonl, reporter.is_some(), &messages)
+    let exit = emit_and_exit_terminal(terminal, &mut jsonl, reporter.is_some(), &messages);
+    // After the terminal event, so a reader of the output never waits on
+    // it; before exit, since nothing else names the session.
+    if let Some(title) = title {
+        title.generate().await;
+    }
+    exit
+}
+
+/// Runs the prompt on a new session saved as `rho run`'s, until it ends or
+/// `stops` stops it, and tears the session down. Returns how the prompt
+/// ended and, unless it was stopped, the title request its turn left.
+async fn run_session(
+    prompt_text: String,
+    startup: &Startup<'_>,
+    stops: &mut Stops,
+    reporter: Option<&mut RunReporter>,
+    jsonl: Option<&mut JsonlAdapter>,
+) -> (PromptEnd, Option<TitleJob>) {
+    let build = SessionBuild {
+        launch: SessionLaunch {
+            config_path: startup.config_path.clone(),
+            no_system_prompt: startup.no_system_prompt,
+            no_tools: startup.no_tools,
+            no_subagents: startup.no_subagents,
+            diagnostics: startup.diagnostics.clone(),
+            agent: startup.agent.clone(),
+            prompt_suffix: None,
+        },
+        host: HostCapabilities::unattended(UnattendedApprovals::Alone),
+        run: RunShape {
+            role: SessionRole::Run,
+            max_steps: startup.max_steps,
+            hook_labels: Default::default(),
+        },
+    };
+    let logouts = Logouts::default();
+    let opening = SessionOpening {
+        build,
+        process_config: startup.config,
+        host_mcp: Default::default(),
+        cwd: &startup.cwd,
+        added_dirs: startup.added_dirs.clone(),
+        logouts: &logouts,
+    };
+    let mut view = HeadlessView::new(reporter, jsonl);
+    let stop = CancellationToken::new();
+    let work = async {
+        let mut runtime = SessionRuntime::open_new(opening, rho_sdk::SessionId::new()).await?;
+        view.bind(&runtime);
+        let _ = startup
+            .herdr
+            .report_state(HerdrState::Working, None, None)
+            .await;
+        let ended = cancel_on_stop(
+            &stop,
+            runtime.handle(),
+            run_prompt(&mut runtime, &mut view, prompt_text, startup.config),
+        )
+        .await;
+        let title = runtime.take_title();
+        runtime.shutdown().await;
+        let _ = startup
+            .herdr
+            .report_state(HerdrState::Idle, None, None)
+            .await;
+        let _ = startup.herdr.release().await;
+        anyhow::Ok((ended, title))
+    };
+    let (worked, cause) = until_stopped(stops, &stop, work).await;
+    // A JSONL write that failed already failed the turn; the stream is gone.
+    if let Some(message) = view.take_output_failure() {
+        let failed = AutomationExit::new(1, TerminalReason::OutputError, message);
+        return (PromptEnd::Failed(failed.into()), None);
+    }
+    match worked {
+        // A stopped run exits now, without waiting on a title.
+        Ok((ended, title)) => (
+            PromptEnd::of(ended, cause),
+            title.filter(|_| cause.is_none()),
+        ),
+        Err(error) => (PromptEnd::of(Err(error), cause), None),
+    }
+}
+
+/// Runs `text` within a new prompt: its slash command when it starts with
+/// one `rho run` runs, else a model turn on it. A command `rho run` cannot
+/// run fails the prompt as a configuration error.
+async fn run_prompt(
+    runtime: &mut SessionRuntime,
+    view: &mut HeadlessView<'_>,
+    text: String,
+    process_config: &Config,
+) -> anyhow::Result<TurnOutcome> {
+    let prompt = runtime.begin_prompt(process_config).await?;
+    let input = UserInput::text(text);
+    let home = crate::paths::home_dir();
+    let command = {
+        let scope = CommandScope::of(runtime, home.as_deref(), process_config);
+        // Expansion can wait on an MCP server, so a stop drops it.
+        tokio::select! {
+            biased;
+            () = prompt.cancellation().cancelled() => return Ok(TurnOutcome::Cancelled),
+            command = session_commands::resolve(input.clone(), &scope, RUN_COMMANDS) => command,
+        }
+    };
+    let rejected = |message: String| -> anyhow::Error {
+        AutomationExit::new(2, TerminalReason::ConfigurationError, message).into()
+    };
+    match command.map_err(|rejected_command| rejected(rejected_command.to_string()))? {
+        PromptCommand::Turn {
+            input: model,
+            calls,
+        } => {
+            let turn = Turn {
+                display: input,
+                model,
+                calls,
+            };
+            runtime
+                .run_prompt_turn(view, &prompt, turn, process_config)
+                .await
+        }
+        PromptCommand::RunAsAgent(task) => {
+            runtime
+                .rebind_agent(&prompt, &task, process_config)
+                .await
+                .map_err(|error| match error.downcast::<CommandRejected>() {
+                    Ok(CommandRejected(message)) => rejected(message),
+                    Err(error) => error,
+                })?;
+            // The command stays the shown message; the model gets the task.
+            let turn = Turn {
+                display: input,
+                model: task.input,
+                calls: Vec::new(),
+            };
+            runtime
+                .run_prompt_turn(view, &prompt, turn, process_config)
+                .await
+        }
+        // `RUN_COMMANDS` has no `/compact`, so the resolver rejects it first.
+        PromptCommand::Compact { .. } => Err(rejected(
+            "could not run /compact: not available in rho run".into(),
+        )),
+        // The workflow would outlive the process, which exits with its prompt.
+        PromptCommand::StartWorkflow(start) => Err(rejected(format!(
+            "could not run /workflow:{}: not available in rho run; use rho workflow run",
+            start.workflow.label
+        ))),
+    }
 }
 
 fn write_text_answer(answer: &rho_sdk::RunOutcome, has_reporter: bool) -> anyhow::Result<()> {
@@ -285,7 +390,7 @@ fn write_text_answer(answer: &rho_sdk::RunOutcome, has_reporter: bool) -> anyhow
     })
 }
 
-pub(super) fn emit(event: WireEvent) -> anyhow::Result<()> {
+fn emit(event: WireEvent) -> anyhow::Result<()> {
     let mut stdout = io::stdout().lock();
     write_event(&mut stdout, &event).map_err(|error| {
         AutomationExit::new(
@@ -330,22 +435,23 @@ enum RunTerminal {
     Completed(rho_sdk::RunOutcome),
     MaxSteps(rho_sdk::RunOutcome),
     Timeout,
+    Interrupted(ShutdownSignal),
     Failed(anyhow::Error),
 }
 
-fn classify_run_terminal(
-    result: anyhow::Result<rho_sdk::RunOutcome>,
-    timed_out: bool,
-) -> RunTerminal {
-    if timed_out {
-        return RunTerminal::Timeout;
-    }
-    match result {
-        Ok(answer) if answer.stop_reason() == rho_sdk::StopReason::MaxSteps => {
+fn classify_run_terminal(end: PromptEnd) -> RunTerminal {
+    match end {
+        PromptEnd::Finished(answer) if answer.stop_reason() == rho_sdk::StopReason::MaxSteps => {
             RunTerminal::MaxSteps(answer)
         }
-        Ok(answer) => RunTerminal::Completed(answer),
-        Err(error) => RunTerminal::Failed(error),
+        PromptEnd::Finished(answer) => RunTerminal::Completed(answer),
+        PromptEnd::Stopped(StopCause::Timeout) => RunTerminal::Timeout,
+        PromptEnd::Stopped(StopCause::Interrupted(signal)) => RunTerminal::Interrupted(signal),
+        // Nothing but a stop cancels `rho run`'s prompt.
+        PromptEnd::Stopped(StopCause::Cancelled) => {
+            RunTerminal::Failed(anyhow::anyhow!("rho run was cancelled"))
+        }
+        PromptEnd::Failed(error) => RunTerminal::Failed(error),
     }
 }
 
@@ -359,6 +465,10 @@ fn emit_and_exit_terminal(
         RunTerminal::Timeout => {
             emit_stopped(jsonl, TerminalReason::Timeout)?;
             Err(AutomationExit::new(124, TerminalReason::Timeout, TIMEOUT_MESSAGE).into())
+        }
+        RunTerminal::Interrupted(signal) => {
+            emit_stopped(jsonl, TerminalReason::Interrupted)?;
+            Err(AutomationInterrupted::new(signal).into())
         }
         RunTerminal::MaxSteps(answer) => {
             if let Some(adapter) = jsonl.as_mut() {
@@ -384,15 +494,10 @@ fn emit_and_exit_terminal(
             if reason == TerminalReason::ProviderError {
                 print_provider_diagnostic(&error);
             }
-            if reason == TerminalReason::Interrupted {
-                emit_stopped(jsonl, reason)?;
-            } else if reason != TerminalReason::OutputError {
+            if reason != TerminalReason::OutputError {
                 emit_failure(jsonl, reason, &error, messages)?;
             }
             let message = messages.for_error(reason, &error);
-            if error.is::<AutomationInterrupted>() {
-                return Err(error);
-            }
             Err(AutomationExit::new(code, reason, message).into())
         }
     }
@@ -411,450 +516,6 @@ fn print_provider_diagnostic(error: &anyhow::Error) {
     });
     if let Some(diagnostic) = diagnostic {
         eprintln!("provider diagnostic: {diagnostic}");
-    }
-}
-
-pub(super) async fn run_session(
-    prompt_text: String,
-    startup: &Startup<'_>,
-    reporter: Option<&mut RunReporter>,
-    cancellation: Option<rho_tools::cancellation::RunCancellation>,
-) -> anyhow::Result<rho_sdk::RunOutcome> {
-    crate::app::session_runtime::ensure_auto_classifier_model(startup.config)?;
-    let mut shutdown = ShutdownSignals::install()?;
-    run_session_with_output(
-        prompt_text,
-        startup,
-        &mut shutdown,
-        reporter,
-        cancellation,
-        None,
-    )
-    .await
-}
-
-async fn run_session_with_output(
-    prompt_text: String,
-    startup: &Startup<'_>,
-    shutdown: &mut ShutdownSignals,
-    mut reporter: Option<&mut RunReporter>,
-    cancellation: Option<rho_tools::cancellation::RunCancellation>,
-    mut jsonl: Option<&mut JsonlAdapter>,
-) -> anyhow::Result<rho_sdk::RunOutcome> {
-    crate::app::session_runtime::ensure_auto_classifier_model(startup.config)?;
-    let resume = startup
-        .checkpoint
-        .as_ref()
-        .and_then(|checkpoint| checkpoint.resume.as_ref());
-    let entry = match resume {
-        Some(_) => RunEntry::Resume,
-        None => RunEntry::Prompt(prompt_text),
-    };
-    let SessionAssembly {
-        built,
-        workspace_root,
-        ..
-    } = assemble_session(SessionAssemblyOptions {
-        config: startup.config,
-        config_path: startup.config_path.clone(),
-        cwd: &startup.cwd,
-        no_system_prompt: startup.no_system_prompt,
-        no_tools: startup.no_tools,
-        no_subagents: startup.no_subagents,
-        // Automation keeps questionnaire capability when the agent exposes it.
-        questionnaire_enabled: true,
-        // An automation run can only show a server's question when the caller
-        // supplied a responder for host input; without one the run would fail
-        // on the first question instead of declining it.
-        mcp_elicitation: match startup.host_input {
-            Some(_) => crate::tools::mcp::McpElicitationSupport::Available,
-            None => crate::tools::mcp::McpElicitationSupport::Unavailable,
-        },
-        // Automation binds no model for sampling, so it never declares the
-        // capability and rejects any request that arrives anyway.
-        mcp_sampling: crate::app::tools_prompt::McpSamplingSupport::Unavailable,
-        tool_source_attach: crate::app::tools_prompt::ToolSourceAttach::Connect,
-        mcp_authorization: crate::tools::mcp::McpAuthorizationMode::from_process(),
-        diagnostics: &startup.diagnostics,
-        agent: &startup.agent,
-        max_steps: startup.max_steps,
-        usage_purpose: startup.usage_purpose,
-        usage_parent_session_id: startup.parent_session_id.clone(),
-        hook_host_labels: startup.hook_host_labels.clone(),
-        added_dirs: &startup.added_dirs,
-        host_io: startup.host_io.clone(),
-        system_prompt_suffix: startup.system_prompt_suffix,
-        extend_tools: |mut tool_set: crate::tools::sdk_registry::AppToolSet| {
-            if let Some(poster) = startup.notice_poster.clone() {
-                tool_set.add_bundle(crate::tools::message_parent_bundle(poster));
-            }
-            tool_set
-        },
-        approval: |inputs: ApprovalInputs| {
-            Ok(SessionApproval {
-                session: headless_approval_session(
-                    &inputs.config,
-                    startup.approval_session.clone(),
-                    startup.approval_classifier.clone(),
-                    inputs.workspace_root,
-                    inputs.usage_recording,
-                    inputs.session_writes,
-                )?,
-                receiver: None,
-            })
-        },
-        session_options: |_| {
-            Ok(resume.cloned().map_or_else(
-                crate::app::interactive_runtime::startup::fresh_session_options,
-                rho_sdk::SessionOptions::from_snapshot,
-            ))
-        },
-    })
-    .await?;
-    let session = &built.session;
-    if let Some(checkpoint) = &startup.checkpoint {
-        session.set_checkpoint_store(Some(
-            built
-                .tools
-                .todo_state()
-                .checkpoint_store(Arc::clone(&checkpoint.store)),
-        ))?;
-    }
-    let mut delegation = super::headless_delegation::HeadlessDelegation::attach(
-        session,
-        super::headless_delegation::BackgroundSources::of(&built.tools),
-        None,
-        /*held*/ &mut None,
-    )?;
-    if let Some(adapter) = jsonl.as_deref_mut() {
-        adapter.set_run_context(session.id(), &workspace_root);
-    }
-    if let Some(reporter) = reporter.as_deref_mut() {
-        reporter.set_mcp_tools(built.tools.mcp_report().tool_names());
-    }
-    let _ = startup
-        .herdr
-        .report_state(HerdrState::Working, None, None)
-        .await;
-    let result = super::headless_delegation::HeadlessDelegation::drive(
-        &mut delegation,
-        complete_run(
-            session,
-            entry,
-            shutdown,
-            HeadlessRunDeps {
-                reporter,
-                external_cancellation: cancellation,
-                jsonl,
-                host_input: startup.host_input.as_deref(),
-            },
-            startup.steering_slot.clone(),
-        ),
-    )
-    .await;
-
-    let session_hooks = built.runtime.hooks();
-    let session_id = session.id().clone();
-    match &result {
-        Ok(_) => {
-            session_hooks.session_completed(&session_id, /* completed_runs */ 1)
-        }
-        Err(error) => session_hooks.session_failed(
-            &session_id,
-            rho_sdk::hooks::HookSessionFailureKind::RunFailed,
-            &error.to_string(),
-        ),
-    }
-    built.teardown().await;
-    let _ = startup
-        .herdr
-        .report_state(HerdrState::Idle, None, None)
-        .await;
-    let _ = startup.herdr.release().await;
-
-    result
-}
-
-/// Resolves the approval session for one headless run.
-///
-/// Non-Auto keeps the inherited session. Auto always installs a classifier:
-/// isolate a workflow/subagent template onto this run's write log when present,
-/// otherwise build a fresh headless classifier. A stray non-classifier
-/// `approval_session` is ignored in Auto so callers do not juggle paired Option
-/// knobs.
-fn headless_approval_session(
-    config: &Config,
-    approval_session: Option<rho_sdk::ApprovalSession>,
-    approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
-    workspace_root: PathBuf,
-    usage_recording: rho_sdk::ProviderRequestUsageRecording,
-    session_writes: SessionWriteLog,
-) -> anyhow::Result<Option<rho_sdk::ApprovalSession>> {
-    if config.permission_mode != PermissionMode::Auto {
-        return Ok(approval_session);
-    }
-    Ok(Some(rho_sdk::ApprovalSession::from_shared(
-        headless_auto_classifier(
-            config,
-            approval_classifier,
-            workspace_root,
-            usage_recording,
-            session_writes,
-        ),
-    )))
-}
-
-fn headless_auto_classifier(
-    config: &Config,
-    approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
-    workspace_root: PathBuf,
-    usage_recording: rho_sdk::ProviderRequestUsageRecording,
-    session_writes: SessionWriteLog,
-) -> Arc<ClassifierApprovalHandler> {
-    match approval_classifier {
-        Some(template) => template.isolate_for_run(session_writes),
-        None => ClassifierApprovalHandler::shared(
-            config.clone(),
-            workspace_root,
-            usage_recording,
-            None,
-            Some(session_writes),
-        ),
-    }
-}
-
-async fn complete_run(
-    session: &rho_sdk::Session,
-    entry: RunEntry,
-    shutdown: &mut ShutdownSignals,
-    dependencies: HeadlessRunDeps<'_>,
-    steering_slot: Option<super::subagent_messaging::SteeringSlot>,
-) -> anyhow::Result<rho_sdk::RunOutcome> {
-    let HeadlessRunDeps {
-        reporter,
-        external_cancellation,
-        jsonl,
-        host_input,
-    } = dependencies;
-    let mut run = match entry {
-        RunEntry::Prompt(text) => session.start(UserInput::text(text)).await?,
-        RunEntry::Resume => session.continue_history().await?,
-    };
-    if let Some(slot) = steering_slot {
-        slot.publish(run.steering_handle());
-    }
-    let cancellation = run.cancellation_handle();
-    let external_cancellation = external_cancellation.unwrap_or_default();
-    tokio::select! {
-        outcome = headless_run::drive(&mut run, reporter, jsonl, host_input) => outcome,
-        signal = shutdown.recv() => {
-            let signal = signal?;
-            cancellation.cancel();
-            let _ = run.outcome().await;
-            Err(AutomationInterrupted::new(signal).into())
-        }
-        () = external_cancellation.cancelled() => {
-            cancellation.cancel();
-            let _ = run.outcome().await;
-            Err(SubagentCancelled.into())
-        }
-    }
-}
-
-pub(crate) use crate::run_artifacts::RunArtifactIdentity;
-
-/// Maintains the `--output-file` status contract for subagent runs and
-/// streams progress to stdout so a watching pane shows live activity.
-pub(crate) struct RunReporter {
-    sink: crate::run_artifacts::RunArtifactSink,
-    adapter: crate::tui::event_adapter::SdkEventAdapter,
-    stream_output: bool,
-    steering_slot: Option<super::subagent_messaging::SteeringSlot>,
-}
-
-impl RunReporter {
-    pub(crate) fn new(
-        path: PathBuf,
-        identity: RunArtifactIdentity,
-        cwd: PathBuf,
-        prompt: &str,
-        stream_output: bool,
-        status_tx: Option<tokio::sync::watch::Sender<RunStatus>>,
-    ) -> anyhow::Result<Self> {
-        let sink = crate::run_artifacts::RunArtifactSink::open(path, &identity, prompt, status_tx)?;
-        Ok(Self {
-            sink,
-            // MCP tools connect with the session, after this reporter exists.
-            adapter: crate::tui::event_adapter::SdkEventAdapter::new(
-                cwd,
-                crate::tools::mcp::exported_name::McpToolNames::default(),
-            ),
-            stream_output,
-            steering_slot: None,
-        })
-    }
-
-    /// Resume after the executor already wrote the Starting boundary.
-    pub(crate) fn continue_from(
-        path: PathBuf,
-        started_status: RunStatus,
-        cwd: PathBuf,
-        prompt: &str,
-        status_tx: Option<tokio::sync::watch::Sender<RunStatus>>,
-        live_title: Option<crate::run_artifacts::LiveRunTitle>,
-        steering_slot: Option<super::subagent_messaging::SteeringSlot>,
-    ) -> anyhow::Result<Self> {
-        let sink = crate::run_artifacts::RunArtifactSink::continue_from(
-            path,
-            started_status,
-            prompt,
-            status_tx,
-            live_title,
-        )?;
-        Ok(Self {
-            sink,
-            adapter: crate::tui::event_adapter::SdkEventAdapter::new(
-                cwd,
-                crate::tools::mcp::exported_name::McpToolNames::default(),
-            ),
-            stream_output: false,
-            steering_slot,
-        })
-    }
-
-    /// Identify the session's MCP calls on progress cards once they connect.
-    fn set_mcp_tools(&mut self, mcp_tools: crate::tools::mcp::exported_name::McpToolNames) {
-        self.adapter.set_mcp_tools(mcp_tools);
-    }
-
-    pub(super) fn on_event(&mut self, event: &rho_sdk::RunEvent) {
-        use rho_sdk::RunEvent;
-
-        if let rho_sdk::RunEvent::SteeringApplied { ids } = event {
-            if let Some(slot) = &self.steering_slot {
-                for message in slot.applied(ids) {
-                    self.sink
-                        .record_attachment(crate::run_artifacts::AttachmentEvent::Message(
-                            Box::new(crate::presentation::parent_message_card(
-                                message.into_string(),
-                                crate::presentation::NotificationDelivery::Received,
-                                "applied to conversation history".into(),
-                            )),
-                        ));
-                }
-            }
-        }
-        let attachments = crate::tui::translate_run_event(&mut self.adapter, event);
-        for attachment in attachments {
-            // Reasoning is deliberately kept out of `last_text`: the status file
-            // carries the answer, not the thinking.
-            if let crate::run_artifacts::AttachmentEvent::AssistantTextDelta(text) = &attachment {
-                if !text.is_empty() {
-                    self.sink.append_last_text(text);
-                }
-            }
-            self.sink.record_attachment(attachment);
-        }
-        match event {
-            RunEvent::StepStarted { step, .. } => {
-                self.sink.status.state = RunState::Running;
-                self.sink.status.turns = *step as u64;
-                self.sink.publish();
-            }
-            RunEvent::ToolStarted { name, .. } => {
-                self.sink.status.last_activity = Some(format!("tool: {name}"));
-                self.stream(&format!("\n[tool] {name}\n"));
-                self.sink.publish();
-            }
-            RunEvent::HostInputRequested { request }
-            | RunEvent::ToolHostInputRequested { request, .. } => {
-                self.sink.status.last_activity =
-                    Some(format!("waiting for questionnaire: {}", request.title()));
-                self.sink.publish();
-            }
-            RunEvent::AssistantTextDelta { text } => {
-                self.sink.status.last_activity = Some("assistant text".into());
-                self.stream(text);
-                // Attachment path already published throttled when translated.
-            }
-            RunEvent::ProviderStreamReset { .. } => {
-                self.sink.status.last_activity = Some("retrying provider response".into());
-                self.sink.status.last_text = None;
-                self.stream("\n[provider response discarded; retrying]\n");
-                self.sink.publish();
-            }
-            RunEvent::UsageUpdated { usage } => {
-                self.sink.status.input_tokens = usage.inclusive_prompt_tokens();
-                self.sink.status.output_tokens = usage.output_tokens;
-            }
-            _ => {}
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn status(&self) -> &RunStatus {
-        &self.sink.status
-    }
-
-    pub(super) fn write(&mut self) {
-        self.sink.publish();
-    }
-
-    pub(crate) fn finish(&mut self, result: &anyhow::Result<rho_sdk::RunOutcome>) {
-        match result {
-            Ok(outcome) => {
-                let usage = outcome.usage();
-                self.sink.status.input_tokens = usage.inclusive_prompt_tokens();
-                self.sink.status.output_tokens = usage.output_tokens;
-                self.sink.finish_ok(Some(outcome.text().to_string()));
-            }
-            Err(error)
-                if error.is::<AutomationInterrupted>()
-                    || error.downcast_ref::<AutomationExit>().is_some_and(|exit| {
-                        matches!(
-                            exit.reason(),
-                            TerminalReason::MaxSteps | TerminalReason::Timeout
-                        )
-                    })
-                    || error.is::<SubagentCancelled>() =>
-            {
-                self.sink.finish_stopped("stopped");
-            }
-            Err(error) => {
-                self.sink.finish_error(format!("{error:#}"));
-            }
-        }
-    }
-
-    fn finish_terminal(&mut self, terminal: &RunTerminal) {
-        match terminal {
-            RunTerminal::Completed(outcome) => {
-                let usage = outcome.usage();
-                self.sink.status.input_tokens = usage.inclusive_prompt_tokens();
-                self.sink.status.output_tokens = usage.output_tokens;
-                self.sink.finish_ok(Some(outcome.text().to_string()));
-            }
-            RunTerminal::MaxSteps(_) | RunTerminal::Timeout => {
-                self.sink.finish_stopped("stopped");
-            }
-            RunTerminal::Failed(error)
-                if error.is::<AutomationInterrupted>() || error.is::<SubagentCancelled>() =>
-            {
-                self.sink.finish_stopped("stopped");
-            }
-            RunTerminal::Failed(error) => {
-                self.sink.finish_error(format!("{error:#}"));
-            }
-        }
-    }
-
-    fn stream(&self, text: &str) {
-        if !self.stream_output {
-            return;
-        }
-        let mut stdout = io::stdout().lock();
-        let _ = stdout.write_all(text.as_bytes());
-        let _ = stdout.flush();
     }
 }
 

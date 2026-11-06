@@ -20,7 +20,7 @@ mod daemon_cli;
 mod doctor_cli;
 pub(crate) mod endpoint_login;
 mod headless_delegation;
-pub(crate) mod headless_run;
+mod headless_host;
 mod interactive;
 pub(crate) mod interactive_presenter;
 mod interactive_run_controller;

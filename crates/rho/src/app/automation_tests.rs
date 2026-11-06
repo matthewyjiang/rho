@@ -1,54 +1,23 @@
-use std::{
-    io,
-    num::NonZeroUsize,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+use std::{io, num::NonZeroUsize};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{ContentBlock, Message, ModelIdentity, ModelResponse, ToolCall, ToolSpec},
-    provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
-    tool::{
-        PreparedToolInvocation, ScriptedTool, ScriptedToolOutcome, Tool, ToolContext, ToolError,
-        ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput,
-        ToolPreparationContext, ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess,
-    },
-    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CancellationToken,
-    CapabilityRequest, CapabilitySource, HostChoice, HostInputRequest, HostInputResponse,
-    HostQuestion, PathScope, PolicyDecision, Rho, SelectionMode, SessionOptions, SystemPrompt,
-    Workspace, WorkspacePolicy,
+    model::{ContentBlock, ModelIdentity, ModelResponse, ToolCall, ToolSpec},
+    provider::{ScriptedProvider, ScriptedTurn},
+    tool::{ScriptedTool, ScriptedToolOutcome, ToolOutput},
+    Rho, SessionOptions,
 };
 use serde_json::json;
-use tokio::{
-    sync::{oneshot, Semaphore},
-    time::timeout,
-};
 
 use super::{
-    classify_error, classify_run_terminal, complete_run, headless_approval_session,
-    headless_auto_classifier, prompt_from_reader, AutomationExit, RunArtifactIdentity, RunEntry,
-    RunReporter, RunTerminal, TerminalMessages, MAX_STEPS_MESSAGE,
+    classify_error, classify_run_terminal, prompt_from_reader, AutomationExit, RunTerminal,
+    TerminalMessages,
 };
-use crate::app::headless_run::{HeadlessRunDeps, HostInputRespondFuture, HostInputResponder};
-use crate::app::shutdown_signal::ShutdownSignals;
-use crate::permission_classifier_handler::{
-    ClassifierApprovalHandler, CONSECUTIVE_DENY_ESCALATION,
-};
-use crate::{
-    agent::PERMISSION_CLASSIFIER_AGENT_ID,
-    app::{
-        automation_protocol::TerminalReason,
-        policy::AppPolicy,
-        runtime_builder::{build_runtime, RuntimeBuildOptions},
-    },
-    compaction::CompactionConfig,
-    config::{Config, InternalAgentModelConfig},
-    permission::PermissionMode,
-    permission_classifier::ClassifierVerdict,
+use crate::app::{
+    automation_protocol::TerminalReason,
+    headless_host::{PromptEnd, StopCause},
+    session_runtime::TurnOutcome,
+    shutdown_signal::ShutdownSignal,
 };
 
 // Covers: terminal reasons come from typed errors (an AutomationExit or a
@@ -123,16 +92,38 @@ fn terminal_messages_keep_detail_but_hide_authentication_errors() {
     }
 }
 
-// Covers: MaxSteps must become RunTerminal::MaxSteps without output-mode or flag context.
-// Owner: pure unit (run terminal classification)
-#[tokio::test]
-async fn classifies_max_steps_stop_without_cli_flag_context() {
-    let runtime = Rho::builder()
+/// How the prompt itself ended, before any stop.
+#[derive(Clone, Copy, Debug)]
+enum Ended {
+    Answered,
+    AtStepLimit,
+    Cancelled,
+    Failed,
+}
+
+/// A prompt that ended as `ended`. Finished runs come from a scripted
+/// session, so their stop reason is the SDK's own.
+async fn prompt_that(ended: Ended) -> anyhow::Result<TurnOutcome> {
+    let (turn, max_steps) = match ended {
+        Ended::Cancelled => return Ok(TurnOutcome::Cancelled),
+        Ended::Failed => return Err(anyhow::anyhow!("provider unavailable")),
+        Ended::Answered => (
+            ModelResponse::Assistant(vec![ContentBlock::Text("answer".into())]),
+            None,
+        ),
+        Ended::AtStepLimit => (
+            ModelResponse::Assistant(vec![ContentBlock::ToolCall(ToolCall::new(
+                "call-1".into(),
+                "noop".into(),
+                json!({}),
+            ))]),
+            NonZeroUsize::new(1),
+        ),
+    };
+    let mut builder = Rho::builder()
         .provider(ScriptedProvider::new(
-            ModelIdentity::new("test", "test", "max-steps-terminal"),
-            [ScriptedTurn::completed(ModelResponse::Assistant(vec![
-                ContentBlock::ToolCall(ToolCall::new("call-1".into(), "noop".into(), json!({}))),
-            ]))],
+            ModelIdentity::new("test", "test", "run-terminal"),
+            [ScriptedTurn::completed(turn)],
         ))
         .tool(ScriptedTool::new(
             ToolSpec {
@@ -141,230 +132,70 @@ async fn classifies_max_steps_stop_without_cli_flag_context() {
                 input_schema: json!({"type": "object"}),
             },
             ScriptedToolOutcome::Success(ToolOutput::text("ok")),
-        ))
-        .max_steps(NonZeroUsize::new(1).unwrap())
-        .build()
-        .unwrap();
+        ));
+    if let Some(max_steps) = max_steps {
+        builder = builder.max_steps(max_steps);
+    }
+    let runtime = builder.build().unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();
-    let outcome = session.complete("one step").await.unwrap();
-    assert_eq!(outcome.stop_reason(), rho_sdk::StopReason::MaxSteps);
-
-    let terminal = classify_run_terminal(Ok(outcome), /*timed_out*/ false);
-    match terminal {
-        RunTerminal::MaxSteps(_) => {
-            let exit = AutomationExit::new(124, TerminalReason::MaxSteps, MAX_STEPS_MESSAGE);
-            assert_eq!(exit.exit_code(), 124);
-            assert_eq!(exit.reason(), TerminalReason::MaxSteps);
-            assert_eq!(exit.to_string(), MAX_STEPS_MESSAGE);
-        }
-        RunTerminal::Completed(_) | RunTerminal::Timeout | RunTerminal::Failed(_) => {
-            panic!("expected MaxSteps terminal")
-        }
-    }
+    let outcome = session.complete("go").await.unwrap();
     runtime.shutdown();
+    Ok(TurnOutcome::Completed(outcome))
 }
 
-// Covers: wall-clock timeout wins over the underlying session result when classifying.
+/// The terminal, comparable as a whole.
+#[derive(Debug, PartialEq)]
+enum Terminal {
+    Completed,
+    MaxSteps,
+    Timeout,
+    Interrupted,
+    Failed(String),
+}
+
+fn terminal(terminal: RunTerminal) -> Terminal {
+    match terminal {
+        RunTerminal::Completed(_) => Terminal::Completed,
+        RunTerminal::MaxSteps(_) => Terminal::MaxSteps,
+        RunTerminal::Timeout => Terminal::Timeout,
+        RunTerminal::Interrupted(_) => Terminal::Interrupted,
+        RunTerminal::Failed(error) => Terminal::Failed(error.to_string()),
+    }
+}
+
+// Covers: a stop (timeout, signal) wins over however the prompt ended, the
+// SDK's step-limit stop becomes max_steps without CLI flag context, and a
+// cancel nothing in `rho run` asked for fails the run.
 // Owner: pure unit (run terminal classification)
-#[test]
-fn classifies_timeout_ahead_of_session_result() {
-    let terminal = classify_run_terminal(
-        Err(anyhow::anyhow!("ignored when timed out")),
-        /*timed_out*/ true,
-    );
-    assert!(matches!(terminal, RunTerminal::Timeout));
-}
-
-// Covers: a classifier allow or human escalation on a supplied Auto template
-// must record into this run's write log, not the template's, so a later
-// untracked workspace write skips classification.
-// Owner: automation startup approval wiring.
 #[tokio::test]
-async fn supplied_auto_classifier_template_records_allows_on_the_run_write_log() {
-    struct AllowInner;
-    impl ApprovalHandler for AllowInner {
-        fn request<'a>(&'a self, _request: ApprovalRequest) -> ApprovalFuture<'a> {
-            Box::pin(async { ApprovalDecision::AllowOnce })
-        }
-    }
-
-    let root = tempfile::tempdir().unwrap();
-    let created = root.path().join("new.rs");
-    std::fs::write(&created, "fn main() {}\n").unwrap();
-    let git_status = std::process::Command::new("git")
-        .args(["init"])
-        .current_dir(root.path())
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .status()
-        .expect("git should be available for permission tests");
-    assert!(git_status.success(), "git init failed");
-
-    let mut config = Config {
-        permission_mode: PermissionMode::Auto,
-        ..Config::default()
-    };
-    config.set_internal_agent_model_config(
-        PERMISSION_CLASSIFIER_AGENT_ID,
-        InternalAgentModelConfig::new("openai".into(), "gpt-5.5".into(), "api-key".into()),
-    );
-    let request = CapabilityRequest::write_path(
-        created,
-        PathScope::PrimaryWorkspace,
-        CapabilitySource::built_in_tool("write"),
-    );
-
-    for escalate in [false, true] {
-        let classify_calls = Arc::new(AtomicUsize::new(0));
-        let template_writes = crate::permission::SessionWriteLog::default();
-        let run_writes = crate::permission::SessionWriteLog::default();
-        let template = Arc::new(
-            ClassifierApprovalHandler::for_tests(
-                {
-                    let classify_calls = Arc::clone(&classify_calls);
-                    Arc::new(move |_input| {
-                        classify_calls.fetch_add(1, Ordering::SeqCst);
-                        Box::pin(async move {
-                            if escalate {
-                                ClassifierVerdict::Deny {
-                                    reason: "blocked".into(),
-                                }
-                            } else {
-                                ClassifierVerdict::Allow
-                            }
-                        })
-                    })
-                },
-                escalate.then(|| Arc::new(AllowInner) as Arc<dyn ApprovalHandler>),
-            )
-            .with_session_writes(template_writes.clone()),
-        );
-        let handler = headless_auto_classifier(
-            &config,
-            Some(template),
-            root.path().to_path_buf(),
-            Default::default(),
-            run_writes.clone(),
-        );
-        let run_policy = AppPolicy::for_mode(PermissionMode::Auto, run_writes);
-        let template_policy = AppPolicy::for_mode(PermissionMode::Auto, template_writes);
-
+async fn classifies_how_the_prompt_ended_and_what_stopped_it() {
+    for (ended, stop, expected) in [
+        (Ended::Answered, None, Terminal::Completed),
+        (Ended::AtStepLimit, None, Terminal::MaxSteps),
+        (Ended::Answered, Some(StopCause::Timeout), Terminal::Timeout),
+        (
+            Ended::Failed,
+            Some(StopCause::Interrupted(ShutdownSignal::Interrupt)),
+            Terminal::Interrupted,
+        ),
+        (
+            Ended::Cancelled,
+            None,
+            Terminal::Failed("rho run was cancelled".into()),
+        ),
+        (
+            Ended::Failed,
+            None,
+            Terminal::Failed("provider unavailable".into()),
+        ),
+    ] {
+        let end = PromptEnd::of(prompt_that(ended).await, stop);
         assert_eq!(
-            run_policy.evaluate(&request),
-            PolicyDecision::RequireApproval {
-                reason: String::new(),
-            }
-        );
-
-        if escalate {
-            for _ in 0..CONSECUTIVE_DENY_ESCALATION {
-                assert!(matches!(
-                    handler
-                        .request(ApprovalRequest::new(request.clone(), "approval required"))
-                        .await,
-                    ApprovalDecision::Deny { .. }
-                ));
-            }
-        }
-        assert_eq!(
-            handler
-                .request(ApprovalRequest::new(request.clone(), "approval required"))
-                .await,
-            ApprovalDecision::AllowOnce
-        );
-        assert_eq!(
-            classify_calls.load(Ordering::SeqCst),
-            if escalate {
-                CONSECUTIVE_DENY_ESCALATION as usize
-            } else {
-                1
-            }
-        );
-        assert_eq!(run_policy.evaluate(&request), PolicyDecision::Allow);
-        assert_eq!(
-            template_policy.evaluate(&request),
-            PolicyDecision::RequireApproval {
-                reason: String::new(),
-            },
-            "isolated grants must not land on the template log"
-        );
-        assert_eq!(
-            classify_calls.load(Ordering::SeqCst),
-            if escalate {
-                CONSECUTIVE_DENY_ESCALATION as usize
-            } else {
-                1
-            }
+            terminal(classify_run_terminal(end)),
+            expected,
+            "{ended:?} stopped by {stop:?}"
         );
     }
-}
-
-// Covers: Auto ignores a stray non-classifier session and still installs a
-// classifier so callers need not clear approval_session first.
-// Owner: automation startup approval wiring.
-#[test]
-fn auto_ignores_stray_approval_session_and_builds_classifier() {
-    let mut config = Config {
-        permission_mode: PermissionMode::Auto,
-        ..Config::default()
-    };
-    config.set_internal_agent_model_config(
-        PERMISSION_CLASSIFIER_AGENT_ID,
-        InternalAgentModelConfig::new("openai".into(), "gpt-5.5".into(), "api-key".into()),
-    );
-    let root = tempfile::tempdir().unwrap();
-    let approval_session = rho_sdk::ApprovalSession::new(rho_sdk::DenyApprovals);
-
-    let resolved = headless_approval_session(
-        &config,
-        Some(approval_session),
-        None,
-        root.path().to_path_buf(),
-        Default::default(),
-        crate::permission::SessionWriteLog::default(),
-    )
-    .unwrap();
-
-    assert!(resolved.is_some());
-}
-
-#[test]
-fn reporter_discards_partial_text_when_provider_attempt_resets() {
-    let root = tempfile::tempdir().unwrap();
-    let output = root.path().join("result.json");
-    let mut reporter = RunReporter::new(
-        output,
-        RunArtifactIdentity {
-            agent_id: "reviewer".into(),
-            agent_fingerprint: "fingerprint".into(),
-            provider: "test".into(),
-            model: Some("test".into()),
-            runtime: crate::agent::AgentRuntime::Rho,
-            reasoning: None,
-        },
-        root.path().to_path_buf(),
-        "review",
-        /* stream_output */ false,
-        None,
-    )
-    .unwrap();
-
-    reporter.on_event(&rho_sdk::RunEvent::AssistantTextDelta {
-        text: "stale partial response".into(),
-    });
-    reporter.on_event(&rho_sdk::RunEvent::ProviderStreamReset {
-        reason: rho_sdk::ProviderStreamResetReason::RetryableFailure {
-            kind: rho_sdk::ProviderErrorKind::Unavailable,
-            retry_after: None,
-        },
-        detail: "retrying".into(),
-    });
-
-    assert_eq!(reporter.status().last_text, None);
-    assert_eq!(
-        reporter.status().last_activity.as_deref(),
-        Some("retrying provider response")
-    );
 }
 
 #[test]
@@ -373,449 +204,4 @@ fn prompt_requires_input() {
     let error = prompt_from_reader(Vec::new(), /*read_stdin*/ false, &mut stdin).unwrap_err();
 
     assert!(error.to_string().contains("requires a prompt"));
-}
-
-#[tokio::test]
-async fn headless_run_compacts_at_configured_threshold_and_completes() {
-    let provider = ScriptedProvider::new(
-        ModelIdentity::new("test", "test", "automation-compaction"),
-        [
-            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall::new("call-1".into(), "expand_context".into(), json!({})),
-            )])),
-            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
-                "compact summary".into(),
-            )])),
-            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
-                "done".into(),
-            )])),
-        ],
-    );
-    let shared_provider: Arc<dyn ModelProvider> = Arc::new(provider.clone());
-    let tools: Vec<Arc<dyn Tool>> = vec![Arc::new(ScriptedTool::new(
-        ToolSpec {
-            name: "expand_context".into(),
-            description: "return a large result".into(),
-            input_schema: json!({"type": "object"}),
-        },
-        ScriptedToolOutcome::Success(ToolOutput::text("tool context ".repeat(500))),
-    ))];
-    let mut inventory = crate::tools::sdk_registry::AppToolSet::disabled();
-    inventory.add_bundle(crate::tools::sdk_registry::StaticToolBundle::new(tools));
-    let root = tempfile::tempdir().unwrap();
-    let runtime = build_runtime(RuntimeBuildOptions {
-        provider: shared_provider,
-        tools: &inventory,
-        workspace: Workspace::new(root.path()).unwrap(),
-        workspace_policy: AppPolicy::for_mode(PermissionMode::Auto, Default::default()),
-        approval_session: None,
-        system_prompt: SystemPrompt::None,
-        reasoning: rho_sdk::ReasoningLevel::Off,
-        service_tier: None,
-        compaction: CompactionConfig {
-            auto_compact: true,
-            threshold_percent: 5,
-            target_percent: 1,
-            summarizer: None,
-        },
-        context_window: Some(1_000),
-        usage_purpose: "agent",
-        usage_parent_session_id: None,
-        usage_recording: Default::default(),
-        hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-        hooks: None,
-        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
-        recall: None,
-    })
-    .unwrap();
-    assert_eq!(runtime.diagnostics().compaction_trigger_tokens(), Some(50));
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-
-    let outcome = complete_run(
-        &session,
-        RunEntry::Prompt("continue".into()),
-        &mut ShutdownSignals::install().unwrap(),
-        HeadlessRunDeps {
-            reporter: None,
-            external_cancellation: None,
-            jsonl: None,
-            host_input: None,
-        },
-        /* steering_slot */ None,
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(outcome.text(), "done");
-    let requests = provider.recorded_requests();
-    assert_eq!(requests.len(), 3);
-    let summary = requests[2]
-        .messages
-        .iter()
-        .find_map(|message| match message {
-            Message::CompactionSummary(summary) => Some(summary),
-            _ => None,
-        })
-        .expect("compacted history carries a typed summary");
-    assert_eq!(summary.trigger, Some(rho_sdk::CompactionTrigger::Automatic));
-    runtime.shutdown();
-}
-
-fn host_question_request(title: &str) -> HostInputRequest {
-    let question = HostQuestion::new(
-        "answer",
-        "choose",
-        vec![HostChoice::new("yes", "yes")],
-        SelectionMode::One,
-    )
-    .unwrap();
-    HostInputRequest::questionnaire(title, vec![question]).unwrap()
-}
-
-fn assistant_calls(calls: &[(&str, &str, &str)]) -> ModelResponse {
-    ModelResponse::Assistant(
-        calls
-            .iter()
-            .map(|(id, name, key)| {
-                ContentBlock::ToolCall(ToolCall::new(
-                    (*id).into(),
-                    (*name).into(),
-                    json!({ "key": key }),
-                ))
-            })
-            .collect(),
-    )
-}
-
-#[derive(Clone)]
-struct GatedHostInputResponder {
-    release: Arc<Semaphore>,
-    waiting: Arc<AtomicUsize>,
-}
-
-impl HostInputResponder for GatedHostInputResponder {
-    fn respond<'a>(
-        &'a self,
-        _request: HostInputRequest,
-        cancellation: &'a CancellationToken,
-    ) -> HostInputRespondFuture<'a> {
-        let release = Arc::clone(&self.release);
-        let waiting = Arc::clone(&self.waiting);
-        Box::pin(async move {
-            waiting.fetch_add(1, Ordering::AcqRel);
-            tokio::select! {
-                permit = release.acquire() => {
-                    permit
-                        .map_err(|_| rho_sdk::Error::Interrupted {
-                            message: "host input gate closed".into(),
-                            source: None,
-                        })?
-                        .forget();
-                    Ok(HostInputResponse::new().answer("answer", ["yes"]))
-                }
-                () = cancellation.cancelled() => Err(rho_sdk::Error::Cancelled),
-            }
-        })
-    }
-}
-
-#[derive(Clone)]
-struct HeadlessHostInputTool {
-    request: HostInputRequest,
-    progress_gate: Arc<Semaphore>,
-    progress_sent: Arc<AtomicUsize>,
-    finish_gate: Arc<Semaphore>,
-}
-
-impl Tool for HeadlessHostInputTool {
-    fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "interact".into(),
-            description: "headless host-input backpressure probe".into(),
-            input_schema: json!({"type": "object"}),
-        }
-    }
-
-    fn prepare<'a>(
-        &'a self,
-        invocation: ToolInvocation,
-        _context: ToolPreparationContext,
-    ) -> ToolPrepareFuture<'a> {
-        let key = invocation.arguments()["key"].as_str().unwrap().to_owned();
-        Box::pin(async move {
-            Ok(PreparedToolInvocation::resource_aware(
-                [ToolResourceAccess::shared(ToolResource::opaque(
-                    "headless-backpressure-test",
-                    key,
-                ))],
-                [],
-                ToolMetadata::new(),
-                move |context| {
-                    Box::pin(async move {
-                        let asks_for_input =
-                            invocation.arguments()["key"].as_str().unwrap() == "ask";
-                        if asks_for_input {
-                            let response = context
-                                .request_host_input(self.request.clone())
-                                .await
-                                .map_err(|error| {
-                                ToolError::new(ToolErrorKind::Execution, error.to_string())
-                            })?;
-                            return Ok(ToolOutput::text(response.answers()["answer"][0].clone()));
-                        }
-
-                        loop {
-                            tokio::select! {
-                                biased;
-                                permit = self.finish_gate.acquire() => {
-                                    permit.unwrap().forget();
-                                    return Ok(ToolOutput::text("progress complete"));
-                                }
-                                permit = self.progress_gate.acquire() => {
-                                    permit.unwrap().forget();
-                                    if !context.progress().send(ToolProgress::new("tick")).await {
-                                        return Err(ToolError::cancelled());
-                                    }
-                                    self.progress_sent.fetch_add(1, Ordering::AcqRel);
-                                }
-                                () = context.cancellation().cancelled() => {
-                                    return Err(ToolError::cancelled());
-                                }
-                            }
-                        }
-                    })
-                },
-            ))
-        })
-    }
-
-    fn call<'a>(&'a self, _invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
-        unreachable!("resource-aware preparation is always used")
-    }
-}
-
-#[tokio::test]
-async fn headless_run_fails_closed_without_host_input_responder() {
-    let request = host_question_request("fail-closed");
-    let runtime = Rho::builder()
-        .provider(ScriptedProvider::new(
-            ModelIdentity::new("test", "test", "fail-closed"),
-            [ScriptedTurn::completed(assistant_calls(&[(
-                "ask-call", "interact", "ask",
-            )]))],
-        ))
-        .tool(HeadlessHostInputTool {
-            request,
-            progress_gate: Arc::new(Semaphore::new(0)),
-            progress_sent: Arc::new(AtomicUsize::new(0)),
-            finish_gate: Arc::new(Semaphore::new(0)),
-        })
-        .build()
-        .unwrap();
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-
-    let error = timeout(
-        Duration::from_secs(2),
-        complete_run(
-            &session,
-            RunEntry::Prompt("ask".into()),
-            &mut ShutdownSignals::install().unwrap(),
-            HeadlessRunDeps {
-                reporter: None,
-                external_cancellation: None,
-                jsonl: None,
-                host_input: None,
-            },
-            /* steering_slot */ None,
-        ),
-    )
-    .await
-    .expect("fail-closed path should finish")
-    .unwrap_err();
-
-    assert!(
-        error.to_string().contains("cannot answer host input"),
-        "unexpected error: {error}"
-    );
-    runtime.shutdown();
-}
-
-#[tokio::test]
-async fn headless_run_drains_events_while_waiting_for_parent_host_input() {
-    let request = host_question_request("drain-while-waiting");
-    let progress_gate = Arc::new(Semaphore::new(0));
-    let finish_gate = Arc::new(Semaphore::new(0));
-    let progress_sent = Arc::new(AtomicUsize::new(0));
-    let parent_release = Arc::new(Semaphore::new(0));
-    let parent_waiting = Arc::new(AtomicUsize::new(0));
-    let runtime = Rho::builder()
-        .provider(ScriptedProvider::new(
-            ModelIdentity::new("test", "test", "drain-while-waiting"),
-            [
-                ScriptedTurn::completed(assistant_calls(&[
-                    ("ask-call", "interact", "ask"),
-                    ("progress-call", "interact", "progress"),
-                ])),
-                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
-                    "done".into(),
-                )])),
-            ],
-        ))
-        .tool(HeadlessHostInputTool {
-            request,
-            progress_gate: Arc::clone(&progress_gate),
-            progress_sent: Arc::clone(&progress_sent),
-            finish_gate: Arc::clone(&finish_gate),
-        })
-        .max_parallel_tools(NonZeroUsize::new(2).unwrap())
-        .event_capacity(NonZeroUsize::new(1).unwrap())
-        .build()
-        .unwrap();
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-    let responder = GatedHostInputResponder {
-        release: Arc::clone(&parent_release),
-        waiting: Arc::clone(&parent_waiting),
-    };
-
-    let drive = tokio::spawn({
-        let session = session;
-        async move {
-            complete_run(
-                &session,
-                RunEntry::Prompt("ask".into()),
-                &mut ShutdownSignals::install().unwrap(),
-                HeadlessRunDeps {
-                    reporter: None,
-                    external_cancellation: None,
-                    jsonl: None,
-                    host_input: Some(&responder as &dyn HostInputResponder),
-                },
-                /* steering_slot */ None,
-            )
-            .await
-        }
-    });
-
-    timeout(Duration::from_secs(2), async {
-        while parent_waiting.load(Ordering::Acquire) == 0 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("parent responder should start waiting");
-
-    progress_gate.add_permits(1);
-    timeout(Duration::from_secs(2), async {
-        while progress_sent.load(Ordering::Acquire) < 1 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("progress should keep flowing while the parent answer is pending");
-
-    parent_release.add_permits(1);
-    finish_gate.add_permits(1);
-
-    let outcome = timeout(Duration::from_secs(2), drive)
-        .await
-        .expect("headless drain path should finish")
-        .expect("drive task")
-        .expect("run outcome");
-    assert_eq!(outcome.text(), "done");
-    runtime.shutdown();
-}
-
-#[tokio::test]
-async fn headless_run_drains_events_while_waiting_for_respond_ack() {
-    let request = host_question_request("drain-while-ack");
-    let progress_gate = Arc::new(Semaphore::new(0));
-    let finish_gate = Arc::new(Semaphore::new(0));
-    let progress_sent = Arc::new(AtomicUsize::new(0));
-    let (hold_tx, hold_rx) = oneshot::channel::<()>();
-    let runtime = Rho::builder()
-        .provider(ScriptedProvider::new(
-            ModelIdentity::new("test", "test", "drain-while-ack"),
-            [
-                ScriptedTurn::completed(assistant_calls(&[
-                    ("ask-call", "interact", "ask"),
-                    ("progress-call", "interact", "progress"),
-                ])),
-                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
-                    "done".into(),
-                )])),
-            ],
-        ))
-        .tool(HeadlessHostInputTool {
-            request,
-            progress_gate: Arc::clone(&progress_gate),
-            progress_sent: Arc::clone(&progress_sent),
-            finish_gate: Arc::clone(&finish_gate),
-        })
-        .max_parallel_tools(NonZeroUsize::new(2).unwrap())
-        .event_capacity(NonZeroUsize::new(1).unwrap())
-        .build()
-        .unwrap();
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-
-    // Answer immediately so drive_headless_run spends time on the Respond ack path.
-    struct ImmediateThenSignal {
-        hold: std::sync::Mutex<Option<oneshot::Sender<()>>>,
-    }
-    impl HostInputResponder for ImmediateThenSignal {
-        fn respond<'a>(
-            &'a self,
-            _request: HostInputRequest,
-            _cancellation: &'a CancellationToken,
-        ) -> HostInputRespondFuture<'a> {
-            let hold = self.hold.lock().expect("hold lock").take();
-            Box::pin(async move {
-                if let Some(hold) = hold {
-                    let _ = hold.send(());
-                }
-                Ok(HostInputResponse::new().answer("answer", ["yes"]))
-            })
-        }
-    }
-    let responder = ImmediateThenSignal {
-        hold: std::sync::Mutex::new(Some(hold_tx)),
-    };
-
-    let drive = tokio::spawn(async move {
-        complete_run(
-            &session,
-            RunEntry::Prompt("ask".into()),
-            &mut ShutdownSignals::install().unwrap(),
-            HeadlessRunDeps {
-                reporter: None,
-                external_cancellation: None,
-                jsonl: None,
-                host_input: Some(&responder as &dyn HostInputResponder),
-            },
-            /* steering_slot */ None,
-        )
-        .await
-    });
-
-    timeout(Duration::from_secs(2), hold_rx)
-        .await
-        .expect("responder should answer")
-        .expect("hold signal");
-
-    progress_gate.add_permits(2);
-    timeout(Duration::from_secs(2), async {
-        while progress_sent.load(Ordering::Acquire) < 2 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("progress should keep flowing while respond ack is pending");
-
-    finish_gate.add_permits(1);
-    let outcome = timeout(Duration::from_secs(2), drive)
-        .await
-        .expect("ack drain path should finish")
-        .expect("drive task")
-        .expect("run outcome");
-    assert_eq!(outcome.text(), "done");
-    runtime.shutdown();
 }

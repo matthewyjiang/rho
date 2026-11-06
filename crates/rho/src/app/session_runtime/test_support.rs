@@ -131,7 +131,7 @@ pub(super) async fn runtime_on(
 
 /// How a test session is built: as a [`root_agent`] whose host answers its
 /// approvals, configured from `workspace_root`.
-pub(super) fn test_build(config: &Config, workspace_root: &Path) -> SessionBuild {
+pub(in crate::app) fn test_build(config: &Config, workspace_root: &Path) -> SessionBuild {
     SessionBuild {
         launch: SessionLaunch {
             config_path: workspace_root.join("rho-test-config.toml"),

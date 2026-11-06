@@ -1,5 +1,8 @@
 use std::{
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
@@ -9,20 +12,26 @@ use rho_sdk::{
     provider::{ScriptedProvider, ScriptedTurn},
     tool::{Tool, ToolContext, ToolError, ToolFuture, ToolInvocation, ToolOutput},
     ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, ApprovalSession,
-    CapabilityRequest, CapabilitySource, PathScope, UserInput,
+    CapabilityRequest, CapabilitySource, PathScope, PolicyDecision, UserInput,
 };
 use tokio::sync::mpsc;
 
 use super::{ensure_auto_classifier_model, ApprovalPolicy, UnattendedApprovals};
 use crate::{
     agent::PERMISSION_CLASSIFIER_AGENT_ID,
-    app::session_runtime::{
-        build::with_plan_exit,
-        test_support::{built_on, test_build},
-        SessionEvent, SessionRuntime, SessionStorage, Turn, TurnControl, TurnIo, TurnOutcome,
+    app::{
+        policy::AppPolicy,
+        session_assembly::ApprovalInputs,
+        session_runtime::{
+            build::with_plan_exit,
+            test_support::{built_on, test_build},
+            SessionEvent, SessionRuntime, SessionStorage, Turn, TurnControl, TurnIo, TurnOutcome,
+        },
     },
     config::{Config, InternalAgentModelConfig},
-    permission::PermissionMode,
+    permission::{PermissionMode, SessionWriteLog},
+    permission_classifier::ClassifierVerdict,
+    permission_classifier_handler::{ClassifierApprovalHandler, CONSECUTIVE_DENY_ESCALATION},
     session::Session as StoredSession,
     tools::{
         plan_exit,
@@ -247,4 +256,112 @@ fn auto_requires_configured_permission_classifier_model() {
         InternalAgentModelConfig::new("openai".into(), "gpt-5.5".into(), "api-key".into()),
     );
     ensure_auto_classifier_model(&config).unwrap();
+}
+
+// Covers: a classifier allow or human escalation on a parent's Auto
+// template must record into this session's write log, not the template's,
+// so a later untracked workspace write skips classification.
+// Owner: session runtime approval wiring.
+#[tokio::test]
+async fn classifier_template_records_allows_on_the_session_write_log() {
+    let root = tempfile::tempdir().unwrap();
+    let created = root.path().join("new.rs");
+    std::fs::write(&created, "fn main() {}\n").unwrap();
+    let git_status = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(root.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("git should be available for permission tests");
+    assert!(git_status.success(), "git init failed");
+
+    let mut config = Config {
+        permission_mode: PermissionMode::Auto,
+        ..Config::default()
+    };
+    config.set_internal_agent_model_config(
+        PERMISSION_CLASSIFIER_AGENT_ID,
+        InternalAgentModelConfig::new("openai".into(), "gpt-5.5".into(), "api-key".into()),
+    );
+    let request = CapabilityRequest::write_path(
+        created,
+        PathScope::PrimaryWorkspace,
+        CapabilitySource::built_in_tool("write"),
+    );
+    let require_approval = PolicyDecision::RequireApproval {
+        reason: String::new(),
+    };
+
+    // Whether the classifier denies until the human it escalates to allows.
+    for escalate in [false, true] {
+        let classify_calls = Arc::new(AtomicUsize::new(0));
+        let template_writes = SessionWriteLog::default();
+        let session_writes = SessionWriteLog::default();
+        let template = Arc::new(
+            ClassifierApprovalHandler::for_tests(
+                {
+                    let classify_calls = Arc::clone(&classify_calls);
+                    Arc::new(move |_input| {
+                        classify_calls.fetch_add(1, Ordering::SeqCst);
+                        Box::pin(async move {
+                            if escalate {
+                                ClassifierVerdict::Deny {
+                                    reason: "blocked".into(),
+                                }
+                            } else {
+                                ClassifierVerdict::Allow
+                            }
+                        })
+                    })
+                },
+                escalate.then(|| Arc::new(AllowEverything) as Arc<dyn ApprovalHandler>),
+            )
+            .with_session_writes(template_writes.clone()),
+        );
+        let handler =
+            UnattendedApprovals::ClassifierTemplate(template).classifier(ApprovalInputs {
+                config: config.clone(),
+                workspace_root: root.path().to_path_buf(),
+                usage_recording: Default::default(),
+                session_writes: session_writes.clone(),
+            });
+        let session_policy = AppPolicy::for_mode(PermissionMode::Auto, session_writes);
+        let template_policy = AppPolicy::for_mode(PermissionMode::Auto, template_writes);
+        assert_eq!(session_policy.evaluate(&request), require_approval);
+
+        if escalate {
+            for _ in 0..CONSECUTIVE_DENY_ESCALATION {
+                assert!(matches!(
+                    handler
+                        .request(ApprovalRequest::new(request.clone(), "approval required"))
+                        .await,
+                    ApprovalDecision::Deny { .. }
+                ));
+            }
+        }
+        let decision = handler
+            .request(ApprovalRequest::new(request.clone(), "approval required"))
+            .await;
+        let expected_calls = if escalate {
+            CONSECUTIVE_DENY_ESCALATION as usize
+        } else {
+            1
+        };
+        assert_eq!(
+            (
+                decision,
+                classify_calls.load(Ordering::SeqCst),
+                session_policy.evaluate(&request),
+                template_policy.evaluate(&request),
+            ),
+            (
+                ApprovalDecision::AllowOnce,
+                expected_calls,
+                PolicyDecision::Allow,
+                require_approval.clone(),
+            ),
+            "escalate: {escalate}"
+        );
+    }
 }

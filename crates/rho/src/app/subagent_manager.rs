@@ -211,11 +211,13 @@ impl SubagentManager {
             .lock()
             .expect("delegated session lock")
             .clone();
-        let parent_session_id = placement
-            .parent_session_id()
-            .map(str::to_owned)
-            .and_then(|id| rho_sdk::SessionId::from_string(id).ok());
-        let session_id = placement.parent_session_id().map(str::to_owned);
+        // Every host binds its session before a turn can call the `agent`
+        // tool, so a subagent always has the parent it reports to.
+        let Some(session_id) = placement.parent_session_id().map(str::to_owned) else {
+            anyhow::bail!("could not start subagent: no parent session is bound");
+        };
+        let parent_session_id = rho_sdk::SessionId::from_string(session_id.clone())
+            .map_err(|error| anyhow::anyhow!("could not start subagent: {error}"))?;
         let cwd = cwd.to_path_buf();
         let (id, directory) =
             tokio::task::spawn_blocking(move || subagent::reserve_run_directory(&placement, &cwd))
@@ -257,7 +259,7 @@ impl SubagentManager {
                     .map(str::to_owned),
                 started: Instant::now(),
                 handle,
-                session_id,
+                session_id: Some(session_id),
                 observed: false,
                 explicitly_observed: false,
                 cost_accounted: false,
