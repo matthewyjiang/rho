@@ -3,7 +3,7 @@ use std::time::Duration;
 use pretty_assertions::assert_eq;
 use tokio::{
     io::{duplex, AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf},
-    sync::Notify,
+    sync::{oneshot, Notify},
     task::JoinHandle,
 };
 
@@ -690,5 +690,49 @@ async fn ending_sends_what_was_published_and_why_the_publisher_closed() {
     assert_eq!(
         peer.remaining().await,
         vec![event(1), detached(DetachReason::DaemonStopping)]
+    );
+}
+
+// Covers: a closing connection whose peer stopped reading, with its socket
+// and notification queue full, ends with `Stalled` once a write has waited
+// CLOSE_GRACE, instead of holding the daemon's stop open forever.
+// Owner: protocol server forwarding.
+#[tokio::test(start_paused = true)]
+async fn a_peer_that_stops_reading_cannot_hold_a_closing_connection_open() {
+    let events = 4 * crate::forward::NOTIFICATION_QUEUE as u64;
+    let (service, mut publishers) = AttachService::new(events as usize, 0);
+    let (client, server) = duplex(1024);
+    let (stop, stopped) = oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        let info = test_info();
+        let shutdown = async {
+            let _ = stopped.await;
+        };
+        serve_connection(server, &info, service, shutdown).await
+    });
+    // The read half stays open and unread, as a suspended client's does.
+    let (_unread, mut writer) = tokio::io::split(client);
+    send_lines(
+        &mut writer,
+        &[
+            hello_line(1, PROTOCOL_VERSION),
+            session_line(2, SESSION_ATTACH),
+        ],
+    )
+    .await;
+    let publisher = publishers.recv().await.unwrap();
+    for seq in 1..=events {
+        assert_eq!(publisher.try_publish(Seq(seq), notice(seq)), Ok(()));
+    }
+    publisher.close(DetachReason::DaemonStopping);
+
+    stop.send(()).unwrap();
+    let ended = tokio::time::timeout(RESPONSE_DEADLINE, server)
+        .await
+        .expect("the closing connection ends within RESPONSE_DEADLINE")
+        .unwrap();
+    assert!(
+        matches!(ended, Err(FrameError::Stalled { grace }) if grace == CLOSE_GRACE),
+        "{ended:?}"
     );
 }

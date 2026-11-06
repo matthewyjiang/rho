@@ -72,6 +72,6 @@ pub use methods::{
     SessionSteerResponse, StatusParams, StopParams, StopResponse, StreamId, ToolCallId,
     ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
 };
-pub use server::{serve_connection, ServerInfo, Service};
+pub use server::{serve_connection, ServerInfo, Service, CLOSE_GRACE};
 pub use subscription::{subscription, Published, Publisher, Subscription};
 pub use version::{ProtocolVersion, VersionFix, VersionMismatch, PROTOCOL_VERSION};

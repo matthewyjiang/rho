@@ -2,13 +2,13 @@
 //! session forwarding, and the single writer every outgoing message goes
 //! through.
 
-use std::{future::Future, sync::Arc};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use serde::Serialize;
 use serde_json::{Map, Value};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::{mpsc, OwnedSemaphorePermit},
+    sync::{mpsc, watch, OwnedSemaphorePermit},
     task::JoinSet,
 };
 
@@ -135,6 +135,16 @@ pub(crate) enum Outgoing {
     Notification(jsonrpc::Notification, OwnedSemaphorePermit),
 }
 
+/// How long a closing connection waits for its peer to take each message
+/// before it gives up on the rest, so a client that stopped reading, such as
+/// a suspended TUI, cannot hold the daemon's stop open.
+//
+// Measured: a client reading a Unix socket decoded 16 MiB of session event
+// lines, as much as a session's whole replay buffer, in 92 ms; one line, at
+// most `MAX_LINE_BYTES`, takes no longer. So this trips only on a peer that
+// is not reading, and still leaves the stop most of its turn drain budget.
+pub const CLOSE_GRACE: Duration = Duration::from_secs(1);
+
 /// Serves one connection until the peer stops sending or `shutdown`
 /// resolves.
 ///
@@ -163,7 +173,9 @@ pub(crate) enum Outgoing {
 /// publishers have already published, and the reason of each publisher
 /// already closed, then end; they never wait for more, so a service that
 /// closes its publishers before `shutdown` resolves tells every attached
-/// client why it was detached.
+/// client why it was detached. Once it is closing, each write must finish
+/// within [`CLOSE_GRACE`]; a peer that stops reading loses the rest, and the
+/// connection ends with [`FrameError::Stalled`].
 ///
 /// Recoverable protocol errors (bad JSON, invalid messages, unknown methods)
 /// get an error response and the connection continues; framing errors end it
@@ -186,6 +198,7 @@ where
     let (outbox, inbox) = mpsc::unbounded_channel();
     let mut calls = JoinSet::new();
     let forwarders = Arc::new(Forwarders::new());
+    let closing = watch::Sender::new(false);
     // The writer ends once every sender is gone (the reader's when it stops
     // reading, each forwarder's when the reader stops them, and each call's
     // when that call has answered) or a write fails.
@@ -201,11 +214,14 @@ where
                 &forwarders,
             )
             .await;
-            // Unlike calls, forwarders end with the connection.
+            closing.send_replace(true);
+            // Unlike calls, forwarders end with the connection. A forwarder
+            // waiting for queue room is freed once the writer gives up,
+            // which drops the queued messages and their permits.
             forwarders.end_all().await;
             read
         },
-        write_messages(MessageWriter::new(writer), inbox),
+        write_messages(MessageWriter::new(writer), inbox, closing.subscribe()),
     );
     // After a failed write, calls may still be running; their answers go
     // nowhere, but they finish.
@@ -252,7 +268,7 @@ where
                 }));
                 return Err(error);
             }
-            Err(error @ FrameError::Io(_)) => return Err(error),
+            Err(error @ (FrameError::Io(_) | FrameError::Stalled { .. })) => return Err(error),
         };
         let response = match Message::parse(&line) {
             Ok(Message::Request(Request { id, method, params })) => {
@@ -300,18 +316,30 @@ where
 }
 
 /// Writes queued messages in order until every sender is gone or a write
-/// fails. Returning drops `inbox`, which tells the reader to stop.
+/// fails, or, once `closing` is set, a write does not finish within
+/// [`CLOSE_GRACE`]. Returning drops `inbox`, which tells the reader to stop.
 async fn write_messages<W: AsyncWrite + Unpin>(
     mut writer: MessageWriter<W>,
     mut inbox: mpsc::UnboundedReceiver<Outgoing>,
+    closing: watch::Receiver<bool>,
 ) -> Result<(), FrameError> {
     while let Some(outgoing) = inbox.recv().await {
-        match outgoing {
-            Outgoing::Response(response) => writer.write(&Message::Response(response)).await?,
-            // The permit returns to the queue once the line is written.
-            Outgoing::Notification(notification, _permit) => {
-                writer.write(&Message::Notification(notification)).await?;
+        // The permit returns to the queue once the line is written.
+        let (message, _permit) = match outgoing {
+            Outgoing::Response(response) => (Message::Response(response), None),
+            Outgoing::Notification(notification, permit) => {
+                (Message::Notification(notification), Some(permit))
             }
+        };
+        let mut closing = closing.clone();
+        let stalled = async {
+            // The sender outlives the writer, so this only waits.
+            let _ = closing.wait_for(|closing| *closing).await;
+            tokio::time::sleep(CLOSE_GRACE).await;
+        };
+        tokio::select! {
+            written = writer.write(&message) => written?,
+            () = stalled => return Err(FrameError::Stalled { grace: CLOSE_GRACE }),
         }
     }
     Ok(())

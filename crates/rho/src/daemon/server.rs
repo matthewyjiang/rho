@@ -8,7 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rho_protocol::{DaemonInfo, ServerInfo, Service, PROTOCOL_VERSION};
+use rho_protocol::{DaemonInfo, FrameError, ServerInfo, Service, PROTOCOL_VERSION};
 use rho_sdk::CancellationToken;
 use tokio::{
     net::{UnixListener, UnixStream},
@@ -148,8 +148,16 @@ impl BoundDaemon {
                                 shutdown.cancelled(),
                             )
                             .await;
-                            if let Err(error) = served {
-                                tracing::debug!(%error, "connection closed with an error");
+                            match served {
+                                Ok(()) => {}
+                                // A budget a client can hit is logged where
+                                // it is seen.
+                                Err(error @ FrameError::Stalled { .. }) => {
+                                    tracing::warn!(%error, "dropped a client that stopped reading");
+                                }
+                                Err(error) => {
+                                    tracing::debug!(%error, "connection closed with an error");
+                                }
                             }
                         });
                     }
