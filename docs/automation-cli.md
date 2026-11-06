@@ -51,6 +51,24 @@ file on stdin without `--stdin` is an error (`rho run "review" < diff.txt` needs
 
 Use `rho --no-tools run "..."` to remove tool access. That flag does not suppress Rho's system prompt; add `--no-system-prompt` as well when you want only the raw prompt and model response (`rho --no-tools --no-system-prompt run "..."`). `rho run --no-tools` fails because `--no-tools` is not a `run` flag.
 
+### Sessions, commands, and questions
+
+Each `rho run` saves its session like an interactive one, recorded as a `run`
+session, so `rho sessions list` shows it and `rho --resume <ID>` continues it in
+the TUI. Its title is generated after the run's final output, before the
+process exits; an interrupted or timed-out run skips it.
+
+A prompt that starts with a slash command resolves the way it does in an ACP
+session: prompt templates (`/prompt:<name>`), MCP prompts, `/init`,
+`/agent:<name>`, and `$skill` mentions all work. `rho run` rejects commands it
+cannot run, such as `/compact` (a run's session is new, so there is nothing to
+compact), `/workflow:<name>` (use `rho workflow run`), and TUI-only commands,
+as a configuration error with exit code `2`.
+
+Nobody answers questions during a run, so the run gets no questionnaire tool,
+and a question that arrives anyway, such as an MCP server's elicitation, is
+declined. The run continues with the refusal instead of failing.
+
 ### Automation output
 
 Choose text when a script only needs the final answer. Choose JSONL when it needs progress or terminal state.
