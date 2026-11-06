@@ -14,7 +14,7 @@ The rho daemon is one long-lived background process per user and rho home (`~/.r
 
 Only one daemon runs per rho home. A second `rho daemon run` fails with the pid and version of the one already running.
 
-The daemon shuts down gracefully on `rho daemon stop`, `SIGTERM`, or `SIGINT`: it stops accepting connections and reading requests, answers the requests it has already received, removes its socket, and exits with status 0. A request that never finishes holds that shutdown open; a second `SIGTERM` or `SIGINT` then makes the daemon exit at once with status 1, and the next daemon to start removes the socket it left behind.
+The daemon shuts down gracefully on `rho daemon stop`, `SIGTERM`, or `SIGINT`: it stops accepting connections and reading requests, answers the requests it has already received, removes its socket, and exits with status 0. A request that never finishes holds that shutdown open. A `SIGTERM` or `SIGINT` that arrives once shutdown is under way, whether a second signal or any signal after `rho daemon stop`, makes the daemon exit at once with status 1, and the next daemon to start removes the socket it left behind.
 
 ## Starting automatically
 
