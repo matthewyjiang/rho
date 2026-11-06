@@ -151,8 +151,12 @@ pub(super) async fn run_prompt<'v>(
         &'r Config,
     ) -> PromptBody<'r>,
 ) -> PromptEnd {
+    // Opening a session builds a large future; keep it and the work that
+    // holds it on the heap, since a 1 MiB main-thread stack (Windows) cannot
+    // hold the copies moving them by value makes.
+    let open = Box::pin(open);
     let tripwire = Tripwire::default();
-    let work = async {
+    let work = Box::pin(async {
         let mut runtime = open.await?;
         view.bind(&runtime);
         let ended = cancel_on_stop(&tripwire, runtime.handle(), async {
@@ -171,7 +175,7 @@ pub(super) async fn run_prompt<'v>(
         }
         runtime.shutdown().await;
         ended
-    };
+    });
     let ended = until_stopped(stops, &tripwire, work).await;
     PromptEnd::of(ended, tripwire.cause())
 }
