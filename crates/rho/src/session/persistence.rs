@@ -900,10 +900,22 @@ pub(crate) struct NoSessionFound {
     id_prefix: String,
 }
 
-fn single_match<'a, T>(matches: &'a [T], id_prefix: &str) -> anyhow::Result<Option<&'a T>> {
-    match matches {
-        [] => Ok(None),
-        [only] => Ok(Some(only)),
+/// The one session `id_prefix` names among `matches` (transcript path and
+/// workspace pairs). A session whose whole id is `id_prefix` wins over ones
+/// it is only a prefix of, so a full id is never ambiguous: ids are any
+/// string a client chose, and one can prefix another.
+fn single_match<'a>(
+    matches: &'a [(PathBuf, PathBuf)],
+    id_prefix: &str,
+) -> anyhow::Result<Option<&'a (PathBuf, PathBuf)>> {
+    let exact = matches
+        .iter()
+        .filter(|(path, _)| session_id_from_path(path).as_deref() == Some(id_prefix))
+        .collect::<Vec<_>>();
+    match (exact.as_slice(), matches) {
+        ([only], _) => Ok(Some(only)),
+        ([], []) => Ok(None),
+        ([], [only]) => Ok(Some(only)),
         _ => anyhow::bail!("multiple sessions match '{id_prefix}'; use a longer UUID prefix"),
     }
 }

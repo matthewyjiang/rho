@@ -237,9 +237,18 @@ fn opens_session_by_uuid_prefix() {
 
     write_minimal_session_file(&root, &cwd, "aaaaaaaa-1111-4111-8111-111111111111");
     write_minimal_session_file(&root, &cwd, "aaaaaaaa-2222-4222-8222-222222222222");
-    for (case, prefix) in [("ambiguous", "aaaaaaaa"), ("missing", "missing")] {
-        assert!(
-            Session::open_by_id_in_root(&root, &cwd, prefix).is_err(),
+    // Client-chosen ids can prefix one another; a whole id still names one.
+    write_minimal_session_file(&root, &cwd, "client");
+    write_minimal_session_file(&root, &cwd, "client-2");
+    for (case, prefix, opens) in [
+        ("ambiguous", "aaaaaaaa", None),
+        ("missing", "missing", None),
+        ("whole id that prefixes another", "client", Some("client")),
+    ] {
+        let opened = Session::open_by_id_in_root(&root, &cwd, prefix).ok();
+        assert_eq!(
+            opened.as_ref().map(|(session, _)| session.id()),
+            opens,
             "{case}"
         );
     }
