@@ -11,7 +11,7 @@ use rho_sdk::{
 
 use super::{
     ApprovalPolicy, ChildAgents, Logouts, OpenedSession, QuestionSupport, SessionBuild,
-    SessionPermission, SessionRuntime, SessionStorage, UsageAttribution,
+    SessionPermission, SessionRole, SessionRuntime, SessionStorage,
 };
 use crate::{
     agent::{
@@ -146,7 +146,7 @@ impl SessionRuntime {
                 launch_agent: root_agent(config),
                 host_io: Default::default(),
                 max_steps: None,
-                usage: UsageAttribution::Root,
+                role: SessionRole::Acp,
                 hook_labels: Default::default(),
                 prompt_suffix: None,
                 mcp_authorization: McpAuthorizationMode::NonInteractive,

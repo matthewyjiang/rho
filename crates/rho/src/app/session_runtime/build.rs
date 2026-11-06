@@ -21,6 +21,7 @@ use crate::{
     config::Config,
     credential_store::AppCredentialStore,
     diagnostics::RuntimeDiagnostics,
+    session::SessionOrigin,
     tools::{
         host_io::HostIo,
         mcp::{config::McpConfig, McpAuthorizationMode},
@@ -54,8 +55,9 @@ pub(crate) struct SessionBuild {
     /// The most model steps one run may take; `None` keeps the configured
     /// step limit. `rho run --max-steps` and an agent's step limit set it.
     pub(crate) max_steps: Option<NonZeroUsize>,
-    /// Whose work the session's model usage is recorded as.
-    pub(crate) usage: UsageAttribution,
+    /// What the session is for, which decides whose work its model usage
+    /// is recorded as and the origin a new session's file records.
+    pub(crate) role: SessionRole,
     /// Labels every hook envelope of the session carries, such as a
     /// workflow node's.
     pub(crate) hook_labels: HookHostLabels,
@@ -69,35 +71,61 @@ pub(crate) struct SessionBuild {
     pub(crate) approvals: ApprovalPolicy,
 }
 
-/// Whose work a session's model usage is recorded as. A delegated child's
-/// usage and hooks also name the session that asked for it.
+/// What a session is for. Its model usage is recorded as an agent's or a
+/// subagent's from it, a delegated child's usage and hooks also naming the
+/// session that started it, and a new session's file records its origin.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum UsageAttribution {
-    /// A session a person or host started, such as ACP's or `rho run`'s.
-    Root,
-    /// A delegated child. `parent` is the session that started it; a
-    /// workflow node has none.
+pub(crate) enum SessionRole {
+    /// A person's session in the interactive TUI.
+    #[expect(dead_code, reason = "the TUI builds on the runtime in a later PR")]
+    Interactive,
+    /// An ACP client's session, such as Zed's or T3 Code's.
+    Acp,
+    /// `rho run`'s session.
+    #[expect(dead_code, reason = "rho run builds on the runtime in the next PR")]
+    Run,
+    /// A Rho subagent `parent` started through the `agent` tool. Every host
+    /// binds its session as the subagent manager's parent before its first
+    /// turn, so a subagent always has one; only workflow nodes run
+    /// parentless.
     #[expect(
         dead_code,
-        reason = "Rho subagents and workflow nodes build on the runtime in the next PR"
+        reason = "Rho subagents build on the runtime in the next PR"
     )]
-    Subagent { parent: Option<rho_sdk::SessionId> },
+    Subagent { parent: rho_sdk::SessionId },
+    /// An agent node of a workflow run, which no session started.
+    #[expect(
+        dead_code,
+        reason = "workflow nodes build on the runtime in the next PR"
+    )]
+    WorkflowNode,
 }
 
-impl UsageAttribution {
+impl SessionRole {
     /// The usage purpose the session's requests are recorded under.
-    pub(super) fn purpose(&self) -> &'static str {
+    pub(super) fn usage_purpose(&self) -> &'static str {
         match self {
-            Self::Root => "agent",
-            Self::Subagent { .. } => "subagent",
+            Self::Interactive | Self::Acp | Self::Run => "agent",
+            Self::Subagent { .. } | Self::WorkflowNode => "subagent",
         }
     }
 
-    /// The session that delegated this one, if any.
-    pub(super) fn parent(&self) -> Option<rho_sdk::SessionId> {
+    /// The session that delegated this one, which its usage names.
+    pub(super) fn usage_parent(&self) -> Option<rho_sdk::SessionId> {
         match self {
-            Self::Root => None,
-            Self::Subagent { parent } => parent.clone(),
+            Self::Subagent { parent } => Some(parent.clone()),
+            Self::Interactive | Self::Acp | Self::Run | Self::WorkflowNode => None,
+        }
+    }
+
+    /// The host a new session's file records it was created by.
+    pub(super) fn origin(&self) -> SessionOrigin {
+        match self {
+            Self::Interactive => SessionOrigin::Interactive,
+            Self::Acp => SessionOrigin::Acp,
+            Self::Run => SessionOrigin::Run,
+            Self::Subagent { .. } => SessionOrigin::Subagent,
+            Self::WorkflowNode => SessionOrigin::WorkflowNode,
         }
     }
 }
@@ -169,8 +197,8 @@ pub(super) async fn build_session(
         diagnostics: &build.diagnostics,
         agent,
         max_steps: build.max_steps,
-        usage_purpose: build.usage.purpose(),
-        usage_parent_session_id: build.usage.parent(),
+        usage_purpose: build.role.usage_purpose(),
+        usage_parent_session_id: build.role.usage_parent(),
         hook_host_labels: build.hook_labels.clone(),
         added_dirs,
         host_io: build.host_io.clone(),
