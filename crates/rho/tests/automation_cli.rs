@@ -662,9 +662,28 @@ fn run_saves_its_session_as_a_run() {
             &Value::from("run")
         )
     );
-    assert!(
-        entries.iter().any(|entry| entry["type"] == "message"),
-        "the turn is saved: {entries:?}"
+    // The session file is a tree of commits whose deltas append history:
+    // the turn is saved when its prompt and the answer were appended.
+    let appended = entries
+        .iter()
+        .flat_map(|entry| {
+            entry["transition"]["delta"]["appended_history"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        (
+            appended
+                .iter()
+                .find_map(|message| message["User"][0]["Text"].as_str()),
+            appended.iter().find_map(|message| {
+                message["EnrichedAssistant"]["content"][0]["Text"].as_str()
+            }),
+        ),
+        (Some("remember this"), Some("saved answer")),
+        "the turn is saved"
     );
 }
 
