@@ -13,14 +13,15 @@ use rho_sdk::{
 };
 use tokio::sync::mpsc;
 
-use super::{ApprovalPolicy, UnattendedApprovals};
+use super::{ensure_auto_classifier_model, ApprovalPolicy, UnattendedApprovals};
 use crate::{
+    agent::PERMISSION_CLASSIFIER_AGENT_ID,
     app::session_runtime::{
         build::with_plan_exit,
         test_support::{built_on, test_build},
         SessionEvent, SessionRuntime, SessionStorage, Turn, TurnControl, TurnIo, TurnOutcome,
     },
-    config::Config,
+    config::{Config, InternalAgentModelConfig},
     permission::PermissionMode,
     session::Session as StoredSession,
     tools::{
@@ -224,4 +225,26 @@ async fn approvals_reach_the_host_only_when_it_answers_them() {
         );
         runtime.shutdown().await;
     }
+}
+
+// Covers: Auto must fail before a session builds when no classifier model is configured.
+// Owner: session build permission gating.
+#[test]
+fn auto_requires_configured_permission_classifier_model() {
+    let mut config = Config {
+        permission_mode: PermissionMode::Auto,
+        ..Config::default()
+    };
+
+    let error = ensure_auto_classifier_model(&config).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "permission mode auto requires a configured permission-classifier model (set via /config or config.toml [internal_agents.permission-classifier])"
+    );
+
+    config.set_internal_agent_model_config(
+        PERMISSION_CLASSIFIER_AGENT_ID,
+        InternalAgentModelConfig::new("openai".into(), "gpt-5.5".into(), "api-key".into()),
+    );
+    ensure_auto_classifier_model(&config).unwrap();
 }

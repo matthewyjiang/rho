@@ -70,7 +70,7 @@ mod workflow;
 pub(crate) use agent::AgentTask;
 #[cfg(test)]
 pub(in crate::app) use agent::{bind_delegated_agent, loaded_agent_with, MODEL_OVERRIDE_METADATA};
-pub(crate) use approval_policy::ApprovalPolicy;
+pub(crate) use approval_policy::{ensure_auto_classifier_model, ApprovalPolicy};
 #[cfg(test)]
 pub(in crate::app) use build::session_config;
 pub(crate) use build::{

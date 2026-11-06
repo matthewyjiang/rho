@@ -14,7 +14,6 @@ use rho_sdk::{
 use crate::{
     app::{
         agent_executor::AgentExecutor,
-        automation::ensure_headless_auto_classifier_model,
         bootstrap::absolute_config_path,
         config_repository::ConfigRepository,
         policy::AppPolicy,
@@ -168,7 +167,7 @@ fn workflow_approval_channel(
 ) -> anyhow::Result<WorkflowApprovalChannel> {
     let (handler, classifier): (Arc<dyn ApprovalHandler>, _) = match permission_mode {
         PermissionMode::Auto => {
-            ensure_headless_auto_classifier_model(config)?;
+            crate::app::session_runtime::ensure_auto_classifier_model(config)?;
             let human = approval_mode.can_prompt().then(|| {
                 Arc::new(TerminalWorkflowApprovals { interactive: true })
                     as Arc<dyn ApprovalHandler>

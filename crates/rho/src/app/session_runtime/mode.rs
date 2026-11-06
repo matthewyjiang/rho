@@ -7,11 +7,11 @@ use std::path::PathBuf;
 use rho_sdk::SessionOptions;
 
 use super::{
-    model_context_window, model_scoped_config, RunShape, SessionRuntime, SettingChangeError,
+    ensure_auto_classifier_model, model_context_window, model_scoped_config, RunShape,
+    SessionRuntime, SettingChangeError,
 };
 use crate::{
     app::{
-        automation::ensure_headless_auto_classifier_model,
         policy::AppPolicy,
         runtime_builder::{build_runtime_with_max_steps, RuntimeBuildOptions},
         sdk_config::WorkspaceOptions,
@@ -47,7 +47,7 @@ impl SessionRuntime {
         }
         let mut config = model_scoped_config(&self.current_model(), process_config);
         config.permission_mode = mode;
-        ensure_headless_auto_classifier_model(&config)
+        ensure_auto_classifier_model(&config)
             .map_err(|error| SettingChangeError::Unsupported(error.to_string()))?;
 
         let writes = self

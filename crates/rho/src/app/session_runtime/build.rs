@@ -6,12 +6,11 @@ use std::{
 
 use rho_sdk::{hooks::HookHostLabels, provider::ModelProvider, SessionOptions};
 
-use super::{ApprovalPolicy, SessionPermission};
+use super::{ensure_auto_classifier_model, ApprovalPolicy, SessionPermission};
 use crate::{
     added_dirs::AddedDirs,
     app::{
         agent_binding::BoundAgent,
-        automation::ensure_headless_auto_classifier_model,
         headless_delegation::BackgroundWait,
         session_assembly::{
             assemble_session, ApprovalInputs, BuiltSession, SessionAssembly, SessionAssemblyOptions,
@@ -189,7 +188,7 @@ pub(super) async fn build_session(
     added_dirs: &AddedDirs,
     session_options: impl FnOnce(Arc<dyn ModelProvider>) -> anyhow::Result<SessionOptions>,
 ) -> anyhow::Result<(BuiltSession, SessionPermission)> {
-    ensure_headless_auto_classifier_model(config)?;
+    ensure_auto_classifier_model(config)?;
     // A session request can follow a terminal login another process saved,
     // even when startup itself succeeded without credentials.
     AppCredentialStore::reread_external_logins();

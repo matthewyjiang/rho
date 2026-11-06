@@ -10,7 +10,6 @@ use std::{
 use rho_sdk::UserInput;
 
 use {
-    crate::agent::PERMISSION_CLASSIFIER_AGENT_ID,
     crate::cli::{Command, OutputFormat},
     crate::config::Config,
     crate::diagnostics::RuntimeDiagnostics,
@@ -421,7 +420,7 @@ pub(super) async fn run_session(
     reporter: Option<&mut RunReporter>,
     cancellation: Option<rho_tools::cancellation::RunCancellation>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
-    ensure_headless_auto_classifier_model(startup.config)?;
+    crate::app::session_runtime::ensure_auto_classifier_model(startup.config)?;
     let mut shutdown = ShutdownSignals::install()?;
     run_session_with_output(
         prompt_text,
@@ -442,7 +441,7 @@ async fn run_session_with_output(
     cancellation: Option<rho_tools::cancellation::RunCancellation>,
     mut jsonl: Option<&mut JsonlAdapter>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
-    ensure_headless_auto_classifier_model(startup.config)?;
+    crate::app::session_runtime::ensure_auto_classifier_model(startup.config)?;
     let resume = startup
         .checkpoint
         .as_ref()
@@ -574,22 +573,6 @@ async fn run_session_with_output(
     let _ = startup.herdr.release().await;
 
     result
-}
-
-pub(crate) fn ensure_headless_auto_classifier_model(config: &Config) -> anyhow::Result<()> {
-    if config.permission_mode == PermissionMode::Auto
-        && config
-            .internal_agent_model(PERMISSION_CLASSIFIER_AGENT_ID)
-            .is_none()
-    {
-        anyhow::bail!(
-            "permission mode auto requires a configured permission-classifier model (set via /config or config.toml [internal_agents.permission-classifier])"
-        );
-    }
-    if config.permission_mode == PermissionMode::Auto {
-        crate::permission_classifier::check_screen_config(config)?;
-    }
-    Ok(())
 }
 
 /// Resolves the approval session for one headless run.

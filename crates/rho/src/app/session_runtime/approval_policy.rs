@@ -14,12 +14,14 @@ use std::sync::Arc;
 use rho_sdk::ApprovalSession;
 
 use crate::{
+    agent::PERMISSION_CLASSIFIER_AGENT_ID,
     app::{
         interactive_runtime::startup::{
             approval_channel_for, ApprovalChannel, ApprovalChannelOptions,
         },
         session_assembly::{ApprovalInputs, SessionApproval},
     },
+    config::Config,
     permission::PermissionMode,
     permission_classifier_handler::ClassifierApprovalHandler,
 };
@@ -139,6 +141,25 @@ impl UnattendedApprovals {
             },
         }
     }
+}
+
+/// Fails when `config`'s mode is Auto and the classifier it needs cannot
+/// run: no permission-classifier model, or an invalid screen. Every
+/// session build checks it, since an unattended Auto session has nobody to
+/// fall back to, and an attended one should not start half-wired.
+pub(crate) fn ensure_auto_classifier_model(config: &Config) -> anyhow::Result<()> {
+    if config.permission_mode != PermissionMode::Auto {
+        return Ok(());
+    }
+    if config
+        .internal_agent_model(PERMISSION_CLASSIFIER_AGENT_ID)
+        .is_none()
+    {
+        anyhow::bail!(
+            "permission mode auto requires a configured permission-classifier model (set via /config or config.toml [internal_agents.permission-classifier])"
+        );
+    }
+    crate::permission_classifier::check_screen_config(config)
 }
 
 #[cfg(test)]

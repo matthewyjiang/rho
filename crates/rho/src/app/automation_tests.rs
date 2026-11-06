@@ -29,9 +29,9 @@ use tokio::{
 };
 
 use super::{
-    classify_error, classify_run_terminal, complete_run, ensure_headless_auto_classifier_model,
-    headless_approval_session, headless_auto_classifier, prompt_from_reader, AutomationExit,
-    RunArtifactIdentity, RunEntry, RunReporter, RunTerminal, TerminalMessages, MAX_STEPS_MESSAGE,
+    classify_error, classify_run_terminal, complete_run, headless_approval_session,
+    headless_auto_classifier, prompt_from_reader, AutomationExit, RunArtifactIdentity, RunEntry,
+    RunReporter, RunTerminal, TerminalMessages, MAX_STEPS_MESSAGE,
 };
 use crate::app::headless_run::{HeadlessRunDeps, HostInputRespondFuture, HostInputResponder};
 use crate::app::shutdown_signal::ShutdownSignals;
@@ -173,28 +173,6 @@ fn classifies_timeout_ahead_of_session_result() {
         /*timed_out*/ true,
     );
     assert!(matches!(terminal, RunTerminal::Timeout));
-}
-
-// Covers: headless Auto must fail before runtime construction when no classifier model is configured.
-// Owner: automation startup permission gating.
-#[test]
-fn headless_auto_requires_configured_permission_classifier_model() {
-    let mut config = Config {
-        permission_mode: PermissionMode::Auto,
-        ..Config::default()
-    };
-
-    let error = ensure_headless_auto_classifier_model(&config).unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "permission mode auto requires a configured permission-classifier model (set via /config or config.toml [internal_agents.permission-classifier])"
-    );
-
-    config.set_internal_agent_model_config(
-        PERMISSION_CLASSIFIER_AGENT_ID,
-        InternalAgentModelConfig::new("openai".into(), "gpt-5.5".into(), "api-key".into()),
-    );
-    ensure_headless_auto_classifier_model(&config).unwrap();
 }
 
 // Covers: a classifier allow or human escalation on a supplied Auto template
