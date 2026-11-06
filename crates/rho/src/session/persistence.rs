@@ -106,9 +106,26 @@ impl SessionStore {
     }
 
     pub(super) fn resolve_local(&self, id_prefix: &str) -> anyhow::Result<Option<ResolvedSession>> {
+        self.resolve_local_where(id_prefix, |_| true)
+    }
+
+    /// The session saved under exactly `id` in this workspace, if any. Unlike
+    /// [`Self::resolve_local`], `id` is never read as a prefix.
+    pub(super) fn resolve_exact_local(&self, id: &str) -> anyhow::Result<Option<ResolvedSession>> {
+        self.resolve_local_where(id, |path| session_id_from_path(path).as_deref() == Some(id))
+    }
+
+    /// The one session in this workspace whose id `id_prefix` prefixes and
+    /// whose transcript `keep` accepts.
+    fn resolve_local_where(
+        &self,
+        id_prefix: &str,
+        keep: impl Fn(&Path) -> bool,
+    ) -> anyhow::Result<Option<ResolvedSession>> {
         let dir = self.ensure_dir()?;
         let local = matching_session_files(&dir, id_prefix)?
             .into_iter()
+            .filter(|path| keep(path.as_path()))
             .filter_map(|path| {
                 let cwd = read_session_cwd(&path).ok()?;
                 (workspace_key(&cwd) == workspace_key(&self.cwd)).then_some((path, cwd))

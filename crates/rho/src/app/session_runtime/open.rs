@@ -5,11 +5,15 @@
 //! this id" a session that was opened but never prompted, so reopening it
 //! opens it new again under the same id. A reopened session runs as the
 //! agent it was saved as, and its host may show its saved conversation to
-//! its client before the first prompt.
+//! its client before the first prompt. A workflow node's session is found
+//! by [`NodeSession::find`] instead, which holds it to the node's agent.
 
 use std::path::Path;
 
-use rho_sdk::{model::Message, SessionOptions};
+use rho_sdk::{
+    model::{ContentBlock, Message},
+    SessionId, SessionOptions,
+};
 
 use super::{
     agent::loaded_agent,
@@ -19,7 +23,10 @@ use super::{
 use crate::{
     added_dirs::AddedDirs,
     agent::AgentCatalog,
-    app::interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
+    app::{
+        agent_binding::BoundAgent,
+        interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
+    },
     config::Config,
     session::{
         tree::ProjectedMessage, NoSessionFound, Session as StoredSession, SessionPersistence,
@@ -43,6 +50,63 @@ pub(crate) struct SessionOpening<'a> {
     /// The host's logout count; the session's provider reads credentials
     /// as it opens.
     pub(crate) logouts: &'a Logouts,
+}
+
+/// What a workflow node's attempt finds under the session id it recorded.
+pub(crate) enum NodeSession {
+    /// Nothing is saved under the id: the attempt's agent never prompted.
+    Unsaved,
+    /// The saved session, whose conversation the attempt continues.
+    Saved(StoredSession),
+    /// The saved session ends in the agent's final reply, with this text:
+    /// the process that ran the attempt died before it reported the reply.
+    Answered(String),
+}
+
+impl NodeSession {
+    /// Finds the session saved under exactly `id` in `cwd`'s workspace for a
+    /// node bound to `agent`. The plan froze the node's agent, so the session
+    /// must be `agent`'s root session, by id and fingerprint; any other fails
+    /// rather than run as an agent the plan did not approve.
+    pub(crate) fn find(cwd: &Path, id: &SessionId, agent: &BoundAgent) -> anyhow::Result<Self> {
+        let Some((stored, histories)) = StoredSession::open_exact_in_workspace(cwd, id.as_str())?
+        else {
+            return Ok(Self::Unsaved);
+        };
+        let fingerprint = agent.fingerprint().to_string();
+        let bound = match (
+            stored.delegated_agent_id()?,
+            stored.stored_agent_identity()?,
+        ) {
+            (None, Some((stored_id, stored_fingerprint))) => {
+                stored_id == agent.id().as_str() && stored_fingerprint == fingerprint
+            }
+            (Some(_), _) | (None, None) => false,
+        };
+        anyhow::ensure!(
+            bound,
+            "session '{id}' is not a session of workflow agent '{}' as the plan froze it; refusing to continue the node in it",
+            agent.id(),
+        );
+        Ok(match final_reply(&histories.model) {
+            Some(reply) => Self::Answered(reply),
+            None => Self::Saved(stored),
+        })
+    }
+}
+
+/// The text of the agent's final reply when `history` ends in one: a
+/// completed assistant message that calls no tools.
+fn final_reply(history: &[Message]) -> Option<String> {
+    let mut reply = String::new();
+    for block in history.last()?.completed_assistant_content()? {
+        match block {
+            ContentBlock::Text(text) => reply.push_str(text),
+            ContentBlock::Image(_) => {}
+            ContentBlock::ToolCall(_) => return None,
+        }
+    }
+    Some(reply)
 }
 
 /// A saved session's conversation, which its host may show its client,
@@ -77,7 +141,7 @@ impl SessionRuntime {
     /// written.
     pub(crate) async fn open_new(
         opening: SessionOpening<'_>,
-        id: rho_sdk::SessionId,
+        id: SessionId,
         persistence: SessionPersistence,
     ) -> anyhow::Result<Self> {
         let SessionOpening {
@@ -130,13 +194,22 @@ impl SessionRuntime {
         let stored = match StoredSession::open_by_id_with_histories(opening.cwd, id) {
             Ok((stored, _)) => stored,
             Err(error) if error.is::<NoSessionFound>() => {
-                let Ok(id) = rho_sdk::SessionId::from_string(id) else {
+                let Ok(id) = SessionId::from_string(id) else {
                     return Err(error);
                 };
                 return Self::open_new(opening, id, SessionPersistence::Saved).await;
             }
             Err(error) => return Err(error),
         };
+        Self::open_saved(opening, stored).await
+    }
+
+    /// Opens `stored` as the agent it was saved as and keeping the origin its
+    /// file records. Its host may then show its [`Self::saved_history`].
+    pub(crate) async fn open_saved(
+        opening: SessionOpening<'_>,
+        stored: StoredSession,
+    ) -> anyhow::Result<Self> {
         let SessionOpening {
             build,
             process_config,

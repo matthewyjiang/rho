@@ -168,6 +168,12 @@ impl RunReporter {
         self.sink.finish_ok(Some(outcome.text().to_string()));
     }
 
+    /// Ends the status as `ok` with `reply`, an answer the run's session
+    /// already saved, so no model request reports usage.
+    pub(crate) fn finish_answered(&mut self, reply: String) {
+        self.sink.finish_ok(Some(reply));
+    }
+
     /// Ends the status as stopped: by a stop, or at `rho run`'s step limit.
     pub(crate) fn finish_stopped(&mut self) {
         self.sink.finish_stopped("stopped");
