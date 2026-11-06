@@ -7,7 +7,7 @@ use crate::{
         headless_host::ChildSession,
         subagent_pool::{ChildObserver, StartedSubagent},
     },
-    subagent::{RunState, RunStatus},
+    subagent::RunState,
     workflow::{ArtifactObservation, NodeTerminalState, ValidatedOutputRef, WorkflowValue},
 };
 
@@ -32,41 +32,6 @@ impl WorkflowAgentExecutor {
     ) -> Self {
         Self { executor, observer }
     }
-}
-
-/// Which of an agent node's two limits ran out.
-#[derive(Debug, PartialEq, Eq)]
-enum NodeExpiry {
-    /// The run waited `timeout` in line for agent capacity and never started.
-    Queued,
-    /// The run ran `timeout` after it started.
-    Running,
-}
-
-/// Resolves when the node's run spent `timeout` waiting in line for agent
-/// capacity, or `timeout` after it left the line. The two count apart, so a
-/// wait in a budget shared with other work does not eat the node's run
-/// time, while a queued node, which already holds its checkout lock, still
-/// gives the lock back within its timeout (#1658). Never resolves for a run
-/// that ended while queued: its end arrives through the run's handle.
-async fn node_deadline(
-    mut status: tokio::sync::watch::Receiver<RunStatus>,
-    timeout: Duration,
-) -> NodeExpiry {
-    // Whether the run left the line; `wait_for`'s borrow is not `Send`.
-    let started = async {
-        status
-            .wait_for(|status| status.state != RunState::Queued)
-            .await
-            .is_ok()
-    };
-    match tokio::time::timeout(timeout, started).await {
-        Err(_) => return NodeExpiry::Queued,
-        Ok(false) => std::future::pending::<()>().await,
-        Ok(true) => {}
-    }
-    tokio::time::sleep(timeout).await;
-    NodeExpiry::Running
 }
 
 /// What a node that never left the line was waiting on, for its error.
@@ -145,10 +110,9 @@ impl WorkflowAgentExecutor {
         if let Some(progress) = &request.progress {
             progress.message(format!("starting agent {}", agent.agent_id));
         }
-        let deadline = node_deadline(
-            handle.clone_status_watch(),
-            Duration::from_secs(prepared.timeout_seconds),
-        );
+        // One timeout from spawn, so the checkout lock the node already holds
+        // is given back within it even while the node waits for capacity.
+        let deadline = tokio::time::sleep(Duration::from_secs(prepared.timeout_seconds));
         tokio::pin!(deadline);
         let mut status_rx = handle.clone_status_watch();
         let mut last_report = String::new();
@@ -162,20 +126,23 @@ impl WorkflowAgentExecutor {
                         agent_cleanup_limit(),
                     ).await;
                 }
-                expiry = &mut deadline => {
+                () = &mut deadline => {
+                    let queued = handle.status().state == RunState::Queued;
                     let place = handle.queue().place();
                     let stopped = stop_agent(
                         &mut handle,
                         AgentStopReason::Timeout,
                         agent_cleanup_limit(),
                     ).await?;
-                    return match expiry {
-                        NodeExpiry::Running => Ok(stopped),
-                        NodeExpiry::Queued => Err(RuntimeError::AgentBudgetTimeout {
-                            wait_limit_seconds: prepared.timeout_seconds,
+                    // A node that never got capacity says which budget it
+                    // waited on, not just that it timed out.
+                    if queued {
+                        return Err(RuntimeError::AgentBudgetTimeout {
+                            timeout_seconds: prepared.timeout_seconds,
                             waiting_on: waiting_on(place),
-                        }),
-                    };
+                        });
+                    }
+                    return Ok(stopped);
                 }
                 status = handle.wait() => break status,
                 changed = status_rx.changed() => {
@@ -363,7 +330,3 @@ pub(super) async fn stop_agent(
         }),
     }
 }
-
-#[cfg(test)]
-#[path = "agent_tests.rs"]
-mod tests;

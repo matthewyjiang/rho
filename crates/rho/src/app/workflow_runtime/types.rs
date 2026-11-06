@@ -285,14 +285,14 @@ pub(crate) enum RuntimeError {
         "workflow checkout lock wait budget exceeded: limit {wait_limit_seconds} seconds, waited at least {wait_limit_seconds} seconds"
     )]
     CheckoutLockTimeout { wait_limit_seconds: u64 },
-    /// An agent node waited its whole `timeout_seconds` for a slot in the
-    /// agent budget and never started. `waiting_on` names the budget it
-    /// last waited on, its limit, and the node's place in line.
+    /// An agent node timed out before it got a slot in the agent budget.
+    /// `waiting_on` names the budget it last waited on, its limit, and the
+    /// node's place in line.
     #[error(
-        "workflow agent budget wait exceeded: limit {wait_limit_seconds} seconds, still waiting on {waiting_on}"
+        "workflow agent node timed out after {timeout_seconds} seconds before it started, still waiting on {waiting_on}"
     )]
     AgentBudgetTimeout {
-        wait_limit_seconds: u64,
+        timeout_seconds: u64,
         waiting_on: String,
     },
     #[error("workflow executor cleanup did not confirm termination after {cause:?}")]
