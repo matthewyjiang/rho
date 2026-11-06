@@ -207,12 +207,14 @@ After an unclean exit, an attempt with uncertain process ownership becomes
 `needs_recovery`. Rho does not infer success and does not start an automatic
 retry. Inspect the process and artifacts, then pass `--recover-uncertain`.
 
-A Rho agent attempt atomically replaces `agent/session.json` in its attempt
-directory before each model request and before each batch of tool calls. On
-confirmed recovery, an attempt with a readable checkpoint continues under the
-same attempt number. Other uncertain attempts reset and start a new attempt.
-The checkpoint is removed when the attempt finishes or resets. A continued
-attempt's timeout starts again from zero.
+A Rho agent attempt runs in a saved session that session lists leave out,
+whose id its `status.json` records before the agent starts. The session saves
+before each model request and before each batch of tool calls. On confirmed
+recovery, an attempt with a recorded session reopens it and continues under the
+same attempt number; if its prompt was not saved yet, it sends the prompt. A
+session that cannot be reopened fails the attempt. Other uncertain attempts
+reset and start a new attempt in a new session. A continued attempt's timeout
+starts again from zero.
 `resume --dry-run` reports the decision for each attempt without changing the
 run.
 
