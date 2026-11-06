@@ -54,9 +54,13 @@ Use `rho --no-tools run "..."` to remove tool access. That flag does not suppres
 ### Sessions, commands, and questions
 
 Each `rho run` saves its session like an interactive one, recorded as a `run`
-session, so `rho sessions list` shows it and `rho --resume <ID>` continues it in
-the TUI. A run does not ask a model to title its session, so session lists
-show it by its first message; `rho sessions rename` names it.
+session. Session lists leave runs out, so a script's runs never crowd the
+sessions you had yourself: `rho sessions list`, the `/resume` picker and
+`/sessions` manager, `-c`, ACP session lists, and the `sessions` tool's
+search scopes skip them. A run opens by its id, which the JSONL stream reports
+as `session_id`: `rho sessions export <ID>` writes its transcript and
+`rho --resume <ID>` continues it in the TUI. A run does not ask a model to
+title its session; `rho sessions rename` names it.
 
 A prompt that starts with a slash command resolves the way it does in an ACP
 session: prompt templates (`/prompt:<name>`), MCP prompts, `/init`,

@@ -64,7 +64,7 @@ pub(super) async fn delete(session_id: SessionId) -> Result<DeleteSessionRespons
 /// name whole ids, and ids need not be UUIDs, so a store prefix lookup could
 /// match another session or stop at a longer id in one workspace.
 fn saved_target(id: &str) -> Result<Option<SessionTarget>, AcpError> {
-    let mut matches = StoredSession::list_all(SessionListing::IncludingChildren)
+    let mut matches = StoredSession::list_all(SessionListing::Everything)
         .map_err(store_error)?
         .into_iter()
         .filter(|summary| summary.id == id);

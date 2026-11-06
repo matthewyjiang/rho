@@ -391,8 +391,9 @@ fn refresh_preserves_scope_for_deleted_workspaces() {
 }
 
 // Covers: default repo isolation, explicit expansion, same-worktree ordering and
-// current-session exclusion must also apply to focused reads; child sessions
-// stay out of every scope but their own current one.
+// current-session exclusion must also apply to focused reads; a session that
+// is not person-facing, such as a `rho run`'s, stays out of every scope but
+// its own current one.
 #[test]
 fn scope_and_current_exclusion_apply_to_search_and_read() {
     let root = TempDir::new().unwrap();
@@ -419,21 +420,21 @@ fn scope_and_current_exclusion_apply_to_search_and_read() {
     current
         .append_message(&Message::user_text("scopeword"))
         .unwrap();
-    let child = Session::create_with_id_in_root(
+    let hidden = Session::create_with_id_in_root(
         root.path(),
         project.path(),
-        "subagent-child",
+        "scripted-run",
         None,
-        SessionOrigin::Subagent,
+        SessionOrigin::Run,
     )
     .unwrap();
-    child
+    hidden
         .append_message(&Message::user_text("scopeword"))
         .unwrap();
     let own = run(
         root.path(),
         project.path(),
-        child.id(),
+        hidden.id(),
         json!({"action":"search","query":"scopeword","scope":"current"}),
     );
     assert_eq!(own["total_matches"], json!(1));

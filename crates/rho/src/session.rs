@@ -97,7 +97,8 @@ pub struct SessionSummary {
 }
 
 /// Which host created a session, recorded on its header when its file is
-/// created so listings can tell a person's sessions from child ones.
+/// created so listings can tell the sessions a person had from the ones a
+/// program ran.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SessionOrigin {
@@ -119,13 +120,15 @@ pub(crate) enum SessionOrigin {
 }
 
 impl SessionOrigin {
-    /// Whether another session started this one. A person reaches a child
-    /// session through the parent that ran it, so person-facing listings
-    /// leave it out; opening it by id still works.
-    pub(crate) fn is_child(self) -> bool {
+    /// Whether a person had the session, so person-facing listings show
+    /// it. A script's `rho run` and a parent's subagents and workflow nodes
+    /// are left out: whoever ran one already holds what it returned, and
+    /// opening it by id still works. An origin this Rho does not know stays
+    /// listed, like a file written before origins were recorded.
+    pub(crate) fn is_person_facing(self) -> bool {
         match self {
-            Self::Subagent | Self::WorkflowNode => true,
-            Self::Interactive | Self::Acp | Self::Run | Self::Unknown => false,
+            Self::Interactive | Self::Acp | Self::Unknown => true,
+            Self::Run | Self::Subagent | Self::WorkflowNode => false,
         }
     }
 }
@@ -134,21 +137,22 @@ impl SessionOrigin {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SessionListing {
     /// The sessions a person picks from: pickers, `rho sessions`,
-    /// `--continue` and ACP lists. Child sessions are left out (see
-    /// [`SessionOrigin::is_child`]); files older than origins are kept.
+    /// `--continue` and ACP lists. Only person-facing origins (see
+    /// [`SessionOrigin::is_person_facing`]) and files older than origins.
     PersonFacing,
-    /// Every saved session, child sessions included: exact-id lookups and
-    /// bulk deletes that must not strand a child's files.
-    IncludingChildren,
+    /// Every saved session: exact-id lookups and bulk deletes that must not
+    /// strand a hidden session's files.
+    Everything,
 }
 
 impl SessionListing {
     fn retain(self, sessions: &mut Vec<SessionSummary>) {
         match self {
             Self::PersonFacing => {
-                sessions.retain(|session| !session.origin.is_some_and(SessionOrigin::is_child));
+                sessions
+                    .retain(|session| session.origin.is_none_or(SessionOrigin::is_person_facing));
             }
-            Self::IncludingChildren => {}
+            Self::Everything => {}
         }
     }
 }

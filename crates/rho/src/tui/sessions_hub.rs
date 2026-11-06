@@ -530,8 +530,9 @@ impl App {
     fn prompt_delete_directory_sessions(&mut self, cwd: &Path) -> anyhow::Result<()> {
         // List fresh so "all sessions" includes any saved since the hub
         // loaded. One workspace is an index query, well under a millisecond.
-        // Child sessions the hub hides go too, rather than linger unlisted.
-        let targets = Session::list(cwd, SessionListing::IncludingChildren)?
+        // Sessions the hub hides (runs, subagents, workflow nodes) go too,
+        // rather than linger unlisted.
+        let targets = Session::list(cwd, SessionListing::Everything)?
             .iter()
             .map(SessionSummary::target)
             .collect::<Vec<_>>();

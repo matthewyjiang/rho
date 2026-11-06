@@ -1053,13 +1053,13 @@ fn the_header_keeps_the_origin_the_session_was_created_with() {
     }
 }
 
-// Covers: person-facing listings leave out child sessions (a subagent's or a
-// workflow node's) and keep every other origin, including files written
-// before origins were recorded; the index carries each header's origin; a
-// child session still opens by id.
+// Covers: person-facing listings leave out `rho run`, subagent, and workflow
+// node sessions and keep every other origin, including files written before
+// origins were recorded; the index carries each header's origin; a hidden
+// session still opens by id.
 // Owner: session listing
 #[test]
-fn person_facing_listings_leave_out_child_sessions() {
+fn person_facing_listings_leave_out_runs_and_child_sessions() {
     // A header as an older Rho (no origin) or a later one (an origin this
     // one does not know) writes it.
     const OLDER_RHO: &str = "";
@@ -1069,7 +1069,7 @@ fn person_facing_listings_leave_out_child_sessions() {
     let cases = [
         ("interactive", Interactive, None, Some(Interactive), true),
         ("acp", Acp, None, Some(Acp), true),
-        ("run", Run, None, Some(Run), true),
+        ("run", Run, None, Some(Run), false),
         ("subagent", Subagent, None, Some(Subagent), false),
         (
             "workflow-node",
@@ -1116,15 +1116,12 @@ fn person_facing_listings_leave_out_child_sessions() {
         by_id(
             cases
                 .iter()
-                .filter(|case| case.4 || listing == SessionListing::IncludingChildren)
+                .filter(|case| case.4 || listing == SessionListing::Everything)
                 .map(|(id, _, _, indexed, _)| (id.to_string(), *indexed))
                 .collect(),
         )
     };
-    for listing in [
-        SessionListing::PersonFacing,
-        SessionListing::IncludingChildren,
-    ] {
+    for listing in [SessionListing::PersonFacing, SessionListing::Everything] {
         assert_eq!(
             [
                 listed(Session::list_in_root_for_test(&root, &cwd, listing)),

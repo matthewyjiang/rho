@@ -219,8 +219,8 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
 
 /// Runs the prompt on a new session saved as `rho run`'s, until it ends or
 /// `stops` stops it, and tears the session down. Returns how the prompt
-/// ended. The session is never titled: a model call per scripted run is not
-/// worth it, and listings fall back to its first message.
+/// ended. Person-facing listings leave the session out, so it opens by id.
+/// It is never titled: a model call per scripted run is not worth it.
 async fn run_session(
     prompt_text: String,
     startup: &Startup<'_>,

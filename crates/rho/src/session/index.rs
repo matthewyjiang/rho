@@ -570,8 +570,9 @@ fn migrate_index_with_hook(
         &transaction,
         "effective_format_version integer not null default 1",
     )?;
-    // Versioned, unlike the columns above: an older Rho that indexed a child
-    // session would leave its origin unset, listing it as a person's.
+    // Versioned, unlike the columns above: an older Rho that indexed a run
+    // or child session would leave its origin unset, listing it as a
+    // person's.
     ensure_column(&transaction, "origin text")?;
     if version < 3 {
         // Force the next workspace sync to re-summarize existing rows,
