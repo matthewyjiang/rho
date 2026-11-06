@@ -202,21 +202,12 @@ impl SessionRuntime {
             added_dirs: self.added_dirs.clone(),
             auth: self.auth.clone(),
             handle: self.handle.clone(),
-            mirror: self.step_mirror.clone(),
             display: Mutex::new(display),
         }));
         self.built
             .session
             .set_checkpoint_store(Some(checkpoint.0.clone()))?;
         Ok(checkpoint)
-    }
-
-    /// Also saves every step checkpoint to `store`, such as a workflow
-    /// attempt's checkpoint that a resumed attempt continues from.
-    // Temporary(reopen): goes with `SessionCheckpoint`, once workflow nodes
-    // reopen their saved session instead.
-    pub(crate) fn mirror_step_checkpoints(&mut self, store: Arc<dyn SessionStore>) {
-        self.step_mirror = Some(store);
     }
 
     /// Saves the turn's user message before its run starts, and returns the
@@ -427,10 +418,6 @@ struct CheckpointStore {
     auth: String,
     /// Tells the store when a successor owns the file.
     handle: SessionHandle,
-    /// Where each step checkpoint is also saved; see
-    /// [`SessionRuntime::mirror_step_checkpoints`].
-    // Temporary(reopen): goes with `SessionCheckpoint`.
-    mirror: Option<Arc<dyn SessionStore>>,
     display: Mutex<TurnDisplay>,
 }
 
@@ -441,13 +428,10 @@ impl CheckpointStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Saves `snapshot` to the session file, and returns it as saved, or
-    /// `None` when a successor owns the file.
-    // Temporary(reopen): the returned snapshot only feeds `mirror`; this
-    // returns `()` once the mirror goes.
-    fn save_now(&self, snapshot: SessionSnapshot) -> anyhow::Result<Option<SessionSnapshot>> {
+    /// Saves `snapshot` to the session file, unless a successor owns it.
+    fn save_now(&self, snapshot: SessionSnapshot) -> anyhow::Result<()> {
         if self.handle.is_replaced() {
-            return Ok(None);
+            return Ok(());
         }
         let snapshot = decorate(
             &self.prompt,
@@ -463,7 +447,7 @@ impl CheckpointStore {
             stored.save_snapshot(&snapshot, &pending.rows)?;
             display.mark_written(pending);
         }
-        Ok(Some(snapshot))
+        Ok(())
     }
 }
 
@@ -477,17 +461,11 @@ impl SessionStore for CheckpointStore {
 
     fn save<'a>(&'a self, snapshot: SessionSnapshot) -> SessionStoreFuture<'a, ()> {
         Box::pin(async move {
-            let saved = self
-                .save_now(snapshot)
+            self.save_now(snapshot)
                 .map_err(|error| rho_sdk::Error::Persistence {
                     message: format!("{error:#}"),
                     source: None,
-                })?;
-            // Temporary(reopen): goes with `mirror`.
-            match (&self.mirror, saved) {
-                (Some(mirror), Some(saved)) => mirror.save(saved).await,
-                (None, _) | (_, None) => Ok(()),
-            }
+                })
         })
     }
 }

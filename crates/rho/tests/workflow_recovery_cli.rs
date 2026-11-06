@@ -17,10 +17,11 @@ use tempfile::TempDir;
 const MODE_ENV: &str = "RHO_AUTOMATION_TEST_MODE";
 const COMMAND_ENV: &str = "RHO_AUTOMATION_TEST_COMMAND";
 /// The `process-then-delay` fixture holds its second model request for 30 s.
-/// The whole test, both runs included, measured 0.19 s locally. Giving up
-/// before the fixture's own delay ends keeps a missing checkpoint a clear
-/// failure instead of a run that quietly completes.
-const CHECKPOINT_DEADLINE: Duration = Duration::from_secs(25);
+/// One row of the test, both runs included, measured 0.19 s locally (with the
+/// attempt checkpoint this replaced; the parent re-measures). Giving up
+/// before the fixture's own delay ends keeps a missing save a clear failure
+/// instead of a run that quietly completes.
+const SAVE_DEADLINE: Duration = Duration::from_secs(25);
 
 const CONFIG: &str = r#"provider = "xai"
 model = "grok-fixture"
@@ -54,132 +55,177 @@ tools: [process]
 Do the task.
 ";
 
-// Covers: a Rho agent node killed mid-run continues the same attempt from its
-// step checkpoint, so the model sees the saved history (including the finished
-// tool call) instead of a fresh prompt, and `--dry-run` predicts that.
-// Owner: workflow crash recovery (SDK checkpoint store wired through the
-// headless agent runner).
-#[test]
-fn killed_agent_node_continues_from_its_checkpoint() {
-    let root = TempDir::new().unwrap();
-    std::fs::create_dir_all(root.path().join("wf/agents")).unwrap();
-    std::fs::write(root.path().join("config.toml"), CONFIG).unwrap();
-    std::fs::write(root.path().join("wf/main.star"), WORKFLOW).unwrap();
-    std::fs::write(root.path().join("wf/agents/fixture.md"), AGENT).unwrap();
-
-    let plan = rho(
-        &root,
-        "inspect",
-        &["workflow", "plan", "wf/main.star", "--output", "json"],
-    );
-    let plan: Value = serde_json::from_slice(&success(&plan).stdout).unwrap();
-    let plan_id = plan["manifest"]["plan_id"].as_str().unwrap();
-
-    // Turn one starts a process; turn two hangs, so the run is killed after the
-    // checkpoint that holds the finished tool call.
-    let mut first = command(&root, "process-then-delay");
-    first
-        .env(COMMAND_ENV, "true")
-        .args(["workflow", "run", plan_id, "--yes", "--output", "jsonl"]);
-    let mut first = first.spawn().unwrap();
-    let (run_id, checkpoint) = wait_for_tool_checkpoint(&root);
-    first.kill().unwrap();
-    first.wait().unwrap();
-    let saved: Value = serde_json::from_slice(&std::fs::read(&checkpoint).unwrap()).unwrap();
-
-    let preview = rho(
-        &root,
-        "inspect",
-        &[
-            "workflow",
-            "resume",
-            &run_id,
-            "--dry-run",
-            "--output",
-            "jsonl",
-        ],
-    );
-    let preview: Value = serde_json::from_slice(&success(&preview).stdout).unwrap();
-    assert_eq!(
-        preview,
-        json!({
-            "run_id": run_id,
-            "needs_confirmation": true,
-            "attempts": [{"node": "s0.inspect", "attempt": 1, "action": "continue"}],
-        })
-    );
-
-    let resumed = rho(
-        &root,
-        "inspect",
-        &[
-            "workflow",
-            "resume",
-            &run_id,
-            "--recover-uncertain",
-            "--yes",
-            "--output",
-            "jsonl",
-        ],
-    );
-    let node_events = String::from_utf8(success(&resumed).stdout.clone())
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap())
-        .filter(|event| {
-            matches!(
-                event["type"].as_str(),
-                Some("node_started" | "node_finished")
-            )
-        })
-        .map(|event| json!([event["type"], event["attempt"], event["outcome"]]))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        node_events,
-        [
-            json!(["node_started", 1, null]),
-            json!(["node_finished", null, "success"]),
-        ]
-    );
-    // The inspect fixture answers with the request it received.
-    let answer = checkpoint.with_file_name("answer.txt");
-    let request: Value = serde_json::from_slice(&std::fs::read(answer).unwrap()).unwrap();
-    assert_eq!(request["messages"], saved["history"]);
-    assert!(
-        !checkpoint.exists(),
-        "finished attempts drop their checkpoint"
-    );
+/// What the killed run left of the node's session for its resume.
+#[derive(Clone, Copy, Debug)]
+enum SavedSession {
+    /// The session as saved, with the finished tool call.
+    Kept,
+    /// No session file, as when the run died before its first save.
+    Removed,
 }
 
-/// Waits until attempt 1 has saved a checkpoint holding the user prompt, the
-/// tool call, and its result. Returns the run ID and the checkpoint path.
-fn wait_for_tool_checkpoint(root: &TempDir) -> (String, PathBuf) {
-    let runs = root.path().join(".rho/workflows/runs");
+// Covers: a Rho agent node killed mid-run continues the same attempt by
+// reopening the session it recorded, so the model sees the saved history
+// (including the finished tool call) and not the prompt a second time, or
+// only the prompt when nothing was saved; `--dry-run` predicts that.
+// Owner: workflow crash recovery (the session id the attempt records,
+// reopened through the headless agent runner).
+#[test]
+fn killed_agent_node_continues_its_saved_session() {
+    for (saved, expected) in [
+        // (user messages, tool results) in the resumed model request.
+        (SavedSession::Kept, (1, 1)),
+        (SavedSession::Removed, (1, 0)),
+    ] {
+        let root = TempDir::new().unwrap();
+        std::fs::create_dir_all(root.path().join("wf/agents")).unwrap();
+        std::fs::write(root.path().join("config.toml"), CONFIG).unwrap();
+        std::fs::write(root.path().join("wf/main.star"), WORKFLOW).unwrap();
+        std::fs::write(root.path().join("wf/agents/fixture.md"), AGENT).unwrap();
+
+        let plan = rho(
+            &root,
+            "inspect",
+            &["workflow", "plan", "wf/main.star", "--output", "json"],
+        );
+        let plan: Value = serde_json::from_slice(&success(&plan).stdout).unwrap();
+        let plan_id = plan["manifest"]["plan_id"].as_str().unwrap();
+
+        // Turn one starts a process; turn two hangs, so the run is killed
+        // after the save that holds the finished tool call.
+        let mut first = command(&root, "process-then-delay");
+        first
+            .env(COMMAND_ENV, "true")
+            .args(["workflow", "run", plan_id, "--yes", "--output", "jsonl"]);
+        let mut first = first.spawn().unwrap();
+        let save = wait_for_tool_result_save(&root);
+        first.kill().unwrap();
+        first.wait().unwrap();
+        match saved {
+            SavedSession::Kept => {}
+            SavedSession::Removed => std::fs::remove_dir_all(&save.session).unwrap(),
+        }
+
+        let preview = rho(
+            &root,
+            "inspect",
+            &[
+                "workflow",
+                "resume",
+                &save.run_id,
+                "--dry-run",
+                "--output",
+                "jsonl",
+            ],
+        );
+        let preview: Value = serde_json::from_slice(&success(&preview).stdout).unwrap();
+        assert_eq!(
+            preview,
+            json!({
+                "run_id": save.run_id,
+                "needs_confirmation": true,
+                "attempts": [{"node": "s0.inspect", "attempt": 1, "action": "continue"}],
+            }),
+            "{saved:?}"
+        );
+
+        let resumed = rho(
+            &root,
+            "inspect",
+            &[
+                "workflow",
+                "resume",
+                &save.run_id,
+                "--recover-uncertain",
+                "--yes",
+                "--output",
+                "jsonl",
+            ],
+        );
+        let node_events = String::from_utf8(success(&resumed).stdout.clone())
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .filter(|event| {
+                matches!(
+                    event["type"].as_str(),
+                    Some("node_started" | "node_finished")
+                )
+            })
+            .map(|event| json!([event["type"], event["attempt"], event["outcome"]]))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            node_events,
+            [
+                json!(["node_started", 1, null]),
+                json!(["node_finished", null, "success"]),
+            ],
+            "{saved:?}"
+        );
+        // The inspect fixture answers with the request it received.
+        let answer = save.attempt.join("agent/answer.txt");
+        let request: Value = serde_json::from_slice(&std::fs::read(answer).unwrap()).unwrap();
+        let messages = request["messages"].as_array().unwrap();
+        let count = |kind: &str| {
+            messages
+                .iter()
+                .filter(|message| message.get(kind).is_some())
+                .count()
+        };
+        assert_eq!((count("User"), count("ToolResult")), expected, "{saved:?}");
+    }
+}
+
+/// Where attempt 1 of a run saved its agent's session.
+struct AttemptSave {
+    run_id: String,
+    attempt: PathBuf,
+    /// The session's directory below its workspace's.
+    session: PathBuf,
+}
+
+/// Waits until attempt 1's agent has saved its session with the tool call's
+/// result.
+fn wait_for_tool_result_save(root: &TempDir) -> AttemptSave {
     let started = Instant::now();
     loop {
-        if let Some(found) = tool_checkpoint(&runs) {
+        if let Some(found) = tool_result_save(root.path()) {
             return found;
         }
         assert!(
-            started.elapsed() < CHECKPOINT_DEADLINE,
-            "no tool checkpoint within {CHECKPOINT_DEADLINE:?}"
+            started.elapsed() < SAVE_DEADLINE,
+            "no tool result saved within {SAVE_DEADLINE:?}"
         );
         std::thread::sleep(Duration::from_millis(20));
     }
 }
 
-fn tool_checkpoint(runs: &Path) -> Option<(String, PathBuf)> {
-    let run = std::fs::read_dir(runs).ok()?.next()?.ok()?;
-    let checkpoint = run
-        .path()
-        .join("nodes/s0.inspect/attempts/1/agent/session.json");
-    // Saves replace the file atomically, so any read sees a complete snapshot.
-    let snapshot: Value = serde_json::from_slice(&std::fs::read(&checkpoint).ok()?).ok()?;
-    let has_tool_result = snapshot["history"]
-        .as_array()?
-        .iter()
-        .any(|message| message.get("ToolResult").is_some());
-    has_tool_result.then(|| (run.file_name().into_string().unwrap(), checkpoint))
+fn tool_result_save(root: &Path) -> Option<AttemptSave> {
+    let run = std::fs::read_dir(root.join(".rho/workflows/runs"))
+        .ok()?
+        .next()?
+        .ok()?;
+    let attempt = run.path().join("nodes/s0.inspect/attempts/1");
+    let record: Value =
+        serde_json::from_slice(&std::fs::read(attempt.join("status.json")).ok()?).ok()?;
+    let id = record["state"]["agent_session"].as_str()?;
+    // Each session is a directory named for its id, below its workspace's.
+    let suffix = format!("_{id}");
+    let session = std::fs::read_dir(root.join(".rho/sessions"))
+        .ok()?
+        .flatten()
+        .filter_map(|workspace| std::fs::read_dir(workspace.path()).ok())
+        .flatten()
+        .flatten()
+        .find(|entry| entry.file_name().to_string_lossy().ends_with(&suffix))?
+        .path();
+    // Every message a save writes is tagged with its kind.
+    let saved = std::fs::read_to_string(session.join("session.jsonl")).ok()?;
+    saved.contains("\"ToolResult\"").then(|| AttemptSave {
+        run_id: run.file_name().into_string().unwrap(),
+        attempt,
+        session,
+    })
 }
 
 fn rho(root: &TempDir, mode: &str, args: &[&str]) -> Output {

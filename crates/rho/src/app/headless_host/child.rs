@@ -3,7 +3,8 @@
 //! like any other, tagged with its role, unless its parent's is never saved,
 //! and the parent watches its status file. The child sends its prompt as
 //! given, decides its approvals alone or as the parent passed down, and
-//! stops when the parent cancels it.
+//! stops when the parent cancels it. A workflow node an earlier process left
+//! running reopens its saved session and continues it instead.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -28,17 +29,17 @@ use crate::{
     subagent::RunStatus,
 };
 
-/// Step checkpoints for one workflow node's run.
-///
-/// The session also saves to `store` at every step boundary. With `resume`,
-/// the run restores that snapshot and continues it instead of sending the
-/// prompt.
-// Temporary(reopen): goes once workflow nodes reopen their saved session
-// instead of restoring a checkpoint snapshot.
-#[derive(Clone)]
-pub(crate) struct SessionCheckpoint {
-    pub(crate) store: Arc<dyn rho_sdk::SessionStore>,
-    pub(crate) resume: Option<rho_sdk::SessionSnapshot>,
+/// The session a child runs in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ChildSession {
+    /// A new session under this id: a subagent's, or a workflow node
+    /// attempt's first run.
+    New(rho_sdk::SessionId),
+    /// The session saved under this id, reopened as the agent the child is
+    /// bound to: a workflow node attempt that an earlier process left
+    /// running. The child continues the conversation saved there, or sends
+    /// its prompt when none was saved yet.
+    Reopen(rho_sdk::SessionId),
 }
 
 /// One child run on the Rho runtime, after binding and permit acquisition.
@@ -51,8 +52,8 @@ pub(crate) struct ChildRun {
     pub(crate) output_file: PathBuf,
     /// A subagent with its parent, or a workflow node.
     pub(crate) role: SessionRole,
-    /// Whether the child's session is saved: as its parent's is, for a
-    /// subagent. A resumed workflow node always saves.
+    /// Whether a new session is saved: as its parent's is, for a subagent;
+    /// always, for a workflow node. A reopened session is saved already.
     pub(crate) persistence: SessionPersistence,
     /// The parent that answers the child's questions, when one listens.
     pub(crate) questions: Option<ParentQuestions>,
@@ -64,7 +65,7 @@ pub(crate) struct ChildRun {
     pub(crate) live_title: crate::run_artifacts::LiveRunTitle,
     pub(crate) hook_host_labels: rho_sdk::hooks::HookHostLabels,
     pub(crate) approvals: UnattendedApprovals,
-    pub(crate) checkpoint: Option<SessionCheckpoint>,
+    pub(crate) session: ChildSession,
     pub(crate) added_dirs: crate::added_dirs::AddedDirs,
     pub(crate) host_io: crate::tools::host_io::HostIo,
 }
@@ -89,7 +90,7 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         live_title,
         hook_host_labels,
         approvals,
-        checkpoint,
+        session,
         added_dirs,
         host_io,
     } = run;
@@ -155,31 +156,14 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         added_dirs,
         logouts: &logouts,
     };
-    let (mirror, resume) = match checkpoint {
-        Some(SessionCheckpoint { store, resume }) => (Some(store), resume),
-        None => (None, None),
-    };
-    let start = match &resume {
-        Some(_) => TurnStart::Continue,
-        None => {
-            let input = UserInput::text(prompt);
-            TurnStart::Prompt(Turn {
-                display: input.clone(),
-                model: input,
-                calls: Vec::new(),
-            })
-        }
-    };
     let open = async {
-        let mut runtime = match resume {
-            Some(snapshot) => SessionRuntime::open_from_checkpoint(opening, snapshot).await?,
-            None => {
-                SessionRuntime::open_new(opening, rho_sdk::SessionId::new(), persistence).await?
-            }
+        // A reopened session runs as the agent the child is bound to: a
+        // child never rebinds with `/agent:`, so its file records a root
+        // session, which reopens as the launch agent (see `loaded_agent`).
+        let runtime = match session {
+            ChildSession::New(id) => SessionRuntime::open_new(opening, id, persistence).await?,
+            ChildSession::Reopen(id) => SessionRuntime::reopen(opening, id.as_str()).await?,
         };
-        if let Some(store) = mirror {
-            runtime.mirror_step_checkpoints(store);
-        }
         // The parent steers the child's model turns through its handle.
         if let Some(slot) = &steering_slot {
             slot.publish(runtime.handle());
@@ -197,6 +181,18 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         &config,
         open,
         |runtime, view, scope, process_config| {
+            // A reopened session saved before its prompt reached the model,
+            // or not at all, holds no conversation and still needs it.
+            let start = if runtime.has_conversation() {
+                TurnStart::Continue
+            } else {
+                let input = UserInput::text(prompt);
+                TurnStart::Prompt(Turn {
+                    display: input.clone(),
+                    model: input,
+                    calls: Vec::new(),
+                })
+            };
             Box::pin(runtime.run_prompt_turn(view, scope, start, process_config))
         },
     )

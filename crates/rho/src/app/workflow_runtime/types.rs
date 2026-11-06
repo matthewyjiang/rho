@@ -80,8 +80,10 @@ pub(crate) struct NodeExecutionRequest<I> {
     pub(crate) attempt_directory: PathBuf,
     pub(crate) cancellation: rho_sdk::CancellationToken,
     pub(crate) progress: Option<NodeProgressReporter>,
-    /// Saved agent session when this attempt continues after an unclean exit.
-    pub(crate) resume: Option<rho_sdk::SessionSnapshot>,
+    /// The session a Rho agent node's attempt runs in: new, or reopened when
+    /// the attempt continues after an unclean exit. Commands and agents on
+    /// other runtimes have none.
+    pub(crate) agent_session: Option<crate::app::headless_host::ChildSession>,
 }
 
 impl<I> NodeExecutionRequest<I> {
@@ -97,7 +99,7 @@ impl<I> NodeExecutionRequest<I> {
             attempt_directory: self.attempt_directory,
             cancellation: self.cancellation,
             progress: self.progress,
-            resume: self.resume,
+            agent_session: self.agent_session,
         }
     }
 
@@ -126,7 +128,7 @@ impl<I> NodeExecutionRequest<I> {
                 attempt_directory: self.attempt_directory,
                 cancellation: self.cancellation,
                 progress: self.progress,
-                resume: self.resume,
+                agent_session: self.agent_session,
             },
         )
     }

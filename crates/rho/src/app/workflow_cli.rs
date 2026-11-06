@@ -507,15 +507,14 @@ fn print_recovery_preview(
             }
             for attempt in &preview.attempts {
                 let action = match &attempt.recovery {
-                    AttemptRecovery::Continue { .. } => "continue from its last checkpoint",
+                    AttemptRecovery::Continue { .. } => "continue its saved session",
                     AttemptRecovery::Reset { reason } => match reason {
                         ResetReason::CancellationRequested => "restart: cancellation was requested",
                         ResetReason::CommandNode => "restart: command node",
                         ResetReason::ForeignAgent => {
-                            "restart: Claude and Cursor agents do not checkpoint"
+                            "restart: Claude, Cursor, and Antigravity agents cannot continue"
                         }
-                        ResetReason::NoCheckpoint => "restart: no checkpoint was saved",
-                        ResetReason::UnreadableCheckpoint => "restart: checkpoint is unreadable",
+                        ResetReason::NoSessionRecorded => "restart: no session was recorded",
                     },
                 };
                 println!("{} attempt {}: {action}", attempt.node, attempt.attempt);

@@ -1,13 +1,13 @@
 use std::path::Path;
 
-use rho_sdk::SessionSnapshot;
+use rho_sdk::SessionId;
 use serde::Serialize;
 
 use crate::workflow::{
-    apply_durable_event, derive_snapshot, AgentRuntime, AttemptCheckpoint, AttemptNumber,
-    AttemptState, ExternalOwner, FrozenWorkflow, LeafExecution, NodeResetReason, NodeState,
-    NodeTerminalState, RunId, RunLifecycle, RunStateRecord, StoredRun, TaskInstanceId,
-    WorkflowEvent, WorkflowEventRecord, WorkflowState, WorkflowStore,
+    apply_durable_event, derive_snapshot, AgentRuntime, AttemptNumber, AttemptState, ExternalOwner,
+    FrozenWorkflow, LeafExecution, NodeResetReason, NodeState, NodeTerminalState, RunId,
+    RunLifecycle, RunStateRecord, StoredRun, TaskInstanceId, WorkflowEvent, WorkflowEventRecord,
+    WorkflowState, WorkflowStore,
 };
 
 use super::{
@@ -97,9 +97,16 @@ pub(super) fn mark_attempt_uncertain(
     attempt: AttemptNumber,
 ) -> Result<(), RuntimeError> {
     let record = read_attempt_record(run_directory, node, attempt)?;
-    let owner = match record.state {
-        AttemptState::Started { owner } | AttemptState::InterruptedUncertain { owner } => owner,
-        AttemptState::LaunchIntended => ExternalOwner::Process { pid: 0 },
+    let (owner, agent_session) = match record.state {
+        AttemptState::Started {
+            owner,
+            agent_session,
+        }
+        | AttemptState::InterruptedUncertain {
+            owner,
+            agent_session,
+        } => (owner, agent_session),
+        AttemptState::LaunchIntended => (ExternalOwner::Process { pid: 0 }, None),
         AttemptState::Completed { .. } | AttemptState::CleanlyCancelled => {
             return Err(RuntimeError::Data(format!(
                 "node '{node}' cleanup became uncertain after its attempt was terminal"
@@ -110,7 +117,10 @@ pub(super) fn mark_attempt_uncertain(
         run_directory,
         node,
         attempt,
-        AttemptState::InterruptedUncertain { owner },
+        AttemptState::InterruptedUncertain {
+            owner,
+            agent_session,
+        },
     )
 }
 
@@ -126,10 +136,10 @@ pub(crate) struct UncertainAttempt {
 #[derive(Debug, Serialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub(crate) enum AttemptRecovery {
-    /// Continue the same attempt from its saved agent session.
+    /// Continue the same attempt by reopening its agent's saved session.
     Continue {
         #[serde(skip)]
-        snapshot: Box<SessionSnapshot>,
+        session: SessionId,
     },
     /// Discard the attempt and start a new one.
     Reset { reason: ResetReason },
@@ -142,11 +152,11 @@ pub(crate) enum ResetReason {
     CancellationRequested,
     /// Commands have no saved progress to continue from.
     CommandNode,
-    /// Claude and Cursor agents do not save Rho checkpoints.
+    /// Claude, Cursor, and Antigravity agents have no Rho session to reopen.
     ForeignAgent,
-    /// The agent exited before its first checkpoint.
-    NoCheckpoint,
-    UnreadableCheckpoint,
+    /// The attempt recorded no session to reopen, as one an older Rho
+    /// started does not.
+    NoSessionRecorded,
 }
 
 impl UncertainAttempt {
@@ -175,15 +185,24 @@ impl UncertainAttempt {
                     AgentRuntime::ClaudeCli | AgentRuntime::Cursor | AgentRuntime::Antigravity => {
                         reset(ResetReason::ForeignAgent)
                     }
+                    // A session that cannot be reopened fails the continued
+                    // attempt, as any other agent failure does.
                     AgentRuntime::Rho => {
-                        match AttemptCheckpoint::new(run_directory, &node, attempt).read() {
-                            Ok(Some(snapshot)) => AttemptRecovery::Continue {
-                                snapshot: Box::new(snapshot),
-                            },
-                            Ok(None) => reset(ResetReason::NoCheckpoint),
-                            Err(error) => {
-                                tracing::warn!(%error, %node, "could not read workflow agent checkpoint");
-                                reset(ResetReason::UnreadableCheckpoint)
+                        match read_attempt_record(run_directory, &node, attempt)?.state {
+                            AttemptState::Started {
+                                agent_session: Some(session),
+                                ..
+                            }
+                            | AttemptState::InterruptedUncertain {
+                                agent_session: Some(session),
+                                ..
+                            } => AttemptRecovery::Continue { session },
+                            AttemptState::Started { .. }
+                            | AttemptState::InterruptedUncertain { .. }
+                            | AttemptState::LaunchIntended
+                            | AttemptState::Completed { .. }
+                            | AttemptState::CleanlyCancelled => {
+                                reset(ResetReason::NoSessionRecorded)
                             }
                         }
                     }
@@ -198,23 +217,12 @@ impl UncertainAttempt {
     }
 }
 
-/// An uncertain attempt that resumes from its checkpoint in this process.
+/// An uncertain attempt that continues in this process, reopening the
+/// session its agent saved.
 pub(super) struct ContinuedAttempt {
     pub(super) node: TaskInstanceId,
     pub(super) attempt: AttemptNumber,
-    pub(super) snapshot: SessionSnapshot,
-}
-
-/// Drops the saved agent session of an attempt that can no longer continue.
-/// A leftover file only costs disk space, so a failure is logged, not fatal.
-pub(super) fn discard_checkpoint(
-    run_directory: &Path,
-    node: &TaskInstanceId,
-    attempt: AttemptNumber,
-) {
-    if let Err(error) = AttemptCheckpoint::new(run_directory, node, attempt).discard() {
-        tracing::warn!(%error, %node, "could not remove workflow agent checkpoint");
-    }
+    pub(super) session: SessionId,
 }
 
 /// Execute the precomputed policy. Confirmation precedes resets and acknowledgement:
@@ -292,7 +300,7 @@ pub(super) fn recover_state(
                     node,
                 )?;
                 match recovery {
-                    AttemptRecovery::Continue { snapshot } => {
+                    AttemptRecovery::Continue { session } => {
                         write_attempt(
                             &journal.directory,
                             &node,
@@ -301,16 +309,18 @@ pub(super) fn recover_state(
                                 owner: ExternalOwner::Process {
                                     pid: std::process::id(),
                                 },
+                                agent_session: Some(session.clone()),
                             },
                         )?;
                         continued.push(ContinuedAttempt {
                             node,
                             attempt,
-                            snapshot: *snapshot,
+                            session,
                         });
                     }
+                    // The reset attempt's session stays saved, as any other
+                    // finished node's does.
                     AttemptRecovery::Reset { .. } => {
-                        discard_checkpoint(&journal.directory, &node, attempt);
                         journal.commit(WorkflowEvent::NodeReset {
                             node,
                             reason: NodeResetReason::InterruptedRecovery,
@@ -343,34 +353,20 @@ pub(super) fn recover_state(
 }
 
 pub(super) fn recover_completed_transitions(journal: &mut RunJournal) -> Result<(), RuntimeError> {
-    for CompletedAttempt {
-        node,
-        attempt,
-        events,
-    } in completed_attempts(&journal.directory, &journal.run.state.state)?
-    {
-        for event in events {
-            journal.commit(event)?;
-        }
-        discard_checkpoint(&journal.directory, &node, attempt);
+    for event in completion_events(&journal.directory, &journal.run.state.state)? {
+        journal.commit(event)?;
     }
     Ok(())
 }
 
-/// A running attempt whose `status.json` already records completion, left by a
-/// crash after the attempt finished but before the journal did.
-struct CompletedAttempt {
-    node: TaskInstanceId,
-    attempt: AttemptNumber,
-    /// Journal events that finish the node, in commit order.
-    events: Vec<WorkflowEvent>,
-}
-
-fn completed_attempts(
+/// The journal events, in commit order, that finish each running attempt
+/// whose `status.json` already records completion, left by a crash after the
+/// attempt finished but before the journal did.
+fn completion_events(
     run_directory: &Path,
     state: &WorkflowState,
-) -> Result<Vec<CompletedAttempt>, RuntimeError> {
-    let mut completed = Vec::new();
+) -> Result<Vec<WorkflowEvent>, RuntimeError> {
+    let mut events = Vec::new();
     for (node, node_state) in state.tasks() {
         let NodeState::Running { attempt } = *node_state else {
             continue;
@@ -378,7 +374,6 @@ fn completed_attempts(
         let Some(completion) = completed_attempt(run_directory, &node, attempt)? else {
             continue;
         };
-        let mut events = Vec::new();
         if let Some(output) = completion.structured_output.clone() {
             if state.structured_output(&node, attempt).is_none() {
                 events.push(WorkflowEvent::StructuredOutput {
@@ -389,16 +384,11 @@ fn completed_attempts(
             }
         }
         events.push(WorkflowEvent::NodeFinished {
-            node: node.clone(),
+            node,
             completion: Box::new(completion),
         });
-        completed.push(CompletedAttempt {
-            node,
-            attempt,
-            events,
-        });
     }
-    Ok(completed)
+    Ok(events)
 }
 
 /// Read-only report of what `resume` would do with uncertain attempts.
@@ -418,11 +408,8 @@ pub(crate) fn preview_recovery(
     let (mut run, records) = WorkflowStore::new(rho_home)?.load_run_with_events(run_id)?;
     let directory = run_directory(rho_home, run_id);
     replay_event_tail(&mut run, &records, &directory)?;
-    for completed in completed_attempts(&directory, &run.state.state)? {
-        for event in completed.events {
-            run.state.state =
-                apply_durable_event(&run.graph, &run.state.state, &event, &directory)?;
-        }
+    for event in completion_events(&directory, &run.state.state)? {
+        run.state.state = apply_durable_event(&run.graph, &run.state.state, &event, &directory)?;
     }
     let (needs_confirmation, uncertain) = match ResumePlan::for_run(&run.state) {
         ResumePlan::Resume {

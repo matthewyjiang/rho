@@ -171,10 +171,6 @@ pub(crate) struct SessionRuntime {
     reopen_notice: Option<String>,
     /// Child notice binding kept between prompts, since children outlive them.
     held_notices: Option<HeldNotices>,
-    /// Where step checkpoints are also saved; see
-    /// [`Self::mirror_step_checkpoints`].
-    // Temporary(reopen): goes with `SessionCheckpoint`.
-    step_mirror: Option<std::sync::Arc<dyn rho_sdk::SessionStore>>,
 }
 
 impl SessionRuntime {
@@ -209,7 +205,6 @@ impl SessionRuntime {
             unsaved_compaction: false,
             reopen_notice,
             held_notices: None,
-            step_mirror: None,
         }
     }
 

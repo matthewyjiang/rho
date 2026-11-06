@@ -62,7 +62,9 @@ fn mcp_server(name: &str) -> McpConfig {
 
 // Covers: a reloaded child must come back with its delegated tool boundary,
 // never the root's, even when it shares the launch agent's id; a root session
-// stays the launch agent; a changed definition fails the load.
+// stays the launch agent without looking up a definition, so a reopened
+// workflow node keeps the binding frozen at plan time even when a definition
+// of the same id differs; a changed definition fails a child's load.
 // Owner: session runtime load agent selection.
 #[test]
 fn load_restores_the_child_binding_or_fails() {
@@ -117,7 +119,10 @@ fn load_restores_the_child_binding_or_fails() {
 
     let root_dir = tempfile::tempdir().unwrap();
     let root = session(root_dir.path());
-    let (agent, _) = loaded_agent(&launch_agent, &root, config.clone(), catalog).unwrap();
+    let (agent, _) = loaded_agent(&launch_agent, &root, config.clone(), || {
+        panic!("a root session runs as its launch agent, never a looked-up definition")
+    })
+    .unwrap();
     assert_eq!(agent.fingerprint(), launch_agent.fingerprint());
 
     std::fs::write(

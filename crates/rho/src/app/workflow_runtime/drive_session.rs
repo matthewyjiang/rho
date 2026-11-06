@@ -2,10 +2,13 @@ use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
 use tokio::task::JoinSet;
 
-use crate::workflow::{
-    attempt_directory, next_actions, AttemptNumber, AttemptState, ExternalOwner, NodeTerminalState,
-    RunId, RunLifecycle, SchedulerAction, SchedulerCapacity, StoredRun, TaskInstanceId,
-    WorkflowEvent, WorkflowStore, WorkspaceAccess,
+use crate::{
+    app::headless_host::ChildSession,
+    workflow::{
+        attempt_directory, next_actions, AgentRuntime, AttemptNumber, AttemptState, ExternalOwner,
+        NodeTerminalState, RunId, RunLifecycle, SchedulerAction, SchedulerCapacity, StoredRun,
+        TaskInstanceId, WorkflowEvent, WorkflowStore, WorkspaceAccess,
+    },
 };
 
 use super::{
@@ -16,8 +19,8 @@ use super::{
     journal::{write_attempt, RunJournal},
     prepared::{PreparedExecution, PreparedInvocation},
     recovery::{
-        discard_checkpoint, mark_attempt_uncertain, recover_completed_transitions, recover_state,
-        replay_event_tail, ContinuedAttempt, ResumePlan,
+        mark_attempt_uncertain, recover_completed_transitions, recover_state, replay_event_tail,
+        ContinuedAttempt, ResumePlan,
     },
     runner::{send_event, RecoveryDecision, WorkflowRunner},
     CheckoutGate, CleanupCause, NodeExecutionRequest, NodeExecutionResult, NodeProgressReporter,
@@ -260,12 +263,16 @@ impl<'a> DriveSession<'a> {
         let owner = ExternalOwner::Process {
             pid: std::process::id(),
         };
+        // Recorded before dispatch, so a later process can reopen the session
+        // this attempt's agent saves.
+        let agent_session = new_agent_session(&invocation);
         write_attempt(
             &self.journal.directory,
             &node,
             attempt,
             AttemptState::Started {
                 owner: owner.clone(),
+                agent_session: agent_session.clone(),
             },
         )?;
         self.journal.commit(WorkflowEvent::AttemptStarted {
@@ -273,16 +280,18 @@ impl<'a> DriveSession<'a> {
             attempt,
             owner,
         })?;
-        self.start_attempt(node, attempt, access, invocation, /* resume */ None)
+        let agent_session = agent_session.map(ChildSession::New);
+        self.start_attempt(node, attempt, access, invocation, agent_session)
     }
 
-    /// Dispatches attempts that recovery chose to continue from their checkpoint.
-    /// Their `status.json` already names this process as owner.
+    /// Dispatches attempts that recovery chose to continue, reopening their
+    /// agents' saved sessions. Their `status.json` already names this process
+    /// as owner.
     fn continue_attempts(&mut self) -> Result<(), RuntimeError> {
         for ContinuedAttempt {
             node,
             attempt,
-            snapshot,
+            session,
         } in std::mem::take(&mut self.continued)
         {
             let access = self
@@ -298,7 +307,8 @@ impl<'a> DriveSession<'a> {
                 &node,
                 &self.journal.run.state.state,
             );
-            self.start_attempt(node, attempt, access, invocation, Some(snapshot))?;
+            let agent_session = Some(ChildSession::Reopen(session));
+            self.start_attempt(node, attempt, access, invocation, agent_session)?;
         }
         Ok(())
     }
@@ -310,7 +320,7 @@ impl<'a> DriveSession<'a> {
         attempt: AttemptNumber,
         access: WorkspaceAccess,
         invocation: Result<PreparedInvocation<PreparedExecution>, RuntimeError>,
-        resume: Option<rho_sdk::SessionSnapshot>,
+        agent_session: Option<ChildSession>,
     ) -> Result<(), RuntimeError> {
         let run_id = self.journal.run.manifest.run_id;
         self.attempt_started_at.insert(node.clone(), Instant::now());
@@ -363,7 +373,7 @@ impl<'a> DriveSession<'a> {
             attempt_directory: attempt_directory(&self.journal.directory, &node, attempt),
             cancellation: self.runner.cancellation.clone(),
             progress,
-            resume,
+            agent_session,
         };
         let agents = Arc::clone(&self.runner.agents);
         let commands = Arc::clone(&self.runner.commands);
@@ -501,7 +511,6 @@ impl<'a> DriveSession<'a> {
             node: node.clone(),
             completion: Box::new(completion.clone()),
         })?;
-        discard_checkpoint(&self.journal.directory, &node, attempt);
         if let Some(hooks) = &self.runner.hooks {
             let artifacts = completion.artifacts.references();
             self.journal.commit(WorkflowEvent::HookObserved {
@@ -552,6 +561,25 @@ impl<'a> DriveSession<'a> {
         )?;
         send_event(&self.events, RuntimeEvent::Completed);
         Ok(self.journal.run)
+    }
+}
+
+/// The session a new attempt's agent runs in, for a Rho agent, whose saved
+/// session a later process can reopen. Commands, agents on other runtimes,
+/// and a node that failed to bind run none.
+fn new_agent_session(
+    invocation: &Result<PreparedInvocation<PreparedExecution>, RuntimeError>,
+) -> Option<rho_sdk::SessionId> {
+    let Ok(PreparedInvocation {
+        execution: PreparedExecution::Agent(agent),
+        ..
+    }) = invocation
+    else {
+        return None;
+    };
+    match agent.agent.runtime {
+        AgentRuntime::Rho => Some(rho_sdk::SessionId::new()),
+        AgentRuntime::ClaudeCli | AgentRuntime::Cursor | AgentRuntime::Antigravity => None,
     }
 }
 

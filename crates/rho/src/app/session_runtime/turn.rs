@@ -30,8 +30,9 @@ pub(crate) struct Turn {
     pub(crate) calls: Vec<ToolCall>,
 }
 
-/// What a turn starts its run from: a prompt, or the session's restored
-/// history, as a workflow node continues its checkpoint.
+/// What a turn starts its run from: a prompt, or the history the session
+/// was reopened with, as a workflow node continues its saved session after
+/// an unclean exit.
 pub(crate) enum TurnStart {
     Prompt(Turn),
     /// Continue the history the session was opened with; see

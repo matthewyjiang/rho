@@ -148,10 +148,24 @@ pub(crate) struct AttemptRecord {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub(crate) enum AttemptState {
     LaunchIntended,
-    Started { owner: ExternalOwner },
-    Completed { completion: Box<NodeCompletion> },
+    /// `agent_session` is the saved session a Rho agent node's attempt runs
+    /// in, which recovery reopens to continue the attempt. Other nodes have
+    /// none, and neither has a record an older Rho wrote.
+    Started {
+        owner: ExternalOwner,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_session: Option<rho_sdk::SessionId>,
+    },
+    Completed {
+        completion: Box<NodeCompletion>,
+    },
     CleanlyCancelled,
-    InterruptedUncertain { owner: ExternalOwner },
+    /// A started attempt whose owner may still run; keeps its session.
+    InterruptedUncertain {
+        owner: ExternalOwner,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_session: Option<rho_sdk::SessionId>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
