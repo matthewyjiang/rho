@@ -18,7 +18,7 @@ use crate::{
         events::{
             cancelled_approval, ApprovalId, PlanApprovalId, RunEnd, SessionEvent, TurnControl,
         },
-        turn::TurnIo,
+        turn::{MessageSave, TurnIo},
         QuestionSupport,
     },
     permission::PermissionMode,
@@ -44,6 +44,9 @@ enum Seen {
 
 fn seen(event: SessionEvent) -> Seen {
     match event {
+        SessionEvent::MessageInserted(_) => {
+            unreachable!("the turn inserts the message, not the pump")
+        }
         SessionEvent::RunStarted => Seen::RunStarted,
         SessionEvent::Run(_) => Seen::Run,
         SessionEvent::BoundaryApplied { .. } => Seen::BoundaryApplied,
@@ -86,6 +89,7 @@ impl Harness {
                 events: events_tx,
                 control: control_rx,
                 questions,
+                message_save: MessageSave::AtFirstStep,
             };
             pump(
                 PumpSources {

@@ -30,6 +30,7 @@ use crate::app::{
         events::{EventMapper, RunEnding},
         host_features::{Forms, HostFeatures},
         permission,
+        prompt_acceptance::PromptAcceptance,
         signals::SessionSignals,
         AcpClientPort,
     },
@@ -44,6 +45,8 @@ pub(super) struct Forwarder<'a> {
     pub(super) mapper: EventMapper,
     pub(super) signals: SessionSignals,
     pub(super) placeholders: &'a AtomicU64,
+    /// Reported when the turn inserts the prompt's user message.
+    pub(super) acceptance: &'a mut PromptAcceptance,
 }
 
 /// How forwarding went.
@@ -142,6 +145,7 @@ impl<'a> Forwarding<'a> {
         }
         let session_id = self.target.session_id;
         match event {
+            SessionEvent::MessageInserted(inserted) => self.target.acceptance.accept(inserted),
             SessionEvent::RunStarted => {
                 self.started = true;
                 self.target

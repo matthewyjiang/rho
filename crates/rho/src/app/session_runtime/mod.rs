@@ -38,7 +38,6 @@ use crate::{
     tools::mcp::config::McpConfig,
 };
 
-mod acceptance;
 mod agent;
 mod build;
 mod compact;
@@ -53,7 +52,6 @@ mod title;
 mod turn;
 mod workflow;
 
-pub(crate) use acceptance::{InsertedMessage, MessageAcceptance};
 #[cfg(test)]
 pub(crate) use agent::{bind_delegated_agent, loaded_agent_with, MODEL_OVERRIDE_METADATA};
 pub(crate) use agent::{loaded_agent, AgentTask};
@@ -63,15 +61,15 @@ pub(crate) use build::{build_session, session_config, ChildAgents, QuestionSuppo
 use credentials::SessionCredentials;
 pub(crate) use credentials::{CredentialFailure, Logouts};
 pub(crate) use events::{
-    cancelled_approval, ApprovalId, PlanApprovalId, PlanApprovalRequest, RunEnd, SessionEvent,
-    TurnControl,
+    cancelled_approval, ApprovalId, InsertedMessage, PlanApprovalId, PlanApprovalRequest, RunEnd,
+    SessionEvent, TurnControl,
 };
 pub(crate) use mode::{ModeChangeError, SessionPermission};
 pub(crate) use persist::HostStorage;
 pub(crate) use prompt_gate::{Closing, PromptGate, PromptGuard};
 pub(crate) use switch::ModelSwitchError;
 pub(crate) use title::TitleJob;
-pub(crate) use turn::{Turn, TurnIo, TurnOutcome};
+pub(crate) use turn::{MessageSave, Turn, TurnIo, TurnOutcome};
 pub(crate) use workflow::WorkflowStart;
 
 /// A request the session recognizes but cannot run, such as a TUI-only
@@ -143,8 +141,6 @@ pub(crate) struct SessionRuntime {
     /// Child notice binding kept between prompts, since children outlive them.
     held_notices: Option<HeldNotices>,
     background_wait: BackgroundWait,
-    /// How the running prompt reports its inserted user message.
-    acceptance: MessageAcceptance,
 }
 
 impl SessionRuntime {
@@ -181,7 +177,6 @@ impl SessionRuntime {
             deferred_notice: None,
             held_notices: None,
             background_wait,
-            acceptance: MessageAcceptance::Implicit,
         }
     }
 
@@ -236,18 +231,6 @@ impl SessionRuntime {
             );
         }
         Ok(())
-    }
-
-    /// How the next prompt reports its inserted user message; set it as
-    /// each prompt starts, and back to [`MessageAcceptance::Implicit`] after.
-    pub(crate) fn set_acceptance(&mut self, acceptance: MessageAcceptance) {
-        self.acceptance = acceptance;
-    }
-
-    /// Accepts the running prompt as a message nothing replays, for a
-    /// command that saves no prompt.
-    pub(crate) fn accept_unreplayed(&mut self) {
-        self.acceptance.accept_unreplayed();
     }
 
     /// The answer to `exit_plan_mode` that the last turn recorded, if any.

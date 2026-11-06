@@ -404,14 +404,14 @@ async fn accepted_user_message_ids_survive_replay() {
             .await
             .unwrap();
     }
-    host.runtime
-        .set_acceptance(recording(&accepted).into_runtime());
-    host.runtime
+    let inserted = host
+        .runtime
         .save_prompt_rows(
             Message::user_text("/workflow:nightly"),
             &[Message::assistant_text("started")],
         )
         .unwrap();
+    recording(&accepted).accept(inserted);
     host.shutdown().await;
 
     let (stored, _) =

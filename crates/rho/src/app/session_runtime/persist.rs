@@ -37,7 +37,7 @@ use rho_sdk::{
     RunOutcome, SessionId, SessionSnapshot, SessionStore, SessionStoreFuture, UserInput,
 };
 
-use super::{acceptance::InsertedMessage, SessionRuntime};
+use super::{events::InsertedMessage, SessionRuntime};
 use crate::{
     added_dirs::AddedDirs,
     app::active_prompt::ActivePrompt,
@@ -155,48 +155,40 @@ impl SessionRuntime {
         Ok(checkpoint)
     }
 
-    /// Saves the turn's user message before its run starts, so the prompt
-    /// can be accepted with the row a reload replays it as. Only hosts that
-    /// want the message named (ACP v2) need that; otherwise the first step
-    /// save writes the message.
+    /// Saves the turn's user message before its run starts, for
+    /// [`super::MessageSave::BeforeRun`], and returns the message as
+    /// inserted. Otherwise the run's first step save writes it.
     pub(super) fn insert_user_message(
         &mut self,
         checkpoint: &TurnCheckpoint,
-    ) -> anyhow::Result<()> {
-        if !self.acceptance.wants_id() {
-            return Ok(());
-        }
+    ) -> anyhow::Result<InsertedMessage> {
         let mut display = checkpoint.0.lock_display();
         let Some(user) = display.unsaved_user.clone() else {
-            self.acceptance.accept_unreplayed();
-            return Ok(());
+            return Ok(InsertedMessage::Unreplayed);
         };
-        self.save_prompt_rows(user, &[])?;
+        let inserted = self.save_prompt_rows(user, &[])?;
         display.mark_user_written();
-        Ok(())
+        Ok(inserted)
     }
 
     /// Saves the prompt's `user` message with the display rows `following`
-    /// it, and accepts the prompt with the row a reload replays that message
-    /// as: the first row of the node the save adds. A replaced runtime saves
-    /// nothing and accepts the message as unreplayed.
+    /// it, and returns the row a reload replays that message as: the first
+    /// row of the node the save adds. A replaced runtime saves nothing, so
+    /// its message is unreplayed.
     pub(crate) fn save_prompt_rows(
         &mut self,
         user: Message,
         following: &[Message],
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<InsertedMessage> {
         if self.is_replaced() {
-            self.acceptance.accept_unreplayed();
-            return Ok(());
+            return Ok(InsertedMessage::Unreplayed);
         }
         let rows: Vec<Message> = std::iter::once(user)
             .chain(following.iter().cloned())
             .collect();
         let snapshot = self.durable_snapshot();
         let node = self.stored()?.save_snapshot_node(&snapshot, &rows)?;
-        self.acceptance
-            .accept(InsertedMessage::Saved(DisplayRowOrigin { node, row: 0 }));
-        Ok(())
+        Ok(InsertedMessage::Saved(DisplayRowOrigin { node, row: 0 }))
     }
 
     /// Saves the settled turn with the display rows its step checkpoints

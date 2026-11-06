@@ -42,7 +42,7 @@ use crate::{
         headless_delegation::BackgroundWait,
         session_assembly::BuiltSession,
         session_runtime::{
-            model_scoped_config, ChildAgents, CurrentModel, HostStorage, MessageAcceptance,
+            model_scoped_config, ChildAgents, CurrentModel, HostStorage, InsertedMessage,
             ModelSwitchError, PromptGate, PromptGuard, QuestionSupport, RuntimeParts, SessionBuild,
             SessionPermission, SessionRuntime, TitleJob, Turn, TurnIo, TurnOutcome, WorkflowStart,
         },
@@ -102,6 +102,9 @@ pub(super) struct SessionHost {
     t3_wake: Option<T3Wake>,
     /// Optional features the host advertised at `initialize`.
     host_features: super::HostFeatures,
+    /// How the running prompt reports its inserted user message; set as
+    /// each prompt starts, and back to [`PromptAcceptance::Implicit`] after.
+    prompt_acceptance: PromptAcceptance,
     runtime: SessionRuntime,
 }
 
@@ -122,9 +125,9 @@ impl SessionHost {
         client: &dyn AcpClientPort,
         startup: &AcpStartup,
     ) -> anyhow::Result<PromptResponse> {
-        self.runtime.set_acceptance(acceptance.into_runtime());
+        self.prompt_acceptance = acceptance;
         let result = self.dispatch_prompt(request, client, startup).await;
-        self.runtime.set_acceptance(MessageAcceptance::Implicit);
+        self.prompt_acceptance = PromptAcceptance::Implicit;
         result
     }
 
@@ -184,7 +187,7 @@ impl SessionHost {
                 self.run_turn(&input, model, calls, client).await
             }
             Some(Ok(PromptAction::Compact { instructions })) => {
-                self.runtime.accept_unreplayed();
+                self.prompt_acceptance.accept(InsertedMessage::Unreplayed);
                 self.compact(instructions, client).await
             }
             Some(Ok(PromptAction::StartWorkflow(start))) => {
@@ -194,7 +197,7 @@ impl SessionHost {
                 self.run_as_agent(&input, task, startup, client).await
             }
             Some(Ok(PromptAction::AwaitWake(signal))) => {
-                self.runtime.accept_unreplayed();
+                self.prompt_acceptance.accept(InsertedMessage::Unreplayed);
                 self.await_wake(signal, &starting, client).await
             }
             Some(Err(rejected)) => Err(rejected.into()),
@@ -397,6 +400,7 @@ impl SessionHost {
             sent_plan: Vec::new(),
             t3_wake,
             host_features: startup.host_features,
+            prompt_acceptance: PromptAcceptance::Implicit,
             runtime,
         }
     }
@@ -413,6 +417,7 @@ impl SessionHost {
     ) -> anyhow::Result<PromptResponse> {
         let (events, event_receiver) = mpsc::unbounded_channel();
         let (control_sender, control) = mpsc::unbounded_channel();
+        let message_save = self.prompt_acceptance.message_save();
         let built = self.runtime.built();
         let forwarder = forward::Forwarder {
             session_id: &self.acp_session_id,
@@ -432,11 +437,13 @@ impl SessionHost {
                 std::mem::take(&mut self.sent_plan),
             ),
             placeholders: &self.permission_placeholders,
+            acceptance: &mut self.prompt_acceptance,
         };
         let io = TurnIo {
             events,
             control,
             questions: question_support(self.host_features.forms),
+            message_save,
         };
         let turn = Turn {
             display: display.clone(),
@@ -476,7 +483,8 @@ impl SessionHost {
             .await?;
         match started {
             WorkflowStart::Cancelled => Ok(PromptResponse::new(StopReason::Cancelled)),
-            WorkflowStart::Started { notice } => {
+            WorkflowStart::Started { notice, inserted } => {
+                self.prompt_acceptance.accept(inserted);
                 send_notification(
                     client,
                     EventMapper::agent_notice(&self.acp_session_id, &notice),

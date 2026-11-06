@@ -23,7 +23,10 @@ use tokio::sync::{mpsc, oneshot};
 use super::Forwarder;
 use crate::{
     app::{
-        acp::{events::EventMapper, signals::SessionSignals, AcpClientPort, HostFeatures},
+        acp::{
+            events::EventMapper, prompt_acceptance::PromptAcceptance, signals::SessionSignals,
+            AcpClientPort, HostFeatures,
+        },
         session_runtime::{cancelled_approval, ApprovalId, SessionEvent, TurnControl},
     },
     tools::todo::TodoState,
@@ -93,6 +96,7 @@ async fn permission_request_does_not_block_event_drain() {
     };
     let session_id = SessionId::new("session-1");
     let placeholders = AtomicU64::new(0);
+    let mut acceptance = PromptAcceptance::Implicit;
     let forwarder = Forwarder {
         session_id: &session_id,
         client: &port,
@@ -100,6 +104,7 @@ async fn permission_request_does_not_block_event_drain() {
         mapper: EventMapper::new(HostFeatures::default(), PathBuf::new(), Default::default()),
         signals: SessionSignals::new(session().await, TodoState::default(), None, Vec::new()),
         placeholders: &placeholders,
+        acceptance: &mut acceptance,
     };
     let (events, event_receiver) = mpsc::unbounded_channel();
     let (control_sender, mut control) = mpsc::unbounded_channel();

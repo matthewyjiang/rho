@@ -36,6 +36,21 @@ pub(crate) struct TurnIo {
     /// Whether the host can put the run's questions to a person; a host
     /// that cannot gets none, and the turn declines them.
     pub(crate) questions: QuestionSupport,
+    /// When the turn saves the prompt's user message.
+    pub(crate) message_save: MessageSave,
+}
+
+/// When a turn saves the prompt's user message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MessageSave {
+    /// Before the run starts, reported as [`SessionEvent::MessageInserted`]
+    /// with the row a reload replays it as. For hosts that answer a prompt
+    /// once its message is in and must name it as replay will, such as ACP
+    /// v2.
+    BeforeRun,
+    /// With the run's first step save, reporting nothing: the host learns
+    /// of the message from the turn's end.
+    AtFirstStep,
 }
 
 impl TurnIo {
@@ -99,7 +114,14 @@ impl SessionRuntime {
             calls,
         } = turn;
         let checkpoint = self.install_turn_checkpoint(&display, &model)?;
-        let result = match self.insert_user_message(&checkpoint) {
+        let saved = match io.message_save {
+            MessageSave::BeforeRun => self
+                .insert_user_message(&checkpoint)
+                .map(|inserted| io.emit(SessionEvent::MessageInserted(inserted))),
+            // The run's first step save writes it.
+            MessageSave::AtFirstStep => Ok(()),
+        };
+        let result = match saved {
             Ok(()) => {
                 if let Some(text) = self.deferred_notice.take() {
                     io.emit(SessionEvent::Notice { text });
