@@ -6,7 +6,7 @@
 //! (the job registry, one session runtime per thread, event fan-out) lands
 //! here.
 
-use std::{path::PathBuf, time::Instant};
+use std::{future::Future, path::PathBuf, time::Instant};
 
 use rho_protocol::{DaemonStatus, Service, PROTOCOL_VERSION};
 use rho_sdk::CancellationToken;
@@ -34,21 +34,25 @@ impl DaemonHost {
 }
 
 impl Service for DaemonHost {
-    fn status(&self) -> DaemonStatus {
-        DaemonStatus {
-            pid: std::process::id(),
-            version: env!("CARGO_PKG_VERSION").to_owned(),
-            protocol: PROTOCOL_VERSION,
-            started_at: self.started_at,
-            uptime_secs: self.started.elapsed().as_secs(),
-            // Counts jobs once the job registry lands with thread hosting.
-            jobs: 0,
-            socket: self.socket.clone(),
+    fn status(&self) -> impl Future<Output = DaemonStatus> + Send {
+        async move {
+            DaemonStatus {
+                pid: std::process::id(),
+                version: env!("CARGO_PKG_VERSION").to_owned(),
+                protocol: PROTOCOL_VERSION,
+                started_at: self.started_at,
+                uptime_secs: self.started.elapsed().as_secs(),
+                // Counts jobs once the job registry lands with thread hosting.
+                jobs: 0,
+                socket: self.socket.clone(),
+            }
         }
     }
 
-    fn stop(&self) {
-        tracing::info!("stop requested");
-        self.shutdown.cancel();
+    fn stop(&self) -> impl Future<Output = ()> + Send {
+        async move {
+            tracing::info!("stop requested");
+            self.shutdown.cancel();
+        }
     }
 }

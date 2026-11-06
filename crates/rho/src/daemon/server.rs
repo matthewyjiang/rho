@@ -85,9 +85,9 @@ impl BoundDaemon {
     /// `shutdown` is cancelled, by the service (on `rho/daemon/stop`) or by
     /// the caller (for example on a signal).
     ///
-    /// Shutdown is graceful: stop accepting, let every connection finish the
-    /// response it is writing, then remove the socket and info file and
-    /// release the lock.
+    /// Shutdown is graceful: stop accepting, let every connection answer the
+    /// requests it has already read, then remove the socket and info file
+    /// and release the lock.
     pub(crate) async fn serve<Svc: Service + 'static>(
         self,
         service: Arc<Svc>,
@@ -124,7 +124,7 @@ impl BoundDaemon {
                             let served = rho_protocol::serve_connection(
                                 stream,
                                 &info,
-                                service.as_ref(),
+                                service,
                                 shutdown.cancelled(),
                             )
                             .await;
@@ -146,8 +146,8 @@ impl BoundDaemon {
         };
         tracing::info!("rho daemon shutting down");
         drop(listener);
-        // Connections observe the cancelled token between requests, so this
-        // waits only for responses already being written.
+        // Connections stop reading once the token is cancelled, so this waits
+        // only for the requests they have already read.
         while connections.join_next().await.is_some() {}
         for path in [&paths.socket, &paths.info_file] {
             if let Err(error) = fs::remove_file(path) {

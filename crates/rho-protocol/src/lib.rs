@@ -12,7 +12,11 @@
 //! 2. The daemon accepts when the majors match, or replies
 //!    [`ErrorCode::VersionMismatch`] with a [`VersionMismatch`] saying which
 //!    side to change.
-//! 3. The client sends requests such as [`methods::DAEMON_STATUS`].
+//! 3. The client sends requests such as [`methods::DAEMON_STATUS`]. The
+//!    daemon serves them concurrently and answers each one when it completes,
+//!    so responses can arrive out of order; each carries its request's id.
+//! 4. When the client stops sending or the daemon shuts down, the daemon
+//!    answers every request it has already read, then closes the connection.
 //!
 //! [`Client`] implements the frontend side; [`serve_connection`] implements
 //! the daemon side around a [`Service`].

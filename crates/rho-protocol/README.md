@@ -7,6 +7,13 @@ daemon and its frontends: the Rho TUI, rho-ui, the `rho acp` adapter, and MCP.
 - Every connection starts with `rho/hello`. Peers are compatible when their
   protocol majors match; a mismatch returns a typed error that says whether to
   restart the daemon or update the client.
+- After the handshake, the daemon serves a connection's requests concurrently
+  and answers each one when it completes, so responses can arrive out of
+  order and pair with their requests by id. When the client stops sending or
+  the daemon shuts down, the daemon answers every request it has already read,
+  then closes the connection.
+- `serve_connection` implements the daemon side around a `Service` with one
+  async method per protocol method.
 - No dependency on `rho-sdk`, so an SDK major never breaks a frontend build.
 
 ```rust
