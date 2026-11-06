@@ -17,8 +17,8 @@ use tempfile::TempDir;
 const MODE_ENV: &str = "RHO_AUTOMATION_TEST_MODE";
 const COMMAND_ENV: &str = "RHO_AUTOMATION_TEST_COMMAND";
 /// The `process-then-delay` fixture holds its second model request for 30 s.
-/// One row of the test, both runs included, measured 0.19 s locally (with the
-/// attempt checkpoint this replaced; the parent re-measures). Giving up
+/// The whole test, both rows and every run included, measured 0.25-0.28 s
+/// over 5 local runs. Giving up
 /// before the fixture's own delay ends keeps a missing save a clear failure
 /// instead of a run that quietly completes.
 const SAVE_DEADLINE: Duration = Duration::from_secs(25);
