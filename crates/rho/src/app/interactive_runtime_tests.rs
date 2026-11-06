@@ -201,8 +201,8 @@ async fn replace_provider_rebuilds_compactor_with_current_context_window() {
 // compatible hosts keep routing affinity across turns.
 // Owner: interactive runtime session options
 #[tokio::test]
-async fn fresh_session_options_seed_a_prompt_cache_key() {
-    let options = super::startup::fresh_session_options();
+async fn new_session_options_seed_a_prompt_cache_key() {
+    let options = super::startup::session_options_for_id(rho_sdk::SessionId::new());
     let provider = Arc::new(ScriptedProvider::new(
         ModelIdentity::new("test", "test", "test"),
         Vec::new(),

@@ -60,17 +60,6 @@ impl TodoState {
         decorate(snapshot, self.list())
     }
 
-    /// Headless SDK checkpointing also crosses this host-owned state seam.
-    pub(crate) fn checkpoint_store(
-        &self,
-        inner: Arc<dyn rho_sdk::SessionStore>,
-    ) -> Arc<dyn rho_sdk::SessionStore> {
-        Arc::new(TodoCheckpointStore {
-            inner,
-            todo: self.clone(),
-        })
-    }
-
     /// Capture once before compaction awaits a provider. The SDK commits this
     /// state with its replacement, even if a later tool update races with it.
     pub(crate) fn checkpoint(&self) -> TodoCheckpoint {
@@ -210,24 +199,6 @@ fn successful_native_list(history: &[Message]) -> Option<TodoList> {
         }
     }
     latest
-}
-
-struct TodoCheckpointStore {
-    inner: Arc<dyn rho_sdk::SessionStore>,
-    todo: TodoState,
-}
-
-impl rho_sdk::SessionStore for TodoCheckpointStore {
-    fn load<'a>(
-        &'a self,
-        id: &'a rho_sdk::SessionId,
-    ) -> rho_sdk::SessionStoreFuture<'a, Option<SessionSnapshot>> {
-        self.inner.load(id)
-    }
-
-    fn save<'a>(&'a self, snapshot: SessionSnapshot) -> rho_sdk::SessionStoreFuture<'a, ()> {
-        self.inner.save(self.todo.decorate(snapshot))
-    }
 }
 
 #[cfg(test)]

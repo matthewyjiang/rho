@@ -480,10 +480,6 @@ pub(in crate::app) fn session_options_for_id(id: SessionId) -> SessionOptions {
     SessionOptions::new().id(id).prompt_cache_key(key)
 }
 
-pub(in crate::app) fn fresh_session_options() -> SessionOptions {
-    session_options_for_id(SessionId::new())
-}
-
 pub(super) fn resume_omissions_report(
     snapshot: &rho_sdk::SessionSnapshot,
     target: &rho_sdk::model::ModelIdentity,
