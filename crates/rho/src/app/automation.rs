@@ -330,6 +330,8 @@ async fn run_text(
                     Ok(CommandRejected(message)) => rejected(message),
                     Err(error) => error,
                 })?;
+            // The rebound agent has tools of its own.
+            view.bind(runtime);
             // The command stays the shown message; the model gets the task.
             let turn = Turn {
                 display: input,
