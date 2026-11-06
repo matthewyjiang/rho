@@ -999,7 +999,9 @@ fn set_generated_title_does_not_overwrite_manual_title() {
 // Owner: session file header
 #[test]
 fn the_header_keeps_the_origin_the_session_was_created_with() {
-    let cases: [(&str, fn(&Session), SessionOrigin); 3] = [
+    /// What happens to the file between creating and reopening it.
+    type Edit = fn(&Session);
+    let cases: [(&str, Edit, SessionOrigin); 3] = [
         ("as created", |_| {}, SessionOrigin::Acp),
         (
             "rebound to a delegated agent",
