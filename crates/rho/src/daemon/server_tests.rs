@@ -5,7 +5,10 @@ use rho_protocol::{methods, StatusParams, StopParams, StopResponse};
 use tempfile::TempDir;
 
 use super::*;
-use crate::daemon::{client, lock};
+use crate::daemon::{
+    client, lock,
+    test_support::{test_status, StubHost},
+};
 
 /// Failure bound for the server task to finish after a stop request.
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(10);
@@ -17,8 +20,10 @@ fn prepared_paths(root: &Path) -> DaemonPaths {
 }
 
 // Covers: a daemon started over a crashed one's leftover socket serves the
-// handshake and status, keeps its socket private, and on `rho/daemon/stop`
-// ends its serve task, removes its socket and info file, and frees the lock.
+// handshake, routes requests to the service its caller passed, keeps its
+// socket private, and when that service stops it on `rho/daemon/stop`,
+// acknowledges, ends its serve task, removes its socket and info file, and
+// frees the lock.
 // Owner: daemon server lifecycle.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_serves_status_and_cleans_up_on_stop() {
@@ -27,7 +32,7 @@ async fn daemon_serves_status_and_cleans_up_on_stop() {
     fs::write(&paths.socket, "left by a crashed daemon").unwrap();
     let bound = bind(&paths, lock::acquire(&paths).unwrap()).unwrap();
     let shutdown = CancellationToken::new();
-    let server = tokio::spawn(bound.serve(shutdown));
+    let server = tokio::spawn(bound.serve(StubHost::new(&shutdown), shutdown));
 
     let socket_mode = fs::metadata(&paths.socket).unwrap().permissions().mode() & 0o777;
     assert_eq!(socket_mode, 0o600);
@@ -41,18 +46,7 @@ async fn daemon_serves_status_and_cleans_up_on_stop() {
         .request::<methods::Status>(&StatusParams {})
         .await
         .unwrap();
-    assert_eq!(
-        status,
-        DaemonStatus {
-            pid: std::process::id(),
-            version: env!("CARGO_PKG_VERSION").to_owned(),
-            protocol: PROTOCOL_VERSION,
-            started_at: status.started_at,
-            uptime_secs: status.uptime_secs,
-            jobs: 0,
-            socket: paths.socket.clone(),
-        }
-    );
+    assert_eq!(status, test_status());
     assert_eq!(
         lock::read_record(&paths).map(|record| record.pid),
         Some(std::process::id())

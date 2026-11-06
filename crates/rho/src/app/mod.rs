@@ -17,6 +17,8 @@ pub(crate) mod config_repository;
 pub(crate) mod context_report;
 pub(crate) mod conversation_switch;
 mod daemon_cli;
+#[cfg(unix)]
+mod daemon_host;
 mod doctor_cli;
 pub(crate) mod endpoint_login;
 mod headless_host;

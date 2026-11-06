@@ -15,6 +15,11 @@
       "path": "crates/rho-providers/src/credentials",
       "modules": ["model"],
       "reason": "keep credentials independent from model runtime metadata"
+    },
+    {
+      "path": "crates/rho/src/daemon",
+      "modules": ["app", "session", "tui"],
+      "reason": "the daemon is generic transport; what it answers comes from the Service its caller passes in (app::daemon_host)"
     }
   ],
   "forbidden_package_dependencies": [
@@ -54,6 +59,16 @@
         "crates/rho-providers/src/tls.rs"
       ],
       "reason": "reqwest rustls-no-provider panics unless ring is installed; use reqwest_client / reqwest_client_builder"
+    },
+    {
+      "roots": ["crates/rho/src/daemon"],
+      "sequences": [
+        ["super", "::", "super"],
+        ["super", "::", "app"],
+        ["super", "::", "session"],
+        ["super", "::", "tui"]
+      ],
+      "reason": "the daemon is generic transport; reaching the crate root through super would bypass the forbidden-module rule above"
     },
     {
       "roots": ["crates/rho/src"],

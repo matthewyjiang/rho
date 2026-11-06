@@ -17,8 +17,10 @@ categories = ["asynchronous", "network-programming"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["io-util", "macros"] }
+# 1.36 adds `JoinSet::try_join_next`, which reaps a connection's finished
+# request tasks.
+tokio = { version = "1.36", features = ["io-util", "macros", "rt", "sync"] }
 
 [dev-dependencies]
 pretty_assertions = "1"
-tokio = { version = "1", features = ["io-util", "macros", "rt", "time"] }
+tokio = { version = "1.36", features = ["time"] }
