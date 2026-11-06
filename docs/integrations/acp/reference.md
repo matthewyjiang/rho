@@ -127,11 +127,13 @@ Listing and deleting saved history do not start model discovery or require provi
 
 Nothing beyond the replay is sent while `session/load` is in flight, because hosts such as T3 Code discard live updates for a session until its load completes. Prompts and settings on the replacement wait until its load response and initial command list have been enqueued, so later updates cannot be overwritten by that initial state. A checklist restored by the load, and a model-prompt change notice found at load, go out when the next prompt starts.
 
+A session open in another Rho process, such as a terminal TUI or another `rho acp`, fails to load with `invalid_request` (`-32600`) naming the session, because only one process writes a session file at a time. Loading a session already live on this connection replaces it instead (see [Sessions](/sessions#one-process-per-session)).
+
 The load starts from the process default mode, model, reasoning, and fast mode, except that `/agent:` sessions rebind to their agent's prompt, tools, and model, and [per-call model](#per-call-model) children restore their saved selection. History restored on load may still mention a prior switch.
 
 ### Resume
 
-`session/resume` opens a saved session the way `session/load` does, for hosts that keep their own transcript. It takes the same `cwd`, `additionalDirectories`, and `mcpServers`, follows the same restore rules, answers with the same modes and config options, and sends the command list after its response. It replays nothing: no `session/update` reaches the host before the response. As with `session/load`, an ID with nothing saved resumes as an empty session, so a session from `session/new` that was never prompted survives an agent restart.
+`session/resume` opens a saved session the way `session/load` does, for hosts that keep their own transcript. It takes the same `cwd`, `additionalDirectories`, and `mcpServers`, follows the same restore rules, answers with the same modes and config options, and sends the command list after its response. It replays nothing: no `session/update` reaches the host before the response. It refuses a session open in another Rho process the same way. As with `session/load`, an ID with nothing saved resumes as an empty session, so a session from `session/new` that was never prompted survives an agent restart.
 
 A checklist restored by the resume, and a model-prompt change notice found during it, go out when the next prompt starts, as after a load. The checklist is sent whole, so a host that already shows it just sees it again.
 
