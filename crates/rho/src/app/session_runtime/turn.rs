@@ -31,6 +31,31 @@ pub(crate) struct Turn {
     pub(crate) calls: Vec<ToolCall>,
 }
 
+/// What a turn starts its run from: a prompt, or the session's restored
+/// history, as a workflow node continues its checkpoint.
+pub(crate) enum TurnStart {
+    Prompt(Turn),
+    /// Continue the history the session was opened with; see
+    /// [`rho_sdk::Session::continue_history`]. The turn inserts no user
+    /// message and asks for no title.
+    Continue,
+}
+
+impl From<Turn> for TurnStart {
+    fn from(turn: Turn) -> Self {
+        Self::Prompt(turn)
+    }
+}
+
+/// What the run is started with, once the turn saved its prompt.
+enum RunInput {
+    Prompt {
+        model: UserInput,
+        calls: Vec<ToolCall>,
+    },
+    Continue,
+}
+
 /// How a turn talks to its host. Keep the control sender until the turn
 /// returns: a turn whose control channel closes fails, since nothing can
 /// answer its requests any more.
@@ -94,15 +119,17 @@ impl SessionRuntime {
     pub(super) async fn run_turn(
         &mut self,
         prompt: &PromptScope,
-        turn: Turn,
+        start: impl Into<TurnStart>,
         io: TurnIo,
         process_config: &Config,
     ) -> anyhow::Result<TurnOutcome> {
-        let title_input = match self.title {
-            TitleState::Unasked => Some(turn.display.clone()),
-            TitleState::Pending(_) | TitleState::Asked => None,
+        let start = start.into();
+        let title_input = match (&self.title, &start) {
+            (TitleState::Unasked, TurnStart::Prompt(turn)) => Some(turn.display.clone()),
+            (TitleState::Unasked, TurnStart::Continue)
+            | (TitleState::Pending(_) | TitleState::Asked, _) => None,
         };
-        let result = self.run_delegated(prompt, turn, io).await;
+        let result = self.run_delegated(prompt, start, io).await;
         self.note_credential_failure(&result);
         if let Some(user) = title_input.filter(|_| result.as_ref().is_ok_and(TurnOutcome::answered))
         {
@@ -115,7 +142,7 @@ impl SessionRuntime {
     async fn run_delegated(
         &mut self,
         prompt: &PromptScope,
-        turn: Turn,
+        start: TurnStart,
         mut io: TurnIo,
     ) -> anyhow::Result<TurnOutcome> {
         let stored = self.stored()?.clone();
@@ -134,7 +161,7 @@ impl SessionRuntime {
         // stops them.
         let result = HeadlessDelegation::drive(
             &mut delegation,
-            self.drive_prompt(prompt, turn, displays, &mut io),
+            self.drive_prompt(prompt, start, displays, &mut io),
         )
         .await;
         self.held_notices = delegation.hold_notices();
@@ -144,16 +171,22 @@ impl SessionRuntime {
     async fn drive_prompt(
         &mut self,
         prompt: &PromptScope,
-        turn: Turn,
+        start: TurnStart,
         displays: OfferedDisplays,
         io: &mut TurnIo,
     ) -> anyhow::Result<TurnOutcome> {
-        let Turn {
-            display,
-            model,
-            calls,
-        } = turn;
-        let checkpoint = self.install_turn_checkpoint(&display, &model)?;
+        let (checkpoint, input) = match start {
+            TurnStart::Prompt(Turn {
+                display,
+                model,
+                calls,
+            }) => (
+                self.install_turn_checkpoint(&display, &model),
+                RunInput::Prompt { model, calls },
+            ),
+            TurnStart::Continue => (self.install_continuation_checkpoint(), RunInput::Continue),
+        };
+        let checkpoint = checkpoint?;
         // The prompt is durable before anything runs, so a host that dies
         // mid-turn still replays it.
         let result = match self.insert_user_message(&checkpoint) {
@@ -162,7 +195,7 @@ impl SessionRuntime {
                 if let Some(text) = self.reopen_notice.take() {
                     io.emit(SessionEvent::Notice { text });
                 }
-                self.drive_run(prompt, &checkpoint, model, calls, displays, io)
+                self.drive_run(prompt, &checkpoint, input, displays, io)
                     .await
             }
             Err(error) => Err(error),
@@ -178,15 +211,18 @@ impl SessionRuntime {
         &mut self,
         prompt: &PromptScope,
         checkpoint: &TurnCheckpoint,
-        model: UserInput,
-        calls: Vec<ToolCall>,
+        input: RunInput,
         displays: OfferedDisplays,
         io: &mut TurnIo,
     ) -> anyhow::Result<TurnOutcome> {
-        let started = if calls.is_empty() {
-            self.built.session.start(model).await
-        } else {
-            self.built.session.start_with_tool_calls(model, calls).await
+        let started = match input {
+            RunInput::Prompt { model, calls } if calls.is_empty() => {
+                self.built.session.start(model).await
+            }
+            RunInput::Prompt { model, calls } => {
+                self.built.session.start_with_tool_calls(model, calls).await
+            }
+            RunInput::Continue => self.built.session.continue_history().await,
         };
         let mut run = match started {
             Ok(run) => run,

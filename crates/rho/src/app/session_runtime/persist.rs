@@ -133,6 +133,33 @@ impl SessionRuntime {
     ) -> anyhow::Result<TurnCheckpoint> {
         let stored = self.stored()?.clone();
         let base = turn_base(&stored, || self.durable_snapshot())?;
+        let display = TurnDisplay::new(
+            Message::User(display.blocks().to_vec()),
+            Message::User(model.blocks().to_vec()),
+            self.built.session.history().len(),
+        );
+        self.install_checkpoint(stored, Some(base), display)
+    }
+
+    /// Saves a turn that continues the restored history at every step
+    /// boundary, as [`Self::install_turn_checkpoint`] does for a prompt.
+    /// The turn adds no user message and never rolls back.
+    pub(super) fn install_continuation_checkpoint(&mut self) -> anyhow::Result<TurnCheckpoint> {
+        let stored = self.stored()?.clone();
+        let history = self.built.session.history();
+        let Some(last) = history.last() else {
+            anyhow::bail!("could not continue session: it has no history");
+        };
+        let display = TurnDisplay::continuing(last.clone(), history.len() - 1);
+        self.install_checkpoint(stored, /*base*/ None, display)
+    }
+
+    fn install_checkpoint(
+        &mut self,
+        stored: StoredSession,
+        base: Option<NodeId>,
+        display: TurnDisplay,
+    ) -> anyhow::Result<TurnCheckpoint> {
         let checkpoint = TurnCheckpoint(Arc::new(CheckpointStore {
             stored,
             base,
@@ -142,16 +169,21 @@ impl SessionRuntime {
             added_dirs: self.added_dirs.clone(),
             auth: self.auth.clone(),
             handle: self.handle.clone(),
-            display: Mutex::new(TurnDisplay::new(
-                Message::User(display.blocks().to_vec()),
-                Message::User(model.blocks().to_vec()),
-                self.built.session.history().len(),
-            )),
+            mirror: self.step_mirror.clone(),
+            display: Mutex::new(display),
         }));
         self.built
             .session
             .set_checkpoint_store(Some(checkpoint.0.clone()))?;
         Ok(checkpoint)
+    }
+
+    /// Also saves every step checkpoint to `store`, such as a workflow
+    /// attempt's checkpoint that a resumed attempt continues from.
+    // Temporary: workflow nodes reopen their saved session instead once
+    // `SessionCheckpoint` goes, and this mirror with it.
+    pub(crate) fn mirror_step_checkpoints(&mut self, store: Arc<dyn SessionStore>) {
+        self.step_mirror = Some(store);
     }
 
     /// Saves the turn's user message before its run starts, and returns the
@@ -224,6 +256,10 @@ impl SessionRuntime {
         outcome: &RunOutcome,
     ) -> anyhow::Result<()> {
         self.persist_turn(checkpoint, Some(outcome.text()))?;
+        // A continuation added no prompt to roll back.
+        let Some(base) = &checkpoint.0.base else {
+            return Ok(());
+        };
         if outcome.stop_reason() != rho_sdk::StopReason::Refusal || self.is_replaced() {
             return Ok(());
         }
@@ -235,7 +271,7 @@ impl SessionRuntime {
         // live session still matches the refusal branch the file selects.
         let stored = self.stored()?.clone();
         let refused_leaf = stored.with_session_tree(|tree| Ok(tree.active_leaf_id().cloned()))?;
-        stored.set_leaf(&checkpoint.0.base)?;
+        stored.set_leaf(base)?;
         if let Err(error) = self
             .built
             .session
@@ -326,8 +362,9 @@ impl TurnCheckpoint {
 
 struct CheckpointStore {
     stored: StoredSession,
-    /// The session node before this turn; see [`turn_base`].
-    base: NodeId,
+    /// The session node before this turn, which a refusal rolls back to;
+    /// see [`turn_base`]. `None` for a continuation, which never does.
+    base: Option<NodeId>,
     todo: TodoState,
     code_mode: Arc<crate::tools::code_mode::CodeModeSurface>,
     prompt: ActivePrompt,
@@ -335,6 +372,9 @@ struct CheckpointStore {
     auth: String,
     /// Tells the store when a successor owns the file.
     handle: SessionHandle,
+    /// Where each step checkpoint is also saved; see
+    /// [`SessionRuntime::mirror_step_checkpoints`].
+    mirror: Option<Arc<dyn SessionStore>>,
     display: Mutex<TurnDisplay>,
 }
 
@@ -345,9 +385,11 @@ impl CheckpointStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn save_now(&self, snapshot: SessionSnapshot) -> anyhow::Result<()> {
+    /// Saves `snapshot` to the session file, and returns it as saved, or
+    /// `None` when a successor owns the file.
+    fn save_now(&self, snapshot: SessionSnapshot) -> anyhow::Result<Option<SessionSnapshot>> {
         if self.handle.is_replaced() {
-            return Ok(());
+            return Ok(None);
         }
         let snapshot = decorate(
             &self.prompt,
@@ -361,7 +403,7 @@ impl CheckpointStore {
         let pending = display.pending_rows(snapshot.history(), SaveScope::Step);
         self.stored.save_snapshot(&snapshot, &pending.rows)?;
         display.mark_written(pending);
-        Ok(())
+        Ok(Some(snapshot))
     }
 }
 
@@ -372,11 +414,16 @@ impl SessionStore for CheckpointStore {
 
     fn save<'a>(&'a self, snapshot: SessionSnapshot) -> SessionStoreFuture<'a, ()> {
         Box::pin(async move {
-            self.save_now(snapshot)
+            let saved = self
+                .save_now(snapshot)
                 .map_err(|error| rho_sdk::Error::Persistence {
                     message: format!("{error:#}"),
                     source: None,
-                })
+                })?;
+            match (&self.mirror, saved) {
+                (Some(mirror), Some(saved)) => mirror.save(saved).await,
+                (None, _) | (_, None) => Ok(()),
+            }
         })
     }
 }
@@ -483,6 +530,19 @@ impl TurnDisplay {
             followed: Followed::Tracking {
                 written: written + taken,
             },
+        }
+    }
+
+    /// A turn that continues `history` whose last row, `input`, sits at
+    /// `history_start`: there is no user message to write, and the rows
+    /// the run appends after `input` are the turn's.
+    fn continuing(input: Message, history_start: usize) -> Self {
+        Self {
+            unsaved_user: None,
+            input,
+            history_start,
+            followed: Followed::Tracking { written: 0 },
+            applied: VecDeque::new(),
         }
     }
 

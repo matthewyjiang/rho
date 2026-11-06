@@ -94,7 +94,7 @@ pub(crate) use session_tools::SessionTools;
 pub(crate) use settings::SettingChangeError;
 pub(crate) use title::TitleJob;
 use title::TitleState;
-pub(crate) use turn::{Turn, TurnIo, TurnOutcome};
+pub(crate) use turn::{Turn, TurnIo, TurnOutcome, TurnStart};
 pub(crate) use workflow::WorkflowStart;
 
 /// A request the session recognizes but cannot run, such as a TUI-only
@@ -166,6 +166,9 @@ pub(crate) struct SessionRuntime {
     reopen_notice: Option<String>,
     /// Child notice binding kept between prompts, since children outlive them.
     held_notices: Option<HeldNotices>,
+    /// Where step checkpoints are also saved; see
+    /// [`Self::mirror_step_checkpoints`].
+    step_mirror: Option<std::sync::Arc<dyn rho_sdk::SessionStore>>,
 }
 
 impl SessionRuntime {
@@ -200,6 +203,7 @@ impl SessionRuntime {
             unsaved_compaction: false,
             reopen_notice,
             held_notices: None,
+            step_mirror: None,
         }
     }
 
@@ -226,6 +230,12 @@ impl SessionRuntime {
     /// The session's workspace directory.
     pub(crate) fn cwd(&self) -> &Path {
         self.storage.cwd()
+    }
+
+    /// The root the session's tools resolve paths against: the workspace
+    /// as the permission layer canonicalized it.
+    pub(crate) fn workspace_root(&self) -> &Path {
+        &self.permission.workspace_root
     }
 
     pub(crate) fn permission_mode(&self) -> PermissionMode {

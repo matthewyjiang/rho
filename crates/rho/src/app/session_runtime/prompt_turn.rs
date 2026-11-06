@@ -13,7 +13,7 @@ use std::future::Future;
 
 use rho_sdk::UserInput;
 
-use super::{PromptScope, SessionRuntime, Turn, TurnIo, TurnOutcome};
+use super::{PromptScope, SessionRuntime, Turn, TurnIo, TurnOutcome, TurnStart};
 use crate::{
     config::Config,
     permission::PermissionMode,
@@ -93,7 +93,8 @@ impl SessionRuntime {
     /// Runs `turn` within `prompt`, then hands off the plan it may have
     /// answered: an approved plan on an answered turn switches the session's
     /// mode and runs the implementation turn in the same prompt. `view`
-    /// shows both turns and reports the handoff between them.
+    /// shows both turns and reports the handoff between them. `turn` is a
+    /// [`Turn`], or [`TurnStart::Continue`] to continue restored history.
     ///
     /// Returns the prompt's end: the implementation turn's after a switch,
     /// else the first turn's, which a cancel that landed before the switch
@@ -102,10 +103,12 @@ impl SessionRuntime {
         &mut self,
         view: &mut impl TurnView,
         prompt: &PromptScope,
-        turn: Turn,
+        turn: impl Into<TurnStart>,
         process_config: &Config,
     ) -> anyhow::Result<TurnOutcome> {
-        let ended = self.show_turn(view, prompt, turn, process_config).await;
+        let ended = self
+            .show_turn(view, prompt, turn.into(), process_config)
+            .await;
         match self.hand_off_plan(prompt, ended, process_config).await {
             PlanHandoff::Ended { notice, ended } => {
                 if let Some(notice) = notice {
@@ -121,7 +124,7 @@ impl SessionRuntime {
             } => {
                 view.report_plan(self, process_config, PlanReport::Switched { mode, notice })
                     .await;
-                self.show_turn(view, prompt, implementation, process_config)
+                self.show_turn(view, prompt, implementation.into(), process_config)
                     .await
             }
         }
@@ -132,7 +135,7 @@ impl SessionRuntime {
         &mut self,
         view: &mut impl TurnView,
         prompt: &PromptScope,
-        turn: Turn,
+        turn: TurnStart,
         process_config: &Config,
     ) -> anyhow::Result<TurnOutcome> {
         let (io, showing) = view.open_turn(self);

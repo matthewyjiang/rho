@@ -76,6 +76,49 @@ impl SessionRuntime {
         opening: SessionOpening<'_>,
         id: rho_sdk::SessionId,
     ) -> anyhow::Result<Self> {
+        Self::open_as_launched(
+            opening,
+            |_| Ok(session_options_for_id(id)),
+            /*stored*/ None,
+        )
+        .await
+    }
+
+    /// Opens the session `snapshot` checkpointed, as the build's launch
+    /// agent, for a [`super::TurnStart::Continue`] turn to go on from. Its
+    /// turns save to the session file the checkpointing run wrote, or to a
+    /// new one under the snapshot's id when there is none.
+    // Temporary: workflow nodes reopen their saved session instead once
+    // `SessionCheckpoint` goes.
+    pub(crate) async fn open_from_checkpoint(
+        opening: SessionOpening<'_>,
+        snapshot: rho_sdk::SessionSnapshot,
+    ) -> anyhow::Result<Self> {
+        let stored = match StoredSession::open_by_id_with_histories(
+            opening.cwd,
+            snapshot.session_id().as_str(),
+        ) {
+            Ok((stored, _)) => Some(stored),
+            Err(error) if error.is::<NoSessionFound>() => None,
+            Err(error) => return Err(error),
+        };
+        Self::open_as_launched(
+            opening,
+            |_| Ok(SessionOptions::from_snapshot(snapshot)),
+            stored,
+        )
+        .await
+    }
+
+    /// Opens a session as the build's launch agent with `session_options`,
+    /// saving to `stored`, or to a file its first save creates.
+    async fn open_as_launched(
+        opening: SessionOpening<'_>,
+        session_options: impl FnOnce(
+            std::sync::Arc<dyn rho_sdk::provider::ModelProvider>,
+        ) -> anyhow::Result<SessionOptions>,
+        stored: Option<StoredSession>,
+    ) -> anyhow::Result<Self> {
         let SessionOpening {
             build,
             process_config,
@@ -86,17 +129,18 @@ impl SessionRuntime {
         } = opening;
         let config = session_config(process_config, &host_mcp);
         let agent = build.launch.agent.clone();
-        let (built, permission) = build_session(&build, &agent, &config, cwd, &added_dirs, |_| {
-            Ok(session_options_for_id(id))
-        })
-        .await?;
-        let storage = SessionStorage::deferred(
-            cwd.to_path_buf(),
-            built.session.id().to_string(),
-            agent.id().to_string(),
-            agent.fingerprint().to_string(),
-            build.run.role.origin(),
-        );
+        let (built, permission) =
+            build_session(&build, &agent, &config, cwd, &added_dirs, session_options).await?;
+        let storage = match stored {
+            Some(stored) => SessionStorage::saved(stored),
+            None => SessionStorage::deferred(
+                cwd.to_path_buf(),
+                built.session.id().to_string(),
+                agent.id().to_string(),
+                agent.fingerprint().to_string(),
+                build.run.role.origin(),
+            ),
+        };
         Ok(Self::new(
             OpenedSession {
                 build,
