@@ -4,7 +4,7 @@ Thanks for contributing. Keep changes small and focused on one concern.
 
 ## Setup
 
-This repo expects Rust **1.92** (`mise.toml`). That file also enables [mr-boxington](https://mr-boxington.jdx.dev/) for mise 2026.9.2 or newer, so an activated `cargo` uses the shared build cache. Without mise, `cargo` is unchanged. The first wrapped build moves an existing `target/` into the mbx cache and leaves a symlink at `target/`.
+This repo expects Rust **1.92** (`mise.toml`). Builds use the standard `target/` directory. To share build output across worktrees, you can optionally install the [huacnlee/cargo](https://github.com/huacnlee/cargo) fork, which keeps targets in a shared directory. It is not required.
 
 From the repo root:
 
