@@ -100,12 +100,14 @@ fn killed_agent_node_continues_its_saved_session() {
         let plan_id = plan(&root);
 
         // Turn one starts a process; turn two hangs, so the run is killed
-        // after the save that holds the finished tool call.
+        // after the save that holds the finished tool call. The process
+        // outlives the kill: one that exited would add its exit notice to
+        // the session in a race with the kill.
         let save = kill_after_save(
             &root,
             &plan_id,
             "process-then-delay",
-            "true",
+            &held_process(&root),
             "\"ToolResult\"",
         );
         match saved {
@@ -172,17 +174,11 @@ fn killed_agent_node_with_its_reply_saved_finishes_without_the_model() {
     let plan_id = plan(&root);
     // Turn one starts a process and turn two replies; the live process holds
     // the prompt after the reply is saved, so the run is killed there.
-    // The killed run leaves its process behind, so it ends with the
-    // workspace instead of outliving the test.
-    let holds_prompt = format!(
-        "while [ -d '{}' ]; do sleep 0.1; done",
-        root.path().display()
-    );
     let save = kill_after_save(
         &root,
         &plan_id,
         "process-then-reply",
-        &holds_prompt,
+        &held_process(&root),
         FIXTURE_REPLY,
     );
 
@@ -193,6 +189,16 @@ fn killed_agent_node_with_its_reply_saved_finishes_without_the_model() {
         std::fs::read_to_string(save.attempt.join("agent/answer.txt")).unwrap(),
         FIXTURE_REPLY
     );
+}
+
+/// A command that runs until `root` is removed. A killed run leaves its
+/// process behind, so it ends with the workspace instead of outliving the
+/// test.
+fn held_process(root: &TempDir) -> String {
+    format!(
+        "while [ -d '{}' ]; do sleep 0.1; done",
+        root.path().display()
+    )
 }
 
 /// A workspace holding the fixture workflow, its agent, and Rho's config.
