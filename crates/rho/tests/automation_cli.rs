@@ -613,6 +613,103 @@ fn final_answer_is_the_only_stdout_content() {
     assert_eq!(request, ("openai".into(), "gpt-5.5".into(), "agent".into()));
 }
 
+// Covers: `rho run` saves its session under the session root, recorded as
+// a run's, so `rho sessions` can list and resume it.
+// Owner: rho run session storage (process contract)
+#[test]
+fn run_saves_its_session_as_a_run() {
+    let root = TempDir::new().unwrap();
+    let mut command = command(&root, "fixed");
+    command
+        .env(RESPONSE_ENV, "saved answer")
+        .args(["run", "--output", "jsonl", "remember this"]);
+    let output = command.output().unwrap();
+    assert_success(&output);
+    let events = jsonl_events(&output);
+    let session_id = events.first().unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let transcripts = std::fs::read_dir(root.path().join(".rho/sessions"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_dir())
+        .flat_map(|workspace| std::fs::read_dir(workspace).unwrap())
+        .map(|session| session.unwrap().path())
+        .filter(|session| {
+            session
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(&format!("_{session_id}")))
+        })
+        .map(|session| std::fs::read_to_string(session.join("session.jsonl")).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(transcripts.len(), 1, "one saved session for {session_id}");
+    let entries = transcripts[0]
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        (
+            &entries[0]["type"],
+            &entries[0]["id"],
+            &entries[0]["origin"]
+        ),
+        (
+            &Value::from("session"),
+            &Value::from(session_id),
+            &Value::from("run")
+        )
+    );
+    assert!(
+        entries.iter().any(|entry| entry["type"] == "message"),
+        "the turn is saved: {entries:?}"
+    );
+}
+
+// Covers: `rho run` resolves the slash commands it runs, such as a prompt
+// template, and rejects the ones it cannot run as configuration errors
+// before any model call.
+// Owner: rho run command resolution (process contract)
+#[test]
+fn resolves_slash_commands_and_rejects_the_ones_it_cannot_run() {
+    let root = TempDir::new().unwrap();
+    let prompts = root.path().join(".rho/prompts");
+    std::fs::create_dir_all(&prompts).unwrap();
+    std::fs::write(prompts.join("review.md"), "Review $ARGUMENTS carefully").unwrap();
+
+    let expanded = run(&root, "inspect", &["run", "/prompt:review the diff"], None);
+    assert_success(&expanded);
+    assert_eq!(user_prompt(&expanded), "Review the diff carefully");
+
+    for prompt in ["/compact", "/compact keep the plan"] {
+        let rejected = run(
+            &root,
+            "inspect",
+            &["run", "--output", "jsonl", prompt],
+            None,
+        );
+        assert_eq!(rejected.status.code(), Some(2), "{prompt}");
+        let events = jsonl_events(&rejected);
+        let terminal = events.last().unwrap();
+        assert_eq!(
+            (&terminal["type"], &terminal["reason"]),
+            (
+                &Value::from("run.failed"),
+                &Value::from("configuration_error")
+            ),
+            "{prompt}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| event["type"] == "assistant.text_delta"),
+            "{prompt} reached the model"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn jsonl_sigterm_emits_stopped_event_after_cleanup() {
