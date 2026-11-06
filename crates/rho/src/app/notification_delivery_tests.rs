@@ -24,7 +24,7 @@ async fn publication_during_final_snapshot_stays_ordered_for_idle_delivery() {
         crate::config::Config::default(),
         root.path().join("config.toml"),
         root.path().to_path_buf(),
-        crate::app::subagent_host::SubagentHost::Alone,
+        crate::app::subagent_pool::SubagentPool::Own,
     );
     let bridge = SubagentNoticeBridge::new();
     let (mut notices, permits) = bridge.bind_parent();

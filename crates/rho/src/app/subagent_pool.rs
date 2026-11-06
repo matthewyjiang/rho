@@ -1,7 +1,7 @@
 //! What a session's in-process subagents share with the host that runs the
 //! session.
 //!
-//! Most hosts run each session's subagents alone, on the session's own pool
+//! Most hosts run each session's subagents on the session's own pool
 //! sized by its config's `agent_concurrency`. The daemon shares one pool
 //! across every session it hosts, so the budget is daemon-wide, and hears of
 //! each run so it can list the run as a child job of its session's (#1658).
@@ -12,12 +12,11 @@ use super::agent_concurrency::{AgentConcurrency, QueueWatch};
 use crate::subagent::RunStatus;
 
 /// Where a session's subagents take capacity, and who else hears of them.
-#[derive(Clone, Default)]
-pub(crate) enum SubagentHost {
+#[derive(Clone)]
+pub(crate) enum SubagentPool {
     /// The session's own pool, sized by its config's `agent_concurrency`;
     /// nobody else hears of its runs.
-    #[default]
-    Alone,
+    Own,
     /// A pool the host shares across its sessions, and the observer of this
     /// session's runs.
     Shared {
@@ -26,10 +25,10 @@ pub(crate) enum SubagentHost {
     },
 }
 
-impl std::fmt::Debug for SubagentHost {
+impl std::fmt::Debug for SubagentPool {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Alone => formatter.write_str("Alone"),
+            Self::Own => formatter.write_str("Own"),
             Self::Shared { concurrency, .. } => formatter
                 .debug_struct("Shared")
                 .field("limit", &concurrency.total_limit())
@@ -42,9 +41,9 @@ impl std::fmt::Debug for SubagentHost {
 /// record each run as a child job of the session's job.
 ///
 /// [`Self::started`] is called on the task that spawned the run, right after
-/// the spawn and before the run has capacity. Implementors must not block:
-/// they follow the run through [`StartedSubagent::status`] on a task of
-/// their own.
+/// the spawn and before the run has capacity. Implementors must return
+/// promptly and follow the run through [`StartedSubagent::status`] on a task
+/// of their own.
 pub(crate) trait SubagentObserver: Send + Sync {
     fn started(&self, run: StartedSubagent);
 }

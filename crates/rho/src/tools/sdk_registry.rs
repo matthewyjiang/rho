@@ -63,7 +63,7 @@ pub struct DelegationConfig {
     /// absent.
     catalog: Option<Arc<crate::agent::AgentCatalog>>,
     /// Where the delegated agents take capacity, and who else hears of them.
-    host: crate::app::subagent_host::SubagentHost,
+    pool: crate::app::subagent_pool::SubagentPool,
 }
 
 impl DelegationConfig {
@@ -71,13 +71,13 @@ impl DelegationConfig {
         cwd: PathBuf,
         config_path: PathBuf,
         catalog: Option<Arc<crate::agent::AgentCatalog>>,
-        host: crate::app::subagent_host::SubagentHost,
+        pool: crate::app::subagent_pool::SubagentPool,
     ) -> Self {
         Self {
             cwd,
             config_path,
             catalog,
-            host,
+            pool,
         }
     }
 }
@@ -374,7 +374,7 @@ impl AppToolSet {
                     config_path: delegation.config_path,
                     catalog: delegation.catalog,
                     host_io: tool_set.host_io.clone(),
-                    host: delegation.host,
+                    pool: delegation.pool,
                 },
                 tool_set.checkpoint_tracker.clone(),
             );

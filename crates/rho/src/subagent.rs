@@ -166,6 +166,14 @@ impl RunStatus {
         Some(Duration::from_secs(end - started))
     }
 
+    /// Moves a queued run to Starting, stamping [`Self::started_at`]: it has
+    /// capacity and is launching.
+    pub fn start_now(&mut self) {
+        self.state = RunState::Starting;
+        self.started_at = Some(unix_now_secs());
+        self.last_activity = Some("starting".into());
+    }
+
     /// Stamp [`Self::finished_at`] once when entering a terminal state.
     pub fn mark_finished_now(&mut self) {
         if self.state.is_terminal() && self.finished_at.is_none() {

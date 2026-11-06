@@ -235,7 +235,7 @@ impl AgentRunHandle {
 
 impl AgentExecutor {
     /// An executor whose runs take capacity from `concurrency`: a pool of
-    /// their own, or one their host shares (see `subagent_host`).
+    /// their own, or one their host shares (see `subagent_pool`).
     pub(crate) fn new(
         config: Config,
         config_path: PathBuf,
@@ -485,24 +485,12 @@ impl AgentExecutor {
         let queue = queued.watch();
         // A Rho child writes the session it was given; a run on another
         // runtime keeps that runtime's own.
-        let child_session = match (bound.runtime(), &session) {
-            (
-                super::agent_binding::BoundRuntime::Rho { .. },
-                ChildSession::New(id) | ChildSession::Reopen(id),
-            ) => Some(id.clone()),
-            (
-                super::agent_binding::BoundRuntime::ClaudeCli { .. }
-                | super::agent_binding::BoundRuntime::Cursor { .. }
-                | super::agent_binding::BoundRuntime::Antigravity { .. },
-                _,
-            ) => None,
-        };
-        let mut initial = bound.artifact_identity().starting_status();
-        initial.state = RunState::Queued;
-        initial.last_activity = Some("queued".into());
+        let child_session = bound.rho_config().map(|_| session.id().clone());
+        let mut initial = bound.artifact_identity().queued_status();
         initial.parent_session_id = role.parent().map(ToString::to_string);
-        // Executor owns the Starting boundary; sinks continue_from it.
-        // Write Starting here so the handle can observe status before the task runs.
+        // Executor owns the Queued and Starting boundaries; sinks
+        // continue_from Starting. Write Queued here so the handle can observe
+        // status before the task runs.
         subagent::initialize_status(&output_file, &initial)?;
         let (status_tx, status) = tokio::sync::watch::channel(initial);
         let (completion_tx, completion) = tokio::sync::watch::channel(false);
@@ -546,11 +534,8 @@ impl AgentExecutor {
                 subagent::write_status(&output_file, &stopped)?;
                 return Ok(());
             };
-            let mut starting = task_status_tx.borrow().clone();
-            starting.state = RunState::Starting;
-            starting.last_activity = Some("starting".into());
-            task_status_tx.send_replace(starting.clone());
-            subagent::write_status(&output_file, &starting)?;
+            task_status_tx.send_modify(RunStatus::start_now);
+            subagent::write_status(&output_file, &task_status_tx.borrow().clone())?;
 
             spawn_run_title(
                 &title_config,

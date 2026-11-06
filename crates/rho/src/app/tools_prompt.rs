@@ -59,7 +59,7 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     /// What the host does in place of local disk, such as serving files.
     pub(crate) host_io: crate::tools::host_io::HostIo,
     /// Where delegated agents take capacity, and who else hears of them.
-    pub(crate) subagent_host: crate::app::subagent_host::SubagentHost,
+    pub(crate) subagent_pool: crate::app::subagent_pool::SubagentPool,
 }
 
 /// Whether this run offers MCP sampling at all.
@@ -280,7 +280,7 @@ pub(crate) async fn assemble_tools_and_prompt(
                 options
                     .catalog
                     .and_then(|discovered| discovered.for_cwd(options.cwd)),
-                options.subagent_host.clone(),
+                options.subagent_pool.clone(),
             ));
         }
         if options

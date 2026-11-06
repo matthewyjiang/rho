@@ -59,7 +59,7 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     /// What the host does in place of local disk, such as serving files.
     pub host_io: crate::tools::host_io::HostIo,
     /// Where delegated agents take capacity, and who else hears of them.
-    pub subagent_host: crate::app::subagent_host::SubagentHost,
+    pub subagent_pool: crate::app::subagent_pool::SubagentPool,
     /// Adds caller-owned tools after shared assembly.
     pub extend_tools: ExtendTools,
     /// Host instructions retained across model-specific behavioral replacement.
@@ -161,7 +161,7 @@ where
         hook_host_labels,
         added_dirs,
         host_io,
-        subagent_host,
+        subagent_pool,
         extend_tools,
         system_prompt_suffix,
         approval,
@@ -210,7 +210,7 @@ where
         // Automation, ACP, side chats, and subagents run no cache warmer.
         process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
         host_io,
-        subagent_host,
+        subagent_pool,
     })
     .await?;
     let tool_set = extend_tools(tool_set);

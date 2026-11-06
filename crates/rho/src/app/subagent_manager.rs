@@ -15,9 +15,9 @@ use {
     crate::app::{
         agent_concurrency::AgentConcurrency,
         agent_executor::{AgentExecutor, AgentLaunchRequest, AgentRunHandle},
-        subagent_host::{StartedSubagent, SubagentHost, SubagentObserver},
         subagent_host_input::{SubagentHostInputBridge, SubagentHostInputRequest},
         subagent_messaging::{SubagentNotice, SubagentNoticeBridge},
+        subagent_pool::{StartedSubagent, SubagentObserver, SubagentPool},
     },
     crate::session::SessionPersistence,
     crate::subagent::{self, RunStatus},
@@ -101,7 +101,7 @@ pub struct SubagentManager {
     executor: AgentExecutor,
     parent: Arc<Mutex<ParentBinding>>,
     /// Hears of each run this manager starts, when the host shares its
-    /// subagents (see `subagent_host`).
+    /// pool (see `subagent_pool`).
     observer: Option<Arc<dyn SubagentObserver>>,
 }
 
@@ -120,19 +120,20 @@ struct ParentBinding {
 }
 
 impl SubagentManager {
-    /// A manager whose runs take capacity and report as `host` says.
+    /// A manager whose runs take capacity from `pool`, and report to its
+    /// observer when it has one.
     pub(crate) fn new(
         config: crate::config::Config,
         config_path: PathBuf,
         cwd: PathBuf,
-        host: SubagentHost,
+        pool: SubagentPool,
     ) -> Self {
-        let (concurrency, observer) = match host {
-            SubagentHost::Alone => (
+        let (concurrency, observer) = match pool {
+            SubagentPool::Own => (
                 AgentConcurrency::from_config(config.agent_concurrency),
                 None,
             ),
-            SubagentHost::Shared {
+            SubagentPool::Shared {
                 concurrency,
                 observer,
             } => (concurrency, Some(observer)),

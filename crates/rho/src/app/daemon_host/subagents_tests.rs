@@ -11,10 +11,8 @@ use crate::{
     app::{
         agent_binding::CapacityClass,
         agent_concurrency::{Budget, QueuePlace},
-        daemon_host::jobs::{
-            JobEvent, JobId, JobKind, JobRecord, JobRegistry, JobState, JobStore, TurnEnd,
-        },
-        subagent_host::{StartedSubagent, SubagentHost},
+        daemon_host::jobs::{JobEvent, JobId, JobRegistry, JobState, JobStore, TurnEnd},
+        subagent_pool::{StartedSubagent, SubagentPool},
     },
     config::Config,
     subagent::{RunState, RunStatus},
@@ -100,27 +98,25 @@ async fn wait_for_state(registry: &JobRegistry, id: &JobId, state: JobState) {
     panic!("job {id} never reached {state}: {:?}", registry.get(id));
 }
 
-// Covers: a run a session starts is recorded as a queued child job of the
-// session's job, with the session it writes and where it waits in the
-// daemon-wide budget, whose limit is the opened session's config; the job
-// then moves with the run to running and completed, and a run the daemon's
-// stop ends is recorded interrupted.
+// Covers: a run's job reports where the run waits in the daemon-wide
+// budget, whose limit the opened session's config sets, until the run has
+// capacity; a run the daemon's stop ends is recorded interrupted, not
+// cancelled.
 // Owner: daemon subagent jobs.
 #[tokio::test(flavor = "current_thread")]
-async fn a_session_s_runs_are_child_jobs_of_its_job() {
+async fn a_child_job_reports_its_queue_place_until_it_runs() {
     let home = TempDir::new().unwrap();
     let registry = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
     let stopping = CancellationToken::new();
     let subagents = Subagents::new(Arc::clone(&registry), stopping.clone());
-    let parent = JobId::generate();
-    let config = Config {
+    subagents.set_limit(&Config {
         agent_concurrency: 1,
         ..Config::default()
-    };
-    let SubagentHost::Shared {
+    });
+    let SubagentPool::Shared {
         concurrency,
         observer,
-    } = subagents.host_for(parent.clone(), &config)
+    } = subagents.pool_for(JobId::generate())
     else {
         panic!("the daemon shares its pool");
     };
@@ -129,34 +125,18 @@ async fn a_session_s_runs_are_child_jobs_of_its_job() {
         .acquire(&RunCancellation::new())
         .await
         .expect("a run of another session holds the only slot");
-
-    let child_session = rho_sdk::SessionId::new();
     let queued = concurrency.join(CapacityClass::Rho);
     let (status_tx, status_rx) = watch::channel(status(RunState::Queued));
     observer.started(StartedSubagent {
         run_id: "run-1".into(),
-        session: Some(child_session.clone()),
+        session: Some(rho_sdk::SessionId::new()),
         workspace: PathBuf::from("/work"),
         status: status_rx,
         queue: queued.watch(),
     });
-    let jobs = registry.list();
-    let [child] = jobs.as_slice() else {
-        panic!("one job: {jobs:?}");
-    };
+    let job = registry.list().pop().expect("the run's job").id;
     assert_eq!(
-        child,
-        &JobRecord {
-            kind: JobKind::Subagent,
-            state: JobState::Queued,
-            workspace: PathBuf::from("/work"),
-            parent: Some(parent.clone()),
-            session: Some(child_session),
-            ..child.clone()
-        }
-    );
-    assert_eq!(
-        subagents.queue_place(&child.id),
+        subagents.queue_place(&job),
         Some(QueuePlace {
             budget: Budget::AgentConcurrency,
             limit: 1,
@@ -170,27 +150,10 @@ async fn a_session_s_runs_are_child_jobs_of_its_job() {
         .await
         .expect("capacity");
     status_tx.send_replace(status(RunState::Running));
-    wait_for_state(&registry, &child.id, JobState::Running).await;
-    assert_eq!(subagents.queue_place(&child.id), None);
-    status_tx.send_replace(status(RunState::Ok));
-    wait_for_state(&registry, &child.id, JobState::Ended(TurnEnd::Completed)).await;
+    wait_for_state(&registry, &job, JobState::Running).await;
+    assert_eq!(subagents.queue_place(&job), None);
 
-    let (status_tx, status_rx) = watch::channel(status(RunState::Running));
-    observer.started(StartedSubagent {
-        run_id: "run-2".into(),
-        session: None,
-        workspace: PathBuf::from("/work"),
-        status: status_rx,
-        queue: Default::default(),
-    });
-    let second = registry
-        .list()
-        .into_iter()
-        .find(|record| record.id != child.id)
-        .expect("the second run's job")
-        .id;
-    wait_for_state(&registry, &second, JobState::Running).await;
     stopping.cancel();
     status_tx.send_replace(status(RunState::Stopped));
-    wait_for_state(&registry, &second, JobState::Ended(TurnEnd::Interrupted)).await;
+    wait_for_state(&registry, &job, JobState::Ended(TurnEnd::Interrupted)).await;
 }

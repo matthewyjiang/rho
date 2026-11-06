@@ -504,7 +504,7 @@ pub(super) struct DelegationBundleOptions {
     /// The parent's host I/O, which delegated Rho agents share.
     pub host_io: crate::tools::host_io::HostIo,
     /// Where the agents take capacity, and who else hears of them.
-    pub host: crate::app::subagent_host::SubagentHost,
+    pub pool: crate::app::subagent_pool::SubagentPool,
 }
 
 pub(super) struct SdkDelegationBundle {
@@ -543,7 +543,7 @@ pub(super) fn sdk_bundle(
         config.clone(),
         options.config_path,
         options.cwd.clone(),
-        options.host,
+        options.pool,
     )
     .with_host_io(options.host_io);
     let mut tools = Vec::<Arc<dyn rho_sdk::tool::Tool>>::new();

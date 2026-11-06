@@ -7,9 +7,9 @@
 //! cannot occupy spare global slots.
 //!
 //! A run joins its first queue when it is spawned ([`AgentConcurrency::join`]),
-//! so runs start in the order they were spawned, and its [`QueueWatch`] says
-//! where it stands while it waits: the budget, that budget's limit, and its
-//! position (#1658).
+//! so runs get capacity in the order they joined each queue, and its
+//! [`QueueWatch`] says where it stands while it waits: the budget, that
+//! budget's limit, and its position (#1658).
 
 use std::{
     collections::VecDeque,
@@ -245,26 +245,32 @@ impl Drop for Waiting {
 pub(crate) struct QueueWatch(Arc<Mutex<Option<WaitingIn>>>);
 
 /// The pool a run waits in, and its wait there.
-type WaitingIn = (Arc<Pool>, Arc<Waiter>);
+struct WaitingIn {
+    pool: Arc<Pool>,
+    waiter: Arc<Waiter>,
+}
 
 impl QueueWatch {
     fn waiting_on(&self, waiting: &Waiting) {
-        *self.slot() = Some((Arc::clone(&waiting.pool), Arc::clone(&waiting.waiter)));
+        *self.current() = Some(WaitingIn {
+            pool: Arc::clone(&waiting.pool),
+            waiter: Arc::clone(&waiting.waiter),
+        });
     }
 
     fn clear(&self) {
-        *self.slot() = None;
+        *self.current() = None;
     }
 
     /// Where the run stands while it waits for capacity; `None` once it
     /// holds every slot it needs, or stopped waiting.
     pub(crate) fn place(&self) -> Option<QueuePlace> {
-        let slot = self.slot();
-        let (pool, waiter) = slot.as_ref()?;
+        let current = self.current();
+        let WaitingIn { pool, waiter } = current.as_ref()?;
         pool.place(waiter)
     }
 
-    fn slot(&self) -> MutexGuard<'_, Option<WaitingIn>> {
+    fn current(&self) -> MutexGuard<'_, Option<WaitingIn>> {
         // Only ever replaced whole.
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -273,10 +279,20 @@ impl QueueWatch {
 /// A run in line for capacity since [`AgentConcurrency::join`]. Dropping
 /// it gives up its place.
 pub(crate) struct QueuedRun {
-    concurrency: AgentConcurrency,
-    class: CapacityClass,
-    first: Waiting,
+    line: Line,
     watch: QueueWatch,
+}
+
+/// The queues a run waits in, by its capacity class.
+enum Line {
+    /// Rho, Cursor, Antigravity: the global queue only. No nested pool:
+    /// unlike Claude, there is no measured subscription fan-out limit to
+    /// size one against.
+    Global(Waiting),
+    /// Claude: the Claude queue, then the global one, joined once the run
+    /// has its Claude permit, so queued Claude work never holds a global
+    /// slot and spare global slots stay available for Rho.
+    ClaudeThenGlobal { claude: Waiting, global: Arc<Pool> },
 }
 
 impl QueuedRun {
@@ -285,45 +301,35 @@ impl QueuedRun {
         self.watch.clone()
     }
 
-    /// Waits for capacity in runtime-aware order.
-    ///
-    /// - Rho, Cursor, Antigravity: one global permit only. No nested pool:
-    ///   unlike Claude, there is no measured subscription fan-out limit to
-    ///   size one against.
-    /// - Claude: the Claude permit first, then it joins the global queue.
-    ///
-    /// Claude-first ordering keeps queued Claude tasks off the global pool
-    /// until Claude capacity exists, so spare global slots stay available for
-    /// Rho. Cancellation at either stage returns `None` and drops any permit
-    /// already held so capacity cannot leak.
+    /// Waits for every permit the run's line needs. Cancellation at either
+    /// stage returns `None` and drops any permit already held, so capacity
+    /// cannot leak.
     pub(crate) async fn acquire(self, cancellation: &RunCancellation) -> Option<RuntimePermits> {
-        let Self {
-            concurrency,
-            class,
-            first,
-            watch,
-        } = self;
-        let first = first.acquire(cancellation).await;
-        let permits = match (class, first) {
-            (_, None) => None,
-            (CapacityClass::Claude, Some(claude)) => {
-                let total = concurrency.total.join();
-                watch.waiting_on(&total);
-                total
+        let Self { line, watch } = self;
+        let permits = match line {
+            Line::Global(global) => {
+                global
                     .acquire(cancellation)
                     .await
                     .map(|total| RuntimePermits {
                         _total: total,
-                        _claude: Some(claude),
+                        _claude: None,
                     })
             }
-            (
-                CapacityClass::Rho | CapacityClass::Cursor | CapacityClass::Antigravity,
-                Some(total),
-            ) => Some(RuntimePermits {
-                _total: total,
-                _claude: None,
-            }),
+            Line::ClaudeThenGlobal { claude, global } => match claude.acquire(cancellation).await {
+                None => None,
+                Some(claude) => {
+                    let global = global.join();
+                    watch.waiting_on(&global);
+                    global
+                        .acquire(cancellation)
+                        .await
+                        .map(|total| RuntimePermits {
+                            _total: total,
+                            _claude: Some(claude),
+                        })
+                }
+            },
         };
         watch.clear();
         permits
@@ -368,32 +374,21 @@ impl AgentConcurrency {
     }
 
     /// Puts a run of `class` in line for capacity now: runs get capacity in
-    /// the order they joined.
+    /// the order they joined each queue.
     pub(crate) fn join(&self, class: CapacityClass) -> QueuedRun {
-        let first = match class {
-            CapacityClass::Claude => self.claude.join(),
+        let line = match class {
+            CapacityClass::Claude => Line::ClaudeThenGlobal {
+                claude: self.claude.join(),
+                global: Arc::clone(&self.total),
+            },
             CapacityClass::Rho | CapacityClass::Cursor | CapacityClass::Antigravity => {
-                self.total.join()
+                Line::Global(self.total.join())
             }
         };
         let watch = QueueWatch::default();
-        watch.waiting_on(&first);
-        QueuedRun {
-            concurrency: self.clone(),
-            class,
-            first,
-            watch,
-        }
-    }
-
-    /// Joins the line and waits for capacity; see [`QueuedRun::acquire`].
-    #[cfg(test)]
-    pub(crate) async fn acquire(
-        &self,
-        capacity_class: CapacityClass,
-        cancellation: &RunCancellation,
-    ) -> Option<RuntimePermits> {
-        self.join(capacity_class).acquire(cancellation).await
+        let (Line::Global(first) | Line::ClaudeThenGlobal { claude: first, .. }) = &line;
+        watch.waiting_on(first);
+        QueuedRun { line, watch }
     }
 }
 

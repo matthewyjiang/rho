@@ -64,6 +64,18 @@ pub(crate) struct RunArtifactIdentity {
 }
 
 impl RunArtifactIdentity {
+    /// Queued snapshot stamped onto `result.json` when a delegated run is
+    /// spawned, before it has capacity; [`RunStatus::start_now`] moves it to
+    /// Starting.
+    pub(crate) fn queued_status(&self) -> RunStatus {
+        RunStatus {
+            state: RunState::Queued,
+            started_at: None,
+            last_activity: Some("queued".into()),
+            ..self.starting_status()
+        }
+    }
+
     /// Starting snapshot stamped onto `result.json` at the run boundary.
     pub(crate) fn starting_status(&self) -> RunStatus {
         RunStatus {

@@ -43,6 +43,14 @@ pub(crate) enum ChildSession {
     Reopen(rho_sdk::SessionId),
 }
 
+impl ChildSession {
+    pub(crate) fn id(&self) -> &rho_sdk::SessionId {
+        match self {
+            Self::New(id) | Self::Reopen(id) => id,
+        }
+    }
+}
+
 /// One child run on the Rho runtime, after binding and permit acquisition.
 pub(crate) struct ChildRun {
     /// A Rho agent, whose binding carries the config the child settles.

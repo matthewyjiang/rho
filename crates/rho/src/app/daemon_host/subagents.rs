@@ -4,7 +4,7 @@
 //!
 //! The budget's limit is `behavior.agent_concurrency` in the user's config,
 //! read again whenever a session opens, so an edit reaches every session's
-//! subagents from the next open on. A queued run's job reports where it
+//! subagents once the next session opened. A queued run's job reports where it
 //! stands in the budget's queue.
 //!
 //! A run's job follows the run's status: `queued` until the run has
@@ -24,7 +24,7 @@ use super::jobs::{JobEvent, JobId, JobRecord, JobRegistry, JobState, TurnEnd};
 use crate::{
     app::{
         agent_concurrency::{AgentConcurrency, QueuePlace, QueueWatch},
-        subagent_host::{StartedSubagent, SubagentHost, SubagentObserver},
+        subagent_pool::{StartedSubagent, SubagentObserver, SubagentPool},
     },
     config::{Config, DEFAULT_AGENT_CONCURRENCY},
     subagent::{RunState, RunStatus},
@@ -54,12 +54,16 @@ impl Subagents {
         }
     }
 
-    /// How the session whose turns are job `parent`, opened with `config`,
-    /// runs its subagents: on the daemon-wide pool, its limit set to
-    /// `config`'s, each run recorded as a child job of `parent`.
-    pub(super) fn host_for(&self, parent: JobId, config: &Config) -> SubagentHost {
+    /// Sets the daemon-wide limit to `config`'s `agent_concurrency`. Runs
+    /// already going keep their slots.
+    pub(super) fn set_limit(&self, config: &Config) {
         self.concurrency.set_total(config.agent_concurrency);
-        SubagentHost::Shared {
+    }
+
+    /// The pool of the session whose turns are job `parent`: the
+    /// daemon-wide one, each run recorded as a child job of `parent`.
+    pub(super) fn pool_for(&self, parent: JobId) -> SubagentPool {
+        SubagentPool::Shared {
             concurrency: self.concurrency.clone(),
             observer: Arc::new(ChildJobs {
                 parent,
@@ -133,15 +137,13 @@ async fn follow(
                 }
             }
         }
-        if state != JobState::Queued {
-            lock(&queues).remove(&job);
-        }
         if run.state.is_terminal() {
             break;
         }
         if status.changed().await.is_err() {
             // The executor sends a terminal status before it lets go of
-            // the run, so only a run task that panicked gets here.
+            // the run, even when the run panicked, so only a runtime that
+            // shuts down under it gets here.
             let end = if stopping.is_cancelled() {
                 TurnEnd::Interrupted
             } else {

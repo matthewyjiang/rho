@@ -17,8 +17,8 @@ use crate::{
         session_assembly::{
             assemble_session, ApprovalInputs, BuiltSession, SessionAssembly, SessionAssemblyOptions,
         },
-        subagent_host::SubagentHost,
         subagent_messaging::NoticePoster,
+        subagent_pool::SubagentPool,
         tools_prompt::McpSamplingSupport,
     },
     config::Config,
@@ -94,7 +94,7 @@ impl HostCapabilities {
     pub(crate) fn unattended(approvals: UnattendedApprovals) -> Self {
         Self {
             questions: QuestionSupport::Unavailable,
-            children: ChildAgents::InProcess(SubagentHost::Alone),
+            children: ChildAgents::InProcess(SubagentPool::Own),
             background_wait: BackgroundWait::HoldPrompt,
             host_io: HostIo::default(),
             mcp_authorization: McpAuthorizationMode::from_process(),
@@ -209,7 +209,7 @@ pub(crate) enum QuestionSupport {
 pub(crate) enum ChildAgents {
     /// Subagents run in this process, taking capacity and reporting as the
     /// host says.
-    InProcess(SubagentHost),
+    InProcess(SubagentPool),
     /// The host runs them as its own threads (T3 Code's `--t3code`), so its
     /// UI owns them.
     HostThreads,
@@ -272,10 +272,11 @@ pub(super) async fn build_session(
         hook_host_labels: hook_labels.clone(),
         added_dirs,
         host_io: build.host.host_io.clone(),
-        subagent_host: match &build.host.children {
-            ChildAgents::InProcess(host) => host.clone(),
-            // The host's threads replace the in-process tools (below).
-            ChildAgents::HostThreads => SubagentHost::Alone,
+        subagent_pool: match &build.host.children {
+            ChildAgents::InProcess(pool) => pool.clone(),
+            // Unused: the host's threads replace the in-process tools
+            // (below) before any run starts.
+            ChildAgents::HostThreads => SubagentPool::Own,
         },
         extend_tools: |mut tools: AppToolSet| {
             if let Some(poster) = &build.host.parent_notices {

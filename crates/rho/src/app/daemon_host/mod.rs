@@ -3,9 +3,9 @@
 //! `crate::daemon` is the generic transport (socket, lock, accept loop) and
 //! never learns what a session is; [`DaemonHost`] is the [`Service`] it routes
 //! requests to, and `app::daemon_cli` wires the two together. The host owns
-//! the job registry (`jobs/`), whose records outlive the daemon, the
-//! sessions it has loaded (`sessions/`), and the budget their subagents
-//! share (`subagents.rs`).
+//! the job registry (`jobs/`), whose records outlive the daemon, and the
+//! sessions it has loaded (`sessions/`), which own the budget their
+//! subagents share (`subagents.rs`).
 
 use std::{
     io,

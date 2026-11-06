@@ -473,7 +473,7 @@ fn session_build(startup: &AcpStartup, io: &super::client_io::ClientIo) -> HostB
             // `--t3code`: the `agent` tool delegates to T3 so its UI owns children.
             children: match startup.host {
                 AcpHost::Generic => {
-                    ChildAgents::InProcess(crate::app::subagent_host::SubagentHost::Alone)
+                    ChildAgents::InProcess(crate::app::subagent_pool::SubagentPool::Own)
                 }
                 AcpHost::T3Code => ChildAgents::HostThreads,
             },

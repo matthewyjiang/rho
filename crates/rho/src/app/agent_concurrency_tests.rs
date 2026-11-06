@@ -16,6 +16,15 @@ async fn wait_until(mut ready: impl FnMut() -> bool) {
     panic!("condition not met after cooperative yields");
 }
 
+/// Joins the line for `class` and waits for capacity.
+async fn acquire(
+    pool: &AgentConcurrency,
+    class: CapacityClass,
+    cancellation: &RunCancellation,
+) -> Option<RuntimePermits> {
+    pool.join(class).acquire(cancellation).await
+}
+
 fn limits(total: usize, claude_requested: usize) -> ConcurrencyLimits {
     ConcurrencyLimits {
         total,
@@ -75,8 +84,7 @@ fn concurrency_limits_take_total_from_config_and_nested_cap_from_claude_env() {
 async fn claude_queue_does_not_starve_rho_and_progresses_after_release() {
     let pool = AgentConcurrency::new(limits(2, 1));
 
-    let active_claude = pool
-        .acquire(CapacityClass::Claude, &RunCancellation::new())
+    let active_claude = acquire(&pool, CapacityClass::Claude, &RunCancellation::new())
         .await
         .expect("active Claude should acquire");
     assert_eq!(pool.available_total(), 1);
@@ -88,8 +96,7 @@ async fn claude_queue_does_not_starve_rho_and_progresses_after_release() {
         let queued_started = Arc::clone(&queued_started);
         async move {
             queued_started.store(true, std::sync::atomic::Ordering::SeqCst);
-            pool.acquire(CapacityClass::Claude, &RunCancellation::new())
-                .await
+            acquire(&pool, CapacityClass::Claude, &RunCancellation::new()).await
         }
     });
 
@@ -104,8 +111,7 @@ async fn claude_queue_does_not_starve_rho_and_progresses_after_release() {
     assert_eq!(pool.available_total(), 1);
     assert_eq!(pool.available_claude(), 0);
 
-    let rho = pool
-        .acquire(CapacityClass::Rho, &RunCancellation::new())
+    let rho = acquire(&pool, CapacityClass::Rho, &RunCancellation::new())
         .await
         .expect("Rho should take the spare global permit");
     assert_eq!(pool.available_total(), 0);
@@ -134,12 +140,10 @@ async fn claude_queue_does_not_starve_rho_and_progresses_after_release() {
 async fn claude_waits_on_global_after_taking_claude_capacity() {
     let pool = AgentConcurrency::new(limits(2, 1));
 
-    let rho_a = pool
-        .acquire(CapacityClass::Rho, &RunCancellation::new())
+    let rho_a = acquire(&pool, CapacityClass::Rho, &RunCancellation::new())
         .await
         .expect("rho a");
-    let rho_b = pool
-        .acquire(CapacityClass::Rho, &RunCancellation::new())
+    let rho_b = acquire(&pool, CapacityClass::Rho, &RunCancellation::new())
         .await
         .expect("rho b");
     assert_eq!(pool.available_total(), 0);
@@ -147,10 +151,7 @@ async fn claude_waits_on_global_after_taking_claude_capacity() {
 
     let queued = tokio::spawn({
         let pool = pool.clone();
-        async move {
-            pool.acquire(CapacityClass::Claude, &RunCancellation::new())
-                .await
-        }
+        async move { acquire(&pool, CapacityClass::Claude, &RunCancellation::new()).await }
     });
 
     wait_until(|| pool.available_claude() == 0).await;
@@ -178,8 +179,7 @@ async fn claude_waits_on_global_after_taking_claude_capacity() {
 #[tokio::test(flavor = "current_thread")]
 async fn cancellation_during_claude_wait_releases_nothing() {
     let pool = AgentConcurrency::new(limits(2, 1));
-    let _held = pool
-        .acquire(CapacityClass::Claude, &RunCancellation::new())
+    let _held = acquire(&pool, CapacityClass::Claude, &RunCancellation::new())
         .await
         .expect("held Claude occupies nested capacity");
     let cancellation = RunCancellation::new();
@@ -187,7 +187,7 @@ async fn cancellation_during_claude_wait_releases_nothing() {
     let queued = tokio::spawn({
         let pool = pool.clone();
         let cancellation = cancellation.clone();
-        async move { pool.acquire(CapacityClass::Claude, &cancellation).await }
+        async move { acquire(&pool, CapacityClass::Claude, &cancellation).await }
     });
 
     for _ in 0..32 {
@@ -207,8 +207,7 @@ async fn cancellation_during_claude_wait_releases_nothing() {
 #[tokio::test(flavor = "current_thread")]
 async fn cancellation_during_global_wait_releases_claude_permit() {
     let pool = AgentConcurrency::new(limits(1, 1));
-    let _rho = pool
-        .acquire(CapacityClass::Rho, &RunCancellation::new())
+    let _rho = acquire(&pool, CapacityClass::Rho, &RunCancellation::new())
         .await
         .expect("rho fills the only global slot");
     let cancellation = RunCancellation::new();
@@ -216,7 +215,7 @@ async fn cancellation_during_global_wait_releases_claude_permit() {
     let queued = tokio::spawn({
         let pool = pool.clone();
         let cancellation = cancellation.clone();
-        async move { pool.acquire(CapacityClass::Claude, &cancellation).await }
+        async move { acquire(&pool, CapacityClass::Claude, &cancellation).await }
     });
 
     wait_until(|| pool.available_claude() == 0).await;
@@ -240,8 +239,7 @@ async fn cancellation_during_global_wait_releases_claude_permit() {
 #[tokio::test(flavor = "current_thread")]
 async fn cancellation_during_rho_global_wait_holds_nothing() {
     let pool = AgentConcurrency::new(limits(1, 1));
-    let _held = pool
-        .acquire(CapacityClass::Rho, &RunCancellation::new())
+    let _held = acquire(&pool, CapacityClass::Rho, &RunCancellation::new())
         .await
         .expect("held rho");
     let cancellation = RunCancellation::new();
@@ -249,7 +247,7 @@ async fn cancellation_during_rho_global_wait_holds_nothing() {
     let queued = tokio::spawn({
         let pool = pool.clone();
         let cancellation = cancellation.clone();
-        async move { pool.acquire(CapacityClass::Rho, &cancellation).await }
+        async move { acquire(&pool, CapacityClass::Rho, &cancellation).await }
     });
 
     for _ in 0..32 {
@@ -272,7 +270,7 @@ async fn cancellation_wins_when_a_permit_is_already_available() {
     let cancellation = RunCancellation::new();
     cancellation.cancel();
 
-    let permit = pool.acquire(CapacityClass::Rho, &cancellation).await;
+    let permit = acquire(&pool, CapacityClass::Rho, &cancellation).await;
     assert!(permit.is_none());
     assert_eq!(pool.available_total(), 1);
 }
@@ -282,8 +280,7 @@ async fn cancellation_wins_when_a_permit_is_already_available() {
 #[tokio::test(flavor = "current_thread")]
 async fn raising_total_unblocks_queued_run() {
     let pool = AgentConcurrency::new(limits(1, 1));
-    let held = pool
-        .acquire(CapacityClass::Rho, &RunCancellation::new())
+    let held = acquire(&pool, CapacityClass::Rho, &RunCancellation::new())
         .await
         .expect("held");
     let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -292,8 +289,7 @@ async fn raising_total_unblocks_queued_run() {
         let started = Arc::clone(&started);
         async move {
             started.store(true, std::sync::atomic::Ordering::SeqCst);
-            pool.acquire(CapacityClass::Rho, &RunCancellation::new())
-                .await
+            acquire(&pool, CapacityClass::Rho, &RunCancellation::new()).await
         }
     });
 
@@ -319,12 +315,10 @@ async fn raising_total_unblocks_queued_run() {
 #[tokio::test(flavor = "current_thread")]
 async fn lowering_total_does_not_preempt_active_runs() {
     let pool = AgentConcurrency::new(limits(2, 2));
-    let first = pool
-        .acquire(CapacityClass::Rho, &RunCancellation::new())
+    let first = acquire(&pool, CapacityClass::Rho, &RunCancellation::new())
         .await
         .expect("first");
-    let second = pool
-        .acquire(CapacityClass::Rho, &RunCancellation::new())
+    let second = acquire(&pool, CapacityClass::Rho, &RunCancellation::new())
         .await
         .expect("second");
     pool.set_total(1);
@@ -337,8 +331,7 @@ async fn lowering_total_does_not_preempt_active_runs() {
         let started = Arc::clone(&started);
         async move {
             started.store(true, std::sync::atomic::Ordering::SeqCst);
-            pool.acquire(CapacityClass::Rho, &RunCancellation::new())
-                .await
+            acquire(&pool, CapacityClass::Rho, &RunCancellation::new()).await
         }
     });
     wait_until(|| started.load(std::sync::atomic::Ordering::SeqCst)).await;
@@ -373,8 +366,7 @@ async fn lowering_total_does_not_preempt_active_runs() {
 #[tokio::test(flavor = "current_thread")]
 async fn runs_take_capacity_in_the_order_they_joined() {
     let pool = AgentConcurrency::new(limits(1, 1));
-    let held = pool
-        .acquire(CapacityClass::Rho, &RunCancellation::new())
+    let held = acquire(&pool, CapacityClass::Rho, &RunCancellation::new())
         .await
         .expect("held");
     let first = pool.join(CapacityClass::Rho);
@@ -434,8 +426,7 @@ async fn runs_take_capacity_in_the_order_they_joined() {
 #[tokio::test(flavor = "current_thread")]
 async fn a_claude_run_reports_the_budget_it_waits_on() {
     let pool = AgentConcurrency::new(limits(1, 1));
-    let claude = pool
-        .acquire(CapacityClass::Claude, &RunCancellation::new())
+    let claude = acquire(&pool, CapacityClass::Claude, &RunCancellation::new())
         .await
         .expect("held Claude");
     let queued = pool.join(CapacityClass::Claude);

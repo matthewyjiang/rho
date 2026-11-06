@@ -92,25 +92,34 @@ pub(super) fn job_summary(record: JobRecord, queue: Option<QueuePlace>) -> wire:
         created_at,
         updated_at,
         error: failure(&state),
-        queue: queue.map(queue_to_wire),
+        queue: queue.map(Into::into),
     }
 }
 
-fn queue_to_wire(place: QueuePlace) -> wire::QueuePlace {
-    let QueuePlace {
-        budget,
-        limit,
-        position,
-    } = place;
-    // Both are bounded far below `u32::MAX`: the limit by
-    // `MAX_AGENT_CONCURRENCY`, the position by the runs one daemon spawns.
-    let count = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
-    wire::QueuePlace {
-        budget: match budget {
-            Budget::AgentConcurrency => wire::Budget::AgentConcurrency,
-            Budget::ClaudeAgentConcurrency => wire::Budget::ClaudeAgentConcurrency,
-        },
-        limit: count(limit),
-        position: count(position),
+impl From<Budget> for wire::Budget {
+    fn from(budget: Budget) -> Self {
+        match budget {
+            Budget::AgentConcurrency => Self::AgentConcurrency,
+            Budget::ClaudeAgentConcurrency => Self::ClaudeAgentConcurrency,
+        }
+    }
+}
+
+impl From<QueuePlace> for wire::QueuePlace {
+    fn from(place: QueuePlace) -> Self {
+        let QueuePlace {
+            budget,
+            limit,
+            position,
+        } = place;
+        // Both are bounded far below `u32::MAX`: the limit by
+        // `MAX_AGENT_CONCURRENCY`, the position by the runs one daemon
+        // spawns.
+        let count = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
+        Self {
+            budget: budget.into(),
+            limit: count(limit),
+            position: count(position),
+        }
     }
 }

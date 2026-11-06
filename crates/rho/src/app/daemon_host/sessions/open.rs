@@ -87,7 +87,6 @@ pub(super) async fn open_session(
     let repository = ConfigRepository::new(None);
     let config_path = repository.configured_path()?;
     let config = repository.load()?;
-    let children = subagents.host_for(job.clone(), &config);
     // The last config read publishes its custom providers to the daemon,
     // as each rho process publishes its own at startup.
     config.providers.activate()?;
@@ -117,7 +116,7 @@ pub(super) async fn open_session(
         },
         host: HostCapabilities {
             questions: QuestionSupport::Available,
-            children: ChildAgents::InProcess(children),
+            children: ChildAgents::InProcess(subagents.pool_for(job.clone())),
             // Nothing wakes an idle session yet, so background work holds the
             // turn open, as it does for `rho run`.
             background_wait: BackgroundWait::HoldPrompt,
@@ -147,6 +146,8 @@ pub(super) async fn open_session(
         SessionPersistence::Saved,
     ))
     .await?;
+    // Only a session that opened resizes every session's budget.
+    subagents.set_limit(&config);
     Ok(OpenedSession { runtime, config })
 }
 
