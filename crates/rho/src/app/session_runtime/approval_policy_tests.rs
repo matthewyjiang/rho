@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
@@ -13,13 +16,18 @@ use tokio::sync::mpsc;
 use super::{ApprovalPolicy, UnattendedApprovals};
 use crate::{
     app::session_runtime::{
-        test_support::built_on, SessionEvent, SessionRuntime, SessionStorage, Turn, TurnControl,
-        TurnIo, TurnOutcome,
+        build::with_plan_exit,
+        test_support::{built_on, test_build},
+        SessionBuild, SessionEvent, SessionRuntime, SessionStorage, Turn, TurnControl, TurnIo,
+        TurnOutcome,
     },
     config::Config,
     permission::PermissionMode,
     session::Session as StoredSession,
-    tools::sdk_registry::{AppToolSet, StaticToolBundle},
+    tools::{
+        plan_exit,
+        sdk_registry::{AppToolSet, StaticToolBundle},
+    },
 };
 
 const PROBE: &str = "write_probe";
@@ -68,37 +76,42 @@ impl ApprovalHandler for AllowEverything {
     }
 }
 
-/// What one supervised write came to: whether the host was asked, and
-/// whether the write was allowed.
+/// What one session came to: whether its host was asked about a
+/// supervised write, whether the write was allowed, and whether plan mode
+/// then offered `exit_plan_mode`.
 #[derive(Debug, PartialEq)]
-struct Write {
+struct Outcome {
     host_asked: bool,
     allowed: Option<bool>,
+    plan_exit: bool,
 }
 
 // Covers: in a mode that asks before writing, only a host-answered session
 // shows the request to its host. An unattended session answers it itself:
 // with nothing inherited it denies the write, and an inherited workflow
-// approval session decides instead. Neither waits on the host.
-// Owner: session runtime approval wiring, through a permission mode rebuild
-// (scripted provider, no credentials).
+// approval session decides instead. Neither waits on the host, and neither
+// offers a plan exit only a host could approve.
+// Owner: session runtime approval wiring, from the session's first build
+// through permission mode rebuilds (scripted provider, no credentials).
 #[tokio::test]
-async fn supervised_writes_reach_the_host_only_when_it_answers_approvals() {
+async fn approvals_reach_the_host_only_when_it_answers_them() {
     let cases = [
         (
             "host",
             ApprovalPolicy::Host,
-            Write {
+            Outcome {
                 host_asked: true,
                 allowed: Some(true),
+                plan_exit: true,
             },
         ),
         (
             "unattended alone",
             ApprovalPolicy::Unattended(UnattendedApprovals::Alone),
-            Write {
+            Outcome {
                 host_asked: false,
                 allowed: Some(false),
+                plan_exit: false,
             },
         ),
         (
@@ -106,9 +119,10 @@ async fn supervised_writes_reach_the_host_only_when_it_answers_approvals() {
             ApprovalPolicy::Unattended(UnattendedApprovals::Inherited(ApprovalSession::new(
                 AllowEverything,
             ))),
-            Write {
+            Outcome {
                 host_asked: false,
                 allowed: Some(true),
+                plan_exit: false,
             },
         ),
     ];
@@ -134,15 +148,20 @@ async fn supervised_writes_reach_the_host_only_when_it_answers_approvals() {
             ],
         ));
         let allowed = Arc::new(Mutex::new(None));
+        let mut tools = AppToolSet::disabled();
+        tools.add_bundle(StaticToolBundle::new(vec![Arc::new(WriteProbe {
+            allowed: Arc::clone(&allowed),
+        })]));
+        // The session is made with the policy from the start, and its first
+        // build adds the tools the policy offers, as `build_session` does.
+        let build = SessionBuild {
+            approvals,
+            ..test_build(&config, root.path())
+        };
         let mut built = built_on(&config, id, provider).await;
-        built.tools = AppToolSet::disabled();
-        built
-            .tools
-            .add_bundle(StaticToolBundle::new(vec![Arc::new(WriteProbe {
-                allowed: Arc::clone(&allowed),
-            })]));
-        let mut runtime = SessionRuntime::for_tests(built, SessionStorage::saved(stored), &config);
-        runtime.build.approvals = approvals;
+        built.tools = with_plan_exit(tools, &build, &build.launch_agent, &config);
+        let mut runtime =
+            SessionRuntime::for_tests_with(build, built, SessionStorage::saved(stored), &config);
         // Entering supervised rebuilds the SDK runtime with the tools and the
         // policy's approval wiring, as a host's mode change does.
         runtime
@@ -174,25 +193,38 @@ async fn supervised_writes_reach_the_host_only_when_it_answers_approvals() {
             model: input,
             calls: Vec::new(),
         };
-        let (ended, host_asked) = tokio::join!(
-            runtime.run_turn(&prompt, turn, TurnIo { events, control }, &config),
-            host,
-        );
-
+        // A scripted turn ends in milliseconds. The bound only turns a turn
+        // left waiting on an approval nobody answers into a failure rather
+        // than a hung test.
+        let (ended, host_asked) = tokio::time::timeout(Duration::from_secs(60), async {
+            tokio::join!(
+                runtime.run_turn(&prompt, turn, TurnIo { events, control }, &config),
+                host,
+            )
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{label}: the turn hung on an unanswered approval"));
         assert!(
             matches!(ended, Ok(TurnOutcome::Completed(_))),
             "{label}: {ended:?}"
         );
+        drop(prompt);
         let allowed = *allowed.lock().unwrap();
+        runtime
+            .set_permission_mode(PermissionMode::Plan, &config)
+            .await
+            .unwrap();
+        let plan_exit = runtime.tools().contains(plan_exit::TOOL_NAME);
+
         assert_eq!(
-            Write {
+            Outcome {
                 host_asked,
-                allowed
+                allowed,
+                plan_exit,
             },
             expected,
             "{label}"
         );
-        drop(prompt);
         runtime.shutdown().await;
     }
 }

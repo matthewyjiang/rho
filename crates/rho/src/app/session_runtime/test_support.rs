@@ -128,32 +128,51 @@ pub(super) async fn runtime_on(
     SessionRuntime::for_tests(built, SessionStorage::saved(stored), config)
 }
 
+/// How a test session is built: as a [`root_agent`] whose host answers its
+/// approvals, configured from `workspace_root`.
+pub(super) fn test_build(config: &Config, workspace_root: &Path) -> SessionBuild {
+    SessionBuild {
+        config_path: workspace_root.join("rho-test-config.toml"),
+        no_system_prompt: false,
+        no_tools: false,
+        no_subagents: false,
+        diagnostics: RuntimeDiagnostics::new(config),
+        questions: QuestionSupport::Unavailable,
+        children: ChildAgents::InProcess,
+        background_wait: BackgroundWait::HoldPrompt,
+        launch_agent: root_agent(config),
+        host_io: Default::default(),
+        run: RunShape {
+            role: SessionRole::Acp,
+            max_steps: None,
+            hook_labels: Default::default(),
+        },
+        prompt_suffix: None,
+        mcp_authorization: McpAuthorizationMode::NonInteractive,
+        approvals: ApprovalPolicy::Host,
+    }
+}
+
 impl SessionRuntime {
-    /// A runtime around `built`, saved through `storage`, for a
-    /// [`root_agent`] whose workspace is the storage's.
+    /// A runtime around `built`, saved through `storage`, made as
+    /// [`test_build`] says with the storage's workspace.
     pub(super) fn for_tests(built: BuiltSession, storage: SessionStorage, config: &Config) -> Self {
+        let build = test_build(config, storage.cwd());
+        Self::for_tests_with(build, built, storage, config)
+    }
+
+    /// A runtime around `built`, saved through `storage`, made as `build`
+    /// says from the start, in `config`'s mode with the storage's
+    /// workspace.
+    pub(super) fn for_tests_with(
+        build: SessionBuild,
+        built: BuiltSession,
+        storage: SessionStorage,
+        config: &Config,
+    ) -> Self {
         let workspace_root = storage.cwd().to_path_buf();
         Self::from_built_for_tests(
-            SessionBuild {
-                config_path: workspace_root.join("rho-test-config.toml"),
-                no_system_prompt: false,
-                no_tools: false,
-                no_subagents: false,
-                diagnostics: RuntimeDiagnostics::new(config),
-                questions: QuestionSupport::Unavailable,
-                children: ChildAgents::InProcess,
-                background_wait: BackgroundWait::HoldPrompt,
-                launch_agent: root_agent(config),
-                host_io: Default::default(),
-                run: RunShape {
-                    role: SessionRole::Acp,
-                    max_steps: None,
-                    hook_labels: Default::default(),
-                },
-                prompt_suffix: None,
-                mcp_authorization: McpAuthorizationMode::NonInteractive,
-                approvals: ApprovalPolicy::Host,
-            },
+            build,
             built,
             storage,
             SessionPermission {

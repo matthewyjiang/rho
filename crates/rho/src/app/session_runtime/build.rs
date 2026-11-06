@@ -26,6 +26,7 @@ use crate::{
         host_io::HostIo,
         mcp::{config::McpConfig, McpAuthorizationMode},
         plan_exit::PlanExitHost,
+        sdk_registry::AppToolSet,
     },
 };
 
@@ -229,18 +230,7 @@ pub(super) async fn build_session(
                     );
                 }
             }
-            // Plan approval goes through a permission prompt, which every
-            // host that answers approvals answers, so leaving plan mode never
-            // depends on asking questions. Like the TUI, only Rho-runtime
-            // agents get it; like `rho run`, an unattended session does not.
-            if !build.no_tools
-                && agent.rho_capabilities().is_some()
-                && build.approvals.offers_plan_exit()
-            {
-                tools.with_plan_exit_host(config, PlanExitHost::Permission)
-            } else {
-                tools
-            }
+            with_plan_exit(tools, build, agent, config)
         },
         system_prompt_suffix: build.prompt_suffix,
         approval: |inputs: ApprovalInputs| Ok(build.approvals.wire(inputs)),
@@ -257,6 +247,24 @@ pub(super) async fn build_session(
         workspace_root,
     };
     Ok((built, permission))
+}
+
+/// `tools` with `exit_plan_mode` when `build` offers it to `agent`. Plan
+/// approval goes through a permission prompt, which every host that answers
+/// approvals answers, so leaving plan mode never depends on asking
+/// questions. Like the TUI, only Rho-runtime agents get it; like `rho run`,
+/// an unattended session does not.
+pub(super) fn with_plan_exit(
+    tools: AppToolSet,
+    build: &SessionBuild,
+    agent: &BoundAgent,
+    config: &Config,
+) -> AppToolSet {
+    if !build.no_tools && agent.rho_capabilities().is_some() && build.approvals.offers_plan_exit() {
+        tools.with_plan_exit_host(config, PlanExitHost::Permission)
+    } else {
+        tools
+    }
 }
 
 /// The process config with the host's MCP servers merged in.
