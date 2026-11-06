@@ -39,7 +39,6 @@ impl fmt::Display for JobId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
-#[schemars(extend("x-rho-open" = true))]
 pub enum JobKind {
     /// The turns of a session the daemon hosts; see [`super::SESSION_NEW`].
     Session,
@@ -47,6 +46,7 @@ pub enum JobKind {
     /// leniently keeps the rest of the job list usable; daemons never send
     /// it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
 
@@ -56,7 +56,6 @@ pub enum JobKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
-#[schemars(extend("x-rho-open" = true))]
 pub enum JobState {
     /// Created; no turn has started.
     Idle,
@@ -76,6 +75,7 @@ pub enum JobState {
     /// it leniently keeps the rest of the job list usable; daemons never
     /// send it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
 
@@ -88,6 +88,7 @@ pub struct JobSummary {
     /// The workspace the job runs in.
     pub workspace: PathBuf,
     /// The job that started this one; `None` for a job a client started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<JobId>,
     /// The session the job writes.
     pub session: SessionId,
@@ -96,6 +97,7 @@ pub struct JobSummary {
     /// Unix time, in seconds, of the job's last state change.
     pub updated_at: u64,
     /// Why the job failed, when its state is [`JobState::Failed`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 

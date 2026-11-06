@@ -44,7 +44,7 @@ def retype_field(document: dict) -> None:
 
 
 def remove_event_field(document: dict) -> None:
-    for variant in defs(document)["SessionEvent"]["oneOf"]:
+    for variant in defs(document)["SessionEvent"]["anyOf"]:
         variant["properties"].pop("text", None)
         if "text" in variant.get("required", []):
             variant["required"].remove("text")
@@ -52,9 +52,15 @@ def remove_event_field(document: dict) -> None:
 
 def add_value(name: str) -> Callable[[dict], None]:
     def add(document: dict) -> None:
-        defs(document)[name]["oneOf"].append({"const": "paused", "type": "string"})
+        enum = defs(document)[name]
+        enum.get("oneOf", enum.get("anyOf")).insert(0, {"const": "paused", "type": "string"})
 
     return add
+
+
+def close_enum(document: dict) -> None:
+    enum = defs(document)["DetachReason"]
+    enum["anyOf"] = [variant for variant in enum["anyOf"] if "x-rho-other" not in variant]
 
 
 def remove_method(document: dict) -> None:
@@ -106,8 +112,6 @@ def recursive_type(document: dict) -> None:
     defs(document)["Cursor"]["properties"]["next"] = {"$ref": "#/$defs/Cursor"}
 
 
-def open_without_unknown(document: dict) -> None:
-    defs(document)["Replay"]["x-rho-open"] = True
 
 
 class CompatibilityTests(unittest.TestCase):
@@ -118,7 +122,7 @@ class CompatibilityTests(unittest.TestCase):
         for name, change in [
             ("an optional field", add_optional_field),
             ("a method", add_method),
-            ("a value of an enum that reads `unknown`", add_value("DetachReason")),
+            ("a value of an open enum", add_value("DetachReason")),
         ]:
             with self.subTest(name):
                 self.assertEqual(self.check(changed(change)), [])
@@ -147,9 +151,15 @@ class CompatibilityTests(unittest.TestCase):
                 'notification rho/session/event params.event <type="notice">.text: removed',
             ),
             (
-                "a value added to an enum without `unknown`",
+                "a value added to a closed enum",
                 add_value("Replay"),
-                'method rho/session/attach result.replay: added "paused" to an enum without `unknown`',
+                'method rho/session/attach result.replay: added "paused" to a closed enum',
+            ),
+            (
+                "an open enum closed",
+                close_enum,
+                "notification rho/session/detached params.reason: "
+                'one of "daemon_stopping", "lagged" (open) became one of "daemon_stopping", "lagged"',
             ),
             ("a removed method", remove_method, "method rho/session/steer params: removed"),
             ("a removed error code", remove_error, "error -32010: removed"),
@@ -200,12 +210,6 @@ class CompatibilityTests(unittest.TestCase):
                 recursive_type,
                 "method rho/session/attach params.after.next: Cursor contains itself; "
                 "the check does not model recursion",
-            ),
-            (
-                "an open enum without `unknown`",
-                open_without_unknown,
-                "method rho/session/attach result.replay: marked x-rho-open but has no "
-                "`unknown` value",
             ),
         ]:
             with self.subTest(name):

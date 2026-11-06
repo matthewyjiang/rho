@@ -92,6 +92,8 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 
 The protocol has its own version, `major.minor`, independent of rho's; `rho/hello` and `rho/daemon/status` report it. A client and daemon work together when their majors match.
 
-A protocol minor only adds: methods, notifications, error codes, optional fields, and values of enums marked `x-rho-open` in the schema, each of which has an `unknown` value. So a client should ignore fields it does not know, read an enum value it does not know as `unknown`, and treat an error code it does not know by its message. Anything else, such as removing, retyping, or constraining a field, making a field required or nullable, or adding a value to an enum not marked `x-rho-open`, comes only with a new major.
+A protocol minor only adds: methods, notifications, error codes, optional fields, and values of open enums. In the schema, one variant of an open enum is marked `x-rho-other` and matches every value the enum does not list, so a client generated from it accepts values a later minor adds; read them as unknown. A client should also ignore fields it does not know, and treat an error code it does not know by its message. Anything else, such as removing, retyping, or constraining a field, making a field required or nullable, or adding a value to a closed enum, comes only with a new major.
+
+The daemon omits an optional field that has no value rather than sending `null`.
 
 CI holds the protocol to this. A test fails when `protocol.json` no longer matches the wire types, and a check compares it with the schema of the last rho release: a change a minor does not allow fails unless the major rises, and any other change to the wire, which excludes descriptions and names, needs the minor to rise.

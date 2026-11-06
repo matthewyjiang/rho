@@ -15,7 +15,7 @@ categories = ["asynchronous", "network-programming"]
 # scripts/architecture.json enforces that boundary.
 [dependencies]
 # Publishes the wire types as JSON Schema (`schema/protocol.json`).
-schemars = "1"
+schemars = "1.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

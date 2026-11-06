@@ -2,8 +2,8 @@
 """Check rho-protocol's schema against the last release's (#1657).
 
 A protocol minor may add methods, notifications, error codes, optional
-fields, and values of enums marked `x-rho-open` (those that read values they
-do not know as `unknown`). Anything else needs a new protocol major:
+fields, and values of open enums: those with a variant marked `x-rho-other`,
+which matches every value the enum does not list. Anything else needs a new protocol major:
 removing, retyping, or constraining a field, making a field required,
 optional, or nullable, adding a required field to an existing object,
 removing a value, or adding one to a closed enum. Any change at all needs a
@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = Path("crates/rho-protocol/schema/protocol.json")
 RELEASE_TAG = re.compile(r"rho-coding-agent-v(\d+)\.(\d+)\.(\d+)")
 REMOTE = "origin"
-OPEN = "x-rho-open"
+OTHER = "x-rho-other"
 # Keys that describe a schema without constraining the wire.
 ANNOTATIONS = {"description", "title", "default", "examples", "$comment", "deprecated"}
 # Keys that narrow a type; any change to them is a change of the type.
@@ -61,7 +61,7 @@ HANDLED = {
     "required",
     "items",
     "additionalProperties",
-    OPEN,
+    OTHER,
 }
 
 # Where a fact applies: a root such as `method rho/hello params`, then
@@ -144,12 +144,18 @@ def walk(
         others = [(variant, inner) for variant, inner in resolved if variant != {"type": "null"}]
         nullable = nullable or len(others) < len(resolved)
         # `Option<T>` is `anyOf [T, null]`: the same wire as a nullable T.
-        if len(others) == 1 and node.keys() <= {"oneOf", "anyOf", OPEN} | ANNOTATIONS:
+        if len(others) == 1 and node.keys() <= {"oneOf", "anyOf"} | ANNOTATIONS:
             variant, inner = others[0]
             walk(defs, variant, path, out, inner, nullable)
             return
         labels: set[str] = set()
+        open_ = False
         for index, (variant, inner) in enumerate(others):
+            # Matches every value the others do not; what it matches grows
+            # with them, so it has no facts of its own.
+            if isinstance(variant, dict) and variant.get(OTHER):
+                open_ = True
+                continue
             variant_values = variant_labels(variant, index)
             labels.update(variant_values)
             # A value is the whole of its variant; schemars groups values
@@ -159,16 +165,16 @@ def walk(
                 continue
             for label in variant_values:
                 walk(defs, variant, (*path, f" <{label}>"), out, inner)
-        out[path] = values(node, path, labels, nullable)
+        out[path] = Values(frozenset(labels), open_, nullable)
         # Fields beside the variants, as `#[serde(flatten)]` of an enum makes.
         walk_children(defs, node, path, out, refs)
         return
     if "const" in node:
-        out[path] = values(node, path, {json.dumps(node["const"])}, nullable)
+        out[path] = Values(frozenset({json.dumps(node["const"])}), False, nullable)
         return
     if "enum" in node:
-        labels = {json.dumps(value) for value in node["enum"] if value is not None}
-        out[path] = values(node, path, labels, nullable or None in node["enum"])
+        labels = frozenset(json.dumps(value) for value in node["enum"] if value is not None)
+        out[path] = Values(labels, False, nullable or None in node["enum"])
         return
     kinds = node.get("type", [])
     kinds = {kinds} if isinstance(kinds, str) else set(kinds)
@@ -192,13 +198,6 @@ def walk_children(
         walk(defs, node["items"], (*path, "[]"), out, refs)
     if isinstance(node.get("additionalProperties"), dict):
         walk(defs, node["additionalProperties"], (*path, "{}"), out, refs)
-
-
-def values(node: dict, path: Where, labels: set[str], nullable: bool) -> Values:
-    open_ = node.get(OPEN, False)
-    if open_ and not any(label == '"unknown"' or label.endswith('="unknown"') for label in labels):
-        raise ValueError(f"{render(path)}: marked {OPEN} but has no `unknown` value")
-    return Values(frozenset(labels), open_, nullable)
 
 
 def resolve(
@@ -264,7 +263,7 @@ def breaking_changes(baseline: dict[Where, Fact], current: dict[Where, Fact]) ->
                 problems.append(f"{render(path)}: removed {', '.join(sorted(removed))}")
             if added and not old.open:
                 problems.append(
-                    f"{render(path)}: added {', '.join(sorted(added))} to an enum without `unknown`"
+                    f"{render(path)}: added {', '.join(sorted(added))} to a closed enum"
                 )
         else:
             problems.append(f"{render(path)}: {describe(old)} became {describe(new)}")

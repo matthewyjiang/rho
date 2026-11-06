@@ -77,7 +77,6 @@ pub struct Cursor {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
-#[schemars(extend("x-rho-open" = true))]
 pub enum SessionEvent {
     /// The session's job changed state: a turn started (`running`), waits
     /// for input, or ended.
@@ -114,6 +113,7 @@ pub enum SessionEvent {
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
 
@@ -143,7 +143,6 @@ pub struct ToolCallUpdate {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
-#[schemars(extend("x-rho-open" = true))]
 pub enum ToolKind {
     Read,
     Edit,
@@ -158,6 +157,7 @@ pub enum ToolKind {
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
 
@@ -165,7 +165,6 @@ pub enum ToolKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
-#[schemars(extend("x-rho-open" = true))]
 pub enum ToolStatus {
     Pending,
     InProgress,
@@ -174,6 +173,7 @@ pub enum ToolStatus {
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
 
@@ -181,7 +181,6 @@ pub enum ToolStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
-#[schemars(extend("x-rho-open" = true))]
 pub enum ToolContent {
     Text {
         text: String,
@@ -201,6 +200,7 @@ pub enum ToolContent {
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
 
@@ -208,7 +208,6 @@ pub enum ToolContent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
-#[schemars(extend("x-rho-open" = true))]
 pub enum ContentBlock {
     Text {
         text: String,
@@ -221,6 +220,7 @@ pub enum ContentBlock {
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
 
@@ -243,7 +243,6 @@ pub struct PlanEntry {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
-#[schemars(extend("x-rho-open" = true))]
 pub enum PlanStatus {
     Pending,
     InProgress,
@@ -251,6 +250,7 @@ pub enum PlanStatus {
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
 

@@ -19,8 +19,7 @@
       "type": "object"
     },
     "ContentBlock": {
-      "description": "One piece of a user message.",
-      "oneOf": [
+      "anyOf": [
         {
           "properties": {
             "text": {
@@ -59,20 +58,20 @@
           "type": "object"
         },
         {
-          "description": "A value a newer daemon sends that this crate does not know; daemons\nnever send it.",
+          "description": "Any other value: one a later protocol minor adds.",
           "properties": {
             "type": {
-              "const": "unknown",
               "type": "string"
             }
           },
           "required": [
             "type"
           ],
-          "type": "object"
+          "type": "object",
+          "x-rho-other": true
         }
       ],
-      "x-rho-open": true
+      "description": "One piece of a user message."
     },
     "Cursor": {
       "description": "Where a client is in a session's stream; send it back to resume.",
@@ -158,8 +157,7 @@
       "type": "object"
     },
     "DetachReason": {
-      "description": "Why the daemon dropped an attachment.",
-      "oneOf": [
+      "anyOf": [
         {
           "const": "lagged",
           "description": "The client fell too far behind; reattach with its cursor.",
@@ -171,12 +169,12 @@
           "type": "string"
         },
         {
-          "const": "unknown",
-          "description": "A value a newer daemon sends that this crate does not know; daemons\nnever send it.",
-          "type": "string"
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
         }
       ],
-      "x-rho-open": true
+      "description": "Why the daemon dropped an attachment."
     },
     "HelloParams": {
       "description": "Params of [`HELLO`].",
@@ -225,20 +223,19 @@
       "type": "string"
     },
     "JobKind": {
-      "description": "What a job runs. Protocol minors may add kinds.",
-      "oneOf": [
+      "anyOf": [
         {
           "const": "session",
           "description": "The turns of a session the daemon hosts; see [`super::SESSION_NEW`].",
           "type": "string"
         },
         {
-          "const": "unknown",
-          "description": "A kind a newer daemon sends that this crate does not know. Reading it\nleniently keeps the rest of the job list usable; daemons never send\nit.",
-          "type": "string"
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
         }
       ],
-      "x-rho-open": true
+      "description": "What a job runs. Protocol minors may add kinds."
     },
     "JobListParams": {
       "description": "Params of [`JOB_LIST`].",
@@ -261,8 +258,7 @@
       "type": "object"
     },
     "JobState": {
-      "description": "Where a job is. A session job's state is that of its current or last\nturn.\nProtocol minors may add states.",
-      "oneOf": [
+      "anyOf": [
         {
           "enum": [
             "running",
@@ -292,12 +288,12 @@
           "type": "string"
         },
         {
-          "const": "unknown",
-          "description": "A state a newer daemon sends that this crate does not know. Reading\nit leniently keeps the rest of the job list usable; daemons never\nsend it.",
-          "type": "string"
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
         }
       ],
-      "x-rho-open": true
+      "description": "Where a job is. A session job's state is that of its current or last\nturn.\nProtocol minors may add states."
     },
     "JobSummary": {
       "description": "One job, as [`JOB_LIST`] reports it.",
@@ -402,8 +398,7 @@
       "type": "object"
     },
     "PlanStatus": {
-      "description": "Where a plan step is.",
-      "oneOf": [
+      "anyOf": [
         {
           "enum": [
             "pending",
@@ -413,12 +408,12 @@
           "type": "string"
         },
         {
-          "const": "unknown",
-          "description": "A value a newer daemon sends that this crate does not know; daemons\nnever send it.",
-          "type": "string"
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
         }
       ],
-      "x-rho-open": true
+      "description": "Where a plan step is."
     },
     "ProtocolVersion": {
       "description": "A protocol version. Minors add optional fields, methods, and error codes;\nmajors may change anything.",
@@ -557,8 +552,7 @@
       "type": "object"
     },
     "SessionEvent": {
-      "description": "One thing that happened in a session.",
-      "oneOf": [
+      "anyOf": [
         {
           "description": "The session's job changed state: a turn started (`running`), waits\nfor input, or ended.",
           "properties": {
@@ -749,20 +743,20 @@
           "type": "object"
         },
         {
-          "description": "A value a newer daemon sends that this crate does not know; daemons\nnever send it.",
+          "description": "Any other value: one a later protocol minor adds.",
           "properties": {
             "type": {
-              "const": "unknown",
               "type": "string"
             }
           },
           "required": [
             "type"
           ],
-          "type": "object"
+          "type": "object",
+          "x-rho-other": true
         }
       ],
-      "x-rho-open": true
+      "description": "One thing that happened in a session."
     },
     "SessionEventParams": {
       "description": "Params of the [`SESSION_EVENT`] notification.",
@@ -938,8 +932,7 @@
       "type": "object"
     },
     "ToolContent": {
-      "description": "One piece of what a tool call shows.",
-      "oneOf": [
+      "anyOf": [
         {
           "properties": {
             "text": {
@@ -1005,24 +998,23 @@
           "type": "object"
         },
         {
-          "description": "A value a newer daemon sends that this crate does not know; daemons\nnever send it.",
+          "description": "Any other value: one a later protocol minor adds.",
           "properties": {
             "type": {
-              "const": "unknown",
               "type": "string"
             }
           },
           "required": [
             "type"
           ],
-          "type": "object"
+          "type": "object",
+          "x-rho-other": true
         }
       ],
-      "x-rho-open": true
+      "description": "One piece of what a tool call shows."
     },
     "ToolKind": {
-      "description": "What a tool does, so a client can pick an icon or a layout.",
-      "oneOf": [
+      "anyOf": [
         {
           "enum": [
             "read",
@@ -1039,16 +1031,15 @@
           "type": "string"
         },
         {
-          "const": "unknown",
-          "description": "A value a newer daemon sends that this crate does not know; daemons\nnever send it.",
-          "type": "string"
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
         }
       ],
-      "x-rho-open": true
+      "description": "What a tool does, so a client can pick an icon or a layout."
     },
     "ToolStatus": {
-      "description": "Where a tool call is.",
-      "oneOf": [
+      "anyOf": [
         {
           "enum": [
             "pending",
@@ -1059,12 +1050,12 @@
           "type": "string"
         },
         {
-          "const": "unknown",
-          "description": "A value a newer daemon sends that this crate does not know; daemons\nnever send it.",
-          "type": "string"
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
         }
       ],
-      "x-rho-open": true
+      "description": "Where a tool call is."
     },
     "VersionFix": {
       "description": "Which side of an incompatible pair has to change.",

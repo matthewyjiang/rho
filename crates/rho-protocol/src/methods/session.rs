@@ -191,7 +191,6 @@ pub struct SessionDetachedParams {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
-#[schemars(extend("x-rho-open" = true))]
 pub enum DetachReason {
     /// The client fell too far behind; reattach with its cursor.
     Lagged,
@@ -200,5 +199,6 @@ pub enum DetachReason {
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
