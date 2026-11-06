@@ -16,8 +16,7 @@ use super::{run_prompt, HeadlessView, ParentQuestions, PromptEnd, RunReporter, S
 use crate::{
     app::{
         agent_binding::BoundAgent,
-        bootstrap::{settle_bound_config, SettledConfig},
-        cli_config::ProviderRefreshStatus,
+        cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
         session_runtime::{
             HostCapabilities, Logouts, NodeSession, QuestionSupport, RunShape, SessionBuild,
             SessionLaunch, SessionOpening, SessionRole, SessionRuntime, Turn, TurnStart,
@@ -26,7 +25,6 @@ use crate::{
         shutdown_signal::ShutdownSignals,
         subagent_messaging::{NoticePoster, SteeringSlot, CHILD_COMMUNICATION_CONTRACT},
     },
-    config::Config,
     session::SessionPersistence,
     subagent::RunStatus,
 };
@@ -47,8 +45,8 @@ pub(crate) enum ChildSession {
 
 /// One child run on the Rho runtime, after binding and permit acquisition.
 pub(crate) struct ChildRun {
+    /// A Rho agent, whose binding carries the config the child settles.
     pub(crate) bound: BoundAgent,
-    pub(crate) config: Config,
     pub(crate) config_path: PathBuf,
     pub(crate) cwd: PathBuf,
     pub(crate) prompt: String,
@@ -79,7 +77,6 @@ pub(crate) struct ChildRun {
 pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
     let ChildRun {
         bound,
-        config,
         config_path,
         cwd,
         prompt,
@@ -99,11 +96,15 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         host_io,
     } = run;
 
+    let bound_config = bound
+        .rho_config()
+        .ok_or_else(|| anyhow::anyhow!("agent {} does not run on rho", bound.id()))?
+        .clone();
     let SettledConfig {
         config,
         diagnostics,
     } = settle_bound_config(
-        config,
+        bound_config,
         &bound,
         &ProviderRefreshStatus::NotAttempted,
         rho_providers::model::ReasoningRequestSource::PersistedOrDefault,

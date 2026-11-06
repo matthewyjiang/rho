@@ -119,7 +119,7 @@ fn apply_doctor_overrides(
     store: &dyn CredentialStore,
 ) -> anyhow::Result<()> {
     super::cli_config::apply_overrides_allowing_empty_cache(config, cli, store)?;
-    super::cli_config::normalize_reasoning_for_cli(
+    super::cli_config::normalize_reasoning(
         config,
         if cli.reasoning.is_some() {
             rho_providers::model::ReasoningRequestSource::Explicit

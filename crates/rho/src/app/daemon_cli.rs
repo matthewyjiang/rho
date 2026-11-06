@@ -32,7 +32,7 @@ pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
     let rho_home = crate::paths::rho_dir()?;
     let paths = DaemonPaths::resolve(&rho_home, |name| std::env::var_os(name))?;
     match command.unwrap_or(DaemonCommand::Run) {
-        DaemonCommand::Run => run_foreground(&paths, &rho_home).await,
+        DaemonCommand::Run => run_foreground(&paths).await,
         DaemonCommand::Status { json } => status(&paths, json).await,
         DaemonCommand::Stop => stop(&paths).await,
     }
@@ -62,7 +62,7 @@ pub(super) fn runs_daemon(command: Option<&Command>) -> bool {
 const DAEMON_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[cfg(unix)]
-async fn run_foreground(paths: &DaemonPaths, rho_home: &std::path::Path) -> anyhow::Result<()> {
+async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
     paths.prepare_runtime_dir()?;
     // Read once: changing the filter or the sink needs a daemon restart.
     let filter = std::env::var("RHO_LOG")
@@ -96,10 +96,10 @@ async fn run_foreground(paths: &DaemonPaths, rho_home: &std::path::Path) -> anyh
     // Everything the host needs is open before the socket is published, so
     // a client never reaches a daemon that cannot serve it.
     open_credential_store();
-    let jobs = JobRecords::open(rho_home).with_context(|| {
+    let jobs = JobRecords::open(&lock, &paths.state_dir).with_context(|| {
         format!(
             "could not open the daemon's job records in {}",
-            rho_home.display()
+            paths.state_dir.display()
         )
     })?;
     let bound = daemon::bind(paths, lock)?;
@@ -118,16 +118,6 @@ async fn run_foreground(paths: &DaemonPaths, rho_home: &std::path::Path) -> anyh
         bound.started_at(),
         shutdown.clone(),
     ));
-    // When the stop was asked for, whether by `rho daemon stop` or a
-    // signal: the turns' drain budget runs from then, not from when the
-    // requests in flight finished.
-    let stop_requested = tokio::spawn({
-        let shutdown = shutdown.clone();
-        async move {
-            shutdown.cancelled().await;
-            tokio::time::Instant::now()
-        }
-    });
     let on_signal = shutdown.clone();
     // The first signal asks for a graceful shutdown. Shutdown waits for every
     // request already read and for the turns under way to save, so a signal
@@ -151,13 +141,23 @@ async fn run_foreground(paths: &DaemonPaths, rho_home: &std::path::Path) -> anyh
             }
         }
     });
-    let served = bound.serve(Arc::clone(&host), shutdown.clone()).await;
-    // Serving ends only once the stop was asked for; cancelling again is a
-    // no-op that keeps the wait below from hanging if that ever changes.
-    shutdown.cancel();
-    let stop_requested = stop_requested
-        .await
-        .unwrap_or_else(|_| tokio::time::Instant::now());
+    // `stop_requested` is when the stop was asked for, whether by `rho
+    // daemon stop` or a signal: the turns' drain budget runs from then, not
+    // from when the requests in flight finished.
+    let (served, stop_requested) = tokio::join!(
+        async {
+            let served = bound.serve(Arc::clone(&host), shutdown.clone()).await;
+            // Serving ends only once the stop was asked for; cancelling
+            // again is a no-op that keeps the join from hanging if that
+            // ever changes.
+            shutdown.cancel();
+            served
+        },
+        async {
+            shutdown.cancelled().await;
+            tokio::time::Instant::now()
+        },
+    );
     // Still holding the lock, so no other daemon starts, and `rho daemon
     // stop` keeps waiting, until the turns are saved and recorded.
     host.stop_threads(stop_requested).await;

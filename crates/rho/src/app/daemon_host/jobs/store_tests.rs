@@ -36,7 +36,7 @@ fn records_round_trip_and_rewrites_replace_them() {
     store.write(&running).unwrap();
 
     assert_eq!(sorted(store.load().unwrap()), sorted(vec![failed, running]));
-    let mode = fs::metadata(home.path().join("daemon/jobs"))
+    let mode = fs::metadata(home.path().join("jobs"))
         .unwrap()
         .permissions()
         .mode();
@@ -57,7 +57,7 @@ fn unreadable_record_files_are_skipped() {
 
     let kept = record(JobState::Ended(TurnEnd::Completed));
     store.write(&kept).unwrap();
-    let dir = home.path().join("daemon/jobs");
+    let dir = home.path().join("jobs");
     let misnamed = serde_json::to_vec(&record(JobState::Idle)).unwrap();
     for (name, contents) in [
         (

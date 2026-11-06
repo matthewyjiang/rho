@@ -26,8 +26,8 @@ use crate::{
     agent::{AgentCatalog, DEFAULT_AGENT_ID},
     app::{
         agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundAgent},
-        bootstrap::{root_host_tools, settle_bound_config, SettledConfig, SubagentTools},
-        cli_config::ProviderRefreshStatus,
+        bootstrap::{root_host_tools, SubagentTools},
+        cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
         config_repository::ConfigRepository,
         session_runtime::{
             ApprovalPolicy, BackgroundWait, ChildAgents, HostCapabilities, Logouts,

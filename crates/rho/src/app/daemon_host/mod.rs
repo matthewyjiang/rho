@@ -20,6 +20,8 @@ use rho_protocol::{
 };
 use rho_sdk::CancellationToken;
 
+use crate::daemon::DaemonLock;
+
 mod jobs;
 mod threads;
 mod wire;
@@ -32,11 +34,12 @@ use threads::Threads;
 pub(super) struct JobRecords(Arc<JobRegistry>);
 
 impl JobRecords {
-    /// Opens the records in `rho_home`. Opening rewrites the records of
-    /// turns an earlier daemon left open, so call this only while holding
-    /// the daemon lock.
-    pub(super) fn open(rho_home: &Path) -> io::Result<Self> {
-        Ok(Self(Arc::new(JobRegistry::open(JobStore::open(rho_home)?))))
+    /// Opens the records in the daemon's `state_dir`. Opening rewrites the
+    /// records of turns an earlier daemon left open, so it takes the daemon
+    /// lock, which guards that directory, as proof the caller holds it.
+    pub(super) fn open(_held: &DaemonLock, state_dir: &Path) -> io::Result<Self> {
+        let store = JobStore::open(state_dir)?;
+        Ok(Self(Arc::new(JobRegistry::open(store))))
     }
 }
 

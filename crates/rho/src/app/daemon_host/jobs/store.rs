@@ -1,5 +1,6 @@
 //! Durable job records: one JSON file per job in
-//! `<rho home>/daemon/jobs/<job id>.json`.
+//! `<daemon state dir>/jobs/<job id>.json`, the state dir being
+//! `<rho home>/daemon`.
 //!
 //! Records live in the rho home rather than the daemon's runtime directory,
 //! which is a tmpfs on Linux and would lose them at reboot. The directory is
@@ -28,11 +29,11 @@ pub(in crate::app::daemon_host) struct JobStore {
 const RECORD_SUFFIX: &str = ".json";
 
 impl JobStore {
-    /// The store in `rho_home`, its directory created 0700, or an existing
-    /// one closed to group and others: records name the user's projects and
-    /// sessions.
-    pub(in crate::app::daemon_host) fn open(rho_home: &Path) -> io::Result<Self> {
-        let dir = rho_home.join("daemon").join("jobs");
+    /// The store in the daemon's `state_dir`, its directory created 0700,
+    /// or an existing one closed to group and others: records name the
+    /// user's projects and sessions.
+    pub(in crate::app::daemon_host) fn open(state_dir: &Path) -> io::Result<Self> {
+        let dir = state_dir.join("jobs");
         fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)

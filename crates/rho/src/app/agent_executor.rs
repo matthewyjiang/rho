@@ -562,10 +562,6 @@ impl AgentExecutor {
                     crate::antigravity_runtime::session::run_session(session).await
                 }
                 Launch::Rho(bound) => {
-                    let bound_config = bound
-                        .rho_config()
-                        .expect("Rho launch has bound config")
-                        .clone();
                     let agent_id = bound.id().to_string();
                     let questions = questionnaire_target.map(|parent| ParentQuestions {
                         bridge: host_input,
@@ -583,7 +579,6 @@ impl AgentExecutor {
                     });
                     headless_host::run_child(ChildRun {
                         bound,
-                        config: bound_config,
                         config_path,
                         cwd,
                         prompt,

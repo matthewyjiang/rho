@@ -23,9 +23,7 @@ pub(in crate::app::daemon_host) enum JobState {
     /// The running turn waits for someone to answer an approval, a plan
     /// approval, or a question.
     WaitingForInput,
-    /// The last turn ended. Recorded flat, as `"completed"` or
-    /// `{"failed": "<why>"}`.
-    #[serde(untagged)]
+    /// The last turn ended.
     Ended(TurnEnd),
 }
 

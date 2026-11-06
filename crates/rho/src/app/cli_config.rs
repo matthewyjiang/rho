@@ -2,9 +2,12 @@ use std::sync::Arc;
 
 use tracing::Instrument;
 
+use super::agent_binding::BoundAgent;
 use {
     crate::cli::{Cli, Command},
     crate::config::{Config, ProviderConfigs},
+    crate::credential_store::AppCredentialStore,
+    crate::diagnostics::RuntimeDiagnostics,
     crate::model_aliases::ResolvedModelReference,
     rho_providers::credentials::{self, CredentialStore},
     rho_providers::model::{
@@ -373,7 +376,7 @@ fn cli_auth_profile(cli: &Cli) -> anyhow::Result<Option<&'static provider::Provi
         .transpose()
 }
 
-pub(super) fn normalize_reasoning_for_cli(
+pub(super) fn normalize_reasoning(
     config: &mut Config,
     source: rho_providers::model::ReasoningRequestSource,
 ) -> anyhow::Result<bool> {
@@ -438,6 +441,40 @@ pub(super) async fn prepare_model_metadata(
     // cold or offline launches depend on an unrelated network request. Provider-
     // native discovery remains synchronous above because Kimi and Anthropic use
     // it as the authoritative capability source.
+}
+
+/// A bound agent's config, settled for its session, and the diagnostics a
+/// session on it reports.
+pub(super) struct SettledConfig {
+    pub(super) config: Config,
+    pub(super) diagnostics: RuntimeDiagnostics,
+}
+
+/// Settles the config a session of `agent` runs with. Every Rho launch
+/// settles its bound agent here: the CLI, ACP, subagents, and daemon
+/// threads.
+///
+/// The agent's own config, which may pin a model and reasoning, replaces
+/// `config` (kept for an agent on another runtime); that model's
+/// capabilities are fetched when the cache lacks them and
+/// `provider_refresh` did not just fetch them; and its reasoning is
+/// normalized to what the model supports, or refused when an `Explicit`
+/// request does not fit. Custom providers must be active already.
+pub(super) async fn settle_bound_config(
+    config: Config,
+    agent: &BoundAgent,
+    provider_refresh: &ProviderRefreshStatus,
+    reasoning: rho_providers::model::ReasoningRequestSource,
+) -> anyhow::Result<SettledConfig> {
+    let mut config = agent.rho_config().cloned().unwrap_or(config);
+    prepare_model_metadata(&config, &AppCredentialStore, provider_refresh).await;
+    normalize_reasoning(&mut config, reasoning)?;
+    let diagnostics = RuntimeDiagnostics::new(&config);
+    diagnostics.update_agent(agent.id().as_str(), &agent.fingerprint().to_string());
+    Ok(SettledConfig {
+        config,
+        diagnostics,
+    })
 }
 
 fn needs_startup_capability_refresh(

@@ -27,28 +27,28 @@ use crate::{
 };
 
 /// How a prompt's turn began, as the request that sent the prompt learns
-/// it. A turn that completed saved its prompt, so it began `Saved`.
+/// it. A turn that completed saved its prompt, so it began `Saved`. A turn
+/// the daemon's stop interrupted before it saved its prompt sends no
+/// answer: the request answers `DaemonStopping` once the stop begins.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum PromptStart {
     /// The turn saved the prompt and runs on.
     Saved,
     /// A client cancelled the turn before it saved the prompt.
     Cancelled,
-    /// The daemon stopped before the turn saved the prompt.
-    Interrupted,
     /// The turn failed before it saved the prompt, for this reason.
     Failed(String),
 }
 
 impl PromptStart {
     /// How a turn that ended with `end` before it reported saving its
-    /// prompt began.
-    fn ended(end: &TurnEnd) -> Self {
+    /// prompt began, or `None` when the daemon's stop answers the request.
+    fn ended(end: &TurnEnd) -> Option<Self> {
         match end {
-            TurnEnd::Completed => Self::Saved,
-            TurnEnd::Cancelled => Self::Cancelled,
-            TurnEnd::Interrupted => Self::Interrupted,
-            TurnEnd::Failed(error) => Self::Failed(error.clone()),
+            TurnEnd::Completed => Some(Self::Saved),
+            TurnEnd::Cancelled => Some(Self::Cancelled),
+            TurnEnd::Interrupted => None,
+            TurnEnd::Failed(error) => Some(Self::Failed(error.clone())),
         }
     }
 }
@@ -68,8 +68,8 @@ pub(super) struct TurnTask {
 
 impl TurnTask {
     /// Runs the turn of `text` in a daemon task. The receiver learns how
-    /// the turn began; it closes without an answer only if the task
-    /// panicked.
+    /// the turn began; it closes without an answer only once the daemon
+    /// stops (see [`PromptStart`]).
     pub(super) fn spawn(self, text: String) -> oneshot::Receiver<PromptStart> {
         let (started, start) = oneshot::channel();
         tokio::spawn(self.run(text, started));
@@ -116,10 +116,12 @@ async fn run_turn(
     cancel: &CancellationToken,
 ) -> anyhow::Result<TurnOutcome> {
     let scope = runtime.begin_prompt(config).await?;
-    // A cancel from here on reaches the prompt through the thread's handle;
-    // one sent before the prompt began only tripped `cancel`.
+    // A cancel sent before the prompt began only tripped `cancel`: the turn
+    // ends here, before it saves the prompt or calls the model, and dropping
+    // `scope` ends the prompt. A cancel from here on reaches the prompt
+    // through the thread's handle.
     if cancel.is_cancelled() {
-        runtime.handle().cancel();
+        return Ok(TurnOutcome::Cancelled);
     }
     let input = UserInput::text(text);
     let turn = Turn {
@@ -131,7 +133,8 @@ async fn run_turn(
     Box::pin(runtime.run_prompt_turn(view, &scope, turn, config)).await
 }
 
-/// The message a turn records when its task stops without ending it.
+/// The message a turn records, and a prompt still waiting for it gets,
+/// when its task stops without ending it.
 const UNEXPECTED_STOP: &str = "the turn stopped unexpectedly; see the daemon log";
 
 /// Shows a thread's turn to its job: the job's state follows the requests
@@ -139,7 +142,8 @@ const UNEXPECTED_STOP: &str = "the turn stopped unexpectedly; see the daemon log
 /// turn began.
 ///
 /// Records the turn's end exactly once: through [`Self::end`], or, when the
-/// view drops without it, as the turn task panicking, failed.
+/// view drops without it, as the turn task panicking, failed with
+/// [`UNEXPECTED_STOP`].
 struct DaemonView {
     job: JobId,
     jobs: Arc<JobRegistry>,
@@ -164,13 +168,18 @@ impl DaemonView {
         }
     }
 
+    /// Records that the turn ended with `end`.
+    fn end(mut self, end: TurnEnd) {
+        self.finish(end);
+    }
+
     /// Records that the turn ended with `end`, and tells a request still
     /// waiting for the turn to begin.
-    fn end(mut self, end: TurnEnd) {
+    fn finish(&mut self, end: TurnEnd) {
         let start = PromptStart::ended(&end);
         self.record(JobEvent::TurnEnded(end));
         self.ended = true;
-        if let Some(started) = self.started.take() {
+        if let (Some(started), Some(start)) = (self.started.take(), start) {
             let _ = started.send(start);
         }
     }
@@ -210,9 +219,7 @@ impl DaemonView {
 impl Drop for DaemonView {
     fn drop(&mut self) {
         if !self.ended {
-            self.record(JobEvent::TurnEnded(TurnEnd::Failed(
-                UNEXPECTED_STOP.to_owned(),
-            )));
+            self.finish(TurnEnd::Failed(UNEXPECTED_STOP.to_owned()));
         }
     }
 }

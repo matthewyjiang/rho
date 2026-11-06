@@ -62,8 +62,9 @@ struct LiveThread {
     /// The config the thread was opened with, which each turn reads.
     config: Config,
     /// The cancel of the thread's current or last turn. A prompt replaces it
-    /// as its turn starts, under this lock, so a cancel never trips the
-    /// token of a turn it did not see start.
+    /// as its turn starts, and a cancel trips it and the thread's handle,
+    /// both under this lock, so a cancel never reaches a turn it did not see
+    /// start.
     turn_cancel: Mutex<CancellationToken>,
 }
 
@@ -168,9 +169,9 @@ impl Threads {
             *turn_cancel = CancellationToken::new();
             turn_cancel.clone()
         };
-        // Spawned before anything awaits, so a request dropped from here on,
-        // as when its client goes away, still leaves the turn to run and
-        // record its end.
+        // Spawned before anything awaits, so the turn runs and records its
+        // end apart from this request: the transport joins every request it
+        // read, but this one stops waiting once the daemon stops.
         let start = TurnTask {
             job,
             jobs: Arc::clone(&self.jobs),
@@ -179,19 +180,23 @@ impl Threads {
             cancel,
         }
         .spawn(params.text);
-        match start.await {
-            Ok(PromptStart::Saved) => Ok(ThreadPromptResponse {}),
-            Ok(PromptStart::Cancelled) => Err(RpcError::new(
-                ErrorCode::TurnCancelled,
-                "the turn was cancelled before it started",
-            )),
-            Ok(PromptStart::Interrupted) => Err(stopping()),
-            Ok(PromptStart::Failed(error)) => Err(RpcError::new(ErrorCode::TurnFailed, error)),
-            // The task answers for every turn it runs, unless it panicked.
-            Err(_) => Err(RpcError::new(
-                ErrorCode::InternalError,
-                "the turn stopped unexpectedly; see the daemon log",
-            )),
+        // An answer that is already in wins over the stop, so a prompt the
+        // turn saved is not reported refused. Once the daemon stops, the
+        // turn goes on until the stop drains it.
+        tokio::select! {
+            biased;
+            start = start => match start {
+                Ok(PromptStart::Saved) => Ok(ThreadPromptResponse {}),
+                Ok(PromptStart::Cancelled) => Err(RpcError::new(
+                    ErrorCode::TurnCancelled,
+                    "the turn was cancelled before it started",
+                )),
+                Ok(PromptStart::Failed(error)) => Err(RpcError::new(ErrorCode::TurnFailed, error)),
+                // Only a turn the daemon's stop interrupted, or one whose
+                // task the exiting runtime dropped, sends no answer.
+                Err(_) => Err(stopping()),
+            },
+            () = self.stopping.cancelled() => Err(stopping()),
         }
     }
 
@@ -202,8 +207,14 @@ impl Threads {
         params: ThreadCancelParams,
     ) -> Result<ThreadCancelResponse, RpcError> {
         let (_, thread) = self.live_thread(&params.thread)?;
-        thread.turn_cancel().cancel();
+        // Both under the `turn_cancel` lock, which a prompt takes to start
+        // its turn, so the handle's cancel cannot reach a turn started after
+        // this cancel. Lock order: `turn_cancel`, then the prompt gate's
+        // slot inside `handle.cancel()`; nothing takes them the other way.
+        let turn_cancel = thread.turn_cancel();
+        turn_cancel.cancel();
         thread.handle.cancel();
+        drop(turn_cancel);
         Ok(ThreadCancelResponse {})
     }
 

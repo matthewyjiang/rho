@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
@@ -8,16 +8,24 @@ use rho_sdk::{
 use tempfile::TempDir;
 use tokio::sync::{mpsc, oneshot};
 
-use super::{DaemonView, PromptStart, UNEXPECTED_STOP};
+use super::{DaemonView, PromptStart, TurnTask, UNEXPECTED_STOP};
 use crate::{
     app::{
-        daemon_host::jobs::{JobId, JobRecord, JobRegistry, JobState, JobStore, TurnEnd},
+        daemon_host::{
+            jobs::{JobId, JobRecord, JobRegistry, JobState, JobStore, TurnEnd},
+            threads::LiveThread,
+        },
         session_runtime::{
-            ApprovalId, InsertedMessage, PlanApprovalId, PlanApprovalRequest, SessionEvent,
+            unattended_runtime_on, ApprovalId, HangUntilCancel, InsertedMessage, PlanApprovalId,
+            PlanApprovalRequest, QuestionSupport, SessionEvent,
         },
     },
+    config::Config,
     permission::PermissionMode,
 };
+
+/// Bounds each wait on an explicit signal; never the way a test syncs.
+const TEST_BUDGET: Duration = Duration::from_secs(5);
 
 fn approval(n: u64) -> SessionEvent {
     SessionEvent::ApprovalRequested {
@@ -105,21 +113,23 @@ async fn show(view: &mut DaemonView, events: Vec<SessionEvent>) {
     view.show(event_receiver, control).await;
 }
 
-/// (case, the model turns' events, job state after them, prompt answer).
-type WaitingCase = (
-    &'static str,
-    Vec<Vec<SessionEvent>>,
-    JobState,
-    Option<PromptStart>,
-);
-/// (case, events, how the turn releases, recorded end, prompt answer).
-type EndCase = (
-    &'static str,
-    Vec<SessionEvent>,
-    Release,
-    TurnEnd,
-    Option<PromptStart>,
-);
+/// A turn whose model turns show `model_turns`, and the job's `state` and
+/// the prompt request's `start` after them.
+struct WaitingCase {
+    name: &'static str,
+    model_turns: Vec<Vec<SessionEvent>>,
+    state: JobState,
+    start: Option<PromptStart>,
+}
+
+/// A turn that shows `events`, then lets go of its view as `release` says;
+/// the prompt request then got `start`.
+struct EndCase {
+    name: &'static str,
+    events: Vec<SessionEvent>,
+    release: Release,
+    start: Option<PromptStart>,
+}
 
 // Covers: a thread's job is waiting_for_input exactly while some approval,
 // plan approval, or question of its turn is open, whichever kind and in
@@ -129,51 +139,51 @@ type EndCase = (
 // Owner: daemon thread turn view.
 #[tokio::test]
 async fn the_job_waits_for_input_while_any_request_is_open() {
-    let saved = Some(PromptStart::Saved);
-    let cases: Vec<WaitingCase> = vec![
-        (
-            "no request",
-            vec![vec![inserted(), SessionEvent::RunStarted]],
-            JobState::Running,
-            saved.clone(),
-        ),
-        (
-            "an open approval",
-            vec![vec![inserted(), approval(0)]],
-            JobState::WaitingForInput,
-            saved.clone(),
-        ),
-        (
-            "an approval withdrawn",
-            vec![vec![inserted(), approval(0), approval_withdrawn(0)]],
-            JobState::Running,
-            saved.clone(),
-        ),
-        (
-            "one of two approvals withdrawn",
-            vec![vec![
+    let saved = || Some(PromptStart::Saved);
+    let cases = vec![
+        WaitingCase {
+            name: "no request",
+            model_turns: vec![vec![inserted(), SessionEvent::RunStarted]],
+            state: JobState::Running,
+            start: saved(),
+        },
+        WaitingCase {
+            name: "an open approval",
+            model_turns: vec![vec![inserted(), approval(0)]],
+            state: JobState::WaitingForInput,
+            start: saved(),
+        },
+        WaitingCase {
+            name: "an approval withdrawn",
+            model_turns: vec![vec![inserted(), approval(0), approval_withdrawn(0)]],
+            state: JobState::Running,
+            start: saved(),
+        },
+        WaitingCase {
+            name: "one of two approvals withdrawn",
+            model_turns: vec![vec![
                 inserted(),
                 approval(0),
                 approval(1),
                 approval_withdrawn(1),
             ]],
-            JobState::WaitingForInput,
-            saved.clone(),
-        ),
-        (
-            "a plan open after the question closed",
-            vec![vec![
+            state: JobState::WaitingForInput,
+            start: saved(),
+        },
+        WaitingCase {
+            name: "a plan open after the question closed",
+            model_turns: vec![vec![
                 inserted(),
                 question("q"),
                 plan(0),
                 question_withdrawn("q"),
             ]],
-            JobState::WaitingForInput,
-            saved.clone(),
-        ),
-        (
-            "every kind opened and withdrawn",
-            vec![vec![
+            state: JobState::WaitingForInput,
+            start: saved(),
+        },
+        WaitingCase {
+            name: "every kind opened and withdrawn",
+            model_turns: vec![vec![
                 inserted(),
                 approval(0),
                 plan(0),
@@ -182,48 +192,48 @@ async fn the_job_waits_for_input_while_any_request_is_open() {
                 approval_withdrawn(0),
                 question_withdrawn("q"),
             ]],
-            JobState::Running,
-            saved.clone(),
-        ),
-        (
-            "a withdrawal of a request never opened",
-            vec![vec![
+            state: JobState::Running,
+            start: saved(),
+        },
+        WaitingCase {
+            name: "a withdrawal of a request never opened",
+            model_turns: vec![vec![
                 inserted(),
                 approval_withdrawn(3),
                 question_withdrawn("x"),
             ]],
-            JobState::Running,
-            saved.clone(),
-        ),
-        (
-            "a plan still open when the next model turn starts",
-            vec![vec![inserted(), plan(0)], vec![SessionEvent::RunStarted]],
-            JobState::WaitingForInput,
-            saved.clone(),
-        ),
-        (
-            "a plan withdrawn in the next model turn",
-            vec![vec![inserted(), plan(0)], vec![plan_withdrawn(0)]],
-            JobState::Running,
-            saved,
-        ),
-        (
-            "events before the message is saved",
-            vec![vec![SessionEvent::Notice {
+            state: JobState::Running,
+            start: saved(),
+        },
+        WaitingCase {
+            name: "a plan still open when the next model turn starts",
+            model_turns: vec![vec![inserted(), plan(0)], vec![SessionEvent::RunStarted]],
+            state: JobState::WaitingForInput,
+            start: saved(),
+        },
+        WaitingCase {
+            name: "a plan withdrawn in the next model turn",
+            model_turns: vec![vec![inserted(), plan(0)], vec![plan_withdrawn(0)]],
+            state: JobState::Running,
+            start: saved(),
+        },
+        WaitingCase {
+            name: "events before the message is saved",
+            model_turns: vec![vec![SessionEvent::Notice {
                 text: "reopened".into(),
             }]],
-            JobState::Running,
-            None,
-        ),
+            state: JobState::Running,
+            start: None,
+        },
     ];
     let home = TempDir::new().unwrap();
     let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
-    for (name, model_turns, expected_state, expected_start) in cases {
+    for case in cases {
         let job = started_job(&jobs);
         let (started, mut start) = oneshot::channel();
         let mut view = DaemonView::new(job.clone(), Arc::clone(&jobs), started);
 
-        for events in model_turns {
+        for events in case.model_turns {
             show(&mut view, events).await;
         }
 
@@ -232,8 +242,9 @@ async fn the_job_waits_for_input_while_any_request_is_open() {
                 jobs.get(&job).map(|record| record.state),
                 start.try_recv().ok()
             ),
-            (Some(expected_state), expected_start),
-            "{name}"
+            (Some(case.state), case.start),
+            "{}",
+            case.name
         );
     }
 }
@@ -246,83 +257,86 @@ enum Release {
     Drop,
 }
 
+impl Release {
+    /// The end the job records once the view is let go.
+    fn recorded_end(&self) -> TurnEnd {
+        match self {
+            Self::End(end) => end.clone(),
+            Self::Drop => TurnEnd::Failed(UNEXPECTED_STOP.into()),
+        }
+    }
+}
+
 // Covers: the job records how the turn ended, and the prompt request learns
 // how the turn began: saved once the message is, else how the turn ended
-// before it (a completed turn saved its prompt); a view dropped without an
-// end, as by a panicking turn task, records the turn failed, and a request
-// still waiting then gets no answer.
+// before it (a completed turn saved its prompt); a turn interrupted before
+// saving leaves the request to the daemon's stop; a view dropped without an
+// end, as by a panicking turn task, records the turn failed and tells a
+// request still waiting so.
 // Owner: daemon thread turn view.
 #[tokio::test]
 async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
     let failed = || TurnEnd::Failed("provider refused the request".into());
-    let unexpected = || TurnEnd::Failed(UNEXPECTED_STOP.into());
-    let cases: Vec<EndCase> = vec![
-        (
-            "completed after saving",
-            vec![inserted()],
-            Release::End(TurnEnd::Completed),
-            TurnEnd::Completed,
-            Some(PromptStart::Saved),
-        ),
-        (
-            "failed after saving",
-            vec![inserted()],
-            Release::End(failed()),
-            failed(),
-            Some(PromptStart::Saved),
-        ),
-        (
-            "completed without a saved message",
-            vec![],
-            Release::End(TurnEnd::Completed),
-            TurnEnd::Completed,
-            Some(PromptStart::Saved),
-        ),
-        (
-            "cancelled before saving",
-            vec![],
-            Release::End(TurnEnd::Cancelled),
-            TurnEnd::Cancelled,
-            Some(PromptStart::Cancelled),
-        ),
-        (
-            "interrupted before saving",
-            vec![],
-            Release::End(TurnEnd::Interrupted),
-            TurnEnd::Interrupted,
-            Some(PromptStart::Interrupted),
-        ),
-        (
-            "failed before saving",
-            vec![],
-            Release::End(failed()),
-            failed(),
-            Some(PromptStart::Failed("provider refused the request".into())),
-        ),
-        (
-            "dropped while waiting for input",
-            vec![inserted(), approval(0)],
-            Release::Drop,
-            unexpected(),
-            Some(PromptStart::Saved),
-        ),
-        (
-            "dropped before saving",
-            vec![],
-            Release::Drop,
-            unexpected(),
-            None,
-        ),
+    let cases = vec![
+        EndCase {
+            name: "completed after saving",
+            events: vec![inserted()],
+            release: Release::End(TurnEnd::Completed),
+            start: Some(PromptStart::Saved),
+        },
+        EndCase {
+            name: "failed after saving",
+            events: vec![inserted()],
+            release: Release::End(failed()),
+            start: Some(PromptStart::Saved),
+        },
+        EndCase {
+            name: "completed without a saved message",
+            events: vec![],
+            release: Release::End(TurnEnd::Completed),
+            start: Some(PromptStart::Saved),
+        },
+        EndCase {
+            name: "cancelled before saving",
+            events: vec![],
+            release: Release::End(TurnEnd::Cancelled),
+            start: Some(PromptStart::Cancelled),
+        },
+        EndCase {
+            name: "interrupted before saving",
+            events: vec![],
+            release: Release::End(TurnEnd::Interrupted),
+            start: None,
+        },
+        EndCase {
+            name: "failed before saving",
+            events: vec![],
+            release: Release::End(failed()),
+            start: Some(PromptStart::Failed("provider refused the request".into())),
+        },
+        EndCase {
+            name: "dropped while waiting for input",
+            events: vec![inserted(), approval(0)],
+            release: Release::Drop,
+            start: Some(PromptStart::Saved),
+        },
+        EndCase {
+            name: "dropped before saving",
+            events: vec![],
+            release: Release::Drop,
+            start: Some(PromptStart::Failed(UNEXPECTED_STOP.into())),
+        },
     ];
     let home = TempDir::new().unwrap();
     let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
-    for (name, events, release, expected_end, expected_start) in cases {
+    for case in cases {
         let job = started_job(&jobs);
         let (started, mut start) = oneshot::channel();
         let mut view = DaemonView::new(job.clone(), Arc::clone(&jobs), started);
-        show(&mut view, events).await;
+        show(&mut view, case.events).await;
+        let expected_end = case.release.recorded_end();
 
-        match release {
+        match case.release {
             Release::End(end) => view.end(end),
             Release::Drop => drop(view),
         }
@@ -332,8 +346,68 @@ async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
                 jobs.get(&job).map(|record| record.state),
                 start.try_recv().ok()
             ),
-            (Some(JobState::Ended(expected_end)), expected_start),
-            "{name}"
+            (Some(JobState::Ended(expected_end)), case.start),
+            "{}",
+            case.name
         );
     }
+}
+
+// Covers: a cancel sent before the turn begins its prompt ends the turn
+// cancelled before it saves the prompt or calls the model (whose provider
+// would wait for a cancel), so the prompt request learns it was cancelled
+// and the session holds no message.
+// Owner: daemon thread turn task.
+#[tokio::test]
+async fn a_cancel_before_the_prompt_begins_saves_nothing() {
+    let root = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let config = Config::default();
+    let provider: Arc<dyn rho_sdk::provider::ModelProvider> = Arc::new(HangUntilCancel);
+    let sdk = rho_sdk::Rho::builder()
+        .provider_shared(Arc::clone(&provider))
+        .build()
+        .unwrap();
+    let runtime = unattended_runtime_on(
+        root.path(),
+        &config,
+        QuestionSupport::Unavailable,
+        sdk,
+        provider,
+    )
+    .await;
+    let thread = Arc::new(LiveThread::new(runtime, config));
+    let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
+    let job = started_job(&jobs);
+    let cancel = rho_sdk::CancellationToken::new();
+    cancel.cancel();
+
+    let start = TurnTask {
+        job: job.clone(),
+        jobs: Arc::clone(&jobs),
+        thread: Arc::clone(&thread),
+        stopping: rho_sdk::CancellationToken::new(),
+        cancel,
+    }
+    .spawn("hello".into());
+    let start = tokio::time::timeout(TEST_BUDGET, start)
+        .await
+        .expect("the cancelled turn answers")
+        .ok();
+    // Released once the turn recorded its end.
+    let messages = thread
+        .runtime
+        .lock()
+        .await
+        .as_ref()
+        .map(|runtime| runtime.history_for_tests().len());
+
+    assert_eq!(
+        (start, jobs.get(&job).map(|record| record.state), messages),
+        (
+            Some(PromptStart::Cancelled),
+            Some(JobState::Ended(TurnEnd::Cancelled)),
+            Some(0)
+        )
+    );
 }
