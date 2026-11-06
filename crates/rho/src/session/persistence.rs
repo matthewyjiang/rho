@@ -25,6 +25,9 @@ use super::{
     SessionSummary, SessionTarget,
 };
 
+pub(crate) use super::id_match::NoSessionFound;
+use super::id_match::{matching_session_files, session_id, single_match};
+
 // Layout helpers live in `layout`; re-export the historical `persistence::` surface.
 pub(super) use super::layout::{
     ensure_session_dir, parse_timestamp, resolve_transcript_path, session_dir_in_root,
@@ -892,52 +895,6 @@ pub(crate) fn resume_normalized_history(history: Vec<Message>) -> Vec<Message> {
 }
 
 /// Collapses id-prefix matches to at most one, erroring on an ambiguous prefix.
-/// Returns `None` when nothing matched.
-/// No saved session in any workspace matches the requested id or prefix.
-#[derive(Debug, thiserror::Error)]
-#[error("no session found matching '{id_prefix}'")]
-pub(crate) struct NoSessionFound {
-    id_prefix: String,
-}
-
-/// The one session `id_prefix` names among `matches` (transcript path and
-/// workspace pairs). A session whose whole id is `id_prefix` wins over ones
-/// it is only a prefix of, so a full id is never ambiguous: ids are any
-/// string a client chose, and one can prefix another.
-fn single_match<'a>(
-    matches: &'a [(PathBuf, PathBuf)],
-    id_prefix: &str,
-) -> anyhow::Result<Option<&'a (PathBuf, PathBuf)>> {
-    let exact = matches
-        .iter()
-        .filter(|(path, _)| session_id_from_path(path).as_deref() == Some(id_prefix))
-        .collect::<Vec<_>>();
-    match (exact.as_slice(), matches) {
-        ([only], _) => Ok(Some(only)),
-        ([], []) => Ok(None),
-        ([], [only]) => Ok(Some(only)),
-        _ => anyhow::bail!("multiple sessions match '{id_prefix}'; use a longer UUID prefix"),
-    }
-}
-
-fn session_id(path: &Path) -> anyhow::Result<String> {
-    session_id_from_path(path)
-        .ok_or_else(|| anyhow::anyhow!("session file has invalid name: {}", path.display()))
-}
-
-fn matching_session_files(dir: &Path, id_prefix: &str) -> anyhow::Result<Vec<PathBuf>> {
-    let mut files = fs::read_dir(dir)?
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let unit = SessionUnit::from_path(&entry.path())?;
-            let id = unit.id()?;
-            id.starts_with(id_prefix).then(|| unit.transcript_path())
-        })
-        .collect::<Vec<_>>();
-    files.sort();
-    Ok(files)
-}
-
 fn list_session_summaries_by_scan(dir: &Path, cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
     let mut summaries = fs::read_dir(dir)?
         .filter_map(Result::ok)
