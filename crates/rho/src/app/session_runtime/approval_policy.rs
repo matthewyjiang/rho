@@ -36,7 +36,7 @@ pub(crate) enum ApprovalPolicy {
         not(test),
         expect(
             dead_code,
-            reason = "rho run and Rho subagents build on the runtime in the next PR"
+            reason = "rho run, Rho subagents and workflow nodes build on the runtime in the next PR"
         )
     )]
     Unattended(UnattendedApprovals),
@@ -44,20 +44,31 @@ pub(crate) enum ApprovalPolicy {
 
 /// What answers an unattended session's requests besides itself.
 #[derive(Clone)]
-#[expect(
-    dead_code,
-    reason = "rho run, Rho subagents and workflow nodes pass these in the next PR"
-)]
 pub(crate) enum UnattendedApprovals {
     /// Nothing: Auto runs its own classifier, and other modes deny every
     /// request.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "rho run builds on the runtime in the next PR")
+    )]
     Alone,
     /// A workflow run's approval session answers outside Auto. Auto still
     /// runs its own classifier.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "workflow nodes build on the runtime in the next PR"
+        )
+    )]
     Inherited(ApprovalSession),
     /// A parent's classifier template decides in Auto, isolated onto this
     /// session's write grants so its deny streak stays this session's.
     /// Other modes deny every request.
+    #[expect(
+        dead_code,
+        reason = "Rho subagents build on the runtime in the next PR"
+    )]
     ClassifierTemplate(Arc<ClassifierApprovalHandler>),
 }
 

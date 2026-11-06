@@ -443,8 +443,7 @@ fn runtime_config_options(
     )
 }
 
-/// How every build of a session this host opens is set up, and the T3 wake
-/// watcher that wakes it.
+/// A [`SessionBuild`] and the T3 wake watcher that wakes its session.
 struct HostBuild {
     build: SessionBuild,
     /// Present exactly when the build waits for the host to wake it.

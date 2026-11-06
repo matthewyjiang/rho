@@ -115,6 +115,7 @@ impl SessionRuntime {
     /// long-lived host may run it in the background; a host that exits
     /// after the prompt, such as `rho run`, must await it before exiting,
     /// or the title is lost.
+    #[must_use = "the session is titled only once the taken job runs"]
     pub(crate) fn take_title(&mut self) -> Option<TitleJob> {
         let (state, job) = match std::mem::replace(&mut self.title, TitleState::Asked) {
             TitleState::Unasked => (TitleState::Unasked, None),

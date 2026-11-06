@@ -3,9 +3,10 @@
 //!
 //! A host opens it with [`SessionRuntime::open_new`] or
 //! [`SessionRuntime::reopen`] (see `open.rs`), drives it, and shows what it
-//! reports, holding it exclusively for each prompt or setting change. Nothing here knows a wire protocol or a
-//! client: hosts parse their own requests and map the runtime's results,
-//! events, and errors back to theirs.
+//! reports, holding it exclusively for each prompt or setting change.
+//! Nothing here knows a wire protocol or a client: hosts parse their own
+//! requests and map the runtime's results, events, and errors back to
+//! theirs.
 //!
 //! Between prompts a host calls the runtime's settings cores directly:
 //! permission mode, model and provider switches, reasoning level, and fast
