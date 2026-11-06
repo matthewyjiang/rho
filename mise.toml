@@ -1,3 +1,2 @@
 [tools]
-mr-boxington = "1.18.0"
-rust = { version = "1.92.0", mr_boxington = true }
+rust = "1.92.0"
