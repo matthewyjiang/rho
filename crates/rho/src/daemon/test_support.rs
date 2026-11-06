@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use rho_protocol::{
-    DaemonStatus, ErrorCode, JobsListResponse, RpcError, Service, SessionCancelParams,
+    DaemonStatus, ErrorCode, JobListResponse, RpcError, Service, SessionCancelParams,
     SessionCancelResponse, SessionNewParams, SessionNewResponse, SessionPromptParams,
     SessionPromptResponse, SessionSteerParams, SessionSteerResponse, PROTOCOL_VERSION,
 };
@@ -68,14 +68,14 @@ impl Service for StubHost {
         Err(no_sessions())
     }
 
-    async fn list_jobs(&self) -> JobsListResponse {
-        JobsListResponse { jobs: Vec::new() }
+    async fn list_jobs(&self) -> JobListResponse {
+        JobListResponse { jobs: Vec::new() }
     }
 }
 
 fn no_sessions() -> RpcError {
     RpcError::new(
-        ErrorCode::SessionNotFound,
+        ErrorCode::SessionNotLoaded,
         "the stub host hosts no sessions",
     )
 }

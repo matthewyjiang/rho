@@ -3,15 +3,15 @@
 //! `<rho home>/daemon`.
 //!
 //! Records live in the rho home rather than the daemon's runtime directory,
-//! which is a tmpfs on Linux and would lose them at reboot. The directory is
-//! private (0700) and each file is replaced atomically (a temp file in the
+//! which is a tmpfs on Linux and would lose them at reboot. The directory
+//! sits in the private state dir and each file is replaced atomically (a temp file in the
 //! same directory, then a rename), so a reader never sees a torn record. A
 //! file that does not parse as a record named for its own id is logged and
 //! skipped: one bad file never hides the others or stops the daemon.
 
 use std::{
     fs, io,
-    os::unix::fs::{DirBuilderExt, PermissionsExt},
+    os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
 };
 
@@ -29,16 +29,16 @@ pub(in crate::app::daemon_host) struct JobStore {
 const RECORD_SUFFIX: &str = ".json";
 
 impl JobStore {
-    /// The store in the daemon's `state_dir`, its directory created 0700,
-    /// or an existing one closed to group and others: records name the
-    /// user's workspaces and sessions.
+    /// The store in the daemon's `state_dir`, its directory created 0700.
+    /// Records name the user's workspaces and sessions; they stay private
+    /// because the store sits inside the state dir, which taking the daemon
+    /// lock checked is private.
     pub(in crate::app::daemon_host) fn open(state_dir: &Path) -> io::Result<Self> {
         let dir = state_dir.join("jobs");
         fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
             .create(&dir)?;
-        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
         Ok(Self { dir })
     }
 

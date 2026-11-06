@@ -16,7 +16,7 @@ use super::{state::TransitionRefused, unix_now, JobEvent, JobId, JobRecord, JobS
 /// even when two changes race.
 //
 // Holding a std lock across the fsync blocks one runtime worker and any
-// `jobs/list` or `status` caller for the write. Measured on ext4 (NVMe): a
+// `job/list` or `status` caller for the write. Measured on ext4 (NVMe): a
 // record-sized write, fsync, rename and directory fsync took 0.64 ms median
 // and 1.9 ms max over 300 runs, so this stays until a profile says otherwise.
 pub(in crate::app::daemon_host) struct JobRegistry {

@@ -13,20 +13,20 @@
 //! | [`SESSION_PROMPT`] | [`SessionPromptParams`] | [`SessionPromptResponse`] |
 //! | [`SESSION_CANCEL`] | [`SessionCancelParams`] | [`SessionCancelResponse`] |
 //! | [`SESSION_STEER`] | [`SessionSteerParams`] | [`SessionSteerResponse`] |
-//! | [`JOBS_LIST`] | [`JobsListParams`] | [`JobsListResponse`] |
+//! | [`JOB_LIST`] | [`JobListParams`] | [`JobListResponse`] |
 
 use serde::{de::DeserializeOwned, Serialize};
 
 mod daemon;
-mod jobs;
+mod job;
 mod session;
 
 pub use daemon::{
     ClientInfo, DaemonInfo, DaemonStatus, Hello, HelloParams, HelloResponse, Status, StatusParams,
     Stop, StopParams, StopResponse, DAEMON_STATUS, DAEMON_STOP, HELLO,
 };
-pub use jobs::{
-    JobId, JobKind, JobState, JobSummary, JobsList, JobsListParams, JobsListResponse, JOBS_LIST,
+pub use job::{
+    JobId, JobKind, JobList, JobListParams, JobListResponse, JobState, JobSummary, JOB_LIST,
 };
 pub use session::{
     SessionCancel, SessionCancelParams, SessionCancelResponse, SessionId, SessionNew,

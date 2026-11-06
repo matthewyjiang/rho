@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::{
     super::jobs::{JobEvent, JobId, JobRegistry, TurnEnd},
-    LiveSession,
+    LoadedSession,
 };
 use crate::{
     app::session_runtime::{
@@ -56,7 +56,7 @@ impl PromptStart {
 /// One turn of a session whose job already recorded the turn's start.
 pub(super) struct TurnTask {
     pub(super) jobs: Arc<JobRegistry>,
-    pub(super) session: Arc<LiveSession>,
+    pub(super) session: Arc<LoadedSession>,
     /// Cancelled once the daemon stops: a turn cancelled then was
     /// interrupted, not cancelled by a client.
     pub(super) stopping: CancellationToken,

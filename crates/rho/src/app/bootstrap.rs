@@ -20,7 +20,7 @@ use {
 
 use super::{
     acp,
-    agent_binding::{AgentBinder, AgentInvocation, AgentRole},
+    agent_binding::{root_host_tools, AgentBinder, AgentInvocation, AgentRole, SubagentTools},
     automation, automation_protocol, classifier_eval, cli_config, compaction_eval, computer_cli,
     config_repository::ConfigRepository,
     daemon_cli, doctor_cli, interactive, login, mcp_cli, plugins_cli,
@@ -286,8 +286,9 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
 struct PreparedStartup {
     cli: Cli,
     catalog: crate::agent::DiscoveredAgentCatalog,
-    /// The launch config with CLI overrides, before the bound agent's own
-    /// settings apply (see [`cli_config::settle_bound_config`]).
+    /// The config to settle (see [`cli_config::settle_bound_config`]): the
+    /// bound agent's own when it runs on rho, else the launch config with
+    /// CLI overrides.
     config: crate::config::Config,
     config_repository: ConfigRepository,
     first_run: Option<SetupEntry>,
@@ -397,6 +398,9 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     } else {
         rho_providers::model::ReasoningRequestSource::PersistedOrDefault
     };
+    // The bound agent's own config, which may pin a model and reasoning,
+    // replaces the launch config; an agent on another runtime keeps it.
+    let config = bound_agent.rho_config().cloned().unwrap_or(config);
 
     Ok(PreparedStartup {
         cli,
@@ -763,41 +767,6 @@ pub(super) fn host_capabilities(
         tools.insert(ToolCapability::Extension(
             crate::tools::tui_fixture::NAME.into(),
         ));
-    }
-    tools
-}
-
-/// Whether a launch offers the subagent tools its config enables.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SubagentTools {
-    Offered,
-    /// `--no-subagents`.
-    Withheld,
-}
-
-/// The built-in tools a root session on this platform starts from, before
-/// its host's own policy: all of them but the other platform's shell, and
-/// no subagent tools when the launch withholds them or `config` disables
-/// them.
-pub(super) fn root_host_tools(
-    config: &crate::config::Config,
-    subagents: SubagentTools,
-) -> crate::agent::AgentCapabilities {
-    use crate::agent::ToolCapability;
-
-    let mut tools = crate::agent::AgentCapabilities::all_host_tools();
-    // web_search is gated after bind against the resolved provider/model.
-    #[cfg(windows)]
-    tools.remove(&ToolCapability::Bash);
-    #[cfg(not(windows))]
-    tools.remove(&ToolCapability::Powershell);
-    let offered = match subagents {
-        SubagentTools::Offered => config.enable_subagents,
-        SubagentTools::Withheld => false,
-    };
-    if !offered {
-        tools.remove(&ToolCapability::Agent);
-        tools.remove(&ToolCapability::Agents);
     }
     tools
 }

@@ -13,7 +13,7 @@ use crate::{
     app::{
         daemon_host::{
             jobs::{JobId, JobRecord, JobRegistry, JobState, JobStore, TurnEnd},
-            sessions::LiveSession,
+            sessions::LoadedSession,
         },
         session_runtime::{
             unattended_runtime_on, ApprovalId, HangUntilCancel, InsertedMessage, PlanApprovalId,
@@ -378,7 +378,7 @@ async fn a_cancel_before_the_prompt_begins_saves_nothing() {
     .await;
     let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
     let job = started_job(&jobs);
-    let session = Arc::new(LiveSession::new(job.clone(), runtime, config));
+    let session = Arc::new(LoadedSession::new(job.clone(), runtime, config));
     let cancel = rho_sdk::CancellationToken::new();
     cancel.cancel();
 

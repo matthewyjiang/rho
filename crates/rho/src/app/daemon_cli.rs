@@ -30,6 +30,8 @@ pub(super) async fn run(_command: Option<DaemonCommand>) -> anyhow::Result<()> {
 #[cfg(unix)]
 pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
     let rho_home = crate::paths::rho_dir()?;
+    let rho_home = daemon::real_home(&rho_home)
+        .with_context(|| format!("could not resolve rho home {}", rho_home.display()))?;
     let paths = DaemonPaths::resolve(&rho_home, |name| std::env::var_os(name))?;
     match command.unwrap_or(DaemonCommand::Run) {
         DaemonCommand::Run => run_foreground(&paths).await,

@@ -52,17 +52,15 @@ error_codes! {
         /// `rho/hello` named an incompatible protocol major. `data` is a
         /// [`crate::VersionMismatch`] saying which side must change.
         VersionMismatch = -32001,
-        /// No session has the id the request named: the daemon has none
-        /// loaded and the session store has none saved.
-        SessionNotFound = -32002,
-        /// The session exists but this daemon has not loaded it, so it
-        /// cannot take a prompt, a cancel, or steering.
+        /// This daemon has not loaded that session, so it cannot take a
+        /// prompt, a cancel, or steering. The session may not exist: telling
+        /// the two apart comes with reopen (#1661).
         SessionNotLoaded = -32003,
         /// The session already has a turn running or waiting for input.
         /// Prompt again once it ends.
         SessionBusy = -32004,
-        /// The session has no running model turn to steer.
-        TurnNotRunning = -32005,
+        /// No model request is taking input.
+        NotSteerable = -32005,
         /// The running turn refused the steering input, as when its
         /// command queue is full.
         SteerRefused = -32006,

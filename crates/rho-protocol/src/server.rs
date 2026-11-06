@@ -13,11 +13,11 @@ use tokio::{
 
 use crate::{
     methods::{
-        Hello, JobsList, JobsListParams, JobsListResponse, Method, SessionCancel,
-        SessionCancelParams, SessionCancelResponse, SessionNew, SessionNewParams,
-        SessionNewResponse, SessionPrompt, SessionPromptParams, SessionPromptResponse,
-        SessionSteer, SessionSteerParams, SessionSteerResponse, Status, Stop, DAEMON_STATUS,
-        DAEMON_STOP, HELLO, JOBS_LIST, SESSION_CANCEL, SESSION_NEW, SESSION_PROMPT, SESSION_STEER,
+        Hello, JobList, JobListParams, JobListResponse, Method, SessionCancel, SessionCancelParams,
+        SessionCancelResponse, SessionNew, SessionNewParams, SessionNewResponse, SessionPrompt,
+        SessionPromptParams, SessionPromptResponse, SessionSteer, SessionSteerParams,
+        SessionSteerResponse, Status, Stop, DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST,
+        SESSION_CANCEL, SESSION_NEW, SESSION_PROMPT, SESSION_STEER,
     },
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
     MessageWriter, Request, RequestId, Response, RpcError, StatusParams, StopParams, StopResponse,
@@ -81,8 +81,8 @@ pub trait Service: Send + Sync {
         params: SessionSteerParams,
     ) -> impl Future<Output = Result<SessionSteerResponse, RpcError>> + Send;
 
-    /// Answers `rho/jobs/list`.
-    fn list_jobs(&self) -> impl Future<Output = JobsListResponse> + Send;
+    /// Answers `rho/job/list`.
+    fn list_jobs(&self) -> impl Future<Output = JobListResponse> + Send;
 }
 
 /// What the daemon reports in its `rho/hello` response.
@@ -333,7 +333,7 @@ impl ServiceCall {
             SESSION_PROMPT => decode_params::<SessionPrompt>(params).map(Self::PromptSession),
             SESSION_CANCEL => decode_params::<SessionCancel>(params).map(Self::CancelSession),
             SESSION_STEER => decode_params::<SessionSteer>(params).map(Self::SteerSession),
-            JOBS_LIST => decode_params::<JobsList>(params).map(|JobsListParams {}| Self::ListJobs),
+            JOB_LIST => decode_params::<JobList>(params).map(|JobListParams {}| Self::ListJobs),
             method => Err(RpcError::new(
                 ErrorCode::MethodNotFound,
                 format!("unknown method {method}"),
@@ -360,7 +360,7 @@ impl ServiceCall {
             Self::SteerSession(params) => {
                 encode_result::<SessionSteer>(&service.steer_session(params).await?)
             }
-            Self::ListJobs => encode_result::<JobsList>(&service.list_jobs().await),
+            Self::ListJobs => encode_result::<JobList>(&service.list_jobs().await),
         }
     }
 }

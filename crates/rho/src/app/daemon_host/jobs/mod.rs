@@ -93,7 +93,7 @@ pub(super) struct JobRecord {
     /// for a job a client started.
     pub(super) parent: Option<JobId>,
     /// The session the job writes.
-    pub(super) session_id: rho_sdk::SessionId,
+    pub(super) session: rho_sdk::SessionId,
     /// Unix time, in seconds, when the job was created.
     pub(super) created_at: u64,
     /// Unix time, in seconds, of the job's last transition.
@@ -101,9 +101,9 @@ pub(super) struct JobRecord {
 }
 
 impl JobRecord {
-    /// A new job for the turns of session `session_id` in `workspace`,
-    /// before its first turn.
-    pub(super) fn new_session(workspace: PathBuf, session_id: rho_sdk::SessionId) -> Self {
+    /// A new job for the turns of `session` in `workspace`, before its
+    /// first turn.
+    pub(super) fn new_session(workspace: PathBuf, session: rho_sdk::SessionId) -> Self {
         let now = unix_now();
         Self {
             id: JobId::generate(),
@@ -111,7 +111,7 @@ impl JobRecord {
             state: JobState::Idle,
             workspace,
             parent: None,
-            session_id,
+            session,
             created_at: now,
             updated_at: now,
         }

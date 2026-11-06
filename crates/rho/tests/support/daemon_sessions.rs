@@ -10,8 +10,8 @@ use std::{
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{JobsList, SessionCancel, SessionNew, SessionPrompt},
-    Client, ClientError, ClientInfo, ErrorCode, JobKind, JobState, JobSummary, JobsListParams,
+    methods::{JobList, SessionCancel, SessionNew, SessionPrompt},
+    Client, ClientError, ClientInfo, ErrorCode, JobKind, JobListParams, JobState, JobSummary,
     SessionCancelParams, SessionId, SessionNewParams, SessionPromptParams,
 };
 use tokio::net::UnixStream;
@@ -154,7 +154,7 @@ async fn prompt(
         })
 }
 
-/// Polls `rho/jobs/list` until the job of `session`'s turns is in a state
+/// Polls `rho/job/list` until the job of `session`'s turns is in a state
 /// other than running or waiting for input, and returns the job then.
 async fn settled_job(
     sandbox: &Sandbox,
@@ -164,10 +164,7 @@ async fn settled_job(
     sandbox
         .daemon
         .poll_until("the turn to end", DEADLINE, async || {
-            let jobs = client
-                .request::<JobsList>(&JobsListParams {})
-                .await
-                .unwrap();
+            let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
             let job = jobs
                 .jobs
                 .into_iter()
@@ -220,7 +217,7 @@ async fn a_turn_outlives_the_client_that_prompted_it() {
             None,
             session.clone(),
             None,
-            Err(Some(ErrorCode::SessionNotFound))
+            Err(Some(ErrorCode::SessionNotLoaded))
         ),
         "log:\n{}",
         sandbox.daemon_log()

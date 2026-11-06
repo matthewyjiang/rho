@@ -26,8 +26,9 @@ const MAX_SOCKET_PATH_BYTES: usize = SUN_PATH_BYTES - 1;
 
 /// Every file the daemon and its clients use.
 ///
-/// [`DaemonPaths::resolve`] only reads the filesystem to resolve the rho
-/// home's real path (see [`home_id`]). Both directories must be private:
+/// [`DaemonPaths::resolve`] is pure: it takes the home's canonical path from
+/// [`real_home`] and lays the files out under it. Both directories must be
+/// private:
 /// [`DaemonPaths::prepare_runtime_dir`] and [`DaemonPaths::prepare_state_dir`]
 /// create or verify them before anything is created inside.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,7 +78,8 @@ pub(crate) enum DaemonPathError {
 }
 
 impl DaemonPaths {
-    /// Lays out the daemon files for `rho_home`. `env` looks up
+    /// Lays out the daemon files for `rho_home`, the home's canonical path
+    /// from [`real_home`]. `env` looks up
     /// `XDG_RUNTIME_DIR`; tests inject it instead of reading process env.
     ///
     /// The per-user `$XDG_RUNTIME_DIR` is shared by every rho home of that
@@ -186,43 +188,29 @@ fn prepare_private_dir(path: &Path) -> Result<(), DaemonPathError> {
 }
 
 /// Names a rho home's runtime subdirectory: the first 16 hex digits of the
-/// SHA-256 of its real path. Short, so the socket path stays far under the
-/// Unix socket limit, and stable across rho versions, so clients and daemons
-/// of different versions still find each other.
-///
-/// Every spelling of one home (a trailing slash, `//`, `.`, `..`, a symlink)
-/// must name the same socket, because they all share the home's one lock.
-/// The id must also not change once the home exists, since a daemon may be
-/// the process that creates it. So it hashes [`real_path`].
+/// SHA-256 of `rho_home`, the home's canonical path from [`real_home`]. Short,
+/// so the socket path stays far under the Unix socket limit, and stable across
+/// rho versions, so clients and daemons of different versions still find each
+/// other.
 fn home_id(rho_home: &Path) -> String {
     use std::os::unix::ffi::OsStrExt;
-    hex::encode(&Sha256::digest(real_path(rho_home).as_os_str().as_bytes())[..8])
+    hex::encode(&Sha256::digest(rho_home.as_os_str().as_bytes())[..8])
 }
 
-/// The path `path` has, or will have once its missing directories are
-/// created: its nearest existing ancestor canonicalized, then the remaining
-/// components applied as plain directories would resolve them.
-fn real_path(path: &Path) -> PathBuf {
-    let components: Vec<_> = path.components().collect();
-    for existing in (1..=components.len()).rev() {
-        let Ok(mut real) = fs::canonicalize(components[..existing].iter().collect::<PathBuf>())
-        else {
-            continue;
-        };
-        for component in &components[existing..] {
-            match component {
-                std::path::Component::ParentDir => {
-                    real.pop();
-                }
-                std::path::Component::Normal(name) => real.push(name),
-                std::path::Component::CurDir
-                | std::path::Component::RootDir
-                | std::path::Component::Prefix(_) => {}
-            }
-        }
-        return real;
-    }
-    components.iter().collect()
+/// Creates `rho_home` (mode 0700) if it is missing, then returns its canonical
+/// path, which is what [`DaemonPaths::resolve`] takes.
+///
+/// Every spelling of one home (relative, a trailing slash, `//`, `.`, `..`, a
+/// symlink) shares the home's one lock, so it must also name the same socket.
+/// Canonicalizing only after the home exists keeps that true for a daemon
+/// that creates its home, and keeps two relative homes in different
+/// directories apart.
+pub(crate) fn real_home(rho_home: &Path) -> io::Result<PathBuf> {
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(rho_home)?;
+    fs::canonicalize(rho_home)
 }
 
 /// The effective uid of this process.

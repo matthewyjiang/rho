@@ -1,6 +1,6 @@
 //! Sessions: conversations the daemon hosts, named by their session id, the
 //! id `rho sessions` and `/resume` show. While the daemon has a session
-//! loaded, its turns are a job (see [`super::JOBS_LIST`]); each prompt runs
+//! loaded, its turns are a job (see [`super::JOB_LIST`]); each prompt runs
 //! one turn in the daemon, which keeps running when the client that sent it
 //! disconnects.
 
@@ -88,7 +88,7 @@ pub struct SessionNewParams {
 
 /// Result of [`SESSION_NEW`]: the session is loaded and its job is
 /// [`crate::JobState::Idle`]. `rho sessions` lists the session once its
-/// first prompt is saved; [`super::JOBS_LIST`] shows its job.
+/// first prompt is saved; [`super::JOB_LIST`] shows its job.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionNewResponse {
     pub session: SessionId,
@@ -103,7 +103,7 @@ pub struct SessionPromptParams {
 }
 
 /// Result of [`SESSION_PROMPT`]: the prompt is saved and its turn is
-/// running. The turn runs on in the daemon; [`super::JOBS_LIST`] reports how
+/// running. The turn runs on in the daemon; [`super::JOB_LIST`] reports how
 /// it ends.
 ///
 /// A turn that ends before its prompt is saved answers with an error

@@ -110,7 +110,9 @@ pub(crate) enum SessionOrigin {
     Interactive,
     /// An ACP client, such as Zed or T3 Code.
     Acp,
-    /// A session the rho daemon hosts for its clients.
+    /// A session a daemon client started. Whether frontends pass their own
+    /// origin once the TUI (#1667) and ACP (#1670) run through the daemon is
+    /// decided there.
     Daemon,
     /// `rho run`.
     Run,
@@ -303,18 +305,6 @@ impl Session {
             return Ok(None);
         };
         Self::open_resolved_with_histories(&session_root, resolved).map(Some)
-    }
-
-    /// Whether a session is saved under exactly `id` in any workspace.
-    /// Reconciles the session index with the files on disk, as a by-id
-    /// lookup across workspaces does, then reads it; the session is neither
-    /// opened nor leased.
-    pub(crate) fn exists_anywhere(id: &str) -> anyhow::Result<bool> {
-        let session_root = session_root()?;
-        index::reconcile_all_workspaces(&session_root)?;
-        Ok(index::matching_sessions_any_workspace(&session_root, id)?
-            .iter()
-            .any(|found| id_match::path_id(found).as_deref() == Some(id)))
     }
 
     #[cfg(test)]

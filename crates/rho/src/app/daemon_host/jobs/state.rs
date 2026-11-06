@@ -36,7 +36,7 @@ pub(in crate::app::daemon_host) enum TurnEnd {
     Cancelled,
     /// The daemon stopped, or died, before the turn ended.
     Interrupted,
-    /// The turn could not run, for this reason.
+    /// The turn failed, for this reason.
     Failed(String),
 }
 

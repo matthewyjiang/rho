@@ -14,7 +14,7 @@ use std::{
 };
 
 use rho_protocol::{
-    DaemonStatus, JobsListResponse, RpcError, Service, SessionCancelParams, SessionCancelResponse,
+    DaemonStatus, JobListResponse, RpcError, Service, SessionCancelParams, SessionCancelResponse,
     SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
     SessionSteerParams, SessionSteerResponse, PROTOCOL_VERSION,
 };
@@ -74,7 +74,7 @@ impl DaemonHost {
         }
     }
 
-    /// Cancels the turns under way, waits for them to save, and records
+    /// Stops the turns under way, waits for them to save, and records
     /// them interrupted; the wait's budget runs from `stop_requested`. Call
     /// once the transport stopped serving, before releasing the daemon lock.
     pub(super) async fn stop_sessions(&self, stop_requested: tokio::time::Instant) {
@@ -101,7 +101,7 @@ impl Service for DaemonHost {
     }
 
     async fn new_session(&self, params: SessionNewParams) -> Result<SessionNewResponse, RpcError> {
-        self.sessions.open(params).await
+        self.sessions.open_new(params).await
     }
 
     async fn prompt_session(
@@ -115,18 +115,18 @@ impl Service for DaemonHost {
         &self,
         params: SessionCancelParams,
     ) -> Result<SessionCancelResponse, RpcError> {
-        self.sessions.cancel(params).await
+        self.sessions.cancel(params)
     }
 
     async fn steer_session(
         &self,
         params: SessionSteerParams,
     ) -> Result<SessionSteerResponse, RpcError> {
-        self.sessions.steer(params).await
+        self.sessions.steer(params)
     }
 
-    async fn list_jobs(&self) -> JobsListResponse {
-        JobsListResponse {
+    async fn list_jobs(&self) -> JobListResponse {
+        JobListResponse {
             jobs: self.jobs.list().into_iter().map(Into::into).collect(),
         }
     }

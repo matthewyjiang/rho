@@ -5,6 +5,19 @@ use rho_protocol as wire;
 
 use super::jobs::{JobId, JobKind, JobRecord, JobState, TurnEnd};
 
+/// A session id as the wire sends it.
+pub(super) fn session_to_wire(id: rho_sdk::SessionId) -> wire::SessionId {
+    wire::SessionId::new(id.into_string())
+}
+
+/// The session id a request named, or `InvalidId` for a string no session
+/// id can be.
+pub(super) fn session_from_wire(
+    id: &wire::SessionId,
+) -> Result<rho_sdk::SessionId, rho_sdk::InvalidId> {
+    rho_sdk::SessionId::from_string(id.as_str())
+}
+
 impl From<&JobId> for wire::JobId {
     fn from(id: &JobId) -> Self {
         Self::new(id.as_str())
@@ -41,7 +54,7 @@ impl From<JobRecord> for wire::JobSummary {
             state,
             workspace,
             parent,
-            session_id,
+            session,
             created_at,
             updated_at,
         } = record;
@@ -51,7 +64,7 @@ impl From<JobRecord> for wire::JobSummary {
             state: (&state).into(),
             workspace,
             parent: parent.as_ref().map(Into::into),
-            session: wire::SessionId::new(session_id.into_string()),
+            session: session_to_wire(session),
             created_at,
             updated_at,
             error: match state {

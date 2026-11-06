@@ -450,23 +450,20 @@ pub(super) struct SettledConfig {
     pub(super) diagnostics: RuntimeDiagnostics,
 }
 
-/// Settles the config a session of `agent` runs with. Every Rho launch
-/// settles its bound agent here: the CLI, ACP, subagents, and daemon
+/// Settles `config`, the config a session of `agent` runs with. Every Rho
+/// launch settles its bound agent here: the CLI, ACP, subagents, and daemon
 /// sessions.
 ///
-/// The agent's own config, which may pin a model and reasoning, replaces
-/// `config` (kept for an agent on another runtime); that model's
-/// capabilities are fetched when the cache lacks them and
-/// `provider_refresh` did not just fetch them; and its reasoning is
+/// The model's capabilities are fetched when the cache lacks them and
+/// `provider_refresh` did not just fetch them, and the reasoning is
 /// normalized to what the model supports, or refused when an `Explicit`
 /// request does not fit. Custom providers must be active already.
 pub(super) async fn settle_bound_config(
-    config: Config,
+    mut config: Config,
     agent: &BoundAgent,
     provider_refresh: &ProviderRefreshStatus,
     reasoning: rho_providers::model::ReasoningRequestSource,
 ) -> anyhow::Result<SettledConfig> {
-    let mut config = agent.rho_config().cloned().unwrap_or(config);
     prepare_model_metadata(&config, &AppCredentialStore, provider_refresh).await;
     normalize_reasoning(&mut config, reasoning)?;
     let diagnostics = RuntimeDiagnostics::new(&config);

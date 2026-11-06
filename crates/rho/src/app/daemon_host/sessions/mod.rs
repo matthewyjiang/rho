@@ -7,7 +7,7 @@
 //! id. A session this daemon has not loaded, such as one an earlier daemon
 //! ran or one the TUI saved, is refused until reopening lands (#1661).
 //!
-//! Once the daemon stops, it refuses new sessions and prompts, cancels the
+//! Once the daemon stops, it refuses new sessions and prompts, stops the
 //! turns under way, waits for them to save, and records them interrupted.
 
 use std::{
@@ -23,11 +23,13 @@ use rho_protocol::{
 };
 use rho_sdk::{CancellationToken, SessionId, UserInput};
 
-use super::jobs::{JobId, JobRecord, JobRegistry, StartTurnError};
+use super::{
+    jobs::{JobId, JobRecord, JobRegistry, StartTurnError},
+    wire::{session_from_wire, session_to_wire},
+};
 use crate::{
     app::session_runtime::{Closing, Logouts, SessionHandle, SessionRuntime, SteerError},
     config::Config,
-    session::Session,
 };
 
 mod open;
@@ -50,7 +52,7 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(4);
 /// their turns.
 pub(super) struct Sessions {
     jobs: Arc<JobRegistry>,
-    live: Mutex<HashMap<SessionId, Arc<LiveSession>>>,
+    loaded: Mutex<HashMap<SessionId, Arc<LoadedSession>>>,
     /// The daemon's logouts, which every session's credentials follow.
     logouts: Logouts,
     /// Cancelled once the daemon stops.
@@ -58,7 +60,7 @@ pub(super) struct Sessions {
 }
 
 /// A session this daemon loaded.
-struct LiveSession {
+struct LoadedSession {
     /// The job that records the session's turns.
     job: JobId,
     /// Held by the turn under way; taken when the daemon stops.
@@ -73,7 +75,7 @@ struct LiveSession {
     turn_cancel: Mutex<CancellationToken>,
 }
 
-impl LiveSession {
+impl LoadedSession {
     fn new(job: JobId, runtime: SessionRuntime, config: Config) -> Self {
         Self {
             job,
@@ -98,14 +100,14 @@ impl Sessions {
     pub(super) fn new(jobs: Arc<JobRegistry>, stopping: CancellationToken) -> Self {
         Self {
             jobs,
-            live: Mutex::default(),
+            loaded: Mutex::default(),
             logouts: Logouts::default(),
             stopping,
         }
     }
 
     /// Opens a new session in `cwd` and registers the job of its turns.
-    pub(super) async fn open(
+    pub(super) async fn open_new(
         &self,
         params: SessionNewParams,
     ) -> Result<SessionNewResponse, RpcError> {
@@ -127,18 +129,18 @@ impl Sessions {
         // sessions under, so a session opened while the daemon stops is
         // closed here, neither left running nor recorded.
         let refused = {
-            let mut live = self.live();
+            let mut loaded = self.loaded();
             if self.stopping.is_cancelled() {
                 Some((runtime, stopping()))
             } else if let Err(error) = self.jobs.register(record) {
                 let error = RpcError::new(
                     ErrorCode::InternalError,
-                    format!("could not record session: {error}"),
+                    format!("could not record the session's job: {error}"),
                 );
                 Some((runtime, error))
             } else {
-                let loaded = LiveSession::new(job.clone(), runtime, config);
-                live.insert(session.clone(), Arc::new(loaded));
+                let entry = LoadedSession::new(job.clone(), runtime, config);
+                loaded.insert(session.clone(), Arc::new(entry));
                 None
             }
         };
@@ -148,7 +150,7 @@ impl Sessions {
         }
         tracing::info!(%session, %job, "opened session");
         Ok(SessionNewResponse {
-            session: rho_protocol::SessionId::new(session.into_string()),
+            session: session_to_wire(session),
         })
     }
 
@@ -159,7 +161,7 @@ impl Sessions {
         params: SessionPromptParams,
     ) -> Result<SessionPromptResponse, RpcError> {
         self.refuse_when_stopping()?;
-        let session = self.live_session(&params.session).await?;
+        let session = self.loaded_session(&params.session)?;
         let cancel = {
             let mut turn_cancel = session.turn_cancel();
             match self.jobs.start_turn(&session.job) {
@@ -212,11 +214,11 @@ impl Sessions {
 
     /// Cancels a session's turn, if one is under way, even one that has not
     /// begun its prompt yet.
-    pub(super) async fn cancel(
+    pub(super) fn cancel(
         &self,
         params: SessionCancelParams,
     ) -> Result<SessionCancelResponse, RpcError> {
-        let session = self.live_session(&params.session).await?;
+        let session = self.loaded_session(&params.session)?;
         // Both under the `turn_cancel` lock, which a prompt takes to start
         // its turn, so the handle's cancel cannot reach a turn started after
         // this cancel. Lock order: `turn_cancel`, then the prompt gate's
@@ -230,16 +232,16 @@ impl Sessions {
 
     /// Stages `text` for the running turn's next model request. The receipt
     /// is dropped: the turn reports what it applied with its events.
-    pub(super) async fn steer(
+    pub(super) fn steer(
         &self,
         params: SessionSteerParams,
     ) -> Result<SessionSteerResponse, RpcError> {
-        let session = self.live_session(&params.session).await?;
+        let session = self.loaded_session(&params.session)?;
         match session.handle.steer(UserInput::text(params.text)) {
             Ok(_receipt) => Ok(SessionSteerResponse {}),
             Err(SteerError::NotRunning) => Err(RpcError::new(
-                ErrorCode::TurnNotRunning,
-                "session has no running turn to steer",
+                ErrorCode::NotSteerable,
+                "no model request is taking input",
             )),
             Err(SteerError::Refused(error)) => Err(RpcError::new(
                 ErrorCode::SteerRefused,
@@ -249,12 +251,12 @@ impl Sessions {
     }
 
     /// Stops every session for the daemon's exit. Call once `stopping` is
-    /// cancelled: no session opens or turn starts after that. Cancels each
+    /// cancelled: no session opens or turn starts after that. Stops each
     /// turn, waits until [`DRAIN_TIMEOUT`] after `stop_requested` for the
     /// turns to save and the runtimes to tear down, and records every job
     /// still under way as interrupted.
     pub(super) async fn stop(&self, stop_requested: tokio::time::Instant) {
-        let sessions: Vec<_> = self.live().drain().map(|(_, session)| session).collect();
+        let sessions: Vec<_> = self.loaded().drain().map(|(_, session)| session).collect();
         for session in &sessions {
             // The turn stops as one its client lost, so the session keeps
             // what a later daemon resumes (#1661).
@@ -281,35 +283,18 @@ impl Sessions {
         self.jobs.interrupt_unfinished();
     }
 
-    /// The loaded session `id` names. A session that is not loaded is
-    /// `SessionNotLoaded` when the session store has it saved, in any
-    /// workspace, and `SessionNotFound` otherwise.
-    async fn live_session(
-        &self,
-        id: &rho_protocol::SessionId,
-    ) -> Result<Arc<LiveSession>, RpcError> {
-        let id = SessionId::from_string(id.as_str()).map_err(|_| not_found())?;
-        // The guard drops with this statement, before anything awaits.
-        let live = self.live().get(&id).cloned();
-        if let Some(session) = live {
-            return Ok(session);
-        }
-        // A blocking scan of the session index, on the refusal path only.
-        let saved = tokio::task::spawn_blocking(move || Session::exists_anywhere(id.as_str()))
-            .await
-            .map_err(anyhow::Error::from)
-            .and_then(|saved| saved);
-        match saved {
-            Ok(true) => Err(RpcError::new(
+    /// The loaded session `id` names. A well-formed id this daemon has not
+    /// loaded is `SessionNotLoaded`; whether such a session exists at all
+    /// is told apart once the daemon can reopen sessions (#1661).
+    fn loaded_session(&self, id: &rho_protocol::SessionId) -> Result<Arc<LoadedSession>, RpcError> {
+        let id = session_from_wire(id)
+            .map_err(|_| RpcError::new(ErrorCode::InvalidParams, "not a session id"))?;
+        self.loaded().get(&id).cloned().ok_or_else(|| {
+            RpcError::new(
                 ErrorCode::SessionNotLoaded,
                 "session is not loaded in this daemon",
-            )),
-            Ok(false) => Err(not_found()),
-            Err(error) => Err(RpcError::new(
-                ErrorCode::InternalError,
-                format!("could not look up session: {error:#}"),
-            )),
-        }
+            )
+        })
     }
 
     fn refuse_when_stopping(&self) -> Result<(), RpcError> {
@@ -320,15 +305,11 @@ impl Sessions {
         }
     }
 
-    fn live(&self) -> MutexGuard<'_, HashMap<SessionId, Arc<LiveSession>>> {
+    fn loaded(&self) -> MutexGuard<'_, HashMap<SessionId, Arc<LoadedSession>>> {
         // The map is only inserted into and drained, so a panic cannot leave
         // it half-changed.
-        self.live.lock().unwrap_or_else(PoisonError::into_inner)
+        self.loaded.lock().unwrap_or_else(PoisonError::into_inner)
     }
-}
-
-fn not_found() -> RpcError {
-    RpcError::new(ErrorCode::SessionNotFound, "no such session")
 }
 
 fn stopping() -> RpcError {

@@ -9,15 +9,15 @@ use serde::{Deserialize, Serialize};
 use super::{Method, SessionId};
 
 /// List every job the daemon knows.
-pub const JOBS_LIST: &str = "rho/jobs/list";
+pub const JOB_LIST: &str = "rho/job/list";
 
-/// Marker for [`JOBS_LIST`].
-pub struct JobsList;
+/// Marker for [`JOB_LIST`].
+pub struct JobList;
 
-impl Method for JobsList {
-    const NAME: &'static str = JOBS_LIST;
-    type Params = JobsListParams;
-    type Result = JobsListResponse;
+impl Method for JobList {
+    const NAME: &'static str = JOB_LIST;
+    type Params = JobListParams;
+    type Result = JobListResponse;
 }
 
 /// A job's id. Opaque to clients: send back the string the daemon gave.
@@ -83,7 +83,7 @@ pub enum JobState {
     Unknown,
 }
 
-/// One job, as [`JOBS_LIST`] reports it.
+/// One job, as [`JOB_LIST`] reports it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobSummary {
     pub id: JobId,
@@ -103,13 +103,13 @@ pub struct JobSummary {
     pub error: Option<String>,
 }
 
-/// Params of [`JOBS_LIST`].
+/// Params of [`JOB_LIST`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JobsListParams {}
+pub struct JobListParams {}
 
-/// Result of [`JOBS_LIST`].
+/// Result of [`JOB_LIST`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JobsListResponse {
+pub struct JobListResponse {
     /// Every job, oldest first.
     pub jobs: Vec<JobSummary>,
 }

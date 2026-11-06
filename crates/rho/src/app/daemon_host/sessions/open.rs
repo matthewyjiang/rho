@@ -25,8 +25,9 @@ use crate::{
     added_dirs::AddedDirs,
     agent::{AgentCatalog, DEFAULT_AGENT_ID},
     app::{
-        agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundAgent},
-        bootstrap::{root_host_tools, SubagentTools},
+        agent_binding::{
+            root_host_tools, AgentBinder, AgentInvocation, AgentRole, BoundAgent, SubagentTools,
+        },
         cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
         config_repository::ConfigRepository,
         session_runtime::{
@@ -86,6 +87,9 @@ pub(super) async fn open_session(
     // as each rho process publishes its own at startup.
     config.providers.activate()?;
     let agent = bind_default_agent(cwd, &config)?;
+    // The agent's own config, which may pin a model and reasoning, replaces
+    // the loaded one; an agent on another runtime keeps it.
+    let config = agent.rho_config().cloned().unwrap_or(config);
     let SettledConfig {
         config,
         diagnostics,

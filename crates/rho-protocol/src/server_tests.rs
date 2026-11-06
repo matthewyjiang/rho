@@ -37,7 +37,7 @@ fn test_info() -> ServerInfo {
 
 /// The error every test service answers session requests with.
 fn no_such_session() -> RpcError {
-    RpcError::new(ErrorCode::SessionNotFound, "no such session")
+    RpcError::new(ErrorCode::SessionNotLoaded, "no such session")
 }
 
 /// The session and job methods of a test service that hosts no sessions.
@@ -68,8 +68,8 @@ macro_rules! hosts_no_sessions {
             Err(no_such_session())
         }
 
-        async fn list_jobs(&self) -> JobsListResponse {
-            JobsListResponse { jobs: Vec::new() }
+        async fn list_jobs(&self) -> JobListResponse {
+            JobListResponse { jobs: Vec::new() }
         }
     };
 }
@@ -274,7 +274,7 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
             vec![
                 (id(1), Ok(())),
                 (id(2), Err(Some(ErrorCode::InvalidParams))),
-                (id(3), Err(Some(ErrorCode::SessionNotFound))),
+                (id(3), Err(Some(ErrorCode::SessionNotLoaded))),
             ],
         ),
         (

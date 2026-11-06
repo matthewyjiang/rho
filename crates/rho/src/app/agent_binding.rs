@@ -35,6 +35,36 @@ pub(crate) struct AgentInvocation {
     pub(crate) available_tools: AgentCapabilities,
 }
 
+/// Whether a launch offers the subagent tools its config enables.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SubagentTools {
+    Offered,
+    /// `--no-subagents`.
+    Withheld,
+}
+
+/// The built-in tools a root session on this platform starts from, before
+/// its host's own policy: all of them but the other platform's shell, and
+/// no subagent tools when the launch withholds them or `config` disables
+/// them.
+pub(crate) fn root_host_tools(config: &Config, subagents: SubagentTools) -> AgentCapabilities {
+    let mut tools = AgentCapabilities::all_host_tools();
+    // web_search is gated after bind against the resolved provider/model.
+    #[cfg(windows)]
+    tools.remove(&ToolCapability::Bash);
+    #[cfg(not(windows))]
+    tools.remove(&ToolCapability::Powershell);
+    let offered = match subagents {
+        SubagentTools::Offered => config.enable_subagents,
+        SubagentTools::Withheld => false,
+    };
+    if !offered {
+        tools.remove(&ToolCapability::Agent);
+        tools.remove(&ToolCapability::Agents);
+    }
+    tools
+}
+
 /// Capacity class for nested concurrency pools.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CapacityClass {

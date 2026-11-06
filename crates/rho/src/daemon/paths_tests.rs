@@ -139,45 +139,37 @@ fn prepare_runtime_dir_creates_private_dir_and_refuses_exposed_ones() {
     }
 }
 
-// Covers: every spelling of one home names the same socket, since they share
-// its one lock; otherwise a client spelling RHO_HOME differently could not
-// reach the running daemon and a daemon it spawned would be refused the lock.
-// Owner: daemon path policy.
+// Covers: every spelling of one home resolves to its one canonical path, so
+// they all name the same socket as they share its one lock; otherwise a
+// client spelling RHO_HOME differently could not reach the running daemon and
+// a daemon it spawned would be refused the lock. A home that does not exist
+// yet is created private first, so the daemon that creates it binds where its
+// later clients look.
+// Owner: daemon path policy (home resolution).
 #[test]
-fn every_spelling_of_a_home_names_the_same_socket() {
+fn every_spelling_of_a_home_resolves_to_its_canonical_path() {
     let root = TempDir::new().unwrap();
+    let real_root = fs::canonicalize(root.path()).unwrap();
     let home = root.path().join("home");
-    fs::create_dir(&home).unwrap();
+    fs::create_dir_all(home.join("sub")).unwrap();
     let link = root.path().join("link");
     symlink(&home, &link).unwrap();
-    let missing = root.path().join("missing");
-    let xdg = Some("/run/user/1000");
-    let socket = |path: PathBuf| resolve(&path, xdg).unwrap().socket;
 
-    for spelling in [
-        home.join(""),
-        PathBuf::from(format!("{}//", home.display())),
-        home.join("."),
-        link,
+    for (spelling, expected) in [
+        (home.clone(), real_root.join("home")),
+        (home.join(""), real_root.join("home")),
+        (
+            PathBuf::from(format!("{}//", home.display())),
+            real_root.join("home"),
+        ),
+        (home.join("."), real_root.join("home")),
+        (home.join("sub/.."), real_root.join("home")),
+        (link.clone(), real_root.join("home")),
+        // Missing, under a symlinked parent: created, then resolved.
+        (link.join("new"), real_root.join("home/new")),
     ] {
-        assert_eq!(
-            socket(spelling.clone()),
-            socket(home.clone()),
-            "{spelling:?}"
-        );
+        assert_eq!(real_home(&spelling).unwrap(), expected, "{spelling:?}");
     }
-    assert_eq!(socket(missing.join("")), socket(missing.clone()));
-
-    // A home that does not exist yet, under a symlinked parent or reached
-    // through `..`, keeps its socket once it is created.
-    for spelling in [
-        root.path().join("link/new"),
-        root.path().join("home/sub/../new"),
-    ] {
-        let before = socket(spelling.clone());
-        fs::create_dir_all(home.join("new")).unwrap();
-        assert_eq!(before, socket(spelling.clone()), "{spelling:?}");
-        assert_eq!(before, socket(home.join("new")), "{spelling:?}");
-        fs::remove_dir(home.join("new")).unwrap();
-    }
+    let mode = fs::metadata(home.join("new")).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
 }
