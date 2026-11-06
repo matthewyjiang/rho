@@ -17,6 +17,7 @@ fn service() -> AppWorkflowToolService {
         cwd: "/workspace".into(),
         config_path: None,
         tracker: crate::tools::workflow_tracker::WorkflowRunTracker::new(),
+        pool: crate::app::subagent_pool::SubagentPool::Own,
     }
 }
 
@@ -298,6 +299,7 @@ fn workspace_config_declares_primary_workspace_scope() {
         cwd: "/workspace".into(),
         config_path: Some("rho.toml".into()),
         tracker: crate::tools::workflow_tracker::WorkflowRunTracker::new(),
+        pool: crate::app::subagent_pool::SubagentPool::Own,
     }
     .capabilities_for_paths(
         &WorkflowToolRequest::Validate {

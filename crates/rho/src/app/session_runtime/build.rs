@@ -215,6 +215,19 @@ pub(crate) enum ChildAgents {
     HostThreads,
 }
 
+impl ChildAgents {
+    /// The pool the session's in-process agent runs take capacity from:
+    /// its subagents', and its workflow runs' agent nodes, which run in
+    /// process on the session's own pool even when the host's threads run
+    /// its subagents.
+    pub(crate) fn pool(&self) -> SubagentPool {
+        match self {
+            Self::InProcess(pool) => pool.clone(),
+            Self::HostThreads => SubagentPool::Own,
+        }
+    }
+}
+
 /// Builds a session as `build` says, with the permission state of
 /// `config`'s mode, for opening a session (see `open.rs`) or an agent rebind.
 /// `config` is the session's config: the process config plus the host's MCP
@@ -272,12 +285,7 @@ pub(super) async fn build_session(
         hook_host_labels: hook_labels.clone(),
         added_dirs,
         host_io: build.host.host_io.clone(),
-        subagent_pool: match &build.host.children {
-            ChildAgents::InProcess(pool) => pool.clone(),
-            // Unused: the host's threads replace the in-process tools
-            // (below) before any run starts.
-            ChildAgents::HostThreads => SubagentPool::Own,
-        },
+        subagent_pool: build.host.children.pool(),
         extend_tools: |mut tools: AppToolSet| {
             if let Some(poster) = &build.host.parent_notices {
                 tools.add_bundle(crate::tools::message_parent_bundle(Arc::clone(poster)));

@@ -30,6 +30,7 @@ impl From<JobKind> for wire::JobKind {
         match kind {
             JobKind::Session => Self::Session,
             JobKind::Subagent => Self::Subagent,
+            JobKind::Workflow => Self::Workflow,
         }
     }
 }
@@ -79,6 +80,7 @@ pub(super) fn job_summary(record: JobRecord, queue: Option<QueuePlace>) -> wire:
         workspace,
         parent,
         session,
+        workflow_run,
         created_at,
         updated_at,
     } = record;
@@ -89,6 +91,7 @@ pub(super) fn job_summary(record: JobRecord, queue: Option<QueuePlace>) -> wire:
         workspace,
         parent: parent.as_ref().map(Into::into),
         session: session.map(session_to_wire),
+        workflow_run: workflow_run.map(|run| run.to_string()),
         created_at,
         updated_at,
         error: failure(&state),

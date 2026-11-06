@@ -43,9 +43,13 @@ impl fmt::Display for JobId {
 pub enum JobKind {
     /// The turns of a session the daemon hosts; see [`super::SESSION_NEW`].
     Session,
-    /// One subagent run, started by the session job that is its
+    /// One subagent run, started by the session or workflow job that is its
     /// [`JobSummary::parent`].
     Subagent,
+    /// One drive of a workflow run, started by the session job that is its
+    /// [`JobSummary::parent`]; the run's agent nodes are its child
+    /// [`JobKind::Subagent`] jobs.
+    Workflow,
     /// A kind a newer daemon sends that this crate does not know. Reading it
     /// leniently keeps the rest of the job list usable; daemons never send
     /// it.
@@ -101,6 +105,9 @@ pub struct JobSummary {
     /// runtime (Claude, Cursor, Antigravity), which keeps its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<SessionId>,
+    /// The workflow run a [`JobKind::Workflow`] job drives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_run: Option<String>,
     /// Unix time, in seconds, when the job was created.
     pub created_at: u64,
     /// Unix time, in seconds, of the job's last state change.

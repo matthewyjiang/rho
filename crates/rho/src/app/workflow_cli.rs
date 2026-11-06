@@ -60,7 +60,7 @@ use documents::{run_status, write_plan};
 pub(crate) use ops::{freeze_planned_workflow, PreparedPlan, WorkflowOps};
 #[cfg(test)]
 pub(super) use plan_host::{resolve_nodes_with_host, AuthorizedPlanHost};
-pub(crate) use runtime::spawn_background_run;
+pub(crate) use runtime::{spawn_background_run, BackgroundRun};
 pub(crate) use runtime_tui::watch_run;
 pub(super) use tool_service::workflow_tool_service;
 

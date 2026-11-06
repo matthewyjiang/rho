@@ -11,6 +11,9 @@
 //! for capacity in the daemon-wide budget, then `running`, then how it
 //! ended. It never waits for input itself: its questions go to its parent.
 //!
+//! A workflow job is one drive of a workflow run: `running`, then how the
+//! drive ended. Its agent nodes are subagent jobs whose parent it is.
+//!
 //! A state changes only through a [`JobEvent`], so a failed turn always
 //! carries why it failed.
 

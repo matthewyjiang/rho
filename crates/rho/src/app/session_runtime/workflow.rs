@@ -93,8 +93,12 @@ impl SessionRuntime {
         workflow_cli::spawn_background_run(
             run,
             RecoveryDecision::NormalResume,
-            Some(self.build.launch.config_path.clone()),
-            Some(tracker),
+            workflow_cli::BackgroundRun {
+                cwd: self.storage.cwd().to_path_buf(),
+                config_path: Some(self.build.launch.config_path.clone()),
+                pool: self.build.host.children.pool(),
+                tracker,
+            },
         )
         .await
         .map_err(|error| {

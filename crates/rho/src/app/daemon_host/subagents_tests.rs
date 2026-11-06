@@ -6,13 +6,13 @@ use rho_tools::cancellation::RunCancellation;
 use tempfile::TempDir;
 use tokio::sync::watch;
 
-use super::{next_event, Subagents};
+use super::{next_event, workflow_end, Subagents};
 use crate::{
     app::{
         agent_binding::CapacityClass,
         agent_concurrency::{Budget, QueuePlace},
         daemon_host::jobs::{JobEvent, JobId, JobRegistry, JobState, JobStore, TurnEnd},
-        subagent_pool::{StartedSubagent, SubagentPool},
+        subagent_pool::{StartedSubagent, SubagentPool, WorkflowEnd},
     },
     config::Config,
     subagent::{RunState, RunStatus},
@@ -88,6 +88,39 @@ fn a_subagent_job_follows_its_run() {
 }
 
 /// Yields until job `id` is in `state`.
+// Covers: a workflow job ends as its drive ended, with the drive's error
+// when it failed; a drive that stopped without an end was interrupted when
+// the daemon is stopping, and failed otherwise.
+// Owner: daemon workflow jobs.
+#[test]
+fn a_workflow_job_ends_as_its_drive_did() {
+    use TurnEnd::{Cancelled, Completed, Failed, Interrupted};
+    let cases = [
+        (Some(WorkflowEnd::Completed), false, Completed),
+        (Some(WorkflowEnd::Cancelled), false, Cancelled),
+        (
+            Some(WorkflowEnd::Failed(
+                "the workflow run ended with denial".into(),
+            )),
+            false,
+            Failed("the workflow run ended with denial".into()),
+        ),
+        (None, true, Interrupted),
+        (
+            None,
+            false,
+            Failed("the workflow run stopped without an end".into()),
+        ),
+    ];
+    for (ended, stopping, expected) in cases {
+        assert_eq!(
+            workflow_end(ended.clone(), stopping),
+            expected,
+            "{ended:?}, stopping: {stopping}"
+        );
+    }
+}
+
 async fn wait_for_state(registry: &JobRegistry, id: &JobId, state: JobState) {
     for _ in 0..10_000 {
         if registry.get(id).is_some_and(|record| record.state == state) {
@@ -127,7 +160,7 @@ async fn a_child_job_reports_its_queue_place_until_it_runs() {
         .expect("a run of another session holds the only slot");
     let queued = concurrency.join(CapacityClass::Rho);
     let (status_tx, status_rx) = watch::channel(status(RunState::Queued));
-    observer.started(StartedSubagent {
+    observer.subagent_started(StartedSubagent {
         run_id: "run-1".into(),
         session: Some(rho_sdk::SessionId::new()),
         workspace: PathBuf::from("/work"),

@@ -1,10 +1,10 @@
 //! The daemon's job registry: every unit of agent work the daemon knows,
 //! with its state, where it runs, and the session it writes.
 //!
-//! A job is the turns of a session the daemon hosts (see `sessions/`), or a
-//! subagent run one of those sessions started, whose parent is the
-//! session's job (see `subagents.rs`). Workflow runs join as jobs of their
-//! own kind when the daemon hosts them (#1658).
+//! A job is the turns of a session the daemon hosts (see `sessions/`), a
+//! workflow run one of those sessions drives, or a subagent run, whose
+//! parent is the job of the session or workflow run that started it (see
+//! `subagents.rs`).
 //! A job's state moves only through the events in `state.rs`, and every
 //! transition rewrites the job's durable record (see `store.rs`), so a
 //! daemon that restarts lists the jobs its predecessor ran and marks the
@@ -15,6 +15,8 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+
+use crate::workflow::RunId;
 
 mod registry;
 mod state;
@@ -80,8 +82,12 @@ impl From<JobId> for String {
 pub(super) enum JobKind {
     /// The turns of a session the daemon hosts, prompted one by one.
     Session,
-    /// One subagent run, started by the session job that is its parent.
+    /// One subagent run, started by the session or workflow job that is its
+    /// parent.
     Subagent,
+    /// One drive of a workflow run, started by the session job that is its
+    /// parent.
+    Workflow,
 }
 
 /// What the daemon knows about one job, as its record file holds it.
@@ -98,6 +104,9 @@ pub(super) struct JobRecord {
     /// The Rho session the job writes; `None` for a subagent run on
     /// another runtime (Claude, Cursor, Antigravity), which keeps its own.
     pub(super) session: Option<rho_sdk::SessionId>,
+    /// The workflow run a workflow job drives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) workflow_run: Option<RunId>,
     /// Unix time, in seconds, when the job was created.
     pub(super) created_at: u64,
     /// Unix time, in seconds, of the job's last transition.
@@ -116,6 +125,7 @@ impl JobRecord {
             workspace,
             parent: None,
             session: Some(session),
+            workflow_run: None,
             created_at: now,
             updated_at: now,
         }
@@ -136,6 +146,25 @@ impl JobRecord {
             workspace,
             parent: Some(parent),
             session,
+            workflow_run: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// A new job for a drive of workflow run `run` that job `parent`
+    /// started in `workspace`, running from the start: its agent nodes wait
+    /// for capacity, the drive does not.
+    pub(super) fn new_workflow(parent: JobId, workspace: PathBuf, run: RunId) -> Self {
+        let now = unix_now();
+        Self {
+            id: JobId::generate(),
+            kind: JobKind::Workflow,
+            state: JobState::Running,
+            workspace,
+            parent: Some(parent),
+            session: None,
+            workflow_run: Some(run),
             created_at: now,
             updated_at: now,
         }

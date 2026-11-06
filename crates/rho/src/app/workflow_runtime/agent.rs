@@ -1,11 +1,12 @@
-use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
 
 use crate::{
     app::{
         agent_executor::{AgentExecutor, FrozenAgentLaunchRequest},
         headless_host::ChildSession,
+        subagent_pool::{ChildObserver, StartedSubagent},
     },
-    subagent::RunState,
+    subagent::{RunState, RunStatus},
     workflow::{ArtifactObservation, NodeTerminalState, ValidatedOutputRef, WorkflowValue},
 };
 
@@ -19,12 +20,39 @@ use super::{
 
 pub(crate) struct WorkflowAgentExecutor {
     executor: Arc<AgentExecutor>,
+    /// The run's workspace, where its nodes work.
+    workspace: PathBuf,
+    /// Hears of each node's run, when the host shares its pool.
+    observer: Option<Arc<dyn ChildObserver>>,
 }
 
 impl WorkflowAgentExecutor {
-    pub(crate) fn new(executor: Arc<AgentExecutor>) -> Self {
-        Self { executor }
+    pub(crate) fn new(
+        executor: Arc<AgentExecutor>,
+        workspace: PathBuf,
+        observer: Option<Arc<dyn ChildObserver>>,
+    ) -> Self {
+        Self {
+            executor,
+            workspace,
+            observer,
+        }
     }
+}
+
+/// Resolves `timeout` after the node's run leaves the queue, so a wait for
+/// capacity in a budget shared with other work does not count against the
+/// node. Never resolves for a run that ended while queued: its end arrives
+/// through the run's handle.
+async fn node_deadline(mut status: tokio::sync::watch::Receiver<RunStatus>, timeout: Duration) {
+    if status
+        .wait_for(|status| status.state != RunState::Queued)
+        .await
+        .is_err()
+    {
+        std::future::pending::<()>().await;
+    }
+    tokio::time::sleep(timeout).await;
 }
 
 impl WorkflowNodeExecutor<AgentInvocation> for WorkflowAgentExecutor {
@@ -56,15 +84,16 @@ impl WorkflowAgentExecutor {
                 .map_err(|_| RuntimeError::UnsafeArtifact(agent_directory.clone()))?,
         )?;
         let output_file = agent_directory.join(crate::subagent::RESULT_FILE_NAME);
+        let run_id = format!(
+            "workflow:{}:{}:{}",
+            request.run_id, request.node, request.attempt
+        );
         let mut handle = self
             .executor
             .spawn_frozen(FrozenAgentLaunchRequest {
                 agent: agent.as_ref().clone(),
                 prompt: prompt.clone(),
-                run_id: format!(
-                    "workflow:{}:{}:{}",
-                    request.run_id, request.node, request.attempt
-                ),
+                run_id: run_id.clone(),
                 output_file: output_file.clone(),
                 hook_host_labels: rho_sdk::hooks::HookHostLabels::new()
                     .label("workflow_run_id", request.run_id.to_string())
@@ -77,10 +106,16 @@ impl WorkflowAgentExecutor {
                 }),
             })
             .map_err(|error| RuntimeError::Executor(error.to_string()))?;
+        if let Some(observer) = &self.observer {
+            observer.subagent_started(StartedSubagent::of(run_id, self.workspace.clone(), &handle));
+        }
         if let Some(progress) = &request.progress {
             progress.message(format!("starting agent {}", agent.agent_id));
         }
-        let deadline = tokio::time::sleep(Duration::from_secs(prepared.timeout_seconds));
+        let deadline = node_deadline(
+            handle.clone_status_watch(),
+            Duration::from_secs(prepared.timeout_seconds),
+        );
         tokio::pin!(deadline);
         let mut status_rx = handle.clone_status_watch();
         let mut last_report = String::new();
@@ -287,3 +322,7 @@ pub(super) async fn stop_agent(
         }),
     }
 }
+
+#[cfg(test)]
+#[path = "agent_tests.rs"]
+mod tests;

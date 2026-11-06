@@ -292,6 +292,7 @@ pub(crate) async fn assemble_tools_and_prompt(
                 options.cwd.to_path_buf(),
                 Some(options.config_path.clone()),
                 workflow_tracker,
+                options.subagent_pool.clone(),
             ));
         }
         AppToolSet::new(options.config, options.diagnostics.clone(), tool_options).with_mcp(mcp)

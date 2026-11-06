@@ -251,7 +251,12 @@
         },
         {
           "const": "subagent",
-          "description": "One subagent run, started by the session job that is its\n[`JobSummary::parent`].",
+          "description": "One subagent run, started by the session or workflow job that is its\n[`JobSummary::parent`].",
+          "type": "string"
+        },
+        {
+          "const": "workflow",
+          "description": "One drive of a workflow run, started by the session job that is its\n[`JobSummary::parent`]; the run's agent nodes are its child\n[`JobKind::Subagent`] jobs.",
           "type": "string"
         },
         {
@@ -388,6 +393,13 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "workflow_run": {
+          "description": "The workflow run a [`JobKind::Workflow`] job drives.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "workspace": {
           "description": "The workspace the job runs in.",

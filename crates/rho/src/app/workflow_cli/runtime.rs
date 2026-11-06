@@ -19,6 +19,7 @@ use crate::{
         policy::AppPolicy,
         session_runtime::UnattendedApprovals,
         subagent_host_input::SubagentHostInputBridge,
+        subagent_pool::{StartedWorkflow, SubagentPool, WorkflowEnd},
         workflow_runtime::{
             CommandHostFactory, RecoveryDecision, RuntimeError, RuntimeSecurity,
             WorkflowAgentExecutor, WorkflowCommandExecutor, WorkflowNodeExecutor, WorkflowRunner,
@@ -28,7 +29,8 @@ use crate::{
     config::Config,
     permission::{remember_allowed_workspace_writes, PermissionMode, SessionWriteLog},
     permission_classifier_handler::ClassifierApprovalHandler,
-    workflow::{ResolvedNode, StoredRun},
+    tools::workflow_tracker::WorkflowRunTracker,
+    workflow::{ResolvedNode, StoredRun, WorkflowOutcome},
 };
 
 use super::{
@@ -252,7 +254,13 @@ pub(crate) async fn execute_run(
         interactive_input && interactive_display,
         crate::usage::default_recording().await,
     );
-    let runtime = WorkflowRuntime::build(&run, config_path, approval_mode)?;
+    let runtime = WorkflowRuntime::build(
+        &run,
+        &std::env::current_dir()?,
+        config_path,
+        approval_mode,
+        SubagentPool::Own,
+    )?;
     let custom_providers = runtime.custom_providers.clone();
     rho_providers::provider::scope_custom_openai_compatible_providers(
         custom_providers,
@@ -290,31 +298,61 @@ pub(crate) async fn execute_run(
     .await
 }
 
+/// Where a background run is driven from, and who hears how it went.
+pub(crate) struct BackgroundRun {
+    /// The workspace the run was planned in.
+    pub(crate) cwd: PathBuf,
+    pub(crate) config_path: Option<PathBuf>,
+    /// The starting session's pool, which the run's agent nodes share. A
+    /// shared pool's observer hears of the run and says where its nodes run.
+    pub(crate) pool: SubagentPool,
+    /// Delivers the run's completion to the starting session.
+    pub(crate) tracker: WorkflowRunTracker,
+}
+
 /// Starts a workflow run on a detached task and returns immediately.
 ///
 /// The caller keeps chatting or returns a tool result while the run continues.
 /// Inspect progress with status; stop it with cancel. The owner process must
-/// stay alive for the run to make progress. When `tracker` is set, the parent
-/// session receives a completion notification after the driver finishes.
+/// stay alive for the run to make progress. The starting session receives a
+/// completion notification through `background.tracker` after the driver
+/// finishes.
 pub(crate) async fn spawn_background_run(
     run: StoredRun,
     recovery: RecoveryDecision,
-    config_path: Option<std::path::PathBuf>,
-    tracker: Option<crate::tools::workflow_tracker::WorkflowRunTracker>,
+    background: BackgroundRun,
 ) -> anyhow::Result<StoredRun> {
+    let BackgroundRun {
+        cwd,
+        config_path,
+        pool,
+        tracker,
+    } = background;
     let run_id = run.manifest.run_id;
-    if let Some(tracker) = &tracker {
-        tracker.update_from_stored(&run);
-    }
+    tracker.update_from_stored(&run);
+    let (nodes, end) = match pool {
+        SubagentPool::Own => (SubagentPool::Own, None),
+        SubagentPool::Shared { observer, .. } => {
+            let hosted = observer.workflow_started(StartedWorkflow {
+                run_id,
+                workspace: cwd.clone(),
+            });
+            (hosted.nodes, Some(hosted.end))
+        }
+    };
     let runtime = match WorkflowRuntime::build(
         &run,
+        &cwd,
         config_path,
         WorkflowApprovalMode::non_interactive(crate::usage::default_recording().await),
+        nodes,
     ) {
         Ok(runtime) => runtime,
         Err(error) => {
-            if let Some(tracker) = &tracker {
-                tracker.mark_failed(&run_id.to_string(), error.to_string());
+            tracker.mark_failed(&run_id.to_string(), error.to_string());
+            if let Some(end) = end {
+                // The host may already have stopped following the run.
+                let _ = end.send(WorkflowEnd::Failed(format!("{error:#}")));
             }
             return Err(error);
         }
@@ -328,9 +366,7 @@ pub(crate) async fn spawn_background_run(
                 let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
                 let forward_events = async {
                     while let Some(event) = event_rx.recv().await {
-                        if let Some(tracker) = &tracker {
-                            tracker.record_event(&run_id.to_string(), &event);
-                        }
+                        tracker.record_event(&run_id.to_string(), &event);
                     }
                 };
                 let (result, ()) = tokio::join!(
@@ -339,11 +375,13 @@ pub(crate) async fn spawn_background_run(
                 );
                 drop(runner);
                 runtime.shutdown().await;
-                if let Some(tracker) = tracker {
-                    match &result {
-                        Ok(final_run) => tracker.mark_finished_from_stored(final_run),
-                        Err(error) => tracker.mark_failed(&run_id.to_string(), error.to_string()),
-                    }
+                match &result {
+                    Ok(final_run) => tracker.mark_finished_from_stored(final_run),
+                    Err(error) => tracker.mark_failed(&run_id.to_string(), error.to_string()),
+                }
+                if let Some(end) = end {
+                    // The host may already have stopped following the run.
+                    let _ = end.send(drive_end(&result));
                 }
                 match result {
                     Ok(_) => tracing::info!(%run_id, "background workflow completed"),
@@ -360,6 +398,28 @@ pub(crate) async fn spawn_background_run(
     Ok(run)
 }
 
+/// How a drive that returned `result` ended, for the host following it.
+fn drive_end(result: &Result<StoredRun, RuntimeError>) -> WorkflowEnd {
+    let run = match result {
+        Ok(run) => run,
+        Err(error) => return WorkflowEnd::Failed(error.to_string()),
+    };
+    let state = &run.state.state;
+    match state.outcome() {
+        Some(WorkflowOutcome::Success) => WorkflowEnd::Completed,
+        Some(WorkflowOutcome::Cancellation) => WorkflowEnd::Cancelled,
+        Some(
+            outcome @ (WorkflowOutcome::Failure
+            | WorkflowOutcome::Denial
+            | WorkflowOutcome::Blocked),
+        ) => WorkflowEnd::Failed(format!("the workflow run ended with {}", outcome.as_str())),
+        None => WorkflowEnd::Failed(format!(
+            "the workflow run stopped {}",
+            state.lifecycle.as_str()
+        )),
+    }
+}
+
 struct WorkflowRuntime {
     runner: Arc<WorkflowRunner>,
     command_executor:
@@ -370,12 +430,16 @@ struct WorkflowRuntime {
 }
 
 impl WorkflowRuntime {
+    /// The runtime that drives `run`, planned in `cwd`, its agent nodes
+    /// taking capacity from `nodes`.
     fn build(
         run: &StoredRun,
+        cwd: &std::path::Path,
         config_path: Option<std::path::PathBuf>,
         approval_mode: WorkflowApprovalMode,
+        nodes: SubagentPool,
     ) -> anyhow::Result<Self> {
-        let cwd = std::env::current_dir()?.canonicalize()?;
+        let cwd = cwd.canonicalize()?;
         let repository = ConfigRepository::new(config_path);
         let config_path = absolute_config_path(&repository)?;
         let mut config = repository.load()?;
@@ -427,16 +491,13 @@ impl WorkflowRuntime {
             Some(classifier) => UnattendedApprovals::ClassifierTemplate(classifier),
             None => UnattendedApprovals::Inherited(approvals.session),
         };
+        let (concurrency, observer) = nodes.into_parts(config.agent_concurrency);
         let app_agent_executor = Arc::new(
             AgentExecutor::new(
                 config.clone(),
                 config_path,
                 cwd.clone(),
-                // The run's own pool until the daemon hosts workflow runs
-                // (#1658).
-                crate::app::agent_concurrency::AgentConcurrency::from_config(
-                    config.agent_concurrency,
-                ),
+                concurrency,
                 SubagentHostInputBridge::new(),
                 crate::app::subagent_messaging::SubagentNoticeBridge::new(),
             )
@@ -444,7 +505,11 @@ impl WorkflowRuntime {
         );
         let agent_executor: Arc<
             dyn WorkflowNodeExecutor<crate::app::workflow_runtime::AgentInvocation>,
-        > = Arc::new(WorkflowAgentExecutor::new(app_agent_executor));
+        > = Arc::new(WorkflowAgentExecutor::new(
+            app_agent_executor,
+            cwd.clone(),
+            observer,
+        ));
         let command_executor: Arc<
             dyn WorkflowNodeExecutor<crate::app::workflow_runtime::CommandInvocation>,
         > = Arc::new(WorkflowCommandExecutor::new(

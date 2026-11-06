@@ -14,7 +14,7 @@ use rho_sdk::{
 
 use crate::{
     agent::AgentCapabilities,
-    app::workflow_runtime::RecoveryDecision,
+    app::{subagent_pool::SubagentPool, workflow_runtime::RecoveryDecision},
     tools::{
         workflow::{
             WorkflowArtifactSummary, WorkflowCancellationStateSummary, WorkflowDiagnosticSummary,
@@ -32,15 +32,19 @@ use super::{diagnostic_for_model_error, ops::WorkflowOps, plan_host::AuthorizedP
 
 mod capabilities;
 
+/// The `workflow` tool of a session in `cwd`, whose runs' agent nodes share
+/// the session's subagent `pool`.
 pub(in crate::app) fn workflow_tool_service(
     cwd: PathBuf,
     config_path: Option<PathBuf>,
     tracker: WorkflowRunTracker,
+    pool: SubagentPool,
 ) -> Arc<dyn WorkflowToolService> {
     Arc::new(AppWorkflowToolService {
         cwd,
         config_path,
         tracker,
+        pool,
     })
 }
 
@@ -48,6 +52,7 @@ struct AppWorkflowToolService {
     cwd: PathBuf,
     config_path: Option<PathBuf>,
     tracker: WorkflowRunTracker,
+    pool: SubagentPool,
 }
 
 impl WorkflowToolService for AppWorkflowToolService {
@@ -384,8 +389,12 @@ impl AppWorkflowToolService {
         let started = runtime::spawn_background_run(
             run,
             recovery,
-            self.config_path.clone(),
-            Some(self.tracker.clone()),
+            runtime::BackgroundRun {
+                cwd: self.cwd.clone(),
+                config_path: self.config_path.clone(),
+                pool: self.pool.clone(),
+                tracker: self.tracker.clone(),
+            },
         )
         .await
         .map_err(model_workflow_tool_error)?;
@@ -609,7 +618,10 @@ fn diagnostic_summary(diagnostic: crate::workflow::Diagnostic) -> WorkflowDiagno
     }
 }
 
+/// The error the model sees for `error`, with paths and source text
+/// redacted. The full error goes to the log, for whoever runs the host.
 fn model_workflow_tool_error(error: anyhow::Error) -> ToolError {
+    tracing::warn!(error = format!("{error:#}"), "workflow tool call failed");
     let diagnostic = diagnostic_for_model_error(&error);
     ToolError::new(ToolErrorKind::Execution, diagnostic.message)
 }

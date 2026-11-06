@@ -83,10 +83,13 @@ fn auto_workflow_requires_configured_permission_classifier_model() {
         .unwrap();
     let run = stored_run(workflow::test_support::workflow(Vec::new()));
 
+    let workspace = tempfile::tempdir().unwrap();
     let error = match WorkflowRuntime::build(
         &run,
+        workspace.path(),
         Some(config.configured_path().unwrap()),
         WorkflowApprovalMode::non_interactive(Default::default()),
+        crate::app::subagent_pool::SubagentPool::Own,
     ) {
         Ok(_) => panic!("Auto workflow startup must require the classifier model"),
         Err(error) => error,
