@@ -209,13 +209,16 @@ pub struct SessionAttachResponse {
 }
 
 /// What the events after a [`SessionAttachResponse`] start with.
+///
+/// Closed on purpose, unlike the event enums: a client cannot follow events
+/// it does not know how to start from, so a new kind is a protocol major.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Replay {
     /// The events after the client's cursor follow.
     Tail,
-    /// Discard what you have for this session: its saved transcript
-    /// follows, then the turn in progress.
+    /// Discard what you have for this session, cursor included: its saved
+    /// transcript follows, then the turn in progress.
     Reset,
 }
 
@@ -234,9 +237,11 @@ pub struct SessionDetachResponse {}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionEventParams {
     pub session: SessionId,
-    /// Rises by one per live event. Replayed transcript events carry the
-    /// seq the turn in progress started after, so the highest seq a client
-    /// has seen is always its cursor.
+    /// Rises by one per live event. A reset's transcript events carry 0,
+    /// except the last, which carries the seq the turn in progress began
+    /// after. So the highest seq a client has seen since its attach
+    /// response, once above 0, is always a cursor it can resume from: one
+    /// that detaches partway through a transcript resets again.
     pub seq: Seq,
     pub event: SessionEvent,
 }

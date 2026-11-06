@@ -2,6 +2,9 @@
 //! the files it touches, at a line when the call knows one, for hosts that
 //! follow the agent through the workspace.
 
+// Duplicated by the daemon's wire mapper in `app/session_events/tools.rs`
+// until ACP moves onto it (#1670); fix both.
+
 use std::path::Path;
 
 use agent_client_protocol::schema::v1::{ToolCallLocation, ToolKind};

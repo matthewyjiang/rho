@@ -56,7 +56,9 @@ string_id! {
 }
 
 /// Position in a stream: the number of live events sent before and
-/// including this one. Starts at 1.
+/// including this one, from 1. `Seq(0)` is not a position: a reset's
+/// transcript events carry it (see [`super::SessionEventParams::seq`]), and
+/// a cursor at 0 always resets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Seq(pub u64);

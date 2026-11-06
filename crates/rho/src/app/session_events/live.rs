@@ -73,6 +73,9 @@ pub(crate) struct LiveEvents {
     call_ids: CallIds,
     /// Wire ids of the calls [`Self::replay`] opened.
     replayed_ids: CallIds,
+    /// How many of the session's saved display rows [`Self::replay`] has
+    /// replayed.
+    replayed_rows: usize,
     /// The compaction call still open.
     compaction: Option<ToolCallId>,
     /// The message the latest chunk belongs to, while later chunks of its
@@ -122,6 +125,7 @@ impl LiveEvents {
             announced: BTreeMap::new(),
             call_ids: CallIds::default(),
             replayed_ids: CallIds::default(),
+            replayed_rows: 0,
             compaction: None,
             message: None,
         }
@@ -136,15 +140,26 @@ impl LiveEvents {
         self.call_ids.cover(&self.replayed_ids);
     }
 
-    /// The wire events that replay `rows`, the session's saved display rows
-    /// after those this mapper replayed before (see [`replay::replay`]).
+    /// The wire events that replay the rows of `rows`, the session's saved
+    /// display rows, that this mapper has not replayed yet (see
+    /// [`replay::replay`]).
     pub(crate) fn replay(
         &mut self,
         rows: &[ProjectedMessage],
         workspace: &Path,
         tools: SessionTools<'_>,
     ) -> Vec<WireEvent> {
-        replay::replay(rows, workspace, tools, &mut self.replayed_ids)
+        let from = std::mem::replace(&mut self.replayed_rows, rows.len());
+        let Some(new) = rows.get(from..) else {
+            // Display rows only grow along a daemon session's branch.
+            tracing::warn!(
+                from,
+                rows = rows.len(),
+                "a session's saved rows shrank; its replay keeps the rows it had"
+            );
+            return Vec::new();
+        };
+        replay::replay(new, workspace, tools, &mut self.replayed_ids)
     }
 
     /// The wire events for `event`, in order; empty for events the wire does

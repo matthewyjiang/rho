@@ -60,10 +60,10 @@ Clients cannot yet answer a turn's requests ([#1660](https://github.com/matthewy
 
 After `rho/session/attach`, the daemon sends the session's events to the connection as `rho/session/event` notifications, each with the session, a `seq`, and the event. The attach response comes first. Events are the conversation as a client shows it: the job's `state`, user messages, agent message and thought chunks, tool calls (opened with a title, kind, input, and locations, then updated until they complete or fail), the session's plan, context `usage`, transcript cards, and notices. Approvals and questions are not sent yet ([#1660](https://github.com/matthewyjiang/rho/issues/1660)).
 
-Each loaded session has one stream of events, numbered by `seq` from 1. A client keeps the `stream` and the last `seq` it handled as its cursor, and passes them as `after` when it attaches again, for example after the TUI is closed and reopened:
+Each loaded session has one stream of events, numbered by `seq` from 1. A client keeps the `stream` and the highest `seq` it has handled since its attach response as its cursor, and passes them as `after` when it attaches again, for example after the TUI is closed and reopened:
 
 - `tail`: the daemon still buffers every event after the cursor, and sends those, then the live ones. The client continues where it was.
-- `reset`: the cursor is from another stream, too old, or absent. The daemon sends the session's saved conversation, then the events of the turn under way, numbered from where that turn began. The client replaces what it shows with them.
+- `reset`: the cursor is from another stream, too old, at 0, or absent. The client drops what it shows and its cursor. The daemon sends the session's saved conversation, then the events of the turn under way. The saved conversation's events carry `seq` 0, except the last, which carries the `seq` the turn under way began after, so a client that detaches before it has the whole conversation holds no cursor and resets again.
 
 The daemon buffers up to 16 MiB of a session's recent events for clients that resume. A turn larger than that still resets correctly once it is saved; a client that resets while it is under way gets a notice that its start is missing.
 

@@ -97,7 +97,7 @@ impl LoadedSession {
             job,
             handle: runtime.handle(),
             live: Mutex::new(LiveEvents::new(runtime.workspace_root(), runtime.tools())),
-            feed: Feed::new(Vec::new(), 0),
+            feed: Feed::new(),
             runtime: tokio::sync::Mutex::new(Some(runtime)),
             config,
             turn_cancel: Mutex::default(),
@@ -131,9 +131,10 @@ impl Sessions {
     }
 
     /// Starts the daemon's stop: from now on no session opens, no turn
-    /// starts, and every client attached to a session, or attaching one, is
-    /// detached as `daemon_stopping`. Call before the transport closes the
-    /// connections, so each client learns why. Calling again does nothing.
+    /// starts, no client attaches, and every client attached to a session,
+    /// even by an attach that raced the stop, is detached as
+    /// `daemon_stopping`. Call before the transport closes the connections,
+    /// so each client learns why. Calling again does nothing.
     pub(super) fn begin_stop(&self) {
         // Under the lock `open_new` checks `stopping` under, so no session
         // is added after this with its feed open.
@@ -296,21 +297,16 @@ impl Sessions {
     ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
         self.refuse_when_stopping()?;
         let session = self.loaded_session(&params.session)?;
-        let state = self.jobs.get(&session.job).ok_or_else(|| {
-            RpcError::new(
-                ErrorCode::InternalError,
-                format!("session's job {} is not recorded", session.job),
-            )
-        })?;
         let Attached {
             stream,
             replay,
+            job,
             subscription,
         } = session.feed.attach(params.after.as_ref());
         let response = SessionAttachResponse {
             stream,
             replay,
-            state: (&state.state).into(),
+            state: job,
         };
         Ok((response, subscription))
     }

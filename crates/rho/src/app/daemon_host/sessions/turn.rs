@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::{
     super::{
-        jobs::{JobEvent, JobRegistry, TurnEnd},
+        jobs::{JobEvent, JobRegistry, JobState, TurnEnd},
         wire::state_event,
     },
     LoadedSession,
@@ -92,8 +92,8 @@ impl TurnTask {
         // Declared after the lock, so even a panic records the end (see
         // `DaemonView`'s drop) before the lock is released.
         let mut view = DaemonView::new(Arc::clone(&session), jobs, started);
-        session.feed.begin_turn();
-        view.publish_state();
+        // The prompt that spawned this turn recorded its job running.
+        view.publish_state(&JobState::Running);
         let ended = match &mut *runtime {
             Some(runtime) => run_turn(runtime, &mut view, text, &session.config, &cancel).await,
             // Only the daemon's stop takes the runtime, after its last turn.
@@ -122,24 +122,14 @@ fn save_transcript(session: &LoadedSession, runtime: &SessionRuntime) {
         return;
     };
     match saved.display_rows() {
-        Ok(rows) => session
-            .feed
-            .end_turn(rows.len(), |from| match rows.get(from..) {
-                Some(new) => session.live().replay(new, saved.cwd(), saved.tools()),
-                // Display rows only grow along a daemon session's branch.
-                None => {
-                    tracing::warn!(
-                        from,
-                        rows = rows.len(),
-                        "a session's saved rows shrank; its feed transcript keeps the rows it had"
-                    );
-                    Vec::new()
-                }
-            }),
+        Ok(rows) => {
+            let replayed = session.live().replay(&rows, saved.cwd(), saved.tools());
+            session.feed.end_turn(replayed);
+        }
         Err(error) => tracing::warn!(
             job = %session.job,
             error = format!("{error:#}"),
-            "could not read the turn's saved rows; clients that reset replay it from the buffer"
+            "could not read the turn's saved rows; clients that reset replay it live until a later turn saves"
         ),
     }
 }
@@ -227,20 +217,18 @@ impl DaemonView {
         }
     }
 
-    /// Applies `event` to the job and tells attached clients its state.
+    /// Applies `event` to the job and tells attached clients the state it
+    /// left the job in.
     fn record(&self, event: JobEvent) {
         let job = &self.session.job;
-        if let Err(error) = self.jobs.record(job, event) {
-            tracing::warn!(%job, %error, "could not record a turn's progress");
+        match self.jobs.record(job, event) {
+            Ok(state) => self.publish_state(&state),
+            Err(error) => tracing::warn!(%job, %error, "could not record a turn's progress"),
         }
-        self.publish_state();
     }
 
-    /// Tells attached clients the state the registry records for the job.
-    fn publish_state(&self) {
-        if let Some(record) = self.jobs.get(&self.session.job) {
-            self.session.feed.publish([state_event(&record.state)]);
-        }
+    fn publish_state(&self, state: &JobState) {
+        self.session.feed.publish([state_event(state)]);
     }
 
     /// Takes the turn's events until it drops its sender. Holds

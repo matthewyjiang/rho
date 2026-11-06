@@ -1,3 +1,6 @@
+// Duplicated by the daemon's wire mapper in `app/session_events/live.rs`
+// until ACP moves onto it (#1670); fix both.
+
 use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},

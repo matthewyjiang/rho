@@ -379,8 +379,8 @@ impl Follower {
             };
             assert_eq!(params.session, self.session);
             let seen = self.events.last().map(|(seq, _)| *seq);
-            // A reset numbers its replay at the point the turn in progress
-            // began, so a cold follower takes equal seqs as they come.
+            // A reset's transcript is at seq 0 but its last event, so a cold
+            // follower takes equal seqs as they come.
             if seen.is_some_and(|seen| params.seq < seen) {
                 continue;
             }

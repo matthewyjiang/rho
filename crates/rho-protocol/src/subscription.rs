@@ -44,7 +44,8 @@ pub fn subscription(backlog: usize, replay: Vec<(Seq, SessionEvent)>) -> (Publis
 }
 
 /// The daemon's end of one subscription: publishes one session's live events
-/// to one attached client.
+/// to one attached client. Publish only events that encode as JSON; one with
+/// a non-UTF-8 path does not, and its connection would fail on it.
 ///
 /// Dropping it ends the subscription once the client has the events already
 /// published, without a [`crate::methods::SESSION_DETACHED`] notification;
@@ -92,10 +93,15 @@ impl Publisher {
     }
 
     /// Resolves once the subscription is gone, as [`Published::Gone`]
-    /// reports, so a publisher whose client left can be dropped without
-    /// waiting for the next event.
+    /// reports.
     pub async fn closed(&self) {
         self.events.closed().await;
+    }
+
+    /// Whether the subscription is gone, as [`Published::Gone`] reports, so
+    /// a publisher whose client left can be dropped before the next event.
+    pub fn is_gone(&self) -> bool {
+        self.events.is_closed()
     }
 
     /// Ends the subscription with `reason`, such as

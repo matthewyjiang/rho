@@ -187,9 +187,6 @@ impl Table {
 /// Forwards one subscription's events, then its detach reason, while it is
 /// the session's current forwarder. Once `ending` is set, it forwards only
 /// what is already published, then finishes.
-///
-/// An event JSON cannot hold, such as one with a non-UTF-8 path, is skipped;
-/// the client sees the gap in `seq`.
 async fn forward(
     forwarders: Arc<Forwarders>,
     outbox: Outbox,
@@ -204,10 +201,10 @@ async fn forward(
             seq,
             event,
         };
-        match notification::<SessionEventNotification>(&params) {
-            Ok(message) => forwarders.send(&session, id, message, &outbox).await,
-            Err(_) => true,
-        }
+        // A publisher publishes only events that encode (`Publisher`).
+        let message = notification::<SessionEventNotification>(&params)
+            .expect("published session events encode");
+        forwarders.send(&session, id, message, &outbox).await
     };
     let published_all = loop {
         let next = tokio::select! {
@@ -242,9 +239,9 @@ async fn forward(
             session: session.clone(),
             reason,
         };
-        if let Ok(message) = notification::<SessionDetachedNotification>(&params) {
-            forwarders.send(&session, id, message, &outbox).await;
-        }
+        let message = notification::<SessionDetachedNotification>(&params)
+            .expect("a detached notification holds only JSON data");
+        forwarders.send(&session, id, message, &outbox).await;
     }
     forwarders.finish(&session, id);
 }

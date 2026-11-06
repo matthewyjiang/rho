@@ -278,16 +278,20 @@ where
                         outcome: Ok(result),
                     },
                     Ok(Route::Call(call)) => {
-                        let responder = Responder {
-                            id: Some(id),
-                            outbox: outbox.clone(),
-                        };
+                        let responder = Responder::new(id, &outbox);
+                        let service = Arc::clone(&service);
+                        calls.spawn(async move { responder.send(call.run(&*service).await) });
+                        // A finished call stays in the set until joined.
+                        while calls.try_join_next().is_some() {}
+                        continue;
+                    }
+                    Ok(Route::Attach(params)) => {
+                        let responder = Responder::new(id, &outbox);
                         let service = Arc::clone(&service);
                         let forwarders = Arc::clone(forwarders);
-                        calls.spawn(
-                            async move { call.run(&*service, responder, &forwarders).await },
-                        );
-                        // A finished call stays in the set until joined.
+                        calls.spawn(async move {
+                            attach(&*service, params, responder, &forwarders).await;
+                        });
                         while calls.try_join_next().is_some() {}
                         continue;
                     }
@@ -358,6 +362,9 @@ enum Route {
     Answered(Value),
     /// The service answers it, in its own task.
     Call(ServiceCall),
+    /// `rho/session/attach`: the service answers it in its own task, then
+    /// the connection forwards the session's events.
+    Attach(SessionAttachParams),
     /// `rho/session/detach`: the connection stops that session's forwarder
     /// and answers in place.
     Detach(SessionDetachParams),
@@ -371,13 +378,12 @@ enum ServiceCall {
     PromptSession(SessionPromptParams),
     CancelSession(SessionCancelParams),
     SteerSession(SessionSteerParams),
-    AttachSession(SessionAttachParams),
     ListJobs,
 }
 
 impl Connection {
     /// Answers the handshake, protocol errors, and detaches in place, and
-    /// hands service methods to [`ServiceCall`].
+    /// hands attaches and the other service methods on.
     fn route(
         &mut self,
         method: &str,
@@ -409,6 +415,9 @@ impl Connection {
                 ErrorCode::InvalidRequest,
                 format!("{HELLO} was already accepted on this connection"),
             )),
+            (Self::Ready, SESSION_ATTACH) => {
+                decode_params::<SessionAttach>(params).map(Route::Attach)
+            }
             (Self::Ready, SESSION_DETACH) => {
                 decode_params::<SessionDetach>(params).map(Route::Detach)
             }
@@ -428,7 +437,6 @@ impl ServiceCall {
             SESSION_PROMPT => decode_params::<SessionPrompt>(params).map(Self::PromptSession),
             SESSION_CANCEL => decode_params::<SessionCancel>(params).map(Self::CancelSession),
             SESSION_STEER => decode_params::<SessionSteer>(params).map(Self::SteerSession),
-            SESSION_ATTACH => decode_params::<SessionAttach>(params).map(Self::AttachSession),
             JOB_LIST => decode_params::<JobList>(params).map(|JobListParams {}| Self::ListJobs),
             method => Err(RpcError::new(
                 ErrorCode::MethodNotFound,
@@ -437,51 +445,54 @@ impl ServiceCall {
         }
     }
 
-    /// Runs the call and answers it through `responder`; an attach then
-    /// starts forwarding through `forwarders`.
-    async fn run<Svc: Service>(
-        self,
-        service: &Svc,
-        responder: Responder,
-        forwarders: &Arc<Forwarders>,
-    ) {
-        let outcome = match self {
-            Self::AttachSession(params) => {
-                let session = params.session.clone();
-                let (response, subscription) = match service.attach_session(params).await {
-                    Ok(attached) => attached,
-                    Err(error) => return responder.send(Err(error)),
-                };
-                let result = match encode_result::<SessionAttach>(&response) {
-                    Ok(result) => result,
-                    Err(error) => return responder.send(Err(error)),
-                };
-                let outbox = responder.outbox.clone();
-                forwarders.attach(session, subscription, outbox, move || {
-                    responder.send(Ok(result));
-                });
-                return;
-            }
+    /// Runs the call, returning its answer.
+    async fn run<Svc: Service>(self, service: &Svc) -> Result<Value, RpcError> {
+        match self {
             Self::Status => encode_result::<Status>(&service.status().await),
             Self::Stop => {
                 service.stop().await;
                 encode_result::<Stop>(&StopResponse {})
             }
             Self::NewSession(params) => {
-                encode_outcome::<SessionNew>(service.new_session(params).await)
+                encode_result::<SessionNew>(&service.new_session(params).await?)
             }
             Self::PromptSession(params) => {
-                encode_outcome::<SessionPrompt>(service.prompt_session(params).await)
+                encode_result::<SessionPrompt>(&service.prompt_session(params).await?)
             }
             Self::CancelSession(params) => {
-                encode_outcome::<SessionCancel>(service.cancel_session(params).await)
+                encode_result::<SessionCancel>(&service.cancel_session(params).await?)
             }
             Self::SteerSession(params) => {
-                encode_outcome::<SessionSteer>(service.steer_session(params).await)
+                encode_result::<SessionSteer>(&service.steer_session(params).await?)
             }
             Self::ListJobs => encode_result::<JobList>(&service.list_jobs().await),
-        };
-        responder.send(outcome);
+        }
+    }
+}
+
+/// Answers an attach through `responder`, then forwards the session's events
+/// through `forwarders`.
+async fn attach<Svc: Service>(
+    service: &Svc,
+    params: SessionAttachParams,
+    responder: Responder,
+    forwarders: &Arc<Forwarders>,
+) {
+    let session = params.session.clone();
+    let attached = service
+        .attach_session(params)
+        .await
+        .and_then(|(response, subscription)| {
+            Ok((encode_result::<SessionAttach>(&response)?, subscription))
+        });
+    match attached {
+        Ok((result, subscription)) => {
+            let outbox = responder.outbox.clone();
+            forwarders.attach(session, subscription, outbox, move || {
+                responder.send(Ok(result));
+            });
+        }
+        Err(error) => responder.send(Err(error)),
     }
 }
 
@@ -497,6 +508,13 @@ struct Responder {
 }
 
 impl Responder {
+    fn new(id: RequestId, outbox: &Outbox) -> Self {
+        Self {
+            id: Some(id),
+            outbox: outbox.clone(),
+        }
+    }
+
     fn send(mut self, outcome: Result<Value, RpcError>) {
         self.answer(outcome);
     }
@@ -532,11 +550,6 @@ fn decode_params<M: Method>(params: Option<Value>) -> Result<M::Params, RpcError
 /// Encodes `M`'s result, the type [`crate::Client::request`] decodes.
 fn encode_result<M: Method>(result: &M::Result) -> Result<Value, RpcError> {
     encode(result)
-}
-
-/// Encodes a fallible call's outcome as `M`'s result.
-fn encode_outcome<M: Method>(outcome: Result<M::Result, RpcError>) -> Result<Value, RpcError> {
-    encode_result::<M>(&outcome?)
 }
 
 /// Fails only for values JSON cannot hold, such as a non-UTF-8 path.

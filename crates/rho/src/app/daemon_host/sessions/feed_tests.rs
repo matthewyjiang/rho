@@ -30,9 +30,10 @@ fn cursor(feed: &Feed, seq: u64) -> Option<Cursor> {
 
 #[test]
 fn attach_resumes_a_buffered_cursor_and_resets_anything_else() {
-    // A saved transcript of one turn, then a turn in progress.
-    let feed = Feed::new(notices(&["saved"]), 1);
-    feed.begin_turn();
+    // One saved turn, then a turn in progress.
+    let feed = Feed::new();
+    feed.publish(notices(&["live"]));
+    feed.end_turn(notices(&["saved"]));
     feed.publish(notices(&["a", "b", "c"]));
 
     let other_stream = Some(Cursor {
@@ -42,33 +43,35 @@ fn attach_resumes_a_buffered_cursor_and_resets_anything_else() {
     let reset = (
         Replay::Reset,
         vec![
-            (0, notice("saved")),
-            (1, notice("a")),
-            (2, notice("b")),
-            (3, notice("c")),
+            (1, notice("saved")),
+            (2, notice("a")),
+            (3, notice("b")),
+            (4, notice("c")),
         ],
     );
     for (name, after, expected) in [
         ("no cursor", None, reset.clone()),
         ("another stream's cursor", other_stream, reset.clone()),
-        ("a cursor past the stream", cursor(&feed, 4), reset.clone()),
+        ("a cursor past the stream", cursor(&feed, 5), reset.clone()),
+        // What a client holds that left partway through a transcript.
+        ("a cursor at 0", cursor(&feed, 0), reset.clone()),
+        (
+            "the transcript's end",
+            cursor(&feed, 1),
+            (
+                Replay::Tail,
+                vec![(2, notice("a")), (3, notice("b")), (4, notice("c"))],
+            ),
+        ),
         (
             "a buffered cursor",
-            cursor(&feed, 1),
-            (Replay::Tail, vec![(2, notice("b")), (3, notice("c"))]),
+            cursor(&feed, 2),
+            (Replay::Tail, vec![(3, notice("b")), (4, notice("c"))]),
         ),
         (
             "the latest cursor",
-            cursor(&feed, 3),
+            cursor(&feed, 4),
             (Replay::Tail, vec![]),
-        ),
-        (
-            "the stream's start",
-            cursor(&feed, 0),
-            (
-                Replay::Tail,
-                vec![(1, notice("a")), (2, notice("b")), (3, notice("c"))],
-            ),
         ),
     ] {
         assert_eq!(replay(&feed, after), expected, "{name}");
@@ -77,16 +80,13 @@ fn attach_resumes_a_buffered_cursor_and_resets_anything_else() {
 
 #[test]
 fn a_saved_turn_moves_into_the_transcript_without_repeating_or_dropping_events() {
-    let feed = Feed::new(notices(&["first turn"]), 1);
-    feed.begin_turn();
+    let feed = Feed::new();
+    feed.publish(notices(&["first live"]));
+    feed.end_turn(notices(&["first turn"]));
     feed.publish(notices(&["live prompt", "live reply"]));
-    // The turn saved two display rows; their replay joins the transcript,
-    // and its live events stop being part of a reset.
-    feed.end_turn(3, |from| {
-        assert_eq!(from, 1, "only the rows saved since the last turn replay");
-        notices(&["saved prompt", "saved reply"])
-    });
-    feed.begin_turn();
+    // The turn's replay from its saved rows joins the transcript, and its
+    // live events stop being part of a reset.
+    feed.end_turn(notices(&["saved prompt", "saved reply"]));
     feed.publish(notices(&["next prompt"]));
 
     assert_eq!(
@@ -94,27 +94,48 @@ fn a_saved_turn_moves_into_the_transcript_without_repeating_or_dropping_events()
         (
             Replay::Reset,
             vec![
-                (2, notice("first turn")),
-                (2, notice("saved prompt")),
-                (2, notice("saved reply")),
-                (3, notice("next prompt")),
+                (0, notice("first turn")),
+                (0, notice("saved prompt")),
+                (3, notice("saved reply")),
+                (4, notice("next prompt")),
             ]
         ),
     );
     // A client that saw the live turn still resumes from the buffer.
     assert_eq!(
-        replay(&feed, cursor(&feed, 1)),
+        replay(&feed, cursor(&feed, 2)),
         (
             Replay::Tail,
-            vec![(2, notice("live reply")), (3, notice("next prompt"))]
+            vec![(3, notice("live reply")), (4, notice("next prompt"))]
         ),
+    );
+}
+
+// Covers: a turn whose saved rows could not be read must not vanish from
+// resets once the next turn starts.
+#[test]
+fn a_turn_that_did_not_save_replays_live_until_a_later_turn_saves_it() {
+    let feed = Feed::new();
+    feed.publish(notices(&["unsaved turn"]));
+    feed.publish(notices(&["next turn"]));
+    assert_eq!(
+        replay(&feed, None),
+        (
+            Replay::Reset,
+            vec![(1, notice("unsaved turn")), (2, notice("next turn"))]
+        ),
+    );
+
+    feed.end_turn(notices(&["both turns saved"]));
+    assert_eq!(
+        replay(&feed, None),
+        (Replay::Reset, vec![(2, notice("both turns saved"))]),
     );
 }
 
 #[test]
 fn a_turn_larger_than_the_buffer_resets_with_a_notice_instead_of_its_start() {
-    let feed = Feed::new(Vec::new(), 0);
-    feed.begin_turn();
+    let feed = Feed::new();
     let large = "x".repeat(REPLAY_BUFFER_BYTES / 4);
     feed.publish(std::iter::repeat_with(|| notice(&large)).take(5));
     feed.publish(notices(&["latest"]));
@@ -129,5 +150,17 @@ fn a_turn_larger_than_the_buffer_resets_with_a_notice_instead_of_its_start() {
         "the turn's first events were evicted: {seqs:?}"
     );
     // The evicted start can no longer be resumed from.
-    assert_eq!(replay(&feed, cursor(&feed, 0)).0, Replay::Reset);
+    assert_eq!(replay(&feed, cursor(&feed, 1)).0, Replay::Reset);
+}
+
+#[test]
+fn an_attach_reports_the_job_state_its_replay_ends_in() {
+    let feed = Feed::new();
+    assert_eq!(feed.attach(None).job, wire::JobState::Idle);
+    feed.publish([wire::SessionEvent::State {
+        state: wire::JobState::Running,
+        error: None,
+    }]);
+    feed.publish(notices(&["a reply"]));
+    assert_eq!(feed.attach(None).job, wire::JobState::Running);
 }
