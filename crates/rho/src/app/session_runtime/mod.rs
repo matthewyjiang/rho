@@ -80,6 +80,7 @@ pub(crate) use prompt_gate::Closing;
 pub(crate) use session_tools::SessionTools;
 pub(crate) use settings::SettingChangeError;
 pub(crate) use title::TitleJob;
+use title::TitleState;
 pub(crate) use turn::{Turn, TurnIo, TurnOutcome};
 pub(crate) use workflow::WorkflowStart;
 
@@ -140,10 +141,8 @@ pub(crate) struct SessionRuntime {
     /// [`Self::handle`].
     handle: SessionHandle,
     completed_runs: u64,
-    /// Whether this runtime asked the title agent to name the session.
-    title_requested: bool,
-    /// The title the last prompt asked for, until the host takes it.
-    pending_title: Option<TitleJob>,
+    /// How far this runtime got asking to name the session.
+    title: TitleState,
     /// Set when a compaction rewrote live state but could not be saved.
     /// Later prompts are refused so the session never diverges further
     /// from its file; a reload starts a fresh runtime from storage.
@@ -183,8 +182,7 @@ impl SessionRuntime {
             credentials: SessionCredentials::just_read(logouts),
             handle: SessionHandle::new(),
             completed_runs: 0,
-            title_requested: false,
-            pending_title: None,
+            title: TitleState::Unasked,
             unsaved_compaction: false,
             reopen_notice,
             held_notices: None,

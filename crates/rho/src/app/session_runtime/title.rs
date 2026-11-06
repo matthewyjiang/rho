@@ -30,6 +30,17 @@ pub(crate) struct TitleJob {
     cwd: PathBuf,
 }
 
+/// How far a runtime got asking to name its session: it asks once, from
+/// the first turn that reached the model's answer.
+pub(super) enum TitleState {
+    /// No turn has asked yet.
+    Unasked,
+    /// A turn asked, and the host has not taken the job yet.
+    Pending(TitleJob),
+    /// The host took the job; no later turn asks again.
+    Asked,
+}
+
 impl TitleJob {
     /// Generates and saves the title. Yields it only when this request
     /// saved it: a title someone else set first wins and is not resent.
@@ -79,8 +90,7 @@ impl SessionRuntime {
         else {
             return;
         };
-        self.title_requested = true;
-        self.pending_title = Some(TitleJob {
+        self.title = TitleState::Pending(TitleJob {
             model: crate::title::title_model_from_config(&model_scoped_config(
                 &self.current_model(),
                 process_config,
@@ -96,7 +106,13 @@ impl SessionRuntime {
     /// the prompt returns; one a prompt dropped mid-await left behind is
     /// taken after the next.
     pub(crate) fn take_title(&mut self) -> Option<TitleJob> {
-        self.pending_title.take()
+        let (state, job) = match std::mem::replace(&mut self.title, TitleState::Asked) {
+            TitleState::Unasked => (TitleState::Unasked, None),
+            TitleState::Pending(job) => (TitleState::Asked, Some(job)),
+            TitleState::Asked => (TitleState::Asked, None),
+        };
+        self.title = state;
+        job
     }
 }
 

@@ -14,6 +14,7 @@ use super::{
     events::{RunEnd, SessionEvent, TurnControl},
     persist::TurnCheckpoint,
     pump::{pump, AppliedDisplays, ApprovalSource, EventSource, PumpSources},
+    title::TitleState,
     PromptScope, SessionRuntime,
 };
 use crate::{
@@ -96,7 +97,10 @@ impl SessionRuntime {
         io: TurnIo,
         process_config: &Config,
     ) -> anyhow::Result<TurnOutcome> {
-        let title_input = (!self.title_requested).then(|| turn.display.clone());
+        let title_input = match self.title {
+            TitleState::Unasked => Some(turn.display.clone()),
+            TitleState::Pending(_) | TitleState::Asked => None,
+        };
         let result = self.run_delegated(prompt, turn, io).await;
         self.note_credential_failure(&result);
         if let Some(user) = title_input.filter(|_| result.as_ref().is_ok_and(TurnOutcome::answered))
