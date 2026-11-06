@@ -623,11 +623,10 @@ fn final_answer_is_the_only_stdout_content() {
 #[test]
 fn run_saves_its_session_as_a_run() {
     let root = TempDir::new().unwrap();
-    let mut command = command(&root, "fixed");
-    command
-        .env(RESPONSE_ENV, "saved answer")
+    let mut run = command(&root, "fixed");
+    run.env(RESPONSE_ENV, "saved answer")
         .args(["run", "--output", "jsonl", "remember this"]);
-    let output = command.output().unwrap();
+    let output = run.output().unwrap();
     assert_success(&output);
     let events = jsonl_events(&output);
     let session_id = events.first().unwrap()["session_id"]

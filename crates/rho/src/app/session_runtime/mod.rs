@@ -95,7 +95,7 @@ pub(crate) use prompt_turn::{PlanReport, TurnView};
 pub(crate) use session_tools::SessionTools;
 pub(crate) use settings::SettingChangeError;
 #[cfg(test)]
-pub(in crate::app) use test_support::{test_build, unattended_runtime_on, HangUntilCancel};
+pub(in crate::app) use test_support::{unattended_runtime_on, HangUntilCancel};
 pub(crate) use title::TitleJob;
 use title::TitleState;
 pub(crate) use turn::{Turn, TurnIo, TurnOutcome, TurnStart};
