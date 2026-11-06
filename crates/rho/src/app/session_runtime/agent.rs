@@ -9,14 +9,14 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     build::{build_session, session_config},
-    model_scoped_config, split_assembly, CommandRejected, SessionRuntime,
+    model_scoped_config, CommandRejected, SessionPermission, SessionRuntime,
 };
 use crate::{
     agent::{AgentCatalog, AgentDefinition},
     app::{
         agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundAgent, ModelOverride},
         interactive_runtime::startup::session_options_for_id,
-        session_assembly::SessionAssembly,
+        session_assembly::BuiltSession,
     },
     config::Config,
     session::Session as StoredSession,
@@ -148,7 +148,8 @@ impl SessionRuntime {
     }
 
     /// Keep the rebind transaction independent of credential/provider discovery
-    /// so its session and tool restrictions can use a scripted assembly in tests.
+    /// so its session and tool restrictions can use a scripted build in tests.
+    /// `build` builds as [`build_session`] does.
     pub(crate) async fn rebind_agent_with<Build, BuildFuture>(
         &mut self,
         task: &AgentTask,
@@ -158,7 +159,7 @@ impl SessionRuntime {
     ) -> anyhow::Result<()>
     where
         Build: FnOnce(BoundAgent, Config, rho_sdk::SessionId) -> BuildFuture,
-        BuildFuture: Future<Output = anyhow::Result<SessionAssembly>>,
+        BuildFuture: Future<Output = anyhow::Result<(BuiltSession, SessionPermission)>>,
     {
         // The SDK stores its initial system prompt in history; that alone is
         // not a conversation. Any other message must survive, never be dropped.
@@ -206,24 +207,22 @@ impl SessionRuntime {
                 })
             })
             .transpose()?;
-        let mut assembly = build(bound.clone(), config.clone(), id).await?;
+        let (mut built, permission) = build(bound.clone(), config.clone(), id).await?;
         if let Some(saved) = saved_override {
-            let snapshot = assembly
-                .built
+            let snapshot = built
                 .session
                 .snapshot()
                 .with_metadata(MODEL_OVERRIDE_METADATA, saved);
             // SDK snapshot metadata survives checkpoints, compaction and mode
             // rebinds. Seed it before the first turn can save a checkpoint.
-            match assembly
-                .built
+            match built
                 .runtime
                 .rebind_session(SessionOptions::from_snapshot(snapshot))
                 .await
             {
-                Ok(session) => assembly.built.session = session,
+                Ok(session) => built.session = session,
                 Err(error) => {
-                    assembly.built.teardown().await;
+                    built.teardown().await;
                     return Err(error.into());
                 }
             }
@@ -232,12 +231,12 @@ impl SessionRuntime {
         // replacement, before teardown or host notifications can suspend us.
         let initial_snapshot = task.model_override.as_ref().map(|_| {
             super::persist::decorate(
-                &assembly.built.prompt,
-                &assembly.built.tools.todo_state(),
-                assembly.built.tools.code_mode(),
+                &built.prompt,
+                &built.tools.todo_state(),
+                built.tools.code_mode(),
                 &self.added_dirs,
                 &config.auth,
-                assembly.built.session.snapshot(),
+                built.session.snapshot(),
             )
         });
         let rebound = self.stored().and_then(|stored| {
@@ -248,10 +247,9 @@ impl SessionRuntime {
             )
         });
         if let Err(error) = rebound {
-            assembly.built.teardown().await;
+            built.teardown().await;
             return Err(error);
         }
-        let (built, permission) = split_assembly(assembly, config.permission_mode);
         let old = std::mem::replace(&mut self.built, built);
         old.teardown().await;
         self.permission = permission;

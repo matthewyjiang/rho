@@ -4,13 +4,13 @@
 //! repeating its result, after T3 Code restarts.
 
 use agent_client_protocol::schema::v1::{PromptResponse, StopReason};
-use rho_sdk::{model::ContentBlock, CancellationToken, UserInput};
+use rho_sdk::{model::ContentBlock, UserInput};
 
 use super::{
     super::t3_wake::{Background, PromptOrigin, WakeSignal},
     send_notification, EventMapper, SessionHost,
 };
-use crate::app::acp::AcpClientPort;
+use crate::app::{acp::AcpClientPort, session_runtime::PromptStart};
 
 /// Added for the model to a prompt that mentions a watcher, normally T3's
 /// notice that it finished. T3 asks the model to read the task, but a
@@ -46,9 +46,9 @@ impl SessionHost {
         let Some(wake) = self.t3_wake.as_mut() else {
             return;
         };
-        let built = self.runtime.built();
-        let background = Background::of(&built.tools, built.session.id().to_string());
-        let Err(error) = wake.prompt_ended(&built.tools, background).await else {
+        let tools = self.runtime.tools();
+        let background = Background::of(tools, self.runtime.session_id().to_string());
+        let Err(error) = wake.prompt_ended(tools, background).await else {
             return;
         };
         if stop == Some(StopReason::Cancelled) {
@@ -84,15 +84,15 @@ impl SessionHost {
     pub(super) async fn await_wake(
         &self,
         signal: WakeSignal,
-        cancel: &CancellationToken,
+        start: &PromptStart,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
         let session_id = self.acp_session_id.0.as_ref();
-        let Some(summary) = signal.wait(session_id, cancel).await else {
+        let Some(summary) = signal.wait(session_id, start.cancellation()).await else {
             // A session that goes on elsewhere, as when T3 Code restarts or
             // reloads it, keeps the wait for the prompt that resumes it. A
             // cancel or close, as T3's task_cancel sends, ends it.
-            if !self.runtime.prompt_gate().hands_off() {
+            if !start.hands_off() {
                 signal.abandon(session_id);
             }
             return Ok(PromptResponse::new(StopReason::Cancelled));

@@ -5,9 +5,10 @@
 //! loaded session that was never named gets its title then. Until it lands,
 //! or if it fails, the session is listed by its first message.
 //!
-//! The runtime only asks: the host takes the request once the prompt returns,
-//! runs it, and shows the title it saves if the runtime that asked still
-//! owns the session (ACP, for example, as a `session_info_update`).
+//! The runtime only asks, from the turn: the host takes the request once the
+//! prompt returns, runs it, and shows the title it saves if the runtime that
+//! asked still owns the session (ACP, for example, as a
+//! `session_info_update`).
 
 use std::path::PathBuf;
 
@@ -64,14 +65,10 @@ impl TitleJob {
 }
 
 impl SessionRuntime {
-    /// Whether this runtime already asked to name the session.
-    pub(crate) fn title_requested(&self) -> bool {
-        self.title_requested
-    }
-
     /// Asks to name the session from `user`'s message and the reply the
-    /// turn ended with, once per runtime, for [`Self::take_title`].
-    pub(crate) fn request_title(&mut self, process_config: &Config, user: &UserInput) {
+    /// turn ended with, for [`Self::take_title`]. A turn calls it until one
+    /// has a reply to name the session from.
+    pub(super) fn request_title(&mut self, process_config: &Config, user: &UserInput) {
         let Some(stored) = self.storage.file() else {
             return;
         };
@@ -95,9 +92,9 @@ impl SessionRuntime {
         });
     }
 
-    /// The title the last prompt asked for. The prompt stores it as its last
-    /// step, so a prompt dropped mid-await never strands one, and the host
-    /// takes it as soon as the prompt returns.
+    /// The title a turn of the last prompt asked for. Take it as soon as
+    /// the prompt returns; one a prompt dropped mid-await left behind is
+    /// taken after the next.
     pub(crate) fn take_title(&mut self) -> Option<TitleJob> {
         self.pending_title.take()
     }
@@ -113,3 +110,7 @@ fn text_of(blocks: &[ContentBlock]) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+#[cfg(test)]
+#[path = "title_tests.rs"]
+mod tests;

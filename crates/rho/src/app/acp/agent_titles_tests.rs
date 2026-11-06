@@ -1,7 +1,7 @@
 use std::{
     future::Future,
     pin::Pin,
-    sync::{atomic::AtomicBool, Arc, Mutex},
+    sync::{Arc, Mutex},
 };
 
 use agent_client_protocol::{
@@ -13,7 +13,7 @@ use agent_client_protocol::{
 };
 use pretty_assertions::assert_eq;
 
-use super::super::{LiveSession, PromptGate, RhoAcpAgent};
+use super::super::{LiveSession, RhoAcpAgent, SessionHandle};
 use crate::{
     app::acp::{AcpClientPort, AcpStartup},
     config::Config,
@@ -49,8 +49,7 @@ impl AcpClientPort for RecordingPort {
 fn vacant_session() -> Arc<LiveSession> {
     Arc::new(LiveSession {
         host: Arc::new(tokio::sync::Mutex::new(None)),
-        cancel: Arc::new(PromptGate::new()),
-        replaced: Arc::new(AtomicBool::new(false)),
+        handle: SessionHandle::detached_for_tests(),
     })
 }
 
@@ -92,7 +91,7 @@ async fn title_waits_out_loads_and_reaches_only_the_asking_host() {
         let loading = install.lock().await;
 
         let mut report =
-            std::pin::pin!(agent.send_title(&id, &asking.cancel, title.to_owned(), &port));
+            std::pin::pin!(agent.send_title(&id, &asking.handle, title.to_owned(), &port));
         assert!(
             futures_util::poll!(report.as_mut()).is_pending(),
             "{meanwhile:?}: the title must wait for the load"

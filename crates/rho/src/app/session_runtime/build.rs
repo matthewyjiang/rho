@@ -5,6 +5,7 @@ use std::{
 
 use rho_sdk::{provider::ModelProvider, ApprovalSession, SessionOptions};
 
+use super::SessionPermission;
 use crate::{
     added_dirs::AddedDirs,
     app::{
@@ -15,7 +16,7 @@ use crate::{
             approval_channel_for, ApprovalChannel, ApprovalChannelOptions,
         },
         session_assembly::{
-            assemble_session, ApprovalInputs, SessionApproval, SessionAssembly,
+            assemble_session, ApprovalInputs, BuiltSession, SessionApproval, SessionAssembly,
             SessionAssemblyOptions,
         },
         tools_prompt::McpSamplingSupport,
@@ -71,6 +72,8 @@ pub(crate) enum ChildAgents {
     HostThreads,
 }
 
+/// Builds a session as `build` says, with the permission state of
+/// `config`'s mode, for an [`super::OpenedSession`] or an agent rebind.
 /// `config` is the session's config: the process config plus the host's MCP
 /// servers. `added_dirs` is the session's set: launch `--add-dir` values,
 /// plus the host's own roots.
@@ -81,7 +84,7 @@ pub(crate) async fn build_session(
     workspace: &Path,
     added_dirs: &AddedDirs,
     session_options: impl FnOnce(Arc<dyn ModelProvider>) -> anyhow::Result<SessionOptions>,
-) -> anyhow::Result<SessionAssembly> {
+) -> anyhow::Result<(BuiltSession, SessionPermission)> {
     ensure_headless_auto_classifier_model(config)?;
     // A session request can follow a terminal login another process saved,
     // even when startup itself succeeded without credentials.
@@ -93,7 +96,11 @@ pub(crate) async fn build_session(
         QuestionSupport::Available => true,
         QuestionSupport::Unavailable => false,
     };
-    let assembly = assemble_session(SessionAssemblyOptions {
+    let SessionAssembly {
+        built,
+        workspace_root,
+        session_writes,
+    } = assemble_session(SessionAssemblyOptions {
         config,
         config_path: build.config_path.clone(),
         cwd: workspace,
@@ -161,10 +168,15 @@ pub(crate) async fn build_session(
     })
     .await?;
     if let Err(error) = host_tools {
-        assembly.built.teardown().await;
+        built.teardown().await;
         return Err(error);
     }
-    Ok(assembly)
+    let permission = SessionPermission {
+        mode: config.permission_mode,
+        writes: session_writes,
+        workspace_root,
+    };
+    Ok((built, permission))
 }
 
 /// The process config with the host's MCP servers merged in.

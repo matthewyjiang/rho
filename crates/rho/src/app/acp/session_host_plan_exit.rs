@@ -1,92 +1,65 @@
-//! Applies an approved plan at the end of the turn that proposed it, then
-//! runs the implementation turn in the same `session/prompt`, as the TUI
-//! queues it right after the proposal.
+//! Reports the runtime's plan handoff (see [`PlanHandoff`]) at the end of the
+//! turn that proposed the plan, and runs the implementation turn in the same
+//! `session/prompt` when the runtime switched modes.
 
 use agent_client_protocol::schema::v1::{
-    CurrentModeUpdate, SessionNotification, SessionUpdate, StopReason,
+    CurrentModeUpdate, PromptResponse, SessionNotification, SessionUpdate, StopReason,
 };
-use rho_sdk::UserInput;
 
 use super::{
-    permission, send_notification, turn_answered, AcpClientPort, Answered, Config, EventMapper,
-    SessionHost,
+    permission, prompt_response, send_notification, AcpClientPort, Config, EventMapper,
+    SessionHost, Shown,
 };
-use crate::tools::plan_exit::{PlanExitResolution, ProposalTurn};
-
-const IMPLEMENT_PLAN: &str = "Implement the approved plan now. Follow the plan and verify the changes; the host has switched this session's permission mode.";
+use crate::app::session_runtime::{PlanHandoff, TurnOutcome};
 
 impl SessionHost {
-    /// Finishes a prompt whose turn may have answered `exit_plan_mode`,
-    /// applying [`PlanExitDecision::resolve`]'s policy.
-    ///
-    /// [`PlanExitDecision::resolve`]: crate::tools::plan_exit::PlanExitDecision::resolve
-    pub(super) async fn finish_plan_exit(
+    /// Shows `handoff`, which followed the turn that ended as `proposal`, and
+    /// answers the prompt: with the proposal's end, or with the
+    /// implementation turn's once the mode switched, and what the client
+    /// missed of that turn.
+    pub(super) async fn report_plan_handoff(
         &mut self,
-        result: anyhow::Result<Answered>,
+        handoff: PlanHandoff,
+        proposal: anyhow::Result<TurnOutcome>,
         process_config: &Config,
         client: &dyn AcpClientPort,
-    ) -> anyhow::Result<Answered> {
-        let Some(decision) = self.runtime.take_plan_exit_decision() else {
-            return result;
-        };
-        // A cancel that lands after the proposal settled, such as during its
-        // final usage update, still cancels the handoff. Checked right before
-        // the switch commits; a later cancel stops only the implementation.
-        let cancelled = self.runtime.prompt_gate().is_cancelled();
-        let result = result.map(|mut answered| {
-            if cancelled {
-                answered.response.stop_reason = StopReason::Cancelled;
+    ) -> Shown<PromptResponse> {
+        match handoff {
+            PlanHandoff::Kept { notice } => {
+                self.plan_notice(&notice, client).await;
+                Shown::delivered(proposal.map(prompt_response))
             }
-            answered
-        });
-        // A turn that settled completed, even if the client missed an
-        // update of it; that miss still fails the prompt as it answers.
-        let turn = match &result {
-            Ok(answered) if turn_answered(answered.response.stop_reason) => ProposalTurn::Completed,
-            Ok(_) | Err(_) => ProposalTurn::Unfinished,
-        };
-        let target = match decision.resolve(turn, self.runtime.permission_mode()) {
-            PlanExitResolution::Apply(target) => target,
-            PlanExitResolution::Keep(notice) => {
-                self.plan_notice(notice, client).await;
-                return result;
+            PlanHandoff::Cancelled { notice } => {
+                self.plan_notice(&notice, client).await;
+                Shown::delivered(proposal.map(|_| PromptResponse::new(StopReason::Cancelled)))
             }
-        };
-        if let Err(error) = self.set_permission_mode(target, process_config).await {
-            self.plan_notice(
-                &format!("could not execute approved plan: {}", error.message),
-                client,
-            )
-            .await;
-            return result;
+            PlanHandoff::Switched {
+                mode,
+                notice,
+                implementation,
+            } => {
+                // Hosts learn of agent-initiated switches only from these
+                // updates; the config option form follows from the refresh.
+                let update = SessionNotification::new(
+                    self.acp_session_id.clone(),
+                    SessionUpdate::CurrentModeUpdate(CurrentModeUpdate::new(permission::mode_id(
+                        mode,
+                    ))),
+                );
+                if let Err(error) = send_notification(client, update).await {
+                    tracing::warn!(%error, "could not send ACP mode update");
+                }
+                self.refresh_advertisements(process_config, client).await;
+                self.plan_notice(&notice, client).await;
+                let implemented = self
+                    .forward_turn(implementation, process_config, client)
+                    .await;
+                Shown {
+                    ended: implemented.ended.map(prompt_response),
+                    missed_update: implemented.missed_update,
+                }
+            }
         }
-        // Hosts learn of agent-initiated switches only from these updates;
-        // the config option form follows from the refresh.
-        let mode = SessionNotification::new(
-            self.acp_session_id.clone(),
-            SessionUpdate::CurrentModeUpdate(CurrentModeUpdate::new(permission::mode_id(target))),
-        );
-        if let Err(error) = send_notification(client, mode).await {
-            tracing::warn!(%error, "could not send ACP mode update");
-        }
-        self.refresh_advertisements(process_config, client).await;
-        self.plan_notice(
-            &format!(
-                "plan approved; permission mode: {}",
-                target.label().to_lowercase()
-            ),
-            client,
-        )
-        .await;
-        // A permission prompt carries no feedback, so the decision has none.
-        let input = UserInput::text(IMPLEMENT_PLAN);
-        let missed = result.ok().and_then(|answered| answered.missed_update);
-        let mut implemented = self
-            .run_turn(&input, input.clone(), Vec::new(), client)
-            .await?;
-        // The proposal's miss came first, so it is the one reported.
-        implemented.missed_update = missed.or(implemented.missed_update);
-        Ok(implemented)
     }
 
     async fn plan_notice(&self, text: &str, client: &dyn AcpClientPort) {

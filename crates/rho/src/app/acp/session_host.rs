@@ -8,10 +8,7 @@
 //! beside a forwarder that shows the turn's events to the client and answers
 //! its requests (`session_host_forward.rs`).
 
-use std::sync::{
-    atomic::{AtomicBool, AtomicU64},
-    Arc,
-};
+use std::sync::atomic::AtomicU64;
 
 use agent_client_protocol::{
     schema::v1::{
@@ -28,7 +25,7 @@ use tokio::sync::mpsc;
 use super::{
     commands::{self, CommandScope, PromptAction},
     config_options,
-    events::{turn_answered, EventMapper},
+    events::EventMapper,
     fast_mode,
     host_features::{Forms, Toggles},
     permission,
@@ -42,8 +39,8 @@ use crate::{
         headless_delegation::BackgroundWait,
         session_runtime::{
             model_scoped_config, ChildAgents, CurrentModel, InsertedMessage, ModelSwitchError,
-            OpenedSession, PromptGate, PromptGuard, QuestionSupport, SessionBuild, SessionRuntime,
-            TitleJob, Turn, TurnIo, TurnOutcome, WorkflowStart,
+            OpenedSession, QuestionSupport, SessionBuild, SessionHandle, SessionRuntime,
+            SettingChangeError, TitleJob, Turn, TurnIo, TurnOutcome, WorkflowStart,
         },
         workflow_cli::discover::StartCommand,
     },
@@ -79,36 +76,10 @@ pub(super) use open::{History, ReopenRequest, Reopened};
 /// A title one host asked for, not yet generated.
 pub(in crate::app::acp) struct PendingTitle {
     pub(in crate::app::acp) session_id: SessionId,
-    /// The asking host's prompt gate, which its published slot shares, so
-    /// the agent can tell that host from a successor with the same ID.
-    pub(in crate::app::acp) asking_gate: Arc<PromptGate>,
+    /// The asking host's runtime handle, which its published slot shares,
+    /// so the agent can tell that host from a successor with the same ID.
+    pub(in crate::app::acp) asking: SessionHandle,
     pub(in crate::app::acp) job: TitleJob,
-}
-
-/// How a prompt's work ended, before the prompt answers: the response the
-/// session settled on, and an update the client missed on the way. A turn
-/// that settled still counts as settled for the plan handoff and the title;
-/// the missed update fails the prompt only as it answers.
-struct Answered {
-    response: PromptResponse,
-    missed_update: Option<String>,
-}
-
-impl Answered {
-    fn delivered(response: PromptResponse) -> Self {
-        Self {
-            response,
-            missed_update: None,
-        }
-    }
-
-    /// The prompt's answer: the response, unless the client missed an update.
-    fn into_result(self) -> anyhow::Result<PromptResponse> {
-        match self.missed_update {
-            Some(message) => Err(anyhow::Error::msg(message)),
-            None => Ok(self.response),
-        }
-    }
 }
 
 pub(super) struct SessionHost {
@@ -161,12 +132,10 @@ impl SessionHost {
         client: &dyn AcpClientPort,
         startup: &AcpStartup,
     ) -> anyhow::Result<PromptResponse> {
-        self.runtime.ensure_saved_state()?;
         let input = user_input_from_prompt(&request.prompt)?;
-        let starting = self.runtime.prompt_gate().begin();
-        let _guard = PromptGuard(self.runtime.cancel_handle());
-        self.runtime
-            .renew_stale_credentials(&startup.config, &startup.config_path)
+        let start = self
+            .runtime
+            .begin_prompt(&startup.config, &startup.config_path)
             .await?;
         self.refresh_advertisements(&startup.config, client).await;
         let watcher_note = self.wake_prompt_started(&input);
@@ -189,19 +158,12 @@ impl SessionHost {
             // Expansion can wait on an MCP server, so a cancel drops it.
             tokio::select! {
                 biased;
-                () = starting.cancelled() => None,
+                () = start.cancellation().cancelled() => None,
                 action = commands::resolve(input.clone(), &scope) => Some(action),
             }
         };
-        // The first model turn this host completes names an untitled session.
-        let names_session = matches!(
-            &action,
-            Some(Ok(PromptAction::Turn { .. } | PromptAction::RunAsAgent(_)))
-        ) && !self.runtime.title_requested();
-        let answered = match action {
-            None => Ok(Answered::delivered(PromptResponse::new(
-                StopReason::Cancelled,
-            ))),
+        let shown = match action {
+            None => Shown::delivered(Ok(PromptResponse::new(StopReason::Cancelled))),
             Some(Ok(PromptAction::Turn {
                 input: model,
                 calls,
@@ -210,46 +172,41 @@ impl SessionHost {
                     Some(note) => append_text(model, note),
                     None => model,
                 };
-                self.run_turn(&input, model, calls, client).await
+                let turn = Turn {
+                    display: input.clone(),
+                    model,
+                    calls,
+                };
+                self.run_turn(turn, &startup.config, client).await
             }
             Some(Ok(PromptAction::Compact { instructions })) => {
                 self.prompt_acceptance.accept(InsertedMessage::Unreplayed);
-                self.compact(instructions, client)
-                    .await
-                    .map(Answered::delivered)
+                Shown::delivered(self.compact(instructions, client).await)
             }
-            Some(Ok(PromptAction::StartWorkflow(start))) => self
-                .start_workflow(&input, start, startup, client)
-                .await
-                .map(Answered::delivered),
+            Some(Ok(PromptAction::StartWorkflow(start))) => {
+                Shown::delivered(self.start_workflow(&input, start, startup, client).await)
+            }
             Some(Ok(PromptAction::RunAsAgent(task))) => {
                 self.run_as_agent(&input, task, startup, client).await
             }
             Some(Ok(PromptAction::AwaitWake(signal))) => {
                 self.prompt_acceptance.accept(InsertedMessage::Unreplayed);
-                self.await_wake(signal, &starting, client)
-                    .await
-                    .map(Answered::delivered)
+                Shown::delivered(self.await_wake(signal, &start, client).await)
             }
-            Some(Err(rejected)) => Err(rejected.into()),
+            Some(Err(rejected)) => Shown::delivered(Err(rejected.into())),
         };
-        // After the plan handoff, so the implementation turn's failure counts.
-        let answered = self
-            .finish_plan_exit(answered, &startup.config, client)
-            .await;
-        let stop = answered
+        // How the prompt's work ended, though the client missed an update.
+        let stop = shown
+            .ended
             .as_ref()
             .ok()
-            .map(|answered| answered.response.stop_reason);
-        let result = answered.and_then(Answered::into_result);
+            .map(|response| response.stop_reason);
+        let result = shown.into_result();
         // Every card update of the prompt went out, so terminals of finished
         // calls can go.
         self.client_io.release_finished_terminals().await;
-        self.runtime.note_credential_failure(&result);
         self.refresh_advertisements(&startup.config, client).await;
         self.wake_prompt_ended(stop, client).await;
-        // A turn that settled is named even if the client missed an update.
-        let completed = stop.is_some_and(turn_answered);
         let _ = self
             .herdr
             .report_state(
@@ -260,10 +217,6 @@ impl SessionHost {
                 )),
             )
             .await;
-        // Last, with no await after it, so the agent always takes the request.
-        if names_session && completed {
-            self.runtime.request_title(&startup.config, &input);
-        }
         result
     }
 
@@ -280,20 +233,16 @@ impl SessionHost {
             }
             thought_level::THOUGHT_LEVEL_ID => {
                 let requested = thought_level::parse_thought_level_request(&request)?;
-                thought_level::apply_thought_level(
-                    self.runtime.built(),
-                    &model_scoped_config(&self.runtime.current_model(), process_config),
-                    requested,
-                )?;
+                self.runtime
+                    .set_reasoning_level(requested, process_config)
+                    .map_err(|error| setting_error(&self.acp_session_id, error))?;
             }
             fast_mode::FAST_MODE_ID => {
                 let enabled =
                     fast_mode::parse_fast_mode_request(&request, self.host_features.toggles)?;
-                fast_mode::apply_fast_mode(
-                    &self.runtime.built().session,
-                    &self.runtime.current_model(),
-                    enabled,
-                )?;
+                self.runtime
+                    .set_fast_mode(enabled)
+                    .map_err(|error| setting_error(&self.acp_session_id, error))?;
             }
             _ => {
                 return Ok(SetSessionConfigOptionResponse::new(
@@ -307,12 +256,8 @@ impl SessionHost {
         ))
     }
 
-    pub(super) fn cancel_handle(&self) -> Arc<PromptGate> {
-        self.runtime.cancel_handle()
-    }
-
-    pub(super) fn replaced_flag(&self) -> Arc<AtomicBool> {
-        self.runtime.replaced_flag()
+    pub(super) fn handle(&self) -> SessionHandle {
+        self.runtime.handle()
     }
 
     /// The title the last prompt asked for, for the agent to generate and
@@ -321,7 +266,7 @@ impl SessionHost {
         let job = self.runtime.take_title()?;
         Some(PendingTitle {
             session_id: self.acp_session_id.clone(),
-            asking_gate: self.runtime.cancel_handle(),
+            asking: self.runtime.handle(),
             job,
         })
     }
@@ -334,21 +279,20 @@ impl SessionHost {
         CommandScope {
             cwd: self.runtime.cwd(),
             home,
-            tools: &self.runtime.built().tools,
+            tools: self.runtime.tools(),
             config: process_config,
             permission_mode: self.runtime.permission_mode(),
         }
     }
 
     pub(super) fn config_options(&self, process_config: &Config) -> Vec<SessionConfigOption> {
-        let session = &self.runtime.built().session;
         advertised_config_options(
             &self.runtime.current_model(),
             process_config,
             CurrentSettings {
                 permission_mode: self.runtime.permission_mode(),
-                reasoning: session.reasoning_level(),
-                service_tier: session.service_tier(),
+                reasoning: self.runtime.reasoning_level(),
+                fast: self.runtime.fast_mode(),
             },
             self.host_features.toggles,
         )
@@ -390,13 +334,14 @@ impl SessionHost {
     }
 
     /// The host for `opened`, talking to its client through `client_io`.
+    /// Without a Rho home for T3's wake watchers, the runtime holds prompts
+    /// open for background work instead.
     fn from_built(
         client_io: super::client_io::ClientIo,
         startup: &AcpStartup,
-        opened: OpenedSession,
+        mut opened: OpenedSession,
     ) -> Self {
-        let mut build = session_build(startup, &client_io);
-        let t3_wake = match build.background_wait {
+        let t3_wake = match opened.build.background_wait {
             BackgroundWait::HoldPrompt => None,
             BackgroundWait::HostWakes => match super::t3_wake::signal_dir() {
                 Ok(dir) => Some(T3Wake::new(dir)),
@@ -404,12 +349,12 @@ impl SessionHost {
                     tracing::warn!(%error, "T3 wake watchers are off: no Rho home");
                     // Nothing would wake the idle session, so background
                     // work holds the prompt open.
-                    build.background_wait = BackgroundWait::HoldPrompt;
+                    opened.build.background_wait = BackgroundWait::HoldPrompt;
                     None
                 }
             },
         };
-        let runtime = SessionRuntime::new(opened, build, &startup.logouts);
+        let runtime = SessionRuntime::new(opened, &startup.logouts);
         Self {
             acp_session_id: client_io.session_id.clone(),
             client_io,
@@ -428,25 +373,53 @@ impl SessionHost {
     /// client last saw. Hand the checklist back as `sent_plan` once sent;
     /// one that never comes back only costs a resend of the current list.
     fn signals(&mut self) -> SessionSignals {
-        let built = self.runtime.built();
         SessionSignals::new(
-            built.session.clone(),
-            built.tools.todo_state(),
+            self.runtime.context_gauge(),
+            self.runtime.tools().todo_state(),
             self.runtime.context_window(),
             std::mem::take(&mut self.sent_plan),
         )
     }
 
-    /// A model turn on `model`, saved for display as `display`, the prompt
-    /// as the user sent it. `calls` run as one host batch before the first
-    /// model request.
+    /// A model turn, then the plan handoff when the turn answered
+    /// `exit_plan_mode`: the runtime decides it, and the host reports it and
+    /// runs the implementation turn it asks for.
     async fn run_turn(
         &mut self,
-        display: &UserInput,
-        model: UserInput,
-        calls: Vec<rho_sdk::model::ToolCall>,
+        turn: Turn,
+        process_config: &Config,
         client: &dyn AcpClientPort,
-    ) -> anyhow::Result<Answered> {
+    ) -> Shown<PromptResponse> {
+        let proposal = self.forward_turn(turn, process_config, client).await;
+        match self
+            .runtime
+            .hand_off_plan(&proposal.ended, process_config)
+            .await
+        {
+            None => Shown {
+                ended: proposal.ended.map(prompt_response),
+                missed_update: proposal.missed_update,
+            },
+            Some(handoff) => {
+                let answered = self
+                    .report_plan_handoff(handoff, proposal.ended, process_config, client)
+                    .await;
+                // The proposal's miss came first, so it is the one reported.
+                Shown {
+                    ended: answered.ended,
+                    missed_update: proposal.missed_update.or(answered.missed_update),
+                }
+            }
+        }
+    }
+
+    /// Runs `turn` beside a forwarder that shows it to the client.
+    async fn forward_turn(
+        &mut self,
+        turn: Turn,
+        process_config: &Config,
+        client: &dyn AcpClientPort,
+    ) -> Shown<TurnOutcome> {
         let (events, event_receiver) = mpsc::unbounded_channel();
         let (control_sender, control) = mpsc::unbounded_channel();
         // See `Forwarded::sent_plan` for when the checklist comes back.
@@ -458,33 +431,22 @@ impl SessionHost {
             mapper: EventMapper::new(
                 self.host_features,
                 self.runtime.cwd().to_path_buf(),
-                self.runtime.built().tools.mcp_report().tool_names(),
+                self.runtime.tools().mcp_report().tool_names(),
             ),
             signals,
             placeholders: &self.permission_placeholders,
             acceptance: &mut self.prompt_acceptance,
         };
         let io = TurnIo { events, control };
-        let turn = Turn {
-            display: display.clone(),
-            model,
-            calls,
-        };
         let (result, forwarded) = tokio::join!(
-            self.runtime.run_turn(turn, io),
+            self.runtime.run_turn(turn, io, process_config),
             forwarder.forward(event_receiver, control_sender),
         );
         self.sent_plan = forwarded.sent_plan.unwrap_or_default();
-        let stop = match result? {
-            TurnOutcome::Completed(outcome) => EventMapper::map_stop(&outcome),
-            TurnOutcome::Cancelled => StopReason::Cancelled,
-        };
-        // An update that failed after the turn settled still fails the
-        // prompt, as the client missed part of it, but the turn stands.
-        Ok(Answered {
-            response: PromptResponse::new(stop),
+        Shown {
+            ended: result,
             missed_update: forwarded.failure,
-        })
+        }
     }
 
     /// `/workflow:<name>`: starts the run in the background and answers with
@@ -554,7 +516,7 @@ fn question_support(forms: Forms) -> QuestionSupport {
 struct CurrentSettings {
     permission_mode: PermissionMode,
     reasoning: rho_sdk::ReasoningLevel,
-    service_tier: Option<rho_sdk::model::ServiceTier>,
+    fast: bool,
 }
 
 /// Every option a session advertises, rebuilt after each change so a model
@@ -577,12 +539,55 @@ fn advertised_config_options(
         &model_scoped_config(current, process_config),
         settings.reasoning,
     ));
-    options.extend(fast_mode::config_options(
-        current,
-        settings.service_tier,
-        toggles,
-    ));
+    options.extend(fast_mode::config_options(current, settings.fast, toggles));
     options
+}
+
+/// How a turn, or the prompt it answers, ended, and the first update of it
+/// the client missed. The turn stands without that update: it was saved, and
+/// the runtime judges it (plan handoff, title) by how it ended. The miss
+/// fails the prompt only as the prompt answers.
+struct Shown<T> {
+    ended: anyhow::Result<T>,
+    missed_update: Option<String>,
+}
+
+impl<T> Shown<T> {
+    /// An end the client missed nothing of.
+    fn delivered(ended: anyhow::Result<T>) -> Self {
+        Self {
+            ended,
+            missed_update: None,
+        }
+    }
+
+    /// The prompt's answer: the turn's own failure first, then a miss.
+    fn into_result(self) -> anyhow::Result<T> {
+        let ended = self.ended?;
+        match self.missed_update {
+            Some(message) => Err(anyhow::Error::msg(message)),
+            None => Ok(ended),
+        }
+    }
+}
+
+/// The answer to a prompt whose last turn ended as `outcome`.
+fn prompt_response(outcome: TurnOutcome) -> PromptResponse {
+    let stop = match outcome {
+        TurnOutcome::Completed(outcome) => EventMapper::map_stop(&outcome),
+        TurnOutcome::Cancelled => StopReason::Cancelled,
+    };
+    PromptResponse::new(stop)
+}
+
+/// A refused thought level or fast mode is the host's to fix or, on a busy
+/// session, to send again.
+fn setting_error(session_id: &SessionId, error: SettingChangeError) -> AcpError {
+    match error {
+        SettingChangeError::Unsupported(_) => AcpError::invalid_params().data(error.to_string()),
+        SettingChangeError::Busy => super::agent::busy_session(session_id),
+        SettingChangeError::Apply(_) => host_apply_error(error),
+    }
 }
 
 fn host_apply_error(error: impl ToString) -> AcpError {
@@ -616,8 +621,10 @@ impl SessionHost {
         startup: &AcpStartup,
         root: &std::path::Path,
         id: rho_sdk::SessionId,
-        provider: Arc<dyn rho_sdk::provider::ModelProvider>,
+        provider: std::sync::Arc<dyn rho_sdk::provider::ModelProvider>,
     ) -> Self {
+        use std::sync::Arc;
+
         use crate::app::{
             session_assembly::BuiltSession,
             session_runtime::{SessionPermission, SessionStorage},
@@ -658,10 +665,13 @@ impl SessionHost {
             writes: Default::default(),
             workspace_root: root.to_path_buf(),
         };
+        let io = super::client_io::ClientIo::local(SessionId::new(id));
+        let build = session_build(startup, &io);
         Self::from_built(
-            super::client_io::ClientIo::local(SessionId::new(id)),
+            io,
             startup,
             OpenedSession {
+                build,
                 built,
                 storage,
                 agent: startup.agent.clone(),

@@ -1,4 +1,5 @@
-use std::sync::Arc;
+//! The `thought_level` session config option. This advertises and parses
+//! it; the session runtime applies it (`SessionRuntime::set_reasoning_level`).
 
 use agent_client_protocol::{
     schema::v1::{
@@ -8,22 +9,11 @@ use agent_client_protocol::{
     Error as AcpError,
 };
 use rho_providers::{
-    model::{
-        models_dev::cached_reasoning_capabilities, ReasoningCapabilities, ReasoningRequestSource,
-        ReasoningResolution,
-    },
+    model::{models_dev::cached_reasoning_capabilities, ReasoningCapabilities},
     reasoning::ReasoningLevel,
 };
 
-use super::agent::session_apply_error;
-use crate::{
-    app::{
-        runtime_builder::{configured_context_window, refresh_session_compaction, CompactionSetup},
-        session_assembly::BuiltSession,
-    },
-    compaction::CompactionConfig,
-    config::Config,
-};
+use crate::config::Config;
 
 pub(super) const THOUGHT_LEVEL_ID: &str = "thought_level";
 
@@ -92,79 +82,6 @@ pub(super) fn parse_thought_level_request(
     value.0.as_ref().parse::<ReasoningLevel>().map_err(|_| {
         AcpError::invalid_params().data(format!("unknown thought_level '{}'", value.0.as_ref()))
     })
-}
-
-/// Validates an explicit host-selected reasoning level against catalog
-/// capabilities. Rejects unsupported pins instead of silently normalizing.
-pub(super) fn resolve_thought_level(
-    config: &Config,
-    requested: ReasoningLevel,
-) -> Result<ReasoningLevel, AcpError> {
-    let capabilities = thought_capabilities(config);
-    match capabilities.resolve(requested, ReasoningRequestSource::Explicit) {
-        ReasoningResolution::Exact(level) | ReasoningResolution::Unknown(level) => Ok(level),
-        ReasoningResolution::NotConfigurable => Err(AcpError::invalid_params().data(format!(
-            "provider '{}' model '{}' does not expose configurable reasoning",
-            config.provider, config.model
-        ))),
-        ReasoningResolution::UnsupportedExplicit(requested) => {
-            let supported = capabilities
-                .levels()
-                .map(|levels| {
-                    levels
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                })
-                .unwrap_or_else(|| "none".to_string());
-            Err(AcpError::invalid_params().data(format!(
-                "provider '{}' model '{}' does not support reasoning level '{}'; supported levels: {}",
-                config.provider, config.model, requested, supported
-            )))
-        }
-        ReasoningResolution::Normalized { .. } => Err(AcpError::internal_error()
-            .data("explicit thought_level must not be auto-normalized".to_string())),
-    }
-}
-
-pub(super) fn apply_thought_level(
-    built: &BuiltSession,
-    config: &Config,
-    requested: ReasoningLevel,
-) -> Result<(), AcpError> {
-    let current = built.session.reasoning_level();
-    if requested == current {
-        return Ok(());
-    }
-    let level = resolve_thought_level(config, requested)?;
-    built
-        .session
-        .set_reasoning_level(level)
-        .map_err(|error| session_apply_error(&built.session, error))?;
-    if let Err(error) = refresh_session_compaction(
-        &built.session,
-        CompactionSetup {
-            provider: Arc::clone(&built.provider),
-            tool_specs: built.tools.specs(),
-            reasoning: level,
-            compaction: CompactionConfig::from(config),
-            context_window: configured_context_window(config),
-            usage_recording: built.runtime.usage_recording(),
-            diagnostics: built.diagnostics.clone(),
-            recall: built.tools.recall_store(),
-            todo: Some(built.tools.todo_state()),
-            code_mode: Some(built.tools.code_mode().clone()),
-        },
-    ) {
-        // Restore the previous level so a failed compaction rebuild does
-        // not leave the session advertising a level its compactor does
-        // not match. The session was idle to get here; ignore a restore
-        // error rather than masking the compaction failure.
-        let _ = built.session.set_reasoning_level(current);
-        return Err(session_apply_error(&built.session, error));
-    }
-    Ok(())
 }
 
 fn thought_capabilities(config: &Config) -> ReasoningCapabilities {

@@ -12,7 +12,7 @@ use super::{
     session_host::{History, ReopenRequest, Reopened, SessionHost},
     AcpClientPort, AcpStartup,
 };
-use crate::app::session_runtime::{Closing, PromptGate};
+use crate::app::session_runtime::{Closing, SessionHandle};
 use agent_client_protocol::schema::v1::{AgentAuthCapabilities, LogoutCapabilities};
 use agent_client_protocol::schema::v1::{
     DeleteSessionRequest, DeleteSessionResponse, ResumeSessionRequest, ResumeSessionResponse,
@@ -68,18 +68,17 @@ impl<Response> SessionStart<Response> {
 ///
 /// The host lock is the busy gate: the map lock is only held long enough to
 /// clone this `Arc`. [`HostWait`] decides who may queue for a held host.
-/// Cancel reads `cancel` without the host lock. A replacement marks `replaced`
-/// and waits for any in-flight prompt to release the host lock before
-/// publishing the new slot, so a follow-up prompt cannot run on the new host
-/// while the old turn is still finishing.
+/// Cancel goes through `handle` without the host lock. A replacement marks
+/// the handle replaced and waits for any in-flight prompt to release the
+/// host lock before publishing the new slot, so a follow-up prompt cannot
+/// run on the new host while the old turn is still finishing.
 ///
-/// `session/close` instead unpublishes the slot and closes its `cancel` gate
-/// before waiting for the host, so a prompt that wins the host after that
-/// ends cancelled instead of starting a turn the close would wait on.
+/// `session/close` instead unpublishes the slot and closes its handle before
+/// waiting for the host, so a prompt that wins the host after that ends
+/// cancelled instead of starting a turn the close would wait on.
 struct LiveSession {
     host: Arc<tokio::sync::Mutex<Option<SessionHost>>>,
-    cancel: Arc<PromptGate>,
-    replaced: Arc<AtomicBool>,
+    handle: SessionHandle,
 }
 
 /// How a request waits when another request holds the session host.
@@ -304,9 +303,9 @@ impl RhoAcpAgent {
         let previous = { self.sessions.lock().await.get(&session_id).cloned() };
         let mut retired = None;
         if let Some(previous) = &previous {
-            previous.cancel.suspend();
+            previous.handle.suspend();
             let host = previous.host.lock().await;
-            previous.replaced.store(true, Ordering::Release);
+            previous.handle.mark_replaced();
             retired = Some(host);
         }
         let mut host = match SessionHost::reopen(&self.startup, request, history).await {
@@ -314,7 +313,7 @@ impl RhoAcpAgent {
             Err(error) => {
                 // The old session stays published, so it must keep saving.
                 if let Some(previous) = &previous {
-                    previous.replaced.store(false, Ordering::Release);
+                    previous.handle.reclaim();
                 }
                 return Err(session_start_error(error));
             }
@@ -376,10 +375,10 @@ impl RhoAcpAgent {
             // A closing session's host is about to be torn down, so nothing
             // that waited for it may use it. One that passes here meets the
             // closed gate instead and starts cancelled.
-            if live.cancel.is_closed() {
+            if live.handle.is_closed() {
                 return Ok(SessionHostLock::Closed);
             }
-            if !live.replaced.load(Ordering::Acquire) {
+            if !live.handle.is_replaced() {
                 return locked.map(SessionHostLock::Ready);
             }
             match (wait, locked) {
@@ -450,7 +449,7 @@ impl RhoAcpAgent {
             sessions.get(&notification.session_id).cloned()
         };
         if let Some(live) = live {
-            live.cancel.cancel();
+            live.handle.cancel();
         }
     }
 
@@ -541,8 +540,8 @@ impl RhoAcpAgent {
 
         let previous = { self.sessions.lock().await.get(&session_id).cloned() };
         let old_host = if let Some(previous) = previous {
-            previous.replaced.store(true, Ordering::Release);
-            previous.cancel.suspend();
+            previous.handle.mark_replaced();
+            previous.handle.suspend();
             previous.host.lock().await.take()
         } else {
             None
@@ -592,18 +591,18 @@ impl RhoAcpAgent {
         self.install(session_id, host).await;
     }
 
-    /// Holds the session's host as a running prompt would, plus the flag a
-    /// replacement sets, so fixtures can race requests against a reload.
+    /// Holds the session's host as a running prompt would, plus the handle
+    /// a replacement marks, so fixtures can race requests against a reload.
     pub(super) async fn hold_host_for_tests(
         &self,
         session_id: &SessionId,
     ) -> (
         tokio::sync::OwnedMutexGuard<Option<SessionHost>>,
-        Arc<AtomicBool>,
+        SessionHandle,
     ) {
         let live = self.live_session(session_id).await.expect("live session");
         let held = Arc::clone(&live.host).lock_owned().await;
-        (held, Arc::clone(&live.replaced))
+        (held, live.handle.clone())
     }
 }
 
@@ -621,15 +620,6 @@ fn reloaded_session(session_id: &SessionId) -> AcpError {
     AcpError::invalid_request().data(format!(
         "session '{session_id}' was reloaded before this change applied; send it again"
     ))
-}
-
-/// Maps an SDK error from changing an idle session's settings: a busy
-/// session is the host's to retry, anything else is internal.
-pub(super) fn session_apply_error(session: &rho_sdk::Session, error: rho_sdk::Error) -> AcpError {
-    match error {
-        rho_sdk::Error::SessionBusy => busy_session(&SessionId::new(session.id().as_str())),
-        error => AcpError::internal_error().data(error.to_string()),
-    }
 }
 
 /// A command the prompt names but cannot run is the caller's to fix.
@@ -661,12 +651,10 @@ fn agent_stopped() -> AcpError {
 
 impl LiveSession {
     fn new(host: SessionHost) -> Arc<Self> {
-        let cancel = host.cancel_handle();
-        let replaced = host.replaced_flag();
+        let handle = host.handle();
         Arc::new(Self {
             host: Arc::new(tokio::sync::Mutex::new(Some(host))),
-            cancel,
-            replaced,
+            handle,
         })
     }
 
@@ -685,7 +673,7 @@ impl LiveSession {
         wait: HostWait,
     ) -> Result<HostGuard, AcpError> {
         let queues = match wait {
-            HostWait::Prompt => self.cancel.admits_queued_prompt(),
+            HostWait::Prompt => self.handle.admits_queued_prompt(),
             HostWait::Settings => true,
         };
         match self.try_lock_host(session_id) {
@@ -734,7 +722,7 @@ impl DerefMut for HostGuard {
 /// replacement the cancelled turn still saves before the host lock is
 /// released.
 async fn shutdown_live(live: Arc<LiveSession>, closing: Closing) {
-    live.cancel.close(closing);
+    live.handle.close(closing);
     let host = live.host.lock().await.take();
     if let Some(host) = host {
         host.shutdown().await;

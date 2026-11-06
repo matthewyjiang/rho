@@ -1,6 +1,6 @@
 //! The gate that carries a session's prompt cancellation.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use rho_sdk::CancellationToken;
 
@@ -18,7 +18,7 @@ use rho_sdk::CancellationToken;
 ///
 /// `suspend` and `close(Closing::Disconnected)` also tell the prompt its
 /// session goes on elsewhere (see [`PromptGate::hands_off`]).
-pub(crate) struct PromptGate {
+pub(super) struct PromptGate {
     slot: Mutex<Slot>,
 }
 
@@ -48,7 +48,7 @@ pub(crate) enum Closing {
 }
 
 impl PromptGate {
-    pub(crate) fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             slot: Mutex::new(Slot {
                 state: PromptGateState::Idle,
@@ -66,7 +66,7 @@ impl PromptGate {
     /// Opens the starting window for a prompt, dropping any cancel that
     /// arrived for the previous one. The returned token trips on a cancel
     /// that lands before `activate`, and is already cancelled once closed.
-    pub(crate) fn begin(&self) -> CancellationToken {
+    pub(super) fn begin(&self) -> CancellationToken {
         let token = CancellationToken::new();
         let mut slot = self.slot();
         if matches!(slot.state, PromptGateState::Closed(_)) {
@@ -100,14 +100,14 @@ impl PromptGate {
         }
     }
 
-    pub(crate) fn finish(&self) {
+    pub(super) fn finish(&self) {
         let mut slot = self.slot();
         if !matches!(slot.state, PromptGateState::Closed(_)) {
             slot.state = PromptGateState::Idle;
         }
     }
 
-    pub(crate) fn cancel(&self) {
+    pub(super) fn cancel(&self) {
         match &self.slot().state {
             PromptGateState::Idle | PromptGateState::Closed(_) => {}
             PromptGateState::Starting(token) | PromptGateState::Active(token) => token.cancel(),
@@ -116,7 +116,7 @@ impl PromptGate {
 
     /// Cancels the current prompt because another host takes the session
     /// over, as an ACP `session/load` of a live session does.
-    pub(crate) fn suspend(&self) {
+    pub(super) fn suspend(&self) {
         let mut slot = self.slot();
         if let PromptGateState::Starting(token) | PromptGateState::Active(token) = &slot.state {
             token.cancel();
@@ -126,7 +126,7 @@ impl PromptGate {
 
     /// Cancels the current prompt and every later one, for a session that
     /// is being torn down.
-    pub(crate) fn close(&self, closing: Closing) {
+    pub(super) fn close(&self, closing: Closing) {
         let mut slot = self.slot();
         if let PromptGateState::Starting(token) | PromptGateState::Active(token) = &slot.state {
             token.cancel();
@@ -135,7 +135,7 @@ impl PromptGate {
     }
 
     /// Whether the running prompt was cancelled, or the session is closing.
-    pub(crate) fn is_cancelled(&self) -> bool {
+    pub(super) fn is_cancelled(&self) -> bool {
         match &self.slot().state {
             PromptGateState::Idle => false,
             PromptGateState::Closed(_) => true,
@@ -145,7 +145,7 @@ impl PromptGate {
         }
     }
 
-    pub(crate) fn is_closed(&self) -> bool {
+    pub(super) fn is_closed(&self) -> bool {
         matches!(self.slot().state, PromptGateState::Closed(_))
     }
 
@@ -153,7 +153,7 @@ impl PromptGate {
     /// elsewhere: another host took it over, or the connection is ending.
     /// Such a prompt keeps state a later prompt resumes, which a cancel or
     /// a retiring close drops.
-    pub(crate) fn hands_off(&self) -> bool {
+    pub(super) fn hands_off(&self) -> bool {
         let slot = self.slot();
         slot.suspended || matches!(slot.state, PromptGateState::Closed(Closing::Disconnected))
     }
@@ -162,22 +162,13 @@ impl PromptGate {
     /// the current prompt was cancelled, none is running (the host is only
     /// held briefly by teardown or a setup request), or the session is
     /// closing, which ends the waiting prompt cancelled.
-    pub(crate) fn admits_queued_prompt(&self) -> bool {
+    pub(super) fn admits_queued_prompt(&self) -> bool {
         match &self.slot().state {
             PromptGateState::Idle | PromptGateState::Closed(_) => true,
             PromptGateState::Starting(token) | PromptGateState::Active(token) => {
                 token.is_cancelled()
             }
         }
-    }
-}
-
-/// Ends the gate's current prompt when dropped, however the prompt returns.
-pub(crate) struct PromptGuard(pub(crate) Arc<PromptGate>);
-
-impl Drop for PromptGuard {
-    fn drop(&mut self) {
-        self.0.finish();
     }
 }
 

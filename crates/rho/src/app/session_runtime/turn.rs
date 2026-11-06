@@ -16,7 +16,10 @@ use super::{
     pump::{pump, AppliedDisplays, ApprovalSource, EventSource, PumpSources},
     SessionRuntime,
 };
-use crate::app::headless_delegation::{BackgroundSources, HeadlessDelegation, OfferedDisplays};
+use crate::{
+    app::headless_delegation::{BackgroundSources, HeadlessDelegation, OfferedDisplays},
+    config::Config,
+};
 
 /// A model turn: `model` is what the run sends, `display` the prompt as the
 /// user sent it, which the turn saves for display. `calls` run as one host
@@ -58,15 +61,52 @@ pub(crate) enum TurnOutcome {
     Cancelled,
 }
 
+impl TurnOutcome {
+    /// Whether the turn reached the model's final answer, including one the
+    /// provider truncated or refused. Cancelled and step-limited turns did
+    /// not.
+    pub(super) fn answered(&self) -> bool {
+        match self {
+            Self::Completed(outcome) => match outcome.stop_reason() {
+                rho_sdk::StopReason::EndTurn
+                | rho_sdk::StopReason::MaxTokens
+                | rho_sdk::StopReason::Refusal => true,
+                rho_sdk::StopReason::MaxSteps => false,
+                // `StopReason` is non-exhaustive; hosts report a reason a
+                // newer SDK adds as an ended turn.
+                _ => true,
+            },
+            Self::Cancelled => false,
+        }
+    }
+}
+
 impl SessionRuntime {
-    /// Runs `turn` to its end, reporting through `io`. Failures are saved
-    /// with what the turn showed and reported to the session's hooks before
-    /// they return.
+    /// Runs `turn` to its end, reporting through `io`, within a prompt
+    /// begun with [`Self::begin_prompt`]. Failures are saved with what the
+    /// turn showed and reported to the session's hooks before they return;
+    /// one on the provider's credentials has the next prompt renew them.
+    /// The first turn this runtime completes with the model's answer asks
+    /// the title agent `process_config` configures to name the session, for
+    /// the host to take with [`Self::take_title`].
     pub(crate) async fn run_turn(
         &mut self,
         turn: Turn,
-        mut io: TurnIo,
+        io: TurnIo,
+        process_config: &Config,
     ) -> anyhow::Result<TurnOutcome> {
+        let title_input = (!self.title_requested).then(|| turn.display.clone());
+        let result = self.run_delegated(turn, io).await;
+        self.note_credential_failure(&result);
+        if let Some(user) = title_input.filter(|_| result.as_ref().is_ok_and(TurnOutcome::answered))
+        {
+            self.request_title(process_config, &user);
+        }
+        result
+    }
+
+    /// Runs `turn` beside the session's background work.
+    async fn run_delegated(&mut self, turn: Turn, mut io: TurnIo) -> anyhow::Result<TurnOutcome> {
         let stored = self.stored()?.clone();
         let mut delegation = HeadlessDelegation::attach(
             &self.built.session,
@@ -140,7 +180,7 @@ impl SessionRuntime {
                 return Err(error.into());
             }
         };
-        self.prompt_gate.activate(run.cancellation_handle());
+        self.handle.gate().activate(run.cancellation_handle());
         io.emit(SessionEvent::RunStarted);
         let cancel = run.cancellation_handle();
         let mut approval_receiver = self.built.approval_receiver.take();

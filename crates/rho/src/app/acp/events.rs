@@ -435,15 +435,6 @@ fn map_sdk_stop_reason(reason: rho_sdk::StopReason) -> StopReason {
     }
 }
 
-/// Whether a turn reached the model's final answer, including one the
-/// provider truncated or refused. Cancelled and step-limited turns did not.
-pub(super) fn turn_answered(stop: StopReason) -> bool {
-    matches!(
-        stop,
-        StopReason::EndTurn | StopReason::MaxTokens | StopReason::Refusal
-    )
-}
-
 fn notify(session_id: &SessionId, update: SessionUpdate) -> SessionNotification {
     SessionNotification::new(session_id.clone(), update)
 }

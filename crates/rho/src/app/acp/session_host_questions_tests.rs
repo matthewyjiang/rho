@@ -29,7 +29,7 @@ use rho_sdk::{
     HostChoice, HostInputRequest, HostQuestion, SelectionMode, SessionOptions,
 };
 
-use super::{PromptGate, SessionHost};
+use super::{SessionHandle, SessionHost};
 use crate::app::acp::host_features::{FormDialect, Forms};
 use crate::app::session_runtime::{OpenedSession, SessionPermission, SessionStorage};
 use crate::{
@@ -104,7 +104,7 @@ struct AskingPort {
     /// Cancels this prompt at the run's final usage update, sent after the
     /// run settled: the second after the plan prompt, which follows the
     /// proposing step's start.
-    cancel_at_final_usage: Option<Arc<PromptGate>>,
+    cancel_at_final_usage: Option<SessionHandle>,
     usage_after_plan_prompt: Mutex<usize>,
     updates: Mutex<Vec<SessionUpdate>>,
     plan_prompts: Mutex<usize>,
@@ -264,10 +264,13 @@ async fn host(
     } else {
         PermissionMode::Plan
     };
+    let io = crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id()));
+    let build = crate::app::acp::session_host::session_build(&startup, &io);
     let mut host = SessionHost::from_built(
-        crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id())),
+        io,
         &startup,
         OpenedSession {
+            build,
             built,
             storage: SessionStorage::saved(stored),
             agent: startup.agent.clone(),
@@ -387,7 +390,7 @@ async fn cancelling_the_prompt_withdraws_an_open_question() {
         asked: asked_tx,
         withdrawn: Arc::clone(&withdrawn),
     });
-    let gate = host.cancel_handle();
+    let gate = host.handle();
     let request = prompt(&host, "ask");
 
     let (response, ()) = tokio::join!(
@@ -411,7 +414,8 @@ async fn cancelling_the_prompt_withdraws_an_open_question() {
 // Covers: keeping planning at the approval prompt must leave the session in
 // plan mode and end the prompt without an implementation turn. Approval is
 // covered over stdio in `acp_server_cli`.
-// Owner: ACP plan exit
+// Owner: session runtime plan handoff, through the ACP host's permission
+// prompts
 #[tokio::test]
 async fn keeping_planning_stays_in_plan_mode_without_another_turn() {
     let home = tempfile::tempdir().unwrap();
@@ -455,7 +459,8 @@ async fn keeping_planning_stays_in_plan_mode_without_another_turn() {
 // plan handoff (here, during its final usage update) discards the approval:
 // the session stays in plan mode, no mode update is sent, the implementation
 // turn never runs, and the prompt ends cancelled
-// Owner: ACP plan exit
+// Owner: session runtime plan handoff, through the ACP host's permission
+// prompts
 #[tokio::test]
 async fn a_cancel_before_the_handoff_keeps_plan_mode() {
     let home = tempfile::tempdir().unwrap();
@@ -472,7 +477,7 @@ async fn a_cancel_before_the_handoff_keeps_plan_mode() {
         host(home.path(), PermissionMode::Plan, Forms::Unavailable, turns).await;
     let mut port = AskingPort::new(FormReply::Respond(ElicitationAction::Decline));
     port.plan_answer = "allow_edits";
-    port.cancel_at_final_usage = Some(host.cancel_handle());
+    port.cancel_at_final_usage = Some(host.handle());
 
     let response = host
         .prompt(

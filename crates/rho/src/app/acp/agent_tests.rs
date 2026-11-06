@@ -1,11 +1,5 @@
 use crate::app::acp::prompt_acceptance::PromptAcceptance;
-use std::{
-    future::Future,
-    path::PathBuf,
-    pin::Pin,
-    sync::{atomic::AtomicBool, Arc},
-    time::Duration,
-};
+use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
 
 use agent_client_protocol::{
     schema::v1::{
@@ -23,7 +17,7 @@ use rho_sdk::{
     ProviderError,
 };
 
-use super::{HostWait, LiveSession, PromptGate, RhoAcpAgent, SessionHost};
+use super::{HostWait, LiveSession, RhoAcpAgent, SessionHandle, SessionHost};
 use crate::{
     agent::{AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolPolicy},
     app::acp::{AcpClientPort, AcpStartup},
@@ -206,8 +200,7 @@ async fn missing_session_prompt_and_load_return_errors() {
 fn vacant_session() -> Arc<LiveSession> {
     Arc::new(LiveSession {
         host: Arc::new(tokio::sync::Mutex::new(None)),
-        cancel: Arc::new(PromptGate::new()),
-        replaced: Arc::new(AtomicBool::new(false)),
+        handle: SessionHandle::detached_for_tests(),
     })
 }
 
@@ -238,8 +231,8 @@ async fn delete_retires_the_open_session_after_an_in_flight_load() {
     assert_eq!(
         (
             agent.sessions.lock().await.contains_key(&id),
-            loaded.cancel.is_closed(),
-            loaded.replaced.load(std::sync::atomic::Ordering::Acquire),
+            loaded.handle.is_closed(),
+            loaded.handle.is_replaced(),
         ),
         (false, true, false)
     );
@@ -248,7 +241,7 @@ async fn delete_retires_the_open_session_after_an_in_flight_load() {
 async fn wait_until_replaced(live: &LiveSession) {
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
-            if live.replaced.load(std::sync::atomic::Ordering::Acquire) {
+            if live.handle.is_replaced() {
                 return;
             }
             tokio::task::yield_now().await;
@@ -270,9 +263,9 @@ async fn prompt_waits_only_behind_a_cancelled_prompt() {
         ("cancelled prompt", true, true),
     ] {
         let live = vacant_session();
-        live.cancel.begin();
+        live.handle.start_prompt_for_tests();
         if cancelled {
-            live.cancel.cancel();
+            live.handle.cancel();
         }
         let held = live.host.lock().await;
         let session_id = SessionId::new("steer");
@@ -364,8 +357,8 @@ async fn prompt_queued_during_replacement_moves_to_the_successor() {
         .lock()
         .await
         .insert(session_id.clone(), Arc::clone(&previous));
-    previous.cancel.begin();
-    previous.cancel.cancel();
+    previous.handle.start_prompt_for_tests();
+    previous.handle.cancel();
     let held = previous.host.lock().await;
     let successor_held = replacement.host.lock().await;
 
@@ -482,7 +475,7 @@ async fn reload_reads_storage_only_after_the_old_host_quiesces() {
 
     drop(held);
     load.await.expect_err("no stored session");
-    assert!(!previous.replaced.load(std::sync::atomic::Ordering::Acquire));
+    assert!(!previous.handle.is_replaced());
     assert!(agent
         .sessions
         .lock()
@@ -792,8 +785,8 @@ async fn prompt_queued_before_close_ends_cancelled_without_a_turn() {
     let session_id = SessionId::new(id.as_str());
     let live = agent.live_session(&session_id).await.unwrap();
     // A cancelled turn still winding down holds the host.
-    live.cancel.begin();
-    live.cancel.cancel();
+    live.handle.start_prompt_for_tests();
+    live.handle.cancel();
     let held = live.host.lock().await;
 
     let prompt = agent.prompt(
@@ -866,7 +859,7 @@ async fn prompt_starting_as_close_lands_runs_no_turn() {
             .await
     });
     tokio::time::timeout(Duration::from_secs(1), async {
-        while !live.cancel.is_closed() {
+        while !live.handle.is_closed() {
             tokio::task::yield_now().await;
         }
     })

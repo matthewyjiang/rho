@@ -8,18 +8,28 @@ use super::SessionRuntime;
 
 impl SessionRuntime {
     /// Compacts with optional `instructions` on what to keep, and saves the
-    /// result; `None` when it was cancelled first.
-    ///
-    /// The SDK commits replacement history before `compact` returns, so the
-    /// work runs as a task: a cancel aborts it only while it is still running.
-    /// A task that already finished has committed, and its outcome is saved
-    /// like any other, as the TUI's abort does.
+    /// result; `None` when it was cancelled first. Run it within a prompt
+    /// begun with [`Self::begin_prompt`]. A failure on the provider's
+    /// credentials has the next prompt renew them.
     pub(crate) async fn compact(
         &mut self,
         instructions: Option<String>,
     ) -> anyhow::Result<Option<CompactionOutcome>> {
+        let result = self.compact_and_save(instructions).await;
+        self.note_credential_failure(&result);
+        result
+    }
+
+    /// The SDK commits replacement history before `compact` returns, so the
+    /// work runs as a task: a cancel aborts it only while it is still running.
+    /// A task that already finished has committed, and its outcome is saved
+    /// like any other, as the TUI's abort does.
+    async fn compact_and_save(
+        &mut self,
+        instructions: Option<String>,
+    ) -> anyhow::Result<Option<CompactionOutcome>> {
         let cancel = CancellationToken::new();
-        self.prompt_gate.activate(cancel.clone());
+        self.handle.gate().activate(cancel.clone());
         let session = self.built.session.clone();
         let mut task = tokio::spawn(async move {
             match instructions {

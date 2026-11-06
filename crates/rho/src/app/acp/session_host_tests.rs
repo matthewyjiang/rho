@@ -10,9 +10,9 @@ use rho_sdk::model::{ContentBlock, ImageContent as SdkImage};
 use super::{
     advertised_config_options,
     convert::{user_input_from_prompt, validate_session_cwd, workspace_cwd, SessionCwdError},
-    CurrentModel, CurrentSettings, Toggles,
+    setting_error, CurrentModel, CurrentSettings, Toggles,
 };
-use crate::{config::Config, permission::PermissionMode};
+use crate::{app::session_runtime::SettingChangeError, config::Config, permission::PermissionMode};
 use rho_providers::reasoning::ReasoningLevel;
 
 // Covers: session/new and session/load must refuse a non-workspace cwd
@@ -158,7 +158,7 @@ fn advertised_options_merge_model_with_per_model_options() {
         let settings = CurrentSettings {
             permission_mode: PermissionMode::AllowEdits,
             reasoning: ReasoningLevel::High,
-            service_tier: Some(rho_sdk::model::ServiceTier::Priority),
+            fast: true,
         };
         let options = advertised_config_options(&current, &config, settings, Toggles::Select);
         let ids = options
@@ -185,5 +185,31 @@ fn select_current(option: &SessionConfigOption) -> &str {
     match &option.kind {
         SessionConfigKind::Select(select) => select.current_value.0.as_ref(),
         other => panic!("expected a select option, got {other:?}"),
+    }
+}
+
+// Covers: a refused thought level or fast mode must reach the client as the
+// ACP error it can act on: fix the request, or resend once the turn ends.
+// Owner: acp session host
+#[test]
+fn setting_errors_map_to_acp_errors() {
+    let session_id = agent_client_protocol::schema::v1::SessionId::new("session-1");
+    let cases = [
+        (
+            SettingChangeError::Unsupported("supported levels: low, high".into()),
+            agent_client_protocol::Error::invalid_params().data("supported levels: low, high"),
+        ),
+        (
+            SettingChangeError::Busy,
+            agent_client_protocol::Error::invalid_request()
+                .data("session 'session-1' already has an active prompt"),
+        ),
+        (
+            SettingChangeError::Apply(anyhow::anyhow!("provider refused")),
+            agent_client_protocol::Error::internal_error().data("provider refused"),
+        ),
+    ];
+    for (error, expected) in cases {
+        assert_eq!(setting_error(&session_id, error), expected);
     }
 }

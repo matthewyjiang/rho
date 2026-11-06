@@ -157,7 +157,7 @@ impl SessionRuntime {
     /// Rebuilds a stale provider for the same model and auth. Still-missing
     /// credentials fail with the typed provider error, which hosts report as
     /// a sign-in request again.
-    pub(crate) async fn renew_stale_credentials(
+    pub(super) async fn renew_stale_credentials(
         &mut self,
         process_config: &Config,
         config_path: &std::path::Path,
@@ -185,8 +185,9 @@ impl SessionRuntime {
         Ok(())
     }
 
-    /// Marks the provider stale when `result` failed on its credentials.
-    pub(crate) fn note_credential_failure<T>(&mut self, result: &anyhow::Result<T>) {
+    /// Marks the provider stale when `result` failed on its credentials, so
+    /// the next prompt renews it.
+    pub(super) fn note_credential_failure<T>(&mut self, result: &anyhow::Result<T>) {
         if result
             .as_ref()
             .is_err_and(|error| CredentialFailure::find(error).is_some())

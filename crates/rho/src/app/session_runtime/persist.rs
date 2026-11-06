@@ -26,10 +26,7 @@
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
 };
 
 use rho_sdk::{
@@ -37,7 +34,7 @@ use rho_sdk::{
     RunOutcome, SessionId, SessionSnapshot, SessionStore, SessionStoreFuture, UserInput,
 };
 
-use super::{events::InsertedMessage, SessionRuntime};
+use super::{events::InsertedMessage, SessionHandle, SessionRuntime};
 use crate::{
     added_dirs::AddedDirs,
     app::active_prompt::ActivePrompt,
@@ -142,7 +139,7 @@ impl SessionRuntime {
             prompt: self.built.prompt.clone(),
             added_dirs: self.added_dirs.clone(),
             auth: self.auth.clone(),
-            replaced: Arc::clone(&self.replaced),
+            handle: self.handle.clone(),
             display: Mutex::new(TurnDisplay::new(
                 Message::User(display.blocks().to_vec()),
                 Message::User(model.blocks().to_vec()),
@@ -265,7 +262,7 @@ impl SessionRuntime {
 
     /// A replaced runtime must not write over its successor's session file.
     pub(super) fn is_replaced(&self) -> bool {
-        self.replaced.load(Ordering::Acquire)
+        self.handle.is_replaced()
     }
 
     /// The live snapshot with the session state a later load restores.
@@ -334,7 +331,8 @@ struct CheckpointStore {
     prompt: ActivePrompt,
     added_dirs: AddedDirs,
     auth: String,
-    replaced: Arc<AtomicBool>,
+    /// Tells the store when a successor owns the file.
+    handle: SessionHandle,
     display: Mutex<TurnDisplay>,
 }
 
@@ -346,7 +344,7 @@ impl CheckpointStore {
     }
 
     fn save_now(&self, snapshot: SessionSnapshot) -> anyhow::Result<()> {
-        if self.replaced.load(Ordering::Acquire) {
+        if self.handle.is_replaced() {
             return Ok(());
         }
         let snapshot = decorate(

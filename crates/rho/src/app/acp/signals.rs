@@ -12,19 +12,20 @@ use rho_sdk::RunEvent;
 
 use super::AcpClientPort;
 use crate::{
+    app::session_runtime::ContextGauge,
     tools::todo::{TodoItem, TodoState, TodoStatus},
     usage::report::Valuation,
 };
 
 /// Tracks one prompt's context fill and checklist for a session.
 ///
-/// Build one per prompt, since the session handle changes when the runtime is
-/// rebound. The host keeps the last checklist it sent across prompts and hands
+/// Build one per prompt, since the session behind the gauge changes when the
+/// runtime is rebound. The host keeps the last checklist it sent across prompts and hands
 /// it in, so a checklist restored by `session/load` goes out with the first
 /// prompt. Nothing is sent during load itself: hosts such as T3 Code discard
 /// every update for a session while its load is in flight.
 pub(super) struct SessionSignals {
-    session: rho_sdk::Session,
+    gauge: ContextGauge,
     todo: TodoState,
     /// Configured window for the current model; the provider-reported window
     /// is the fallback, matching the TUI context meter.
@@ -34,13 +35,13 @@ pub(super) struct SessionSignals {
 
 impl SessionSignals {
     pub(super) fn new(
-        session: rho_sdk::Session,
+        gauge: ContextGauge,
         todo: TodoState,
         context_window: Option<u64>,
         sent_plan: Vec<PlanEntry>,
     ) -> Self {
         Self {
-            session,
+            gauge,
             todo,
             context_window,
             sent_plan,
@@ -64,7 +65,7 @@ impl SessionSignals {
 
     /// Current context fill and cumulative cost; see [`Self::usage_for`].
     pub(super) async fn usage(&self) -> SessionUpdate {
-        self.usage_for(self.session.context_estimate()).await
+        self.usage_for(self.gauge.estimate()).await
     }
 
     /// Context fill from `estimate` and cumulative cost. ACP's `size` is
@@ -80,7 +81,7 @@ impl SessionSignals {
             .context_window
             .or(estimate.reported_context_window())
             .unwrap_or(0);
-        let cost = match crate::usage::session_valuation(self.session.id()).await {
+        let cost = match crate::usage::session_valuation(self.gauge.session_id()).await {
             Valuation::Usd(micros) => Some(Cost::new(micros as f64 / 1_000_000.0, "USD")),
             Valuation::Local | Valuation::Unpriced => None,
         };
