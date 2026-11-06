@@ -18,7 +18,7 @@ use crate::{
         events::{
             cancelled_approval, ApprovalId, PlanApprovalId, RunEnd, SessionEvent, TurnControl,
         },
-        turn::{MessageSave, TurnIo},
+        turn::TurnIo,
         QuestionSupport,
     },
     permission::PermissionMode,
@@ -88,7 +88,6 @@ impl Harness {
             let mut io = TurnIo {
                 events: events_tx,
                 control: control_rx,
-                message_save: MessageSave::AtFirstStep,
             };
             pump(
                 PumpSources {

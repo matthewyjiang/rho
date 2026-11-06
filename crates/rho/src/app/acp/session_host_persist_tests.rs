@@ -1,5 +1,9 @@
 use crate::app::acp::prompt_acceptance::PromptAcceptance;
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use agent_client_protocol::{
     schema::v1::{
@@ -10,10 +14,13 @@ use agent_client_protocol::{
 };
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{ContentBlock, Message, ModelIdentity, ModelResponse, ToolCall},
-    provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
+    model::{ContentBlock, Message, ModelIdentity, ModelRequest, ModelResponse, ToolCall},
+    provider::{
+        ModelProvider, ProviderFuture, ProviderTurnContext, ScriptedProvider, ScriptedTurn,
+    },
     ProviderError, ProviderErrorKind, Retryability, SessionOptions,
 };
+use tokio::sync::oneshot;
 
 use super::SessionHost;
 use crate::{
@@ -230,6 +237,84 @@ async fn unfinished_turn_is_on_disk_for_session_load() {
         "{:?}",
         histories.display
     );
+}
+
+/// Holds its one model request open until released, then fails it.
+struct HeldProvider {
+    entered: Mutex<Option<oneshot::Sender<()>>>,
+    release: Mutex<Option<oneshot::Receiver<()>>>,
+}
+
+impl ModelProvider for HeldProvider {
+    fn identity(&self) -> ModelIdentity {
+        ModelIdentity::new("test", "test", "model")
+    }
+
+    fn send_turn<'a>(&'a self, _request: ModelRequest<'a>) -> ProviderFuture<'a> {
+        Box::pin(async { Err(ProviderError::interrupted("held provider is stream-only")) })
+    }
+
+    fn send_turn_stream<'a>(
+        &'a self,
+        _request: ModelRequest<'a>,
+        _context: ProviderTurnContext,
+    ) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let entered = self.entered.lock().unwrap().take();
+            if let Some(entered) = entered {
+                let _ = entered.send(());
+            }
+            let release = self.release.lock().unwrap().take();
+            if let Some(release) = release {
+                let _ = release.await;
+            }
+            Err(ProviderError::interrupted("released"))
+        })
+    }
+}
+
+// Covers: a host that kills the agent before the model's first answer (T3
+// Code restarts) must still find the user's message on session/load. ACP v1
+// prompts report nothing early, so only the save itself protects them.
+// Owner: session runtime turn persistence, driven through the ACP host
+#[tokio::test]
+async fn prompt_is_on_disk_before_the_model_answers() {
+    let home = tempfile::tempdir().unwrap();
+    let startup = AcpStartup::for_tests(Config::default(), home.path());
+    let (entered, model_asked) = oneshot::channel();
+    let (release, released) = oneshot::channel();
+    let provider: Arc<dyn ModelProvider> = Arc::new(HeldProvider {
+        entered: Mutex::new(Some(entered)),
+        release: Mutex::new(Some(released)),
+    });
+    let stored = StoredSession::create_in_root(home.path(), home.path()).unwrap();
+    let id = stored.id().to_owned();
+    let mut host = host(
+        home.path(),
+        &id,
+        SessionStorage::saved(stored),
+        provider,
+        AppToolSet::disabled(),
+        &startup,
+    )
+    .await;
+
+    let on_disk = async {
+        model_asked.await.expect("the model is asked");
+        let (_, histories) =
+            StoredSession::open_by_id_with_histories_in_root(home.path(), home.path(), &id)
+                .unwrap();
+        release.send(()).expect("release the model");
+        histories.display
+    };
+    let (sent, display) = tokio::join!(
+        send(&mut host, &id, "the codeword is zebra", &startup),
+        on_disk
+    );
+    sent.expect_err("the held request fails");
+    host.shutdown().await;
+
+    assert_eq!(display, vec![Message::user_text("the codeword is zebra")]);
 }
 
 // Covers: a refusal rollback whose durable leaf commit fails must leave the

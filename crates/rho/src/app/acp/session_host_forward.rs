@@ -4,8 +4,9 @@
 //! Runs beside [`SessionRuntime::run_turn`] for the whole turn. Run events
 //! become session updates in order, with the usage and checklist updates
 //! they imply. Approvals, plan approvals, and questions become client
-//! requests, which wait concurrently so a pending one never holds back the
-//! event stream; a withdrawal drops its request. An update the client did
+//! requests, which a separate driver awaits beside the event stream: a
+//! pending request never holds back updates, and a reply reaches the turn
+//! even while an update is still being sent. A withdrawal drops its request. An update the client did
 //! not take fails the turn: the forwarder tells the runtime once and then
 //! only closes the run's cards, best effort. A turn whose run already
 //! ended settles anyway (see `TurnControl::HostFailed`), and the prompt
@@ -23,7 +24,7 @@ use futures_util::{
     stream::{FuturesUnordered, StreamExt},
 };
 use rho_sdk::{HostInputId, HostInputRefusal};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use super::send_notification;
 use crate::app::{
@@ -70,13 +71,16 @@ enum Asked {
 }
 
 /// A client request that ends in the turn's answer.
-type Request<'a> = Pin<Box<dyn Future<Output = (Asked, TurnControl)> + Send + 'a>>;
+type Request<'a> = Pin<Box<dyn Future<Output = TurnControl> + Send + 'a>>;
 
 /// One turn's forwarding state.
 struct Forwarding<'a> {
     target: Forwarder<'a>,
     control: UnboundedSender<TurnControl>,
-    requests: FuturesUnordered<Abortable<Request<'a>>>,
+    /// Hands each request to [`answer_requests`].
+    requests: UnboundedSender<Abortable<Request<'a>>>,
+    /// Abort handles by request. A handle outlives its answered request,
+    /// where aborting does nothing.
     open: HashMap<Asked, AbortHandle>,
     started: bool,
     finished: bool,
@@ -91,33 +95,27 @@ impl<'a> Forwarder<'a> {
         mut events: UnboundedReceiver<SessionEvent>,
         control: UnboundedSender<TurnControl>,
     ) -> Forwarded {
+        let (requests, asked) = mpsc::unbounded_channel();
         let mut forwarding = Forwarding {
             target: self,
-            control,
-            requests: FuturesUnordered::new(),
+            control: control.clone(),
+            requests,
             open: HashMap::new(),
             started: false,
             finished: false,
             failure: None,
         };
-        loop {
-            tokio::select! {
-                biased;
-
-                event = events.recv() => match event {
-                    Some(event) => forwarding.show(event).await,
-                    None => break,
-                },
-
-                Some(answered) = forwarding.requests.next(), if !forwarding.requests.is_empty() => {
-                    // An aborted request was withdrawn; nothing waits on it.
-                    if let Ok((asked, answer)) = answered {
-                        forwarding.open.remove(&asked);
-                        let _ = forwarding.control.send(answer);
-                    }
-                }
+        let show_events = async move {
+            while let Some(event) = events.recv().await {
+                forwarding.show(event).await;
             }
-        }
+            // Ends the driver: the turn is over, so nothing waits on what
+            // is still unanswered.
+            let (closed, _) = mpsc::unbounded_channel();
+            forwarding.requests = closed;
+            forwarding
+        };
+        let (forwarding, ()) = tokio::join!(show_events, answer_requests(asked, control));
         let Forwarding {
             target,
             started,
@@ -128,6 +126,29 @@ impl<'a> Forwarder<'a> {
         Forwarded {
             sent_plan: (!started || finished).then(|| target.signals.into_sent_plan()),
             failure,
+        }
+    }
+}
+
+/// Awaits the turn's client requests and sends each reply to the turn as it
+/// comes, until the forwarder stops handing over requests.
+async fn answer_requests(
+    mut asked: UnboundedReceiver<Abortable<Request<'_>>>,
+    control: UnboundedSender<TurnControl>,
+) {
+    let mut pending = FuturesUnordered::new();
+    loop {
+        tokio::select! {
+            request = asked.recv() => match request {
+                Some(request) => pending.push(request),
+                None => break,
+            },
+            Some(answered) = pending.next(), if !pending.is_empty() => {
+                // An aborted request was withdrawn; nothing waits on it.
+                if let Ok(answer) = answered {
+                    let _ = control.send(answer);
+                }
+            }
         }
     }
 }
@@ -183,13 +204,10 @@ impl<'a> Forwarding<'a> {
                             Ok(response) => response.outcome,
                             Err(_) => RequestPermissionOutcome::Cancelled,
                         };
-                        (
-                            Asked::Approval(id),
-                            TurnControl::RespondApproval {
-                                id,
-                                decision: permission::decision_for(&outcome),
-                            },
-                        )
+                        TurnControl::RespondApproval {
+                            id,
+                            decision: permission::decision_for(&outcome),
+                        }
                     }),
                 );
             }
@@ -207,13 +225,10 @@ impl<'a> Forwarding<'a> {
                                 RequestPermissionOutcome::Cancelled
                             }
                         };
-                        (
-                            Asked::Plan(id),
-                            TurnControl::AnswerPlan {
-                                id,
-                                answer: permission::plan_answer_for(&outcome),
-                            },
-                        )
+                        TurnControl::AnswerPlan {
+                            id,
+                            answer: permission::plan_answer_for(&outcome),
+                        }
                     }),
                 );
             }
@@ -231,9 +246,8 @@ impl<'a> Forwarding<'a> {
                         dialect,
                     );
                     let client = self.target.client;
-                    let asked = Asked::Question(id.clone());
                     self.ask(
-                        asked.clone(),
+                        Asked::Question(id.clone()),
                         Box::pin(async move {
                             let answer = match client.create_elicitation(form).await {
                                 Ok(response) => {
@@ -244,7 +258,7 @@ impl<'a> Forwarding<'a> {
                                     Err(HostInputRefusal::Dismissed)
                                 }
                             };
-                            (asked, TurnControl::AnswerQuestion { id, answer })
+                            TurnControl::AnswerQuestion { id, answer }
                         }),
                     );
                 }
@@ -329,7 +343,9 @@ impl<'a> Forwarding<'a> {
     fn ask(&mut self, asked: Asked, request: Request<'a>) {
         let (handle, registration) = AbortHandle::new_pair();
         self.open.insert(asked, handle);
-        self.requests.push(Abortable::new(request, registration));
+        // The driver runs until this forwarder closes the channel, so the
+        // send cannot fail while events still arrive.
+        let _ = self.requests.send(Abortable::new(request, registration));
     }
 
     fn withdraw(&mut self, asked: &Asked) {

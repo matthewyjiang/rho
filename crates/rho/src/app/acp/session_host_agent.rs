@@ -2,10 +2,9 @@
 //! to the delegated agent, the host advertises what the agent changed, then
 //! runs the task as the child's first turn.
 
-use agent_client_protocol::schema::v1::PromptResponse;
 use rho_sdk::UserInput;
 
-use super::{AcpClientPort, AcpStartup, SessionHost};
+use super::{AcpClientPort, AcpStartup, Answered, SessionHost};
 use crate::app::session_runtime::AgentTask;
 
 impl SessionHost {
@@ -18,7 +17,7 @@ impl SessionHost {
         task: AgentTask,
         startup: &AcpStartup,
         client: &dyn AcpClientPort,
-    ) -> anyhow::Result<PromptResponse> {
+    ) -> anyhow::Result<Answered> {
         self.runtime.rebind_agent(&task, &startup.config).await?;
         self.run_rebound_agent(display, task, startup, client).await
     }
@@ -36,7 +35,7 @@ impl SessionHost {
             &crate::config::Config,
         ) -> anyhow::Result<crate::app::agent_binding::BoundAgent>,
         build: Build,
-    ) -> anyhow::Result<PromptResponse>
+    ) -> anyhow::Result<Answered>
     where
         Build: FnOnce(
             crate::app::agent_binding::BoundAgent,
@@ -59,7 +58,7 @@ impl SessionHost {
         task: AgentTask,
         startup: &AcpStartup,
         client: &dyn AcpClientPort,
-    ) -> anyhow::Result<PromptResponse> {
+    ) -> anyhow::Result<Answered> {
         self.refresh_advertisements(&startup.config, client).await;
         self.run_turn(display, task.input, Vec::new(), client).await
     }

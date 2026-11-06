@@ -85,6 +85,32 @@ pub(in crate::app::acp) struct PendingTitle {
     pub(in crate::app::acp) job: TitleJob,
 }
 
+/// How a prompt's work ended, before the prompt answers: the response the
+/// session settled on, and an update the client missed on the way. A turn
+/// that settled still counts as settled for the plan handoff and the title;
+/// the missed update fails the prompt only as it answers.
+struct Answered {
+    response: PromptResponse,
+    missed_update: Option<String>,
+}
+
+impl Answered {
+    fn delivered(response: PromptResponse) -> Self {
+        Self {
+            response,
+            missed_update: None,
+        }
+    }
+
+    /// The prompt's answer: the response, unless the client missed an update.
+    fn into_result(self) -> anyhow::Result<PromptResponse> {
+        match self.missed_update {
+            Some(message) => Err(anyhow::Error::msg(message)),
+            None => Ok(self.response),
+        }
+    }
+}
+
 pub(super) struct SessionHost {
     acp_session_id: SessionId,
     /// What the session's host does for its tools, shared by every tool set
@@ -172,8 +198,10 @@ impl SessionHost {
             &action,
             Some(Ok(PromptAction::Turn { .. } | PromptAction::RunAsAgent(_)))
         ) && !self.runtime.title_requested();
-        let result = match action {
-            None => Ok(PromptResponse::new(StopReason::Cancelled)),
+        let answered = match action {
+            None => Ok(Answered::delivered(PromptResponse::new(
+                StopReason::Cancelled,
+            ))),
             Some(Ok(PromptAction::Turn {
                 input: model,
                 calls,
@@ -186,35 +214,42 @@ impl SessionHost {
             }
             Some(Ok(PromptAction::Compact { instructions })) => {
                 self.prompt_acceptance.accept(InsertedMessage::Unreplayed);
-                self.compact(instructions, client).await
+                self.compact(instructions, client)
+                    .await
+                    .map(Answered::delivered)
             }
-            Some(Ok(PromptAction::StartWorkflow(start))) => {
-                self.start_workflow(&input, start, startup, client).await
-            }
+            Some(Ok(PromptAction::StartWorkflow(start))) => self
+                .start_workflow(&input, start, startup, client)
+                .await
+                .map(Answered::delivered),
             Some(Ok(PromptAction::RunAsAgent(task))) => {
                 self.run_as_agent(&input, task, startup, client).await
             }
             Some(Ok(PromptAction::AwaitWake(signal))) => {
                 self.prompt_acceptance.accept(InsertedMessage::Unreplayed);
-                self.await_wake(signal, &starting, client).await
+                self.await_wake(signal, &starting, client)
+                    .await
+                    .map(Answered::delivered)
             }
             Some(Err(rejected)) => Err(rejected.into()),
         };
         // After the plan handoff, so the implementation turn's failure counts.
-        let result = self.finish_plan_exit(result, &startup.config, client).await;
+        let answered = self
+            .finish_plan_exit(answered, &startup.config, client)
+            .await;
+        let stop = answered
+            .as_ref()
+            .ok()
+            .map(|answered| answered.response.stop_reason);
+        let result = answered.and_then(Answered::into_result);
         // Every card update of the prompt went out, so terminals of finished
         // calls can go.
         self.client_io.release_finished_terminals().await;
         self.runtime.note_credential_failure(&result);
         self.refresh_advertisements(&startup.config, client).await;
-        self.wake_prompt_ended(
-            result.as_ref().ok().map(|response| response.stop_reason),
-            client,
-        )
-        .await;
-        let completed = result
-            .as_ref()
-            .is_ok_and(|response| turn_answered(response.stop_reason));
+        self.wake_prompt_ended(stop, client).await;
+        // A turn that settled is named even if the client missed an update.
+        let completed = stop.is_some_and(turn_answered);
         let _ = self
             .herdr
             .report_state(
@@ -411,10 +446,9 @@ impl SessionHost {
         model: UserInput,
         calls: Vec<rho_sdk::model::ToolCall>,
         client: &dyn AcpClientPort,
-    ) -> anyhow::Result<PromptResponse> {
+    ) -> anyhow::Result<Answered> {
         let (events, event_receiver) = mpsc::unbounded_channel();
         let (control_sender, control) = mpsc::unbounded_channel();
-        let message_save = self.prompt_acceptance.message_save();
         // See `Forwarded::sent_plan` for when the checklist comes back.
         let signals = self.signals();
         let forwarder = forward::Forwarder {
@@ -430,11 +464,7 @@ impl SessionHost {
             placeholders: &self.permission_placeholders,
             acceptance: &mut self.prompt_acceptance,
         };
-        let io = TurnIo {
-            events,
-            control,
-            message_save,
-        };
+        let io = TurnIo { events, control };
         let turn = Turn {
             display: display.clone(),
             model,
@@ -445,17 +475,16 @@ impl SessionHost {
             forwarder.forward(event_receiver, control_sender),
         );
         self.sent_plan = forwarded.sent_plan.unwrap_or_default();
-        let outcome = result?;
-        // A delivery that failed after the turn settled still fails the
-        // prompt, as the client missed part of it.
-        if let Some(message) = forwarded.failure {
-            return Err(anyhow::Error::msg(message));
-        }
-        let stop = match outcome {
+        let stop = match result? {
             TurnOutcome::Completed(outcome) => EventMapper::map_stop(&outcome),
             TurnOutcome::Cancelled => StopReason::Cancelled,
         };
-        Ok(PromptResponse::new(stop))
+        // An update that failed after the turn settled still fails the
+        // prompt, as the client missed part of it, but the turn stands.
+        Ok(Answered {
+            response: PromptResponse::new(stop),
+            missed_update: forwarded.failure,
+        })
     }
 
     /// `/workflow:<name>`: starts the run in the background and answers with

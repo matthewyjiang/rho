@@ -2,17 +2,16 @@
 //!
 //! ACP v1 answers a prompt when its turn ends, so nothing is reported early.
 //! ACP v2 answers once the message is inserted, with the message's ID, and
-//! requires a replay to reuse that ID. Such a prompt's turn saves its
-//! message before its run starts (`MessageSave::BeforeRun`) and reports the
-//! row a reload replays it as (`SessionEvent::MessageInserted`), as a
-//! workflow start reports the row it saved; the ID is the one replay derives
-//! from that row. A command that saves nothing, such as `/compact`, is
+//! requires a replay to reuse that ID. A turn saves its message before its
+//! run starts and reports the row a reload replays it as
+//! (`SessionEvent::MessageInserted`), as a workflow start reports the row it
+//! saved; the ID is the one replay derives from that row. A command that saves nothing, such as `/compact`, is
 //! accepted with a fresh ID, since nothing of it is replayed.
 
 use agent_client_protocol::schema::v1::MessageId;
 
 use super::events::EventMapper;
-use crate::app::session_runtime::{InsertedMessage, MessageSave};
+use crate::app::session_runtime::InsertedMessage;
 
 /// Reports a prompt's user message, once, when the session inserts it.
 pub(super) enum PromptAcceptance {
@@ -24,15 +23,6 @@ pub(super) enum PromptAcceptance {
 }
 
 impl PromptAcceptance {
-    /// When the prompt's next turn saves its user message: before its run
-    /// while the prompt still waits to report it, else at the first step.
-    pub(super) fn message_save(&self) -> MessageSave {
-        match self {
-            Self::Implicit => MessageSave::AtFirstStep,
-            Self::Report(_) => MessageSave::BeforeRun,
-        }
-    }
-
     /// Reports `message` with the ID replay gives it; later calls do
     /// nothing.
     pub(super) fn accept(&mut self, message: InsertedMessage) {

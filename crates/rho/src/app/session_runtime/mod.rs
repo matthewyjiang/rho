@@ -69,7 +69,7 @@ pub(crate) use persist::SessionStorage;
 pub(crate) use prompt_gate::{Closing, PromptGate, PromptGuard};
 pub(crate) use switch::ModelSwitchError;
 pub(crate) use title::TitleJob;
-pub(crate) use turn::{MessageSave, Turn, TurnIo, TurnOutcome};
+pub(crate) use turn::{Turn, TurnIo, TurnOutcome};
 pub(crate) use workflow::WorkflowStart;
 
 /// A request the session recognizes but cannot run, such as a TUI-only

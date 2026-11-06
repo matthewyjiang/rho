@@ -54,12 +54,11 @@ pub(crate) enum InsertedMessage {
 
 /// What one turn reports, in order.
 pub(crate) enum SessionEvent {
-    /// The turn saved the prompt's user message before its run, as
-    /// [`super::MessageSave::BeforeRun`] asks. Sent at most once, and first:
-    /// before any notice and before [`Self::RunStarted`], so a host that
-    /// answers a prompt once its message is in can answer before it shows
-    /// anything of the turn. Not sent when the save fails, which fails the
-    /// turn, nor for [`super::MessageSave::AtFirstStep`].
+    /// The turn saved the prompt's user message, before its run. Sent once,
+    /// and first: before any notice and before [`Self::RunStarted`], so a
+    /// host that answers a prompt once its message is in can answer before
+    /// it shows anything of the turn. Not sent when the save fails, which
+    /// fails the turn.
     MessageInserted(InsertedMessage),
     /// The SDK run started. Nothing about the run precedes it; the inserted
     /// message and a notice may.

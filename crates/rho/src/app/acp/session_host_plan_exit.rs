@@ -3,12 +3,13 @@
 //! queues it right after the proposal.
 
 use agent_client_protocol::schema::v1::{
-    CurrentModeUpdate, PromptResponse, SessionNotification, SessionUpdate, StopReason,
+    CurrentModeUpdate, SessionNotification, SessionUpdate, StopReason,
 };
 use rho_sdk::UserInput;
 
 use super::{
-    permission, send_notification, turn_answered, AcpClientPort, Config, EventMapper, SessionHost,
+    permission, send_notification, turn_answered, AcpClientPort, Answered, Config, EventMapper,
+    SessionHost,
 };
 use crate::tools::plan_exit::{PlanExitResolution, ProposalTurn};
 
@@ -21,10 +22,10 @@ impl SessionHost {
     /// [`PlanExitDecision::resolve`]: crate::tools::plan_exit::PlanExitDecision::resolve
     pub(super) async fn finish_plan_exit(
         &mut self,
-        result: anyhow::Result<PromptResponse>,
+        result: anyhow::Result<Answered>,
         process_config: &Config,
         client: &dyn AcpClientPort,
-    ) -> anyhow::Result<PromptResponse> {
+    ) -> anyhow::Result<Answered> {
         let Some(decision) = self.runtime.take_plan_exit_decision() else {
             return result;
         };
@@ -32,14 +33,16 @@ impl SessionHost {
         // final usage update, still cancels the handoff. Checked right before
         // the switch commits; a later cancel stops only the implementation.
         let cancelled = self.runtime.prompt_gate().is_cancelled();
-        let result = result.map(|mut response| {
+        let result = result.map(|mut answered| {
             if cancelled {
-                response.stop_reason = StopReason::Cancelled;
+                answered.response.stop_reason = StopReason::Cancelled;
             }
-            response
+            answered
         });
+        // A turn that settled completed, even if the client missed an
+        // update of it; that miss still fails the prompt as it answers.
         let turn = match &result {
-            Ok(response) if turn_answered(response.stop_reason) => ProposalTurn::Completed,
+            Ok(answered) if turn_answered(answered.response.stop_reason) => ProposalTurn::Completed,
             Ok(_) | Err(_) => ProposalTurn::Unfinished,
         };
         let target = match decision.resolve(turn, self.runtime.permission_mode()) {
@@ -77,8 +80,13 @@ impl SessionHost {
         .await;
         // A permission prompt carries no feedback, so the decision has none.
         let input = UserInput::text(IMPLEMENT_PLAN);
-        self.run_turn(&input, input.clone(), Vec::new(), client)
-            .await
+        let missed = result.ok().and_then(|answered| answered.missed_update);
+        let mut implemented = self
+            .run_turn(&input, input.clone(), Vec::new(), client)
+            .await?;
+        // The proposal's miss came first, so it is the one reported.
+        implemented.missed_update = missed.or(implemented.missed_update);
+        Ok(implemented)
     }
 
     async fn plan_notice(&self, text: &str, client: &dyn AcpClientPort) {

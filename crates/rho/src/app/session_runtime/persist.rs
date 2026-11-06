@@ -155,9 +155,8 @@ impl SessionRuntime {
         Ok(checkpoint)
     }
 
-    /// Saves the turn's user message before its run starts, for
-    /// [`super::MessageSave::BeforeRun`], and returns the message as
-    /// inserted. Otherwise the run's first step save writes it.
+    /// Saves the turn's user message before its run starts, and returns the
+    /// message as inserted.
     pub(super) fn insert_user_message(
         &mut self,
         checkpoint: &TurnCheckpoint,
