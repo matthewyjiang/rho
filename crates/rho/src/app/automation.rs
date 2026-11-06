@@ -14,18 +14,17 @@ use std::{
     time::Duration,
 };
 
-use rho_sdk::{CancellationToken, UserInput};
+use rho_sdk::UserInput;
 
 use super::{
     agent_binding::BoundAgent,
     automation_protocol::{write_event, JsonlAdapter, TerminalReason, WireEvent},
-    headless_host::{
-        cancel_on_stop, until_stopped, HeadlessView, PromptEnd, RunReporter, StopCause, Stops,
-    },
+    headless_host::{self, HeadlessView, PromptEnd, RunReporter, StopCause, Stops},
     session_commands::{self, BuiltInCommand, CommandScope, CommandSet, PromptCommand},
     session_runtime::{
-        CommandRejected, HostCapabilities, Logouts, RunShape, SessionBuild, SessionLaunch,
-        SessionOpening, SessionRole, SessionRuntime, Turn, TurnOutcome, UnattendedApprovals,
+        CommandRejected, HostCapabilities, Logouts, PromptScope, RunShape, SessionBuild,
+        SessionLaunch, SessionOpening, SessionRole, SessionRuntime, Turn, TurnOutcome,
+        UnattendedApprovals,
     },
     shutdown_signal::{ShutdownSignal, ShutdownSignals},
 };
@@ -257,50 +256,44 @@ async fn run_session(
         logouts: &logouts,
     };
     let mut view = HeadlessView::new(reporter, jsonl);
-    let stop = CancellationToken::new();
-    let work = async {
-        let mut runtime = SessionRuntime::open_new(opening, rho_sdk::SessionId::new()).await?;
-        view.bind(&runtime);
-        let _ = startup
-            .herdr
-            .report_state(HerdrState::Working, None, None)
-            .await;
-        let ended = cancel_on_stop(
-            &stop,
-            runtime.handle(),
-            run_prompt(&mut runtime, &mut view, prompt_text, startup.config),
-        )
-        .await;
-        runtime.shutdown().await;
-        let _ = startup
-            .herdr
-            .report_state(HerdrState::Idle, None, None)
-            .await;
-        let _ = startup.herdr.release().await;
-        anyhow::Ok(ended)
+    let herdr = &startup.herdr;
+    let open = async {
+        let runtime = SessionRuntime::open_new(opening, rho_sdk::SessionId::new()).await?;
+        let _ = herdr.report_state(HerdrState::Working, None, None).await;
+        anyhow::Ok(runtime)
     };
-    let (worked, cause) = until_stopped(stops, &stop, work).await;
+    let end = headless_host::run_prompt(
+        stops,
+        &mut view,
+        startup.config,
+        open,
+        |runtime, view, scope, process_config| {
+            Box::pin(run_text(runtime, view, scope, prompt_text, process_config))
+        },
+    )
+    .await;
+    let _ = herdr.report_state(HerdrState::Idle, None, None).await;
+    let _ = herdr.release().await;
     // A JSONL write that failed already failed the turn; the stream is gone.
-    if let Some(message) = view.take_output_failure() {
-        let failed = AutomationExit::new(1, TerminalReason::OutputError, message);
-        return PromptEnd::Failed(failed.into());
-    }
-    match worked {
-        Ok(ended) => PromptEnd::of(ended, cause),
-        Err(error) => PromptEnd::of(Err(error), cause),
+    match view.take_output_failure() {
+        Some(message) => {
+            let failed = AutomationExit::new(1, TerminalReason::OutputError, message);
+            PromptEnd::Failed(failed.into())
+        }
+        None => end,
     }
 }
 
-/// Runs `text` within a new prompt: its slash command when it starts with
-/// one `rho run` runs, else a model turn on it. A command `rho run` cannot
-/// run fails the prompt as a configuration error.
-async fn run_prompt(
+/// Runs `text` within `prompt`: its slash command when it starts with one
+/// `rho run` runs, else a model turn on it. A command `rho run` cannot run
+/// fails the prompt as a configuration error.
+async fn run_text(
     runtime: &mut SessionRuntime,
     view: &mut HeadlessView<'_>,
+    prompt: &PromptScope,
     text: String,
     process_config: &Config,
 ) -> anyhow::Result<TurnOutcome> {
-    let prompt = runtime.begin_prompt(process_config).await?;
     let input = UserInput::text(text);
     let home = crate::paths::home_dir();
     let command = {
@@ -326,12 +319,12 @@ async fn run_prompt(
                 calls,
             };
             runtime
-                .run_prompt_turn(view, &prompt, turn, process_config)
+                .run_prompt_turn(view, prompt, turn, process_config)
                 .await
         }
         PromptCommand::RunAsAgent(task) => {
             runtime
-                .rebind_agent(&prompt, &task, process_config)
+                .rebind_agent(prompt, &task, process_config)
                 .await
                 .map_err(|error| match error.downcast::<CommandRejected>() {
                     Ok(CommandRejected(message)) => rejected(message),
@@ -344,7 +337,7 @@ async fn run_prompt(
                 calls: Vec::new(),
             };
             runtime
-                .run_prompt_turn(view, &prompt, turn, process_config)
+                .run_prompt_turn(view, prompt, turn, process_config)
                 .await
         }
         // `RUN_COMMANDS` has no `/compact`, so the resolver rejects it first.
@@ -436,9 +429,8 @@ fn classify_run_terminal(end: PromptEnd) -> RunTerminal {
         PromptEnd::Finished(answer) => RunTerminal::Completed(answer),
         PromptEnd::Stopped(StopCause::Timeout) => RunTerminal::Timeout,
         PromptEnd::Stopped(StopCause::Interrupted(signal)) => RunTerminal::Interrupted(signal),
-        // Nothing but a stop cancels `rho run`'s prompt.
         PromptEnd::Stopped(StopCause::Cancelled) => {
-            RunTerminal::Failed(anyhow::anyhow!("rho run was cancelled"))
+            unreachable!("rho run's stops have no parent cancel")
         }
         PromptEnd::Failed(error) => RunTerminal::Failed(error),
     }

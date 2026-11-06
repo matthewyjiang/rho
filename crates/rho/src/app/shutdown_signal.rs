@@ -7,7 +7,7 @@
 use std::{fmt, io};
 
 /// The signal that stopped a headless run.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ShutdownSignal {
     Interrupt,
     #[cfg(unix)]

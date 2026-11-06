@@ -16,7 +16,6 @@ use super::{
 use crate::app::{
     automation_protocol::TerminalReason,
     headless_host::{PromptEnd, StopCause},
-    session_runtime::TurnOutcome,
     shutdown_signal::ShutdownSignal,
 };
 
@@ -92,21 +91,21 @@ fn terminal_messages_keep_detail_but_hide_authentication_errors() {
     }
 }
 
-/// How the prompt itself ended, before any stop.
+/// How a prompt ended, as the headless host reports it.
 #[derive(Clone, Copy, Debug)]
 enum Ended {
     Answered,
     AtStepLimit,
-    Cancelled,
+    Stopped(StopCause),
     Failed,
 }
 
-/// A prompt that ended as `ended`. Finished runs come from a scripted
-/// session, so their stop reason is the SDK's own.
-async fn prompt_that(ended: Ended) -> anyhow::Result<TurnOutcome> {
+/// The end of a prompt that ended as `ended`. Finished runs come from a
+/// scripted session, so their stop reason is the SDK's own.
+async fn end_of(ended: Ended) -> PromptEnd {
     let (turn, max_steps) = match ended {
-        Ended::Cancelled => return Ok(TurnOutcome::Cancelled),
-        Ended::Failed => return Err(anyhow::anyhow!("provider unavailable")),
+        Ended::Stopped(cause) => return PromptEnd::Stopped(cause),
+        Ended::Failed => return PromptEnd::Failed(anyhow::anyhow!("provider unavailable")),
         Ended::Answered => (
             ModelResponse::Assistant(vec![ContentBlock::Text("answer".into())]),
             None,
@@ -140,7 +139,7 @@ async fn prompt_that(ended: Ended) -> anyhow::Result<TurnOutcome> {
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     let outcome = session.complete("go").await.unwrap();
     runtime.shutdown();
-    Ok(TurnOutcome::Completed(outcome))
+    PromptEnd::Finished(outcome)
 }
 
 /// The terminal, comparable as a whole.
@@ -163,37 +162,28 @@ fn terminal(terminal: RunTerminal) -> Terminal {
     }
 }
 
-// Covers: a stop (timeout, signal) wins over however the prompt ended, the
-// SDK's step-limit stop becomes max_steps without CLI flag context, and a
-// cancel nothing in `rho run` asked for fails the run.
+// Covers: the SDK's step-limit stop becomes max_steps without CLI flag
+// context, and each stop and failure keeps its own terminal.
 // Owner: pure unit (run terminal classification)
 #[tokio::test]
-async fn classifies_how_the_prompt_ended_and_what_stopped_it() {
-    for (ended, stop, expected) in [
-        (Ended::Answered, None, Terminal::Completed),
-        (Ended::AtStepLimit, None, Terminal::MaxSteps),
-        (Ended::Answered, Some(StopCause::Timeout), Terminal::Timeout),
+async fn classifies_how_the_prompt_ended() {
+    for (ended, expected) in [
+        (Ended::Answered, Terminal::Completed),
+        (Ended::AtStepLimit, Terminal::MaxSteps),
+        (Ended::Stopped(StopCause::Timeout), Terminal::Timeout),
         (
-            Ended::Failed,
-            Some(StopCause::Interrupted(ShutdownSignal::Interrupt)),
+            Ended::Stopped(StopCause::Interrupted(ShutdownSignal::Interrupt)),
             Terminal::Interrupted,
         ),
         (
-            Ended::Cancelled,
-            None,
-            Terminal::Failed("rho run was cancelled".into()),
-        ),
-        (
             Ended::Failed,
-            None,
             Terminal::Failed("provider unavailable".into()),
         ),
     ] {
-        let end = PromptEnd::of(prompt_that(ended).await, stop);
         assert_eq!(
-            terminal(classify_run_terminal(end)),
+            terminal(classify_run_terminal(end_of(ended).await)),
             expected,
-            "{ended:?} stopped by {stop:?}"
+            "{ended:?}"
         );
     }
 }

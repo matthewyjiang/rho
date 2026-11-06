@@ -72,8 +72,9 @@ impl<'a> HeadlessView<'a> {
         self
     }
 
-    /// Names `runtime`'s session and tools in what the view writes. Call
-    /// once the session is open, before its prompt.
+    /// Names `runtime`'s session and tools in what the view writes.
+    /// [`super::run_prompt`] binds the view once the session is open, before
+    /// its prompt begins.
     pub(crate) fn bind(&mut self, runtime: &SessionRuntime) {
         if let Some(adapter) = self.jsonl.as_deref_mut() {
             adapter.set_run_context(runtime.session_id(), runtime.workspace_root());

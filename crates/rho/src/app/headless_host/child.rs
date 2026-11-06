@@ -6,12 +6,10 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use rho_sdk::{CancellationToken, UserInput};
+use rho_sdk::UserInput;
 use rho_tools::cancellation::RunCancellation;
 
-use super::{
-    cancel_on_stop, until_stopped, HeadlessView, ParentQuestions, PromptEnd, RunReporter, Stops,
-};
+use super::{run_prompt, HeadlessView, ParentQuestions, PromptEnd, RunReporter, Stops};
 use crate::{
     app::{
         agent_binding::BoundAgent,
@@ -149,52 +147,48 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         added_dirs,
         logouts: &logouts,
     };
-    let (store, resume) = match checkpoint {
+    let (mirror, resume) = match checkpoint {
         Some(SessionCheckpoint { store, resume }) => (Some(store), resume),
         None => (None, None),
+    };
+    let start = match &resume {
+        Some(_) => TurnStart::Continue,
+        None => {
+            let input = UserInput::text(prompt);
+            TurnStart::Prompt(Turn {
+                display: input.clone(),
+                model: input,
+                calls: Vec::new(),
+            })
+        }
+    };
+    let open = async {
+        let mut runtime = match resume {
+            Some(snapshot) => SessionRuntime::open_from_checkpoint(opening, snapshot).await?,
+            None => SessionRuntime::open_new(opening, rho_sdk::SessionId::new()).await?,
+        };
+        if let Some(store) = mirror {
+            runtime.mirror_step_checkpoints(store);
+        }
+        anyhow::Ok(runtime)
     };
     let mut view = HeadlessView::new(Some(&mut reporter), /*jsonl*/ None)
         .with_steering(steering_slot)
         .with_parent_questions(questions);
-    let stop = CancellationToken::new();
-    let work = async {
-        let (mut runtime, start) = match resume {
-            Some(snapshot) => (
-                SessionRuntime::open_from_checkpoint(opening, snapshot).await?,
-                TurnStart::Continue,
-            ),
-            None => {
-                let input = UserInput::text(prompt);
-                let turn = Turn {
-                    display: input.clone(),
-                    model: input,
-                    calls: Vec::new(),
-                };
-                (
-                    SessionRuntime::open_new(opening, rho_sdk::SessionId::new()).await?,
-                    turn.into(),
-                )
-            }
-        };
-        if let Some(store) = store {
-            runtime.mirror_step_checkpoints(store);
-        }
-        view.bind(&runtime);
-        let ended = cancel_on_stop(&stop, runtime.handle(), async {
-            let scope = runtime.begin_prompt(&config).await?;
-            runtime
-                .run_prompt_turn(&mut view, &scope, start, &config)
-                .await
-        })
-        .await;
-        // The child's status file keeps the title its prompt was given; the
-        // session's own title request is left untaken.
-        runtime.shutdown().await;
-        ended
-    };
-    let (ended, cause) = until_stopped(&mut stops, &stop, work).await;
+    // The child's status file keeps the title its prompt was given; the
+    // session's own title request is left untaken.
+    let end = run_prompt(
+        &mut stops,
+        &mut view,
+        &config,
+        open,
+        |runtime, view, scope, process_config| {
+            Box::pin(runtime.run_prompt_turn(view, scope, start, process_config))
+        },
+    )
+    .await;
     drop(view);
-    match PromptEnd::of(ended, cause) {
+    match end {
         PromptEnd::Finished(outcome) => reporter.finish_ok(&outcome),
         PromptEnd::Stopped(_) => reporter.finish_stopped(),
         PromptEnd::Failed(error) => {
