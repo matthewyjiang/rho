@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::Mutex};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
@@ -6,16 +6,27 @@ use rho_sdk::{
     UserInput,
 };
 
-use super::{loaded_agent, loaded_agent_with, AgentTask, MODEL_OVERRIDE_METADATA};
+use super::{
+    bind_delegated_agent, loaded_agent, loaded_agent_with, AgentTask, MODEL_OVERRIDE_METADATA,
+};
 use crate::{
-    agent::{AgentCapabilities, AgentCatalog, ToolCapability},
-    app::session_runtime::{
-        test_support::{idle_runtime, root_agent},
-        CommandRejected,
+    agent::{
+        AgentCapabilities, AgentCatalog, AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy,
+        PromptPolicy, ToolCapability, ToolPolicy,
+    },
+    app::{
+        session_assembly::SessionAssembly,
+        session_runtime::{
+            test_support::{idle_built, idle_runtime, root_agent},
+            CommandRejected,
+        },
     },
     config::Config,
     permission::PermissionMode,
     session::Session as StoredSession,
+    tools::mcp::config::{
+        McpConfig, McpSamplingPolicy, McpServerConfig, McpToolFilter, McpTransport,
+    },
 };
 
 fn launch_config() -> Config {
@@ -24,6 +35,31 @@ fn launch_config() -> Config {
         model: "launch-model".into(),
         permission_mode: PermissionMode::Bypass,
         ..Config::default()
+    }
+}
+
+/// MCP config with one stdio server, `name`.
+fn mcp_server(name: &str) -> McpConfig {
+    McpConfig {
+        servers: [(
+            name.to_owned(),
+            McpServerConfig {
+                enabled: true,
+                tools: McpToolFilter::default(),
+                log_level: None,
+                sampling: McpSamplingPolicy::Deny,
+                transport: McpTransport::Stdio {
+                    command: name.to_owned(),
+                    args: Vec::new(),
+                    cwd: None,
+                    env: Default::default(),
+                    env_from_env: Default::default(),
+                },
+                filesystem: None,
+            },
+        )]
+        .into(),
+        invalid_servers: Vec::new(),
     }
 }
 
@@ -146,4 +182,65 @@ async fn rebind_rejects_nonfresh_sessions_without_replacing_them() {
         assert_eq!(runtime.built.session.snapshot(), before);
         runtime.shutdown().await;
     }
+}
+
+// Covers: an `/agent:` rebind must build the child with the host's MCP
+// servers overlaid on the process config's, or the child loses the tools its
+// host supplies.
+// Owner: session runtime agent rebind.
+#[tokio::test]
+async fn rebind_keeps_the_host_mcp_servers() {
+    let cwd = tempfile::tempdir().unwrap();
+    let config = Config {
+        mcp: mcp_server("config-docs"),
+        ..launch_config()
+    };
+    let mut runtime = idle_runtime(cwd.path(), &config).await;
+    runtime.host_mcp = mcp_server("host-docs");
+    let launch_agent = runtime.build.launch_agent.clone();
+    let child = AgentDefinition {
+        id: AgentId::new("child").unwrap(),
+        description: "child".into(),
+        prompt: PromptPolicy::Extend("Inspect the requested files".into()),
+        runtime: AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::All,
+            model: ModelPolicy::Inherit,
+            reasoning: None,
+        },
+    };
+    let built_with = Mutex::new(None);
+    runtime
+        .rebind_agent_with(
+            &AgentTask {
+                agent_id: "child".into(),
+                model_override: None,
+                input: UserInput::text("task"),
+            },
+            &config,
+            |base| bind_delegated_agent(child, /*model_override*/ None, &launch_agent, base),
+            async |_, config, id| {
+                *built_with.lock().unwrap() = Some(config.clone());
+                Ok(SessionAssembly {
+                    built: idle_built(&config, id).await,
+                    workspace_root: cwd.path().to_path_buf(),
+                    session_writes: Default::default(),
+                })
+            },
+        )
+        .await
+        .unwrap();
+    let built_with = built_with
+        .into_inner()
+        .unwrap()
+        .expect("the rebind builds the child");
+    assert_eq!(
+        built_with
+            .mcp
+            .servers
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["config-docs", "host-docs"]
+    );
+    runtime.shutdown().await;
 }
