@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.33.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.33.0...rho-coding-agent-v2.33.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* **acp:** replay reasoning and tool calls as they streamed live ([#1694](https://github.com/matthewyjiang/rho/issues/1694)) ([009dde0](https://github.com/matthewyjiang/rho/commit/009dde0b193f117cdeca2025ce968bc416575899))
+
 ## [2.33.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.32.3...rho-coding-agent-v2.33.0) (2026-11-05)
 
 
