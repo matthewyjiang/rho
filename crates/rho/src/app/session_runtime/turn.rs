@@ -89,8 +89,9 @@ impl SessionRuntime {
     /// credentials has the next prompt renew them.
     /// The first turn this runtime completes with the model's answer asks
     /// the title agent `process_config` configures to name the session, for
-    /// the host to take with [`Self::take_title`].
-    pub(crate) async fn run_turn(
+    /// the host to take with [`Self::take_title`]. Hosts run turns through
+    /// [`Self::run_prompt_turn`], so none skips the plan handoff.
+    pub(super) async fn run_turn(
         &mut self,
         prompt: &PromptScope,
         turn: Turn,
