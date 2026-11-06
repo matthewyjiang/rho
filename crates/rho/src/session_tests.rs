@@ -1,3 +1,4 @@
+use std::fs::OpenOptions;
 use std::ops::Deref;
 
 use tempfile::TempDir;
