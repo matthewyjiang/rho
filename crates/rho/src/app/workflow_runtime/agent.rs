@@ -1,4 +1,4 @@
-use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
+use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use crate::{
     app::{
@@ -20,8 +20,6 @@ use super::{
 
 pub(crate) struct WorkflowAgentExecutor {
     executor: Arc<AgentExecutor>,
-    /// The run's workspace, where its nodes work.
-    workspace: PathBuf,
     /// Hears of each node's run, when the host shares its pool.
     observer: Option<Arc<dyn ChildObserver>>,
 }
@@ -29,14 +27,9 @@ pub(crate) struct WorkflowAgentExecutor {
 impl WorkflowAgentExecutor {
     pub(crate) fn new(
         executor: Arc<AgentExecutor>,
-        workspace: PathBuf,
         observer: Option<Arc<dyn ChildObserver>>,
     ) -> Self {
-        Self {
-            executor,
-            workspace,
-            observer,
-        }
+        Self { executor, observer }
     }
 }
 
@@ -107,7 +100,11 @@ impl WorkflowAgentExecutor {
             })
             .map_err(|error| RuntimeError::Executor(error.to_string()))?;
         if let Some(observer) = &self.observer {
-            observer.subagent_started(StartedSubagent::of(run_id, self.workspace.clone(), &handle));
+            observer.subagent_started(StartedSubagent::of(
+                run_id,
+                self.executor.cwd().to_path_buf(),
+                &handle,
+            ));
         }
         if let Some(progress) = &request.progress {
             progress.message(format!("starting agent {}", agent.agent_id));

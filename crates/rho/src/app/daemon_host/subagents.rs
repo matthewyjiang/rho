@@ -73,14 +73,15 @@ impl Subagents {
     /// The pool of the session whose turns are job `parent`: the
     /// daemon-wide one, each run recorded as a child job of `parent`.
     pub(super) fn pool_for(&self, parent: JobId) -> SubagentPool {
-        ChildJobs {
-            parent,
+        SubagentPool::Shared {
             concurrency: self.concurrency.clone(),
-            jobs: Arc::clone(&self.jobs),
-            queues: Arc::clone(&self.queues),
-            stopping: self.stopping.clone(),
+            observer: Arc::new(ChildJobs {
+                parent,
+                jobs: Arc::clone(&self.jobs),
+                queues: Arc::clone(&self.queues),
+                stopping: self.stopping.clone(),
+            }),
         }
-        .into_pool()
     }
 
     /// Where job `job`'s run waits for capacity, while it does.
@@ -91,33 +92,12 @@ impl Subagents {
 
 /// Records the runs a session or workflow run starts as children of its
 /// job.
+#[derive(Clone)]
 struct ChildJobs {
     parent: JobId,
-    concurrency: AgentConcurrency,
     jobs: Arc<JobRegistry>,
     queues: Queues,
     stopping: CancellationToken,
-}
-
-impl ChildJobs {
-    /// The daemon-wide pool, its runs recorded as children of `self.parent`.
-    fn into_pool(self) -> SubagentPool {
-        SubagentPool::Shared {
-            concurrency: self.concurrency.clone(),
-            observer: Arc::new(self),
-        }
-    }
-
-    /// The same, recording runs as children of `parent` instead.
-    fn with_parent(&self, parent: JobId) -> Self {
-        Self {
-            parent,
-            concurrency: self.concurrency.clone(),
-            jobs: Arc::clone(&self.jobs),
-            queues: Arc::clone(&self.queues),
-            stopping: self.stopping.clone(),
-        }
-    }
 }
 
 impl ChildObserver for ChildJobs {
@@ -129,7 +109,7 @@ impl ChildObserver for ChildJobs {
         if let Err(error) = self.jobs.register(record) {
             tracing::error!(parent = %self.parent, run = %run_id, %error, "could not record a workflow run's job; the run goes on unlisted, its agent nodes under the session's job");
             return HostedWorkflow {
-                nodes: self.with_parent(self.parent.clone()).into_pool(),
+                observer: Arc::new(self.clone()),
                 end,
             };
         }
@@ -141,7 +121,10 @@ impl ChildObserver for ChildJobs {
             self.stopping.clone(),
         ));
         HostedWorkflow {
-            nodes: self.with_parent(job).into_pool(),
+            observer: Arc::new(Self {
+                parent: job,
+                ..self.clone()
+            }),
             end,
         }
     }

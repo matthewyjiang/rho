@@ -16,14 +16,15 @@ use super::{
 };
 use crate::{subagent::RunStatus, workflow::RunId};
 
-/// Where a session's subagents take capacity, and who else hears of them.
+/// Where a session's in-process agent runs take capacity, its subagents and
+/// its workflow runs' agent nodes, and who else hears of them.
 #[derive(Clone)]
 pub(crate) enum SubagentPool {
     /// The session's own pool, sized by its config's `agent_concurrency`;
     /// nobody else hears of its runs.
     Own,
-    /// A pool the host shares across its sessions, and the observer of this
-    /// session's runs.
+    /// A pool the host shares across its sessions, and the observer of the
+    /// runs started here.
     Shared {
         concurrency: AgentConcurrency,
         observer: Arc<dyn ChildObserver>,
@@ -45,6 +46,32 @@ impl SubagentPool {
             } => (concurrency, Some(observer)),
         }
     }
+
+    /// The pool workflow run `run`'s agent nodes take capacity from: this
+    /// one, whose observer hears of the run first and returns the observer
+    /// of its nodes, and where to report how the run ended, if anyone
+    /// follows it.
+    pub(crate) fn host_workflow(
+        self,
+        run: StartedWorkflow,
+    ) -> (Self, Option<tokio::sync::oneshot::Sender<WorkflowEnd>>) {
+        match self {
+            Self::Own => (Self::Own, None),
+            Self::Shared {
+                concurrency,
+                observer,
+            } => {
+                let HostedWorkflow { observer, end } = observer.workflow_started(run);
+                (
+                    Self::Shared {
+                        concurrency,
+                        observer,
+                    },
+                    Some(end),
+                )
+            }
+        }
+    }
 }
 
 impl std::fmt::Debug for SubagentPool {
@@ -59,8 +86,9 @@ impl std::fmt::Debug for SubagentPool {
     }
 }
 
-/// Hears of the subagent and workflow runs a session starts. The daemon
-/// implements it to record each run as a child job of the session's job.
+/// Hears of the subagent and workflow runs a session starts, and of the
+/// agent node runs of those workflow runs. The daemon implements it to
+/// record each run as a child job of the job that started it.
 ///
 /// Both methods are called on the task that starts the run and must return
 /// promptly; implementors follow the run on a task of their own.
@@ -69,9 +97,10 @@ pub(crate) trait ChildObserver: Send + Sync {
     /// capacity and possibly after it already ended.
     fn subagent_started(&self, run: StartedSubagent);
 
-    /// Called before the run is driven. Returns the pool its agent nodes
-    /// take capacity from, whose observer hears of each node's run, and
-    /// where the run reports how it ended.
+    /// Called before the run is driven. Returns the observer of the run's
+    /// agent node runs, and where the run reports how it ended. Workflow
+    /// agent nodes start no workflow runs, so the returned observer only
+    /// hears [`Self::subagent_started`].
     fn workflow_started(&self, run: StartedWorkflow) -> HostedWorkflow;
 }
 
@@ -110,10 +139,10 @@ pub(crate) struct StartedWorkflow {
     pub(crate) workspace: PathBuf,
 }
 
-/// How the host runs a workflow run it heard of.
+/// How the host follows a workflow run it heard of.
 pub(crate) struct HostedWorkflow {
-    /// The pool the run's agent nodes take capacity from.
-    pub(crate) nodes: SubagentPool,
+    /// Hears of each of the run's agent node runs.
+    pub(crate) observer: Arc<dyn ChildObserver>,
     /// Takes how the run ended. Dropped unsent when the drive stops without
     /// an end, such as when the host's runtime shuts down under it.
     pub(crate) end: tokio::sync::oneshot::Sender<WorkflowEnd>,

@@ -207,8 +207,8 @@ pub(crate) enum QuestionSupport {
 /// Who runs the children the `agent` tool starts.
 #[derive(Clone)]
 pub(crate) enum ChildAgents {
-    /// Subagents run in this process, taking capacity and reporting as the
-    /// host says.
+    /// Subagents run in this process, as do the agent nodes of the session's
+    /// workflow runs, taking capacity and reporting as the host says.
     InProcess(SubagentPool),
     /// The host runs them as its own threads (T3 Code's `--t3code`), so its
     /// UI owns them.

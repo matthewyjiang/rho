@@ -1,4 +1,7 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use {
     crate::agent::{AgentCapabilities, AgentDefinition, ToolCapability},
@@ -234,6 +237,11 @@ impl AgentRunHandle {
 }
 
 impl AgentExecutor {
+    /// The workspace runs are spawned in.
+    pub(crate) fn cwd(&self) -> &Path {
+        &self.cwd
+    }
+
     /// An executor whose runs take capacity from `concurrency`: a pool of
     /// their own, or one their host shares (see `subagent_pool`).
     pub(crate) fn new(

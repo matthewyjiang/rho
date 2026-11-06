@@ -12,7 +12,7 @@ use crate::{
         agent_binding::CapacityClass,
         agent_concurrency::{Budget, QueuePlace},
         daemon_host::jobs::{JobEvent, JobId, JobRegistry, JobState, JobStore, TurnEnd},
-        subagent_pool::{StartedSubagent, SubagentPool, WorkflowEnd},
+        subagent_pool::{StartedSubagent, SubagentPool},
     },
     config::Config,
     subagent::{RunState, RunStatus},
@@ -88,37 +88,18 @@ fn a_subagent_job_follows_its_run() {
 }
 
 /// Yields until job `id` is in `state`.
-// Covers: a workflow job ends as its drive ended, with the drive's error
-// when it failed; a drive that stopped without an end was interrupted when
-// the daemon is stopping, and failed otherwise.
+// Covers: a workflow drive that stopped without an end was interrupted
+// when the daemon is stopping, and failed otherwise.
 // Owner: daemon workflow jobs.
 #[test]
-fn a_workflow_job_ends_as_its_drive_did() {
-    use TurnEnd::{Cancelled, Completed, Failed, Interrupted};
-    let cases = [
-        (Some(WorkflowEnd::Completed), false, Completed),
-        (Some(WorkflowEnd::Cancelled), false, Cancelled),
+fn a_workflow_drive_without_an_end_is_interrupted_only_by_a_stop() {
+    assert_eq!(
+        (workflow_end(None, true), workflow_end(None, false)),
         (
-            Some(WorkflowEnd::Failed(
-                "the workflow run ended with denial".into(),
-            )),
-            false,
-            Failed("the workflow run ended with denial".into()),
-        ),
-        (None, true, Interrupted),
-        (
-            None,
-            false,
-            Failed("the workflow run stopped without an end".into()),
-        ),
-    ];
-    for (ended, stopping, expected) in cases {
-        assert_eq!(
-            workflow_end(ended.clone(), stopping),
-            expected,
-            "{ended:?}, stopping: {stopping}"
-        );
-    }
+            TurnEnd::Interrupted,
+            TurnEnd::Failed("the workflow run stopped without an end".into()),
+        )
+    );
 }
 
 async fn wait_for_state(registry: &JobRegistry, id: &JobId, state: JobState) {

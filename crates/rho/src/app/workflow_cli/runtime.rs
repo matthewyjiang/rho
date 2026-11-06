@@ -302,6 +302,8 @@ pub(crate) async fn execute_run(
 pub(crate) struct BackgroundRun {
     /// The workspace the run was planned in.
     pub(crate) cwd: PathBuf,
+    /// The config the run settles its agents against; `None` for the
+    /// default config.
     pub(crate) config_path: Option<PathBuf>,
     /// The starting session's pool, which the run's agent nodes share. A
     /// shared pool's observer hears of the run and says where its nodes run.
@@ -330,16 +332,10 @@ pub(crate) async fn spawn_background_run(
     } = background;
     let run_id = run.manifest.run_id;
     tracker.update_from_stored(&run);
-    let (nodes, end) = match pool {
-        SubagentPool::Own => (SubagentPool::Own, None),
-        SubagentPool::Shared { observer, .. } => {
-            let hosted = observer.workflow_started(StartedWorkflow {
-                run_id,
-                workspace: cwd.clone(),
-            });
-            (hosted.nodes, Some(hosted.end))
-        }
-    };
+    let (nodes, end) = pool.host_workflow(StartedWorkflow {
+        run_id,
+        workspace: cwd.clone(),
+    });
     let runtime = match WorkflowRuntime::build(
         &run,
         &cwd,
@@ -349,10 +345,11 @@ pub(crate) async fn spawn_background_run(
     ) {
         Ok(runtime) => runtime,
         Err(error) => {
-            tracker.mark_failed(&run_id.to_string(), error.to_string());
+            let reason = format!("{error:#}");
+            tracker.mark_failed(&run_id.to_string(), reason.clone());
             if let Some(end) = end {
                 // The host may already have stopped following the run.
-                let _ = end.send(WorkflowEnd::Failed(format!("{error:#}")));
+                let _ = end.send(WorkflowEnd::Failed(reason));
             }
             return Err(error);
         }
@@ -414,7 +411,7 @@ fn drive_end(result: &Result<StoredRun, RuntimeError>) -> WorkflowEnd {
             | WorkflowOutcome::Blocked),
         ) => WorkflowEnd::Failed(format!("the workflow run ended with {}", outcome.as_str())),
         None => WorkflowEnd::Failed(format!(
-            "the workflow run stopped {}",
+            "the workflow run stopped in state {}",
             state.lifecycle.as_str()
         )),
     }
@@ -505,11 +502,7 @@ impl WorkflowRuntime {
         );
         let agent_executor: Arc<
             dyn WorkflowNodeExecutor<crate::app::workflow_runtime::AgentInvocation>,
-        > = Arc::new(WorkflowAgentExecutor::new(
-            app_agent_executor,
-            cwd.clone(),
-            observer,
-        ));
+        > = Arc::new(WorkflowAgentExecutor::new(app_agent_executor, observer));
         let command_executor: Arc<
             dyn WorkflowNodeExecutor<crate::app::workflow_runtime::CommandInvocation>,
         > = Arc::new(WorkflowCommandExecutor::new(

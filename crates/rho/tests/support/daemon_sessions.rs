@@ -398,10 +398,12 @@ async fn a_workflow_run_is_a_child_job_of_its_session() {
         ),
         "log:\n{log}"
     );
-    assert!(
-        workflow.workflow_run.is_some(),
-        "a workflow job names its run"
-    );
+    // The run the tool started is the only one under the daemon's home.
+    let runs: Vec<String> = std::fs::read_dir(sandbox.daemon.home().join("workflows/runs"))
+        .unwrap()
+        .map(|run| run.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(workflow.workflow_run.map(|run| vec![run]), Some(runs));
 }
 
 // Covers: a turn cancelled through `rho/session/cancel` is recorded
