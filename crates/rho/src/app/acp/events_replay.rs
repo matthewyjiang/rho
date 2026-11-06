@@ -1,6 +1,9 @@
 //! Rebuild a client's transcript from persisted display history, without
 //! executing tools. ACP tool updates always follow a full call for that id.
 
+// Duplicated by the daemon's wire mapper in `app/session_events/replay.rs`
+// until ACP moves onto it (#1670); fix both.
+
 use std::{collections::BTreeMap, path::Path};
 
 use agent_client_protocol::schema::v1::{

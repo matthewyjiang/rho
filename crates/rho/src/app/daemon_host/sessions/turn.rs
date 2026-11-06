@@ -1,13 +1,12 @@
 //! One prompt's turn, run in a task the daemon owns, so it goes on when the
 //! client that sent the prompt disconnects.
 //!
-//! The turn reports to a [`DaemonView`], which keeps the job's state in step
-//! with it: `waiting_for_input` while an approval, plan approval, or question
-//! is open, `running` otherwise. Nothing answers those requests yet: no
-//! client can attach to a turn until #1657 and none answers until #1660, so
+//! The turn reports to a [`DaemonView`], which sends its events to the
+//! session's attached clients (#1657) and keeps the job's state in step with
+//! it: `waiting_for_input` while an approval, plan approval, or question is
+//! open, `running` otherwise. Nothing answers those requests until #1660, so
 //! a turn that asks parks until `rho/session/cancel` withdraws its requests.
-//! A request is never denied because no client is attached. The events
-//! themselves are dropped until #1657 buffers them for clients.
+//! A request is never denied because no client is attached.
 
 use std::{collections::HashSet, future::Future, sync::Arc};
 
@@ -15,7 +14,10 @@ use rho_sdk::{CancellationToken, HostInputId, UserInput};
 use tokio::sync::{mpsc, oneshot};
 
 use super::{
-    super::jobs::{JobEvent, JobId, JobRegistry, TurnEnd},
+    super::{
+        jobs::{JobEvent, JobRegistry, JobState, TurnEnd},
+        wire::state_event,
+    },
     LoadedSession,
 };
 use crate::{
@@ -89,18 +91,49 @@ impl TurnTask {
         let mut runtime = session.runtime.lock().await;
         // Declared after the lock, so even a panic records the end (see
         // `DaemonView`'s drop) before the lock is released.
-        let mut view = DaemonView::new(session.job.clone(), jobs, started);
+        let mut view = DaemonView::new(Arc::clone(&session), jobs, started);
+        // The prompt that spawned this turn recorded its job running.
+        view.publish_state(&JobState::Running);
         let ended = match &mut *runtime {
             Some(runtime) => run_turn(runtime, &mut view, text, &session.config, &cancel).await,
             // Only the daemon's stop takes the runtime, after its last turn.
             None => Ok(TurnOutcome::Cancelled),
         };
+        // Before the end is recorded, so the state event that reports it
+        // follows the transcript's cut: a client reset from then on gets the
+        // saved turn, then how it ended.
+        if let Some(runtime) = &*runtime {
+            save_transcript(&session, runtime);
+        }
         view.end(match ended {
             Ok(TurnOutcome::Completed(_)) => TurnEnd::Completed,
             Ok(TurnOutcome::Cancelled) if stopping.is_cancelled() => TurnEnd::Interrupted,
             Ok(TurnOutcome::Cancelled) => TurnEnd::Cancelled,
             Err(error) => TurnEnd::Failed(format!("{error:#}")),
         });
+    }
+}
+
+/// Moves what the turn saved into the session's feed transcript, so a
+/// client that attaches from now on replays it from the saved rows.
+fn save_transcript(session: &LoadedSession, runtime: &SessionRuntime) {
+    // A session that has saved nothing yet has no file to replay.
+    let Some(saved) = runtime.saved_history() else {
+        return;
+    };
+    match saved.display_rows() {
+        Ok(rows) => {
+            // A turn that saved no rows stays in the buffer, as one whose
+            // rows could not be read does, until a later turn saves.
+            if let Some(replayed) = session.live().replay(&rows, saved.cwd(), saved.tools()) {
+                session.feed.end_turn(replayed);
+            }
+        }
+        Err(error) => tracing::warn!(
+            job = %session.job,
+            error = format!("{error:#}"),
+            "could not read the turn's saved rows; clients that reset replay it live until a later turn saves"
+        ),
     }
 }
 
@@ -122,6 +155,7 @@ async fn run_turn(
         return Ok(TurnOutcome::Cancelled);
     }
     let input = UserInput::text(text);
+    view.session.live().prompt(&input);
     let turn = Turn {
         display: input.clone(),
         model: input,
@@ -143,7 +177,7 @@ const UNEXPECTED_STOP: &str = "the turn stopped unexpectedly; see the daemon log
 /// view drops without it, as the turn task panicking, failed with
 /// [`UNEXPECTED_STOP`].
 struct DaemonView {
-    job: JobId,
+    session: Arc<LoadedSession>,
     jobs: Arc<JobRegistry>,
     /// Answered `Saved` once the turn saved its prompt, or with how the
     /// turn ended if it ends first.
@@ -156,9 +190,13 @@ struct DaemonView {
 }
 
 impl DaemonView {
-    fn new(job: JobId, jobs: Arc<JobRegistry>, started: oneshot::Sender<PromptStart>) -> Self {
+    fn new(
+        session: Arc<LoadedSession>,
+        jobs: Arc<JobRegistry>,
+        started: oneshot::Sender<PromptStart>,
+    ) -> Self {
         Self {
-            job,
+            session,
             jobs,
             started: Some(started),
             open: OpenInputs::default(),
@@ -182,10 +220,18 @@ impl DaemonView {
         }
     }
 
+    /// Applies `event` to the job and tells attached clients the state it
+    /// left the job in.
     fn record(&self, event: JobEvent) {
-        if let Err(error) = self.jobs.record(&self.job, event) {
-            tracing::warn!(job = %self.job, %error, "could not record a turn's progress");
+        let job = &self.session.job;
+        match self.jobs.record(job, event) {
+            Ok(state) => self.publish_state(&state),
+            Err(error) => tracing::warn!(%job, %error, "could not record a turn's progress"),
         }
+    }
+
+    fn publish_state(&self, state: &JobState) {
+        self.session.feed.publish([state_event(state)]);
     }
 
     /// Takes the turn's events until it drops its sender. Holds
@@ -197,6 +243,8 @@ impl DaemonView {
         _control: mpsc::UnboundedSender<TurnControl>,
     ) {
         while let Some(event) = events.recv().await {
+            let wire = self.session.live().map(&event);
+            self.session.feed.publish(wire);
             if matches!(event, SessionEvent::MessageInserted(_)) {
                 if let Some(started) = self.started.take() {
                     let _ = started.send(PromptStart::Saved);

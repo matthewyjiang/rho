@@ -1,0 +1,250 @@
+//! Session events: what an attached client sees of a session (#1657).
+//!
+//! The daemon sends each one in a [`super::SESSION_EVENT`] notification. They
+//! mirror ACP's `session/update`, so an adapter maps them field for field.
+//! Enums that a protocol minor may grow read unknown values as `Unknown`.
+
+use std::{fmt, path::PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use super::JobState;
+
+/// Declares a transparent string id with `new`, `as_str`, and `Display`,
+/// like [`super::SessionId`].
+macro_rules! string_id {
+    ($(#[$meta:meta])* $name:ident) => {
+        $(#[$meta])*
+        #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name(String);
+
+        impl $name {
+            pub fn new(id: impl Into<String>) -> Self {
+                Self(id.into())
+            }
+
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(&self.0)
+            }
+        }
+    };
+}
+
+string_id! {
+    /// Identifies one message in a session's event stream: chunks with the
+    /// same id extend one message.
+    MessageId
+}
+
+string_id! {
+    /// Identifies one tool call; every [`ToolCallUpdate`] with the same id
+    /// updates that call.
+    ToolCallId
+}
+
+string_id! {
+    /// One loaded session's event stream. A new daemon, or a reload, starts
+    /// a new stream.
+    StreamId
+}
+
+/// Position in a stream: the number of live events sent before and
+/// including this one, from 1. `Seq(0)` is not a position: a reset's
+/// transcript events carry it (see [`super::SessionEventParams::seq`]), and
+/// a cursor at 0 always resets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Seq(pub u64);
+
+/// Where a client is in a session's stream; send it back to resume.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Cursor {
+    pub stream: StreamId,
+    pub seq: Seq,
+}
+
+/// One thing that happened in a session.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SessionEvent {
+    /// The session's job changed state: a turn started (`running`), waits
+    /// for input, or ended.
+    State {
+        state: JobState,
+        /// Why the turn failed, when `state` is [`JobState::Failed`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    /// A user message, whole.
+    UserMessage {
+        message: MessageId,
+        content: Vec<ContentBlock>,
+    },
+    /// More of the agent's reply.
+    AgentMessageChunk { message: MessageId, text: String },
+    /// More of the agent's reasoning.
+    ThoughtChunk { message: MessageId, text: String },
+    /// Opens or updates a tool call; absent fields are unchanged.
+    ToolCall(ToolCallUpdate),
+    /// The agent's plan, replacing any earlier one.
+    Plan { entries: Vec<PlanEntry> },
+    /// How full the model's context is.
+    Usage {
+        used_tokens: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window_tokens: Option<u64>,
+    },
+    /// A titled card the session shows outside the conversation, such as a
+    /// background result.
+    Card { title: String, markdown: String },
+    /// Something to tell the user that is not part of the conversation.
+    Notice { text: String },
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Opens a tool call, or updates the one with the same `id`. Absent fields
+/// are unchanged.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolCallUpdate {
+    pub id: ToolCallId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ToolKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<ToolStatus>,
+    /// The tool's input, as the model wrote it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_input: Option<serde_json::Value>,
+    /// Replaces the call's content when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<Vec<ToolContent>>,
+    /// Files the call touches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locations: Option<Vec<Location>>,
+}
+
+/// What a tool does, so a client can pick an icon or a layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ToolKind {
+    Read,
+    Edit,
+    Delete,
+    Move,
+    Search,
+    Execute,
+    Think,
+    Fetch,
+    SwitchMode,
+    Other,
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Where a tool call is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ToolStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Failed,
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    Unknown,
+}
+
+/// One piece of what a tool call shows.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ToolContent {
+    Text {
+        text: String,
+    },
+    Image {
+        mime_type: String,
+        /// Base64.
+        data: String,
+    },
+    /// A file change; `old_text` is absent for a new file.
+    Diff {
+        path: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        old_text: Option<String>,
+        new_text: String,
+    },
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    Unknown,
+}
+
+/// One piece of a user message.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ContentBlock {
+    Text {
+        text: String,
+    },
+    Image {
+        mime_type: String,
+        /// Base64.
+        data: String,
+    },
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    Unknown,
+}
+
+/// A file a tool call touches, and the line when one applies.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Location {
+    pub path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+}
+
+/// One step of the agent's plan.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanEntry {
+    pub content: String,
+    pub status: PlanStatus,
+}
+
+/// Where a plan step is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum PlanStatus {
+    Pending,
+    InProgress,
+    Completed,
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    Unknown,
+}
+
+#[cfg(test)]
+#[path = "event_tests.rs"]
+mod tests;

@@ -6,7 +6,9 @@ use std::{
     sync::{Mutex, MutexGuard, PoisonError},
 };
 
-use super::{state::TransitionRefused, unix_now, JobEvent, JobId, JobRecord, JobStore, TurnEnd};
+use super::{
+    state::TransitionRefused, unix_now, JobEvent, JobId, JobRecord, JobState, JobStore, TurnEnd,
+};
 
 /// The daemon's jobs: the ones it runs and the records it loaded at
 /// startup. Shared by every request and turn task.
@@ -106,24 +108,25 @@ impl JobRegistry {
     /// one starts a turn.
     pub(in crate::app::daemon_host) fn start_turn(&self, id: &JobId) -> Result<(), StartTurnError> {
         match self.record(id, JobEvent::TurnStarted) {
-            Ok(()) => Ok(()),
+            Ok(_) => Ok(()),
             Err(TransitionError::Unknown(unknown)) => Err(unknown.into()),
             // A turn starts from every state but the two of a turn under way.
             Err(TransitionError::Refused(_)) => Err(StartTurnError::Busy),
         }
     }
 
-    /// Applies `event` to job `id` and rewrites its record.
+    /// Applies `event` to job `id`, rewrites its record, and returns the
+    /// state it left the job in.
     pub(in crate::app::daemon_host) fn record(
         &self,
         id: &JobId,
         event: JobEvent,
-    ) -> Result<(), TransitionError> {
+    ) -> Result<JobState, TransitionError> {
         let mut jobs = self.lock();
         let record = jobs.get_mut(id).ok_or(UnknownJob)?;
         apply(record, event)?;
         persist(&self.store, record);
-        Ok(())
+        Ok(record.state.clone())
     }
 
     /// Records every turn still under way as interrupted: at startup, for

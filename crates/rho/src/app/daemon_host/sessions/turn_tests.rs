@@ -1,4 +1,8 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
@@ -100,6 +104,20 @@ fn started_job(jobs: &JobRegistry) -> JobId {
     jobs.register(record).unwrap();
     jobs.start_turn(&job).unwrap();
     job
+}
+
+/// Session `job`, loaded in `root` with a provider that never answers, so
+/// nothing but the test drives its turns.
+async fn loaded_session(root: &Path, job: JobId) -> Arc<LoadedSession> {
+    let config = Config::default();
+    let provider: Arc<dyn rho_sdk::provider::ModelProvider> = Arc::new(HangUntilCancel);
+    let sdk = rho_sdk::Rho::builder()
+        .provider_shared(Arc::clone(&provider))
+        .build()
+        .unwrap();
+    let runtime =
+        unattended_runtime_on(root, &config, QuestionSupport::Unavailable, sdk, provider).await;
+    Arc::new(LoadedSession::new(job, runtime, config))
 }
 
 /// Shows `events` to `view` as one model turn.
@@ -226,12 +244,14 @@ async fn the_job_waits_for_input_while_any_request_is_open() {
             start: None,
         },
     ];
+    let root = TempDir::new().unwrap();
     let home = TempDir::new().unwrap();
     let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
     for case in cases {
         let job = started_job(&jobs);
+        let session = loaded_session(root.path(), job.clone()).await;
         let (started, mut start) = oneshot::channel();
-        let mut view = DaemonView::new(job.clone(), Arc::clone(&jobs), started);
+        let mut view = DaemonView::new(session, Arc::clone(&jobs), started);
 
         for events in case.model_turns {
             show(&mut view, events).await;
@@ -327,12 +347,14 @@ async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
             start: Some(PromptStart::Failed(UNEXPECTED_STOP.into())),
         },
     ];
+    let root = TempDir::new().unwrap();
     let home = TempDir::new().unwrap();
     let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
     for case in cases {
         let job = started_job(&jobs);
+        let session = loaded_session(root.path(), job.clone()).await;
         let (started, mut start) = oneshot::channel();
-        let mut view = DaemonView::new(job.clone(), Arc::clone(&jobs), started);
+        let mut view = DaemonView::new(session, Arc::clone(&jobs), started);
         show(&mut view, case.events).await;
         let expected_end = case.release.recorded_end();
 
@@ -362,23 +384,9 @@ async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
 async fn a_cancel_before_the_prompt_begins_saves_nothing() {
     let root = TempDir::new().unwrap();
     let home = TempDir::new().unwrap();
-    let config = Config::default();
-    let provider: Arc<dyn rho_sdk::provider::ModelProvider> = Arc::new(HangUntilCancel);
-    let sdk = rho_sdk::Rho::builder()
-        .provider_shared(Arc::clone(&provider))
-        .build()
-        .unwrap();
-    let runtime = unattended_runtime_on(
-        root.path(),
-        &config,
-        QuestionSupport::Unavailable,
-        sdk,
-        provider,
-    )
-    .await;
     let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
     let job = started_job(&jobs);
-    let session = Arc::new(LoadedSession::new(job.clone(), runtime, config));
+    let session = loaded_session(root.path(), job.clone()).await;
     let cancel = rho_sdk::CancellationToken::new();
     cancel.cancel();
 

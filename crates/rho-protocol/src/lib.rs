@@ -20,8 +20,19 @@
 //! 4. When the client stops sending or the daemon shuts down, the daemon
 //!    answers every request it has already read, then closes the connection.
 //!
-//! [`Client`] implements the frontend side; [`serve_connection`] implements
-//! the daemon side around a [`Service`].
+//! # Events
+//!
+//! A client follows a session by attaching to it ([`methods::SESSION_ATTACH`]).
+//! The daemon then sends the session's events as
+//! [`methods::SESSION_EVENT`] notifications, each numbered with its
+//! [`Seq`] in the session's [`StreamId`]. A client that reattaches with its
+//! [`Cursor`] resumes after the last event it saw, or is reset to the
+//! session's saved transcript when the daemon no longer buffers that point
+//! (#1657).
+//!
+//! [`Client`] implements the frontend side, with daemon notifications on its
+//! [`Notifications`]; [`serve_connection`] implements the daemon side around a
+//! [`Service`], which publishes events through [`subscription()`].
 //!
 //! # Methods
 //!
@@ -38,23 +49,29 @@
 
 mod client;
 mod error;
+mod forward;
 mod jsonrpc;
 pub mod methods;
 mod server;
+mod subscription;
 mod version;
 
-pub use client::{Client, ClientError};
+pub use client::{Client, ClientError, DaemonNotification, Notifications};
 pub use error::ErrorCode;
 pub use jsonrpc::{
     FrameError, Message, MessageReader, MessageWriter, Notification, ParseError, Request,
     RequestId, Response, RpcError, MAX_LINE_BYTES,
 };
 pub use methods::{
-    ClientInfo, DaemonInfo, DaemonStatus, HelloParams, HelloResponse, JobId, JobKind,
-    JobListParams, JobListResponse, JobState, JobSummary, SessionCancelParams,
-    SessionCancelResponse, SessionId, SessionNewParams, SessionNewResponse, SessionPromptParams,
-    SessionPromptResponse, SessionSteerParams, SessionSteerResponse, StatusParams, StopParams,
-    StopResponse,
+    ClientInfo, ContentBlock, Cursor, DaemonInfo, DaemonStatus, DetachReason, HelloParams,
+    HelloResponse, JobId, JobKind, JobListParams, JobListResponse, JobState, JobSummary, Location,
+    MessageId, PlanEntry, PlanStatus, Replay, Seq, SessionAttachParams, SessionAttachResponse,
+    SessionCancelParams, SessionCancelResponse, SessionDetachParams, SessionDetachResponse,
+    SessionDetachedParams, SessionEvent, SessionEventParams, SessionId, SessionNewParams,
+    SessionNewResponse, SessionPromptParams, SessionPromptResponse, SessionSteerParams,
+    SessionSteerResponse, StatusParams, StopParams, StopResponse, StreamId, ToolCallId,
+    ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
 };
-pub use server::{serve_connection, ServerInfo, Service};
+pub use server::{serve_connection, ServerInfo, Service, CLOSE_GRACE};
+pub use subscription::{subscription, Published, Publisher, Subscription};
 pub use version::{ProtocolVersion, VersionFix, VersionMismatch, PROTOCOL_VERSION};

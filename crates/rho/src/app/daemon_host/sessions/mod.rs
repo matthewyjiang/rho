@@ -7,8 +7,12 @@
 //! id. A session this daemon has not loaded, such as one an earlier daemon
 //! ran or one the TUI saved, is refused until reopening lands (#1661).
 //!
-//! Once the daemon stops, it refuses new sessions and prompts, stops the
-//! turns under way, waits for them to save, and records them interrupted.
+//! Clients attach to a loaded session to follow its events (#1657); see
+//! [`feed`].
+//!
+//! Once the daemon starts stopping, it refuses new sessions and prompts and
+//! detaches every client; then it stops the turns under way, waits for them
+//! to save, and records them interrupted.
 
 use std::{
     collections::HashMap,
@@ -17,9 +21,10 @@ use std::{
 };
 
 use rho_protocol::{
-    ErrorCode, RpcError, SessionCancelParams, SessionCancelResponse, SessionNewParams,
-    SessionNewResponse, SessionPromptParams, SessionPromptResponse, SessionSteerParams,
-    SessionSteerResponse,
+    DetachReason, ErrorCode, RpcError, SessionAttachParams, SessionAttachResponse,
+    SessionCancelParams, SessionCancelResponse, SessionNewParams, SessionNewResponse,
+    SessionPromptParams, SessionPromptResponse, SessionSteerParams, SessionSteerResponse,
+    Subscription,
 };
 use rho_sdk::{CancellationToken, SessionId, UserInput};
 
@@ -28,13 +33,18 @@ use super::{
     wire::{session_from_wire, session_to_wire},
 };
 use crate::{
-    app::session_runtime::{Closing, Logouts, SessionHandle, SessionRuntime, SteerError},
+    app::{
+        session_events::LiveEvents,
+        session_runtime::{Closing, Logouts, SessionHandle, SessionRuntime, SteerError},
+    },
     config::Config,
 };
 
+mod feed;
 mod open;
 mod turn;
 
+use feed::{Attached, Feed};
 use open::{open_session, OpenedSession, Workspace};
 use turn::{PromptStart, TurnTask};
 
@@ -55,7 +65,7 @@ pub(super) struct Sessions {
     loaded: Mutex<HashMap<SessionId, Arc<LoadedSession>>>,
     /// The daemon's logouts, which every session's credentials follow.
     logouts: Logouts,
-    /// Cancelled once the daemon stops.
+    /// Cancelled once the daemon starts stopping ([`Self::begin_stop`]).
     stopping: CancellationToken,
 }
 
@@ -73,17 +83,31 @@ struct LoadedSession {
     /// handle, both under this lock, so a cancel never reaches a turn it did
     /// not see start.
     turn_cancel: Mutex<CancellationToken>,
+    /// The session's events, as attached clients follow them.
+    feed: Feed,
+    /// Turns the runtime's events into the feed's; only the turn under way
+    /// uses it, so the lock is never contended.
+    live: Mutex<LiveEvents>,
 }
 
 impl LoadedSession {
+    /// A session opened new: nothing saved yet, so its feed starts empty.
     fn new(job: JobId, runtime: SessionRuntime, config: Config) -> Self {
         Self {
             job,
             handle: runtime.handle(),
+            live: Mutex::new(LiveEvents::new(runtime.workspace_root(), runtime.tools())),
+            feed: Feed::new(),
             runtime: tokio::sync::Mutex::new(Some(runtime)),
             config,
             turn_cancel: Mutex::default(),
         }
+    }
+
+    fn live(&self) -> MutexGuard<'_, LiveEvents> {
+        // A panic while mapping one event leaves the mapper as it was
+        // between events, at worst missing that event's bookkeeping.
+        self.live.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn turn_cancel(&self) -> MutexGuard<'_, CancellationToken> {
@@ -96,13 +120,28 @@ impl LoadedSession {
 }
 
 impl Sessions {
-    /// The sessions of a daemon whose stop cancels `stopping`.
-    pub(super) fn new(jobs: Arc<JobRegistry>, stopping: CancellationToken) -> Self {
+    /// No sessions yet; their turns are recorded in `jobs`.
+    pub(super) fn new(jobs: Arc<JobRegistry>) -> Self {
         Self {
             jobs,
             loaded: Mutex::default(),
             logouts: Logouts::default(),
-            stopping,
+            stopping: CancellationToken::new(),
+        }
+    }
+
+    /// Starts the daemon's stop: from now on no session opens, no turn
+    /// starts, no client attaches, and every client attached to a session,
+    /// even by an attach that raced the stop, is detached as
+    /// `daemon_stopping`. Call before the transport closes the connections,
+    /// so each client learns why. Calling again does nothing.
+    pub(super) fn begin_stop(&self) {
+        // Under the lock `open_new` checks `stopping` under, so no session
+        // is added after this with its feed open.
+        let loaded = self.loaded();
+        self.stopping.cancel();
+        for session in loaded.values() {
+            session.feed.close(DetachReason::DaemonStopping);
         }
     }
 
@@ -250,12 +289,35 @@ impl Sessions {
         }
     }
 
-    /// Stops every session for the daemon's exit. Call once `stopping` is
-    /// cancelled: no session opens or turn starts after that. Stops each
-    /// turn, waits until [`DRAIN_TIMEOUT`] after `stop_requested` for the
-    /// turns to save and the runtimes to tear down, and records every job
-    /// still under way as interrupted.
+    /// Subscribes a client to a session's events, resuming after its cursor
+    /// when the session's feed still can.
+    pub(super) fn attach(
+        &self,
+        params: SessionAttachParams,
+    ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
+        self.refuse_when_stopping()?;
+        let session = self.loaded_session(&params.session)?;
+        let Attached {
+            stream,
+            replay,
+            job,
+            subscription,
+        } = session.feed.attach(params.after.as_ref());
+        let response = SessionAttachResponse {
+            stream,
+            replay,
+            state: job,
+        };
+        Ok((response, subscription))
+    }
+
+    /// Stops every session for the daemon's exit, beginning the stop if
+    /// [`Self::begin_stop`] has not. Stops each turn, waits until
+    /// [`DRAIN_TIMEOUT`] after `stop_requested` for the turns to save and
+    /// the runtimes to tear down, and records every job still under way as
+    /// interrupted.
     pub(super) async fn stop(&self, stop_requested: tokio::time::Instant) {
+        self.begin_stop();
         let sessions: Vec<_> = self.loaded().drain().map(|(_, session)| session).collect();
         for session in &sessions {
             // The turn stops as one its client lost, so the session keeps

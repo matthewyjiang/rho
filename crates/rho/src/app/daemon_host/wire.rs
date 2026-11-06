@@ -46,6 +46,25 @@ impl From<&JobState> for wire::JobState {
     }
 }
 
+/// Why a job in `state` failed, if it did.
+fn failure(state: &JobState) -> Option<String> {
+    match state {
+        JobState::Ended(TurnEnd::Failed(error)) => Some(error.clone()),
+        JobState::Idle
+        | JobState::Running
+        | JobState::WaitingForInput
+        | JobState::Ended(TurnEnd::Completed | TurnEnd::Cancelled | TurnEnd::Interrupted) => None,
+    }
+}
+
+/// The event that tells attached clients a session's job is now in `state`.
+pub(super) fn state_event(state: &JobState) -> wire::SessionEvent {
+    wire::SessionEvent::State {
+        state: state.into(),
+        error: failure(state),
+    }
+}
+
 impl From<JobRecord> for wire::JobSummary {
     fn from(record: JobRecord) -> Self {
         let JobRecord {
@@ -67,15 +86,7 @@ impl From<JobRecord> for wire::JobSummary {
             session: session_to_wire(session),
             created_at,
             updated_at,
-            error: match state {
-                JobState::Ended(TurnEnd::Failed(error)) => Some(error),
-                JobState::Idle
-                | JobState::Running
-                | JobState::WaitingForInput
-                | JobState::Ended(TurnEnd::Completed | TurnEnd::Cancelled | TurnEnd::Interrupted) => {
-                    None
-                }
-            },
+            error: failure(&state),
         }
     }
 }

@@ -14,7 +14,7 @@ The rho daemon is one long-lived background process per user and rho home (`~/.r
 
 Only one daemon runs per rho home. A second `rho daemon run` fails with the pid, version, and socket of the one already running.
 
-The daemon shuts down gracefully on `rho daemon stop`, `SIGTERM`, or `SIGINT`: it stops accepting connections and reading requests, answers the requests it has already received, and removes its socket. It then stops the [turns](#sessions-and-jobs) still running, waits up to 4 seconds for them to save, records them `interrupted`, and exits with status 0. A request that never finishes holds that shutdown open. A `SIGTERM` or `SIGINT` that arrives once shutdown is under way, whether a second signal or any signal after `rho daemon stop`, makes the daemon exit at once with status 1; the next daemon to start removes the socket it left behind and records the turns that daemon left open as `interrupted`.
+The daemon shuts down gracefully on `rho daemon stop`, `SIGTERM`, or `SIGINT`: it detaches every client following a session with `rho/session/detached` (reason `daemon_stopping`), stops accepting connections and reading requests, answers the requests it has already received, and removes its socket. A client that has stopped reading, such as a suspended TUI, is dropped once a message to it has waited 1 second, so it cannot hold the stop open. It then stops the [turns](#sessions-and-jobs) still running, waits up to 4 seconds for them to save, records them `interrupted`, and exits with status 0. A request that never finishes holds that shutdown open. A `SIGTERM` or `SIGINT` that arrives once shutdown is under way, whether a second signal or any signal after `rho daemon stop`, makes the daemon exit at once with status 1; the next daemon to start removes the socket it left behind and records the turns that daemon left open as `interrupted`.
 
 ## Sessions and jobs
 
@@ -28,6 +28,8 @@ The [`rho-protocol` `methods` module](https://docs.rs/rho-protocol/latest/rho_pr
 | `rho/session/prompt` | `session`, `text` | Starts a turn and returns once the turn has saved the prompt. A session runs one turn at a time; a prompt while a turn is under way is refused with `SessionBusy`. |
 | `rho/session/cancel` | `session` | Cancels the turn under way, if any. The turn ends `cancelled`, or `interrupted` when the daemon is stopping. |
 | `rho/session/steer` | `session`, `text` | Adds `text` to the running turn's next model request. Refused with `NotSteerable` when no model request is taking input. |
+| `rho/session/attach` | `session`, `after`? | Follows the session's events, described [below](#following-a-session). Returns the session's `stream`, its `replay` (`tail` or `reset`), and its job `state`. |
+| `rho/session/detach` | `session` | Stops following the session. No event for it arrives after the response. |
 | `rho/job/list` | | Lists every job the daemon knows, including those earlier daemons ran, each with its kind, state, workspace, and session. |
 
 A prompt whose turn ends before it saves the prompt returns an error instead of a result:
@@ -52,7 +54,20 @@ A session's job state is the state of its current or last turn:
 
 A new prompt moves a session's job from any state but `running` and `waiting_for_input` back to `running`. `rho daemon status` counts the jobs that are `running` or `waiting_for_input`.
 
-Clients cannot yet watch a turn's events ([#1657](https://github.com/matthewyjiang/rho/issues/1657)) or answer its requests ([#1660](https://github.com/matthewyjiang/rho/issues/1660)). A turn that asks for approval or input waits in `waiting_for_input` until a client can answer; it is never denied because no client is attached. Until then, only `rho/session/cancel` ends the wait.
+Clients cannot yet answer a turn's requests ([#1660](https://github.com/matthewyjiang/rho/issues/1660)). A turn that asks for approval or input waits in `waiting_for_input` until a client can answer; it is never denied because no client is attached. Until then, only `rho/session/cancel` ends the wait.
+
+### Following a session
+
+After `rho/session/attach`, the daemon sends the session's events to the connection as `rho/session/event` notifications, each with the session, a `seq`, and the event. The attach response comes first. Events are the conversation as a client shows it: the job's `state`, user messages, agent message and thought chunks, tool calls (opened with a title, kind, input, and locations, then updated until they complete or fail), the session's plan, context `usage`, transcript cards, and notices. Approvals and questions are not sent yet ([#1660](https://github.com/matthewyjiang/rho/issues/1660)).
+
+Each loaded session has one stream of events, numbered by `seq` from 1. A client keeps the `stream` and the highest `seq` it has handled since its attach response as its cursor, and passes them as `after` when it attaches again, for example after the TUI is closed and reopened:
+
+- `tail`: the daemon still buffers every event after the cursor, and sends those, then the live ones. The client continues where it was.
+- `reset`: the cursor is from another stream, too old, at 0, or absent. The client drops what it shows and its cursor. The daemon sends the session's saved conversation, then the events of the turn under way. The saved conversation's events carry `seq` 0, except the last, which carries the `seq` the turn under way began after, so a client that detaches before it has the whole conversation holds no cursor and resets again.
+
+The daemon buffers up to 16 MiB of a session's recent events for clients that resume. A turn larger than that still resets correctly once it is saved; a client that resets while it is under way gets a notice that its start is missing.
+
+A client that falls 4096 events behind is detached with `rho/session/detached` (reason `lagged`) instead of slowing the turn, and can attach again with its cursor. When the daemon stops, every attached client gets `rho/session/detached` with reason `daemon_stopping`. Attaching a session the connection already follows replaces the earlier attachment.
 
 Each job's record is a JSON file in `~/.rho/daemon/jobs/` (`$RHO_HOME/daemon/jobs/` with `RHO_HOME`), rewritten on every state change. Records are kept: nothing deletes them yet, so a daemon lists the jobs earlier daemons ran. A daemon serves only the sessions it opened itself; it cannot load a saved session yet ([#1661](https://github.com/matthewyjiang/rho/issues/1661)). A request for a session it has not loaded, such as one an earlier daemon ran, one the TUI saved, or one that does not exist, is refused with `SessionNotLoaded` (-32003); telling those apart comes with reopen.
 

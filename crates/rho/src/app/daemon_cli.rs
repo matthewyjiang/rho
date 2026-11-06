@@ -120,7 +120,7 @@ async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
         bound.started_at(),
         shutdown.clone(),
     ));
-    let on_signal = shutdown.clone();
+    let on_signal = Arc::clone(&host);
     // The first signal asks for a graceful shutdown. Shutdown waits for every
     // request already read and for the turns under way to save, so a signal
     // that arrives once it is under way, whether a signal or `rho daemon
@@ -128,13 +128,13 @@ async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
     let signal_task = tokio::spawn(async move {
         loop {
             match signals.recv().await {
-                Ok(signal) if on_signal.is_cancelled() => {
+                Ok(signal) if on_signal.stopping() => {
                     tracing::warn!(%signal, "exiting without waiting for in-flight requests");
                     std::process::exit(1);
                 }
                 Ok(signal) => {
                     tracing::info!(%signal, "shutting down on signal");
-                    on_signal.cancel();
+                    on_signal.begin_stop();
                 }
                 Err(error) => {
                     tracing::warn!(%error, "signal handling failed");
@@ -205,7 +205,7 @@ fn stderr_is_journal_stream(stream: &std::ffi::OsStr) -> bool {
 
 #[cfg(unix)]
 async fn status(paths: &DaemonPaths, json: bool) -> anyhow::Result<()> {
-    let (mut client, _) = daemon::connect(paths, cli_client_info()).await?;
+    let (client, _) = daemon::connect(paths, cli_client_info()).await?;
     let status = client.request::<methods::Status>(&StatusParams {}).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&status)?);
@@ -236,7 +236,7 @@ fn status_text(status: &DaemonStatus) -> String {
 #[cfg(unix)]
 async fn stop(paths: &DaemonPaths) -> anyhow::Result<()> {
     let pid = match daemon::connect(paths, cli_client_info()).await {
-        Ok((mut client, hello)) => {
+        Ok((client, hello)) => {
             client.request::<methods::Stop>(&StopParams {}).await?;
             hello.daemon.pid
         }

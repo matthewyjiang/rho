@@ -285,6 +285,10 @@ pub enum FrameError {
     LineTooLong { limit: usize, observed: usize },
     #[error("JSON-RPC stream I/O failed: {0}")]
     Io(#[from] std::io::Error),
+    /// A closing connection's peer did not take a message within `grace`
+    /// ([`crate::CLOSE_GRACE`]), so the rest went unsent.
+    #[error("the peer stopped reading; a write did not finish within CLOSE_GRACE ({grace:?})")]
+    Stalled { grace: std::time::Duration },
 }
 
 /// Reads newline-delimited messages from one stream half.
@@ -363,6 +367,12 @@ impl<W: AsyncWrite + Unpin> MessageWriter<W> {
         self.inner.write_all(&line).await?;
         self.inner.flush().await?;
         Ok(())
+    }
+
+    /// Ends the stream, so the peer reads end of stream once it has every
+    /// message written before.
+    pub(crate) async fn shutdown(&mut self) -> std::io::Result<()> {
+        self.inner.shutdown().await
     }
 }
 
