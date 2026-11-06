@@ -219,6 +219,7 @@ impl App {
                 &session_id,
                 agent_id,
                 agent_fingerprint,
+                crate::session::SessionOrigin::Interactive,
             )?;
             self.info.session.session_id = Some(session_id);
             agent.attach_storage(session);

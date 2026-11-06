@@ -20,7 +20,7 @@ use rho_sdk::{CompactionState, Revision, SessionSnapshot};
 use super::agent_identity::SessionAgentRole;
 use super::snapshot_delta::StoredSnapshotDelta;
 use super::tree::{NodeId, ProjectedMessage, SessionNode, SessionTree};
-use super::{index, Session, SessionHistories, SessionIndexRecord, SessionSummary};
+use super::{index, Session, SessionHistories, SessionIndexRecord, SessionOrigin, SessionSummary};
 
 // Layout helpers live in `layout`; re-export the historical `persistence::` surface.
 pub(super) use super::layout::{
@@ -304,6 +304,10 @@ pub(super) enum SessionEntry {
         agent_fingerprint: Option<String>,
         #[serde(default, skip_serializing_if = "SessionAgentRole::is_root")]
         agent_role: SessionAgentRole,
+        /// The host that created the session; `None` in a file written
+        /// before origins were recorded.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<SessionOrigin>,
     },
     Message {
         timestamp: String,
@@ -507,6 +511,7 @@ impl Session {
         id: String,
         created_at: u64,
         agent: Option<(&str, &str)>,
+        origin: SessionOrigin,
     ) -> anyhow::Result<()> {
         self.append_entry(&SessionEntry::Session {
             version: SESSION_VERSION,
@@ -516,6 +521,7 @@ impl Session {
             agent_id: agent.map(|(id, _)| id.to_string()),
             agent_fingerprint: agent.map(|(_, fingerprint)| fingerprint.to_string()),
             agent_role: SessionAgentRole::Root,
+            origin: Some(origin),
         })?;
         let _ = index::record_created(self, created_at);
         Ok(())

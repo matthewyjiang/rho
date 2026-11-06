@@ -24,6 +24,7 @@ use crate::{
     },
     config::Config,
     permission::PermissionMode,
+    session::SessionOrigin,
 };
 
 impl SessionHost {
@@ -51,6 +52,7 @@ impl SessionHost {
                 cwd,
                 added_dirs,
                 logouts: &startup.logouts,
+                origin: SessionOrigin::Acp,
             },
             sdk_id,
         )
@@ -94,6 +96,7 @@ impl SessionHost {
             cwd,
             added_dirs,
             logouts: &startup.logouts,
+            origin: SessionOrigin::Acp,
         };
         let session_id = &request.session_id;
         let runtime = match history {

@@ -508,6 +508,7 @@ fn write_session_file(root: &Path, cwd: &Path, id: &str, timestamp: u64, prompts
         agent_id: None,
         agent_fingerprint: None,
         agent_role: crate::session::agent_identity::SessionAgentRole::Root,
+        origin: None,
     }];
     entries.extend(prompts.iter().map(|prompt| SessionEntry::Message {
         timestamp: timestamp.to_string(),
@@ -989,4 +990,34 @@ fn set_generated_title_does_not_overwrite_manual_title() {
         .find(|summary| summary.id == id)
         .expect("session summary");
     assert_eq!(summary.title.as_deref(), Some("manual name"));
+}
+
+// Covers: a session file keeps the host that created it on its header, which
+// listings filter by, including after a fresh session is rebound to a
+// delegated agent and its header rewritten.
+// Owner: session file header
+#[test]
+fn the_header_keeps_the_origin_the_session_was_created_with() {
+    for rebind in [false, true] {
+        let root = temp_session_root();
+        let cwd = temp_cwd();
+        let session = Session::create_with_id_in_root(
+            &root,
+            &cwd,
+            "acp-session",
+            Some(("rho", "fingerprint")),
+            SessionOrigin::Acp,
+        )
+        .unwrap();
+        if rebind {
+            session
+                .rebind_fresh_delegated_agent("child", "child-fingerprint", None)
+                .unwrap();
+        }
+        let origin = match read_entries(session.path()).unwrap().into_iter().next() {
+            Some(SessionEntry::Session { origin, .. }) => origin,
+            _ => panic!("the file starts with its header"),
+        };
+        assert_eq!(origin, Some(SessionOrigin::Acp), "rebind {rebind}");
+    }
 }

@@ -21,7 +21,7 @@ use crate::{
     agent::AgentCatalog,
     app::interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
     config::Config,
-    session::{tree::ProjectedMessage, NoSessionFound, Session as StoredSession},
+    session::{tree::ProjectedMessage, NoSessionFound, Session as StoredSession, SessionOrigin},
     tools::{mcp::config::McpConfig, sdk_registry::AppToolSet},
 };
 
@@ -41,6 +41,9 @@ pub(crate) struct SessionOpening<'a> {
     /// The host's logout count; the session's provider reads credentials
     /// as it opens.
     pub(crate) logouts: &'a Logouts,
+    /// The host a new session's file records it was opened by. A reopened
+    /// session keeps the origin it was saved with.
+    pub(crate) origin: SessionOrigin,
 }
 
 /// A reopened session's saved conversation, which its host may show its
@@ -82,6 +85,7 @@ impl SessionRuntime {
             cwd,
             added_dirs,
             logouts,
+            origin,
         } = opening;
         let config = session_config(process_config, &host_mcp);
         let agent = build.launch_agent.clone();
@@ -94,6 +98,7 @@ impl SessionRuntime {
             built.session.id().to_string(),
             agent.id().to_string(),
             agent.fingerprint().to_string(),
+            origin,
         );
         Ok(Self::new(
             OpenedSession {
@@ -143,6 +148,7 @@ impl SessionRuntime {
             cwd,
             added_dirs,
             logouts,
+            origin: _,
         } = opening;
         let (agent, config) = loaded_agent(
             &build.launch_agent,
