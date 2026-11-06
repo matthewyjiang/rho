@@ -32,7 +32,7 @@ Runs started by a saved interactive session store durable artifacts with that se
 ~/.rho/sessions/<workspace-key>/<created-at>_<session-id>/subagents/<id>/
 ```
 
-Parentless runs, including delegated work started by `rho run`, remain under `~/.rho/subagents/<id>/`. Runs from resumed legacy flat sessions also remain there because those sessions have no folder to own them. Existing global runs are not moved.
+Parentless runs remain under `~/.rho/subagents/<id>/`. Runs from resumed legacy flat sessions also remain there because those sessions have no folder to own them. Existing global runs are not moved.
 
 Each run directory can contain:
 

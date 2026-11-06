@@ -1,6 +1,6 @@
 //! Terminal classification and messages for a finished `rho run`.
 
-use super::{AutomationExit, AutomationInterrupted, TerminalReason};
+use super::{AutomationExit, TerminalReason};
 
 /// Human-readable terminal messages for one run's classified errors.
 pub(super) struct TerminalMessages {
@@ -57,9 +57,6 @@ impl TerminalMessages {
 }
 
 pub(super) fn classify_error(error: &anyhow::Error) -> (TerminalReason, u8) {
-    if let Some(interrupted) = error.downcast_ref::<AutomationInterrupted>() {
-        return (TerminalReason::Interrupted, interrupted.exit_code());
-    }
     if let Some(exit) = error.downcast_ref::<AutomationExit>() {
         return (exit.reason(), exit.exit_code());
     }
