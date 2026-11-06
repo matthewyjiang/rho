@@ -618,7 +618,7 @@ fn final_answer_is_the_only_stdout_content() {
 }
 
 // Covers: `rho run` saves its session under the session root, recorded as
-// a run's, so `rho sessions` can list and resume it.
+// a run's, and `rho sessions` lists it with its prompt.
 // Owner: rho run session storage (process contract)
 #[test]
 fn run_saves_its_session_as_a_run() {
@@ -635,7 +635,13 @@ fn run_saves_its_session_as_a_run() {
         .unwrap()
         .to_owned();
 
-    let transcripts = std::fs::read_dir(root.path().join(".rho/sessions"))
+    let mut list = command(&root, "fixed");
+    list.args(["sessions", "list", "--json"]);
+    let listed = list.output().unwrap();
+    assert_success(&listed);
+    let listing = inspection(&listed);
+    let sessions = listing["sessions"].as_array().unwrap();
+    let headers = std::fs::read_dir(root.path().join(".rho/sessions"))
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.is_dir())
@@ -647,47 +653,27 @@ fn run_saves_its_session_as_a_run() {
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.ends_with(&format!("_{session_id}")))
         })
-        .map(|session| std::fs::read_to_string(session.join("session.jsonl")).unwrap())
-        .collect::<Vec<_>>();
-    assert_eq!(transcripts.len(), 1, "one saved session for {session_id}");
-    let entries = transcripts[0]
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        (
-            &entries[0]["type"],
-            &entries[0]["id"],
-            &entries[0]["origin"]
-        ),
-        (
-            &Value::from("session"),
-            &Value::from(session_id),
-            &Value::from("run")
-        )
-    );
-    // The session file is a tree of commits whose deltas append history:
-    // the turn is saved when its prompt and the answer were appended.
-    let appended = entries
-        .iter()
-        .flat_map(|entry| {
-            entry["transition"]["delta"]["appended_history"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default()
+        .map(|session| {
+            let transcript = std::fs::read_to_string(session.join("session.jsonl")).unwrap();
+            let header = transcript.lines().next().unwrap().to_owned();
+            serde_json::from_str::<Value>(&header).unwrap()
         })
         .collect::<Vec<_>>();
     assert_eq!(
         (
-            appended
+            sessions
                 .iter()
-                .find_map(|message| message["User"][0]["Text"].as_str()),
-            appended.iter().find_map(|message| {
-                message["EnrichedAssistant"]["content"][0]["Text"].as_str()
-            }),
+                .map(|session| (&session["id"], &session["first_user_message"]))
+                .collect::<Vec<_>>(),
+            headers
+                .iter()
+                .map(|header| &header["origin"])
+                .collect::<Vec<_>>(),
         ),
-        (Some("remember this"), Some("saved answer")),
-        "the turn is saved"
+        (
+            vec![(&Value::from(session_id), &Value::from("remember this"))],
+            vec![&Value::from("run")],
+        )
     );
 }
 

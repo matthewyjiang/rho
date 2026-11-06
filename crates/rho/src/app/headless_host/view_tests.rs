@@ -10,15 +10,15 @@ use std::{
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{ContentBlock, Message, ModelIdentity, ModelResponse, ToolCall, ToolSpec},
+    model::{ContentBlock, ModelIdentity, ModelResponse, ToolCall, ToolSpec},
     provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
     tool::{
-        PreparedToolInvocation, ScriptedTool, ScriptedToolOutcome, Tool, ToolContext, ToolError,
-        ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput,
-        ToolPreparationContext, ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess,
+        PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture,
+        ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
+        ToolProgress, ToolResource, ToolResourceAccess,
     },
     HostChoice, HostInputRefusal, HostInputRequest, HostInputResponse, HostQuestion, Rho,
-    SelectionMode, SessionId, SessionOptions, SystemPrompt, UserInput, Workspace,
+    SelectionMode, SessionId, UserInput,
 };
 use serde_json::json;
 use tokio::{sync::Semaphore, time::timeout};
@@ -26,21 +26,12 @@ use tokio::{sync::Semaphore, time::timeout};
 use super::{HeadlessView, ParentQuestions};
 use crate::{
     app::{
-        policy::AppPolicy,
-        runtime_builder::{build_runtime, RuntimeBuildOptions},
-        session_assembly::BuiltSession,
         session_runtime::{
-            test_build, HostCapabilities, Logouts, QuestionSupport, SessionPermission,
-            SessionRuntime, SessionStorage, Turn, TurnOutcome, UnattendedApprovals,
+            unattended_runtime_on, QuestionSupport, SessionRuntime, Turn, TurnOutcome,
         },
         subagent_host_input::{SubagentHostInputBridge, SubagentHostInputRequest},
     },
-    compaction::CompactionConfig,
     config::Config,
-    diagnostics::RuntimeDiagnostics,
-    permission::PermissionMode,
-    session::Session as StoredSession,
-    tools::sdk_registry::{AppToolSet, StaticToolBundle},
 };
 
 /// Bounds each wait on an explicit signal; never the way a test syncs.
@@ -203,49 +194,7 @@ async fn unattended_runtime(
         .event_capacity(NonZeroUsize::new(1).unwrap())
         .build()
         .unwrap();
-    runtime_on(root, config, questions, runtime, provider).await
-}
-
-/// An unattended session runtime saved under `root` on the SDK `runtime`,
-/// whose host offers `questions`.
-async fn runtime_on(
-    root: &Path,
-    config: &Config,
-    questions: QuestionSupport,
-    runtime: Rho,
-    provider: Arc<dyn ModelProvider>,
-) -> SessionRuntime {
-    let stored = StoredSession::create_in_root(root, root).unwrap();
-    let id = SessionId::from_string(stored.id()).unwrap();
-    let session = runtime.session(SessionOptions::new().id(id)).await.unwrap();
-    let built = BuiltSession {
-        runtime,
-        session,
-        provider,
-        tools: AppToolSet::disabled(),
-        hooks: None,
-        approval_receiver: None,
-        prompt_template: None,
-        prompt: Default::default(),
-        diagnostics: RuntimeDiagnostics::new(config),
-    };
-    let mut build = test_build(config, root);
-    build.host = HostCapabilities {
-        questions,
-        ..HostCapabilities::unattended(UnattendedApprovals::Alone)
-    };
-    SessionRuntime::from_built_for_tests(
-        build,
-        built,
-        SessionStorage::saved(stored),
-        SessionPermission {
-            mode: config.permission_mode,
-            writes: Default::default(),
-            workspace_root: root.to_path_buf(),
-        },
-        config.auth.clone(),
-        &Logouts::default(),
-    )
+    unattended_runtime_on(root, config, questions, runtime, provider).await
 }
 
 /// Runs the prompt "go" on `runtime` through `view` and returns its reply.
@@ -397,99 +346,6 @@ async fn a_question_waiting_on_the_parent_does_not_stall_the_run() {
     assert_eq!(
         (reply.expect("the prompt ends"), tool.answered()),
         ("done".to_owned(), Some(Answered::Answer("yes".into())))
-    );
-    runtime.shutdown().await;
-}
-
-// Covers: a headless run that crosses its compaction threshold mid-turn
-// compacts automatically and still finishes with the model's reply.
-// Owner: headless host view over the session runtime's run pump.
-#[tokio::test]
-async fn a_run_that_crosses_its_compaction_threshold_compacts_and_finishes() {
-    let provider = ScriptedProvider::new(
-        ModelIdentity::new("test", "test", "headless-compaction"),
-        [
-            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-                ToolCall::new("call-1".into(), "expand_context".into(), json!({})),
-            )])),
-            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
-                "compact summary".into(),
-            )])),
-            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
-                "done".into(),
-            )])),
-        ],
-    );
-    let tools: Vec<Arc<dyn Tool>> = vec![Arc::new(ScriptedTool::new(
-        ToolSpec {
-            name: "expand_context".into(),
-            description: "return a large result".into(),
-            input_schema: json!({"type": "object"}),
-        },
-        ScriptedToolOutcome::Success(ToolOutput::text("tool context ".repeat(500))),
-    ))];
-    let mut inventory = AppToolSet::disabled();
-    inventory.add_bundle(StaticToolBundle::new(tools));
-    let root = tempfile::tempdir().unwrap();
-    let config = Config::default();
-    let shared: Arc<dyn ModelProvider> = Arc::new(provider.clone());
-    let sdk = build_runtime(RuntimeBuildOptions {
-        provider: Arc::clone(&shared),
-        tools: &inventory,
-        workspace: Workspace::new(root.path()).unwrap(),
-        workspace_policy: AppPolicy::for_mode(PermissionMode::Auto, Default::default()),
-        approval_session: None,
-        system_prompt: SystemPrompt::None,
-        reasoning: rho_sdk::ReasoningLevel::Off,
-        service_tier: None,
-        compaction: CompactionConfig {
-            auto_compact: true,
-            threshold_percent: 5,
-            target_percent: 1,
-            summarizer: None,
-        },
-        context_window: Some(1_000),
-        usage_purpose: "agent",
-        usage_parent_session_id: None,
-        usage_recording: Default::default(),
-        hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-        hooks: None,
-        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
-        recall: None,
-    })
-    .unwrap();
-    assert_eq!(sdk.diagnostics().compaction_trigger_tokens(), Some(50));
-    let mut runtime = runtime_on(
-        root.path(),
-        &config,
-        QuestionSupport::Unavailable,
-        sdk,
-        shared,
-    )
-    .await;
-    let mut view = HeadlessView::new();
-    view.bind(&runtime);
-
-    let reply = timeout(TEST_BUDGET, run_prompt(&mut runtime, &mut view, &config))
-        .await
-        .expect("the prompt ends");
-
-    let requests = provider.recorded_requests();
-    let summary = requests[2]
-        .messages
-        .iter()
-        .find_map(|message| match message {
-            Message::CompactionSummary(summary) => Some(summary.trigger),
-            _ => None,
-        })
-        .expect("compacted history carries a typed summary");
-    assert_eq!(
-        (reply, requests.len(), summary),
-        (
-            "done".to_owned(),
-            3,
-            Some(rho_sdk::CompactionTrigger::Automatic)
-        )
     );
     runtime.shutdown().await;
 }
