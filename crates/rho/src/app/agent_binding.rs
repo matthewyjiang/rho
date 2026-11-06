@@ -277,6 +277,8 @@ impl BoundAgent {
             parent_messages: None,
             rate_limit_state_path: None,
             overrides: Default::default(),
+            // A saved parent's; the executor sets the parent's own.
+            persistence: crate::session::SessionPersistence::Saved,
         })
     }
 

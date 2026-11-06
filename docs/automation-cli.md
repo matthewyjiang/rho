@@ -39,8 +39,8 @@ Options:
       --output <OUTPUT>     Select plain final-answer output or a JSON Lines event stream [default: text] [possible values: text, jsonl]
       --max-steps <N>       Override the model-step budget for this run
       --timeout <DURATION>  Cancel the run after this wall-clock duration
-      --no-save             Do not save the run's session, or the sessions of
-                            subagents it starts, so nothing is left to export or
+      --no-save             Do not save the run's session or its Rho and Claude
+                            subagents' sessions, so none is left to export or
                             resume
       --no-subagents        Do not expose the delegated-agent tools (agent/agents) to the model
       --agent <ID>          Select the agent definition used for this session or automation run
@@ -67,11 +67,19 @@ title its session; `rho sessions rename` names it.
 
 Pass `rho run --no-save` to skip saving. The run's session stays in memory:
 no session folder or index row is written, so nothing is left to export or
-resume, and the subagents it starts don't save their sessions either. Their
-run artifacts go under `~/.rho/subagents/<id>/`, as for any run with no saved
-session to hold them. Like the interactive `rho --no-save`, this is not a
-privacy mode: providers still receive requests, and usage records, logs, and
-hooks may keep their own data.
+resume. Its Rho subagents don't save their sessions either, and its
+`claude-cli` subagents leave no resumable Claude session. Their run artifacts
+go under `~/.rho/subagents/<id>/`, as for any run with no saved session to hold
+them. Two kinds of child still save:
+
+- `cursor` and `antigravity` subagents keep the sessions their CLIs save,
+  since neither has an unsaved mode.
+- Workflow nodes the run starts save their sessions, because a workflow run is
+  its own durable record that `rho workflow` resumes from.
+
+Like the interactive `rho --no-save`, this is not a privacy mode: providers
+still receive requests, and usage records, logs, and hooks may keep their own
+data.
 
 A prompt that starts with a slash command resolves the way it does in an ACP
 session: prompt templates (`/prompt:<name>`), MCP prompts, `/init`,

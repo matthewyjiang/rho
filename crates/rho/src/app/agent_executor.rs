@@ -413,6 +413,9 @@ impl AgentExecutor {
             prompt: request.prompt,
             run_id: request.run_id,
             role: SessionRole::WorkflowNode,
+            // Saved even when a `--no-save` run started the workflow: a
+            // workflow run is its own durable record, which its nodes'
+            // sessions are part of and `rho workflow` resumes from.
             persistence: SessionPersistence::Saved,
             output_file: request.output_file,
             questionnaire_target: None,
@@ -523,6 +526,7 @@ impl AgentExecutor {
                 Launch::ClaudeCli(mut session) => {
                     append_child_communication_contract(&mut session.system_prompt);
                     session.parent_messages = parent_rx;
+                    session.persistence = persistence;
                     session.overrides.live_title = Some(std::sync::Arc::clone(&task_live_title));
                     if let Some(frozen) = frozen_cli {
                         apply_frozen(&mut session.overrides, frozen);
@@ -637,7 +641,9 @@ struct BoundLaunchRequest {
     run_id: String,
     /// A subagent with its parent, or a workflow node.
     role: SessionRole,
-    /// Whether the child's session is saved; a Rho runtime child only.
+    /// Whether the child's session is saved: a Rho runtime child's session
+    /// file, or a Claude child's Claude session. Cursor and Antigravity have
+    /// no unsaved session, so their children keep theirs either way.
     persistence: SessionPersistence,
     output_file: PathBuf,
     /// Parent session that can present this child's questionnaires, when one
