@@ -48,15 +48,15 @@ mod persist;
 mod prompt_gate;
 mod pump;
 mod switch;
+#[cfg(test)]
+mod test_support;
 mod title;
 mod turn;
 mod workflow;
 
 #[cfg(test)]
-pub(crate) use agent::{bind_delegated_agent, loaded_agent_with, MODEL_OVERRIDE_METADATA};
+pub(in crate::app) use agent::{bind_delegated_agent, loaded_agent_with, MODEL_OVERRIDE_METADATA};
 pub(crate) use agent::{loaded_agent, AgentTask};
-#[cfg(test)]
-pub(crate) use build::overlay_host_mcp;
 pub(crate) use build::{build_session, session_config, ChildAgents, QuestionSupport, SessionBuild};
 use credentials::SessionCredentials;
 pub(crate) use credentials::{CredentialFailure, Logouts};
@@ -290,84 +290,4 @@ pub(crate) fn split_assembly(
             workspace_root,
         },
     )
-}
-
-#[cfg(test)]
-impl SessionRuntime {
-    /// A runtime around `built`, saved through `storage`, for a plain root
-    /// agent with every tool whose workspace is the storage's.
-    pub(crate) fn for_tests(built: BuiltSession, storage: SessionStorage, config: &Config) -> Self {
-        use crate::{
-            agent::{
-                AgentCapabilities, AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy,
-                PromptPolicy, ToolPolicy,
-            },
-            app::agent_binding::{AgentBinder, AgentInvocation, AgentRole},
-        };
-        let agent = AgentBinder::bind(
-            Arc::new(AgentDefinition {
-                id: AgentId::new("rho").expect("test agent id"),
-                description: "test".into(),
-                prompt: PromptPolicy::Extend(String::new()),
-                runtime: AgentRuntimeSpec::Rho {
-                    tools: ToolPolicy::All,
-                    model: ModelPolicy::Inherit,
-                    reasoning: None,
-                },
-            }),
-            AgentInvocation {
-                role: AgentRole::AutomationRoot,
-                available_tools: AgentCapabilities::all_host_tools(),
-            },
-            config,
-        )
-        .expect("bind test agent");
-        let workspace_root = storage.cwd().to_path_buf();
-        Self::new(
-            OpenedSession {
-                built,
-                storage,
-                agent: agent.clone(),
-                auth: config.auth.clone(),
-                host_mcp: McpConfig::default(),
-                added_dirs: AddedDirs::default(),
-                permission: SessionPermission {
-                    mode: config.permission_mode,
-                    writes: Default::default(),
-                    workspace_root: workspace_root.clone(),
-                },
-                reopen_notice: None,
-            },
-            SessionBuild {
-                config_path: workspace_root.join("rho-test-config.toml"),
-                no_system_prompt: false,
-                no_tools: false,
-                no_subagents: false,
-                diagnostics: crate::diagnostics::RuntimeDiagnostics::new(config),
-                questions: QuestionSupport::Unavailable,
-                children: ChildAgents::InProcess,
-                background_wait: crate::app::headless_delegation::BackgroundWait::HoldPrompt,
-                launch_agent: agent,
-                host_io: Default::default(),
-            },
-            &Logouts::default(),
-        )
-    }
-
-    /// Pretends the runtime already completed `runs` turns.
-    pub(crate) fn set_completed_runs_for_tests(&mut self, runs: u64) {
-        self.completed_runs = runs;
-    }
-
-    pub(crate) fn credentials_for_tests(&self) -> &SessionCredentials {
-        &self.credentials
-    }
-
-    pub(crate) fn storage(&self) -> &SessionStorage {
-        &self.storage
-    }
-
-    pub(crate) fn agent(&self) -> &BoundAgent {
-        &self.agent
-    }
 }

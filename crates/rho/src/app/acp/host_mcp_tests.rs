@@ -5,8 +5,11 @@ use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
 
 use super::host_mcp_config;
-use crate::app::session_runtime::overlay_host_mcp;
-use crate::tools::mcp::config::{McpConfig, McpSamplingPolicy, McpTransport};
+use crate::{
+    app::session_runtime::session_config,
+    config::Config,
+    tools::mcp::config::{McpConfig, McpSamplingPolicy, McpTransport},
+};
 
 /// Projects a converted config onto what a host controls: each accepted
 /// server's transport, plus the identities rejected as invalid.
@@ -133,13 +136,14 @@ fn host_servers_convert_to_session_config() {
 // Owner: ACP host MCP conversion, through the session runtime's overlay
 #[test]
 fn host_entries_own_their_name_over_config_servers() {
-    let configured = || {
-        let mut config = McpConfig::default();
-        overlay_host_mcp(
-            &mut config,
-            host_mcp_config(&[http("bridge", "https://config.example/mcp")]),
-        );
-        config
+    // A process config whose own `bridge` server the host entries meet.
+    let process = || Config {
+        mcp: session_config(
+            &Config::default(),
+            &host_mcp_config(&[http("bridge", "https://config.example/mcp")]),
+        )
+        .mcp,
+        ..Config::default()
     };
     let cases = [
         (
@@ -184,8 +188,7 @@ fn host_entries_own_their_name_over_config_servers() {
         ),
     ];
     for (label, servers, expected) in cases {
-        let mut config = configured();
-        overlay_host_mcp(&mut config, host_mcp_config(&servers));
-        assert_eq!(summary(&config), expected, "{label}");
+        let config = session_config(&process(), &host_mcp_config(&servers));
+        assert_eq!(summary(&config.mcp), expected, "{label}");
     }
 }

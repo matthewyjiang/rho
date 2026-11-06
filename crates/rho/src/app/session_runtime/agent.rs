@@ -25,7 +25,7 @@ use crate::{
 /// Resolved selection, not the alias or definition: alias edits must not move
 /// a resumed call to another provider. Auth is a profile id, never a credential.
 /// The key predates the runtime and names ACP, which first hosted children.
-pub(crate) const MODEL_OVERRIDE_METADATA: &str = "rho.acp.agent_model_override";
+pub(in crate::app) const MODEL_OVERRIDE_METADATA: &str = "rho.acp.agent_model_override";
 
 /// `/agent:<name>`: a task for a delegated agent, whose per-call model
 /// selection stays separate from the definition.
@@ -280,7 +280,7 @@ pub(crate) fn loaded_agent(
 
 /// Keep credential discovery injectable while testing durable selection and
 /// definition-identity checks at the load boundary.
-pub(crate) fn loaded_agent_with(
+pub(in crate::app) fn loaded_agent_with(
     launch_agent: &BoundAgent,
     stored: &StoredSession,
     config: Config,
@@ -327,7 +327,7 @@ pub(crate) fn loaded_agent_with(
 /// Both fresh rebinding and resume must enforce the delegated tool boundary:
 /// the child gets at most `launch_agent`'s tools. Callers refuse a bound
 /// agent that does not run on Rho.
-pub(crate) fn bind_delegated_agent(
+pub(in crate::app) fn bind_delegated_agent(
     definition: AgentDefinition,
     model_override: Option<ModelOverride<'_>>,
     launch_agent: &BoundAgent,
@@ -353,3 +353,7 @@ fn not_a_rho_agent(bound: &BoundAgent) -> CommandRejected {
         bound.definition().runtime.runtime()
     ))
 }
+
+#[cfg(test)]
+#[path = "agent_tests.rs"]
+mod tests;

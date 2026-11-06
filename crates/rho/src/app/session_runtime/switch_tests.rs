@@ -1,11 +1,20 @@
-use super::*;
+use std::sync::Arc;
+
+use pretty_assertions::assert_eq;
+use rho_sdk::{
+    model::{Message, ModelIdentity},
+    provider::{ModelProvider, ScriptedProvider},
+    SessionOptions,
+};
+
 use crate::{
     agent::{AgentCapabilities, ToolCapability},
     app::{
         active_prompt::ActivePrompt,
         session_assembly::BuiltSession,
-        session_runtime::{SessionPermission, SessionStorage},
+        session_runtime::{SessionRuntime, SessionStorage},
     },
+    config::Config,
     diagnostics::RuntimeDiagnostics,
     model_identity::PromptModel,
     prompt,
@@ -15,16 +24,10 @@ use crate::{
         sdk_registry::{AppToolSet, ToolSetOptions},
     },
 };
-use pretty_assertions::assert_eq;
-use rho_sdk::{
-    model::{Message, ModelIdentity},
-    provider::{ModelProvider, ScriptedProvider},
-    SessionOptions,
-};
 
-// Covers: ACP model switches must replace the advisor's cached executor prompt
+// Covers: a model switch must replace the advisor's cached executor prompt
 // together with its live history, including model-specific replacements.
-// Owner: ACP session transaction, without credential/network discovery
+// Owner: session runtime model switch, without credential/network discovery
 #[tokio::test]
 async fn model_prompt_switch_rebinds_advisor_with_live_history() {
     let home = tempfile::tempdir().unwrap();
@@ -93,54 +96,32 @@ async fn model_prompt_switch_rebinds_advisor_with_live_history() {
         diagnostics,
     };
     let stored = StoredSession::create_in_root(home.path(), home.path()).unwrap();
-    let startup = crate::app::acp::AcpStartup::for_tests(config.clone(), home.path());
-    let mut host = SessionHost::from_built(
-        crate::app::acp::client_io::ClientIo::local(SessionId::new(stored.id())),
-        &startup,
-        OpenedSession {
-            built,
-            storage: SessionStorage::saved(stored),
-            agent: startup.agent.clone(),
-            auth: startup.config.auth.clone(),
-            host_mcp: Default::default(),
-            added_dirs: Default::default(),
-            permission: SessionPermission {
-                mode: config.permission_mode,
-                writes: Default::default(),
-                workspace_root: home.path().to_path_buf(),
-            },
-            reopen_notice: None,
-        },
-    );
+    let mut runtime = SessionRuntime::for_tests(built, SessionStorage::saved(stored), &config);
     let next: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
         ModelIdentity::new("test", "test", "next"),
         Vec::new(),
     ));
-    let expected = host
-        .runtime
-        .built()
+    let expected = runtime
+        .built
         .prompt_template
         .as_ref()
         .unwrap()
         .build(&PromptModel::from_sdk_identity(&next.identity()))
         .unwrap();
-    let read = host.runtime.credentials_for_tests().before_read();
-    host.runtime.switch_provider(next, &config, read).unwrap();
+    let read = runtime.credentials.before_read();
+    runtime.switch_provider(next, &config, read).unwrap();
     assert_eq!(advisor.system_prompt(), Some(expected.text.clone()));
     assert_eq!(
-        &host.runtime.built().session.history()[..2],
+        &runtime.built.session.history()[..2],
         &[
             Message::System(expected.text),
             Message::user_text("retained conversation"),
         ]
     );
     assert_eq!(
-        host.runtime.built().prompt.provenance,
+        runtime.built.prompt.provenance,
         expected.model_prompt.as_ref().map(Into::into)
     );
-    assert_eq!(
-        host.runtime.built().diagnostics.prompt_sources(),
-        expected.sources
-    );
-    host.shutdown().await;
+    assert_eq!(runtime.built.diagnostics.prompt_sources(), expected.sources);
+    runtime.shutdown().await;
 }

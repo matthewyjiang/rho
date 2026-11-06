@@ -75,7 +75,8 @@ async fn next_chunk(chunks: &mut mpsc::UnboundedReceiver<String>) -> String {
 // must deliver their queued notices, wait for them, and continue with their
 // result. The TUI keeps children and their inbox across cancelled turns the
 // same way.
-// Owner: ACP session host prompt lifecycle.
+// Owner: session runtime background delegation across prompts, driven
+// through the ACP host.
 #[tokio::test]
 async fn cancelled_prompt_keeps_children_for_the_next_prompt() {
     let home = tempfile::tempdir().unwrap();

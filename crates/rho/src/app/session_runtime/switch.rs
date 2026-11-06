@@ -80,7 +80,7 @@ impl SessionRuntime {
     /// discovery so the session transaction can be exercised with a scripted
     /// provider. `read` is [`super::SessionCredentials::before_read`] from
     /// before `provider` was built.
-    pub(crate) fn switch_provider(
+    pub(super) fn switch_provider(
         &mut self,
         provider: Arc<dyn rho_sdk::provider::ModelProvider>,
         config: &Config,
@@ -155,3 +155,7 @@ fn resolve_switch_reasoning(
         }),
     }
 }
+
+#[cfg(test)]
+#[path = "switch_tests.rs"]
+mod tests;

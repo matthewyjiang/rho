@@ -119,7 +119,7 @@ fn tool_turn(id: &str, name: &str) -> ScriptedTurn {
 // failed "Tool call not found" card. Cancel interrupts a running call without
 // finishing it, and ACP asks agents to flush pending updates before the
 // `cancelled` prompt response, so the card must not stay in progress.
-// Owner: ACP session host prompt lifecycle.
+// Owner: ACP turn forwarder tool cards.
 #[tokio::test]
 async fn tool_calls_open_with_a_card_and_end_in_a_terminal_status() {
     let home = tempfile::tempdir().unwrap();

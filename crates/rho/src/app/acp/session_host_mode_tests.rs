@@ -425,7 +425,7 @@ async fn mode_change_reaching_a_replaced_host_fails_without_applying() {
 // Covers: after session/set_mode, tool writes must obey the new mode: plan
 // denies without asking, supervised asks the host, bypass runs without asking.
 // The live conversation and session identity survive every swap.
-// Owner: ACP session transaction
+// Owner: session runtime mode change, through the ACP host's permission prompts
 #[tokio::test]
 async fn set_mode_changes_tool_authorization_and_keeps_the_conversation() {
     let home = tempfile::tempdir().unwrap();
@@ -467,29 +467,10 @@ async fn set_mode_changes_tool_authorization_and_keeps_the_conversation() {
     host.shutdown().await;
 }
 
-// Covers: auto without a configured classifier model must be rejected as bad
-// params and leave the session in its previous mode, matching headless startup.
-// Owner: ACP session transaction
-#[tokio::test]
-async fn set_mode_auto_without_classifier_keeps_the_previous_mode() {
-    let home = tempfile::tempdir().unwrap();
-    let config = test_config();
-    let mut host = host(home.path(), &config, Vec::new(), AppToolSet::disabled()).await;
-
-    let error = host
-        .set_permission_mode(PermissionMode::Auto, &config)
-        .await
-        .expect_err("auto needs a classifier model");
-
-    assert_eq!(error.code, ErrorCode::InvalidParams);
-    assert_eq!(host.runtime.permission_mode(), PermissionMode::Bypass);
-    host.shutdown().await;
-}
-
 // Covers: hosts that use config options (Zed) switch modes through the `mode`
 // option; it must apply like session/set_mode and echo the new mode, and an
 // unknown value must be rejected without changing the mode.
-// Owner: ACP session transaction
+// Owner: ACP config option mapping
 #[tokio::test]
 async fn mode_config_option_switches_the_permission_mode() {
     let home = tempfile::tempdir().unwrap();

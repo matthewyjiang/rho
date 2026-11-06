@@ -10,7 +10,7 @@ use agent_client_protocol::{
 use pretty_assertions::assert_eq;
 use rho_providers::reasoning::ReasoningLevel;
 use rho_sdk::{
-    model::{ContentBlock, Message, ModelIdentity, ModelResponse},
+    model::{ContentBlock, ModelIdentity, ModelResponse},
     provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
     SessionOptions, UserInput,
 };
@@ -19,15 +19,15 @@ use super::super::SessionHost;
 use crate::{
     agent::{
         AgentCapabilities, AgentCatalog, AgentCatalogSources, AgentDefinition, AgentId,
-        AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolCapability, ToolPolicy,
+        AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolPolicy,
     },
     app::{
         acp::{AcpClientPort, AcpStartup},
         agent_binding::{AgentBinder, AgentInvocation, AgentRole, ModelOverride},
         session_assembly::{BuiltSession, SessionAssembly},
         session_runtime::{
-            bind_delegated_agent, loaded_agent, loaded_agent_with, AgentTask, CommandRejected,
-            OpenedSession, SessionPermission, SessionStorage, MODEL_OVERRIDE_METADATA,
+            bind_delegated_agent, loaded_agent_with, AgentTask, OpenedSession, SessionPermission,
+            SessionStorage, MODEL_OVERRIDE_METADATA,
         },
     },
     config::Config,
@@ -206,7 +206,8 @@ async fn host(cwd: &Path, startup: &AcpStartup) -> SessionHost {
 // turn, preserving the host's pre-prompt mode, reasoning and session id. A call
 // override must be durable before advertising the child, then survive the first
 // checkpoint and reload without changing identity.
-// Owner: ACP session rebind transaction (scripted provider, no credentials).
+// Owner: ACP `/agent:` host ordering over the runtime rebind (scripted
+// provider, no credentials).
 #[tokio::test]
 async fn rebind_applies_child_tools_and_current_host_selection() {
     let cwd = tempfile::tempdir().unwrap();
@@ -383,132 +384,4 @@ async fn rebind_applies_child_tools_and_current_host_selection() {
         }
         host.shutdown().await;
     }
-}
-
-// Covers: rebinding must not silently discard a conversation, including a
-// loaded conversation whose completed-runs counter starts at zero.
-// Owner: ACP session rebind transaction.
-#[tokio::test]
-async fn rebind_rejects_nonfresh_sessions_without_replacing_them() {
-    let cwd = tempfile::tempdir().unwrap();
-    let startup = startup(cwd.path());
-    for (completed_runs, history) in [
-        (0, vec![Message::user_text("retained conversation")]),
-        (1, Vec::new()),
-    ] {
-        let mut host = host(cwd.path(), &startup).await;
-        host.runtime.set_completed_runs_for_tests(completed_runs);
-        for message in history {
-            host.runtime
-                .built()
-                .session
-                .append_message(message)
-                .unwrap();
-        }
-        let before = host.runtime.built().session.snapshot();
-        let input = UserInput::text("task");
-        let error = host
-            .run_as_agent_with(
-                &input,
-                AgentTask {
-                    agent_id: "acp-child".into(),
-                    model_override: None,
-                    input: input.clone(),
-                },
-                &startup,
-                &NullPort,
-                |_| panic!("nonfresh sessions must not rebind"),
-                |_, _, _| async { panic!("nonfresh sessions must not rebuild") },
-            )
-            .await
-            .unwrap_err();
-        assert!(error.downcast_ref::<CommandRejected>().is_some());
-        assert_eq!(host.runtime.built().session.snapshot(), before);
-        host.shutdown().await;
-    }
-}
-
-// Covers: a reloaded child must come back with its delegated tool boundary,
-// never the root's, even when it shares the launch agent's id; a root session
-// stays the launch agent; a changed definition fails the load.
-// Owner: ACP session load agent selection.
-#[test]
-fn load_restores_the_child_binding_or_fails() {
-    let cwd = tempfile::tempdir().unwrap();
-    let agents = cwd.path().join(".agents/agents");
-    std::fs::create_dir_all(&agents).unwrap();
-    let startup = startup(cwd.path());
-    // Same id as the launch agent, so only the persisted role tells them apart.
-    let file = agents.join(format!("{}.md", startup.agent.id()));
-    std::fs::write(
-        &file,
-        "---\ndescription: Loaded child\ntools: [read_file, agent]\n---\nInspect files\n",
-    )
-    .unwrap();
-    let catalog = || {
-        Ok(AgentCatalog::discover_with_home(
-            cwd.path(),
-            /*home*/ None,
-        )?)
-    };
-    let definitions = catalog().unwrap();
-    let definition = &definitions
-        .find(startup.agent.id().as_str())
-        .unwrap()
-        .definition;
-    let session = |root: &Path| {
-        StoredSession::create_in_root_with_agent(
-            root,
-            cwd.path(),
-            startup.agent.id().as_str(),
-            &startup.agent.fingerprint().to_string(),
-        )
-        .unwrap()
-    };
-    let child_root = tempfile::tempdir().unwrap();
-    let child = session(child_root.path());
-    child
-        .rebind_fresh_delegated_agent(
-            startup.agent.id().as_str(),
-            &definition.fingerprint().to_string(),
-            /*initial_snapshot*/ None,
-        )
-        .unwrap();
-
-    let (agent, _) = loaded_agent(&startup.agent, &child, startup.config.clone(), catalog).unwrap();
-    assert_eq!(agent.fingerprint(), definition.fingerprint());
-    assert_eq!(
-        agent.rho_capabilities(),
-        Some(&AgentCapabilities::new([ToolCapability::ReadFile].into()))
-    );
-
-    let root_dir = tempfile::tempdir().unwrap();
-    let root = session(root_dir.path());
-    let (agent, _) = loaded_agent(&startup.agent, &root, startup.config.clone(), catalog).unwrap();
-    assert_eq!(agent.fingerprint(), startup.agent.fingerprint());
-
-    std::fs::write(
-        &file,
-        "---\ndescription: Loaded child\ntools: [read_file, write_file]\n---\nInspect files\n",
-    )
-    .unwrap();
-    let snapshot = child
-        .snapshot_for_resume(
-            ModelIdentity::new("test", "test", "call-model"),
-            "cache".into(),
-        )
-        .unwrap()
-        .with_metadata(
-            MODEL_OVERRIDE_METADATA,
-            r#"{"provider":"test","model":"call-model","auth":"test-auth"}"#,
-        );
-    child.save_snapshot(&snapshot, &[]).unwrap();
-    assert!(loaded_agent_with(
-        &startup.agent,
-        &child,
-        startup.config.clone(),
-        catalog,
-        |_, _, _, _| panic!("changed definitions must fail before override binding"),
-    )
-    .is_err());
 }

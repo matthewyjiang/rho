@@ -140,7 +140,7 @@ fn from_first_user(history: &[Message]) -> Vec<Message> {
 // Covers: hosts open sessions they never prompt (T3 Code's provider refresh),
 // and each must not leave an empty, unnamed row in /resume. The first prompt
 // creates the file with the whole turn.
-// Owner: ACP session host turn persistence
+// Owner: session runtime turn persistence, driven through the ACP host
 #[tokio::test]
 async fn new_session_saves_nothing_until_its_first_prompt() {
     let home = tempfile::tempdir().unwrap();
@@ -179,7 +179,7 @@ async fn new_session_saves_nothing_until_its_first_prompt() {
 // Covers: a host that kills the agent mid-turn (T3 Code restarts) must still
 // find the user's message and the model's started work, tool calls included,
 // on session/load and TUI resume, though the end-of-turn save never ran.
-// Owner: ACP session host turn persistence
+// Owner: session runtime turn persistence, driven through the ACP host
 #[tokio::test]
 async fn unfinished_turn_is_on_disk_for_session_load() {
     let home = tempfile::tempdir().unwrap();
@@ -235,7 +235,7 @@ async fn unfinished_turn_is_on_disk_for_session_load() {
 // Covers: a refusal rollback whose durable leaf commit fails must leave the
 // live session on the refusal branch the file still selects, so the next turn
 // saves model history and replay that agree.
-// Owner: ACP session host turn persistence
+// Owner: session runtime turn persistence, driven through the ACP host
 #[tokio::test]
 async fn failed_refusal_rollback_keeps_live_and_saved_history_together() {
     let home = tempfile::tempdir().unwrap();
@@ -294,7 +294,7 @@ async fn failed_refusal_rollback_keeps_live_and_saved_history_together() {
 
 // Covers: a background result shown to the host stays in the saved display
 // history when the turn then fails, so session/load still replays it.
-// Owner: ACP session host turn persistence
+// Owner: session runtime turn persistence, driven through the ACP host
 #[tokio::test]
 async fn background_result_survives_a_failed_turn() {
     let home = tempfile::tempdir().unwrap();
@@ -364,7 +364,7 @@ fn recording(ids: &Arc<std::sync::Mutex<Vec<String>>>) -> PromptAcceptance {
 // was answered with: model turns, including one that ran a tool, and a
 // workflow start, which saves its prompt without a turn. A prompt retried
 // with the same text after a refusal rolled it back is a new message.
-// Owner: ACP session host prompt insertion
+// Owner: ACP prompt acceptance over the runtime's message insertion
 #[tokio::test]
 async fn accepted_user_message_ids_survive_replay() {
     let home = tempfile::tempdir().unwrap();

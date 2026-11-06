@@ -4,7 +4,7 @@
 //! features (browser preview, orchestration). Rho connects them alongside the
 //! servers from its own config; the session runtime overlays them, so a host
 //! entry replaces a config server of the same name, even when it is invalid
-//! (`app::session_runtime::overlay_host_mcp`).
+//! (`app::session_runtime::session_config`).
 
 use std::collections::BTreeMap;
 

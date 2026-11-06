@@ -179,7 +179,7 @@ pub(crate) fn session_config(process: &Config, host_mcp: &McpConfig) -> Config {
 /// session only, because the host's entry carries session-specific
 /// credentials; an invalid host entry suppresses it rather than connect it
 /// under an identity the host meant to replace.
-pub(crate) fn overlay_host_mcp(process: &mut McpConfig, host: McpConfig) {
+fn overlay_host_mcp(process: &mut McpConfig, host: McpConfig) {
     for invalid in &host.invalid_servers {
         if process.servers.remove(&invalid.identity).is_some() {
             tracing::warn!(server = %invalid.identity, "host MCP entry is invalid; not connecting the configured server it replaces");

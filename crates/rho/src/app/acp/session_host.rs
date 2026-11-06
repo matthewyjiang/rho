@@ -651,10 +651,6 @@ impl SessionHost {
 mod tests;
 
 #[cfg(test)]
-#[path = "session_host_model_prompt_tests.rs"]
-mod model_prompt_tests;
-
-#[cfg(test)]
 #[path = "session_host_delegation_tests.rs"]
 mod delegation_tests;
 

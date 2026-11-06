@@ -141,3 +141,7 @@ impl SessionRuntime {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "mode_tests.rs"]
+mod tests;
