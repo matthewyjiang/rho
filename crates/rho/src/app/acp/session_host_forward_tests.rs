@@ -162,9 +162,8 @@ async fn permission_request_does_not_block_event_drain() {
         features: HostFeatures::default(),
         mapper: EventMapper::new(HostFeatures::default(), PathBuf::new(), Default::default()),
         signals: SessionSignals::new(
-            ContextGauge::of_session_for_tests(session().await),
+            ContextGauge::of_session_for_tests(session().await, /*configured_window*/ None),
             TodoState::default(),
-            None,
             Vec::new(),
         ),
         placeholders: &placeholders,
@@ -228,9 +227,8 @@ async fn reply_reaches_the_turn_while_an_update_is_sent() {
         features: HostFeatures::default(),
         mapper: EventMapper::new(HostFeatures::default(), PathBuf::new(), Default::default()),
         signals: SessionSignals::new(
-            ContextGauge::of_session_for_tests(session().await),
+            ContextGauge::of_session_for_tests(session().await, /*configured_window*/ None),
             TodoState::default(),
-            None,
             Vec::new(),
         ),
         placeholders: &placeholders,

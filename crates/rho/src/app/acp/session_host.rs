@@ -379,7 +379,6 @@ impl SessionHost {
         SessionSignals::new(
             self.runtime.context_gauge(),
             self.runtime.tools().todo_state(),
-            self.runtime.context_window(),
             std::mem::take(&mut self.sent_plan),
         )
     }

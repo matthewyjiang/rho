@@ -63,9 +63,8 @@ async fn finished_tools_send_the_checklist_only_when_it_changed() {
     let todo = TodoState::default();
     todo.replace(list(&[("read", TodoStatus::Completed)]));
     let mut signals = SessionSignals::new(
-        ContextGauge::of_session_for_tests(session().await),
+        ContextGauge::of_session_for_tests(session().await, /*configured_window*/ None),
         todo.clone(),
-        None,
         Vec::new(),
     );
     let steps = [
@@ -125,9 +124,8 @@ async fn finished_tools_send_the_checklist_only_when_it_changed() {
 async fn usage_reports_the_known_window_or_zero() {
     for (window, size) in [(Some(200_000), 200_000), (None, 0)] {
         let mut signals = SessionSignals::new(
-            ContextGauge::of_session_for_tests(session().await),
+            ContextGauge::of_session_for_tests(session().await, window),
             TodoState::default(),
-            window,
             Vec::new(),
         );
         let step = RunEvent::StepStarted {

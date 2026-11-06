@@ -27,23 +27,14 @@ use crate::{
 pub(super) struct SessionSignals {
     gauge: ContextGauge,
     todo: TodoState,
-    /// Configured window for the current model; the provider-reported window
-    /// is the fallback, matching the TUI context meter.
-    context_window: Option<u64>,
     sent_plan: Vec<PlanEntry>,
 }
 
 impl SessionSignals {
-    pub(super) fn new(
-        gauge: ContextGauge,
-        todo: TodoState,
-        context_window: Option<u64>,
-        sent_plan: Vec<PlanEntry>,
-    ) -> Self {
+    pub(super) fn new(gauge: ContextGauge, todo: TodoState, sent_plan: Vec<PlanEntry>) -> Self {
         Self {
             gauge,
             todo,
-            context_window,
             sent_plan,
         }
     }
@@ -77,10 +68,7 @@ impl SessionSignals {
     /// them. It is omitted, never sent as 0, while no request has a price;
     /// an all-local session omits it too, as the TUI statusline does.
     async fn usage_for(&self, estimate: rho_sdk::ContextEstimate) -> SessionUpdate {
-        let size = self
-            .context_window
-            .or(estimate.reported_context_window())
-            .unwrap_or(0);
+        let size = self.gauge.window_for(estimate).unwrap_or(0);
         let cost = match crate::usage::session_valuation(self.gauge.session_id()).await {
             Valuation::Usd(micros) => Some(Cost::new(micros as f64 / 1_000_000.0, "USD")),
             Valuation::Local | Valuation::Unpriced => None,

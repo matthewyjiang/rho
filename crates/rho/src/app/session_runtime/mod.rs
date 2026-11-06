@@ -200,9 +200,15 @@ impl SessionRuntime {
         SessionTools::of(&self.built.tools)
     }
 
-    /// Reads the session's context fill, including while a turn runs.
+    /// Reads the session's context fill against its current model's
+    /// window, including while a turn runs. Take a new gauge after a model
+    /// switch.
     pub(crate) fn context_gauge(&self) -> ContextGauge {
-        ContextGauge(self.built.session.clone())
+        let current = self.current_model();
+        ContextGauge {
+            session: self.built.session.clone(),
+            configured_window: model_context_window(&current.provider, &current.model),
+        }
     }
 
     /// The session's workspace directory.
@@ -231,12 +237,6 @@ impl SessionRuntime {
         }
     }
 
-    /// The configured context window of the current model.
-    pub(crate) fn context_window(&self) -> Option<u64> {
-        let current = self.current_model();
-        model_context_window(&current.provider, &current.model)
-    }
-
     /// Cancels any prompt and tears the session down.
     pub(crate) async fn shutdown(self) {
         self.handle.cancel();
@@ -252,24 +252,45 @@ impl SessionRuntime {
     }
 }
 
-/// Reads one session's context fill, and nothing that changes the session.
-/// A host keeps it while a turn runs, when the runtime itself is busy.
+/// Reads one session's context fill and the window it fills, and nothing
+/// that changes the session. A host keeps it while a turn runs, when the
+/// runtime itself is busy.
 #[derive(Clone)]
-pub(crate) struct ContextGauge(rho_sdk::Session);
+pub(crate) struct ContextGauge {
+    session: rho_sdk::Session,
+    /// The configured window of the session's model when the gauge was
+    /// taken.
+    configured_window: Option<u64>,
+}
 
 impl ContextGauge {
-    /// A gauge on `session`, for host tests that have no runtime.
+    /// A gauge on `session` whose model is configured with
+    /// `configured_window`, for host tests that have no runtime.
     #[cfg(test)]
-    pub(crate) fn of_session_for_tests(session: rho_sdk::Session) -> Self {
-        Self(session)
+    pub(crate) fn of_session_for_tests(
+        session: rho_sdk::Session,
+        configured_window: Option<u64>,
+    ) -> Self {
+        Self {
+            session,
+            configured_window,
+        }
     }
 
     pub(crate) fn estimate(&self) -> rho_sdk::ContextEstimate {
-        self.0.context_estimate()
+        self.session.context_estimate()
+    }
+
+    /// The context window `estimate` fills: the configured window of the
+    /// session's model, else the one the provider reported with `estimate`,
+    /// as the TUI context meter measures it. `None` when neither knows.
+    pub(crate) fn window_for(&self, estimate: rho_sdk::ContextEstimate) -> Option<u64> {
+        self.configured_window
+            .or(estimate.reported_context_window())
     }
 
     pub(crate) fn session_id(&self) -> &rho_sdk::SessionId {
-        self.0.id()
+        self.session.id()
     }
 }
 
