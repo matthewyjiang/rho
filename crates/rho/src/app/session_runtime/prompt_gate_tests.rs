@@ -47,14 +47,15 @@ fn cancel_between_turns_of_one_prompt_cancels_the_next_turn() {
     assert!(second.is_cancelled());
 }
 
-// Covers: a prompt's scope dropped after the next prompt began must neither
-// end the newer prompt (a cancel must still reach it) nor arm a run for it,
-// and reads its own prompt as over
+// Covers: a prompt's scope that outlives the next prompt's start must stop
+// what it waits on (such as command expansion or a wake wait), keep state
+// the newer prompt resumes, and neither end the newer prompt (a cancel must
+// still reach it) nor arm a run for it
 // Owner: session runtime prompt gate
 #[test]
 fn a_stale_prompt_never_acts_for_the_newer_one() {
     let gate = PromptGate::new();
-    let (_, stale) = gate.begin();
+    let (stale_start, stale) = gate.begin();
     let (_, current) = gate.begin();
     let current_run = rho_sdk::CancellationToken::new();
     gate.activate(current, current_run.clone());
@@ -64,10 +65,13 @@ fn a_stale_prompt_never_acts_for_the_newer_one() {
     gate.cancel();
     assert_eq!(
         (
+            stale_start.is_cancelled(),
+            gate.continues_elsewhere(stale),
+            gate.continues_elsewhere(current),
             current_run.is_cancelled(),
             stale_run.is_cancelled(),
             gate.is_cancelled(stale),
         ),
-        (true, true, true)
+        (true, true, false, true, true, true)
     );
 }

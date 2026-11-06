@@ -76,8 +76,9 @@ impl TitleJob {
 }
 
 impl SessionRuntime {
-    /// Asks to name the session from `user`'s message and the reply the
-    /// turn ended with, for [`Self::take_title`]. A turn calls it until one
+    /// Asks to name the session from `user`'s message and the model's last
+    /// reply, for [`Self::take_title`]. The reply may precede tool results,
+    /// as when a turn ends on `exit_plan_mode`; a turn calls it until one
     /// has a reply to name the session from.
     pub(super) fn request_title(&mut self, process_config: &Config, user: &UserInput) {
         let Some(stored) = self.storage.file() else {
@@ -85,8 +86,9 @@ impl SessionRuntime {
         };
         let history = self.built.session.history();
         let Some(reply) = history
-            .last()
-            .and_then(Message::completed_assistant_content)
+            .iter()
+            .rev()
+            .find_map(Message::completed_assistant_content)
         else {
             return;
         };

@@ -45,11 +45,11 @@ impl PromptScope {
     }
 
     /// Whether the prompt stopped only because its session goes on
-    /// elsewhere: another host took it over, or the connection is ending.
-    /// Such a prompt keeps state a later prompt resumes, which a cancel or
-    /// a retiring close drops.
+    /// elsewhere: another host took it over, the connection is ending, or a
+    /// newer prompt began. Such a prompt keeps state a later prompt resumes,
+    /// which a cancel or a retiring close drops.
     pub(crate) fn continues_elsewhere(&self) -> bool {
-        self.handle.gate().continues_elsewhere()
+        self.handle.gate().continues_elsewhere(self.generation)
     }
 
     /// Whether this prompt was cancelled, at any point so far, or the

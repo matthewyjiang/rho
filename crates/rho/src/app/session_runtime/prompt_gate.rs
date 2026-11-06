@@ -12,10 +12,12 @@ use rho_sdk::CancellationToken;
 /// so command expansion can stop, and is replayed onto the run's token as
 /// soon as `activate` receives it. `cancel` is a no-op while idle.
 ///
-/// Each `begin` opens a new [`PromptGeneration`], and `activate`, `finish`,
-/// and `is_cancelled` act for one generation only, so a prompt's scope that
-/// outlives it (dropped after the next prompt began) never finishes or
-/// arms the newer prompt; to it, its own prompt reads as cancelled.
+/// Each `begin` opens a new [`PromptGeneration`] and cancels the previous
+/// prompt's token, and `activate`, `finish`, `is_cancelled`, and
+/// `continues_elsewhere` act for one generation only, so a prompt's scope
+/// that outlives it (dropped after the next prompt began) stops what it is
+/// waiting on and never finishes or arms the newer prompt; to it, its own
+/// prompt reads as cancelled and as going on in the newer one.
 ///
 /// `close` is terminal: it cancels the current prompt, and every prompt that
 /// begins later starts cancelled, so a prompt that took the host just before
@@ -77,12 +79,16 @@ impl PromptGate {
     }
 
     /// Opens the starting window for a new prompt generation, dropping any
-    /// cancel that arrived for the previous one. The returned token trips on
-    /// a cancel that lands before `activate`, and is already cancelled once
-    /// closed.
+    /// cancel that arrived for the previous one and stopping whatever that
+    /// prompt still waits on. The returned token trips on a cancel that
+    /// lands before `activate`, and is already cancelled once closed.
     pub(super) fn begin(&self) -> (CancellationToken, PromptGeneration) {
         let token = CancellationToken::new();
         let mut slot = self.slot();
+        if let PromptGateState::Starting(previous) | PromptGateState::Active(previous) = &slot.state
+        {
+            previous.cancel();
+        }
         let generation = PromptGeneration(slot.generation.0.wrapping_add(1));
         slot.generation = generation;
         if matches!(slot.state, PromptGateState::Closed(_)) {
@@ -173,13 +179,15 @@ impl PromptGate {
         matches!(self.slot().state, PromptGateState::Closed(_))
     }
 
-    /// Whether the current prompt stopped only because its session goes on
-    /// elsewhere: another host took it over, or the connection is ending.
-    /// Such a prompt keeps state a later prompt resumes, which a cancel or
-    /// a retiring close drops.
-    pub(super) fn continues_elsewhere(&self) -> bool {
+    /// Whether prompt `generation` stopped only because its session goes on
+    /// elsewhere: another host took it over, the connection is ending, or a
+    /// newer prompt began. Such a prompt keeps state a later prompt resumes,
+    /// which a cancel or a retiring close drops.
+    pub(super) fn continues_elsewhere(&self, generation: PromptGeneration) -> bool {
         let slot = self.slot();
-        slot.suspended || matches!(slot.state, PromptGateState::Closed(Closing::Disconnected))
+        slot.generation != generation
+            || slot.suspended
+            || matches!(slot.state, PromptGateState::Closed(Closing::Disconnected))
     }
 
     /// Whether a new prompt may wait for the host instead of being refused:
