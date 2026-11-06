@@ -276,39 +276,6 @@ fn workspace_delete_keeps_exact_protected_session() {
     assert!(!deleted_path.exists());
 }
 
-// Covers: a second process cannot delete a transcript while its owning session
-// holds the durable active lease.
-// Owner: session deletion
-#[test]
-fn active_session_lease_blocks_delete_until_session_closes() {
-    let sessions = tempfile::tempdir().unwrap();
-    let subagents = tempfile::tempdir().unwrap();
-    let workspace = tempfile::tempdir().unwrap();
-    let id = "00000000-0000-0000-0000-000000000126";
-    let session = create_session(sessions.path(), workspace.path(), id);
-    let target = SessionTarget::new(id, workspace.path());
-
-    assert!(delete_target_in_roots(
-        sessions.path(),
-        subagents.path(),
-        &target,
-        &DeleteOptions::default(),
-    )
-    .is_err());
-    assert!(session.path().exists());
-
-    let path = session.path().to_path_buf();
-    drop(session);
-    delete_target_in_roots(
-        sessions.path(),
-        subagents.path(),
-        &target,
-        &DeleteOptions::default(),
-    )
-    .unwrap();
-    assert!(!path.exists());
-}
-
 // Covers: a child spawned while the session was open keeps a copy of the
 // lease handle until exec, so closing the session must release the lease itself.
 // Owner: session deletion

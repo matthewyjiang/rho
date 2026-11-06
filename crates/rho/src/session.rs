@@ -1,7 +1,6 @@
 #[cfg(test)]
 use std::{fs, io::Write};
 use std::{
-    fs::{File, OpenOptions},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -22,6 +21,7 @@ mod display_rows;
 mod id_match;
 mod index;
 mod layout;
+mod lease;
 mod persistence;
 pub(crate) mod recall;
 pub(crate) mod replay_points;
@@ -51,14 +51,17 @@ mod workspace_scope;
 #[cfg(test)]
 use layout::encode_cwd;
 use persistence::{
-    parse_timestamp, session_dir_in_root, session_root, session_web_dir, unix_timestamp_secs,
-    AppendCursor, SessionStore,
+    parse_timestamp, session_root, session_web_dir, unix_timestamp_secs, AppendCursor, SessionStore,
 };
 #[cfg(test)]
-use persistence::{read_entries, summarize_session_file, SessionEntry, SESSION_VERSION};
+use persistence::{
+    read_entries, session_dir_in_root, summarize_session_file, SessionEntry, SESSION_VERSION,
+};
 
 pub use delete::{is_cross_project, DeleteOptions, DeleteOutcome};
 pub(crate) use delete::{CleanupOutcome, WorkspaceDeleteOutcome};
+pub(crate) use lease::SessionInUse;
+use lease::{LeasePurpose, SessionLease};
 pub(crate) use persistence::NoSessionFound;
 pub(crate) use workspace_scope::Workspace;
 
@@ -70,7 +73,7 @@ pub struct Session {
     cwd: PathBuf,
     workspace_key: String,
     write_lock: Arc<Mutex<AppendCursor>>,
-    _active_lease: Arc<SessionLease>,
+    _active_lease: SessionLease,
 }
 
 #[derive(Clone, Debug)]
@@ -270,78 +273,6 @@ pub(super) struct SessionIndexRecord {
     /// file written before parents were recorded.
     pub(super) parent_session: Option<SessionTarget>,
 }
-/// A held session lease. Dropping it unlocks explicitly before closing: a
-/// child process spawned elsewhere in Rho shares the lock until it execs, so
-/// closing the handle alone can keep the session looking active.
-#[derive(Debug)]
-pub(crate) struct SessionLease {
-    file: File,
-}
-
-impl SessionLease {
-    /// A duplicate of the leased handle, standing in for one a child process
-    /// inherits between fork and exec.
-    #[cfg(test)]
-    pub(crate) fn inherited_handle_for_tests(&self) -> File {
-        self.file.try_clone().unwrap()
-    }
-}
-
-impl Drop for SessionLease {
-    fn drop(&mut self) {
-        let _ = fs2::FileExt::unlock(&self.file);
-    }
-}
-
-#[derive(Clone, Copy)]
-enum LeaseMode {
-    Active,
-    Delete,
-}
-
-fn acquire_session_lease(
-    session_root: &Path,
-    cwd: &Path,
-    id: &str,
-    mode: LeaseMode,
-) -> anyhow::Result<SessionLease> {
-    let dir = session_dir_in_root(session_root, cwd);
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join(format!(".{id}.active.lock"));
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(&path)?;
-    layout::set_private_file_permissions(&file)?;
-    let lock = match mode {
-        LeaseMode::Active => fs2::FileExt::try_lock_shared(&file),
-        LeaseMode::Delete => fs2::FileExt::try_lock_exclusive(&file),
-    };
-    match lock {
-        Ok(()) => Ok(SessionLease { file }),
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => match mode {
-            LeaseMode::Active => anyhow::bail!(
-                "session '{}' is being deleted by another Rho process; refresh the session list",
-                delete::short_id(id)
-            ),
-            LeaseMode::Delete => anyhow::bail!(
-                "refusing to delete active session '{}'; close it in the other Rho process first",
-                delete::short_id(id)
-            ),
-        },
-        Err(error) => Err(error.into()),
-    }
-}
-
-fn acquire_delete_session_lease(
-    session_root: &Path,
-    cwd: &Path,
-    id: &str,
-) -> anyhow::Result<SessionLease> {
-    acquire_session_lease(session_root, cwd, id, LeaseMode::Delete)
-}
 
 impl Session {
     pub fn open_by_id_with_histories(
@@ -413,8 +344,12 @@ impl Session {
             resolved.id,
             resolved.cwd.display(),
         );
-        let active_lease =
-            acquire_session_lease(session_root, &resolved.cwd, &resolved.id, LeaseMode::Active)?;
+        let active_lease = lease::acquire(
+            session_root,
+            &resolved.cwd,
+            &resolved.id,
+            LeasePurpose::Open,
+        )?;
         let tree = tree::SessionTree::load(&resolved.path)?;
         let histories = persistence::histories_from_tree(&tree)?;
         let session = Self::from_parts_with_lease(
@@ -891,7 +826,7 @@ impl Session {
         id: String,
         path: PathBuf,
     ) -> anyhow::Result<Self> {
-        let active_lease = acquire_session_lease(session_root, cwd, &id, LeaseMode::Active)?;
+        let active_lease = lease::acquire(session_root, cwd, &id, LeasePurpose::Open)?;
         Ok(Self::from_parts_with_lease(
             session_root,
             cwd.to_path_buf(),
@@ -915,7 +850,7 @@ impl Session {
             session_root: session_root.to_path_buf(),
             cwd,
             write_lock: Arc::new(Mutex::new(AppendCursor::default())),
-            _active_lease: Arc::new(active_lease),
+            _active_lease: active_lease,
         }
     }
 

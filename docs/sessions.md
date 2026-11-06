@@ -296,6 +296,14 @@ The picker and session list stay scoped to the current workspace. Inside the TUI
 
 To work across every directory, use `/sessions` inside the TUI. It opens a full-width session manager that groups saved sessions by directory, with the current directory first. Worktrees of the same Git repository share one section: the current worktree lists its sessions, and each other worktree shows as one row. Directories that no longer exist collect under a final `MISSING DIRECTORIES` section. Press Enter on a session in the current directory to resume it, or on a directory row to narrow the list to that directory. You can inspect and delete sessions from other directories, but Rho asks you to start it in that directory before resuming so tools and project context cannot stay bound to the wrong workspace. Press `d` on a session to delete it, or on a directory row to delete the reviewed saved sessions in that directory, along with the unlisted run, subagent, and workflow node sessions saved there; both ask for confirmation. When saved sessions refer to workspace directories that no longer exist, the picker adds a cleanup row that deletes the reviewed sessions after confirmation. The current session is never deleted.
 
+### One process per session
+
+Only one Rho process writes a session at a time. While a TUI, `rho acp`, `rho run`, or a workflow has a session open, another Rho process cannot resume, continue, load, or delete it: `rho --resume`, `rho -c`, `/resume`, and ACP `session/load` and `session/resume` fail with `session '<id>' is open in another Rho process; close it there first`. Close the session there, or exit that process, then try again. `-c` picks the latest session even when another process has it open, so it fails the same way rather than start a new one.
+
+Within one process, opening a session it already has open shares it: a `/resume` of the current session, or an ACP `session/load` of a session live on the same connection, which replaces the live one. Commands that do not open a session work from any process: `rho sessions list`, `export`, `rename`, and session search.
+
+Rho records an open session with an OS lock on `.<session-id>.active.lock` in its workspace's session directory. The OS releases the lock when the process exits, including after a crash, so a leftover lock file never keeps a session locked.
+
 ## Listing, renaming, exporting, and deleting sessions
 
 Use the `sessions` CLI to inspect, export, rename, remove, and clean up saved history:
@@ -331,7 +339,7 @@ Deleting a session also deletes the child sessions it started, such as its subag
 Delete refuses:
 
 - the current interactive session (switch or start a new session first)
-- a session open in another Rho process (close it there first), including a child session it would delete
+- a session open in this or another Rho process (close it first), or an open child session it would delete
 - a session with a still-running or starting related run, unless you pass `--force` (intended only for stale artifacts left after a crash)
 - an ambiguous UUID prefix (the error lists matching ids and workspaces)
 

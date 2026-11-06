@@ -3,6 +3,7 @@ use super::tree::{NodeId, SessionNode, SessionNodeKind, StoredStateTransition};
 use super::*;
 use rho_providers::model::AbortedAssistant;
 use rho_tools::tool::ToolCall;
+use std::fs::OpenOptions;
 
 fn assert_mirrored_record_matches_file(session: &Session, mirrored: &SessionIndexRecord) {
     let reloaded = summarize_session_file(session.path(), session.cwd()).unwrap();

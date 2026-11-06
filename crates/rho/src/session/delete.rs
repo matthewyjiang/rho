@@ -13,7 +13,9 @@ use crate::subagent::RunStatus;
 use crate::subagent::{self, RunIndexCleanup, RunState, RESULT_FILE_NAME};
 
 use super::{
-    acquire_delete_session_lease, index,
+    id_match::short_id,
+    index,
+    lease::{self, LeasePurpose},
     persistence::{workspace_key, ResolvedSession, SessionStore, SessionUnit},
     SessionSummary, SessionTarget,
 };
@@ -406,8 +408,12 @@ impl<'a> BatchDelete<'a> {
             )
         })?;
 
-        let _session_lease =
-            acquire_delete_session_lease(self.session_root, &resolved.cwd, &resolved.id)?;
+        let _session_lease = lease::acquire(
+            self.session_root,
+            &resolved.cwd,
+            &resolved.id,
+            LeasePurpose::Delete,
+        )?;
 
         // Child sessions go first, each through this same delete, so a
         // failed one leaves its parent to retry. Check the parent's own
@@ -554,10 +560,6 @@ fn find_parent_linked_runs(
         });
     }
     Ok(runs)
-}
-
-pub(super) fn short_id(id: &str) -> String {
-    id.chars().take(8).collect()
 }
 
 /// True when the session belongs to a different workspace than `cwd`.

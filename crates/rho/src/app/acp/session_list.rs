@@ -203,7 +203,12 @@ async fn off_runtime<T: Send + 'static>(
         .map_err(|error| AcpError::internal_error().data(error.to_string()))?
 }
 
+/// A session something else holds is the caller's to retry once it is
+/// closed; every other store failure is internal.
 fn store_error(error: anyhow::Error) -> AcpError {
+    if error.is::<crate::session::SessionInUse>() {
+        return AcpError::invalid_request().data(error.to_string());
+    }
     AcpError::internal_error().data(error.to_string())
 }
 

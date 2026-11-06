@@ -7,6 +7,11 @@ use std::{
 
 use super::layout::{session_id_from_path, SessionUnit};
 
+/// The first eight characters of a session id, as messages show it.
+pub(super) fn short_id(id: &str) -> String {
+    id.chars().take(8).collect()
+}
+
 /// No saved session in any workspace matches the requested id or prefix.
 #[derive(Debug, thiserror::Error)]
 #[error("no session found matching '{id_prefix}'")]

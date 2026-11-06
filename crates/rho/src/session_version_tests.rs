@@ -2,6 +2,7 @@ use super::tree::{SessionNode, StoredStateTransition};
 use super::*;
 use rho_providers::model::{AssistantMessage, ProviderContextBlock};
 use serde_json::json;
+use std::fs::OpenOptions;
 
 const SESSION_V1: &str = include_str!("session/fixtures/session-v1.jsonl");
 const SESSION_V2: &str = include_str!("session/fixtures/session-v2.jsonl");
