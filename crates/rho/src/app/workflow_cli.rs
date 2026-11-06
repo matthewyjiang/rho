@@ -507,15 +507,16 @@ fn print_recovery_preview(
             }
             for attempt in &preview.attempts {
                 let action = match &attempt.recovery {
-                    AttemptRecovery::Continue { .. } => "continue its saved session",
+                    AttemptRecovery::Continue { session } => {
+                        format!("continue its saved session {session}")
+                    }
                     AttemptRecovery::Reset { reason } => match reason {
                         ResetReason::CancellationRequested => "restart: cancellation was requested",
                         ResetReason::CommandNode => "restart: command node",
-                        ResetReason::ForeignAgent => {
-                            "restart: Claude, Cursor, and Antigravity agents cannot continue"
-                        }
+                        ResetReason::ForeignAgent => "restart: only Rho agents can continue",
                         ResetReason::NoSessionRecorded => "restart: no session was recorded",
-                    },
+                    }
+                    .to_owned(),
                 };
                 println!("{} attempt {}: {action}", attempt.node, attempt.attempt);
             }

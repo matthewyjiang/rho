@@ -1,4 +1,4 @@
-use super::{test_support::*, *};
+use super::{prepared::AgentSession, test_support::*, *};
 use crate::workflow::*;
 use pretty_assertions::assert_eq;
 use std::{
@@ -263,10 +263,10 @@ async fn launch_recovers_at_each_durable_boundary() {
                     schema_version: ATTEMPT_VERSION,
                     attempt,
                     state: if point >= Point::StartedFile {
-                        AttemptState::Started {
+                        AttemptState::Started(AttemptRun {
                             owner: ExternalOwner::Process { pid: 42 },
                             agent_session: None,
-                        }
+                        })
                     } else {
                         AttemptState::LaunchIntended
                     },
@@ -500,15 +500,15 @@ async fn uncertain_attempt_requires_explicit_recovery() {
     );
     assert_eq!(
         read_attempt_state(&directory, 1),
-        AttemptState::InterruptedUncertain {
+        AttemptState::InterruptedUncertain(AttemptRun {
             owner: ExternalOwner::Process { pid: 4242 },
             agent_session: Some(session),
-        }
+        })
     );
 }
 
 /// Seeds attempt 1 of `inspect` as started by a process that is gone, its
-/// agent running in `agent_session`, or in none an older Rho recorded.
+/// agent running in `agent_session`, or in none that was recorded.
 fn seed_running_attempt(
     home: &std::path::Path,
     workspace: &std::path::Path,
@@ -550,10 +550,10 @@ fn seed_running_attempt(
         &AttemptRecord {
             schema_version: ATTEMPT_VERSION,
             attempt,
-            state: AttemptState::Started {
+            state: AttemptState::Started(AttemptRun {
                 owner: ExternalOwner::Process { pid: 4242 },
                 agent_session: agent_session.cloned(),
-            },
+            }),
         },
     )
     .unwrap();
@@ -571,33 +571,45 @@ fn read_attempt_state(directory: &std::path::Path, attempt: u32) -> AttemptState
     .state
 }
 
-/// One dispatch an executor received: its attempt, the session it was handed,
-/// and the session its `status.json` recorded by then.
+/// One agent dispatch an executor received: its attempt, the session it was
+/// handed, and the session its `status.json` recorded by then.
 #[derive(Debug, PartialEq)]
 struct Dispatch {
     attempt: u32,
-    session: Option<crate::app::headless_host::ChildSession>,
+    session: Option<AgentSession>,
     recorded: Option<rho_sdk::SessionId>,
 }
 
-/// Records every dispatch, then succeeds.
+/// Records every agent dispatch, then succeeds.
 #[derive(Default)]
 struct SessionProbe {
     seen: std::sync::Mutex<Vec<Dispatch>>,
 }
 
-impl<I: Send + 'static> WorkflowNodeExecutor<I> for SessionProbe {
-    fn execute<'a>(&'a self, request: NodeExecutionRequest<I>) -> WorkflowExecutionFuture<'a> {
+impl WorkflowNodeExecutor<AgentInvocation> for SessionProbe {
+    fn execute<'a>(
+        &'a self,
+        request: NodeExecutionRequest<AgentInvocation>,
+    ) -> WorkflowExecutionFuture<'a> {
         let recorded = match read_attempt_state(&request.run_directory, request.attempt.get()) {
-            AttemptState::Started { agent_session, .. } => agent_session,
+            AttemptState::Started(run) => run.agent_session,
             state => panic!("dispatched attempt is {state:?}, not started"),
         };
         self.seen.lock().unwrap().push(Dispatch {
             attempt: request.attempt.get(),
-            session: request.agent_session.clone(),
+            session: request.invocation.execution.session.clone(),
             recorded,
         });
         Box::pin(async { Ok(NodeExecutionResult::terminal(NodeTerminalState::Success)) })
+    }
+}
+
+impl WorkflowNodeExecutor<CommandInvocation> for SessionProbe {
+    fn execute<'a>(
+        &'a self,
+        _request: NodeExecutionRequest<CommandInvocation>,
+    ) -> WorkflowExecutionFuture<'a> {
+        unreachable!("the recovery workflow runs agents only")
     }
 }
 
@@ -622,7 +634,12 @@ async fn recorded_agent_session_continues_the_attempt() {
         serde_json::json!({
             "run_id": run.manifest.run_id,
             "needs_confirmation": true,
-            "attempts": [{"node": "s0.inspect", "attempt": 1, "action": "continue"}],
+            "attempts": [{
+                "node": "s0.inspect",
+                "attempt": 1,
+                "action": "continue",
+                "session": session,
+            }],
         })
     );
     assert_eq!(std::fs::read(&events).unwrap(), events_before);
@@ -640,9 +657,7 @@ async fn recorded_agent_session_continues_the_attempt() {
         *probe.seen.lock().unwrap(),
         [Dispatch {
             attempt: 1,
-            session: Some(crate::app::headless_host::ChildSession::Reopen(
-                session.clone()
-            )),
+            session: Some(AgentSession::Reopen(session.clone())),
             recorded: Some(session),
         }]
     );
@@ -700,19 +715,19 @@ async fn uncertain_agent_attempt_resets_when_it_cannot_continue() {
             .await
             .unwrap();
         let seen = probe.seen.lock().unwrap();
-        let Some(crate::app::headless_host::ChildSession::New(new_session)) =
+        let Some(AgentSession::New(new_session)) =
             seen.first().and_then(|dispatch| dispatch.session.clone())
         else {
             panic!("{reason}: the new attempt has no new session: {seen:?}");
         };
-        assert_ne!(new_session, old_session, "{reason}");
+        if recorded {
+            assert_ne!(new_session, old_session, "{reason}");
+        }
         assert_eq!(
             *seen,
             [Dispatch {
                 attempt: 2,
-                session: Some(crate::app::headless_host::ChildSession::New(
-                    new_session.clone()
-                )),
+                session: Some(AgentSession::New(new_session.clone())),
                 recorded: Some(new_session),
             }],
             "{reason}"

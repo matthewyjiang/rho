@@ -1,7 +1,10 @@
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use crate::{
-    app::agent_executor::{AgentExecutor, FrozenAgentLaunchRequest},
+    app::{
+        agent_executor::{AgentExecutor, FrozenAgentLaunchRequest},
+        headless_host::ChildSession,
+    },
     subagent::RunState,
     workflow::{ArtifactObservation, NodeTerminalState, ValidatedOutputRef, WorkflowValue},
 };
@@ -9,7 +12,7 @@ use crate::{
 use super::{
     artifacts::{write_artifact, write_artifact_with_observation},
     cancellation::AGENT_CANCELLATION_CLEANUP_MILLIS,
-    prepared::AgentInvocation,
+    prepared::{AgentInvocation, AgentSession},
     CleanupCause, NodeExecutionRequest, NodeExecutionResult, NodeProgressUpdate, RuntimeError,
     WorkflowExecutionFuture, WorkflowNodeExecutor,
 };
@@ -39,7 +42,11 @@ impl WorkflowAgentExecutor {
         request: NodeExecutionRequest<AgentInvocation>,
     ) -> Result<NodeExecutionResult, RuntimeError> {
         let prepared = &request.invocation;
-        let AgentInvocation { agent, prompt } = &prepared.execution;
+        let AgentInvocation {
+            agent,
+            prompt,
+            session,
+        } = &prepared.execution;
         let agent_directory = request.attempt_directory.join("agent");
         let run_directory = &request.run_directory;
         crate::workflow::ensure_directory_beneath(
@@ -64,7 +71,10 @@ impl WorkflowAgentExecutor {
                     .label("plan_digest", request.plan_digest.0.clone())
                     .label("node_id", request.node.to_string())
                     .label("attempt", request.attempt.to_string()),
-                session: request.agent_session.clone(),
+                session: session.clone().map(|session| match session {
+                    AgentSession::New(id) => ChildSession::New(id),
+                    AgentSession::Reopen(id) => ChildSession::Reopen(id),
+                }),
             })
             .map_err(|error| RuntimeError::Executor(error.to_string()))?;
         if let Some(progress) = &request.progress {

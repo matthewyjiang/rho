@@ -4,10 +4,10 @@ use rho_sdk::SessionId;
 use serde::Serialize;
 
 use crate::workflow::{
-    apply_durable_event, derive_snapshot, AgentRuntime, AttemptNumber, AttemptState, ExternalOwner,
-    FrozenWorkflow, LeafExecution, NodeResetReason, NodeState, NodeTerminalState, RunId,
-    RunLifecycle, RunStateRecord, StoredRun, TaskInstanceId, WorkflowEvent, WorkflowEventRecord,
-    WorkflowState, WorkflowStore,
+    apply_durable_event, derive_snapshot, AgentRuntime, AttemptNumber, AttemptRun, AttemptState,
+    ExternalOwner, FrozenWorkflow, LeafExecution, NodeResetReason, NodeState, NodeTerminalState,
+    RunId, RunLifecycle, RunStateRecord, StoredRun, TaskInstanceId, WorkflowEvent,
+    WorkflowEventRecord, WorkflowState, WorkflowStore,
 };
 
 use super::{
@@ -96,32 +96,30 @@ pub(super) fn mark_attempt_uncertain(
     node: &TaskInstanceId,
     attempt: AttemptNumber,
 ) -> Result<(), RuntimeError> {
-    let record = read_attempt_record(run_directory, node, attempt)?;
-    let (owner, agent_session) = match record.state {
-        AttemptState::Started {
-            owner,
-            agent_session,
-        }
-        | AttemptState::InterruptedUncertain {
-            owner,
-            agent_session,
-        } => (owner, agent_session),
-        AttemptState::LaunchIntended => (ExternalOwner::Process { pid: 0 }, None),
+    let run = match read_attempt_record(run_directory, node, attempt)?.state {
+        AttemptState::Started(run) | AttemptState::InterruptedUncertain(run) => run,
+        AttemptState::LaunchIntended => AttemptRun {
+            owner: ExternalOwner::Process { pid: 0 },
+            agent_session: None,
+        },
         AttemptState::Completed { .. } | AttemptState::CleanlyCancelled => {
-            return Err(RuntimeError::Data(format!(
-                "node '{node}' cleanup became uncertain after its attempt was terminal"
-            )))
+            return Err(terminal_attempt(node))
         }
     };
     write_attempt(
         run_directory,
         node,
         attempt,
-        AttemptState::InterruptedUncertain {
-            owner,
-            agent_session,
-        },
+        AttemptState::InterruptedUncertain(run),
     )
+}
+
+/// A running node whose attempt `status.json` already records as terminal,
+/// which recovery finishes before it plans or marks uncertain attempts.
+fn terminal_attempt(node: &TaskInstanceId) -> RuntimeError {
+    RuntimeError::Data(format!(
+        "node '{node}' is running, but its attempt is already terminal"
+    ))
 }
 
 /// What resume does with one attempt that an earlier process left running.
@@ -137,10 +135,7 @@ pub(crate) struct UncertainAttempt {
 #[serde(tag = "action", rename_all = "snake_case")]
 pub(crate) enum AttemptRecovery {
     /// Continue the same attempt by reopening its agent's saved session.
-    Continue {
-        #[serde(skip)]
-        session: SessionId,
-    },
+    Continue { session: SessionId },
     /// Discard the attempt and start a new one.
     Reset { reason: ResetReason },
 }
@@ -152,10 +147,11 @@ pub(crate) enum ResetReason {
     CancellationRequested,
     /// Commands have no saved progress to continue from.
     CommandNode,
-    /// Claude, Cursor, and Antigravity agents have no Rho session to reopen.
+    /// Only Rho agents can continue: agents on other runtimes have no Rho
+    /// session to reopen.
     ForeignAgent,
-    /// The attempt recorded no session to reopen, as one an older Rho
-    /// started does not.
+    /// The attempt's session was never recorded, such as one a crash
+    /// interrupted before its agent started, or one an earlier Rho started.
     NoSessionRecorded,
 }
 
@@ -188,22 +184,18 @@ impl UncertainAttempt {
                     // A session that cannot be reopened fails the continued
                     // attempt, as any other agent failure does.
                     AgentRuntime::Rho => {
-                        match read_attempt_record(run_directory, &node, attempt)?.state {
-                            AttemptState::Started {
-                                agent_session: Some(session),
-                                ..
-                            }
-                            | AttemptState::InterruptedUncertain {
-                                agent_session: Some(session),
-                                ..
-                            } => AttemptRecovery::Continue { session },
-                            AttemptState::Started { .. }
-                            | AttemptState::InterruptedUncertain { .. }
-                            | AttemptState::LaunchIntended
-                            | AttemptState::Completed { .. }
-                            | AttemptState::CleanlyCancelled => {
-                                reset(ResetReason::NoSessionRecorded)
-                            }
+                        let session =
+                            match read_attempt_record(run_directory, &node, attempt)?.state {
+                                AttemptState::Started(run)
+                                | AttemptState::InterruptedUncertain(run) => run.agent_session,
+                                AttemptState::LaunchIntended => None,
+                                AttemptState::Completed { .. } | AttemptState::CleanlyCancelled => {
+                                    return Err(terminal_attempt(&node))
+                                }
+                            };
+                        match session {
+                            Some(session) => AttemptRecovery::Continue { session },
+                            None => reset(ResetReason::NoSessionRecorded),
                         }
                     }
                 },
@@ -305,12 +297,12 @@ pub(super) fn recover_state(
                             &journal.directory,
                             &node,
                             attempt,
-                            AttemptState::Started {
+                            AttemptState::Started(AttemptRun {
                                 owner: ExternalOwner::Process {
                                     pid: std::process::id(),
                                 },
                                 agent_session: Some(session.clone()),
-                            },
+                            }),
                         )?;
                         continued.push(ContinuedAttempt {
                             node,

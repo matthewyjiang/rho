@@ -100,9 +100,9 @@ pub(super) fn completed_attempt(
     Ok(match record.state {
         AttemptState::Completed { completion } => Some(*completion),
         AttemptState::LaunchIntended
-        | AttemptState::Started { .. }
+        | AttemptState::Started(_)
         | AttemptState::CleanlyCancelled
-        | AttemptState::InterruptedUncertain { .. } => None,
+        | AttemptState::InterruptedUncertain(_) => None,
     })
 }
 
