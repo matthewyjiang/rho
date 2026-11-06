@@ -389,6 +389,19 @@ impl SessionHost {
         }
     }
 
+    /// Signal tracking for the next update, starting from the checklist the
+    /// client last saw. Hand the checklist back as `sent_plan` once sent;
+    /// one that never comes back only costs a resend of the current list.
+    fn signals(&mut self) -> SessionSignals {
+        let built = self.runtime.built();
+        SessionSignals::new(
+            built.session.clone(),
+            built.tools.todo_state(),
+            self.runtime.context_window(),
+            std::mem::take(&mut self.sent_plan),
+        )
+    }
+
     /// A model turn on `model`, saved for display as `display`, the prompt
     /// as the user sent it. `calls` run as one host batch before the first
     /// model request.
@@ -402,7 +415,8 @@ impl SessionHost {
         let (events, event_receiver) = mpsc::unbounded_channel();
         let (control_sender, control) = mpsc::unbounded_channel();
         let message_save = self.prompt_acceptance.message_save();
-        let built = self.runtime.built();
+        // See `Forwarded::sent_plan` for when the checklist comes back.
+        let signals = self.signals();
         let forwarder = forward::Forwarder {
             session_id: &self.acp_session_id,
             client,
@@ -410,16 +424,9 @@ impl SessionHost {
             mapper: EventMapper::new(
                 self.host_features,
                 self.runtime.cwd().to_path_buf(),
-                built.tools.mcp_report().tool_names(),
+                self.runtime.built().tools.mcp_report().tool_names(),
             ),
-            // Starts from the checklist the client last saw; see
-            // `Forwarded::sent_plan` for when it comes back.
-            signals: SessionSignals::new(
-                built.session.clone(),
-                built.tools.todo_state(),
-                self.runtime.context_window(),
-                std::mem::take(&mut self.sent_plan),
-            ),
+            signals,
             placeholders: &self.permission_placeholders,
             acceptance: &mut self.prompt_acceptance,
         };

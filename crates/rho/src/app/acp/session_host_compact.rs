@@ -10,7 +10,6 @@ use super::{send_notification, SessionHost};
 use crate::app::acp::{
     compaction_card::{outcome_summary, CompactionCard},
     events::EventMapper,
-    signals::SessionSignals,
     AcpClientPort,
 };
 
@@ -29,13 +28,7 @@ impl SessionHost {
         let result = self.runtime.compact(instructions).await;
         if let Ok(Some(_)) = &result {
             // The context meter follows the committed history.
-            let built = self.runtime.built();
-            let signals = SessionSignals::new(
-                built.session.clone(),
-                built.tools.todo_state(),
-                self.runtime.context_window(),
-                std::mem::take(&mut self.sent_plan),
-            );
+            let signals = self.signals();
             signals.send_usage(&self.acp_session_id, client).await;
             self.sent_plan = signals.into_sent_plan();
         }
