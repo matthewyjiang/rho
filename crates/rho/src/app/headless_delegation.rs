@@ -113,13 +113,7 @@ impl HeadlessDelegation {
         let session_id = session.id().to_string();
         let mut held = held.take().map(|HeldNotices(delivery)| delivery);
         let subagents = sources.subagents.map(|manager| {
-            manager.bind_parent_session(
-                crate::subagent::RunPlacement::for_parent_session(
-                    session_id.clone(),
-                    storage.and_then(crate::session::Session::subagents_dir),
-                ),
-                persistence,
-            );
+            manager.bind_parent_session(session_id.clone(), storage, persistence);
             held.take().unwrap_or_else(|| {
                 let binding = manager.rebind_notices(None);
                 SubagentDelivery {

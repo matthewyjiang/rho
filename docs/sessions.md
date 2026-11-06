@@ -326,7 +326,7 @@ rho sessions cleanup --force   # allow stale non-terminal related runs
 
 `rm` accepts one or more session ids or unique prefixes. It deletes each session transcript unit (folder layout or legacy flat `.jsonl`), its web sidecar, and its session index row. Folder deletion also removes delegated runs nested under `subagents/`. Rho still removes older or legacy-session runs under `~/.rho/subagents/` when their `result.json` records the session as `parent_session_id`. Usage ledger rows are **not** deleted, so cost history remains.
 
-Deleting a session also deletes the child sessions it started, such as its subagents' sessions, and their children in turn, in any workspace. A child session records its parent in its header. Children are deleted first, each through the same delete and the same refusals below; if one is refused, the parent stays, so deleting it again finishes the job. Deleting a child session keeps its parent. Workflow node sessions record no parent, so deleting the session that started a workflow keeps them.
+Deleting a session also deletes the child sessions it started, such as its subagents' sessions, and their children in turn, in any workspace. A child session records its parent's id and workspace in its header, so a session with the same id in another workspace keeps its own children. Children are deleted first, each through the same delete and the same refusals below; if one is refused, the parent stays, so deleting it again finishes the job. Deleting a child session keeps its parent. Workflow node sessions record no parent, so deleting the session that started a workflow keeps them.
 
 Delete refuses:
 

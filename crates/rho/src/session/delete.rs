@@ -245,6 +245,11 @@ struct BatchDelete<'a> {
     /// Workspaces whose index rows were synced to disk this batch, so child
     /// sessions are found by their recorded parent.
     synced_workspaces: HashSet<String>,
+    /// Index rows of the sessions being deleted right now: the innermost
+    /// one and the parents waiting on its delete. A header that names its
+    /// own session or one of these as its parent makes a cycle, which must
+    /// neither recurse forever nor block the delete.
+    deleting: HashSet<index::IndexKey>,
 }
 
 impl<'a> BatchDelete<'a> {
@@ -260,6 +265,7 @@ impl<'a> BatchDelete<'a> {
             options,
             removed: Vec::new(),
             synced_workspaces: HashSet::new(),
+            deleting: HashSet::new(),
         })
     }
 
@@ -276,15 +282,23 @@ impl<'a> BatchDelete<'a> {
         self.removed.contains(&key)
     }
 
-    /// The saved child sessions `resolved` started. Its workspace's index
-    /// rows are synced first, once a batch, so a child the index has not
-    /// seen yet is still found; a child saved in another workspace is found
-    /// by the row its creation recorded.
+    /// The saved child sessions `resolved` started that this batch has not
+    /// deleted and is not deleting. Its workspace's index rows are synced
+    /// first, once a batch, so a child the index has not seen yet is still
+    /// found; a child saved in another workspace is found by the row its
+    /// creation recorded.
     fn child_sessions(&mut self, resolved: &ResolvedSession) -> anyhow::Result<Vec<SessionTarget>> {
         if self.synced_workspaces.insert(workspace_key(&resolved.cwd)) {
             index::sync_workspace(self.session_root, &resolved.cwd)?;
         }
-        index::child_sessions(self.session_root, &resolved.id)
+        let parent = SessionTarget::new(resolved.id.clone(), resolved.cwd.clone());
+        Ok(index::child_sessions(self.session_root, &parent)?
+            .into_iter()
+            .filter(|child| {
+                let key = (workspace_key(&child.cwd), child.id.clone());
+                !self.deleting.contains(&key) && !self.removed.contains(&key)
+            })
+            .collect())
     }
 
     /// The runs linked to session `id` stored in `unit`, and the ones
@@ -327,7 +341,17 @@ impl<'a> BatchDelete<'a> {
         Ok((linked, forced_run_ids))
     }
 
+    /// Deletes `resolved` and its child sessions, marked as being deleted
+    /// until it returns so a cycle back to it is skipped.
     fn delete_resolved(&mut self, resolved: ResolvedSession) -> anyhow::Result<DeleteOutcome> {
+        let key = (workspace_key(&resolved.cwd), resolved.id.clone());
+        self.deleting.insert(key.clone());
+        let outcome = self.delete_marked(resolved);
+        self.deleting.remove(&key);
+        outcome
+    }
+
+    fn delete_marked(&mut self, resolved: ResolvedSession) -> anyhow::Result<DeleteOutcome> {
         let options = self.options;
         if options
             .protected_session

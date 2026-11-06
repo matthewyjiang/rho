@@ -12,67 +12,100 @@ fn create_session(root: &Path, cwd: &Path, id: &str) -> Session {
 // Covers: deleting a session deletes the child sessions it started and
 // theirs, wherever they were saved, and nothing else; deleting a child keeps
 // its parent; a batch that also names a child deleted with its parent
-// reports no failure for it.
+// reports no failure for it; a parent is its id in its own workspace, so a
+// same-id session elsewhere keeps its children; a header naming its own
+// session as its parent does not stop the delete.
 // Owner: session deletion
 #[test]
 fn delete_takes_child_sessions_recursively() {
     /// Each deleted id with the child sessions deleted along with it.
     type Deleted<'a> = Vec<(&'a str, usize)>;
-    // (label, targets, expected deletions, expected remaining ids)
-    let cases: [(&str, &[&str], Deleted, Vec<&str>); 3] = [
+    // (label, targets, expected deletions, expected sessions gone)
+    let cases: [(&str, &[&str], Deleted, Vec<&str>); 5] = [
         (
             "parent",
             &["parent"],
             vec![("parent", 2)],
-            vec!["other-root", "sibling"],
+            vec!["parent", "child", "grandchild"],
         ),
         (
             "child",
             &["child"],
             vec![("child", 1)],
-            vec!["parent", "other-root", "sibling"],
+            vec!["child", "grandchild"],
         ),
         (
             "parent and child",
             &["parent", "child"],
             vec![("parent", 2)],
-            vec!["other-root", "sibling"],
+            vec!["parent", "child", "grandchild"],
+        ),
+        (
+            "same id in another workspace",
+            &["twin-here"],
+            vec![("twin", 1)],
+            vec!["twin-here", "twin-here-child"],
+        ),
+        (
+            "own parent",
+            &["self-parent"],
+            vec![("self-parent", 0)],
+            vec!["self-parent"],
         ),
     ];
-    for (label, targets, expected_deleted, expected_remaining) in cases {
+    for (label, targets, expected_deleted, expected_gone) in cases {
         let sessions = tempfile::tempdir().unwrap();
         let subagents = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
         // A subagent can run in another workspace, such as a worktree.
         let elsewhere = tempfile::tempdir().unwrap();
-        // (id, workspace, parent)
+        // (name, id, workspace, parent's name)
         let tree = [
-            ("parent", workspace.path(), None),
-            ("child", workspace.path(), Some("parent")),
-            ("grandchild", elsewhere.path(), Some("child")),
-            ("other-root", workspace.path(), None),
-            ("sibling", workspace.path(), Some("other-root")),
+            ("parent", "parent", workspace.path(), None),
+            ("child", "child", workspace.path(), Some("parent")),
+            ("grandchild", "grandchild", elsewhere.path(), Some("child")),
+            ("other-root", "other-root", workspace.path(), None),
+            ("sibling", "sibling", workspace.path(), Some("other-root")),
+            // One id saved in two workspaces, each with a child here.
+            ("twin-here", "twin", workspace.path(), None),
+            (
+                "twin-here-child",
+                "twin-here-child",
+                workspace.path(),
+                Some("twin-here"),
+            ),
+            ("twin-elsewhere", "twin", elsewhere.path(), None),
+            (
+                "twin-elsewhere-child",
+                "twin-elsewhere-child",
+                workspace.path(),
+                Some("twin-elsewhere"),
+            ),
+            (
+                "self-parent",
+                "self-parent",
+                workspace.path(),
+                Some("self-parent"),
+            ),
         ];
-        let paths = tree.map(|(id, cwd, parent)| {
+        let target = |name: &str| {
+            let (_, id, cwd, _) = tree.iter().find(|(entry, ..)| *entry == name).unwrap();
+            SessionTarget::new(*id, *cwd)
+        };
+        let paths = tree.map(|(name, id, cwd, parent)| {
             let provenance = match parent {
                 Some(parent) => SessionProvenance {
                     origin: SessionOrigin::Subagent,
-                    parent: Some(parent.to_string()),
+                    parent: Some(target(parent)),
                 },
                 None => SessionOrigin::Interactive.into(),
             };
             let session =
                 Session::create_with_id_in_root(sessions.path(), cwd, id, None, provenance)
                     .unwrap();
-            (id, session.path().to_path_buf())
+            (name, session.path().to_path_buf())
         });
-        let targets = targets
-            .iter()
-            .map(|target| {
-                let (id, cwd, _) = tree.iter().find(|(id, ..)| id == target).unwrap();
-                SessionTarget::new(*id, *cwd)
-            })
-            .collect::<Vec<_>>();
+        let targets = targets.iter().copied().map(target).collect::<Vec<_>>();
 
         let outcome = delete_targets_in_roots(
             sessions.path(),
@@ -92,14 +125,14 @@ fn delete_takes_child_sessions_recursively() {
             .iter()
             .map(|item| item.error.as_str())
             .collect::<Vec<_>>();
-        let remaining = paths
+        let gone = paths
             .iter()
-            .filter(|(_, path)| path.exists())
-            .map(|(id, _)| *id)
+            .filter(|(_, path)| !path.exists())
+            .map(|(name, _)| *name)
             .collect::<Vec<_>>();
         assert_eq!(
-            (deleted, failed, remaining),
-            (expected_deleted, Vec::<&str>::new(), expected_remaining),
+            (deleted, failed, gone),
+            (expected_deleted, Vec::<&str>::new(), expected_gone),
             "{label}"
         );
     }

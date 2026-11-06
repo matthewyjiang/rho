@@ -110,12 +110,12 @@ pub(super) fn matching_sessions_any_workspace(
         .collect())
 }
 
-/// The saved sessions, in any workspace, whose header names `parent_id` as
-/// the session that started them, oldest first. Rows whose file is gone are
-/// skipped.
+/// The saved sessions, in any workspace, whose header names `parent` (id
+/// and workspace) as the session that started them, oldest first. Rows
+/// whose file is gone are skipped.
 pub(super) fn child_sessions(
     session_root: &Path,
-    parent_id: &str,
+    parent: &SessionTarget,
 ) -> anyhow::Result<Vec<SessionTarget>> {
     let connection = open_index(session_root)?;
     let connection = connection
@@ -124,10 +124,10 @@ pub(super) fn child_sessions(
     let mut statement = connection.prepare(
         "select cwd, id, path
          from sessions
-         where parent = ?1
+         where parent_workspace_key = ?1 and parent_id = ?2
          order by created_at asc, id asc",
     )?;
-    let rows = statement.query_map(params![parent_id], |row| {
+    let rows = statement.query_map(params![workspace_key(&parent.cwd), parent.id], |row| {
         let cwd: String = row.get(0)?;
         let id: String = row.get(1)?;
         let path: String = row.get(2)?;
@@ -686,6 +686,10 @@ fn upsert_record(
 ) -> anyhow::Result<()> {
     let cwd = record.summary.cwd.to_string_lossy().to_string();
     let path = record.summary.path.to_string_lossy().to_string();
+    let parent_workspace_key = record
+        .parent_session
+        .as_ref()
+        .map(|parent| super::persistence::workspace_key(&parent.cwd));
     connection.execute(
         "insert into sessions (
             workspace_key,
@@ -706,9 +710,10 @@ fn upsert_record(
             active_leaf_id,
             effective_format_version,
             origin,
-            parent
+            parent_workspace_key,
+            parent_id
          ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
-                   ?19)
+                   ?19, ?20)
          on conflict(workspace_key, id) do update set
             cwd = excluded.cwd,
             path = excluded.path,
@@ -726,7 +731,8 @@ fn upsert_record(
             active_leaf_id = excluded.active_leaf_id,
             effective_format_version = excluded.effective_format_version,
             origin = excluded.origin,
-            parent = excluded.parent",
+            parent_workspace_key = excluded.parent_workspace_key,
+            parent_id = excluded.parent_id",
         params![
             workspace_key,
             cwd,
@@ -746,7 +752,11 @@ fn upsert_record(
             record.active_leaf_id.as_deref(),
             record.effective_format_version,
             record.summary.origin.map(encode_origin),
-            record.parent_session.as_deref(),
+            parent_workspace_key,
+            record
+                .parent_session
+                .as_ref()
+                .map(|parent| parent.id.as_str()),
         ],
     )?;
     Ok(())

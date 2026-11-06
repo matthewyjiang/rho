@@ -45,6 +45,9 @@ pub(crate) struct AgentLaunchRequest {
     pub(crate) run_id: String,
     /// The session that delegated the run.
     pub(crate) parent_session_id: rho_sdk::SessionId,
+    /// The workspace the parent is saved in, `None` while it has no file;
+    /// see [`SessionRole::Subagent`].
+    pub(crate) parent_workspace: Option<PathBuf>,
     /// Whether the run's session is saved, as its parent's is.
     pub(crate) persistence: SessionPersistence,
     pub(crate) output_file: PathBuf,
@@ -373,6 +376,7 @@ impl AgentExecutor {
             run_id: request.run_id,
             role: SessionRole::Subagent {
                 parent: request.parent_session_id,
+                parent_workspace: request.parent_workspace,
             },
             persistence: request.persistence,
             output_file: request.output_file,

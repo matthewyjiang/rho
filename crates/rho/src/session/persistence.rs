@@ -22,7 +22,7 @@ use super::snapshot_delta::StoredSnapshotDelta;
 use super::tree::{NodeId, ProjectedMessage, SessionNode, SessionTree};
 use super::{
     index, Session, SessionHistories, SessionIndexRecord, SessionOrigin, SessionProvenance,
-    SessionSummary,
+    SessionSummary, SessionTarget,
 };
 
 // Layout helpers live in `layout`; re-export the historical `persistence::` surface.
@@ -311,11 +311,11 @@ pub(super) enum SessionEntry {
         /// before origins were recorded.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<SessionOrigin>,
-        /// The session that started this one, such as a subagent's parent;
-        /// `None` for one nothing started, or in a file written before
-        /// parents were recorded.
+        /// The saved session that started this one, such as a subagent's
+        /// parent, by id and workspace; `None` for one nothing saved
+        /// started, or in a file written before parents were recorded.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        parent_session: Option<String>,
+        parent_session: Option<SessionTarget>,
     },
     Message {
         timestamp: String,

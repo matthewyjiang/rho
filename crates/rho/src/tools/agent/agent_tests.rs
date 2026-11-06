@@ -193,7 +193,8 @@ async fn running_queries_are_scoped_to_the_parent_session() {
     let fixture = manager(root.path());
     let manager = fixture.manager();
     manager.bind_parent_session(
-        crate::subagent::RunPlacement::for_parent_session("session-1", None),
+        "session-1",
+        /*storage*/ None,
         crate::session::SessionPersistence::Saved,
     );
     let id = spawn_background_run(&manager, root.path()).await;
@@ -210,7 +211,8 @@ async fn observed_terminal_run_is_not_redelivered() {
     let fixture = manager(root.path());
     let manager = fixture.manager();
     manager.bind_parent_session(
-        crate::subagent::RunPlacement::for_parent_session("session-1", None),
+        "session-1",
+        /*storage*/ None,
         crate::session::SessionPersistence::Saved,
     );
     let id = spawn_background_run(&manager, root.path()).await;
@@ -229,7 +231,8 @@ async fn unobserved_terminal_runs_drain_as_one_batch() {
     let fixture = manager(root.path());
     let manager = fixture.manager();
     manager.bind_parent_session(
-        crate::subagent::RunPlacement::for_parent_session("session-1", None),
+        "session-1",
+        /*storage*/ None,
         crate::session::SessionPersistence::Saved,
     );
     let first = spawn_background_run(&manager, root.path()).await;
@@ -254,7 +257,8 @@ async fn restored_notifications_can_drain_again() {
     let fixture = manager(root.path());
     let manager = fixture.manager();
     manager.bind_parent_session(
-        crate::subagent::RunPlacement::for_parent_session("session-1", None),
+        "session-1",
+        /*storage*/ None,
         crate::session::SessionPersistence::Saved,
     );
     let id = spawn_background_run(&manager, root.path()).await;
@@ -369,7 +373,8 @@ async fn concurrent_background_launches_register_together() {
     let fixture = manager(root.path());
     let manager = fixture.manager();
     manager.bind_parent_session(
-        crate::subagent::RunPlacement::for_parent_session("session-1", None),
+        "session-1",
+        /*storage*/ None,
         crate::session::SessionPersistence::Saved,
     );
     let tool = AgentTool::new(manager.clone(), root.path(), /*catalog*/ None);

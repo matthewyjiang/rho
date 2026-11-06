@@ -68,8 +68,10 @@ pub(super) fn migrate_index_with_hook(
     // Versioned, unlike the columns above: an older Rho that indexed a run
     // or child session would leave its origin unset, listing it as a
     // person's, and its parent unset, keeping it when its parent is deleted.
+    // A parent is its workspace and id, since ids repeat across workspaces.
     ensure_column(&transaction, "origin text")?;
-    ensure_column(&transaction, "parent text")?;
+    ensure_column(&transaction, "parent_workspace_key text")?;
+    ensure_column(&transaction, "parent_id text")?;
     if version < 3 {
         // Force the next workspace sync to re-summarize existing rows,
         // backfilling tree facts (version 2) and header origins and parents
@@ -83,7 +85,7 @@ pub(super) fn migrate_index_with_hook(
          create index if not exists sessions_workspace_id_idx
             on sessions(workspace_key, id);
          create index if not exists sessions_parent_idx
-            on sessions(parent);",
+            on sessions(parent_workspace_key, parent_id);",
     )?;
     transaction.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION)?;
     before_commit(&transaction)?;
@@ -128,7 +130,8 @@ pub(super) fn validate_index_columns(connection: &Connection) -> anyhow::Result<
         "active_leaf_id",
         "effective_format_version",
         "origin",
-        "parent",
+        "parent_workspace_key",
+        "parent_id",
     ];
     validate_columns(connection, REQUIRED_COLUMNS)
 }

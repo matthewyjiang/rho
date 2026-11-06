@@ -99,6 +99,9 @@ pub struct SubagentManager {
 struct ParentBinding {
     /// Where the subagents' run artifacts go.
     placement: subagent::RunPlacement,
+    /// The workspace the parent is saved in, `None` while it has no file.
+    /// Each subagent's session records it with the parent's id.
+    workspace: Option<PathBuf>,
     /// Whether the subagents' own sessions are saved: not when their
     /// parent's is not, since a child of nothing on disk could never be
     /// reached or deleted with it.
@@ -118,6 +121,7 @@ impl SubagentManager {
             ),
             parent: Arc::new(Mutex::new(ParentBinding {
                 placement: subagent::RunPlacement::parentless(),
+                workspace: None,
                 persistence: SessionPersistence::Saved,
             })),
         }
@@ -154,16 +158,23 @@ impl SubagentManager {
         self.executor.notices().unbind_parent();
     }
 
-    /// Binds the session later subagents report to: their artifacts go to
-    /// `placement`, and they save their sessions as `persistence` says the
+    /// Binds session `session_id`, whose file is `storage` once it has one,
+    /// as the session later subagents report to: their artifacts go in that
+    /// file's folder, their sessions record the file's session as their
+    /// parent, and they save those sessions as `persistence` says the
     /// parent does.
     pub(crate) fn bind_parent_session(
         &self,
-        placement: subagent::RunPlacement,
+        session_id: impl Into<String>,
+        storage: Option<&crate::session::Session>,
         persistence: SessionPersistence,
     ) {
         *self.parent.lock().expect("delegated session lock") = ParentBinding {
-            placement,
+            placement: subagent::RunPlacement::for_parent_session(
+                session_id,
+                storage.and_then(crate::session::Session::subagents_dir),
+            ),
+            workspace: storage.map(|stored| stored.cwd().to_path_buf()),
             persistence,
         };
     }
@@ -231,6 +242,7 @@ impl SubagentManager {
     ) -> anyhow::Result<(String, PathBuf)> {
         let ParentBinding {
             placement,
+            workspace: parent_workspace,
             persistence,
         } = self.parent.lock().expect("delegated session lock").clone();
         // Every host binds its session before a turn can call the `agent`
@@ -251,6 +263,7 @@ impl SubagentManager {
             prompt: prompt.to_string(),
             run_id: id.clone(),
             parent_session_id,
+            parent_workspace,
             persistence,
             output_file,
         };

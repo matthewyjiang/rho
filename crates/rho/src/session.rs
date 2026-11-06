@@ -138,9 +138,10 @@ impl SessionOrigin {
 pub(crate) struct SessionProvenance {
     /// The host that created it.
     pub(crate) origin: SessionOrigin,
-    /// The session that started it, such as a subagent's parent. Deleting
-    /// that session deletes this one with it.
-    pub(crate) parent: Option<String>,
+    /// The saved session that started it, such as a subagent's parent, by
+    /// its id and workspace: the same id can be saved in two workspaces.
+    /// Deleting that session deletes this one with it.
+    pub(crate) parent: Option<SessionTarget>,
 }
 
 impl From<SessionOrigin> for SessionProvenance {
@@ -188,8 +189,9 @@ impl SessionListing {
     }
 }
 
-/// Exact identity for a session within its owning workspace.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// Exact identity for a session within its owning workspace. A child
+/// session's header records its parent's as `{"id": …, "cwd": …}`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SessionTarget {
     pub id: String,
     pub cwd: PathBuf,
@@ -259,7 +261,7 @@ pub(super) struct SessionIndexRecord {
     pub(super) effective_format_version: u32,
     /// The session that started this one, from its header; `None` for a
     /// file written before parents were recorded.
-    pub(super) parent_session: Option<String>,
+    pub(super) parent_session: Option<SessionTarget>,
 }
 /// A held session lease. Dropping it unlocks explicitly before closing: a
 /// child process spawned elsewhere in Rho shares the lock until it execs, so

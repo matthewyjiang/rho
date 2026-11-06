@@ -329,10 +329,8 @@ pub(super) fn bind_subagent_parent(
         // Temporary(tui-runtime): `--no-save` children still save until the
         // TUI runs on the session runtime, which follows the parent's storage.
         manager.bind_parent_session(
-            crate::subagent::RunPlacement::for_parent_session(
-                session_id.to_string(),
-                storage.and_then(StoredSession::subagents_dir),
-            ),
+            session_id.to_string(),
+            storage,
             crate::session::SessionPersistence::Saved,
         );
     }

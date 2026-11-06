@@ -21,7 +21,7 @@ use super::persistence::{
     EXPLICIT_TREE_VERSION, SESSION_VERSION,
 };
 use super::snapshot_delta::StoredSnapshotDelta;
-use super::{SessionIndexRecord, SessionOrigin, SessionSummary};
+use super::{SessionIndexRecord, SessionOrigin, SessionSummary, SessionTarget};
 
 /// Where a projected display row was saved: row `row` of node `node`, a
 /// compaction node's notice following its saved rows. Unique to one insertion
@@ -270,7 +270,7 @@ pub(crate) struct SessionTree {
     session_id: Option<String>,
     cwd: Option<PathBuf>,
     origin: Option<SessionOrigin>,
-    parent_session: Option<String>,
+    parent_session: Option<SessionTarget>,
     created_at: Option<u64>,
     updated_at: Option<u64>,
     version: Option<u32>,

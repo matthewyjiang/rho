@@ -21,7 +21,7 @@ use crate::{
     config::Config,
     credential_store::AppCredentialStore,
     diagnostics::RuntimeDiagnostics,
-    session::{SessionOrigin, SessionProvenance},
+    session::{SessionOrigin, SessionProvenance, SessionTarget},
     tools::{
         host_io::HostIo,
         mcp::{config::McpConfig, McpAuthorizationMode},
@@ -134,7 +134,13 @@ pub(crate) enum SessionRole {
     /// binds its session as the subagent manager's parent before its first
     /// turn, so a subagent always has one; only workflow nodes run
     /// parentless.
-    Subagent { parent: rho_sdk::SessionId },
+    Subagent {
+        parent: rho_sdk::SessionId,
+        /// The workspace `parent` is saved in, `None` while it has no file.
+        /// An id is unique only within a workspace, so the subagent's file
+        /// records both to name its parent.
+        parent_workspace: Option<PathBuf>,
+    },
     /// An agent node of a workflow run, which no session started.
     WorkflowNode,
 }
@@ -152,27 +158,33 @@ impl SessionRole {
     /// name.
     pub(crate) fn parent(&self) -> Option<&rho_sdk::SessionId> {
         match self {
-            Self::Subagent { parent } => Some(parent),
+            Self::Subagent { parent, .. } => Some(parent),
             Self::Interactive | Self::Acp | Self::Run | Self::WorkflowNode => None,
         }
     }
 
     /// Where a new session's file records it came from: the host that
-    /// created it and, for a subagent, its parent, so deleting the parent
-    /// deletes it too. A workflow node records no parent: the workflow
-    /// runtime does not know the session that started its run, if any.
+    /// created it and, for a subagent of a saved session, that parent, so
+    /// deleting the parent deletes it too. A workflow node records no
+    /// parent: the workflow runtime does not know the session that started
+    /// its run, if any.
     pub(super) fn provenance(&self) -> SessionProvenance {
-        let origin = match self {
-            Self::Interactive => SessionOrigin::Interactive,
-            Self::Acp => SessionOrigin::Acp,
-            Self::Run => SessionOrigin::Run,
-            Self::Subagent { .. } => SessionOrigin::Subagent,
-            Self::WorkflowNode => SessionOrigin::WorkflowNode,
+        let (origin, parent) = match self {
+            Self::Interactive => (SessionOrigin::Interactive, None),
+            Self::Acp => (SessionOrigin::Acp, None),
+            Self::Run => (SessionOrigin::Run, None),
+            Self::Subagent {
+                parent,
+                parent_workspace,
+            } => (
+                SessionOrigin::Subagent,
+                parent_workspace
+                    .as_ref()
+                    .map(|cwd| SessionTarget::new(parent.to_string(), cwd.clone())),
+            ),
+            Self::WorkflowNode => (SessionOrigin::WorkflowNode, None),
         };
-        SessionProvenance {
-            origin,
-            parent: self.parent().map(ToString::to_string),
-        }
+        SessionProvenance { origin, parent }
     }
 }
 
