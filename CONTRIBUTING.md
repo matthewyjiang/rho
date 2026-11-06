@@ -4,7 +4,7 @@ Thanks for contributing. Keep changes small and focused on one concern.
 
 ## Setup
 
-This repo expects Rust **1.92** (`mise.toml`). Builds use the standard `target/` directory. To share build output across worktrees, you can optionally install the [huacnlee/cargo](https://github.com/huacnlee/cargo) fork, which keeps targets in a shared directory. It is not required.
+This repo expects Rust **1.92** (`mise.toml`).
 
 From the repo root:
 
