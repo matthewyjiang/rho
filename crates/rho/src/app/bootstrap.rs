@@ -12,6 +12,7 @@ use {
     crate::credential_store::AppCredentialStore,
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::HerdrReporter,
+    crate::session::SessionPersistence,
     crate::tui::SetupEntry,
     crate::update,
     rho_providers::model::ModelError,
@@ -440,6 +441,10 @@ struct AutomationStartup<'a> {
 
 async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Result<()> {
     let diagnostics = bind_agent_diagnostics(startup.config, &startup.bound_agent);
+    let persistence = match &startup.cli.command {
+        Some(Command::Run { no_save: true, .. }) => SessionPersistence::Ephemeral,
+        _ => SessionPersistence::Saved,
+    };
     automation::run(
         startup.prompt,
         automation::Startup {
@@ -454,6 +459,7 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
             output: startup.output,
             max_steps: startup.max_steps,
             timeout: startup.timeout,
+            persistence,
             diagnostics,
             herdr: startup.herdr,
             added_dirs: startup.added_dirs,

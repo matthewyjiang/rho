@@ -33,6 +33,7 @@ use crate::{
     config::Config,
     diagnostics::RuntimeDiagnostics,
     herdr::{HerdrReporter, HerdrState},
+    session::SessionPersistence,
 };
 
 mod terminal;
@@ -111,6 +112,8 @@ pub(super) struct Startup<'a> {
     pub output: OutputFormat,
     pub max_steps: Option<NonZeroUsize>,
     pub timeout: Option<Duration>,
+    /// Whether the run's session is saved; `--no-save` makes it ephemeral.
+    pub persistence: SessionPersistence,
     pub diagnostics: RuntimeDiagnostics,
     pub herdr: HerdrReporter,
     /// Directories added to the workspace scope beyond `cwd`.
@@ -217,10 +220,11 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
     emit_and_exit_terminal(terminal, &mut jsonl, reporter.is_some(), &messages)
 }
 
-/// Runs the prompt on a new session saved as `rho run`'s, until it ends or
-/// `stops` stops it, and tears the session down. Returns how the prompt
-/// ended. Person-facing listings leave the session out, so it opens by id.
-/// It is never titled: a model call per scripted run is not worth it.
+/// Runs the prompt on a new session saved as `rho run`'s, unless
+/// `--no-save` made it ephemeral, until it ends or `stops` stops it, and
+/// tears the session down. Returns how the prompt ended. Person-facing
+/// listings leave the session out, so it opens by id. It is never titled: a
+/// model call per scripted run is not worth it.
 async fn run_session(
     prompt_text: String,
     startup: &Startup<'_>,
@@ -263,7 +267,9 @@ async fn run_session(
     }
     let herdr = &startup.herdr;
     let open = async {
-        let runtime = SessionRuntime::open_new(opening, rho_sdk::SessionId::new()).await?;
+        let runtime =
+            SessionRuntime::open_new(opening, rho_sdk::SessionId::new(), startup.persistence)
+                .await?;
         let _ = herdr.report_state(HerdrState::Working, None, None).await;
         anyhow::Ok(runtime)
     };

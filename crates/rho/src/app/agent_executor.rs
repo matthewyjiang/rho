@@ -3,6 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use {
     crate::agent::{AgentCapabilities, AgentDefinition, ToolCapability},
     crate::config::Config,
+    crate::session::SessionPersistence,
     crate::subagent::{self, RunState, RunStatus},
     rho_tools::cancellation::RunCancellation,
 };
@@ -44,6 +45,8 @@ pub(crate) struct AgentLaunchRequest {
     pub(crate) run_id: String,
     /// The session that delegated the run.
     pub(crate) parent_session_id: rho_sdk::SessionId,
+    /// Whether the run's session is saved, as its parent's is.
+    pub(crate) persistence: SessionPersistence,
     pub(crate) output_file: PathBuf,
 }
 
@@ -371,6 +374,7 @@ impl AgentExecutor {
             role: SessionRole::Subagent {
                 parent: request.parent_session_id,
             },
+            persistence: request.persistence,
             output_file: request.output_file,
             questionnaire_target,
             notice_target,
@@ -405,6 +409,7 @@ impl AgentExecutor {
             prompt: request.prompt,
             run_id: request.run_id,
             role: SessionRole::WorkflowNode,
+            persistence: SessionPersistence::Saved,
             output_file: request.output_file,
             questionnaire_target: None,
             notice_target: None,
@@ -420,6 +425,7 @@ impl AgentExecutor {
             prompt,
             run_id,
             role,
+            persistence,
             output_file,
             questionnaire_target,
             notice_target,
@@ -565,6 +571,7 @@ impl AgentExecutor {
                         prompt,
                         output_file,
                         role,
+                        persistence,
                         questions,
                         notices,
                         steering_slot: task_steering_slot,
@@ -626,6 +633,8 @@ struct BoundLaunchRequest {
     run_id: String,
     /// A subagent with its parent, or a workflow node.
     role: SessionRole,
+    /// Whether the child's session is saved; a Rho runtime child only.
+    persistence: SessionPersistence,
     output_file: PathBuf,
     /// Parent session that can present this child's questionnaires, when one
     /// is listening. `None` removes the capability before bind.

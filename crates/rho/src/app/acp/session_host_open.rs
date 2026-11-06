@@ -24,6 +24,7 @@ use crate::{
     },
     config::Config,
     permission::PermissionMode,
+    session::SessionPersistence,
 };
 
 impl SessionHost {
@@ -53,6 +54,7 @@ impl SessionHost {
                 logouts: &startup.logouts,
             },
             sdk_id,
+            SessionPersistence::Saved,
         )
         .await?;
         let host = Self::from_runtime(io, startup, runtime, t3_wake);

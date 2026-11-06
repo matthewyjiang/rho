@@ -86,6 +86,7 @@ impl Fixture {
                 workflows: &workflows,
             },
             None,
+            crate::session::SessionPersistence::Saved,
             /*held*/ &mut None,
         )
         .unwrap();
@@ -550,6 +551,7 @@ async fn failed_attach_keeps_held_notices() {
             workflows: &workflows,
         },
         None,
+        crate::session::SessionPersistence::Saved,
         &mut held,
     );
     assert!(attached.is_err());

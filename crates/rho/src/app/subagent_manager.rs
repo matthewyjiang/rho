@@ -17,6 +17,7 @@ use {
         subagent_host_input::{SubagentHostInputBridge, SubagentHostInputRequest},
         subagent_messaging::{SubagentNotice, SubagentNoticeBridge},
     },
+    crate::session::SessionPersistence,
     crate::subagent::{self, RunStatus},
 };
 
@@ -90,7 +91,18 @@ pub struct SubagentNotification {
 pub struct SubagentManager {
     inner: Arc<Mutex<HashMap<String, AgentEntry>>>,
     executor: AgentExecutor,
-    parent_placement: Arc<Mutex<subagent::RunPlacement>>,
+    parent: Arc<Mutex<ParentBinding>>,
+}
+
+/// The session a manager's subagents report to.
+#[derive(Clone)]
+struct ParentBinding {
+    /// Where the subagents' run artifacts go.
+    placement: subagent::RunPlacement,
+    /// Whether the subagents' own sessions are saved: not when their
+    /// parent's is not, since a child of nothing on disk could never be
+    /// reached or deleted with it.
+    persistence: SessionPersistence,
 }
 
 impl SubagentManager {
@@ -104,7 +116,10 @@ impl SubagentManager {
                 SubagentHostInputBridge::new(),
                 SubagentNoticeBridge::new(),
             ),
-            parent_placement: Arc::new(Mutex::new(subagent::RunPlacement::parentless())),
+            parent: Arc::new(Mutex::new(ParentBinding {
+                placement: subagent::RunPlacement::parentless(),
+                persistence: SessionPersistence::Saved,
+            })),
         }
     }
 
@@ -139,11 +154,18 @@ impl SubagentManager {
         self.executor.notices().unbind_parent();
     }
 
-    pub fn bind_parent_session(&self, placement: subagent::RunPlacement) {
-        *self
-            .parent_placement
-            .lock()
-            .expect("delegated session lock") = placement;
+    /// Binds the session later subagents report to: their artifacts go to
+    /// `placement`, and they save their sessions as `persistence` says the
+    /// parent does.
+    pub(crate) fn bind_parent_session(
+        &self,
+        placement: subagent::RunPlacement,
+        persistence: SessionPersistence,
+    ) {
+        *self.parent.lock().expect("delegated session lock") = ParentBinding {
+            placement,
+            persistence,
+        };
     }
 
     pub fn update_selection(
@@ -207,11 +229,10 @@ impl SubagentManager {
         cwd: &Path,
         model_override: Option<&str>,
     ) -> anyhow::Result<(String, PathBuf)> {
-        let placement = self
-            .parent_placement
-            .lock()
-            .expect("delegated session lock")
-            .clone();
+        let ParentBinding {
+            placement,
+            persistence,
+        } = self.parent.lock().expect("delegated session lock").clone();
         // Every host binds its session before a turn can call the `agent`
         // tool, so a subagent always has the parent it reports to.
         let Some(session_id) = placement.parent_session_id().map(str::to_owned) else {
@@ -230,6 +251,7 @@ impl SubagentManager {
             prompt: prompt.to_string(),
             run_id: id.clone(),
             parent_session_id,
+            persistence,
             output_file,
         };
         let handle = match self.executor.spawn(launch) {

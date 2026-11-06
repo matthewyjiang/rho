@@ -326,10 +326,15 @@ pub(super) fn bind_subagent_parent(
 ) {
     tools.bind_session_search(session_id.as_str());
     if let Some(manager) = tools.subagents() {
-        manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
-            session_id.to_string(),
-            storage.and_then(StoredSession::subagents_dir),
-        ));
+        // Temporary(tui-runtime): `--no-save` children still save until the
+        // TUI runs on the session runtime, which follows the parent's storage.
+        manager.bind_parent_session(
+            crate::subagent::RunPlacement::for_parent_session(
+                session_id.to_string(),
+                storage.and_then(StoredSession::subagents_dir),
+            ),
+            crate::session::SessionPersistence::Saved,
+        );
     }
     tools
         .workflow_tracker()

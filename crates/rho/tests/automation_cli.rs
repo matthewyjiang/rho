@@ -619,53 +619,65 @@ fn final_answer_is_the_only_stdout_content() {
 
 // Covers: `rho run` saves its session under the session root, recorded as
 // a run's; `rho sessions list` leaves it out, and it opens by id.
+// `--no-save` leaves no session behind to list or open.
 // Owner: rho run session storage (process contract)
 #[test]
-fn run_saves_its_session_as_a_hidden_run() {
-    let root = TempDir::new().unwrap();
-    let mut run = command(&root, "fixed");
-    run.env(RESPONSE_ENV, "saved answer")
-        .args(["run", "--output", "jsonl", "remember this"]);
-    let output = run.output().unwrap();
-    assert_success(&output);
-    let events = jsonl_events(&output);
-    let session_id = events.first().unwrap()["session_id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+fn run_saves_its_session_as_a_hidden_run_unless_told_not_to() {
+    // (run flags, saved header origins, opens by id)
+    let cases: [(&[&str], Vec<Value>, bool); 2] = [
+        (&[], vec![Value::from("run")], true),
+        (&["--no-save"], Vec::new(), false),
+    ];
+    for (flags, origins, opens) in cases {
+        let root = TempDir::new().unwrap();
+        let mut run = command(&root, "fixed");
+        run.env(RESPONSE_ENV, "saved answer")
+            .args(["run", "--output", "jsonl"])
+            .args(flags)
+            .arg("remember this");
+        let output = run.output().unwrap();
+        assert_success(&output);
+        let events = jsonl_events(&output);
+        let session_id = events.first().unwrap()["session_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
 
-    let mut list = command(&root, "fixed");
-    list.args(["sessions", "list", "--json"]);
-    let listed = list.output().unwrap();
-    assert_success(&listed);
-    let listing = inspection(&listed);
-    let headers = saved_session_headers(&root, &session_id);
-    let exported = root.path().join("run-transcript.json");
-    let mut export = command(&root, "fixed");
-    export
-        .args(["sessions", "export", &session_id, "--output"])
-        .arg(&exported);
-    assert_success(&export.output().unwrap());
-    let transcript: Value =
-        serde_json::from_str(&std::fs::read_to_string(&exported).unwrap()).unwrap();
-    assert_eq!(
-        (
-            listing["sessions"].as_array().unwrap().len(),
-            headers
-                .iter()
-                .map(|header| &header["origin"])
-                .collect::<Vec<_>>(),
+        let mut list = command(&root, "fixed");
+        list.args(["sessions", "list", "--json"]);
+        let listed = list.output().unwrap();
+        assert_success(&listed);
+        let listing = inspection(&listed);
+        let exported = root.path().join("run-transcript.json");
+        let mut export = command(&root, "fixed");
+        export
+            .args(["sessions", "export", &session_id, "--output"])
+            .arg(&exported);
+        let opened = export.output().unwrap().status.success().then(|| {
+            let transcript: Value =
+                serde_json::from_str(&std::fs::read_to_string(&exported).unwrap()).unwrap();
             (
-                &transcript["id"],
-                &transcript["messages"][0]["message"]["User"][0]["Text"]
+                transcript["id"].clone(),
+                transcript["messages"][0]["message"]["User"][0]["Text"].clone(),
+            )
+        });
+        assert_eq!(
+            (
+                listing["sessions"].as_array().unwrap().len(),
+                saved_session_headers(&root, &session_id)
+                    .into_iter()
+                    .map(|header| header["origin"].clone())
+                    .collect::<Vec<_>>(),
+                opened,
             ),
-        ),
-        (
-            0,
-            vec![&Value::from("run")],
-            (&Value::from(session_id), &Value::from("remember this")),
-        )
-    );
+            (
+                0,
+                origins,
+                opens.then(|| (Value::from(session_id), Value::from("remember this"))),
+            ),
+            "{flags:?}"
+        );
+    }
 }
 
 /// The headers of the sessions saved under `root` as `session_id`.

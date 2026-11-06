@@ -22,6 +22,10 @@
 //! model replies is rolled back after it is saved: the session moves back to
 //! the node it started from, so the refused turn stays in the file as an
 //! abandoned branch that neither the model nor a reload sees.
+//!
+//! An [`SessionPersistence::Ephemeral`] session (`rho run --no-save`) never
+//! writes a file: its turns run the same way and save nothing, and a refusal
+//! rolls back only its live history.
 
 use std::{
     collections::VecDeque,
@@ -40,7 +44,7 @@ use crate::{
     app::active_prompt::ActivePrompt,
     session::{
         tree::{DisplayRowOrigin, NodeId},
-        Session as StoredSession, SessionOrigin,
+        Session as StoredSession, SessionOrigin, SessionPersistence,
     },
     tools::todo::TodoState,
 };
@@ -49,7 +53,7 @@ use crate::{
 pub(crate) type CreateStoredSession = Box<dyn Fn() -> anyhow::Result<StoredSession> + Send + Sync>;
 
 /// A session's workspace and file. The file is absent until the first save
-/// of a new session.
+/// of a new session, and always for an ephemeral one.
 pub(crate) struct SessionStorage {
     cwd: PathBuf,
     file: SessionFile,
@@ -58,6 +62,8 @@ pub(crate) struct SessionStorage {
 enum SessionFile {
     Unsaved(CreateStoredSession),
     Saved(StoredSession),
+    /// Never written; see [`SessionPersistence::Ephemeral`].
+    Ephemeral,
 }
 
 impl SessionStorage {
@@ -95,6 +101,14 @@ impl SessionStorage {
         }
     }
 
+    /// Storage in `cwd` for a session that is never written.
+    pub(crate) fn ephemeral(cwd: PathBuf) -> Self {
+        Self {
+            cwd,
+            file: SessionFile::Ephemeral,
+        }
+    }
+
     /// The session's workspace directory.
     pub(crate) fn cwd(&self) -> &Path {
         &self.cwd
@@ -104,23 +118,30 @@ impl SessionStorage {
     pub(crate) fn file(&self) -> Option<&StoredSession> {
         match &self.file {
             SessionFile::Saved(stored) => Some(stored),
-            SessionFile::Unsaved(_) => None,
+            SessionFile::Unsaved(_) | SessionFile::Ephemeral => None,
+        }
+    }
+
+    /// Whether the session is ever written, which the children it starts
+    /// follow.
+    pub(crate) fn persistence(&self) -> SessionPersistence {
+        match &self.file {
+            SessionFile::Unsaved(_) | SessionFile::Saved(_) => SessionPersistence::Saved,
+            SessionFile::Ephemeral => SessionPersistence::Ephemeral,
         }
     }
 }
 
 impl SessionRuntime {
-    /// The session file, created now if this is the session's first save.
-    pub(super) fn stored(&mut self) -> anyhow::Result<&StoredSession> {
+    /// The session file, created now if this is the session's first save,
+    /// or `None` for an ephemeral session, which saves nothing.
+    pub(super) fn stored(&mut self) -> anyhow::Result<Option<&StoredSession>> {
         if let SessionFile::Unsaved(create) = &self.storage.file {
             let stored = create()?;
             self.built.tools.bind_recall(Some(&stored));
             self.storage.file = SessionFile::Saved(stored);
         }
-        match &self.storage.file {
-            SessionFile::Saved(stored) => Ok(stored),
-            SessionFile::Unsaved(_) => unreachable!("the file was created above"),
-        }
+        Ok(self.storage.file())
     }
 
     /// Saves the coming turn at every step boundary. Call while idle, with
@@ -131,38 +152,44 @@ impl SessionRuntime {
         display: &UserInput,
         model: &UserInput,
     ) -> anyhow::Result<TurnCheckpoint> {
-        let stored = self.stored()?.clone();
-        let base = turn_base(&stored, || self.durable_snapshot())?;
+        let stored = self.stored()?.cloned();
+        let rollback = match &stored {
+            Some(stored) => Rollback::ToNode {
+                base: turn_base(stored, || self.durable_snapshot())?,
+                stored: stored.clone(),
+            },
+            None => Rollback::LiveHistory,
+        };
         let display = TurnDisplay::new(
             Message::User(display.blocks().to_vec()),
             Message::User(model.blocks().to_vec()),
             self.built.session.history().len(),
         );
-        self.install_checkpoint(stored, Some(base), display)
+        self.install_checkpoint(stored, rollback, display)
     }
 
     /// Saves a turn that continues the restored history at every step
     /// boundary, as [`Self::install_turn_checkpoint`] does for a prompt.
     /// The turn adds no user message and never rolls back.
     pub(super) fn install_continuation_checkpoint(&mut self) -> anyhow::Result<TurnCheckpoint> {
-        let stored = self.stored()?.clone();
+        let stored = self.stored()?.cloned();
         let history = self.built.session.history();
         let Some(last) = history.last() else {
             anyhow::bail!("could not continue session: it has no history");
         };
         let display = TurnDisplay::continuing(last.clone(), history.len() - 1);
-        self.install_checkpoint(stored, /*base*/ None, display)
+        self.install_checkpoint(stored, Rollback::Never, display)
     }
 
     fn install_checkpoint(
         &mut self,
-        stored: StoredSession,
-        base: Option<NodeId>,
+        stored: Option<StoredSession>,
+        rollback: Rollback,
         display: TurnDisplay,
     ) -> anyhow::Result<TurnCheckpoint> {
         let checkpoint = TurnCheckpoint(Arc::new(CheckpointStore {
             stored,
-            base,
+            rollback,
             todo: self.built.tools.todo_state(),
             code_mode: self.built.tools.code_mode().clone(),
             prompt: self.built.prompt.clone(),
@@ -203,8 +230,8 @@ impl SessionRuntime {
 
     /// Saves the prompt's `user` message with the display rows `following`
     /// it, and returns the row a reload replays that message as: the first
-    /// row of the node the save adds. A replaced runtime saves nothing, so
-    /// its message is unreplayed.
+    /// row of the node the save adds. A replaced or ephemeral runtime saves
+    /// nothing, so its message is unreplayed.
     pub(crate) fn save_prompt_rows(
         &mut self,
         user: Message,
@@ -217,7 +244,10 @@ impl SessionRuntime {
             .chain(following.iter().cloned())
             .collect();
         let snapshot = self.durable_snapshot();
-        let node = self.stored()?.save_snapshot_node(&snapshot, &rows)?;
+        let Some(stored) = self.stored()? else {
+            return Ok(InsertedMessage::Unreplayed);
+        };
+        let node = stored.save_snapshot_node(&snapshot, &rows)?;
         Ok(InsertedMessage::Saved(DisplayRowOrigin { node, row: 0 }))
     }
 
@@ -233,6 +263,9 @@ impl SessionRuntime {
             return Ok(());
         }
         let snapshot = self.durable_snapshot();
+        let Some(stored) = self.stored()?.cloned() else {
+            return Ok(());
+        };
         let mut display = checkpoint.0.lock_display();
         let mut pending = display.pending_rows(snapshot.history(), SaveScope::Settle);
         if !display.follows(snapshot.history()) {
@@ -242,7 +275,7 @@ impl SessionRuntime {
                     .map(Message::assistant_text),
             );
         }
-        self.stored()?.save_snapshot(&snapshot, &pending.rows)?;
+        stored.save_snapshot(&snapshot, &pending.rows)?;
         display.mark_written(pending);
         Ok(())
     }
@@ -256,10 +289,6 @@ impl SessionRuntime {
         outcome: &RunOutcome,
     ) -> anyhow::Result<()> {
         self.persist_turn(checkpoint, Some(outcome.text()))?;
-        // A continuation added no prompt to roll back.
-        let Some(base) = &checkpoint.0.base else {
-            return Ok(());
-        };
         if outcome.stop_reason() != rho_sdk::StopReason::Refusal || self.is_replaced() {
             return Ok(());
         }
@@ -267,9 +296,20 @@ impl SessionRuntime {
         let Some(start) = checkpoint.0.lock_display().prompt_only_start(&history) else {
             return Ok(());
         };
+        let (stored, base) = match &checkpoint.0.rollback {
+            // A continuation added no prompt to roll back.
+            Rollback::Never => return Ok(()),
+            Rollback::LiveHistory => {
+                // Nothing is saved, so only the live session forgets it.
+                self.built
+                    .session
+                    .replace_history(history[..start].to_vec())?;
+                return Ok(());
+            }
+            Rollback::ToNode { stored, base } => (stored, base),
+        };
         // Durable first, as tree selection does: if the leaf commit fails, the
         // live session still matches the refusal branch the file selects.
-        let stored = self.stored()?.clone();
         let refused_leaf = stored.with_session_tree(|tree| Ok(tree.active_leaf_id().cloned()))?;
         stored.set_leaf(base)?;
         if let Err(error) = self
@@ -360,11 +400,20 @@ impl TurnCheckpoint {
     }
 }
 
+/// What a refusal of one turn rolls back to.
+enum Rollback {
+    /// `stored`'s node before the turn; see [`turn_base`].
+    ToNode { stored: StoredSession, base: NodeId },
+    /// The live history before the prompt, for an ephemeral session.
+    LiveHistory,
+    /// Nothing: a continuation added no prompt.
+    Never,
+}
+
 struct CheckpointStore {
-    stored: StoredSession,
-    /// The session node before this turn, which a refusal rolls back to;
-    /// see [`turn_base`]. `None` for a continuation, which never does.
-    base: Option<NodeId>,
+    /// The session file, or `None` for an ephemeral session.
+    stored: Option<StoredSession>,
+    rollback: Rollback,
     todo: TodoState,
     code_mode: Arc<crate::tools::code_mode::CodeModeSurface>,
     prompt: ActivePrompt,
@@ -402,17 +451,22 @@ impl CheckpointStore {
             &self.auth,
             snapshot,
         );
-        let mut display = self.lock_display();
-        let pending = display.pending_rows(snapshot.history(), SaveScope::Step);
-        self.stored.save_snapshot(&snapshot, &pending.rows)?;
-        display.mark_written(pending);
+        if let Some(stored) = &self.stored {
+            let mut display = self.lock_display();
+            let pending = display.pending_rows(snapshot.history(), SaveScope::Step);
+            stored.save_snapshot(&snapshot, &pending.rows)?;
+            display.mark_written(pending);
+        }
         Ok(Some(snapshot))
     }
 }
 
 impl SessionStore for CheckpointStore {
     fn load<'a>(&'a self, id: &'a SessionId) -> SessionStoreFuture<'a, Option<SessionSnapshot>> {
-        SessionStore::load(&self.stored, id)
+        match &self.stored {
+            Some(stored) => SessionStore::load(stored, id),
+            None => Box::pin(async { Ok(None) }),
+        }
     }
 
     fn save<'a>(&'a self, snapshot: SessionSnapshot) -> SessionStoreFuture<'a, ()> {

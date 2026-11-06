@@ -1,8 +1,9 @@
 //! A Rho agent run that a session or a workflow started: a subagent the
 //! `agent` tool delegated, or a workflow agent node. Its session is saved
-//! like any other, tagged with its role, and the parent watches its status
-//! file. The child sends its prompt as given, decides its approvals alone
-//! or as the parent passed down, and stops when the parent cancels it.
+//! like any other, tagged with its role, unless its parent's is never saved,
+//! and the parent watches its status file. The child sends its prompt as
+//! given, decides its approvals alone or as the parent passed down, and
+//! stops when the parent cancels it.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -23,6 +24,7 @@ use crate::{
     },
     config::Config,
     diagnostics::RuntimeDiagnostics,
+    session::SessionPersistence,
     subagent::RunStatus,
 };
 
@@ -49,6 +51,9 @@ pub(crate) struct ChildRun {
     pub(crate) output_file: PathBuf,
     /// A subagent with its parent, or a workflow node.
     pub(crate) role: SessionRole,
+    /// Whether the child's session is saved: as its parent's is, for a
+    /// subagent. A resumed workflow node always saves.
+    pub(crate) persistence: SessionPersistence,
     /// The parent that answers the child's questions, when one listens.
     pub(crate) questions: Option<ParentQuestions>,
     /// The parent the child posts notices to, when one listens.
@@ -75,6 +80,7 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         prompt,
         output_file,
         role,
+        persistence,
         questions,
         notices,
         steering_slot,
@@ -169,7 +175,9 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
     let open = async {
         let mut runtime = match resume {
             Some(snapshot) => SessionRuntime::open_from_checkpoint(opening, snapshot).await?,
-            None => SessionRuntime::open_new(opening, rho_sdk::SessionId::new()).await?,
+            None => {
+                SessionRuntime::open_new(opening, rho_sdk::SessionId::new(), persistence).await?
+            }
         };
         if let Some(store) = mirror {
             runtime.mirror_step_checkpoints(store);

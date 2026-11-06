@@ -62,9 +62,12 @@ impl SessionRuntime {
             return Ok(None);
         }
         let snapshot = self.durable_snapshot();
-        let saved = self
-            .stored()
-            .and_then(|stored| stored.save_compaction_snapshot(&snapshot, &[], &outcome));
+        // An ephemeral session has nothing to save.
+        let saved = self.stored().and_then(|stored| {
+            stored.map_or(Ok(()), |stored| {
+                stored.save_compaction_snapshot(&snapshot, &[], &outcome)
+            })
+        });
         if let Err(error) = saved {
             // Live history, compaction accounting, and metadata already
             // moved on; refuse later prompts rather than run against

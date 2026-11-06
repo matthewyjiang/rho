@@ -21,7 +21,9 @@ use crate::{
     agent::AgentCatalog,
     app::interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
     config::Config,
-    session::{tree::ProjectedMessage, NoSessionFound, Session as StoredSession},
+    session::{
+        tree::ProjectedMessage, NoSessionFound, Session as StoredSession, SessionPersistence,
+    },
     tools::mcp::config::McpConfig,
 };
 
@@ -41,6 +43,16 @@ pub(crate) struct SessionOpening<'a> {
     /// The host's logout count; the session's provider reads credentials
     /// as it opens.
     pub(crate) logouts: &'a Logouts,
+}
+
+/// Where a session opened as launched saves.
+enum NewStorage {
+    /// To the file a checkpointing run already wrote.
+    Saved(StoredSession),
+    /// To a file its first save creates.
+    Deferred,
+    /// Nowhere; see [`SessionPersistence::Ephemeral`].
+    Ephemeral,
 }
 
 /// A saved session's conversation, which its host may show its client,
@@ -71,17 +83,18 @@ impl<'a> SavedHistory<'a> {
 
 impl SessionRuntime {
     /// Opens a new session `id` as the build's launch agent. Its file is
-    /// created by its first save.
+    /// created by its first save, unless `persistence` says it is never
+    /// written.
     pub(crate) async fn open_new(
         opening: SessionOpening<'_>,
         id: rho_sdk::SessionId,
+        persistence: SessionPersistence,
     ) -> anyhow::Result<Self> {
-        Self::open_as_launched(
-            opening,
-            |_| Ok(session_options_for_id(id)),
-            /*stored*/ None,
-        )
-        .await
+        let storage = match persistence {
+            SessionPersistence::Saved => NewStorage::Deferred,
+            SessionPersistence::Ephemeral => NewStorage::Ephemeral,
+        };
+        Self::open_as_launched(opening, |_| Ok(session_options_for_id(id)), storage).await
     }
 
     /// Opens the session `snapshot` checkpointed, as the build's launch
@@ -102,22 +115,26 @@ impl SessionRuntime {
             Err(error) if error.is::<NoSessionFound>() => None,
             Err(error) => return Err(error),
         };
+        let storage = match stored {
+            Some(stored) => NewStorage::Saved(stored),
+            None => NewStorage::Deferred,
+        };
         Self::open_as_launched(
             opening,
             |_| Ok(SessionOptions::from_snapshot(snapshot)),
-            stored,
+            storage,
         )
         .await
     }
 
     /// Opens a session as the build's launch agent with `session_options`,
-    /// saving to `stored`, or to a file its first save creates.
+    /// saving as `storage` says.
     async fn open_as_launched(
         opening: SessionOpening<'_>,
         session_options: impl FnOnce(
             std::sync::Arc<dyn rho_sdk::provider::ModelProvider>,
         ) -> anyhow::Result<SessionOptions>,
-        stored: Option<StoredSession>,
+        storage: NewStorage,
     ) -> anyhow::Result<Self> {
         let SessionOpening {
             build,
@@ -131,15 +148,16 @@ impl SessionRuntime {
         let agent = build.launch.agent.clone();
         let (built, permission) =
             build_session(&build, &agent, &config, cwd, &added_dirs, session_options).await?;
-        let storage = match stored {
-            Some(stored) => SessionStorage::saved(stored),
-            None => SessionStorage::deferred(
+        let storage = match storage {
+            NewStorage::Saved(stored) => SessionStorage::saved(stored),
+            NewStorage::Deferred => SessionStorage::deferred(
                 cwd.to_path_buf(),
                 built.session.id().to_string(),
                 agent.id().to_string(),
                 agent.fingerprint().to_string(),
                 build.run.role.origin(),
             ),
+            NewStorage::Ephemeral => SessionStorage::ephemeral(cwd.to_path_buf()),
         };
         Ok(Self::new(
             OpenedSession {
@@ -170,7 +188,7 @@ impl SessionRuntime {
                 let Ok(id) = rho_sdk::SessionId::from_string(id) else {
                     return Err(error);
                 };
-                return Self::open_new(opening, id).await;
+                return Self::open_new(opening, id, SessionPersistence::Saved).await;
             }
             Err(error) => return Err(error),
         };

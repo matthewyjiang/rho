@@ -133,6 +133,17 @@ impl SessionOrigin {
     }
 }
 
+/// Whether a new session is ever written to the session root.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SessionPersistence {
+    /// Written from its first save on, so it can be listed and reopened.
+    Saved,
+    /// Never written: no session file and no index row, so nothing is left
+    /// to reopen. `rho run --no-save` runs this way, and so do the
+    /// subagents such a run starts, since their parent is nowhere on disk.
+    Ephemeral,
+}
+
 /// Which saved sessions a listing returns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SessionListing {

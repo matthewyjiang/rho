@@ -108,6 +108,7 @@ fn validate_cli_rejects_session_flags_with_non_interactive_commands() {
                 output: crate::cli::OutputFormat::Text,
                 max_steps: None,
                 timeout: None,
+                no_save: false,
                 prompt: Vec::new(),
             },
             Command::Update,
@@ -135,6 +136,7 @@ fn validate_cli_rejects_prompt_outside_interactive_session() {
             output: crate::cli::OutputFormat::Text,
             max_steps: None,
             timeout: None,
+            no_save: false,
             prompt: Vec::new(),
         }),
         ..test_cli()

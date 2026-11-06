@@ -63,7 +63,7 @@ running session. The statusline shows `not saved`, and `/new` keeps this mode.
 Exiting or crashing loses the conversation; it won't appear in session history
 and cannot be resumed.
 
-`--no-save` is interactive-only and cannot be combined with `--resume`, `-R`, `--continue`, or `-c`.
+`rho --no-save` is interactive-only and cannot be combined with `--resume`, `-R`, `--continue`, or `-c`. To run a scripted prompt without saving, pass [`rho run --no-save`](/automation-cli#sessions-commands-and-questions).
 Inside the TUI, `/resume`, `/tree`, `/title`, `/export`, and `/rewind`
 are unavailable.
 Use `/copy` to copy an answer, or start Rho without the flag to resume saved work.

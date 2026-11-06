@@ -195,6 +195,10 @@ pub enum Command {
         /// Cancel the run after this wall-clock duration.
         #[arg(long, value_name = "DURATION", value_parser = parse_duration)]
         timeout: Option<Duration>,
+        /// Do not save the run's session, or the sessions of subagents it
+        /// starts, so nothing is left to export or resume.
+        #[arg(long)]
+        no_save: bool,
         /// Prompt text to send to the agent.
         #[arg(value_name = "PROMPT", num_args = 0..)]
         prompt: Vec<String>,

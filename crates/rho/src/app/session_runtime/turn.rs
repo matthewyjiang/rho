@@ -145,11 +145,12 @@ impl SessionRuntime {
         start: TurnStart,
         mut io: TurnIo,
     ) -> anyhow::Result<TurnOutcome> {
-        let stored = self.stored()?.clone();
+        let stored = self.stored()?.cloned();
         let mut delegation = HeadlessDelegation::attach(
             &self.built.session,
             BackgroundSources::of(&self.built.tools),
-            Some(&stored),
+            stored.as_ref(),
+            self.storage.persistence(),
             &mut self.held_notices,
         )?;
         delegation.set_background_wait(self.build.host.background_wait);
