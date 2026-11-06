@@ -7,6 +7,7 @@
 //! threads it runs (`threads/`).
 
 use std::{
+    io,
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
@@ -26,6 +27,19 @@ mod wire;
 use jobs::{JobRegistry, JobStore};
 use threads::Threads;
 
+/// The daemon's job records, opened before the daemon binds its socket, so
+/// a daemon that cannot keep records stops before any client reaches it.
+pub(super) struct JobRecords(Arc<JobRegistry>);
+
+impl JobRecords {
+    /// Opens the records in `rho_home`. Opening rewrites the records of
+    /// turns an earlier daemon left open, so call this only while holding
+    /// the daemon lock.
+    pub(super) fn open(rho_home: &Path) -> io::Result<Self> {
+        Ok(Self(Arc::new(JobRegistry::open(JobStore::open(rho_home)?))))
+    }
+}
+
 /// The daemon's protocol service.
 pub(super) struct DaemonHost {
     socket: PathBuf,
@@ -38,20 +52,15 @@ pub(super) struct DaemonHost {
 
 impl DaemonHost {
     /// A host for the daemon listening on `socket` since `started_at` (Unix
-    /// seconds), keeping its job records in `rho_home`. `rho/daemon/stop`
-    /// cancels `shutdown`, which ends the transport's serve loop and
-    /// refuses new threads and prompts; then call [`Self::stop_threads`].
-    ///
-    /// Opening the registry rewrites the records of turns an earlier daemon
-    /// left open, so call this only while holding the daemon lock.
+    /// seconds), keeping its jobs in `jobs`. `rho/daemon/stop` cancels
+    /// `shutdown`, which ends the transport's serve loop and refuses new
+    /// threads and prompts; then call [`Self::stop_threads`].
     pub(super) fn new(
+        JobRecords(jobs): JobRecords,
         socket: PathBuf,
         started_at: u64,
         shutdown: CancellationToken,
-        rho_home: &Path,
     ) -> Self {
-        threads::open_credential_store();
-        let jobs = Arc::new(JobRegistry::open(JobStore::in_rho_home(rho_home)));
         Self {
             socket,
             started_at,
@@ -63,10 +72,10 @@ impl DaemonHost {
     }
 
     /// Cancels the turns under way, waits for them to save, and records
-    /// them interrupted. Call once the transport stopped serving, before
-    /// releasing the daemon lock.
-    pub(super) async fn stop_threads(&self) {
-        self.threads.stop().await;
+    /// them interrupted; the wait's budget runs from `stop_requested`. Call
+    /// once the transport stopped serving, before releasing the daemon lock.
+    pub(super) async fn stop_threads(&self, stop_requested: tokio::time::Instant) {
+        self.threads.stop(stop_requested).await;
     }
 }
 

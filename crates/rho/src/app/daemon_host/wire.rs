@@ -3,7 +3,7 @@
 
 use rho_protocol as wire;
 
-use super::jobs::{JobId, JobKind, JobRecord, JobState};
+use super::jobs::{JobId, JobKind, JobRecord, JobState, TurnEnd};
 
 impl From<&JobId> for wire::JobId {
     fn from(id: &JobId) -> Self {
@@ -19,16 +19,16 @@ impl From<JobKind> for wire::JobKind {
     }
 }
 
-impl From<JobState> for wire::JobState {
-    fn from(state: JobState) -> Self {
+impl From<&JobState> for wire::JobState {
+    fn from(state: &JobState) -> Self {
         match state {
             JobState::Idle => Self::Idle,
             JobState::Running => Self::Running,
             JobState::WaitingForInput => Self::WaitingForInput,
-            JobState::Completed => Self::Completed,
-            JobState::Failed => Self::Failed,
-            JobState::Cancelled => Self::Cancelled,
-            JobState::Interrupted => Self::Interrupted,
+            JobState::Ended(TurnEnd::Completed) => Self::Completed,
+            JobState::Ended(TurnEnd::Failed(_)) => Self::Failed,
+            JobState::Ended(TurnEnd::Cancelled) => Self::Cancelled,
+            JobState::Ended(TurnEnd::Interrupted) => Self::Interrupted,
         }
     }
 }
@@ -44,18 +44,25 @@ impl From<JobRecord> for wire::JobSummary {
             session_id,
             created_at,
             updated_at,
-            error,
         } = record;
         Self {
             id: (&id).into(),
             kind: kind.into(),
-            state: state.into(),
+            state: (&state).into(),
             project_root,
             parent: parent.as_ref().map(Into::into),
             session_id: session_id.into_string(),
             created_at,
             updated_at,
-            error,
+            error: match state {
+                JobState::Ended(TurnEnd::Failed(error)) => Some(error),
+                JobState::Idle
+                | JobState::Running
+                | JobState::WaitingForInput
+                | JobState::Ended(TurnEnd::Completed | TurnEnd::Cancelled | TurnEnd::Interrupted) => {
+                    None
+                }
+            },
         }
     }
 }

@@ -4,7 +4,7 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use super::{JobRegistry, StartTurnError};
-use crate::app::daemon_host::jobs::{JobId, JobRecord, JobState, JobStore};
+use crate::app::daemon_host::jobs::{JobEvent, JobId, JobRecord, JobState, JobStore, TurnEnd};
 
 fn states(records: Vec<JobRecord>) -> Vec<(JobId, JobState)> {
     let mut states: Vec<_> = records
@@ -22,17 +22,18 @@ fn states(records: Vec<JobRecord>) -> Vec<(JobId, JobState)> {
 // Owner: daemon job registry startup.
 #[test]
 fn startup_interrupts_the_turns_a_dead_daemon_left_open() {
-    use JobState::{Cancelled, Completed, Failed, Idle, Interrupted, Running, WaitingForInput};
+    use JobState::{Ended, Idle, Running, WaitingForInput};
     let home = TempDir::new().unwrap();
-    let store = JobStore::in_rho_home(home.path());
+    let store = JobStore::open(home.path()).unwrap();
+    let failed = Ended(TurnEnd::Failed("provider refused the request".into()));
     let cases = [
         (Idle, Idle),
-        (Running, Interrupted),
-        (WaitingForInput, Interrupted),
-        (Completed, Completed),
-        (Failed, Failed),
-        (Cancelled, Cancelled),
-        (Interrupted, Interrupted),
+        (Running, Ended(TurnEnd::Interrupted)),
+        (WaitingForInput, Ended(TurnEnd::Interrupted)),
+        (Ended(TurnEnd::Completed), Ended(TurnEnd::Completed)),
+        (failed.clone(), failed),
+        (Ended(TurnEnd::Cancelled), Ended(TurnEnd::Cancelled)),
+        (Ended(TurnEnd::Interrupted), Ended(TurnEnd::Interrupted)),
     ];
     let mut expected = Vec::new();
     for (saved, after) in cases {
@@ -59,23 +60,21 @@ fn startup_interrupts_the_turns_a_dead_daemon_left_open() {
 #[test]
 fn a_turn_starts_only_when_none_is_in_progress() {
     let home = TempDir::new().unwrap();
-    let registry = JobRegistry::open(JobStore::in_rho_home(home.path()));
+    let registry = JobRegistry::open(JobStore::open(home.path()).unwrap());
     let job = JobRecord::new_thread(PathBuf::from("/work"), rho_sdk::SessionId::new());
     let id = job.id.clone();
     registry.register(job).unwrap();
 
-    let started = registry.start_turn(&id).map(|record| record.state);
-    let while_running = registry.start_turn(&id).map(|record| record.state);
-    registry.set_state(&id, JobState::WaitingForInput).unwrap();
-    let while_waiting = registry.start_turn(&id).map(|record| record.state);
-    let unknown = registry
-        .start_turn(&JobId::generate())
-        .map(|record| record.state);
+    let started = registry.start_turn(&id);
+    let while_running = registry.start_turn(&id);
+    registry.record(&id, JobEvent::InputOpened).unwrap();
+    let while_waiting = registry.start_turn(&id);
+    let unknown = registry.start_turn(&JobId::generate());
 
     assert_eq!(
         [started, while_running, while_waiting, unknown],
         [
-            Ok(JobState::Running),
+            Ok(()),
             Err(StartTurnError::Busy),
             Err(StartTurnError::Busy),
             Err(StartTurnError::Unknown(super::UnknownJob)),

@@ -1,4 +1,4 @@
-//! A job's state and the transitions between states.
+//! A job's state and the events that move it.
 //!
 //! A thread job's state is the state of its current or last turn: `idle`
 //! before its first prompt, `running` while a turn runs,
@@ -6,12 +6,15 @@
 //! approval, or a question, and then how the turn ended. A new prompt
 //! starts the next turn from any ended state. `interrupted` is how a turn
 //! ends when its daemon stops before the turn does.
+//!
+//! A state changes only through a [`JobEvent`], so a failed turn always
+//! carries why it failed.
 
 use serde::{Deserialize, Serialize};
 
 /// Where a job is in its life. See the module docs for what each state
 /// means for a thread.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(in crate::app::daemon_host) enum JobState {
     /// Created; no turn has started.
@@ -20,63 +23,87 @@ pub(in crate::app::daemon_host) enum JobState {
     /// The running turn waits for someone to answer an approval, a plan
     /// approval, or a question.
     WaitingForInput,
+    /// The last turn ended. Recorded flat, as `"completed"` or
+    /// `{"failed": "<why>"}`.
+    #[serde(untagged)]
+    Ended(TurnEnd),
+}
+
+/// How a turn ended.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(in crate::app::daemon_host) enum TurnEnd {
     Completed,
-    Failed,
+    /// A client cancelled it.
     Cancelled,
     /// The daemon stopped, or died, before the turn ended.
     Interrupted,
+    /// The turn could not run, for this reason.
+    Failed(String),
 }
 
-/// A transition the job's state does not allow.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("a job cannot go from {from} to {to}")]
+/// Something that happened to a job's turn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::app::daemon_host) enum JobEvent {
+    /// A prompt started a new turn.
+    TurnStarted,
+    /// The turn asked for an approval, a plan approval, or a question while
+    /// none was open.
+    InputOpened,
+    /// Nothing the turn asked is open any more.
+    InputSettled,
+    TurnEnded(TurnEnd),
+}
+
+/// An event the job's state does not allow.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("a job that is {from} cannot take {event}")]
 pub(in crate::app::daemon_host) struct TransitionRefused {
     pub(in crate::app::daemon_host) from: JobState,
-    pub(in crate::app::daemon_host) to: JobState,
+    pub(in crate::app::daemon_host) event: JobEvent,
 }
 
 impl JobState {
-    /// The state after moving to `to`, when this state allows it.
-    pub(in crate::app::daemon_host) fn transition(
-        self,
-        to: Self,
+    /// The state after `event`, when this state allows it.
+    pub(in crate::app::daemon_host) fn after(
+        &self,
+        event: JobEvent,
     ) -> Result<Self, TransitionRefused> {
-        use JobState::{Cancelled, Completed, Failed, Idle, Interrupted, Running, WaitingForInput};
-        match (self, to) {
-            // A prompt starts the next turn.
-            (Idle | Completed | Failed | Cancelled | Interrupted, Running)
-            // The turn asked for input, or nothing it asked is open any more.
-            | (Running, WaitingForInput)
-            | (WaitingForInput, Running)
-            // The turn ended, waiting or not.
-            | (Running | WaitingForInput, Completed | Failed | Cancelled | Interrupted) => Ok(to),
+        use JobEvent::{InputOpened, InputSettled, TurnEnded, TurnStarted};
+        use JobState::{Ended, Idle, Running, WaitingForInput};
+        match (self, event) {
+            (Idle | Ended(_), TurnStarted) => Ok(Running),
+            (Running, InputOpened) => Ok(WaitingForInput),
+            (WaitingForInput, InputSettled) => Ok(Running),
+            (Running | WaitingForInput, TurnEnded(end)) => Ok(Ended(end)),
             (
-                Idle | Running | WaitingForInput | Completed | Failed | Cancelled | Interrupted,
-                Idle | Running | WaitingForInput | Completed | Failed | Cancelled | Interrupted,
-            ) => Err(TransitionRefused { from: self, to }),
+                Idle | Running | WaitingForInput | Ended(_),
+                event @ (TurnStarted | InputOpened | InputSettled | TurnEnded(_)),
+            ) => Err(TransitionRefused {
+                from: self.clone(),
+                event,
+            }),
         }
     }
 
     /// Whether a turn is under way: running or waiting for input.
-    pub(in crate::app::daemon_host) fn in_progress(self) -> bool {
+    pub(in crate::app::daemon_host) fn in_progress(&self) -> bool {
         match self {
             Self::Running | Self::WaitingForInput => true,
-            Self::Idle | Self::Completed | Self::Failed | Self::Cancelled | Self::Interrupted => {
-                false
-            }
+            Self::Idle | Self::Ended(_) => false,
         }
     }
 
-    /// The state's wire name.
-    pub(in crate::app::daemon_host) fn as_str(self) -> &'static str {
+    /// The state's name, as logs and errors show it.
+    pub(in crate::app::daemon_host) fn as_str(&self) -> &'static str {
         match self {
             Self::Idle => "idle",
             Self::Running => "running",
             Self::WaitingForInput => "waiting_for_input",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Cancelled => "cancelled",
-            Self::Interrupted => "interrupted",
+            Self::Ended(TurnEnd::Completed) => "completed",
+            Self::Ended(TurnEnd::Cancelled) => "cancelled",
+            Self::Ended(TurnEnd::Interrupted) => "interrupted",
+            Self::Ended(TurnEnd::Failed(_)) => "failed",
         }
     }
 }
@@ -84,6 +111,17 @@ impl JobState {
 impl std::fmt::Display for JobState {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(self.as_str())
+    }
+}
+
+impl std::fmt::Display for JobEvent {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::TurnStarted => "turn_started",
+            Self::InputOpened => "input_opened",
+            Self::InputSettled => "input_settled",
+            Self::TurnEnded(_) => "turn_ended",
+        })
     }
 }
 

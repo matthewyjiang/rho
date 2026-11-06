@@ -2,11 +2,11 @@
 //! with its state, where it runs, and the session it writes.
 //!
 //! A job today is a thread (see `threads/`). Subagent runs and workflow runs
-//! join as jobs with their own kinds when the daemon hosts them (2c-3,
-//! 2c-4). A job's state moves only through the explicit transitions in
-//! `state.rs`, and every transition rewrites the job's durable record (see
-//! `store.rs`), so a daemon that restarts lists the jobs its predecessor ran
-//! and marks the ones it left unfinished as interrupted.
+//! join as jobs with their own kinds when the daemon hosts them (#1658).
+//! A job's state moves only through the events in `state.rs`, and every
+//! transition rewrites the job's durable record (see `store.rs`), so a
+//! daemon that restarts lists the jobs its predecessor ran and marks the
+//! ones it left unfinished as interrupted.
 //!
 //! Records are never deleted yet: a retention policy is a follow-up.
 
@@ -19,7 +19,7 @@ mod state;
 mod store;
 
 pub(super) use registry::{JobRegistry, StartTurnError};
-pub(super) use state::JobState;
+pub(super) use state::{JobEvent, JobState, TurnEnd};
 pub(super) use store::JobStore;
 
 /// One job's identity: a UUID v4, as a string on the wire and as the name
@@ -97,8 +97,6 @@ pub(super) struct JobRecord {
     pub(super) created_at: u64,
     /// Unix time, in seconds, of the job's last transition.
     pub(super) updated_at: u64,
-    /// Why the job's last turn failed. Set only in [`JobState::Failed`].
-    pub(super) error: Option<String>,
 }
 
 impl JobRecord {
@@ -115,7 +113,6 @@ impl JobRecord {
             session_id,
             created_at: now,
             updated_at: now,
-            error: None,
         }
     }
 }

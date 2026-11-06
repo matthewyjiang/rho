@@ -1,52 +1,71 @@
 use pretty_assertions::assert_eq;
 
-use super::{JobState, TransitionRefused};
+use super::{JobEvent, JobState, TransitionRefused, TurnEnd};
 
-const ALL: [JobState; 7] = [
-    JobState::Idle,
-    JobState::Running,
-    JobState::WaitingForInput,
-    JobState::Completed,
-    JobState::Failed,
-    JobState::Cancelled,
-    JobState::Interrupted,
-];
+fn failed() -> TurnEnd {
+    TurnEnd::Failed("provider refused the request".into())
+}
 
-// Covers: every (from, to) pair a job state can be asked for: a prompt
-// starts a turn from idle or any ended state, a running turn toggles
-// waiting_for_input and ends from either, and everything else is refused
-// with the pair named, including a second prompt on a running thread
-// (running -> running), a turn ending twice, and a turn ending before it
-// started.
+fn all_states() -> [JobState; 7] {
+    [
+        JobState::Idle,
+        JobState::Running,
+        JobState::WaitingForInput,
+        JobState::Ended(TurnEnd::Completed),
+        JobState::Ended(TurnEnd::Cancelled),
+        JobState::Ended(TurnEnd::Interrupted),
+        JobState::Ended(failed()),
+    ]
+}
+
+fn all_events() -> [JobEvent; 7] {
+    [
+        JobEvent::TurnStarted,
+        JobEvent::InputOpened,
+        JobEvent::InputSettled,
+        JobEvent::TurnEnded(TurnEnd::Completed),
+        JobEvent::TurnEnded(TurnEnd::Cancelled),
+        JobEvent::TurnEnded(TurnEnd::Interrupted),
+        JobEvent::TurnEnded(failed()),
+    ]
+}
+
+// Covers: every (state, event) pair: a prompt starts a turn from idle or
+// any ended state, a running turn opens and settles input, and ends, with
+// how it ended, from either; everything else is refused with the pair
+// named, including a second prompt on a running thread, a turn ending
+// twice, and a turn ending before it started.
 // Owner: daemon job state machine.
 #[test]
-fn transitions_allow_exactly_the_turn_lifecycle() {
-    use JobState::{Cancelled, Completed, Failed, Idle, Interrupted, Running, WaitingForInput};
-    let allowed = [
-        (Idle, Running),
-        (Completed, Running),
-        (Failed, Running),
-        (Cancelled, Running),
-        (Interrupted, Running),
-        (Running, WaitingForInput),
-        (WaitingForInput, Running),
-        (Running, Completed),
-        (Running, Failed),
-        (Running, Cancelled),
-        (Running, Interrupted),
-        (WaitingForInput, Completed),
-        (WaitingForInput, Failed),
-        (WaitingForInput, Cancelled),
-        (WaitingForInput, Interrupted),
+fn events_move_a_job_through_exactly_the_turn_lifecycle() {
+    use JobEvent::{InputOpened, InputSettled, TurnEnded, TurnStarted};
+    use JobState::{Ended, Idle, Running, WaitingForInput};
+    let mut allowed = vec![
+        (Idle, TurnStarted, Running),
+        (Running, InputOpened, WaitingForInput),
+        (WaitingForInput, InputSettled, Running),
     ];
-    for from in ALL {
-        for to in ALL {
-            let expected = if allowed.contains(&(from, to)) {
-                Ok(to)
-            } else {
-                Err(TransitionRefused { from, to })
-            };
-            assert_eq!(from.transition(to), expected, "{from} -> {to}");
+    for end in [
+        TurnEnd::Completed,
+        TurnEnd::Cancelled,
+        TurnEnd::Interrupted,
+        failed(),
+    ] {
+        allowed.push((Ended(end.clone()), TurnStarted, Running));
+        allowed.push((Running, TurnEnded(end.clone()), Ended(end.clone())));
+        allowed.push((WaitingForInput, TurnEnded(end.clone()), Ended(end)));
+    }
+    for from in all_states() {
+        for event in all_events() {
+            let expected = allowed
+                .iter()
+                .find(|(state, allowed_event, _)| *state == from && *allowed_event == event)
+                .map(|(_, _, to)| to.clone())
+                .ok_or_else(|| TransitionRefused {
+                    from: from.clone(),
+                    event: event.clone(),
+                });
+            assert_eq!(from.after(event.clone()), expected, "{from} + {event}");
         }
     }
 }

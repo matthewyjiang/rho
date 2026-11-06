@@ -28,36 +28,37 @@ pub(in crate::app::daemon_host) struct JobStore {
 const RECORD_SUFFIX: &str = ".json";
 
 impl JobStore {
-    /// The store in `rho_home`.
-    pub(in crate::app::daemon_host) fn in_rho_home(rho_home: &Path) -> Self {
-        Self {
-            dir: rho_home.join("daemon").join("jobs"),
-        }
+    /// The store in `rho_home`, its directory created 0700, or an existing
+    /// one closed to group and others: records name the user's projects and
+    /// sessions.
+    pub(in crate::app::daemon_host) fn open(rho_home: &Path) -> io::Result<Self> {
+        let dir = rho_home.join("daemon").join("jobs");
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir)?;
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
+        Ok(Self { dir })
     }
 
-    /// Replaces `record`'s file. Flushed before the rename: a later daemon
-    /// trusts it to say what this one ran.
+    /// Replaces `record`'s file. The file is flushed before the rename and
+    /// the directory after it: a later daemon trusts the record to say what
+    /// this one ran.
     pub(in crate::app::daemon_host) fn write(&self, record: &JobRecord) -> io::Result<()> {
-        self.prepare_dir()?;
         let mut contents = serde_json::to_vec_pretty(record)?;
         contents.push(b'\n');
         write_bytes_atomically_with_durability(
             &self.path_of(&record.id),
             &contents,
             WriteDurability::Durable,
-        )
+        )?;
+        fs::File::open(&self.dir)?.sync_all()
     }
 
-    /// Every record in the store, in no particular order. A missing
-    /// directory holds none.
+    /// Every record in the store, in no particular order.
     pub(in crate::app::daemon_host) fn load(&self) -> io::Result<Vec<JobRecord>> {
-        let entries = match fs::read_dir(&self.dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error),
-        };
         let mut records = Vec::new();
-        for entry in entries {
+        for entry in fs::read_dir(&self.dir)? {
             let path = entry?.path();
             let Some(stem) = path
                 .file_name()
@@ -78,16 +79,6 @@ impl JobStore {
 
     fn path_of(&self, id: &JobId) -> PathBuf {
         self.dir.join(format!("{}{RECORD_SUFFIX}", id.as_str()))
-    }
-
-    /// Creates the directory 0700, or closes an existing one to group and
-    /// others: records name the user's projects and sessions.
-    fn prepare_dir(&self) -> io::Result<()> {
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&self.dir)?;
-        fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700))
     }
 }
 

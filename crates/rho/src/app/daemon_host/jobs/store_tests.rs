@@ -4,7 +4,7 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use super::JobStore;
-use crate::app::daemon_host::jobs::{JobId, JobRecord, JobState};
+use crate::app::daemon_host::jobs::{JobId, JobRecord, JobState, TurnEnd};
 
 fn record(state: JobState) -> JobRecord {
     JobRecord {
@@ -25,11 +25,10 @@ fn sorted(mut records: Vec<JobRecord>) -> Vec<JobRecord> {
 #[test]
 fn records_round_trip_and_rewrites_replace_them() {
     let home = TempDir::new().unwrap();
-    let store = JobStore::in_rho_home(home.path());
-    let failed = JobRecord {
-        error: Some("provider refused the request".into()),
-        ..record(JobState::Failed)
-    };
+    let store = JobStore::open(home.path()).unwrap();
+    let failed = record(JobState::Ended(TurnEnd::Failed(
+        "provider refused the request".into(),
+    )));
     let mut running = record(JobState::Running);
     store.write(&failed).unwrap();
     store.write(&running).unwrap();
@@ -47,16 +46,16 @@ fn records_round_trip_and_rewrites_replace_them() {
 // Covers: files that are not a record named for its own id (not JSON, not a
 // record, named for another job) are skipped without hiding the valid
 // records, and files that are not record files at all (an interrupted
-// write's temp file, a stray note) are ignored; a missing directory holds
-// no records.
+// write's temp file, a stray note) are ignored; a new store holds no
+// records.
 // Owner: daemon job store.
 #[test]
 fn unreadable_record_files_are_skipped() {
     let home = TempDir::new().unwrap();
-    let store = JobStore::in_rho_home(home.path());
+    let store = JobStore::open(home.path()).unwrap();
     assert_eq!(store.load().unwrap(), Vec::new());
 
-    let kept = record(JobState::Completed);
+    let kept = record(JobState::Ended(TurnEnd::Completed));
     store.write(&kept).unwrap();
     let dir = home.path().join("daemon/jobs");
     let misnamed = serde_json::to_vec(&record(JobState::Idle)).unwrap();
