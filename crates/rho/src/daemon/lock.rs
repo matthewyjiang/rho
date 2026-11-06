@@ -4,11 +4,16 @@
 //! whole lifetime; the kernel releases it when the process exits, however it
 //! exits. Holding the lock therefore proves no other daemon is alive, which
 //! is what makes removing a leftover socket safe.
+//!
+//! The lock lives in the rho home, not the runtime directory, so it guards
+//! the home's daemon state no matter which runtime directory a daemon
+//! resolved. Each home resolves exactly one socket path, so the lock still
+//! covers the socket.
 
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
-    os::unix::fs::OpenOptionsExt,
+    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -19,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use super::paths::DaemonPaths;
 
-/// Proof that this process is the only daemon for its runtime directory.
+/// Proof that this process is the only daemon for its rho home.
 /// Dropping it releases the lock.
 #[derive(Debug)]
 pub(crate) struct DaemonLock {
@@ -57,8 +62,19 @@ fn already_running_message(record: Option<&DaemonRecord>) -> String {
     }
 }
 
-/// Takes the daemon lock without blocking. The runtime directory must exist.
+/// Takes the daemon lock without blocking, creating its directory (0700)
+/// first.
 pub(crate) fn acquire(paths: &DaemonPaths) -> Result<DaemonLock, LockError> {
+    if let Some(dir) = paths.lock.parent() {
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .map_err(|source| LockError::Io {
+                path: dir.to_path_buf(),
+                source,
+            })?;
+    }
     let file = open_lock_file(&paths.lock)?;
     match FileExt::try_lock_exclusive(&file) {
         Ok(()) => Ok(DaemonLock { _file: file }),

@@ -50,10 +50,22 @@ impl Served {
 
 /// Binds the daemon socket and publishes the info file.
 ///
-/// Taking the [`DaemonLock`] proves no other daemon is alive, so the socket
-/// and info file a crashed daemon left behind are removed before binding. The
-/// runtime directory must already be prepared.
+/// Taking the [`DaemonLock`] proves no other daemon serves this rho home, so
+/// the socket and info file a crashed daemon left behind are removed before
+/// binding. The lock lives in the rho home but the socket may live in the
+/// shared `$XDG_RUNTIME_DIR`, so a socket that still accepts connections
+/// belongs to a daemon for another rho home and is refused rather than
+/// removed. The runtime directory must already be prepared.
 pub(crate) fn bind(paths: &DaemonPaths, lock: DaemonLock) -> io::Result<BoundDaemon> {
+    if std::os::unix::net::UnixStream::connect(&paths.socket).is_ok() {
+        return Err(io::Error::new(
+            io::ErrorKind::AddrInUse,
+            format!(
+                "another rho daemon is listening on {}; it serves a different rho home",
+                paths.socket.display()
+            ),
+        ));
+    }
     for stale in [&paths.info_file, &paths.socket] {
         match fs::remove_file(stale) {
             Ok(()) => tracing::info!(path = %stale.display(), "removed stale daemon file"),

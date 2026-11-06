@@ -23,10 +23,12 @@ fn resolve_with(
 
 // Covers: the default home's socket lives under $XDG_RUNTIME_DIR only when it
 // is a usable absolute path; an explicit RHO_HOME always keeps its own socket,
-// so two homes never share one daemon.
+// so two homes never share one daemon. The lock stays in the home whatever
+// the runtime directory, so daemons started with different XDG_RUNTIME_DIRs
+// for one home still exclude each other.
 // Owner: daemon path policy.
 #[test]
-fn runtime_dir_follows_the_rho_home_and_absolute_xdg_runtime_dir() {
+fn runtime_dir_follows_the_rho_home_and_absolute_xdg_runtime_dir_but_the_lock_stays_home() {
     let home = Path::new("/home/user/.rho");
     for (rho_home_env, xdg, expected) in [
         (None, Some("/run/user/1000"), "/run/user/1000/rho"),
@@ -47,6 +49,11 @@ fn runtime_dir_follows_the_rho_home_and_absolute_xdg_runtime_dir() {
             "RHO_HOME={rho_home_env:?} XDG_RUNTIME_DIR={xdg:?}"
         );
         assert_eq!(paths.socket, paths.runtime_dir.join("daemon.sock"));
+        assert_eq!(
+            paths.lock,
+            PathBuf::from("/home/user/.rho/daemon/daemon.lock"),
+            "RHO_HOME={rho_home_env:?} XDG_RUNTIME_DIR={xdg:?}"
+        );
     }
 }
 

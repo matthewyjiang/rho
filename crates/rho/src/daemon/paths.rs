@@ -20,15 +20,21 @@ const MAX_SOCKET_PATH_BYTES: usize = SUN_PATH_BYTES - 1;
 /// Every file the daemon and its clients use.
 ///
 /// [`DaemonPaths::resolve`] is pure. The runtime directory holds the
-/// rendezvous files and must be private: [`DaemonPaths::prepare_runtime_dir`]
-/// creates or verifies it before anything is created inside.
+/// rendezvous files (socket and info file) and must be private:
+/// [`DaemonPaths::prepare_runtime_dir`] creates or verifies it before anything
+/// is created inside. The lock lives in the rho home instead, because the
+/// state it guards (the job records under `<rho home>/daemon/jobs`) belongs to
+/// the home, not to whichever runtime directory a daemon happened to resolve.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DaemonPaths {
     /// `<rho home>/run` for an explicit `RHO_HOME`, else
     /// `$XDG_RUNTIME_DIR/rho`, else `~/.rho/run`.
     pub(crate) runtime_dir: PathBuf,
     pub(crate) socket: PathBuf,
-    /// Held exclusively by the running daemon for its whole lifetime.
+    /// `<rho home>/daemon/daemon.lock`, held exclusively by the running daemon
+    /// for its whole lifetime. One per rho home, so two daemons that resolve
+    /// different runtime directories for the same home (say, with different
+    /// `XDG_RUNTIME_DIR`s) still exclude each other.
     pub(crate) lock: PathBuf,
     /// JSON [`super::lock::DaemonRecord`] written after the socket is bound.
     pub(crate) info_file: PathBuf,
@@ -91,7 +97,7 @@ impl DaemonPaths {
             });
         }
         Ok(Self {
-            lock: runtime_dir.join("daemon.lock"),
+            lock: rho_home.join("daemon").join("daemon.lock"),
             info_file: runtime_dir.join("daemon.json"),
             log_file: rho_home.join("logs").join("daemon.log"),
             socket,

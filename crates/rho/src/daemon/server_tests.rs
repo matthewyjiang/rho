@@ -72,3 +72,26 @@ async fn daemon_serves_status_and_cleans_up_on_stop() {
     assert!(!paths.info_file.exists(), "info file removed");
     assert!(!lock::is_held(&paths).unwrap(), "lock released");
 }
+
+// Covers: two default rho homes share one `$XDG_RUNTIME_DIR` socket but take
+// different locks, so a daemon for the second home must refuse a socket that
+// a live daemon still answers on rather than delete it.
+// Owner: daemon server bind.
+#[tokio::test]
+async fn bind_refuses_a_socket_a_live_daemon_answers_on() {
+    let runtime = TempDir::new().unwrap();
+    let xdg = |name: &str| (name == "XDG_RUNTIME_DIR").then(|| runtime.path().into());
+    let (first_home, second_home) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    let first = DaemonPaths::resolve(first_home.path(), xdg).unwrap();
+    let second = DaemonPaths::resolve(second_home.path(), xdg).unwrap();
+    assert_eq!(first.socket, second.socket);
+    first.prepare_runtime_dir().unwrap();
+    let _live = bind(&first, lock::acquire(&first).unwrap()).unwrap();
+
+    let refused = bind(&second, lock::acquire(&second).unwrap())
+        .err()
+        .map(|error| error.kind());
+
+    assert_eq!(refused, Some(io::ErrorKind::AddrInUse));
+    assert!(first.socket.exists(), "the live daemon keeps its socket");
+}
