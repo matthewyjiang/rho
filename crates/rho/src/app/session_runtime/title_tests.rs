@@ -39,7 +39,7 @@ async fn only_an_answered_turn_asks_for_a_title() {
     ] {
         let root = tempfile::tempdir().unwrap();
         let mut runtime = runtime_on(root.path(), &config, provider).await;
-        let start = runtime
+        let prompt = runtime
             .begin_prompt(&config, &root.path().join("config.toml"))
             .await
             .unwrap();
@@ -51,6 +51,7 @@ async fn only_an_answered_turn_asks_for_a_title() {
         let input = UserInput::text("name this session");
         let outcome = runtime
             .run_turn(
+                &prompt,
                 Turn {
                     display: input.clone(),
                     model: input,
@@ -61,7 +62,7 @@ async fn only_an_answered_turn_asks_for_a_title() {
             )
             .await
             .unwrap();
-        drop(start);
+        drop(prompt);
         assert_eq!(
             (
                 matches!(outcome, TurnOutcome::Completed(_)),

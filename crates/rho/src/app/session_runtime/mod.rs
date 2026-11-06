@@ -9,9 +9,10 @@
 //! Between prompts a host calls the runtime's settings cores directly:
 //! permission mode, model and provider switches, reasoning level, and fast
 //! mode. Hosts read the session only through narrow accessors, never the
-//! SDK session itself, so all changes go through the runtime. A prompt starts with
-//! [`SessionRuntime::begin_prompt`] (see `prompt.rs`); within it the host
-//! runs the command cores (`/compact`, `/workflow:`, `/agent:` rebinds) or a
+//! SDK session itself, so all changes go through the runtime. A prompt starts
+//! with [`SessionRuntime::begin_prompt`] (see `prompt.rs`), whose
+//! [`PromptScope`] every in-prompt call takes, so only a begun prompt runs
+//! the command cores (`/compact`, `/workflow:`, `/agent:` rebinds) or a
 //! model turn. A model turn is [`SessionRuntime::run_turn`]: the host passes
 //! a [`TurnIo`] and, while the turn runs, shows the [`SessionEvent`]s it
 //! sends and answers its requests with [`TurnControl`]s (see `events.rs`).
@@ -73,7 +74,7 @@ pub(crate) use handle::SessionHandle;
 pub(crate) use mode::{ModeChangeError, SessionPermission};
 pub(crate) use persist::SessionStorage;
 pub(crate) use plan_exit::PlanHandoff;
-pub(crate) use prompt::PromptStart;
+pub(crate) use prompt::PromptScope;
 pub(crate) use prompt_gate::Closing;
 pub(crate) use settings::SettingChangeError;
 pub(crate) use switch::ModelSwitchError;

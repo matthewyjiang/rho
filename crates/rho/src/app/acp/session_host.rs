@@ -39,8 +39,8 @@ use crate::{
         headless_delegation::BackgroundWait,
         session_runtime::{
             model_scoped_config, ChildAgents, CurrentModel, InsertedMessage, ModelSwitchError,
-            OpenedSession, QuestionSupport, SessionBuild, SessionHandle, SessionRuntime,
-            SettingChangeError, TitleJob, Turn, TurnIo, TurnOutcome, WorkflowStart,
+            OpenedSession, PromptScope, QuestionSupport, SessionBuild, SessionHandle,
+            SessionRuntime, SettingChangeError, TitleJob, Turn, TurnIo, TurnOutcome, WorkflowStart,
         },
         workflow_cli::discover::StartCommand,
     },
@@ -133,7 +133,7 @@ impl SessionHost {
         startup: &AcpStartup,
     ) -> anyhow::Result<PromptResponse> {
         let input = user_input_from_prompt(&request.prompt)?;
-        let start = self
+        let prompt = self
             .runtime
             .begin_prompt(&startup.config, &startup.config_path)
             .await?;
@@ -158,7 +158,7 @@ impl SessionHost {
             // Expansion can wait on an MCP server, so a cancel drops it.
             tokio::select! {
                 biased;
-                () = start.cancellation().cancelled() => None,
+                () = prompt.cancellation().cancelled() => None,
                 action = commands::resolve(input.clone(), &scope) => Some(action),
             }
         };
@@ -177,21 +177,23 @@ impl SessionHost {
                     model,
                     calls,
                 };
-                self.run_turn(turn, &startup.config, client).await
+                self.run_turn(&prompt, turn, &startup.config, client).await
             }
             Some(Ok(PromptAction::Compact { instructions })) => {
                 self.prompt_acceptance.accept(InsertedMessage::Unreplayed);
-                Shown::delivered(self.compact(instructions, client).await)
+                Shown::delivered(self.compact(&prompt, instructions, client).await)
             }
-            Some(Ok(PromptAction::StartWorkflow(start))) => {
-                Shown::delivered(self.start_workflow(&input, start, startup, client).await)
-            }
+            Some(Ok(PromptAction::StartWorkflow(start))) => Shown::delivered(
+                self.start_workflow(&prompt, &input, start, startup, client)
+                    .await,
+            ),
             Some(Ok(PromptAction::RunAsAgent(task))) => {
-                self.run_as_agent(&input, task, startup, client).await
+                self.run_as_agent(&prompt, &input, task, startup, client)
+                    .await
             }
             Some(Ok(PromptAction::AwaitWake(signal))) => {
                 self.prompt_acceptance.accept(InsertedMessage::Unreplayed);
-                Shown::delivered(self.await_wake(signal, &start, client).await)
+                Shown::delivered(self.await_wake(signal, &prompt, client).await)
             }
             Some(Err(rejected)) => Shown::delivered(Err(rejected.into())),
         };
@@ -386,14 +388,17 @@ impl SessionHost {
     /// runs the implementation turn it asks for.
     async fn run_turn(
         &mut self,
+        prompt: &PromptScope,
         turn: Turn,
         process_config: &Config,
         client: &dyn AcpClientPort,
     ) -> Shown<PromptResponse> {
-        let proposal = self.forward_turn(turn, process_config, client).await;
+        let proposal = self
+            .forward_turn(prompt, turn, process_config, client)
+            .await;
         match self
             .runtime
-            .hand_off_plan(&proposal.ended, process_config)
+            .hand_off_plan(prompt, &proposal.ended, process_config)
             .await
         {
             None => Shown {
@@ -402,7 +407,7 @@ impl SessionHost {
             },
             Some(handoff) => {
                 let answered = self
-                    .report_plan_handoff(handoff, proposal.ended, process_config, client)
+                    .report_plan_handoff(prompt, handoff, proposal.ended, process_config, client)
                     .await;
                 // The proposal's miss came first, so it is the one reported.
                 Shown {
@@ -416,6 +421,7 @@ impl SessionHost {
     /// Runs `turn` beside a forwarder that shows it to the client.
     async fn forward_turn(
         &mut self,
+        prompt: &PromptScope,
         turn: Turn,
         process_config: &Config,
         client: &dyn AcpClientPort,
@@ -439,7 +445,7 @@ impl SessionHost {
         };
         let io = TurnIo { events, control };
         let (result, forwarded) = tokio::join!(
-            self.runtime.run_turn(turn, io, process_config),
+            self.runtime.run_turn(prompt, turn, io, process_config),
             forwarder.forward(event_receiver, control_sender),
         );
         self.sent_plan = forwarded.sent_plan.unwrap_or_default();
@@ -453,6 +459,7 @@ impl SessionHost {
     /// the notice the prompt was saved with.
     async fn start_workflow(
         &mut self,
+        prompt: &PromptScope,
         display: &UserInput,
         start: StartCommand,
         startup: &AcpStartup,
@@ -460,7 +467,13 @@ impl SessionHost {
     ) -> anyhow::Result<PromptResponse> {
         let started = self
             .runtime
-            .start_workflow(display, start, &startup.config, &startup.config_path)
+            .start_workflow(
+                prompt,
+                display,
+                start,
+                &startup.config,
+                &startup.config_path,
+            )
             .await?;
         match started {
             WorkflowStart::Cancelled => Ok(PromptResponse::new(StopReason::Cancelled)),

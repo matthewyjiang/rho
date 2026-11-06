@@ -5,7 +5,7 @@
 
 use rho_sdk::UserInput;
 
-use super::{SessionRuntime, Turn, TurnOutcome};
+use super::{PromptScope, SessionRuntime, Turn, TurnOutcome};
 use crate::{
     config::Config,
     permission::PermissionMode,
@@ -33,8 +33,9 @@ pub(crate) enum PlanHandoff {
 }
 
 impl SessionRuntime {
-    /// Applies the answer to `exit_plan_mode` that the turn ending as
-    /// `proposal` recorded, if any. Call once the host has shown that turn.
+    /// Applies the answer to `exit_plan_mode` that `prompt`'s turn ending
+    /// as `proposal` recorded, if any. Call once the host has shown that
+    /// turn.
     /// `proposal` is how the turn itself ended: an update the host failed to
     /// show does not change it, since the turn was saved either way. A cancel that
     /// lands before the switch commits, such as during the host's last
@@ -42,11 +43,12 @@ impl SessionRuntime {
     /// only the implementation turn.
     pub(crate) async fn hand_off_plan(
         &mut self,
+        prompt: &PromptScope,
         proposal: &anyhow::Result<TurnOutcome>,
         process_config: &Config,
     ) -> Option<PlanHandoff> {
         let decision = self.built.tools.take_plan_exit_decision()?;
-        let cancelled = self.handle.gate().is_cancelled();
+        let cancelled = prompt.is_cancelled();
         let turn = match proposal {
             Ok(outcome) if outcome.answered() && !cancelled => ProposalTurn::Completed,
             Ok(_) | Err(_) => ProposalTurn::Unfinished,

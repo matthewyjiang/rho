@@ -10,7 +10,7 @@ use super::{
     permission, prompt_response, send_notification, AcpClientPort, Config, EventMapper,
     SessionHost, Shown,
 };
-use crate::app::session_runtime::{PlanHandoff, TurnOutcome};
+use crate::app::session_runtime::{PlanHandoff, PromptScope, TurnOutcome};
 
 impl SessionHost {
     /// Shows `handoff`, which followed the turn that ended as `proposal`, and
@@ -19,6 +19,7 @@ impl SessionHost {
     /// missed of that turn.
     pub(super) async fn report_plan_handoff(
         &mut self,
+        prompt: &PromptScope,
         handoff: PlanHandoff,
         proposal: anyhow::Result<TurnOutcome>,
         process_config: &Config,
@@ -52,7 +53,7 @@ impl SessionHost {
                 self.refresh_advertisements(process_config, client).await;
                 self.plan_notice(&notice, client).await;
                 let implemented = self
-                    .forward_turn(implementation, process_config, client)
+                    .forward_turn(prompt, implementation, process_config, client)
                     .await;
                 Shown {
                     ended: implemented.ended.map(prompt_response),

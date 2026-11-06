@@ -39,10 +39,10 @@ impl SessionHandle {
     }
 
     /// Starts a prompt as the runtime does, for host tests that hold a slot
-    /// with no runtime behind it.
+    /// with no runtime behind it. The prompt lasts until the scope drops.
     #[cfg(test)]
-    pub(crate) fn start_prompt_for_tests(&self) {
-        self.0.gate.begin();
+    pub(crate) fn start_prompt_for_tests(&self) -> super::PromptScope {
+        super::PromptScope::begin(self)
     }
 
     pub(super) fn gate(&self) -> &PromptGate {

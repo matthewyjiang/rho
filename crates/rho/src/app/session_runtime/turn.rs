@@ -14,7 +14,7 @@ use super::{
     events::{RunEnd, SessionEvent, TurnControl},
     persist::TurnCheckpoint,
     pump::{pump, AppliedDisplays, ApprovalSource, EventSource, PumpSources},
-    SessionRuntime,
+    PromptScope, SessionRuntime,
 };
 use crate::{
     app::headless_delegation::{BackgroundSources, HeadlessDelegation, OfferedDisplays},
@@ -82,21 +82,22 @@ impl TurnOutcome {
 }
 
 impl SessionRuntime {
-    /// Runs `turn` to its end, reporting through `io`, within a prompt
-    /// begun with [`Self::begin_prompt`]. Failures are saved with what the
-    /// turn showed and reported to the session's hooks before they return;
-    /// one on the provider's credentials has the next prompt renew them.
+    /// Runs `turn` to its end within `prompt`, reporting through `io`.
+    /// Failures are saved with what the turn showed and reported to the
+    /// session's hooks before they return; one on the provider's
+    /// credentials has the next prompt renew them.
     /// The first turn this runtime completes with the model's answer asks
     /// the title agent `process_config` configures to name the session, for
     /// the host to take with [`Self::take_title`].
     pub(crate) async fn run_turn(
         &mut self,
+        prompt: &PromptScope,
         turn: Turn,
         io: TurnIo,
         process_config: &Config,
     ) -> anyhow::Result<TurnOutcome> {
         let title_input = (!self.title_requested).then(|| turn.display.clone());
-        let result = self.run_delegated(turn, io).await;
+        let result = self.run_delegated(prompt, turn, io).await;
         self.note_credential_failure(&result);
         if let Some(user) = title_input.filter(|_| result.as_ref().is_ok_and(TurnOutcome::answered))
         {
@@ -106,7 +107,12 @@ impl SessionRuntime {
     }
 
     /// Runs `turn` beside the session's background work.
-    async fn run_delegated(&mut self, turn: Turn, mut io: TurnIo) -> anyhow::Result<TurnOutcome> {
+    async fn run_delegated(
+        &mut self,
+        prompt: &PromptScope,
+        turn: Turn,
+        mut io: TurnIo,
+    ) -> anyhow::Result<TurnOutcome> {
         let stored = self.stored()?.clone();
         let mut delegation = HeadlessDelegation::attach(
             &self.built.session,
@@ -121,15 +127,18 @@ impl SessionRuntime {
         // mid-turn message. The next prompt waits for and delivers them and
         // their undelivered notices; only closing or replacing the session
         // stops them.
-        let result =
-            HeadlessDelegation::drive(&mut delegation, self.drive_prompt(turn, displays, &mut io))
-                .await;
+        let result = HeadlessDelegation::drive(
+            &mut delegation,
+            self.drive_prompt(prompt, turn, displays, &mut io),
+        )
+        .await;
         self.held_notices = delegation.hold_notices();
         result
     }
 
     async fn drive_prompt(
         &mut self,
+        prompt: &PromptScope,
         turn: Turn,
         displays: OfferedDisplays,
         io: &mut TurnIo,
@@ -148,7 +157,7 @@ impl SessionRuntime {
                 if let Some(text) = self.reopen_notice.take() {
                     io.emit(SessionEvent::Notice { text });
                 }
-                self.drive_run(&checkpoint, model, calls, displays, io)
+                self.drive_run(prompt, &checkpoint, model, calls, displays, io)
                     .await
             }
             Err(error) => Err(error),
@@ -162,6 +171,7 @@ impl SessionRuntime {
 
     async fn drive_run(
         &mut self,
+        prompt: &PromptScope,
         checkpoint: &TurnCheckpoint,
         model: UserInput,
         calls: Vec<ToolCall>,
@@ -180,7 +190,7 @@ impl SessionRuntime {
                 return Err(error.into());
             }
         };
-        self.handle.gate().activate(run.cancellation_handle());
+        prompt.activate(run.cancellation_handle());
         io.emit(SessionEvent::RunStarted);
         let cancel = run.cancellation_handle();
         let mut approval_receiver = self.built.approval_receiver.take();

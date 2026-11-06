@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     build::{build_session, session_config},
-    model_scoped_config, CommandRejected, SessionPermission, SessionRuntime,
+    model_scoped_config, CommandRejected, PromptScope, SessionPermission, SessionRuntime,
 };
 use crate::{
     agent::{AgentCatalog, AgentDefinition},
@@ -106,12 +106,14 @@ impl SessionRuntime {
         Ok(())
     }
 
-    /// Rebuilds a fresh child for `task` with its selected model and
-    /// definition's prompt and tools. The host then submits only the task to
-    /// the model; the original command remains in display history so the
-    /// host can show how the child was launched.
+    /// Rebuilds a fresh child for `task` within `prompt`, with its selected
+    /// model and definition's prompt and tools. The host then submits only
+    /// the task to the model as the prompt's turn; the original command
+    /// remains in display history so the host can show how the child was
+    /// launched.
     pub(crate) async fn rebind_agent(
         &mut self,
+        prompt: &PromptScope,
         task: &AgentTask,
         process_config: &Config,
     ) -> anyhow::Result<()> {
@@ -122,6 +124,7 @@ impl SessionRuntime {
         let added_dirs = self.added_dirs.clone();
         let build = self.build.clone();
         self.rebind_agent_with(
+            prompt,
             task,
             process_config,
             |base| {
@@ -149,9 +152,11 @@ impl SessionRuntime {
 
     /// Keep the rebind transaction independent of credential/provider discovery
     /// so its session and tool restrictions can use a scripted build in tests.
-    /// `build` builds as [`build_session`] does.
+    /// `build` builds as [`build_session`] does. `_prompt` only proves the
+    /// rebind runs within a prompt, whose turn the child then takes.
     pub(crate) async fn rebind_agent_with<Build, BuildFuture>(
         &mut self,
+        _prompt: &PromptScope,
         task: &AgentTask,
         process_config: &Config,
         bind: impl FnOnce(&Config) -> anyhow::Result<BoundAgent>,

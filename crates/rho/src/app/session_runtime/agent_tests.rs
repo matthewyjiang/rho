@@ -162,8 +162,13 @@ async fn rebind_rejects_nonfresh_sessions_without_replacing_them() {
         }
         let before = runtime.built.session.snapshot();
         let input = UserInput::text("task");
+        let prompt = runtime
+            .begin_prompt(&config, &cwd.path().join("config.toml"))
+            .await
+            .unwrap();
         let error = runtime
             .rebind_agent_with(
+                &prompt,
                 &AgentTask {
                     agent_id: "child".into(),
                     model_override: None,
@@ -175,6 +180,7 @@ async fn rebind_rejects_nonfresh_sessions_without_replacing_them() {
             )
             .await
             .unwrap_err();
+        drop(prompt);
         assert!(error.downcast_ref::<CommandRejected>().is_some());
         assert_eq!(runtime.built.session.snapshot(), before);
         runtime.shutdown().await;
@@ -206,8 +212,13 @@ async fn rebind_keeps_the_host_mcp_servers() {
         },
     };
     let built_with = Mutex::new(None);
+    let prompt = runtime
+        .begin_prompt(&config, &cwd.path().join("config.toml"))
+        .await
+        .unwrap();
     runtime
         .rebind_agent_with(
+            &prompt,
             &AgentTask {
                 agent_id: "child".into(),
                 model_override: None,
@@ -227,6 +238,7 @@ async fn rebind_keeps_the_host_mcp_servers() {
         )
         .await
         .unwrap();
+    drop(prompt);
     let built_with = built_with
         .into_inner()
         .unwrap()

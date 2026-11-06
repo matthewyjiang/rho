@@ -11,7 +11,7 @@ use std::path::Path;
 
 use rho_sdk::{model::Message, CancellationToken, UserInput};
 
-use super::{InsertedMessage, SessionRuntime};
+use super::{InsertedMessage, PromptScope, SessionRuntime};
 use crate::{
     agent::{AgentCapabilities, ToolCapability},
     app::{
@@ -37,14 +37,15 @@ pub(crate) enum WorkflowStart {
 }
 
 impl SessionRuntime {
-    /// Plans `start`, launches its run, records the run id in context, and
-    /// saves the prompt. `display` is the command as the user sent it. Run
-    /// it within a prompt begun with [`Self::begin_prompt`].
+    /// Plans `start` within `prompt`, launches its run, records the run id
+    /// in context, and saves the prompt. `display` is the command as the
+    /// user sent it.
     ///
     /// A cancel stops planning. Once the run exists it keeps going: cancel
     /// it with the `workflow` tool or the CLI, like any background run.
     pub(crate) async fn start_workflow(
         &mut self,
+        prompt: &PromptScope,
         display: &UserInput,
         start: StartCommand,
         process_config: &Config,
@@ -53,7 +54,7 @@ impl SessionRuntime {
         let source = start.workflow.relative_path.clone();
         let failed = |error: anyhow::Error| anyhow::anyhow!("could not start {source}: {error:#}");
         let cancel = CancellationToken::new();
-        self.handle.gate().activate(cancel.clone());
+        prompt.activate(cancel.clone());
 
         let ops = WorkflowOps::open(
             self.storage.cwd().to_path_buf(),
