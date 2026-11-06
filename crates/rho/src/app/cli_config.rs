@@ -452,22 +452,6 @@ fn needs_startup_capability_refresh(
         && provider_model_capabilities_need_refresh(&config.provider, &config.model)
 }
 
-pub(super) fn normalize_reasoning(config: &mut Config) -> bool {
-    normalize_reasoning_from(
-        config,
-        rho_providers::model::ReasoningRequestSource::PersistedOrDefault,
-    )
-}
-
-fn normalize_reasoning_from(
-    config: &mut Config,
-    source: rho_providers::model::ReasoningRequestSource,
-) -> bool {
-    let capabilities = cached_reasoning_capabilities(&config.provider, &config.model);
-    let resolution = capabilities.resolve(config.reasoning, source);
-    apply_reasoning_resolution(config, resolution)
-}
-
 fn apply_reasoning_resolution(
     config: &mut Config,
     resolution: rho_providers::model::ReasoningResolution,

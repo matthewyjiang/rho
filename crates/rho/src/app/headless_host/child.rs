@@ -16,7 +16,8 @@ use super::{run_prompt, HeadlessView, ParentQuestions, PromptEnd, RunReporter, S
 use crate::{
     app::{
         agent_binding::BoundAgent,
-        cli_config,
+        bootstrap::{settle_bound_config, SettledConfig},
+        cli_config::ProviderRefreshStatus,
         session_runtime::{
             HostCapabilities, Logouts, NodeSession, QuestionSupport, RunShape, SessionBuild,
             SessionLaunch, SessionOpening, SessionRole, SessionRuntime, Turn, TurnStart,
@@ -26,7 +27,6 @@ use crate::{
         subagent_messaging::{NoticePoster, SteeringSlot, CHILD_COMMUNICATION_CONTRACT},
     },
     config::Config,
-    diagnostics::RuntimeDiagnostics,
     session::SessionPersistence,
     subagent::RunStatus,
 };
@@ -79,7 +79,7 @@ pub(crate) struct ChildRun {
 pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
     let ChildRun {
         bound,
-        mut config,
+        config,
         config_path,
         cwd,
         prompt,
@@ -99,15 +99,16 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         host_io,
     } = run;
 
-    cli_config::prepare_model_metadata(
-        &config,
-        &crate::credential_store::AppCredentialStore,
-        &cli_config::ProviderRefreshStatus::NotAttempted,
+    let SettledConfig {
+        config,
+        diagnostics,
+    } = settle_bound_config(
+        config,
+        &bound,
+        &ProviderRefreshStatus::NotAttempted,
+        rho_providers::model::ReasoningRequestSource::PersistedOrDefault,
     )
-    .await;
-    cli_config::normalize_reasoning(&mut config);
-    let diagnostics = RuntimeDiagnostics::new(&config);
-    diagnostics.update_agent(bound.id().as_str(), &bound.fingerprint().to_string());
+    .await?;
     let started_status = status_tx.borrow().clone();
     let mut reporter = RunReporter::continue_from(
         output_file,

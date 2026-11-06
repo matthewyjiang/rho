@@ -94,7 +94,7 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
     let PreparedStartup {
         cli,
         catalog,
-        mut config,
+        config,
         config_repository,
         first_run,
         cwd,
@@ -106,13 +106,20 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
         bound_agent,
         bound_reasoning_source,
         provider_refresh,
-        store,
         added_dirs,
     } = prepare_startup(cli).await?;
 
     validate_terminal_mode(&cli)?;
-    cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
-    cli_config::normalize_reasoning_for_cli(&mut config, bound_reasoning_source)?;
+    let SettledConfig {
+        config,
+        diagnostics,
+    } = settle_bound_config(
+        config,
+        &bound_agent,
+        &provider_refresh,
+        bound_reasoning_source,
+    )
+    .await?;
     let herdr = HerdrReporter::from_env();
     let headless_herdr = || {
         herdr
@@ -127,6 +134,7 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
             cwd,
             cli: &cli,
             bound_agent,
+            diagnostics,
             output_file,
             output,
             max_steps,
@@ -146,6 +154,7 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
         cwd,
         bound_agent,
         bound_reasoning_source,
+        diagnostics,
         herdr,
         added_dirs,
     })
@@ -277,6 +286,8 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
 struct PreparedStartup {
     cli: Cli,
     catalog: crate::agent::DiscoveredAgentCatalog,
+    /// The launch config with CLI overrides, before the bound agent's own
+    /// settings apply (see [`settle_bound_config`]).
     config: crate::config::Config,
     config_repository: ConfigRepository,
     first_run: Option<SetupEntry>,
@@ -289,7 +300,6 @@ struct PreparedStartup {
     bound_agent: super::agent_binding::BoundAgent,
     bound_reasoning_source: rho_providers::model::ReasoningRequestSource,
     provider_refresh: cli_config::ProviderRefreshStatus,
-    store: AppCredentialStore,
     added_dirs: crate::added_dirs::AddedDirs,
 }
 
@@ -370,7 +380,6 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         config_repository.save(&config)?;
         config.permission_mode = session_permission_mode;
     }
-    let reasoning_before_binding = config.reasoning;
     let bound_agent = AgentBinder::bind(
         definition,
         AgentInvocation {
@@ -379,13 +388,15 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         },
         &config,
     )?;
-    config = bound_agent.rho_config().cloned().unwrap_or(config);
-    let bound_reasoning_source =
-        if cli.reasoning.is_some() && config.reasoning == reasoning_before_binding {
-            rho_providers::model::ReasoningRequestSource::Explicit
-        } else {
-            rho_providers::model::ReasoningRequestSource::PersistedOrDefault
-        };
+    // An explicit --reasoning stays explicit unless the agent pins its own.
+    let bound_reasoning = bound_agent
+        .rho_config()
+        .map_or(config.reasoning, |bound| bound.reasoning);
+    let bound_reasoning_source = if cli.reasoning.is_some() && bound_reasoning == config.reasoning {
+        rho_providers::model::ReasoningRequestSource::Explicit
+    } else {
+        rho_providers::model::ReasoningRequestSource::PersistedOrDefault
+    };
 
     Ok(PreparedStartup {
         cli,
@@ -402,7 +413,6 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         bound_agent,
         bound_reasoning_source,
         provider_refresh,
-        store,
         added_dirs,
     })
 }
@@ -431,6 +441,7 @@ struct AutomationStartup<'a> {
     cwd: std::path::PathBuf,
     cli: &'a Cli,
     bound_agent: super::agent_binding::BoundAgent,
+    diagnostics: RuntimeDiagnostics,
     output_file: Option<std::path::PathBuf>,
     output: OutputFormat,
     max_steps: Option<NonZeroUsize>,
@@ -440,7 +451,6 @@ struct AutomationStartup<'a> {
 }
 
 async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Result<()> {
-    let diagnostics = bind_agent_diagnostics(startup.config, &startup.bound_agent);
     let persistence = match &startup.cli.command {
         Some(Command::Run { no_save: true, .. }) => SessionPersistence::Ephemeral,
         _ => SessionPersistence::Saved,
@@ -460,7 +470,7 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
             max_steps: startup.max_steps,
             timeout: startup.timeout,
             persistence,
-            diagnostics,
+            diagnostics: startup.diagnostics,
             herdr: startup.herdr,
             added_dirs: startup.added_dirs,
         },
@@ -481,15 +491,21 @@ pub(super) async fn prepare_acp(
         anyhow::bail!("ACP startup requires the acp command");
     };
     let host = acp::AcpHost::from_args(args);
-    let mut startup = prepare_startup(cli).await?;
+    let startup = prepare_startup(cli).await?;
     validate_terminal_mode(&startup.cli)?;
-    cli_config::prepare_model_metadata(&startup.config, &startup.store, &startup.provider_refresh)
-        .await;
-    cli_config::normalize_reasoning_for_cli(&mut startup.config, startup.bound_reasoning_source)?;
-    let diagnostics = bind_agent_diagnostics(&startup.config, &startup.bound_agent);
+    let SettledConfig {
+        config,
+        diagnostics,
+    } = settle_bound_config(
+        startup.config,
+        &startup.bound_agent,
+        &startup.provider_refresh,
+        startup.bound_reasoning_source,
+    )
+    .await?;
     Ok(acp::AcpStartup {
         host,
-        config: startup.config,
+        config,
         config_path: absolute_config_path(&startup.config_repository)?,
         cwd: startup.cwd,
         no_system_prompt: startup.cli.no_system_prompt,
@@ -515,13 +531,12 @@ struct InteractiveStartup<'a> {
     cwd: std::path::PathBuf,
     bound_agent: super::agent_binding::BoundAgent,
     bound_reasoning_source: rho_providers::model::ReasoningRequestSource,
+    diagnostics: RuntimeDiagnostics,
     herdr: HerdrReporter,
     added_dirs: crate::added_dirs::AddedDirs,
 }
 
 async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Result<()> {
-    let diagnostics = bind_agent_diagnostics(&startup.config, &startup.bound_agent);
-
     let pending_update_notice = startup
         .config
         .check_for_updates
@@ -597,7 +612,7 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
         pending_update_notice,
         pending_custom_models,
         pending_prompt_history,
-        diagnostics,
+        diagnostics: startup.diagnostics,
         herdr: startup.herdr,
         agent: startup.bound_agent,
         reasoning_source: startup.bound_reasoning_source,
@@ -606,13 +621,38 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
     .await
 }
 
-fn bind_agent_diagnostics(
-    config: &crate::config::Config,
+/// A bound agent's config, settled for its session, and the diagnostics a
+/// session on it reports.
+pub(super) struct SettledConfig {
+    pub(super) config: crate::config::Config,
+    pub(super) diagnostics: RuntimeDiagnostics,
+}
+
+/// Settles the config a session of `agent` runs with. Every Rho launch
+/// settles its bound agent here: the CLI, ACP, subagents, and daemon
+/// threads.
+///
+/// The agent's own config, which may pin a model and reasoning, replaces
+/// `config` (kept for an agent on another runtime); that model's
+/// capabilities are fetched when the cache lacks them and
+/// `provider_refresh` did not just fetch them; and its reasoning is
+/// normalized to what the model supports, or refused when an `Explicit`
+/// request does not fit. Custom providers must be active already.
+pub(super) async fn settle_bound_config(
+    config: crate::config::Config,
     agent: &super::agent_binding::BoundAgent,
-) -> RuntimeDiagnostics {
-    let diagnostics = RuntimeDiagnostics::new(config);
+    provider_refresh: &cli_config::ProviderRefreshStatus,
+    reasoning: rho_providers::model::ReasoningRequestSource,
+) -> anyhow::Result<SettledConfig> {
+    let mut config = agent.rho_config().cloned().unwrap_or(config);
+    cli_config::prepare_model_metadata(&config, &AppCredentialStore, provider_refresh).await;
+    cli_config::normalize_reasoning_for_cli(&mut config, reasoning)?;
+    let diagnostics = RuntimeDiagnostics::new(&config);
     diagnostics.update_agent(agent.id().as_str(), &agent.fingerprint().to_string());
-    diagnostics
+    Ok(SettledConfig {
+        config,
+        diagnostics,
+    })
 }
 
 fn ensure_cli_credential_store_choice(

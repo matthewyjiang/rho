@@ -1,7 +1,7 @@
-//! Opening a thread's session: config and agents read for the thread's
-//! workspace when the thread is created, as `rho` would read them launched
-//! there, so a config edit applies to the next thread without a daemon
-//! restart.
+//! Opening a thread's session. The config is the user's global config,
+//! read when the thread is created, so a config edit applies to the next
+//! thread without a daemon restart; the agents and instructions are those
+//! of the thread's workspace, as `rho` launched there would find them.
 //!
 //! The session runs as the default agent with the configured permission
 //! mode. Its host answers approvals and questions (both reach the daemon as
@@ -9,20 +9,25 @@
 //! browser login is refused rather than left waiting for a terminal nobody
 //! watches.
 //!
-//! Until clients send their environment (2d), the session's tools run with
-//! the daemon's own environment minus provider credentials, as every rho
-//! session's tools do: whatever environment the daemon started with, which
-//! for an auto-spawned daemon is that of the client that spawned it.
+//! Until clients send their environment (#1659), the session's tools run
+//! with the daemon's own environment minus provider credentials, as every
+//! rho session's tools do: whatever environment the daemon started with,
+//! which for an auto-spawned daemon is that of the client that spawned it.
 
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use rho_protocol::{ErrorCode, RpcError};
 
 use crate::{
     added_dirs::AddedDirs,
     agent::{AgentCatalog, DEFAULT_AGENT_ID},
     app::{
         agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundAgent},
-        bootstrap::{root_host_tools, SubagentTools},
-        cli_config::{self, ProviderRefreshStatus},
+        bootstrap::{root_host_tools, settle_bound_config, SettledConfig, SubagentTools},
+        cli_config::ProviderRefreshStatus,
         config_repository::ConfigRepository,
         session_runtime::{
             ApprovalPolicy, BackgroundWait, ChildAgents, HostCapabilities, Logouts,
@@ -31,11 +36,34 @@ use crate::{
         },
     },
     config::Config,
-    credential_store::AppCredentialStore,
-    diagnostics::RuntimeDiagnostics,
     session::SessionPersistence,
     tools::{host_io::HostIo, mcp::McpAuthorizationMode},
 };
+
+/// The directory a thread runs in: an existing directory, canonicalized.
+/// Parsed once from the request's `cwd`.
+pub(super) struct ThreadWorkspace(PathBuf);
+
+impl ThreadWorkspace {
+    /// The workspace `cwd` names. A relative path, a path that does not
+    /// resolve, and one that is not a directory are invalid params.
+    pub(super) fn parse(cwd: &Path) -> Result<Self, RpcError> {
+        let invalid = |reason: String| {
+            RpcError::new(
+                ErrorCode::InvalidParams,
+                format!("invalid cwd {}: {reason}", cwd.display()),
+            )
+        };
+        if !cwd.is_absolute() {
+            return Err(invalid("not an absolute path".to_owned()));
+        }
+        let path = std::fs::canonicalize(cwd).map_err(|error| invalid(error.to_string()))?;
+        if !path.is_dir() {
+            return Err(invalid("not a directory".to_owned()));
+        }
+        Ok(Self(path))
+    }
+}
 
 /// A thread's session, open, and the config it runs with.
 pub(super) struct OpenedThread {
@@ -44,29 +72,30 @@ pub(super) struct OpenedThread {
     pub(super) config: Config,
 }
 
-/// Opens a new, saved session in `cwd` for a thread. Its file is written
-/// with its first prompt.
-pub(super) async fn open_thread(cwd: &Path, logouts: &Logouts) -> anyhow::Result<OpenedThread> {
-    let cwd = std::fs::canonicalize(cwd)?;
-    anyhow::ensure!(cwd.is_dir(), "{} is not a directory", cwd.display());
+/// Opens a new, saved session in `workspace` for a thread. Its file is
+/// written with its first prompt.
+pub(super) async fn open_thread(
+    workspace: &ThreadWorkspace,
+    logouts: &Logouts,
+) -> anyhow::Result<OpenedThread> {
+    let ThreadWorkspace(cwd) = workspace;
     let repository = ConfigRepository::new(None);
     let config_path = repository.configured_path()?;
-    let mut config = repository.load()?;
+    let config = repository.load()?;
     // The last config read publishes its custom providers to the daemon,
     // as each rho process publishes its own at startup.
     config.providers.activate()?;
-    cli_config::prepare_model_metadata(
-        &config,
-        &AppCredentialStore,
+    let agent = bind_default_agent(cwd, &config)?;
+    let SettledConfig {
+        config,
+        diagnostics,
+    } = settle_bound_config(
+        config,
+        &agent,
         &ProviderRefreshStatus::NotAttempted,
+        rho_providers::model::ReasoningRequestSource::PersistedOrDefault,
     )
-    .await;
-    cli_config::normalize_reasoning(&mut config);
-    let agent = bind_default_agent(&cwd, &config)?;
-    // The agent may pin its own model and reasoning.
-    let config = agent.rho_config().cloned().unwrap_or(config);
-    let diagnostics = RuntimeDiagnostics::new(&config);
-    diagnostics.update_agent(agent.id().as_str(), &agent.fingerprint().to_string());
+    .await?;
     let build = SessionBuild {
         launch: SessionLaunch {
             config_path,
@@ -89,7 +118,7 @@ pub(super) async fn open_thread(cwd: &Path, logouts: &Logouts) -> anyhow::Result
             parent_notices: None,
         },
         run: RunShape {
-            role: SessionRole::DaemonThread,
+            role: SessionRole::Daemon,
             max_steps: None,
             hook_labels: Default::default(),
         },
@@ -98,7 +127,7 @@ pub(super) async fn open_thread(cwd: &Path, logouts: &Logouts) -> anyhow::Result
         build,
         process_config: &config,
         host_mcp: Default::default(),
-        cwd: &cwd,
+        cwd,
         added_dirs: AddedDirs::default(),
         logouts,
     };
@@ -125,19 +154,4 @@ fn bind_default_agent(cwd: &Path, config: &Config) -> anyhow::Result<BoundAgent>
         },
         config,
     )
-}
-
-/// Opens the credential store every thread's provider reads, once, as the
-/// daemon starts: like every rho process, the daemon opens it at startup.
-/// A config that does not load is logged, and threads then fail to open
-/// with the same error.
-pub(in crate::app::daemon_host) fn open_credential_store() {
-    let repository = ConfigRepository::new(None);
-    let opened = repository.configured_path().and_then(|path| {
-        let mut config = repository.load()?;
-        crate::credential_store::initialize_from_config(&mut config, &path)
-    });
-    if let Err(error) = opened {
-        tracing::warn!(error = %format!("{error:#}"), "could not open the credential store");
-    }
 }

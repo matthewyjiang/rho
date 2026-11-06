@@ -16,10 +16,17 @@ use {
     },
 };
 
-use super::{
-    apply_overrides, normalize_reasoning, normalize_reasoning_for_cli, refresh_model_cache,
-    validate,
-};
+use super::{apply_overrides, normalize_reasoning_for_cli, refresh_model_cache, validate};
+
+/// Normalizes `config`'s persisted or default reasoning, as a launch
+/// without `--reasoning` does.
+fn normalize_reasoning(config: &mut Config) -> bool {
+    normalize_reasoning_for_cli(
+        config,
+        rho_providers::model::ReasoningRequestSource::PersistedOrDefault,
+    )
+    .expect("a persisted reasoning level is never refused")
+}
 
 pub(super) fn unique_cache_dir(name: &str) -> std::path::PathBuf {
     let nanos = SystemTime::now()
