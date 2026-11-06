@@ -403,25 +403,17 @@ impl SessionHost {
         let proposal = self
             .forward_turn(prompt, turn, process_config, client)
             .await;
-        match self
+        let handoff = self
             .runtime
-            .hand_off_plan(prompt, &proposal.ended, process_config)
-            .await
-        {
-            None => Shown {
-                ended: proposal.ended.map(prompt_response),
-                missed_update: proposal.missed_update,
-            },
-            Some(handoff) => {
-                let answered = self
-                    .report_plan_handoff(prompt, handoff, proposal.ended, process_config, client)
-                    .await;
-                // The proposal's miss came first, so it is the one reported.
-                Shown {
-                    ended: answered.ended,
-                    missed_update: proposal.missed_update.or(answered.missed_update),
-                }
-            }
+            .hand_off_plan(prompt, proposal.ended, process_config)
+            .await;
+        let answered = self
+            .report_plan_handoff(prompt, handoff, process_config, client)
+            .await;
+        // The proposal's miss came first, so it is the one reported.
+        Shown {
+            ended: answered.ended,
+            missed_update: proposal.missed_update.or(answered.missed_update),
         }
     }
 

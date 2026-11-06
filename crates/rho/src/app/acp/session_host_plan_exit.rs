@@ -3,36 +3,32 @@
 //! `session/prompt` when the runtime switched modes.
 
 use agent_client_protocol::schema::v1::{
-    CurrentModeUpdate, PromptResponse, SessionNotification, SessionUpdate, StopReason,
+    CurrentModeUpdate, PromptResponse, SessionNotification, SessionUpdate,
 };
 
 use super::{
     permission, prompt_response, send_notification, AcpClientPort, Config, EventMapper,
     SessionHost, Shown,
 };
-use crate::app::session_runtime::{PlanHandoff, PromptScope, TurnOutcome};
+use crate::app::session_runtime::{PlanHandoff, PromptScope};
 
 impl SessionHost {
-    /// Shows `handoff`, which followed the turn that ended as `proposal`, and
-    /// answers the prompt: with the proposal's end, or with the
-    /// implementation turn's once the mode switched, and what the client
-    /// missed of that turn.
+    /// Shows `handoff` and answers `prompt` with how it ended: the end the
+    /// handoff carries, or the implementation turn's once the mode switched,
+    /// with what the client missed of that turn.
     pub(super) async fn report_plan_handoff(
         &mut self,
         prompt: &PromptScope,
         handoff: PlanHandoff,
-        proposal: anyhow::Result<TurnOutcome>,
         process_config: &Config,
         client: &dyn AcpClientPort,
     ) -> Shown<PromptResponse> {
         match handoff {
-            PlanHandoff::Kept { notice } => {
-                self.plan_notice(&notice, client).await;
-                Shown::delivered(proposal.map(prompt_response))
-            }
-            PlanHandoff::Cancelled { notice } => {
-                self.plan_notice(&notice, client).await;
-                Shown::delivered(proposal.map(|_| PromptResponse::new(StopReason::Cancelled)))
+            PlanHandoff::Ended { notice, ended } => {
+                if let Some(notice) = notice {
+                    self.plan_notice(&notice, client).await;
+                }
+                Shown::delivered(ended.map(prompt_response))
             }
             PlanHandoff::Switched {
                 mode,
