@@ -1,8 +1,8 @@
 //! The gate that carries a session's prompt cancellation and steering.
 
-use std::sync::Mutex;
+use std::{future::Future, sync::Mutex};
 
-use rho_sdk::{CancellationToken, SteeringHandle};
+use rho_sdk::{CancellationToken, SteeringHandle, SteeringId, UserInput};
 
 /// Carries cancellation for the session's current prompt, and steering for
 /// its model run. A runtime runs one prompt at a time, since its host holds
@@ -179,12 +179,25 @@ impl PromptGate {
         }
     }
 
-    /// The steering of the current prompt's model run; `None` while no
-    /// prompt runs, it is still starting, it runs a command, or it was
-    /// cancelled: a cancelling run could accept a steer it never applies.
-    pub(super) fn steering(&self) -> Option<SteeringHandle> {
+    /// Stages `input` into the current prompt's model run, under the same
+    /// lock a cancel takes, so a cancel either comes first and refuses the
+    /// steer or comes after the run accepted it. `None` while no prompt
+    /// runs, it is still starting, it runs a command, or it was cancelled:
+    /// a cancelling run could accept a steer it never applies.
+    pub(super) fn steer(
+        &self,
+        input: UserInput,
+    ) -> Option<
+        Result<
+            impl Future<Output = Result<SteeringId, rho_sdk::Error>> + Send + 'static,
+            rho_sdk::Error,
+        >,
+    > {
         match &self.slot().state {
-            PromptGateState::Active(work) if !work.token.is_cancelled() => work.steering.clone(),
+            PromptGateState::Active(work) if !work.token.is_cancelled() => work
+                .steering
+                .as_ref()
+                .map(|steering| steering.request_steer_retractable(input)),
             PromptGateState::Active(_)
             | PromptGateState::Idle
             | PromptGateState::Starting(_)

@@ -87,9 +87,10 @@ impl SessionHandle {
         if self.is_replaced() {
             return Err(SteerError::NotRunning);
         }
-        let steering = self.0.gate.steering().ok_or(SteerError::NotRunning)?;
-        steering
-            .request_steer_retractable(input)
+        self.0
+            .gate
+            .steer(input)
+            .ok_or(SteerError::NotRunning)?
             .map_err(|error| match error {
                 rho_sdk::Error::RunFinished => SteerError::NotRunning,
                 error => SteerError::Refused(error),
