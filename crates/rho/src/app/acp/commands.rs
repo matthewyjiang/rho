@@ -4,7 +4,14 @@
 //! send a picked command back as `/name args` prompt text. ACP sessions run
 //! every command of [`crate::app::session_commands`], which resolves them,
 //! including both built-ins, `/compact` and `/init`; this module advertises
-//! them, with `$skill` mentions as T3 Code reads them (see [`super::skills`]).
+//! them.
+//!
+//! T3 Code fills its `$` menu only from `available_commands_update` entries
+//! named `$<skill>` and sends a picked skill back as a `$<skill>` mention in
+//! plain prompt text. Rho advertises its discovered skills that way; the
+//! shared resolver then loads every mentioned skill before the first model
+//! request, as one batch of host-requested `skill` calls.
+//! [`crate::skills::mention`] owns the mention rule shared with the TUI.
 //!
 //! `/rho-wake <token>` runs a T3 wake watcher (see [`super::t3_wake`]). It is
 //! ACP's own command, matched before the shared ones, and never advertised:
@@ -15,10 +22,7 @@ use agent_client_protocol::schema::v1::{
 };
 use rho_sdk::UserInput;
 
-use super::{
-    skills,
-    t3_wake::{WakeSignal, WAKE_COMMAND},
-};
+use super::t3_wake::{WakeSignal, WAKE_COMMAND};
 use crate::{
     agent::AgentRuntimeSpec,
     app::{
@@ -31,15 +35,18 @@ use crate::{
     },
     commands::COMMANDS,
     prompt_templates,
-    skills::mention::SKILL_TOOL,
+    skills::{
+        mention::{self, SKILL_TOOL},
+        Skill,
+    },
     tools::workflow as workflow_tool,
 };
 
 /// The shared commands ACP sessions run: every built-in.
-const ACP_COMMANDS: CommandSet = CommandSet::new(
-    &[BuiltInCommand::Compact, BuiltInCommand::Init],
-    "ACP sessions",
-);
+const ACP_COMMANDS: CommandSet = CommandSet {
+    built_ins: &[BuiltInCommand::Compact, BuiltInCommand::Init],
+    sessions_label: "ACP sessions",
+};
 
 /// What a prompt asks an ACP session to do.
 #[derive(Debug)]
@@ -90,7 +97,7 @@ pub(super) fn available_commands(scope: &CommandScope<'_>) -> Vec<AvailableComma
         );
     }
     if scope.tools.contains(SKILL_TOOL) {
-        commands.extend(skills::available_commands(&scope.skills()));
+        commands.extend(skill_commands(&scope.skills()));
     }
     if let Ok(catalog) = scope.agent_catalog() {
         commands.extend(catalog.iter().filter_map(|entry| {
@@ -126,6 +133,15 @@ pub(super) async fn resolve(
     session_commands::resolve(input, scope, ACP_COMMANDS)
         .await
         .map(AcpPrompt::Shared)
+}
+
+/// `$<name>` commands for every skill a T3 composer can mention.
+fn skill_commands(skills: &[Skill]) -> Vec<AvailableCommand> {
+    skills
+        .iter()
+        .filter(|skill| mention::mentionable(&skill.name))
+        .map(|skill| AvailableCommand::new(format!("${}", skill.name), skill.description.clone()))
+        .collect()
 }
 
 /// An advertised command. `usage` is `/name args`; the args become the hint.

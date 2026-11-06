@@ -63,16 +63,13 @@ impl BuiltInCommand {
 /// does not list are rejected, as are the TUI's own commands.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CommandSet {
-    built_ins: &'static [BuiltInCommand],
+    /// The built-ins this host runs.
+    pub(crate) built_ins: &'static [BuiltInCommand],
     /// The host's sessions as rejections name them, such as `ACP sessions`.
-    host: &'static str,
+    pub(crate) sessions_label: &'static str,
 }
 
 impl CommandSet {
-    pub(crate) const fn new(built_ins: &'static [BuiltInCommand], host: &'static str) -> Self {
-        Self { built_ins, host }
-    }
-
     /// The built-in `id` names, when this set runs it.
     pub(crate) fn built_in(self, id: CommandId) -> Option<BuiltInCommand> {
         self.built_ins
@@ -179,7 +176,7 @@ fn built_in(
         }
         None => Err(CommandRejected(format!(
             "could not run /{}: not available in {}",
-            invocation.name, commands.host
+            invocation.name, commands.sessions_label
         ))),
     }
 }
@@ -245,7 +242,7 @@ fn run_as_agent(
             return Err(rejected(format!(
                 "{agent_id} runs on {}, which {} cannot host",
                 definition.runtime.runtime(),
-                commands.host
+                commands.sessions_label
             )));
         }
     }

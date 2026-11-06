@@ -1,10 +1,13 @@
-use agent_client_protocol::schema::v1::AvailableCommandInput;
+use agent_client_protocol::schema::v1::{AvailableCommand, AvailableCommandInput};
 use pretty_assertions::assert_eq;
 use rho_sdk::UserInput;
 use serde_json::json;
 
-use super::{available_commands, resolve, AcpPrompt};
-use crate::app::session_commands::{test_support::Fixture, PromptCommand};
+use super::{available_commands, resolve, skill_commands, AcpPrompt};
+use crate::{
+    app::session_commands::{test_support::Fixture, PromptCommand},
+    skills::{Skill, SkillSource},
+};
 
 /// The parts of an ACP prompt the wake tests tell apart.
 #[derive(Debug, PartialEq)]
@@ -77,16 +80,46 @@ fn available_commands_list_every_command_kind() {
             json!(["prompt:review", "[$1]"]),
             json!(["mcp:docs:search", "<query>"]),
             json!(["workflow:check", "[inputs JSON]"]),
-            json!(["$acp-demo", null]),
+            json!(["$demo", null]),
             json!(["$rho-agent-creator", null]),
             json!(["$rho-config", null]),
             json!(["$rho-init", null]),
             json!(["$rho-workflow-authoring", null]),
-            json!(["agent:acp-rho", "<task>"]),
+            json!(["agent:child-rho", "<task>"]),
             json!(["agent:default", "<task>"]),
             json!(["agent:explorer", "<task>"]),
             json!(["agent:reviewer", "<task>"]),
             json!(["agent:worker", "<task>"]),
         ]
     );
+}
+
+fn skill(name: &str) -> Skill {
+    Skill {
+        name: name.into(),
+        description: format!("{name} description"),
+        disable_model_invocation: false,
+        source: SkillSource::BuiltIn,
+        contents: String::new(),
+    }
+}
+
+// Covers: the `$` menu must list exactly the skills a T3 composer can mention
+// Owner: acp commands
+#[test]
+fn skill_commands_skip_names_t3_reads_as_amounts() {
+    let skills = [
+        skill("review"),
+        skill("2fa"),
+        skill("20k"),
+        skill("1e6"),
+        skill("42"),
+    ];
+
+    let names = skill_commands(&skills)
+        .into_iter()
+        .map(|AvailableCommand { name, .. }| name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(names, ["$review", "$2fa"]);
 }

@@ -7,11 +7,11 @@ use super::{
 };
 use crate::app::session_runtime::AgentTask;
 
-/// Every built-in, as ACP sessions run them.
-const ALL: CommandSet = CommandSet::new(
-    &[BuiltInCommand::Compact, BuiltInCommand::Init],
-    "test sessions",
-);
+/// A host that runs every built-in.
+const ALL: CommandSet = CommandSet {
+    built_ins: &[BuiltInCommand::Compact, BuiltInCommand::Init],
+    sessions_label: "test sessions",
+};
 
 /// The parts of a command a test can predict: model text, and the skills its
 /// host batch loads, in order. Call ids are random.
@@ -115,26 +115,23 @@ async fn resolve_routes_prompts_to_commands() {
         ),
         (
             "template expansion loads a mentioned skill",
-            "/prompt:review $acp-demo",
-            turn("Review $acp-demo carefully", &["acp-demo"]),
+            "/prompt:review $demo",
+            turn("Review $demo carefully", &["demo"]),
         ),
         (
             "skill picked as a slash command",
-            "/$acp-demo please",
-            turn("/$acp-demo please", &["acp-demo"]),
+            "/$demo please",
+            turn("/$demo please", &["demo"]),
         ),
         (
             "slash command skill batches with later mentions",
-            "/$acp-demo with $rho-config and $acp-demo",
-            turn(
-                "/$acp-demo with $rho-config and $acp-demo",
-                &["acp-demo", "rho-config"],
-            ),
+            "/$demo with $rho-config and $demo",
+            turn("/$demo with $rho-config and $demo", &["demo", "rho-config"]),
         ),
         (
             "skill mention",
-            "use $acp-demo please",
-            turn("use $acp-demo please", &["acp-demo"]),
+            "use $demo please",
+            turn("use $demo please", &["demo"]),
         ),
         ("tui-only command", "/model gpt-5", Resolved::Rejected),
         (
@@ -165,19 +162,19 @@ async fn resolve_routes_prompts_to_commands() {
         ("unknown workflow", "/workflow:missing", Resolved::Rejected),
         (
             "agent definition",
-            "/agent:acp-rho inspect the parser",
+            "/agent:child-rho inspect the parser",
             Resolved::Agent {
-                id: "acp-rho".into(),
+                id: "child-rho".into(),
                 model_override: None,
                 input: UserInput::text("inspect the parser"),
             },
         ),
-        ("agent missing task", "/agent:acp-rho", Resolved::Rejected),
+        ("agent missing task", "/agent:child-rho", Resolved::Rejected),
         (
             "multiline delegated brief",
-            "/agent:acp-rho\n\nGoal: inspect the parser.\n\nReport findings.\n",
+            "/agent:child-rho\n\nGoal: inspect the parser.\n\nReport findings.\n",
             Resolved::Agent {
-                id: "acp-rho".into(),
+                id: "child-rho".into(),
                 model_override: None,
                 input: UserInput::text("Goal: inspect the parser.\n\nReport findings."),
             },
@@ -190,7 +187,7 @@ async fn resolve_routes_prompts_to_commands() {
         ),
         (
             "external agent",
-            "/agent:acp-claude inspect",
+            "/agent:child-claude inspect",
             Resolved::Rejected,
         ),
         (
@@ -218,7 +215,10 @@ async fn resolve_routes_prompts_to_commands() {
         "plan mode cannot start workflows"
     );
     // A host such as `rho run`, whose one prompt has nothing to compact.
-    let without_compact = CommandSet::new(&[BuiltInCommand::Init], "test runs");
+    let without_compact = CommandSet {
+        built_ins: &[BuiltInCommand::Init],
+        sessions_label: "test runs",
+    };
     assert_eq!(
         resolved("/compact", &scope, without_compact).await,
         Resolved::Rejected,
@@ -248,9 +248,9 @@ async fn resolve_keeps_blocks_after_the_command() {
             },
         ),
         (
-            "/agent:acp-rho inspect this",
+            "/agent:child-rho inspect this",
             PromptCommand::RunAsAgent(AgentTask {
-                agent_id: "acp-rho".into(),
+                agent_id: "child-rho".into(),
                 model_override: None,
                 input: UserInput::content(vec![
                     ContentBlock::Text("inspect this".into()),
@@ -260,9 +260,9 @@ async fn resolve_keeps_blocks_after_the_command() {
             }),
         ),
         (
-            "/agent:acp-rho --model @review -- \nInspect this\n--model is task text\n",
+            "/agent:child-rho --model @review -- \nInspect this\n--model is task text\n",
             PromptCommand::RunAsAgent(AgentTask {
-                agent_id: "acp-rho".into(),
+                agent_id: "child-rho".into(),
                 model_override: Some("@review".into()),
                 input: UserInput::content(vec![
                     ContentBlock::Text("\nInspect this\n--model is task text\n".into()),
@@ -291,7 +291,7 @@ async fn agent_model_override_requires_a_reference_and_explicit_task_delimiter()
         (
             "-- --model is literal task text",
             Resolved::Agent {
-                id: "acp-rho".into(),
+                id: "child-rho".into(),
                 model_override: None,
                 input: UserInput::text("--model is literal task text"),
             },
@@ -299,7 +299,7 @@ async fn agent_model_override_requires_a_reference_and_explicit_task_delimiter()
         (
             "--model openai-codex/gpt-6-luna -- inspect --model literally",
             Resolved::Agent {
-                id: "acp-rho".into(),
+                id: "child-rho".into(),
                 model_override: Some("openai-codex/gpt-6-luna".into()),
                 input: UserInput::text("inspect --model literally"),
             },
@@ -315,7 +315,7 @@ async fn agent_model_override_requires_a_reference_and_explicit_task_delimiter()
         ("--model=@review -- task", Resolved::Rejected),
     ] {
         assert_eq!(
-            resolved(&format!("/agent:acp-rho {args}"), &fixture.scope(), ALL).await,
+            resolved(&format!("/agent:child-rho {args}"), &fixture.scope(), ALL).await,
             expected,
             "{args}"
         );

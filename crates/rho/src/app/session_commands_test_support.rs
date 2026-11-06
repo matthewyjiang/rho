@@ -16,8 +16,8 @@ use crate::{
 use super::CommandScope;
 
 /// A workspace with one prompt template (`review`), one project skill
-/// (`acp-demo`), and one workflow (`check`), user definitions for a Rho
-/// (`acp-rho`) and an external (`acp-claude`) agent, an offline MCP prompt
+/// (`demo`), and one workflow (`check`), user definitions for a Rho
+/// (`child-rho`) and an external (`child-claude`) agent, an offline MCP prompt
 /// (`docs:search`), and a session that can load skills, start workflows,
 /// and write files (but not delegate).
 pub(in crate::app) struct Fixture {
@@ -33,11 +33,11 @@ impl Fixture {
         let prompts = workspace.path().join(".rho/prompts");
         std::fs::create_dir_all(&prompts).unwrap();
         std::fs::write(prompts.join("review.md"), "Review $1 carefully").unwrap();
-        let skill = workspace.path().join(".agents/skills/acp-demo");
+        let skill = workspace.path().join(".agents/skills/demo");
         std::fs::create_dir_all(&skill).unwrap();
         std::fs::write(
             skill.join("SKILL.md"),
-            "---\nname: acp-demo\ndescription: Demo skill.\n---\nBody\n",
+            "---\nname: demo\ndescription: Demo skill.\n---\nBody\n",
         )
         .unwrap();
         let workflows = workspace.path().join(".rho/workflows/check");
@@ -48,11 +48,11 @@ impl Fixture {
         std::fs::create_dir_all(&agents).unwrap();
         for (id, contents) in [
             (
-                "acp-rho",
+                "child-rho",
                 "---\ndescription: Rho child\ntools: [read_file]\n---\nInspect files\n",
             ),
             (
-                "acp-claude",
+                "child-claude",
                 "---\ndescription: Claude child\nruntime: claude-cli\ntools: [Read]\n---\nInspect files\n",
             ),
         ] {
