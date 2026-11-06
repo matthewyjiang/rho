@@ -1,4 +1,6 @@
-//! Owns the live parent steering port and correlates application receipts.
+//! Steers a delegated Rho child for its parent: sends each parent message
+//! through the child session's handle and correlates the run's application
+//! receipts back to the messages.
 
 use std::{
     future::Future,
@@ -11,7 +13,10 @@ use futures_util::{
     FutureExt,
 };
 
-use super::subagent_messaging::{parent_message_prompt, ValidatedMessage};
+use super::{
+    session_runtime::{SessionHandle, SteerError},
+    subagent_messaging::{parent_message_prompt, ValidatedMessage},
+};
 
 type Receipt = Shared<BoxFuture<'static, Result<rho_sdk::SteeringId, String>>>;
 
@@ -22,12 +27,13 @@ struct PendingMessage {
 
 #[derive(Default)]
 struct SteeringState {
-    handle: Option<rho_sdk::SteeringHandle>,
+    /// The child's session, from when its runtime opens until the run ends.
+    session: Option<SessionHandle>,
     pending: Vec<Arc<PendingMessage>>,
 }
 
 /// Keeps the live window and its receipts under one lock so clear cannot race
-/// with a sender registering a message against an obsolete handle.
+/// with a sender registering a message against a session that went away.
 #[derive(Clone, Default)]
 pub(crate) struct SteeringSlot {
     state: Arc<Mutex<SteeringState>>,
@@ -44,20 +50,25 @@ impl SteeringSlot {
         Self::default()
     }
 
-    pub(crate) fn publish(&self, handle: rho_sdk::SteeringHandle) {
-        self.state.lock().expect("parent steering state").handle = Some(handle);
+    /// Opens the live window on the child's `session`, once its runtime is
+    /// open. Messages reach whichever model turn the session runs.
+    pub(crate) fn publish(&self, session: SessionHandle) {
+        self.state.lock().expect("parent steering state").session = Some(session);
     }
 
     pub(crate) async fn send(&self, message: &ValidatedMessage) -> anyhow::Result<()> {
         let input = rho_sdk::UserInput::text(parent_message_prompt(message));
         let pending = {
             let mut state = self.state.lock().expect("parent steering state");
-            let Some(handle) = &state.handle else {
-                anyhow::bail!("delegated run is not accepting messages; wait until status is running, then message again");
-            };
             // Queue and register without yielding or releasing the slot lock.
             // A full/closed SDK command queue fails without retaining a body.
-            let receipt = handle.request_steer_retractable(input)?;
+            let receipt = match state.session.as_ref().map(|session| session.steer(input)) {
+                Some(Ok(receipt)) => receipt,
+                None | Some(Err(SteerError::NotRunning)) => {
+                    anyhow::bail!("delegated run is not accepting messages; wait until status is running, then message again");
+                }
+                Some(Err(SteerError::Run(error))) => return Err(error.into()),
+            };
             let pending = Arc::new(PendingMessage {
                 receipt: receipt
                     .map(|result| result.map_err(|error| error.to_string()))
@@ -114,7 +125,7 @@ impl SteeringSlot {
 
     pub(crate) fn clear(&self) {
         let mut state = self.state.lock().expect("parent steering state");
-        state.handle = None;
+        state.session = None;
         state.pending.clear();
     }
 }

@@ -1,6 +1,6 @@
 use pretty_assertions::assert_eq;
 
-use super::PromptGate;
+use super::{ActiveWork, PromptGate};
 
 // Covers: a cancel during prompt start must still cancel the run
 // Owner: session runtime prompt gate
@@ -14,7 +14,7 @@ fn cancel_during_start_marks_the_gate() {
         "command expansion must see the cancel"
     );
     let token = rho_sdk::CancellationToken::new();
-    gate.activate(generation, token.clone());
+    gate.activate(generation, ActiveWork::command(token.clone()));
     assert!(token.is_cancelled());
 }
 
@@ -28,7 +28,7 @@ fn cancel_before_the_next_prompt_does_not_leak_into_it() {
     gate.cancel();
     let (_, second) = gate.begin();
     let token = rho_sdk::CancellationToken::new();
-    gate.activate(second, token.clone());
+    gate.activate(second, ActiveWork::command(token.clone()));
     assert!(!token.is_cancelled());
 }
 
@@ -40,10 +40,10 @@ fn cancel_between_turns_of_one_prompt_cancels_the_next_turn() {
     let gate = PromptGate::new();
     let (_, generation) = gate.begin();
     let first = rho_sdk::CancellationToken::new();
-    gate.activate(generation, first.clone());
+    gate.activate(generation, ActiveWork::command(first.clone()));
     gate.cancel();
     let second = rho_sdk::CancellationToken::new();
-    gate.activate(generation, second.clone());
+    gate.activate(generation, ActiveWork::command(second.clone()));
     assert!(second.is_cancelled());
 }
 
@@ -58,9 +58,9 @@ fn a_stale_prompt_never_acts_for_the_newer_one() {
     let (stale_start, stale) = gate.begin();
     let (_, current) = gate.begin();
     let current_run = rho_sdk::CancellationToken::new();
-    gate.activate(current, current_run.clone());
+    gate.activate(current, ActiveWork::command(current_run.clone()));
     let stale_run = rho_sdk::CancellationToken::new();
-    gate.activate(stale, stale_run.clone());
+    gate.activate(stale, ActiveWork::command(stale_run.clone()));
     gate.finish(stale);
     gate.cancel();
     assert_eq!(

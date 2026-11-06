@@ -13,6 +13,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use super::{
     events::{RunEnd, SessionEvent, TurnControl},
     persist::TurnCheckpoint,
+    prompt_gate::ActiveWork,
     pump::{pump, AppliedDisplays, ApprovalSource, EventSource, PumpSources},
     title::TitleState,
     PromptScope, SessionRuntime,
@@ -232,10 +233,8 @@ impl SessionRuntime {
                 return Err(error.into());
             }
         };
-        prompt.activate(run.cancellation_handle());
-        io.emit(SessionEvent::RunStarted {
-            steering: run.steering_handle(),
-        });
+        prompt.activate(ActiveWork::model_run(&run));
+        io.emit(SessionEvent::RunStarted);
         let cancel = run.cancellation_handle();
         let mut approval_receiver = self.built.approval_receiver.take();
         // Plan approvals belong to the tool set, which outlives this prompt

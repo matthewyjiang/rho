@@ -67,7 +67,7 @@ pub(crate) struct FrozenAgentLaunchRequest {
 /// How a live handle can accept parent plain-text messages.
 #[derive(Clone, Debug)]
 enum MessagingSupport {
-    /// Rho runtime: steering port is published once the session starts.
+    /// Rho runtime: the child session's handle is published once it opens.
     Rho { steering: SteeringSlot },
     /// ACP runtimes: steered into the running turn when the agent supports
     /// `_session/steering`, otherwise delivered as the next `session/prompt`.

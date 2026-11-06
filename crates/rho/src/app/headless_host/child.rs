@@ -111,8 +111,6 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         &prompt,
         status_tx,
         live_title,
-        // Temporary(handle-steering): goes once the parent steers through the
-        // session's handle.
         steering_slot.clone(),
     )?;
     let max_steps = std::num::NonZeroUsize::new(
@@ -182,12 +180,14 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         if let Some(store) = mirror {
             runtime.mirror_step_checkpoints(store);
         }
+        // The parent steers the child's model turns through its handle.
+        if let Some(slot) = &steering_slot {
+            slot.publish(runtime.handle());
+        }
         anyhow::Ok(runtime)
     };
-    // Temporary(handle-steering): the slot goes with the reporter's.
     let mut view = HeadlessView::new()
         .reporting_to(&mut reporter)
-        .with_steering(steering_slot)
         .with_parent_questions(questions);
     // The child's status file keeps the title its prompt was given; the
     // session's own title request is left untaken.

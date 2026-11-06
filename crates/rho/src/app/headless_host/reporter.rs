@@ -19,6 +19,8 @@ pub(crate) struct RunReporter {
     sink: crate::run_artifacts::RunArtifactSink,
     adapter: crate::tui::event_adapter::SdkEventAdapter,
     stream_output: bool,
+    /// A delegated child's parent messages, which the status file records
+    /// as each is applied.
     steering_slot: Option<SteeringSlot>,
 }
 

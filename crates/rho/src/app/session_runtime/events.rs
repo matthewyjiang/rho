@@ -7,7 +7,7 @@
 
 use rho_sdk::{
     ApprovalDecision, ApprovalRequest, ContextEstimate, HostInputId, HostInputRefusal,
-    HostInputRequest, HostInputResponse, RunEvent, SteeringHandle, ToolCallId,
+    HostInputRequest, HostInputResponse, RunEvent, ToolCallId,
 };
 
 use crate::{
@@ -60,12 +60,10 @@ pub(crate) enum SessionEvent {
     /// it shows anything of the turn. Not sent when the save fails, which
     /// fails the turn.
     MessageInserted(InsertedMessage),
-    /// The SDK run started. Nothing about the run precedes it; the inserted
-    /// message and a notice may. `steering` stages messages into the run, as
-    /// a delegated child's parent does.
-    // Temporary(handle-steering): `steering` goes once the parent steers
-    // through the session's handle.
-    RunStarted { steering: SteeringHandle },
+    /// The SDK run started, and [`super::SessionHandle::steer`] reaches it.
+    /// Nothing about the run precedes it; the inserted message and a notice
+    /// may.
+    RunStarted,
     /// An SDK run event, as the run emitted it.
     Run(RunEvent),
     /// The rows to show for a background result the run is about to apply,

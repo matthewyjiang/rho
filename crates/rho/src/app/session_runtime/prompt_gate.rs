@@ -1,16 +1,21 @@
-//! The gate that carries a session's prompt cancellation.
+//! The gate that carries a session's prompt cancellation and steering.
 
 use std::sync::Mutex;
 
-use rho_sdk::CancellationToken;
+use rho_sdk::{CancellationToken, SteeringHandle};
 
-/// Carries cancellation for the session's current prompt. A runtime runs one
-/// prompt at a time, since its host holds it exclusively for each (ACP, for
-/// one, takes its session slot with `try_lock`), so this gate only has to
-/// cover the window between prompt entry and the run's token existing.
+/// Carries cancellation for the session's current prompt, and steering for
+/// its model run. A runtime runs one prompt at a time, since its host holds
+/// it exclusively for each (ACP, for one, takes its session slot with
+/// `try_lock`), so this gate only has to cover the window between prompt
+/// entry and the run's token existing.
 /// While `Starting`, a cancel trips the prompt token that `begin` returned,
 /// so command expansion can stop, and is replayed onto the run's token as
 /// soon as `activate` receives it. `cancel` is a no-op while idle.
+///
+/// Steering reaches only a prompt's model run: `activate` installs it with
+/// the run's token, and it goes when the prompt ends or a command such as
+/// `/compact` takes its place.
 ///
 /// Each `begin` opens a new [`PromptGeneration`] and cancels the previous
 /// prompt's token, and `activate`, `finish`, `is_cancelled`, and
@@ -41,8 +46,45 @@ struct Slot {
 enum PromptGateState {
     Idle,
     Starting(CancellationToken),
-    Active(CancellationToken),
+    Active(ActiveWork),
     Closed(Closing),
+}
+
+impl PromptGateState {
+    /// The current prompt's cancellation, while one is starting or running.
+    fn prompt_token(&self) -> Option<&CancellationToken> {
+        match self {
+            Self::Starting(token) | Self::Active(ActiveWork { cancel: token, .. }) => Some(token),
+            Self::Idle | Self::Closed(_) => None,
+        }
+    }
+}
+
+/// The work a prompt runs right now, as a cancel or a steer reaches it.
+#[derive(Debug)]
+pub(super) struct ActiveWork {
+    cancel: CancellationToken,
+    /// Set for a model run; a command (`/compact`, `/workflow:`) takes no
+    /// steering.
+    steering: Option<SteeringHandle>,
+}
+
+impl ActiveWork {
+    /// An SDK model run, which a steer reaches.
+    pub(super) fn model_run(run: &rho_sdk::Run) -> Self {
+        Self {
+            cancel: run.cancellation_handle(),
+            steering: Some(run.steering_handle()),
+        }
+    }
+
+    /// A command that stops on `cancel` and takes no steering.
+    pub(super) fn command(cancel: CancellationToken) -> Self {
+        Self {
+            cancel,
+            steering: None,
+        }
+    }
 }
 
 /// Which begun prompt a scope belongs to: `begin` numbers each prompt one
@@ -85,8 +127,7 @@ impl PromptGate {
     pub(super) fn begin(&self) -> (CancellationToken, PromptGeneration) {
         let token = CancellationToken::new();
         let mut slot = self.slot();
-        if let PromptGateState::Starting(previous) | PromptGateState::Active(previous) = &slot.state
-        {
+        if let Some(previous) = slot.state.prompt_token() {
             previous.cancel();
         }
         let generation = PromptGeneration(slot.generation.0.wrapping_add(1));
@@ -100,9 +141,10 @@ impl PromptGate {
         (token, generation)
     }
 
-    /// Makes `token` the cancellation of prompt `generation`'s current run.
-    /// A prompt that is no longer current gets `token` cancelled instead.
-    pub(super) fn activate(&self, generation: PromptGeneration, token: CancellationToken) {
+    /// Makes `work` what a cancel, and for a model run a steer, of prompt
+    /// `generation` reaches. A prompt that is no longer current gets
+    /// `work` cancelled instead.
+    pub(super) fn activate(&self, generation: PromptGeneration, work: ActiveWork) {
         let mut slot = self.slot();
         let closed = matches!(slot.state, PromptGateState::Closed(_));
         let current = slot.generation == generation;
@@ -111,16 +153,15 @@ impl PromptGate {
         // token after it ended still cancels this one.
         if closed
             || !current
-            || matches!(
-                &slot.state,
-                PromptGateState::Starting(previous) | PromptGateState::Active(previous)
-                    if previous.is_cancelled()
-            )
+            || slot
+                .state
+                .prompt_token()
+                .is_some_and(CancellationToken::is_cancelled)
         {
-            token.cancel();
+            work.cancel.cancel();
         }
         if !closed && current {
-            slot.state = PromptGateState::Active(token);
+            slot.state = PromptGateState::Active(work);
         }
     }
 
@@ -133,9 +174,19 @@ impl PromptGate {
     }
 
     pub(super) fn cancel(&self) {
+        if let Some(token) = self.slot().state.prompt_token() {
+            token.cancel();
+        }
+    }
+
+    /// The steering of the current prompt's model run; `None` while no
+    /// prompt runs, it is still starting, or it runs a command.
+    pub(super) fn steering(&self) -> Option<SteeringHandle> {
         match &self.slot().state {
-            PromptGateState::Idle | PromptGateState::Closed(_) => {}
-            PromptGateState::Starting(token) | PromptGateState::Active(token) => token.cancel(),
+            PromptGateState::Active(work) => work.steering.clone(),
+            PromptGateState::Idle | PromptGateState::Starting(_) | PromptGateState::Closed(_) => {
+                None
+            }
         }
     }
 
@@ -143,7 +194,7 @@ impl PromptGate {
     /// over, as an ACP `session/load` of a live session does.
     pub(super) fn suspend(&self) {
         let mut slot = self.slot();
-        if let PromptGateState::Starting(token) | PromptGateState::Active(token) = &slot.state {
+        if let Some(token) = slot.state.prompt_token() {
             token.cancel();
             slot.suspended = true;
         }
@@ -153,7 +204,7 @@ impl PromptGate {
     /// is being torn down.
     pub(super) fn close(&self, closing: Closing) {
         let mut slot = self.slot();
-        if let PromptGateState::Starting(token) | PromptGateState::Active(token) = &slot.state {
+        if let Some(token) = slot.state.prompt_token() {
             token.cancel();
         }
         slot.state = PromptGateState::Closed(closing);
@@ -169,9 +220,8 @@ impl PromptGate {
         match &slot.state {
             PromptGateState::Idle => false,
             PromptGateState::Closed(_) => true,
-            PromptGateState::Starting(token) | PromptGateState::Active(token) => {
-                token.is_cancelled()
-            }
+            PromptGateState::Starting(token)
+            | PromptGateState::Active(ActiveWork { cancel: token, .. }) => token.is_cancelled(),
         }
     }
 
@@ -197,9 +247,8 @@ impl PromptGate {
     pub(super) fn admits_queued_prompt(&self) -> bool {
         match &self.slot().state {
             PromptGateState::Idle | PromptGateState::Closed(_) => true,
-            PromptGateState::Starting(token) | PromptGateState::Active(token) => {
-                token.is_cancelled()
-            }
+            PromptGateState::Starting(token)
+            | PromptGateState::Active(ActiveWork { cancel: token, .. }) => token.is_cancelled(),
         }
     }
 }
