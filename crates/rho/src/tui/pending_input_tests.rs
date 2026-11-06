@@ -254,6 +254,7 @@ fn pending_input_renders_below_subagent_and_process_rails() {
     app.subagent_panel
         .ingest(vec![crate::tools::agent::SubagentSnapshot {
             prior_notices: Vec::new(),
+            persistence: crate::session::SessionPersistence::Saved,
             id: "run-1".into(),
             agent_id: "explorer".into(),
             title: None,

@@ -284,6 +284,7 @@ fn push_cli_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
     use crate::{
         agent::AgentRuntime, antigravity_runtime::ANTIGRAVITY_LABEL,
         claude_runtime::session::CLAUDE_LABEL, cursor_runtime::models::CURSOR_LABEL,
+        session::SessionPersistence,
     };
 
     let label = match snapshot.status.runtime {
@@ -291,9 +292,14 @@ fn push_cli_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
         Some(AgentRuntime::Antigravity) => ANTIGRAVITY_LABEL,
         Some(AgentRuntime::ClaudeCli) | Some(AgentRuntime::Rho) | None => CLAUDE_LABEL,
     };
+    // A run that saved nothing (`rho run --no-save`) discarded its session.
+    let resume_command = match snapshot.persistence {
+        SessionPersistence::Saved => label.resume_command,
+        SessionPersistence::Ephemeral => None,
+    };
     if let Some(session_id) = &snapshot.status.runtime_session_id {
         let session_label = label.session_label;
-        lines.push(match label.resume_command {
+        lines.push(match resume_command {
             Some(command) => format!(
                 "{session_label}: {session_id} (resume with `{command} --resume {session_id}`)"
             ),

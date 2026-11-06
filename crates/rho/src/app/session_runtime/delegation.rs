@@ -187,7 +187,7 @@ impl HeadlessDelegation {
             let process_exit = self.processes.as_ref().map(ProcessManager::notified_owned);
             let workflow_finish = self.workflows.notified_owned();
             {
-                let _delivery = super::notification_delivery::lock();
+                let _delivery = crate::app::notification_delivery::lock();
                 let batch = self.collect();
                 if batch.has_results()
                     || self.subagents.as_ref().is_some_and(|subagents| {
@@ -352,7 +352,7 @@ impl Drop for HeadlessDelegation {
         let Some(subagents) = &mut self.subagents else {
             return;
         };
-        let _delivery = super::notification_delivery::lock();
+        let _delivery = crate::app::notification_delivery::lock();
         subagents.manager.unbind_notices();
         // Cancellation can leave queued notices behind. A host that drops the
         // binding instead of holding it retires their receipts with it.

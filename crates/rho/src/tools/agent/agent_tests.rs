@@ -101,6 +101,7 @@ fn notification(id: &str, agent_id: &str, state: RunState) -> SubagentNotificati
     SubagentNotification {
         snapshot: SubagentSnapshot {
             prior_notices: Vec::new(),
+            persistence: crate::session::SessionPersistence::Saved,
             id: id.into(),
             agent_id: agent_id.into(),
             title: None,
