@@ -85,7 +85,7 @@ impl SessionRuntime {
             logouts,
         } = opening;
         let config = session_config(process_config, &host_mcp);
-        let agent = build.launch_agent.clone();
+        let agent = build.launch.agent.clone();
         let (built, permission) = build_session(&build, &agent, &config, cwd, &added_dirs, |_| {
             Ok(session_options_for_id(id))
         })
@@ -139,7 +139,7 @@ impl SessionRuntime {
             logouts,
         } = opening;
         let (agent, config) = loaded_agent(
-            &build.launch_agent,
+            &build.launch.agent,
             &stored,
             session_config(process_config, &host_mcp),
             || Ok(AgentCatalog::discover(cwd)?),

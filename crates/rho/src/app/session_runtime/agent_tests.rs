@@ -197,7 +197,7 @@ async fn rebind_keeps_the_host_mcp_servers() {
     };
     let mut runtime = idle_runtime(cwd.path(), &config).await;
     runtime.host_mcp = mcp_server("host-docs");
-    let launch_agent = runtime.build.launch_agent.clone();
+    let launch_agent = runtime.build.launch.agent.clone();
     let child = AgentDefinition {
         id: AgentId::new("child").unwrap(),
         description: "child".into(),

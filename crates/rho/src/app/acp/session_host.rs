@@ -39,9 +39,10 @@ use crate::{
         headless_delegation::BackgroundWait,
         session_commands::{CommandScope, PromptCommand},
         session_runtime::{
-            model_scoped_config, ApprovalPolicy, ChildAgents, CurrentModel, InsertedMessage,
-            PromptScope, QuestionSupport, RunShape, SessionBuild, SessionHandle, SessionRole,
-            SessionRuntime, SettingChangeError, TitleJob, Turn, TurnOutcome, WorkflowStart,
+            model_scoped_config, ApprovalPolicy, ChildAgents, CurrentModel, HostCapabilities,
+            InsertedMessage, PromptScope, QuestionSupport, RunShape, SessionBuild, SessionHandle,
+            SessionLaunch, SessionRole, SessionRuntime, SettingChangeError, TitleJob, Turn,
+            TurnOutcome, WorkflowStart,
         },
         workflow_cli::discover::StartCommand,
     },
@@ -473,32 +474,36 @@ fn session_build(startup: &AcpStartup, io: &super::client_io::ClientIo) -> HostB
         None => BackgroundWait::HoldPrompt,
     };
     let build = SessionBuild {
-        config_path: startup.config_path.clone(),
-        no_system_prompt: startup.no_system_prompt,
-        no_tools: startup.no_tools,
-        no_subagents: startup.no_subagents,
-        diagnostics: startup.diagnostics.clone(),
-        // Questions reach a person only through form elicitation.
-        questions: question_support(startup.host_features.forms),
-        // `--t3code`: the `agent` tool delegates to T3 so its UI owns children.
-        children: match startup.host {
-            AcpHost::Generic => ChildAgents::InProcess,
-            AcpHost::T3Code => ChildAgents::HostThreads,
+        launch: SessionLaunch {
+            config_path: startup.config_path.clone(),
+            no_system_prompt: startup.no_system_prompt,
+            no_tools: startup.no_tools,
+            no_subagents: startup.no_subagents,
+            diagnostics: startup.diagnostics.clone(),
+            agent: startup.agent.clone(),
+            prompt_suffix: None,
         },
-        background_wait,
-        launch_agent: startup.agent.clone(),
-        host_io: io.host_io(),
+        host: HostCapabilities {
+            // Questions reach a person only through form elicitation.
+            questions: question_support(startup.host_features.forms),
+            // `--t3code`: the `agent` tool delegates to T3 so its UI owns children.
+            children: match startup.host {
+                AcpHost::Generic => ChildAgents::InProcess,
+                AcpHost::T3Code => ChildAgents::HostThreads,
+            },
+            background_wait,
+            host_io: io.host_io(),
+            // An ACP agent has no terminal for a person to finish an MCP login
+            // in: its stdin is the protocol pipe.
+            mcp_authorization: McpAuthorizationMode::NonInteractive,
+            // A person answers through the client's permission prompts.
+            approvals: ApprovalPolicy::Host,
+        },
         run: RunShape {
             role: SessionRole::Acp,
             max_steps: None,
             hook_labels: Default::default(),
         },
-        prompt_suffix: None,
-        // An ACP agent has no terminal for a person to finish an MCP login
-        // in: its stdin is the protocol pipe.
-        mcp_authorization: McpAuthorizationMode::NonInteractive,
-        // A person answers through the client's permission prompts.
-        approvals: ApprovalPolicy::Host,
     };
     HostBuild { build, t3_wake }
 }

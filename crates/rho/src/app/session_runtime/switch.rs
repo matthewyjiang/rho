@@ -46,9 +46,11 @@ impl SessionRuntime {
                 .map_err(SettingChangeError::Apply)?;
             let read = self.credentials.before_read();
             // A keyless login lives in config, which `logout` edits on disk.
-            let login_config =
-                crate::app::endpoint_login::with_disk_login(&config, &self.build.config_path)
-                    .map_err(SettingChangeError::Apply)?;
+            let login_config = crate::app::endpoint_login::with_disk_login(
+                &config,
+                &self.build.launch.config_path,
+            )
+            .map_err(SettingChangeError::Apply)?;
             let provider = build_provider_from_config_ensuring_catalog(
                 &login_config,
                 Arc::new(AppCredentialStore),

@@ -10,8 +10,9 @@ use rho_sdk::{
 };
 
 use super::{
-    ApprovalPolicy, ChildAgents, Logouts, OpenedSession, QuestionSupport, RunShape, SessionBuild,
-    SessionPermission, SessionRole, SessionRuntime, SessionStorage,
+    ApprovalPolicy, ChildAgents, HostCapabilities, Logouts, OpenedSession, QuestionSupport,
+    RunShape, SessionBuild, SessionLaunch, SessionPermission, SessionRole, SessionRuntime,
+    SessionStorage,
 };
 use crate::{
     agent::{
@@ -132,24 +133,28 @@ pub(super) async fn runtime_on(
 /// approvals, configured from `workspace_root`.
 pub(super) fn test_build(config: &Config, workspace_root: &Path) -> SessionBuild {
     SessionBuild {
-        config_path: workspace_root.join("rho-test-config.toml"),
-        no_system_prompt: false,
-        no_tools: false,
-        no_subagents: false,
-        diagnostics: RuntimeDiagnostics::new(config),
-        questions: QuestionSupport::Unavailable,
-        children: ChildAgents::InProcess,
-        background_wait: BackgroundWait::HoldPrompt,
-        launch_agent: root_agent(config),
-        host_io: Default::default(),
+        launch: SessionLaunch {
+            config_path: workspace_root.join("rho-test-config.toml"),
+            no_system_prompt: false,
+            no_tools: false,
+            no_subagents: false,
+            diagnostics: RuntimeDiagnostics::new(config),
+            agent: root_agent(config),
+            prompt_suffix: None,
+        },
+        host: HostCapabilities {
+            questions: QuestionSupport::Unavailable,
+            children: ChildAgents::InProcess,
+            background_wait: BackgroundWait::HoldPrompt,
+            host_io: Default::default(),
+            mcp_authorization: McpAuthorizationMode::NonInteractive,
+            approvals: ApprovalPolicy::Host,
+        },
         run: RunShape {
             role: SessionRole::Acp,
             max_steps: None,
             hook_labels: Default::default(),
         },
-        prompt_suffix: None,
-        mcp_authorization: McpAuthorizationMode::NonInteractive,
-        approvals: ApprovalPolicy::Host,
     }
 }
 
@@ -197,7 +202,7 @@ impl SessionRuntime {
         auth: String,
         logouts: &Logouts,
     ) -> Self {
-        let agent = build.launch_agent.clone();
+        let agent = build.launch.agent.clone();
         Self::new(
             OpenedSession {
                 build,

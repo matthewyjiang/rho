@@ -18,8 +18,7 @@ use crate::{
     app::session_runtime::{
         build::with_plan_exit,
         test_support::{built_on, test_build},
-        SessionBuild, SessionEvent, SessionRuntime, SessionStorage, Turn, TurnControl, TurnIo,
-        TurnOutcome,
+        SessionEvent, SessionRuntime, SessionStorage, Turn, TurnControl, TurnIo, TurnOutcome,
     },
     config::Config,
     permission::PermissionMode,
@@ -154,12 +153,10 @@ async fn approvals_reach_the_host_only_when_it_answers_them() {
         })]));
         // The session is made with the policy from the start, and its first
         // build adds the tools the policy offers, as `build_session` does.
-        let build = SessionBuild {
-            approvals,
-            ..test_build(&config, root.path())
-        };
+        let mut build = test_build(&config, root.path());
+        build.host.approvals = approvals;
         let mut built = built_on(&config, id, provider).await;
-        built.tools = with_plan_exit(tools, &build, &build.launch_agent, &config);
+        built.tools = with_plan_exit(tools, &build, &build.launch.agent, &config);
         let mut runtime =
             SessionRuntime::for_tests_with(build, built, SessionStorage::saved(stored), &config);
         // Entering supervised rebuilds the SDK runtime with the tools and the

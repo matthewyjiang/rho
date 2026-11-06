@@ -30,16 +30,40 @@ use crate::{
     },
 };
 
-/// What a host gives every session build of one session: process flags,
-/// the agent it launched with, and what it does for the session's tools.
-/// Kept by the runtime, so an agent rebind builds the same way.
+/// What a host gives every session build of one session: how it was
+/// launched, what the host does for the session, and how each run is
+/// shaped. Kept by the runtime, so an agent rebind builds the same way.
 #[derive(Clone)]
 pub(crate) struct SessionBuild {
+    pub(crate) launch: SessionLaunch,
+    pub(crate) host: HostCapabilities,
+    /// What the session is for and how each of its runs is shaped.
+    pub(crate) run: RunShape,
+}
+
+/// How the session was launched: process flags and the agent it launched
+/// as.
+#[derive(Clone)]
+pub(crate) struct SessionLaunch {
     pub(crate) config_path: PathBuf,
     pub(crate) no_system_prompt: bool,
     pub(crate) no_tools: bool,
     pub(crate) no_subagents: bool,
     pub(crate) diagnostics: RuntimeDiagnostics,
+    /// The agent the host launched with. A delegated rebind stays within its
+    /// tools.
+    pub(crate) agent: BoundAgent,
+    /// Instructions appended to the session's system prompt, kept when a
+    /// model prompt replaces the rest, such as a child's contract with its
+    /// parent. Not part of the [`RunShape`]: it lives in the built prompt,
+    /// which a permission mode rebuild reuses.
+    pub(crate) prompt_suffix: Option<&'static str>,
+}
+
+/// What the session's host does for it: whether it asks a person, who runs
+/// its children and answers its approvals, and what it serves its tools.
+#[derive(Clone)]
+pub(crate) struct HostCapabilities {
     /// Whether the host can put questions to a person.
     pub(crate) questions: QuestionSupport,
     /// Who runs the `agent` tool's children.
@@ -47,19 +71,9 @@ pub(crate) struct SessionBuild {
     /// Whether background work that outlives a prompt holds it open, or the
     /// host wakes the idle session when the work finishes.
     pub(crate) background_wait: BackgroundWait,
-    /// The agent the host launched with. A delegated rebind stays within its
-    /// tools.
-    pub(crate) launch_agent: BoundAgent,
     /// What the session's host does for its tools, shared by every tool set
     /// the session builds.
     pub(crate) host_io: HostIo,
-    /// What the session is for and how each of its runs is shaped.
-    pub(crate) run: RunShape,
-    /// Instructions appended to the session's system prompt, kept when a
-    /// model prompt replaces the rest, such as a child's contract with its
-    /// parent. Not part of the [`RunShape`]: it lives in the built prompt,
-    /// which a permission mode rebuild reuses.
-    pub(crate) prompt_suffix: Option<&'static str>,
     /// Whether an MCP server's browser login may wait for a person.
     pub(crate) mcp_authorization: McpAuthorizationMode,
     /// Who answers the session's approval requests.
@@ -182,7 +196,7 @@ pub(super) async fn build_session(
     let mut host_tools: anyhow::Result<()> = Ok(());
     // A host that cannot ask a person gets neither the questionnaire tool nor
     // the MCP capability, which Rho would then have to decline every time.
-    let questions = match build.questions {
+    let questions = match build.host.questions {
         QuestionSupport::Available => true,
         QuestionSupport::Unavailable => false,
     };
@@ -197,11 +211,11 @@ pub(super) async fn build_session(
         session_writes,
     } = assemble_session(SessionAssemblyOptions {
         config,
-        config_path: build.config_path.clone(),
+        config_path: build.launch.config_path.clone(),
         cwd: workspace,
-        no_system_prompt: build.no_system_prompt,
-        no_tools: build.no_tools,
-        no_subagents: build.no_subagents,
+        no_system_prompt: build.launch.no_system_prompt,
+        no_tools: build.launch.no_tools,
+        no_subagents: build.launch.no_subagents,
         questionnaire_enabled: questions,
         mcp_elicitation: if questions {
             crate::tools::mcp::McpElicitationSupport::Available
@@ -210,17 +224,17 @@ pub(super) async fn build_session(
         },
         mcp_sampling: McpSamplingSupport::Unavailable,
         tool_source_attach: crate::app::tools_prompt::ToolSourceAttach::Connect,
-        mcp_authorization: build.mcp_authorization,
-        diagnostics: &build.diagnostics,
+        mcp_authorization: build.host.mcp_authorization,
+        diagnostics: &build.launch.diagnostics,
         agent,
         max_steps: *max_steps,
         usage_purpose: role.usage_purpose(),
         usage_parent_session_id: role.usage_parent(),
         hook_host_labels: hook_labels.clone(),
         added_dirs,
-        host_io: build.host_io.clone(),
+        host_io: build.host.host_io.clone(),
         extend_tools: |mut tools| {
-            match build.children {
+            match build.host.children {
                 ChildAgents::InProcess => {}
                 ChildAgents::HostThreads => {
                     host_tools = crate::tools::agent::install_host_delegation(
@@ -232,8 +246,8 @@ pub(super) async fn build_session(
             }
             with_plan_exit(tools, build, agent, config)
         },
-        system_prompt_suffix: build.prompt_suffix,
-        approval: |inputs: ApprovalInputs| Ok(build.approvals.wire(inputs)),
+        system_prompt_suffix: build.launch.prompt_suffix,
+        approval: |inputs: ApprovalInputs| Ok(build.host.approvals.wire(inputs)),
         session_options,
     })
     .await?;
@@ -260,7 +274,10 @@ pub(super) fn with_plan_exit(
     agent: &BoundAgent,
     config: &Config,
 ) -> AppToolSet {
-    if !build.no_tools && agent.rho_capabilities().is_some() && build.approvals.offers_plan_exit() {
+    if !build.launch.no_tools
+        && agent.rho_capabilities().is_some()
+        && build.host.approvals.offers_plan_exit()
+    {
         tools.with_plan_exit_host(config, PlanExitHost::Permission)
     } else {
         tools

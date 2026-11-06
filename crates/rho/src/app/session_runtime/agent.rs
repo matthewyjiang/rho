@@ -131,7 +131,7 @@ impl SessionRuntime {
                 bind_delegated_agent(
                     definition,
                     model_override.as_deref().map(ModelOverride::Reference),
-                    &build.launch_agent,
+                    &build.launch.agent,
                     base,
                 )
             },

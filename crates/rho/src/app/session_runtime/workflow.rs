@@ -55,7 +55,7 @@ impl SessionRuntime {
 
         let ops = WorkflowOps::open(
             self.storage.cwd().to_path_buf(),
-            Some(self.build.config_path.clone()),
+            Some(self.build.launch.config_path.clone()),
         )
         .map_err(failed)?;
         // The same ceiling the session's own workflow tool gives its runs.
@@ -93,7 +93,7 @@ impl SessionRuntime {
         workflow_cli::spawn_background_run(
             run,
             RecoveryDecision::NormalResume,
-            Some(self.build.config_path.clone()),
+            Some(self.build.launch.config_path.clone()),
             Some(tracker),
         )
         .await

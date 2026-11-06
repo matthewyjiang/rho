@@ -55,7 +55,7 @@ impl SessionRuntime {
             .writes
             .clone()
             .carried_across(self.permission.mode, mode);
-        let approval = self.build.approvals.wire(ApprovalInputs {
+        let approval = self.build.host.approvals.wire(ApprovalInputs {
             config: config.clone(),
             workspace_root: self.permission.workspace_root.clone(),
             usage_recording: self.built.runtime.usage_recording(),
