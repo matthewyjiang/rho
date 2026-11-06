@@ -72,7 +72,7 @@ pub(in crate::app) use agent::{bind_delegated_agent, loaded_agent_with, MODEL_OV
 pub(crate) use approval_policy::ApprovalPolicy;
 #[cfg(test)]
 pub(in crate::app) use build::session_config;
-pub(crate) use build::{ChildAgents, QuestionSupport, SessionBuild, SessionRole};
+pub(crate) use build::{ChildAgents, QuestionSupport, RunShape, SessionBuild, SessionRole};
 use credentials::SessionCredentials;
 pub(crate) use credentials::{CredentialFailure, Logouts};
 pub(crate) use events::{

@@ -94,7 +94,7 @@ impl SessionRuntime {
             built.session.id().to_string(),
             agent.id().to_string(),
             agent.fingerprint().to_string(),
-            build.role.origin(),
+            build.run.role.origin(),
         );
         Ok(Self::new(
             OpenedSession {

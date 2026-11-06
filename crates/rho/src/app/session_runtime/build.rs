@@ -52,23 +52,34 @@ pub(crate) struct SessionBuild {
     /// What the session's host does for its tools, shared by every tool set
     /// the session builds.
     pub(crate) host_io: HostIo,
-    /// The most model steps one run may take; `None` keeps the configured
-    /// step limit. `rho run --max-steps` and an agent's step limit set it.
-    pub(crate) max_steps: Option<NonZeroUsize>,
-    /// What the session is for, which decides whose work its model usage
-    /// is recorded as and the origin a new session's file records.
-    pub(crate) role: SessionRole,
-    /// Labels every hook envelope of the session carries, such as a
-    /// workflow node's.
-    pub(crate) hook_labels: HookHostLabels,
+    /// What the session is for and how each of its runs is shaped.
+    pub(crate) run: RunShape,
     /// Instructions appended to the session's system prompt, kept when a
     /// model prompt replaces the rest, such as a child's contract with its
-    /// parent.
+    /// parent. Not part of the [`RunShape`]: it lives in the built prompt,
+    /// which a permission mode rebuild reuses.
     pub(crate) prompt_suffix: Option<&'static str>,
     /// Whether an MCP server's browser login may wait for a person.
     pub(crate) mcp_authorization: McpAuthorizationMode,
     /// Who answers the session's approval requests.
     pub(crate) approvals: ApprovalPolicy,
+}
+
+/// What a session is for and how each of its runs is shaped. Every SDK
+/// runtime the session builds, when it opens and again for a permission
+/// mode change, takes all of it: each build site destructures it whole, so
+/// a new knob cannot reach one and miss the other.
+#[derive(Clone)]
+pub(crate) struct RunShape {
+    /// What the session is for, which decides whose work its model usage
+    /// is recorded as and the origin a new session's file records.
+    pub(crate) role: SessionRole,
+    /// The most model steps one run may take; `None` keeps the configured
+    /// step limit. `rho run --max-steps` and an agent's step limit set it.
+    pub(crate) max_steps: Option<NonZeroUsize>,
+    /// Labels every hook envelope of the session carries, such as a
+    /// workflow node's.
+    pub(crate) hook_labels: HookHostLabels,
 }
 
 /// What a session is for. Its model usage is recorded as an agent's or a
@@ -174,6 +185,11 @@ pub(super) async fn build_session(
         QuestionSupport::Available => true,
         QuestionSupport::Unavailable => false,
     };
+    let RunShape {
+        role,
+        max_steps,
+        hook_labels,
+    } = &build.run;
     let SessionAssembly {
         built,
         workspace_root,
@@ -196,10 +212,10 @@ pub(super) async fn build_session(
         mcp_authorization: build.mcp_authorization,
         diagnostics: &build.diagnostics,
         agent,
-        max_steps: build.max_steps,
-        usage_purpose: build.role.usage_purpose(),
-        usage_parent_session_id: build.role.usage_parent(),
-        hook_host_labels: build.hook_labels.clone(),
+        max_steps: *max_steps,
+        usage_purpose: role.usage_purpose(),
+        usage_parent_session_id: role.usage_parent(),
+        hook_host_labels: hook_labels.clone(),
         added_dirs,
         host_io: build.host_io.clone(),
         extend_tools: |mut tools| {

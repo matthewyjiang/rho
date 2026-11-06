@@ -10,7 +10,7 @@ use rho_sdk::{
 };
 
 use super::{
-    ApprovalPolicy, ChildAgents, Logouts, OpenedSession, QuestionSupport, SessionBuild,
+    ApprovalPolicy, ChildAgents, Logouts, OpenedSession, QuestionSupport, RunShape, SessionBuild,
     SessionPermission, SessionRole, SessionRuntime, SessionStorage,
 };
 use crate::{
@@ -145,9 +145,11 @@ impl SessionRuntime {
                 background_wait: BackgroundWait::HoldPrompt,
                 launch_agent: root_agent(config),
                 host_io: Default::default(),
-                max_steps: None,
-                role: SessionRole::Acp,
-                hook_labels: Default::default(),
+                run: RunShape {
+                    role: SessionRole::Acp,
+                    max_steps: None,
+                    hook_labels: Default::default(),
+                },
                 prompt_suffix: None,
                 mcp_authorization: McpAuthorizationMode::NonInteractive,
                 approvals: ApprovalPolicy::Host,

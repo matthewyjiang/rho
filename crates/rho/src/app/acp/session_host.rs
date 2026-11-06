@@ -40,8 +40,8 @@ use crate::{
         session_commands::{CommandScope, PromptCommand},
         session_runtime::{
             model_scoped_config, ApprovalPolicy, ChildAgents, CurrentModel, InsertedMessage,
-            PromptScope, QuestionSupport, SessionBuild, SessionHandle, SessionRole, SessionRuntime,
-            SettingChangeError, TitleJob, Turn, TurnOutcome, WorkflowStart,
+            PromptScope, QuestionSupport, RunShape, SessionBuild, SessionHandle, SessionRole,
+            SessionRuntime, SettingChangeError, TitleJob, Turn, TurnOutcome, WorkflowStart,
         },
         workflow_cli::discover::StartCommand,
     },
@@ -489,9 +489,11 @@ fn session_build(startup: &AcpStartup, io: &super::client_io::ClientIo) -> HostB
         background_wait,
         launch_agent: startup.agent.clone(),
         host_io: io.host_io(),
-        max_steps: None,
-        role: SessionRole::Acp,
-        hook_labels: Default::default(),
+        run: RunShape {
+            role: SessionRole::Acp,
+            max_steps: None,
+            hook_labels: Default::default(),
+        },
         prompt_suffix: None,
         // An ACP agent has no terminal for a person to finish an MCP login
         // in: its stdin is the protocol pipe.

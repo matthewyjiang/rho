@@ -6,7 +6,9 @@ use std::path::PathBuf;
 
 use rho_sdk::SessionOptions;
 
-use super::{model_context_window, model_scoped_config, SessionRuntime, SettingChangeError};
+use super::{
+    model_context_window, model_scoped_config, RunShape, SessionRuntime, SettingChangeError,
+};
 use crate::{
     app::{
         automation::ensure_headless_auto_classifier_model,
@@ -68,6 +70,13 @@ impl SessionRuntime {
             }
             .build_workspace(&self.added_dirs)
             .map_err(|error| SettingChangeError::Apply(error.into()))?;
+            // The whole run shape, as when the session opened: a mode change
+            // keeps its step limit, attribution and hook labels.
+            let RunShape {
+                role,
+                max_steps,
+                hook_labels,
+            } = &self.build.run;
             let runtime = build_runtime_with_max_steps(
                 RuntimeBuildOptions {
                     provider: std::sync::Arc::clone(&self.built.provider),
@@ -80,15 +89,15 @@ impl SessionRuntime {
                     service_tier: self.built.session.service_tier(),
                     compaction: CompactionConfig::from(&config),
                     context_window: model_context_window(&config.provider, &config.model),
-                    usage_purpose: self.build.role.usage_purpose(),
-                    usage_parent_session_id: self.build.role.usage_parent(),
+                    usage_purpose: role.usage_purpose(),
+                    usage_parent_session_id: role.usage_parent(),
                     usage_recording: self.built.runtime.usage_recording(),
-                    hook_host_labels: self.build.hook_labels.clone(),
+                    hook_host_labels: hook_labels.clone(),
                     hooks: self.built.hooks.as_ref(),
                     diagnostics: self.built.diagnostics.clone(),
                     recall: self.built.tools.recall_store(),
                 },
-                self.build.max_steps,
+                *max_steps,
             )
             .map_err(|error| SettingChangeError::Apply(error.into()))?;
             match runtime
