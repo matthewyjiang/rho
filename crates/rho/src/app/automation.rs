@@ -158,7 +158,12 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
 /// its `run_ended`. Returns the exit, unless the stream could not be
 /// written, which is an output error.
 pub(super) fn emit_startup_failure(exit: AutomationExit) -> AutomationExit {
-    let mut stream = JsonlStream::stdout();
+    end_failed(&mut JsonlStream::stdout(), exit)
+}
+
+/// Ends `stream` as a run that failed with `exit` did, and returns the
+/// exit, unless the stream could not be written, which is an output error.
+fn end_failed(stream: &mut JsonlStream, exit: AutomationExit) -> AutomationExit {
     stream.end(&exit.end);
     stream.failure().map_or(exit, output_error)
 }
@@ -195,9 +200,10 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
         Ok(reporter) => reporter,
         Err(error) => {
             let exit = AutomationExit::new(1, TerminalReason::OutputError, error.to_string());
-            if let Some(stream) = &mut jsonl {
-                stream.end(&exit.end);
-            }
+            let exit = match &mut jsonl {
+                Some(stream) => end_failed(stream, exit),
+                None => exit,
+            };
             return Err(exit.into());
         }
     };
