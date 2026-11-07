@@ -18,7 +18,7 @@ Rho is a fast Rust agent harness with a small footprint and opinionated defaults
 Rho comes with the developer tools you already use, integrated with no configuration.
 
 - **Built-in [RTK](https://github.com/rtk-ai/rtk)**: when the `rtk` binary is on your PATH, Rho rewrites shell commands for you. No `rtk init`, no host hooks. Docs: [RTK](https://matthewyjiang.github.io/rho/integrations/rtk).
-- **Built-in [Herdr](https://github.com/herdrdev/herdr)**: under Herdr, Rho reports agent state, supports pane attach, and handles host image paste. No extra integration. Docs: [Herdr](https://matthewyjiang.github.io/rho/integrations/herdr).
+- **Built-in [Herdr](https://github.com/herdrdev/herdr)**: under Herdr, Rho reports agent state, supports subagent attach, and handles host image paste. No extra integration. Docs: [Herdr](https://matthewyjiang.github.io/rho/integrations/herdr).
 - **Coding tools included**: read, edit, search, shell, web, skills, and workflows ship with Rho. Install, sign in, work.
 
 ## Install

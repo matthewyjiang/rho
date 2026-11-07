@@ -5,7 +5,7 @@ use pretty_assertions::assert_eq;
 use ratatui::layout::Rect;
 use tempfile::TempDir;
 
-use super::{super::chrome::AttachChrome, *};
+use super::*;
 use rho_sdk::model::ModelUsage;
 
 fn resolved_identity_line(
@@ -363,36 +363,6 @@ fn history_lines_honor_max_tool_output_lines() {
     assert!(lines.iter().all(|line| !line.contains("line-4")));
 }
 
-#[test]
-fn herdr_state_follows_attached_subagent_state() {
-    let status = |state| RunStatus {
-        state,
-        last_activity: Some("working".into()),
-        ..RunStatus::default()
-    };
-
-    assert_eq!(
-        herdr_status("abc123", &status(RunState::Starting)).0,
-        HerdrState::Working
-    );
-    assert_eq!(
-        herdr_status("abc123", &status(RunState::Running)).0,
-        HerdrState::Working
-    );
-    assert_eq!(
-        herdr_status("abc123", &status(RunState::Ok)).0,
-        HerdrState::Idle
-    );
-    assert_eq!(
-        herdr_status("abc123", &status(RunState::Stopped)).0,
-        HerdrState::Idle
-    );
-    assert_eq!(
-        herdr_status("abc123", &status(RunState::Error)).0,
-        HerdrState::Blocked
-    );
-}
-
 fn activity_line(app: &AttachmentApp, activity: &str) -> String {
     let rate = app.model_performance.summary().rounded_generation_rate();
     activity_metrics_line(
@@ -609,7 +579,7 @@ fn mouse_events_reuse_painted_history() {
     let mut terminal =
         ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
     terminal
-        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
+        .draw(|frame| app.draw(frame, /*parent_notice*/ None))
         .expect("baseline draw");
     let painted_ptr = app
         .painted
@@ -622,7 +592,7 @@ fn mouse_events_reuse_painted_history() {
     app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 8, 5));
     app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 6));
     terminal
-        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
+        .draw(|frame| app.draw(frame, /*parent_notice*/ None))
         .expect("hover draw");
     assert_eq!(
         app.painted
@@ -641,7 +611,7 @@ fn mouse_events_reuse_painted_history() {
     );
 
     terminal
-        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
+        .draw(|frame| app.draw(frame, /*parent_notice*/ None))
         .expect("toggle draw");
     let after_toggle_ptr = app
         .painted
@@ -721,7 +691,7 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     let mut terminal =
         ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
     terminal
-        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
+        .draw(|frame| app.draw(frame, /*parent_notice*/ None))
         .expect("baseline draw");
 
     let baseline = row_look(&terminal, 5);
@@ -730,7 +700,7 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     // Pointer over the header, outside the history viewport: no lift.
     app.handle_event(mouse(MouseEventKind::Moved, 8, 1));
     terminal
-        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
+        .draw(|frame| app.draw(frame, /*parent_notice*/ None))
         .expect("header draw");
     assert_eq!(
         row_look(&terminal, 5),
@@ -741,7 +711,7 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     // Pointer over the card: lift.
     app.handle_event(mouse(MouseEventKind::Moved, 8, 5));
     terminal
-        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
+        .draw(|frame| app.draw(frame, /*parent_notice*/ None))
         .expect("hover draw");
     assert_ne!(
         row_look(&terminal, 5),
@@ -753,7 +723,7 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     // reshaped card under the stationary pointer instead of dropping it.
     click_card(&mut app, 8, 5);
     terminal
-        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
+        .draw(|frame| app.draw(frame, /*parent_notice*/ None))
         .expect("toggle draw");
     assert!(transcript_tool(&app, 0).expanded);
     assert_ne!(

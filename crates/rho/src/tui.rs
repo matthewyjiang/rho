@@ -496,9 +496,7 @@ pub struct ApplicationServices {
     pub diagnostics: crate::diagnostics::RuntimeDiagnostics,
     pub herdr: HerdrReporter,
 }
-pub(crate) use attachment::{
-    run as run_attachment, translate_run_event, AttachmentDisplaySettings,
-};
+pub(crate) use attachment::translate_run_event;
 pub(crate) use exit_receipt::{print_exit_receipt, ExitReceipt};
 pub use herdr_resume::ResumeLaunchOptions;
 

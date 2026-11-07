@@ -130,8 +130,7 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
             prompt_from_stdin(prompt.clone(), *stdin).map(Some)
         }
         Some(
-            Command::Attach { .. }
-            | Command::Login { .. }
+            Command::Login { .. }
             | Command::CredentialStore { .. }
             | Command::Sessions { .. }
             | Command::Mcp { .. }

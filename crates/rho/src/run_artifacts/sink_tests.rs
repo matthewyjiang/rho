@@ -54,7 +54,7 @@ fn test_identity() -> RunArtifactIdentity {
     }
 }
 
-// Covers: a stream far larger than the writer queue must keep `rho attach`
+// Covers: a stream far larger than the writer queue must keep attach journal
 // recording alive and replay the exact ordered text, even when the sink
 // coalesces bursts. Windows journal flush is slower; the sink budget must
 // still accept the burst instead of disabling recording.

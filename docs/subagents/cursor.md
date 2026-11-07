@@ -11,7 +11,7 @@ flowchart LR
     parent[Rho parent session] --> agentTool[agent tool]
     agentTool --> cursor[cursor-agent child]
     cursor --> sub[Cursor credential]
-    cursor --> attach[rho attach / completion]
+    cursor --> attach["/attach view / completion"]
 ```
 
 ## When this is useful
@@ -83,11 +83,7 @@ flowchart TD
 
 5. **Delegate from a Rho root session** through the `agent` tool. The call returns a run ID immediately, followed by an automatic completion notification.
 
-6. **Watch and cancel**:
-
-   ```bash
-   rho attach <run-id>
-   ```
+6. **Watch and cancel**: open the run with `/attach` in the TUI, or click its row in the activity rail.
 
    `agents` action `message` queues plain text for a running Cursor child. Rho sends it as the next `session/prompt` once the current turn ends; the transcript shows it as a queued parent message. Messages sent after the run finishes fail.
 
@@ -137,7 +133,7 @@ Frozen workflow relaunches that narrow a Bypass agent under an Auto or Allow-edi
 | Permission mode | Plan or Bypass only |
 | Launch | Rho parent `agent` tool, delegated only |
 | Messaging | `agents` action `message`; delivered as the next turn |
-| Inspect | `rho attach <id>` |
+| Inspect | `/attach` |
 
 ## Execution details
 

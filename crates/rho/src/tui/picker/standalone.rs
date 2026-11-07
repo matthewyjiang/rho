@@ -3,7 +3,7 @@
 use crossterm::event::Event;
 
 use super::{
-    runner::{self, EmptySubmit, EventHandling},
+    runner::{self, EventHandling},
     UiPicker,
 };
 use crate::{
@@ -29,7 +29,6 @@ pub(in crate::tui) async fn select(
         &mut events,
         picker,
         keybindings,
-        EmptySubmit::Stay,
         |picker, event| {
             if let Event::Paste(text) = event {
                 for ch in text.chars().filter(|ch| !ch.is_control()) {

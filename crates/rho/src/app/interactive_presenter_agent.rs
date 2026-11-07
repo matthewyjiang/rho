@@ -244,6 +244,8 @@ struct Snapshot<'a> {
 }
 
 impl Snapshot<'_> {
+    /// `attach: ` marks status output saved by older versions, which printed a
+    /// `rho attach` line instead of always leading with `elapsed: `.
     fn has_status_metrics(&self) -> bool {
         self.remaining
             .iter()
@@ -340,6 +342,7 @@ fn snapshot_sections(
     let mut status_continuation = false;
 
     for (index, line) in remaining.iter().copied().enumerate() {
+        // Older saved status output carries an `attach: rho attach <id>` line.
         if Some(index) == metrics_index || line.starts_with("attach: ") {
             status_continuation = false;
             continue;

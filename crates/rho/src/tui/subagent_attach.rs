@@ -5,20 +5,11 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Frame;
 
 use super::{
-    attachment::{
-        AttachChrome, AttachInput, AttachmentApp, AttachmentDisplaySettings, ParentNotice,
-    },
+    attachment::{AttachInput, AttachmentApp, AttachmentDisplaySettings, ParentNotice},
     exclusive_screen::ExclusiveOccupant,
     subagent_panel::SubagentAttachTarget,
     App, ComposerMode,
 };
-
-/// Command a user runs to watch delegated run `run_id` from another terminal.
-///
-/// `run_id` is a validated 6-char hex id, so it needs no shell quoting.
-pub(super) fn attach_command(run_id: &str) -> String {
-    format!("rho attach {run_id}")
-}
 
 /// Short hover hint shown on the right edge of a subagent row.
 pub(super) const ACTION_HINT: &str = "attach";
@@ -105,7 +96,7 @@ impl App {
         let Some(view) = self.exclusive.attach_view_mut() else {
             return false;
         };
-        view.draw(frame, AttachChrome::Embedded { notice });
+        view.draw(frame, notice);
         view.note_drawn();
         true
     }
@@ -143,8 +134,7 @@ impl App {
         };
         self.notify_status(format!(
             "attached to {} · {}",
-            target.agent_id,
-            attach_command(&target.run_id)
+            target.agent_id, target.run_id
         ));
         Ok(())
     }

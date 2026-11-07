@@ -9,8 +9,6 @@
 mod acp_e2e;
 #[path = "support/tui_pty_antigravity_runtime.rs"]
 mod antigravity_runtime;
-#[path = "support/tui_pty_attach.rs"]
-mod attach;
 #[path = "support/tui_pty_attach_previews.rs"]
 mod attach_previews;
 #[path = "support/claude_e2e.rs"]
@@ -866,14 +864,6 @@ fn subagent_rail_mouse_activation_uses_release_and_survives_refresh() {
 #[test]
 fn attach_opens_a_picker_of_running_subagents() {
     assert_pass("attach_picker");
-}
-
-// Covers: `rho attach` with no id must open the picker even when the directory
-// has no running subagents.
-// Owner: interactive TUI
-#[test]
-fn cli_attach_opens_an_empty_picker_when_nothing_is_running() {
-    assert_pass("attach_cli_empty");
 }
 
 // Covers: /attach must swap the main TUI into a live in-place attach view

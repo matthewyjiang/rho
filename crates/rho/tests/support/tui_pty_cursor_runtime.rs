@@ -3,7 +3,7 @@
 use pretty_assertions::assert_eq;
 use rho_tui_pty::{IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan, WaitTimeout};
 use serde_json::{json, Value};
-use std::{fs, path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 use super::acp_e2e::{self, FakeAcpAgent};
 
@@ -18,7 +18,7 @@ const FAKE_CURSOR: FakeAcpAgent = FakeAcpAgent {
 /// Full fake-Cursor ACP path: matrix parent -> agent tool -> binder/executor
 /// -> `cursor-agent acp` spawn with a managed `CURSOR_CONFIG_DIR` -> scripted
 /// ACP agent (`rho __acp-fixture-agent`) -> permission answers -> artifacts ->
-/// parent completion -> `rho attach` replay. Offline; no real Cursor binary.
+/// parent completion -> `/attach` replay. Offline; no real Cursor binary.
 #[test]
 fn fake_cursor_acp_runtime_end_to_end() {
     let home = IsolatedHome::new().unwrap();
@@ -33,7 +33,7 @@ fn fake_cursor_acp_runtime_end_to_end() {
     );
 
     let plan = RhoLaunchPlan::matrix(
-        binary.clone(),
+        binary,
         &home,
         PtySize {
             rows: 32,
@@ -129,36 +129,37 @@ fn fake_cursor_acp_runtime_end_to_end() {
     };
     let expected = [selected("allow-once"), selected("reject-once")];
     assert_eq!(replies, expected.iter().collect::<Vec<_>>());
-    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 
-    // Replay the on-disk artifacts: the shell card and final text survive.
-    let mut plan = RhoLaunchPlan::matrix(
-        binary,
-        &home,
-        PtySize {
-            rows: 28,
-            cols: 120,
-        },
-    )
-    .with_arg("attach")
-    .with_arg(&run_id);
-    plan.cwd = home.path().join("attach-workspace");
-    fs::create_dir_all(&plan.cwd).unwrap();
-    let mut attach = PtyHarness::spawn_named(&plan, "fake_cursor_acp_runtime_e2e_attach").unwrap();
-    attach
+    // Replay the on-disk artifacts in the in-place attach view: the shell card
+    // and final text survive. The picker starts on running runs; Ctrl+R lists
+    // the finished one.
+    harness.submit_text("/attach").unwrap();
+    harness
+        .wait_for_text("attach subagent", WaitTimeout::secs(10, "attach picker"))
+        .unwrap();
+    harness.inject_key(&Key::Ctrl('r')).unwrap();
+    harness
+        .wait_for_text("running only", WaitTimeout::secs(10, "finished runs"))
+        .unwrap();
+    harness.inject_key(&Key::Enter).unwrap();
+    harness
+        .wait_for_text(
+            &format!("attach {run_id}"),
+            WaitTimeout::secs(10, "attach startup"),
+        )
+        .unwrap();
+    harness
         .wait_for_text("cargo test", WaitTimeout::secs(10, "attach shell card"))
         .unwrap();
-    attach
+    harness
         .wait_for_text(
             "rho-cursor-acp-e2e-ok",
             WaitTimeout::secs(5, "attach final text"),
         )
         .unwrap();
-    attach.inject_key(&Key::Char('q')).unwrap();
-    assert_eq!(
-        attach
-            .wait_for_exit(WaitTimeout::secs(5, "detach"))
-            .unwrap(),
-        0
-    );
+    harness.inject_key(&Key::Esc).unwrap();
+    harness
+        .wait_for_text_gone("q back", WaitTimeout::secs(5, "leave attach view"))
+        .unwrap();
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }

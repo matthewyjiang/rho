@@ -24,24 +24,18 @@ use crate::{
     tui::{click_sequence::ClickSequence, terminal_events::TerminalEvents, Theme},
 };
 
-pub(in crate::tui) enum EmptySubmit {
-    Stay,
-    Cancel,
-}
-
 pub(in crate::tui) enum EventHandling {
     Handled,
     Continue,
 }
 
 /// The feature handler runs before navigation and owns special keys and paste.
-/// Reuse the caller's stream when continuing into another terminal UI.
+/// Submitting with no selected row keeps the picker open.
 pub(in crate::tui) async fn run(
     terminal: &mut DefaultTerminal,
     events: &mut TerminalEvents,
     mut picker: UiPicker,
     keybindings: &Keybindings,
-    empty_submit: EmptySubmit,
     mut handle_event: impl FnMut(&mut UiPicker, &Event) -> EventHandling,
 ) -> anyhow::Result<Option<String>> {
     let mut clicks = ClickSequence::default();
@@ -98,10 +92,6 @@ pub(in crate::tui) async fn run(
                 PickerKeyEffect::Submit => {
                     if let Some(item) = picker.selected_item() {
                         return Ok(Some(item.value.clone()));
-                    }
-                    match empty_submit {
-                        EmptySubmit::Stay => {}
-                        EmptySubmit::Cancel => return Ok(None),
                     }
                 }
                 PickerKeyEffect::Escape => return Ok(None),

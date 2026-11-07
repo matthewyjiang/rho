@@ -12,7 +12,7 @@ const RESULT_EXCERPT_BYTES: usize = 16 * 1024;
 pub(crate) const MODEL_NOTIFICATION_BYTES: usize = 16 * 1024;
 
 const NOTIFICATION_HEADER: &str = "[agent notification]\n\nRun status:\n";
-const NOTIFICATION_FOOTER: &str = "\n\nAny omitted or truncated result details remain available through `agents list`, `agents status`, or `rho attach <run-id>`.\n\nThis is an automated notification, not a user message. Fold the results into your ongoing work; use the agents tool for details.";
+const NOTIFICATION_FOOTER: &str = "\n\nAny omitted or truncated result details remain available through `agents list` or `agents status`.\n\nThis is an automated notification, not a user message. Fold the results into your ongoing work; use the agents tool for details.";
 const NEWER_NOTIFICATIONS_SEPARATOR: &str = "\n\n--- newer agent completions ---\n\n";
 const EARLIER_NOTIFICATIONS_TRUNCATED: &str =
     "\n[earlier agent notification context truncated; use `agents list` or `agents status`]";
@@ -24,7 +24,7 @@ pub(super) enum SnapshotFormat {
 }
 
 pub(super) fn format_background_start(id: &str, agent_id: &str) -> String {
-    format!("agent {id} ({agent_id}) started in background\nattach: rho attach {id}")
+    format!("agent {id} ({agent_id}) started in background")
 }
 
 /// Script view of a run. Running output stays private; final answers share
@@ -131,9 +131,6 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
         if let Some(error) = &snapshot.status.attachment_error {
             lines.push(format!("attachment error: {error}"));
         }
-    }
-    if matches!(format, SnapshotFormat::Status) {
-        lines.push(format!("attach: rho attach {}", snapshot.id));
     }
     if snapshot.done && matches!(format, SnapshotFormat::Completion) {
         if let Some(result) = snapshot

@@ -2,23 +2,17 @@
 
 Parent: [Agents and delegation](/subagents).
 
-Observe any delegated run without owning its execution:
-
-```bash
-rho attach
-rho attach abc123
-```
-
-`rho attach` without an id opens a full-screen picker of subagents from the
-current directory, even when none are running. It starts on running runs.
-Ctrl-R shows finished transcripts from this directory so you can reopen an
-old run. Rows show the agent role, generated title, and current tool or
-final state. Enter attaches to the selected run. Escape leaves without
-attaching. `rho attach <id>` still finds a run from any directory.
+Observe any delegated run without owning its execution. In the interactive
+TUI, `/attach` opens a full-screen picker of subagents from the current
+directory, even when none are running. It starts on running runs. Ctrl-R
+shows finished transcripts from this directory so you can reopen an old run.
+Rows show the agent role, generated title, and current tool or final state.
+Enter opens the selected run in place. Escape leaves without attaching.
+Clicking a subagent row in the activity rail opens that run directly.
 
 ```mermaid
 flowchart TD
-    attach[rho attach id] --> index[Global run index]
+    attach["/attach or rail click"] --> index[Global run index]
     index --> sessionDir[Session-owned subagents folder]
     index --> globalDir["~/.rho/subagents id"]
     sessionDir --> watch[Read-only event stream]
@@ -56,11 +50,11 @@ Older journals remain readable without a preview file. Existing logs are not rew
 If live preview publication fails, the journal records a notice and continues
 retaining durable events and the latest input at its lifecycle boundary.
 
-Run IDs stay globally unique. `rho attach` first checks the global run index, then scans folder-layout sessions, then checks the legacy global path. This lets another process attach from any working directory while keeping unindexed older runs available.
+Run IDs stay globally unique. Opening a run by id first checks the global run index, then scans folder-layout sessions, then checks the legacy global path. This finds a run from any working directory while keeping unindexed older runs available.
 
-Detaching does not cancel execution. The interactive TUI opens this viewer in place. `rho attach <id>` still works as a separate process for another terminal. Neither path owns the delegated task. Artifacts remain available for post-run inspection and may contain prompts or workspace content.
+Detaching does not cancel execution. The interactive TUI opens this viewer in place and does not own the delegated task. Artifacts remain available for post-run inspection and may contain prompts or workspace content.
 
-Attach uses the same display settings as the interactive TUI from config: `show_reasoning_output`, `zen_mode`, `max_tool_output_lines`, and `theme`. Reasoning and tool events stay in the journal; the view filters them when painting so hide-reasoning and zen match the main session. Click a truncated tool card, or press Ctrl+O, to expand or collapse it.
+Attach uses the interactive session's display settings: `show_reasoning_output`, `zen_mode`, `max_tool_output_lines`, and `theme`. Reasoning and tool events stay in the journal; the view filters them when painting so hide-reasoning and zen match the main session. Click a truncated tool card, or press Ctrl+O, to expand or collapse it.
 
 A direct automation run can persist the same status contract:
 

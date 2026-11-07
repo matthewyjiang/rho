@@ -12,46 +12,21 @@ use super::super::{
         resolved_context_window, resolved_usage_cost_usd_micros,
     },
 };
-use crate::{
-    herdr::HerdrState,
-    subagent::{self, RunState, RunStatus},
-};
+use crate::subagent::{self, RunState, RunStatus};
 
 /// Separator between attach header fields. Matches the main TUI statusline.
 const FIELD_SEP: &str = " · ";
 
-/// Host-specific attach chrome. Footer copy and parent badges live here so
-/// `AttachmentApp` stays a viewer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AttachChrome {
-    Standalone,
-    Embedded { notice: Option<ParentNotice> },
-}
+/// Footer key hints for the in-place attach view.
+const FOOTER_HINT: &str = "scroll · Tab cycle · Ctrl+O expand · q back · Ctrl+C back/again quit";
 
-/// Parent session state shown in the embedded attach footer.
+/// Parent session state shown in the attach footer. Footer copy and parent
+/// badges live here so `AttachmentApp` stays a viewer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ParentNotice {
     Approval,
     Questionnaire,
     TurnComplete,
-}
-
-impl AttachChrome {
-    fn footer_hint(self) -> &'static str {
-        match self {
-            Self::Standalone => "read-only · scroll · Ctrl+O expand · q detach",
-            Self::Embedded { .. } => {
-                "scroll · Tab cycle · Ctrl+O expand · q back · Ctrl+C back/again quit"
-            }
-        }
-    }
-
-    fn parent_notice(self) -> Option<ParentNotice> {
-        match self {
-            Self::Standalone => None,
-            Self::Embedded { notice } => notice,
-        }
-    }
 }
 
 impl ParentNotice {
@@ -64,11 +39,10 @@ impl ParentNotice {
     }
 }
 
-pub(super) fn footer_line(chrome: AttachChrome, width: usize) -> Line<'static> {
-    let hint = chrome.footer_hint();
-    let text = match chrome.parent_notice() {
-        Some(notice) => format!("{}{FIELD_SEP}{hint}", notice.label()),
-        None => hint.to_string(),
+pub(super) fn footer_line(parent_notice: Option<ParentNotice>, width: usize) -> Line<'static> {
+    let text = match parent_notice {
+        Some(notice) => format!("{}{FIELD_SEP}{FOOTER_HINT}", notice.label()),
+        None => FOOTER_HINT.to_string(),
     };
     Line::styled(truncate_one_line(&text, width), Theme::dim())
 }
@@ -210,19 +184,6 @@ pub(super) fn format_run_cost(
     run_usage
         .and_then(|usage| resolved_usage_cost_usd_micros(usage, None))
         .map(format_usd)
-}
-
-pub(super) fn herdr_status(id: &str, status: &RunStatus) -> (HerdrState, String) {
-    let state = match status.state {
-        RunState::Queued | RunState::Starting | RunState::Running => HerdrState::Working,
-        RunState::Error => HerdrState::Blocked,
-        RunState::Ok | RunState::Stopped => HerdrState::Idle,
-    };
-    let detail = status
-        .last_activity
-        .as_deref()
-        .unwrap_or_else(|| status.state.as_str());
-    (state, format!("agent run {id}: {detail}"))
 }
 
 pub(super) fn state_style(status: Option<&RunStatus>) -> ratatui::style::Style {

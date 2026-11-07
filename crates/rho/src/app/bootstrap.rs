@@ -215,22 +215,6 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
             super::acp_fixture_agent::run(args).await,
         ));
     }
-    if let Some(Command::Attach { id }) = &cli.command {
-        // Attach is early-dispatched, so load display settings here the way the
-        // interactive TUI gets them through RuntimeModelView. Propagate load
-        // failures instead of failing open to full reasoning / work chrome.
-        let config = ConfigRepository::new(cli.config.clone()).load()?;
-        let display = crate::tui::AttachmentDisplaySettings::from_config(&config);
-        return Ok(EarlyDispatch::Handled(
-            crate::tui::run_attachment(
-                id.as_deref(),
-                display,
-                &config.theme,
-                HerdrReporter::from_env(),
-            )
-            .await,
-        ));
-    }
     if matches!(cli.command, Some(Command::Update)) {
         return Ok(EarlyDispatch::Handled(
             update::run_update(env!("CARGO_PKG_VERSION")).await,
