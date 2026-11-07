@@ -155,9 +155,17 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
 }
 
 /// Writes the JSONL stream of a run that failed to start with `exit`: only
-/// its `run_ended`.
-pub(super) fn emit_startup_failure(exit: &AutomationExit) {
-    JsonlStream::stdout().end(&exit.end);
+/// its `run_ended`. Returns the exit, unless the stream could not be
+/// written, which is an output error.
+pub(super) fn emit_startup_failure(exit: AutomationExit) -> AutomationExit {
+    let mut stream = JsonlStream::stdout();
+    stream.end(&exit.end);
+    stream.failure().map_or(exit, output_error)
+}
+
+/// The exit of a run whose JSONL stream failed with `failure`.
+fn output_error(failure: &str) -> AutomationExit {
+    AutomationExit::new(1, TerminalReason::OutputError, failure)
 }
 
 pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Result<()> {
@@ -283,10 +291,7 @@ async fn run_session(
     let _ = herdr.release().await;
     // A JSONL write that failed already failed the turn; the stream is gone.
     let end = match view.output_failure() {
-        Some(message) => {
-            let failed = AutomationExit::new(1, TerminalReason::OutputError, message);
-            PromptEnd::Failed(failed.into())
-        }
+        Some(message) => PromptEnd::Failed(output_error(&message).into()),
         None => end,
     };
     // The bound agent may pin its own provider and auth; that is what runs.
@@ -486,9 +491,10 @@ fn emit_and_exit_terminal(
     };
     if let Some(stream) = jsonl {
         stream.end(&end);
-        // A run that ended well fails if its stream could not say so.
-        if let (Ok(()), Some(failure)) = (&exit, stream.failure()) {
-            return Err(AutomationExit::new(1, TerminalReason::OutputError, failure).into());
+        // A stream that could not be written ends the run as an output
+        // error, whatever the run's own end.
+        if let Some(failure) = stream.failure() {
+            return Err(output_error(failure).into());
         }
     }
     exit

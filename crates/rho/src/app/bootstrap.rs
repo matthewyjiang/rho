@@ -59,7 +59,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             error.to_string(),
         );
         if output == OutputFormat::Jsonl {
-            automation::emit_startup_failure(&exit);
+            return Err(automation::emit_startup_failure(exit).into());
         }
         return Err(exit.into());
     }

@@ -505,22 +505,29 @@ fn startup_failure_writes_only_run_ended() {
     );
 }
 
+// Covers: a JSONL stream that cannot be written ends the run as an output
+// error, exit 1, whatever the run's own end, as for a run that failed to
+// start (else exit 2).
+// Owner: rho run JSONL contract (process contract)
 #[test]
 fn broken_jsonl_stdout_fails_the_run() {
-    let root = TempDir::new().unwrap();
-    let mut command = command(&root, "fixed");
-    command.args(["run", "--output", "jsonl", "hello"]);
-    let (reader, writer) = std::io::pipe().unwrap();
-    drop(reader);
-    command.stdout(writer);
+    for (case, config) in [("runs", ""), ("fails to start", "not valid toml = [")] {
+        let root = TempDir::new().unwrap();
+        std::fs::write(root.path().join("config.toml"), config).unwrap();
+        let mut command = command(&root, "fixed");
+        command.args(["run", "--output", "jsonl", "hello"]);
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        command.stdout(writer);
 
-    let output = command.output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert!(
-        stderr(&output).contains("could not write JSONL output"),
-        "stderr: {}",
-        stderr(&output)
-    );
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{case}");
+        assert!(
+            stderr(&output).contains("could not write JSONL output"),
+            "{case}: {}",
+            stderr(&output)
+        );
+    }
 }
 
 #[test]
