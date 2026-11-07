@@ -169,6 +169,26 @@ impl Sandbox {
         self.daemon.daemon_log()
     }
 
+    /// Writes the fixture config with `permission_mode = "<mode>"`, which a
+    /// daemon started after reads.
+    pub(super) fn set_permission_mode(&self, mode: &str) {
+        std::fs::write(
+            self.daemon.home().join("config.toml"),
+            format!("permission_mode = \"{mode}\"\n{CONFIG}"),
+        )
+        .unwrap();
+    }
+
+    /// Calls `attempt` until it returns `Some`, failing with the daemon log
+    /// after [`DEADLINE`].
+    pub(super) async fn poll_until<T>(
+        &self,
+        what: &str,
+        attempt: impl AsyncFnMut() -> Option<T>,
+    ) -> T {
+        self.daemon.poll_until(what, DEADLINE, attempt).await
+    }
+
     /// The directory `session` is saved in, once it is: each session is a
     /// directory named for its id, below its workspace's.
     fn session_dir(&self, session: &SessionId) -> Option<PathBuf> {
@@ -1020,11 +1040,7 @@ async fn answer(
 pub(super) async fn prompt_a_supervised_write(
     sandbox: &Sandbox,
 ) -> (DaemonProcess, Client, SessionId) {
-    std::fs::write(
-        sandbox.daemon.home().join("config.toml"),
-        format!("permission_mode = \"supervised\"\n{CONFIG}"),
-    )
-    .unwrap();
+    sandbox.set_permission_mode("supervised");
     // The fixture makes the call the prompt spells out as JSON.
     let (daemon, client) = sandbox.start_daemon("tool-call").await;
     let session = new_session(&client, &sandbox.workspace).await;
