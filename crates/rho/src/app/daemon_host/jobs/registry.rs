@@ -143,18 +143,17 @@ impl JobRegistry {
         let jobs = self.lock();
         let mut last: Option<&JobRecord> = None;
         for record in jobs.values() {
-            let (writes, turns) = match &record.subject {
-                JobSubject::Session { session: written } => (written == session, true),
+            // Whether the job runs the session's turns, of the jobs that
+            // write it at all.
+            let turns = match &record.subject {
+                JobSubject::Session { session: written } if written == session => true,
                 JobSubject::Subagent {
                     session: Some(written),
-                } => (written == session, false),
-                JobSubject::Subagent { session: None } | JobSubject::Workflow { .. } => {
-                    (false, false)
-                }
+                } if written == session => false,
+                JobSubject::Session { .. }
+                | JobSubject::Subagent { .. }
+                | JobSubject::Workflow { .. } => continue,
             };
-            if !writes {
-                continue;
-            }
             if record.state.in_progress() {
                 return SessionJob::Busy(record.id.clone());
             }

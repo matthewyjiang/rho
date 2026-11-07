@@ -36,7 +36,7 @@ use rho_sdk::{CancellationToken, SessionId, UserInput};
 use super::{
     jobs::{JobEvent, JobId, JobRecord, JobRegistry, JobState, SessionJob, StartTurnError},
     subagents::Subagents,
-    wire::{session_from_wire, session_to_wire, state_event},
+    wire::{session_to_wire, state_event},
 };
 use crate::{
     app::{
@@ -44,12 +44,12 @@ use crate::{
         session_runtime::{Closing, Logouts, SessionHandle, SessionRuntime, SteerError},
     },
     config::Config,
-    session::{Session as StoredSession, SessionInUse},
 };
 
 mod feed;
 mod inputs;
 mod open;
+mod reopen;
 #[cfg(test)]
 mod test_events;
 mod turn;
@@ -57,6 +57,7 @@ mod turn;
 use feed::{Attached, Feed};
 use inputs::Inputs;
 use open::{open_session, OpenedSession, Opening, Workspace};
+use reopen::ReopenLocks;
 use turn::{PromptStart, TurnLimit, TurnTask};
 
 /// How long the daemon's stop waits for its turns to save once it was
@@ -74,9 +75,8 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(4);
 pub(super) struct Sessions {
     jobs: Arc<JobRegistry>,
     loaded: Mutex<HashMap<SessionId, Arc<LoadedSession>>>,
-    /// One lock per session being reopened, so two requests for it open it
-    /// once; removed once the reopen ends.
-    reopening: Mutex<HashMap<SessionId, Arc<tokio::sync::Mutex<()>>>>,
+    /// The saved sessions being reopened, one at a time each.
+    reopening: ReopenLocks,
     /// The daemon-wide budget the sessions' subagents share, and their jobs.
     subagents: Subagents,
     /// The daemon's logouts, which every session's credentials follow.
@@ -120,35 +120,44 @@ async fn time_out(session: Weak<LoadedSession>, id: rho_protocol::InputRequestId
     }
 }
 
+/// The rows `runtime` has saved, replayed through `live` as the feed's
+/// events, or `None` when it has saved none yet or they could not be read.
+fn saved_replay(
+    live: &mut LiveEvents,
+    runtime: &SessionRuntime,
+    job: &JobId,
+) -> Option<Vec<rho_protocol::SessionEvent>> {
+    let saved = runtime.saved_history()?;
+    match saved.display_rows() {
+        Ok(rows) => live.replay(&rows, saved.cwd(), saved.tools()),
+        Err(error) => {
+            tracing::warn!(
+                %job,
+                error = format!("{error:#}"),
+                "could not read the session's saved rows; clients that reset replay its unsaved turns live until a later turn saves"
+            );
+            None
+        }
+    }
+}
+
 impl LoadedSession {
-    /// A session opened as `runtime`, whose turns are recorded on `job` in
+    /// A session opened as `opened`, whose turns are recorded on `job` in
     /// `jobs`, which is in `state`: idle for a new session, its last turn's
     /// end for a reopened one. Its feed begins with the conversation the
     /// session has saved, which a new session has none of.
-    fn new(
-        job: JobId,
-        jobs: Arc<JobRegistry>,
-        runtime: SessionRuntime,
-        config: Config,
-        state: &JobState,
-    ) -> Self {
+    fn new(job: JobId, jobs: Arc<JobRegistry>, opened: OpenedSession, state: &JobState) -> Self {
+        let OpenedSession { runtime, config } = opened;
         let mut live = LiveEvents::new(runtime.workspace_root(), runtime.tools());
-        let transcript = runtime
-            .saved_history()
-            .and_then(|saved| match saved.display_rows() {
-                Ok(rows) => live.replay(&rows, saved.cwd(), saved.tools()),
-                Err(error) => {
-                    // The mapper then replays every row with the next save.
-                    tracing::warn!(%job, error = format!("{error:#}"), "could not read a reopened session's saved rows; its replay starts empty");
-                    None
-                }
-            })
-            .unwrap_or_default();
+        let feed = Feed::new(state.into());
+        if let Some(saved) = saved_replay(&mut live, &runtime, &job) {
+            feed.end_turn(saved);
+        }
         Self {
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),
             live: Mutex::new(live),
-            feed: Feed::new(transcript, state.into()),
+            feed,
             job,
             jobs,
             runtime: tokio::sync::Mutex::new(Some(runtime)),
@@ -245,7 +254,7 @@ impl Sessions {
             subagents: Subagents::new(Arc::clone(&jobs), stopping.clone()),
             jobs,
             loaded: Mutex::default(),
-            reopening: Mutex::default(),
+            reopening: ReopenLocks::default(),
             logouts: Logouts::default(),
             stopping,
         }
@@ -262,8 +271,8 @@ impl Sessions {
     /// `daemon_stopping`. Call before the transport closes the connections,
     /// so each client learns why. Calling again does nothing.
     pub(super) fn begin_stop(&self) {
-        // Under the lock `open_new` checks `stopping` under, so no session
-        // is added after this with its feed open.
+        // Under the lock `add` checks `stopping` under, so no session is
+        // added after this with its feed open.
         let loaded = self.loaded();
         self.stopping.cancel();
         for session in loaded.values() {
@@ -279,7 +288,7 @@ impl Sessions {
         self.refuse_when_stopping()?;
         let workspace = Workspace::parse(&params.cwd)?;
         let job = JobId::generate();
-        let OpenedSession { runtime, config } = open_session(
+        let opened = open_session(
             Opening::New(workspace),
             &self.logouts,
             &self.subagents,
@@ -287,128 +296,54 @@ impl Sessions {
         )
         .await
         .map_err(open_failed)?;
-        let session = runtime.session_id().clone();
+        let session = opened.runtime.session_id().clone();
         let record = JobRecord::new_session(
             job.clone(),
-            runtime.workspace_root().to_path_buf(),
+            opened.runtime.workspace_root().to_path_buf(),
             session.clone(),
         );
-        self.add(SessionJobRecord::Register(record), runtime, config)
-            .await?;
+        self.add(SessionJobRecord::Register(record), opened).await?;
         tracing::info!(%session, %job, "opened session");
         Ok(SessionNewResponse {
             session: session_to_wire(session),
         })
     }
 
-    /// Adds a session opened as `runtime` with `config`, whose turns are
-    /// recorded on `job`. Checked, recorded, and added under the lock the
-    /// stop drains the sessions under, so a session opened while the daemon
-    /// stops is shut down here, neither left running nor recorded.
+    /// Adds `opened`, whose turns are recorded as `job` says. Checked,
+    /// recorded, and added under the lock the stop drains the sessions
+    /// under, so a session opened while the daemon stops is shut down here,
+    /// neither left running nor recorded. Its saved conversation is replayed
+    /// before that lock, which every request takes.
     async fn add(
         &self,
         job: SessionJobRecord,
-        runtime: SessionRuntime,
-        config: Config,
+        opened: OpenedSession,
     ) -> Result<Arc<LoadedSession>, RpcError> {
+        let session = opened.runtime.session_id().clone();
+        let entry = LoadedSession::new(
+            job.id().clone(),
+            Arc::clone(&self.jobs),
+            opened,
+            job.state(),
+        );
         let refused = {
             let mut loaded = self.loaded();
             match self
                 .refuse_when_stopping()
-                .and_then(|()| job.record(&self.jobs))
+                .and_then(|()| job.record(&self.jobs, &session))
             {
-                Ok(record) => {
-                    let session = runtime.session_id().clone();
-                    let entry = Arc::new(LoadedSession::new(
-                        record.id,
-                        Arc::clone(&self.jobs),
-                        runtime,
-                        config,
-                        &record.state,
-                    ));
+                Ok(()) => {
+                    let entry = Arc::new(entry);
                     loaded.insert(session, Arc::clone(&entry));
                     return Ok(entry);
                 }
                 Err(error) => error,
             }
         };
-        runtime.shutdown().await;
+        if let Some(runtime) = entry.runtime.into_inner() {
+            runtime.shutdown().await;
+        }
         Err(refused)
-    }
-
-    /// The session `id` names, loaded: one the daemon has loaded, or a saved
-    /// one it reopens (#1661). Two requests for the same unloaded session
-    /// open it once; different sessions open at the same time.
-    async fn session(&self, id: &rho_protocol::SessionId) -> Result<Arc<LoadedSession>, RpcError> {
-        let id = parse_session(id)?;
-        if let Some(session) = self.loaded().get(&id) {
-            return Ok(Arc::clone(session));
-        }
-        let lock = Arc::clone(self.reopening().entry(id.clone()).or_default());
-        let reopened = {
-            let _reopening = lock.lock().await;
-            // A request that held the lock first may have opened it.
-            let loaded = self.loaded().get(&id).cloned();
-            match loaded {
-                Some(session) => Ok(session),
-                None => self.reopen(&id).await,
-            }
-        };
-        let mut reopening = self.reopening();
-        // The last request done with the lock removes it. One that removed
-        // it while another waited on it would let a third reopen beside that
-        // waiter after a failed reopen. Clones are taken only under the map's
-        // lock, held here, so the count cannot grow meanwhile.
-        if Arc::strong_count(&lock) == 2 {
-            reopening.remove(&id);
-        }
-        reopened
-    }
-
-    /// Reopens saved session `id` from its file, in its own workspace, and
-    /// records its turns on the session's last job, or a new one when no
-    /// daemon has run it.
-    async fn reopen(&self, id: &SessionId) -> Result<Arc<LoadedSession>, RpcError> {
-        self.refuse_when_stopping()?;
-        let last = match self.jobs.session_job(id) {
-            SessionJob::Busy(job) => {
-                return Err(RpcError::new(
-                    ErrorCode::SessionBusy,
-                    format!("job {job} is writing session {id}"),
-                ))
-            }
-            SessionJob::Last(record) => Some(record),
-            SessionJob::New => None,
-        };
-        let job = last
-            .as_ref()
-            .map_or_else(JobId::generate, |record| record.id.clone());
-        let stored = {
-            let id = id.clone();
-            tokio::task::spawn_blocking(move || saved_session(&id))
-                .await
-                .map_err(|error| {
-                    RpcError::new(
-                        ErrorCode::InternalError,
-                        format!("could not find session: {error}"),
-                    )
-                })??
-        };
-        let OpenedSession { runtime, config } =
-            open_session(Opening::Saved(stored), &self.logouts, &self.subagents, &job)
-                .await
-                .map_err(open_failed)?;
-        let record = match last {
-            Some(record) => SessionJobRecord::Reuse(record),
-            None => SessionJobRecord::Register(JobRecord::new_session(
-                job.clone(),
-                runtime.workspace_root().to_path_buf(),
-                id.clone(),
-            )),
-        };
-        let session = self.add(record, runtime, config).await?;
-        tracing::info!(session = %id, %job, "reopened session");
-        Ok(session)
     }
 
     /// Starts a turn of `text` on a session and returns once the turn saved
@@ -595,37 +530,6 @@ impl Sessions {
         self.jobs.close();
     }
 
-    /// The loaded session `id` names, or `None` for a saved session this
-    /// daemon has not loaded, which has no turn under way. An id nothing is
-    /// saved under is `SessionNotFound`.
-    async fn loaded_session(
-        &self,
-        id: &rho_protocol::SessionId,
-    ) -> Result<Option<Arc<LoadedSession>>, RpcError> {
-        let id = parse_session(id)?;
-        if let Some(session) = self.loaded().get(&id) {
-            return Ok(Some(Arc::clone(session)));
-        }
-        let saved = {
-            let id = id.clone();
-            tokio::task::spawn_blocking(move || StoredSession::workspace_of(id.as_str()))
-                .await
-                .map_err(|error| lookup_failed(&error))?
-                .map_err(|error| lookup_failed(&error))?
-        };
-        match saved {
-            Some(_) => Ok(None),
-            None => Err(not_found(&id)),
-        }
-    }
-
-    fn reopening(&self) -> MutexGuard<'_, HashMap<SessionId, Arc<tokio::sync::Mutex<()>>>> {
-        // Only inserted into and removed from whole.
-        self.reopening
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
     fn refuse_when_stopping(&self) -> Result<(), RpcError> {
         if self.stopping.is_cancelled() {
             Err(stopping())
@@ -651,53 +555,48 @@ enum SessionJobRecord {
 }
 
 impl SessionJobRecord {
-    /// The job, recorded in `jobs`.
-    fn record(self, jobs: &JobRegistry) -> Result<JobRecord, RpcError> {
+    fn id(&self) -> &JobId {
         match self {
-            Self::Register(record) => match jobs.register(record.clone()) {
-                Ok(()) => Ok(record),
-                Err(error) => Err(RpcError::new(
+            Self::Register(record) | Self::Reuse(record) => &record.id,
+        }
+    }
+
+    /// The state the job is in before the session's next turn.
+    fn state(&self) -> &JobState {
+        match self {
+            Self::Register(record) | Self::Reuse(record) => &record.state,
+        }
+    }
+
+    /// Records the job in `jobs` as the one of `session`'s turns, refusing
+    /// it when the registry no longer agrees, as when another job began
+    /// writing the session while it reopened (#1661).
+    fn record(self, jobs: &JobRegistry, session: &SessionId) -> Result<(), RpcError> {
+        match (self, jobs.session_job(session)) {
+            (Self::Register(record), SessionJob::New) => jobs.register(record).map_err(|error| {
+                RpcError::new(
                     ErrorCode::InternalError,
                     format!("could not record the session's job: {error}"),
-                )),
-            },
-            Self::Reuse(record) => Ok(record),
+                )
+            }),
+            (Self::Reuse(record), SessionJob::Last(last)) if last.id == record.id => Ok(()),
+            (_, SessionJob::Busy(job)) => Err(writing(&job, session)),
+            (Self::Register(_) | Self::Reuse(_), SessionJob::New | SessionJob::Last(_)) => {
+                Err(RpcError::new(
+                    ErrorCode::SessionBusy,
+                    format!("session {session}'s job changed while the daemon opened it"),
+                ))
+            }
         }
     }
 }
 
-/// The session saved under `id`, opened in its own workspace. Blocking: it
-/// reads the session index and the session's file.
-fn saved_session(id: &SessionId) -> Result<StoredSession, RpcError> {
-    let cwd = StoredSession::workspace_of(id.as_str())
-        .map_err(|error| lookup_failed(&error))?
-        .ok_or_else(|| not_found(id))?;
-    match StoredSession::open_exact_in_workspace(&cwd, id.as_str()) {
-        Ok(Some((stored, _histories))) => Ok(stored),
-        // Deleted since the index named it.
-        Ok(None) => Err(not_found(id)),
-        Err(error) if error.is::<SessionInUse>() => {
-            Err(RpcError::new(ErrorCode::SessionInUse, format!("{error:#}")))
-        }
-        Err(error) => Err(open_failed(error)),
-    }
-}
-
-fn parse_session(id: &rho_protocol::SessionId) -> Result<SessionId, RpcError> {
-    session_from_wire(id).map_err(|_| RpcError::new(ErrorCode::InvalidParams, "not a session id"))
-}
-
-fn not_found(id: &SessionId) -> RpcError {
+/// The error for a session job `job` writes, so the daemon must not open it
+/// a second time.
+fn writing(job: &JobId, session: &SessionId) -> RpcError {
     RpcError::new(
-        ErrorCode::SessionNotFound,
-        format!("no session is saved under {id}"),
-    )
-}
-
-fn lookup_failed(error: &dyn std::fmt::Display) -> RpcError {
-    RpcError::new(
-        ErrorCode::InternalError,
-        format!("could not look the session up: {error}"),
+        ErrorCode::SessionBusy,
+        format!("job {job} is writing session {session}"),
     )
 }
 

@@ -58,7 +58,16 @@ A session's turn that asks for approval, a plan approval, or answers to question
 
 Any number of clients can follow a session with `rho/session/attach`: they receive its conversation as events, live, and a client that comes back resumes where it left off, or gets the saved conversation again when the daemon no longer buffers what it missed. See [Following a session](/protocol#following-a-session) in the protocol reference. From a terminal, [`rho run --detach`](/automation-cli#running-in-the-daemon) starts one and [`rho attach`](/automation-cli#attaching-to-a-daemon-session) follows it.
 
-Each job's record is a JSON file in `~/.rho/daemon/jobs/` (`$RHO_HOME/daemon/jobs/` with `RHO_HOME`), rewritten on every state change. Records are kept: nothing deletes them yet, so a daemon lists the jobs earlier daemons ran. A prompt or an attach for a saved session the daemon has not loaded, such as one an earlier daemon ran or one the TUI saved, reopens it in its own workspace, as the agent it was saved as, whatever workspace the client is in. Its next turns are recorded on its last session job, so a session keeps one job across daemons; a session no daemon ran gets a new one. Cancel, steer, answer, and hold never reopen a session, since one that is not loaded has no turn to act on. A session another process has open is refused with `SessionInUse` (-32012), and an id nothing is saved under with `SessionNotFound` (-32003). A reopened session stays loaded until the daemon stops.
+Each job's record is a JSON file in `~/.rho/daemon/jobs/` (`$RHO_HOME/daemon/jobs/` with `RHO_HOME`), rewritten on every state change. Records are kept: nothing deletes them yet, so a daemon lists the jobs earlier daemons ran. A prompt or an attach for a saved session the daemon has not loaded, such as one an earlier daemon ran or one the TUI saved, reopens it in its own workspace, whatever workspace the client is in. It runs as the agent it was saved as; if that agent's definition changed or is gone, the reopen fails with `SessionOpenFailed` (-32008), as the TUI's resume does, rather than run the session as another agent. Its next turns are recorded on its last session job, so a session keeps one job across daemons; a session no daemon ran gets a new one. Cancel, steer, answer, and hold never reopen a session, since one that is not loaded has no turn to act on.
+
+A reopen is refused when:
+
+- another process, such as the TUI or a foreground `rho run`, has the session open: `SessionInUse` (-32012);
+- another job of the daemon's, such as a subagent run, writes it: `SessionBusy` (-32004);
+- it is a subagent's or workflow node's session, which only the session that started it continues: `SessionOpenFailed` (-32008);
+- nothing is saved under the id: `SessionNotFound` (-32003).
+
+A reopened session stays loaded, and keeps the session open to other processes, until the daemon stops. Its job state is the daemon's last record of it: a session continued in the TUI since then still reports how the daemon's last turn ended, until the TUI runs through the daemon ([#1667](https://github.com/matthewyjiang/rho/issues/1667)).
 
 Tools in a session run with the daemon's own environment, minus provider credentials, as tools in every rho session do. A daemon that a frontend started automatically has that frontend's environment. Clients will send their own environment later ([#1659](https://github.com/matthewyjiang/rho/issues/1659)).
 

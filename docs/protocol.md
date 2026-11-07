@@ -123,11 +123,11 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 | -32000 | `HandshakeRequired` | A request other than `rho/hello` came before the handshake. |
 | -32001 | `VersionMismatch` | The protocol majors differ; `data` says which side to change. |
 | -32003 | `SessionNotFound` | No session is saved under the id. |
-| -32004 | `SessionBusy` | The session already has a turn under way. |
+| -32004 | `SessionBusy` | The session already has a turn under way, or another job, such as a subagent run, writes the saved session a prompt or an attach would reopen. |
 | -32005 | `NotSteerable` | No model request is taking input. |
 | -32006 | `SteerRefused` | The running turn refused the steering input. |
 | -32007 | `DaemonStopping` | The daemon is stopping and starts nothing new. |
-| -32008 | `SessionOpenFailed` | The daemon could not open the session, for example because the config is invalid. |
+| -32008 | `SessionOpenFailed` | The daemon could not open the session: for example, the config is invalid, the agent a saved session was saved as changed or is gone, or the session is a subagent's or workflow node's, which only its parent continues. |
 | -32009 | `TurnEnded` | The turn ended before it saved the prompt; `data` is its outcome. |
 | -32011 | `InputNotOpen` | The input request is not open: another client answered it first, it timed out, or the turn withdrew it. |
 | -32012 | `SessionInUse` | Another process, such as a TUI or a foreground `rho run`, has the session open, so the daemon cannot reopen it. |

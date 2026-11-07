@@ -438,6 +438,12 @@ impl Session {
         self.rewrite_fresh_delegated_identity(agent_id, fingerprint, initial_snapshot)
     }
 
+    /// The host that created the session, or `None` for a file written
+    /// before origins were recorded.
+    pub(crate) fn origin(&self) -> anyhow::Result<Option<SessionOrigin>> {
+        agent_identity::read_origin(&self.path)
+    }
+
     /// The child agent id when the session was rebound as a delegated agent.
     pub(crate) fn delegated_agent_id(&self) -> anyhow::Result<Option<String>> {
         agent_identity::read_delegated_agent_id(&self.path)

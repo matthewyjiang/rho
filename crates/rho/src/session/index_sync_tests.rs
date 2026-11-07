@@ -9,7 +9,7 @@ use rusqlite::{params, Connection};
 use tempfile::TempDir;
 
 use super::super::persistence::{
-    session_dir_in_root, session_file_stats, workspace_key, SessionEntry,
+    session_dir_in_root, session_file_stats, workspace_key, SessionEntry, SessionStore,
 };
 use super::super::{SessionIndexRecord, SessionSummary};
 use super::{
@@ -459,6 +459,36 @@ fn list_all_sessions_discovers_unindexed_workspaces() {
     assert!(ids.contains("a-session"));
     assert!(ids.contains("b-session"));
     assert_eq!(all.len(), 2);
+}
+
+// Covers: an exact session id finds its workspace from any workspace: a
+// prefix of a saved id finds none, and a session the index has not seen yet
+// is found once the miss reconciles (#1661).
+// Owner: session index lookup by exact id.
+#[test]
+fn an_exact_id_finds_its_workspace_even_before_it_is_indexed() {
+    let root = TempDir::new().unwrap();
+    let cwd_a = TempDir::new().unwrap();
+    let cwd_b = TempDir::new().unwrap();
+    write_test_session(root.path(), cwd_a.path(), "indexed-session", 10, "from a");
+    list_all_sessions(root.path()).unwrap();
+    write_test_session(root.path(), cwd_b.path(), "unindexed-session", 20, "from b");
+
+    let lookup = |id| SessionStore::workspace_of(root.path(), id).unwrap();
+    assert_eq!(
+        [
+            lookup("indexed-session"),
+            lookup("unindexed-session"),
+            lookup("indexed"),
+            lookup("missing"),
+        ],
+        [
+            Some(cwd_a.path().to_path_buf()),
+            Some(cwd_b.path().to_path_buf()),
+            None,
+            None,
+        ]
+    );
 }
 
 // Covers: global listing must return one canonical summary when two index rows

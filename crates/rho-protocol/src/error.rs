@@ -85,8 +85,9 @@ error_codes! {
         VersionMismatch = -32001 => crate::VersionMismatch,
         /// No saved session has that id, in any workspace.
         SessionNotFound = -32003,
-        /// The session already has a turn running or waiting for input.
-        /// Prompt again once it ends.
+        /// The session already has a turn running or waiting for input, or
+        /// another job of the daemon's writes it, so it cannot be reopened
+        /// (#1661). Try again once that ends.
         SessionBusy = -32004,
         /// No model request is taking input.
         NotSteerable = -32005,
@@ -98,7 +99,9 @@ error_codes! {
         /// the stop begins is answered with this.
         DaemonStopping = -32007,
         /// The daemon could not open the session, for example because the
-        /// config or the default agent is invalid.
+        /// config is invalid, the agent a saved session was saved as changed
+        /// or is gone, or the session is a subagent's or workflow node's,
+        /// which only its parent continues (#1661).
         SessionOpenFailed = -32008,
         /// The turn ended before its prompt was saved, as when a cancel
         /// arrives before the turn begins, its time limit passes, or it

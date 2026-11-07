@@ -1,5 +1,6 @@
-//! Agent identity on the session header line: which agent definition a
-//! session belongs to, and whether ACP rebound it as a delegated child.
+//! Identity on the session header line: which agent definition a session
+//! belongs to, whether ACP rebound it as a delegated child, and the host
+//! that created it.
 
 use std::{
     fs,
@@ -15,7 +16,7 @@ use super::{
     layout::{set_private_file_permissions, timestamp},
     persistence::{SessionEntry, SESSION_VERSION},
     tree::{NodeId, SessionNode, SessionNodeKind, StoredStateTransition},
-    Session,
+    Session, SessionOrigin,
 };
 
 /// How the session's agent was bound. Absent from the header means `Root`:
@@ -54,6 +55,15 @@ pub(super) fn read_agent_identity(path: &Path) -> anyhow::Result<Option<(String,
             ..
         } => Ok(Some((id, fingerprint))),
         SessionEntry::Session { .. } => Ok(None),
+        _ => anyhow::bail!("session file does not start with session metadata"),
+    }
+}
+
+/// The host that created the session, or `None` for a file written before
+/// origins were recorded.
+pub(super) fn read_origin(path: &Path) -> anyhow::Result<Option<SessionOrigin>> {
+    match read_header(path)? {
+        SessionEntry::Session { origin, .. } => Ok(origin),
         _ => anyhow::bail!("session file does not start with session metadata"),
     }
 }

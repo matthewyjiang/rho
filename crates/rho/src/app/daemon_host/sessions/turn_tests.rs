@@ -16,7 +16,7 @@ use crate::{
     app::{
         daemon_host::{
             jobs::{JobId, JobRecord, JobRegistry, JobState, JobStore, TurnEnd},
-            sessions::LoadedSession,
+            sessions::{open::OpenedSession, LoadedSession},
         },
         session_runtime::{
             unattended_runtime_on, HangUntilCancel, InsertedMessage, QuestionSupport, SessionEvent,
@@ -59,8 +59,7 @@ async fn loaded_session(root: &Path, jobs: &Arc<JobRegistry>, job: JobId) -> Arc
     Arc::new(LoadedSession::new(
         job,
         Arc::clone(jobs),
-        runtime,
-        config,
+        OpenedSession { runtime, config },
         &JobState::Idle,
     ))
 }

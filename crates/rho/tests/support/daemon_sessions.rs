@@ -63,6 +63,14 @@ const WORKFLOW: &str = r#"def build(inputs):
 WORKFLOW = define(inputs = {}, build = build)
 "#;
 
+/// An agent a session is saved as, other than the default.
+const ARCHIVIST_AGENT: &str = "---
+description: Fixture agent a session is saved as
+---
+
+Archive.
+";
+
 const WORKFLOW_AGENT: &str = "---
 description: Fixture agent for a daemon workflow run
 ---
@@ -154,36 +162,43 @@ impl Sandbox {
         self.daemon.daemon_log()
     }
 
-    /// Whether `session` has a saved file yet.
-    fn session_saved(&self, session: &SessionId) -> bool {
+    /// The directory `session` is saved in, once it is: each session is a
+    /// directory named for its id, below its workspace's.
+    fn session_dir(&self, session: &SessionId) -> Option<PathBuf> {
         let suffix = format!("_{session}");
         std::fs::read_dir(self.daemon.home().join("sessions"))
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|workspace| std::fs::read_dir(workspace.path()).ok())
-            .flatten()
-            .flatten()
-            .any(|entry| {
-                entry.file_name().to_string_lossy().ends_with(&suffix)
-                    && entry.path().join("session.jsonl").is_file()
-            })
-    }
-
-    /// The records saved in `session`'s file.
-    fn session_records(&self, session: &SessionId) -> Vec<serde_json::Value> {
-        // Each session is a directory named for its id, below its
-        // workspace's.
-        let suffix = format!("_{session}");
-        let session = std::fs::read_dir(self.daemon.home().join("sessions"))
-            .unwrap()
+            .ok()?
             .flatten()
             .filter_map(|workspace| std::fs::read_dir(workspace.path()).ok())
             .flatten()
             .flatten()
             .find(|entry| entry.file_name().to_string_lossy().ends_with(&suffix))
-            .unwrap_or_else(|| panic!("no session directory for {session}"))
-            .path();
+            .map(|entry| entry.path())
+    }
+
+    /// Whether `session`'s file has saved a user message yet. A record still
+    /// being written is skipped.
+    fn saved_a_user_message(&self, session: &SessionId) -> bool {
+        self.session_dir(session)
+            .and_then(|dir| std::fs::read_to_string(dir.join("session.jsonl")).ok())
+            .is_some_and(|file| {
+                file.lines()
+                    .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                    .flat_map(|record| {
+                        record["transition"]["delta"]["appended_history"]
+                            .as_array()
+                            .cloned()
+                            .unwrap_or_default()
+                    })
+                    .any(|message| message.get("User").is_some())
+            })
+    }
+
+    /// The records saved in `session`'s file.
+    fn session_records(&self, session: &SessionId) -> Vec<serde_json::Value> {
+        let session = self
+            .session_dir(session)
+            .unwrap_or_else(|| panic!("no session directory for {session}"));
         std::fs::read_to_string(session.join("session.jsonl"))
             .unwrap()
             .lines()
@@ -388,7 +403,8 @@ enum Ending {
 
 // Covers: a subagent a daemon session starts runs in the daemon and is
 // listed as a child job of the session's job, in the session's workspace,
-// completed once it finished, with the session it saved its reply in.
+// completed once it finished, with the session it saved its reply in, which
+// a client cannot reopen: only its parent continues it (#1661).
 // Owner: daemon subagent jobs.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_subagent_is_a_child_job_of_its_session() {
@@ -442,6 +458,10 @@ async fn a_subagent_is_a_child_job_of_its_session() {
             .iter()
             .any(|record| record.to_string().contains(REPLY)),
         "the subagent saved its reply: {records:#?}"
+    );
+    assert_eq!(
+        prompt(&client, &child_session).await,
+        Err(Some(ErrorCode::SessionOpenFailed))
     );
 }
 
@@ -624,7 +644,7 @@ async fn a_session_another_process_saved_reopens_once_it_lets_go() {
     sandbox
         .daemon
         .poll_until("the run to save its prompt", DEADLINE, async || {
-            sandbox.session_saved(&session).then_some(())
+            sandbox.saved_a_user_message(&session).then_some(())
         })
         .await;
     let attach = async |client: &Client| {
@@ -670,6 +690,48 @@ async fn a_session_another_process_saved_reopens_once_it_lets_go() {
             vec![(JobKind::Session, JobState::Idle)],
             Ok(())
         ),
+        "log:\n{}",
+        sandbox.daemon_log()
+    );
+}
+
+// Covers: a session saved as an agent other than the default reopens as
+// that agent while its definition is unchanged, and is refused once the
+// definition changed, rather than reopened as the default agent (#1661).
+// Owner: daemon session reopening.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_reopens_only_as_the_agent_it_was_saved_as() {
+    let sandbox = Sandbox::new();
+    let archivist = sandbox.daemon.root().join(".agents/agents/archivist.md");
+    std::fs::create_dir_all(archivist.parent().unwrap()).unwrap();
+    std::fs::write(&archivist, ARCHIVIST_AGENT).unwrap();
+    let saved_as_archivist = || {
+        let run = sandbox
+            .rho("fixed")
+            .args(["run", "--agent", "archivist", "--output", "jsonl", "hello"])
+            .stdout(Stdio::piped())
+            .output()
+            .unwrap();
+        assert!(run.status.success(), "{run:?}");
+        let started = String::from_utf8(run.stdout).unwrap();
+        let started: serde_json::Value =
+            serde_json::from_str(started.lines().next().unwrap()).unwrap();
+        SessionId::new(started["session"].as_str().unwrap())
+    };
+    let (kept, edited) = (saved_as_archivist(), saved_as_archivist());
+    let (_daemon, client) = sandbox.start_daemon("fixed").await;
+
+    let while_unchanged = prompt(&client, &kept).await;
+    std::fs::write(
+        &archivist,
+        ARCHIVIST_AGENT.replace("Archive.", "Archive everything."),
+    )
+    .unwrap();
+    let once_changed = prompt(&client, &edited).await;
+
+    assert_eq!(
+        (while_unchanged, once_changed),
+        (Ok(()), Err(Some(ErrorCode::SessionOpenFailed))),
         "log:\n{}",
         sandbox.daemon_log()
     );

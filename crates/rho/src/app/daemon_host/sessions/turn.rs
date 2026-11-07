@@ -23,7 +23,7 @@ use tokio::{
 use super::{
     super::jobs::{JobEvent, TurnEnd},
     inputs::Inputs,
-    LoadedSession,
+    saved_replay, LoadedSession,
 };
 use crate::{
     app::{
@@ -189,23 +189,10 @@ impl TurnTask {
 /// Moves what the turn saved into the session's feed transcript, so a
 /// client that attaches from now on replays it from the saved rows.
 fn save_transcript(session: &LoadedSession, runtime: &SessionRuntime) {
-    // A session that has saved nothing yet has no file to replay.
-    let Some(saved) = runtime.saved_history() else {
-        return;
-    };
-    match saved.display_rows() {
-        Ok(rows) => {
-            // A turn that saved no rows stays in the buffer, as one whose
-            // rows could not be read does, until a later turn saves.
-            if let Some(replayed) = session.live().replay(&rows, saved.cwd(), saved.tools()) {
-                session.feed.end_turn(replayed);
-            }
-        }
-        Err(error) => tracing::warn!(
-            job = %session.job,
-            error = format!("{error:#}"),
-            "could not read the turn's saved rows; clients that reset replay it live until a later turn saves"
-        ),
+    // A turn that saved no rows stays in the buffer, as one whose rows could
+    // not be read does, until a later turn saves.
+    if let Some(saved) = saved_replay(&mut session.live(), runtime, &session.job) {
+        session.feed.end_turn(saved);
     }
 }
 
