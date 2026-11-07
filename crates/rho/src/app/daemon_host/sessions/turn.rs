@@ -20,11 +20,7 @@ use tokio::{
     time::Instant,
 };
 
-use super::{
-    super::jobs::{JobEvent, TurnEnd},
-    inputs::Inputs,
-    saved_replay, LoadedSession,
-};
+use super::{super::jobs::TurnEnd, inputs::Inputs, saved_replay, LoadedSession};
 use crate::{
     app::{
         session_commands::{self, BuiltInCommand, CommandScope, CommandSet, PromptCommand},
@@ -319,10 +315,7 @@ impl DaemonView {
         {
             // See `prompt`: the next turn's `running` cannot come before this.
             let _turn_cancel = self.session.turn_cancel();
-            self.session.record_after(
-                outcome.map(|outcome| wire::SessionEvent::TurnEnded { outcome }),
-                JobEvent::TurnEnded(end),
-            );
+            self.session.end_turn(outcome, end);
         }
         self.ended = true;
         if let (Some(started), Some(start)) = (self.started.take(), start) {

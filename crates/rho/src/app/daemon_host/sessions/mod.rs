@@ -34,7 +34,9 @@ use rho_protocol::{
 use rho_sdk::{CancellationToken, SessionId, UserInput};
 
 use super::{
-    jobs::{JobEvent, JobId, JobRecord, JobRegistry, JobState, SessionJob, StartTurnError},
+    jobs::{
+        JobEvent, JobId, JobRecord, JobRegistry, JobState, SessionJob, StartTurnError, TurnEnd,
+    },
     subagents::Subagents,
     wire::{session_to_wire, state_event},
 };
@@ -143,16 +145,24 @@ fn saved_replay(
 
 impl LoadedSession {
     /// A session opened as `opened`, whose turns are recorded on `job` in
-    /// `jobs`, which is in `state`: idle for a new session, its last turn's
-    /// end for a reopened one. Its feed begins with the conversation the
-    /// session has saved, which a new session has none of.
-    fn new(job: JobId, jobs: Arc<JobRegistry>, opened: OpenedSession, state: &JobState) -> Self {
+    /// `jobs`: a new job for a new session, the last one for a reopened one.
+    /// Its feed begins with the conversation the session has saved and how
+    /// the job's last turn ended, which a new session has neither of, so a
+    /// client attaching to a reopened session learns that end (#1661).
+    fn new(job: &JobRecord, jobs: Arc<JobRegistry>, opened: OpenedSession) -> Self {
         let OpenedSession { runtime, config } = opened;
         let mut live = LiveEvents::new(runtime.workspace_root(), runtime.tools());
-        let feed = Feed::new(state.into());
-        if let Some(saved) = saved_replay(&mut live, &runtime, &job) {
+        let feed = Feed::new((&job.state).into());
+        if let Some(saved) = saved_replay(&mut live, &runtime, &job.id) {
             feed.end_turn(saved);
         }
+        if let Some(outcome) = job.outcome.clone() {
+            feed.publish([
+                rho_protocol::SessionEvent::TurnEnded { outcome },
+                state_event(&job.state),
+            ]);
+        }
+        let job = job.id.clone();
         Self {
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),
@@ -201,20 +211,29 @@ impl LoadedSession {
     /// Applies `event` to the session's job and tells attached clients the
     /// state it left the job in.
     fn record(&self, event: JobEvent) {
-        self.record_after(None, event);
-    }
-
-    /// Applies `event` to the session's job and tells attached clients
-    /// `before`, if any, then the state it left the job in, in one publish,
-    /// so no client's replay holds one without the other (#1669).
-    fn record_after(&self, before: Option<rho_protocol::SessionEvent>, event: JobEvent) {
         match self.jobs.record(&self.job, event) {
-            Ok(state) => self
-                .feed
-                .publish(before.into_iter().chain([state_event(&state)])),
+            Ok(state) => self.feed.publish([state_event(&state)]),
             Err(error) => {
                 tracing::warn!(job = %self.job, %error, "could not record a turn's progress");
-                self.feed.publish(before);
+            }
+        }
+    }
+
+    /// Records that the turn ended as `end`, keeping `outcome` on the job for
+    /// a later daemon to replay, and tells attached clients `outcome`, if
+    /// any, then the state it left the job in, in one publish, so no
+    /// client's replay holds one without the other (#1669).
+    fn end_turn(&self, outcome: Option<TurnOutcome>, end: TurnEnd) {
+        let ended = outcome
+            .clone()
+            .map(|outcome| rho_protocol::SessionEvent::TurnEnded { outcome });
+        match self.jobs.end_turn(&self.job, end, outcome) {
+            Ok(state) => self
+                .feed
+                .publish(ended.into_iter().chain([state_event(&state)])),
+            Err(error) => {
+                tracing::warn!(job = %self.job, %error, "could not record a turn's end");
+                self.feed.publish(ended);
             }
         }
     }
@@ -320,17 +339,12 @@ impl Sessions {
         opened: OpenedSession,
     ) -> Result<Arc<LoadedSession>, RpcError> {
         let session = opened.runtime.session_id().clone();
-        let entry = LoadedSession::new(
-            job.id().clone(),
-            Arc::clone(&self.jobs),
-            opened,
-            job.state(),
-        );
+        let entry = LoadedSession::new(job.job(), Arc::clone(&self.jobs), opened);
         let refused = {
             let mut loaded = self.loaded();
             match self
                 .refuse_when_stopping()
-                .and_then(|()| job.record(&self.jobs, &session))
+                .and_then(|()| job.claim(&self.jobs, &session))
             {
                 Ok(()) => {
                     let entry = Arc::new(entry);
@@ -555,23 +569,16 @@ enum SessionJobRecord {
 }
 
 impl SessionJobRecord {
-    fn id(&self) -> &JobId {
+    fn job(&self) -> &JobRecord {
         match self {
-            Self::Register(record) | Self::Reuse(record) => &record.id,
-        }
-    }
-
-    /// The state the job is in before the session's next turn.
-    fn state(&self) -> &JobState {
-        match self {
-            Self::Register(record) | Self::Reuse(record) => &record.state,
+            Self::Register(record) | Self::Reuse(record) => record,
         }
     }
 
     /// Records the job in `jobs` as the one of `session`'s turns, refusing
     /// it when the registry no longer agrees, as when another job began
     /// writing the session while it reopened (#1661).
-    fn record(self, jobs: &JobRegistry, session: &SessionId) -> Result<(), RpcError> {
+    fn claim(self, jobs: &JobRegistry, session: &SessionId) -> Result<(), RpcError> {
         match (self, jobs.session_job(session)) {
             (Self::Register(record), SessionJob::New) => jobs.register(record).map_err(|error| {
                 RpcError::new(

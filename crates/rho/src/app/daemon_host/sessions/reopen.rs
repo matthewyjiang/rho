@@ -82,7 +82,7 @@ impl Sessions {
                 id.clone(),
             )),
         };
-        let job = record.id().clone();
+        let job = record.job().id.clone();
         let opened = open_session(Opening::Saved(stored), &self.logouts, &self.subagents, &job)
             .await
             .map_err(open_failed)?;

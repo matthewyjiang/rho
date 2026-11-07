@@ -76,6 +76,7 @@ pub(super) fn job_summary(record: JobRecord, queue: Option<QueuePlace>) -> wire:
         parent,
         created_at,
         updated_at,
+        outcome: _,
     } = record;
     let (kind, session, workflow_run) = match subject {
         JobSubject::Session { session } => (wire::JobKind::Session, Some(session), None),

@@ -57,10 +57,9 @@ async fn loaded_session(root: &Path, jobs: &Arc<JobRegistry>, job: JobId) -> Arc
     let runtime =
         unattended_runtime_on(root, &config, QuestionSupport::Unavailable, sdk, provider).await;
     Arc::new(LoadedSession::new(
-        job,
+        &jobs.get(&job).unwrap(),
         Arc::clone(jobs),
         OpenedSession { runtime, config },
-        &JobState::Idle,
     ))
 }
 

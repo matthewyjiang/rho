@@ -200,6 +200,23 @@ impl JobRegistry {
         Ok(record.state.clone())
     }
 
+    /// Records that job `id`'s turn ended as `end`, which its clients were
+    /// told as `outcome`, if they were, and returns the state it left the
+    /// job in.
+    pub(in crate::app::daemon_host) fn end_turn(
+        &self,
+        id: &JobId,
+        end: TurnEnd,
+        outcome: Option<rho_protocol::TurnOutcome>,
+    ) -> Result<JobState, TransitionError> {
+        let mut jobs = self.lock();
+        let record = jobs.get_mut(id).ok_or(UnknownJob)?;
+        apply(record, JobEvent::TurnEnded(end))?;
+        record.outcome = outcome;
+        persist(&self.store, record);
+        Ok(record.state.clone())
+    }
+
     /// For the daemon's stop, once its turns saved: records every job
     /// still under way as interrupted, and takes no new job after, so a
     /// run a workflow drive starts during the stop is not left listed as
@@ -227,9 +244,14 @@ impl JobRegistry {
     }
 }
 
-/// Moves `record` on by `event`.
+/// Moves `record` on by `event`. An ended turn forgets the last one's
+/// outcome; [`JobRegistry::end_turn`] then records its own.
 fn apply(record: &mut JobRecord, event: JobEvent) -> Result<(), TransitionRefused> {
+    let ends_turn = matches!(event, JobEvent::TurnEnded(_));
     record.state = record.state.after(event)?;
+    if ends_turn {
+        record.outcome = None;
+    }
     record.updated_at = unix_now();
     Ok(())
 }

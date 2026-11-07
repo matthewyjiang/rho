@@ -118,13 +118,14 @@ async fn job_of(client: &rho_protocol::Client, session: &SessionId) -> rho_proto
 
 // Covers: after a turn ended, `rho attach` by job id replays the session
 // and reports how the turn ended as `rho run` would, exit 0 with the
-// answer; by session id in text mode it shows the conversation; an id the
-// daemon does not know fails.
+// answer, and so it does again through the next daemon, which reopens the
+// session (#1661); by session id in text mode it shows the conversation; an
+// id the daemon does not know fails.
 // Owner: rho attach CLI (process contract).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn attach_reports_how_the_last_turn_ended() {
     let sandbox = Sandbox::new();
-    let (_daemon, client) = sandbox.start_daemon("fixed").await;
+    let (daemon, client) = sandbox.start_daemon("fixed").await;
     let session = new_session(&client, &sandbox.workspace).await;
     assert_eq!(prompt(&client, &session).await, Ok(()));
     let job = settled_job(&sandbox, &client, &session).await;
@@ -132,6 +133,19 @@ async fn attach_reports_how_the_last_turn_ended() {
     let (status, lines) = Attach::spawn(&sandbox, "fixed", &[job.id.as_str(), "--output", "jsonl"])
         .finish()
         .await;
+    drop(client);
+    let stop = sandbox
+        .rho("fixed")
+        .args(["daemon", "stop"])
+        .status()
+        .unwrap();
+    assert!(stop.success(), "log:\n{}", sandbox.daemon_log());
+    drop(daemon);
+    let (_daemon, _client) = sandbox.start_daemon("fixed").await;
+    let (reopened_status, reopened_lines) =
+        Attach::spawn(&sandbox, "fixed", &[session.as_str(), "--output", "jsonl"])
+            .finish()
+            .await;
     let text = sandbox
         .rho("fixed")
         .args(["attach", session.as_str()])
@@ -169,6 +183,20 @@ async fn attach_reports_how_the_last_turn_ended() {
             Some(&turn_ended),
         ),
         "{lines:#?}"
+    );
+    assert_eq!(
+        (
+            reopened_status.code(),
+            ends(&reopened_lines).1,
+            events(&reopened_lines).iter().rev().nth(1).copied(),
+        ),
+        (
+            Some(0),
+            json!({"type": "run_ended", "reason": "completed", "exit_code": 0}),
+            Some(&turn_ended),
+        ),
+        "{reopened_lines:#?}\nlog:\n{}",
+        sandbox.daemon_log()
     );
     assert_eq!(
         (text.status.code(), String::from_utf8(text.stdout).unwrap(),),
