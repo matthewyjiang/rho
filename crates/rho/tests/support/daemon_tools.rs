@@ -9,9 +9,7 @@ use pretty_assertions::assert_eq;
 use rho_protocol::{methods::SessionCancel, JobState, SessionCancelParams};
 use serde_json::json;
 
-use super::sessions::{
-    client_environment, new_session, prompt_tool_call, prompt_tool_call_in, settled_job, Sandbox,
-};
+use super::sessions::{settled_job, Sandbox};
 
 /// A command whose shell starts a child that sleeps, records the child's
 /// pid in `file` in the workspace, and waits for it. The child is the
@@ -82,20 +80,24 @@ async fn the_daemons_stop_ends_the_processes_its_sessions_started() {
     let sandbox = Sandbox::new();
     sandbox.set_permission_mode("bypass");
     let (_daemon, client) = sandbox.start_daemon("tool-call").await;
-    let running_turn = new_session(&client, &sandbox.workspace).await;
+    let running_turn = sandbox.new_session(&client).await;
     let bash = json!({
         "id": "foreground",
         "name": "bash",
         "arguments": {"command": sleeper("foreground.pid")},
     });
-    prompt_tool_call(&client, &running_turn, &bash).await;
-    let cancelled = new_session(&client, &sandbox.workspace).await;
+    sandbox
+        .prompt_tool_call(&client, &running_turn, &bash)
+        .await;
+    let cancelled = sandbox.new_session(&client).await;
     let process = json!({
         "id": "background",
         "name": "process",
         "arguments": {"action": "start", "command": sleeper("background.pid")},
     });
-    prompt_tool_call(&client, &cancelled, &process).await;
+    sandbox
+        .prompt_tool_call(&client, &cancelled, &process)
+        .await;
     let pids = sandbox
         .poll_until("both processes to start", async || {
             Some([
@@ -136,35 +138,57 @@ async fn the_daemons_stop_ends_the_processes_its_sessions_started() {
     );
 }
 
-// Covers: a daemon session's tool processes run with the prompting client's
-// environment, without its provider credentials and with none of the
-// daemon's own, and the next prompt's replaces it; neither the session file
-// nor the daemon log holds its values (#1659).
+// Covers: a daemon session's tool processes, the shell tool's and the
+// `process` tool's, run with the prompting client's environment: its `PATH`
+// leading after login init, without its provider credentials, and with none
+// of the daemon's own; the next prompt's replaces it; neither the session
+// file nor the daemon log holds its values (#1659).
 // Owner: daemon session environment.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_sessions_tools_run_with_the_prompting_clients_environment() {
     let sandbox = Sandbox::new();
     sandbox.set_permission_mode("bypass");
     let (_daemon, client) = sandbox.start_daemon("tool-call").await;
-    let session = new_session(&client, &sandbox.workspace).await;
+    let session = sandbox.new_session(&client).await;
+    // Login init that resets `PATH`, as some distributions' does, in the
+    // home the sandbox's clients send.
+    std::fs::write(
+        sandbox.workspace.parent().unwrap().join(".bash_profile"),
+        "export PATH=/usr/bin:/bin\n",
+    )
+    .unwrap();
     // The daemon has the fixture's mode set; no client sends it.
-    let record = json!({
-        "id": "environment",
-        "name": "bash",
-        "arguments": {
-            "command": "printf '%s|%s|%s' \"$PROBE\" \"${XAI_API_KEY-unset}\" \"${RHO_AUTOMATION_TEST_MODE-unset}\" > env.txt",
-        },
-    });
+    let record = "printf '%s|%s|%s|%s' \"${PATH%%:*}\" \"$PROBE\" \"${XAI_API_KEY-unset}\" \"${RHO_AUTOMATION_TEST_MODE-unset}\" > env.txt";
+    let calls = [
+        (
+            "probe-1659-bash",
+            json!({"id": "bash", "name": "bash", "arguments": {"command": record}}),
+        ),
+        (
+            "probe-1659-process",
+            json!({
+                "id": "process",
+                "name": "process",
+                "arguments": {"action": "start", "command": record},
+            }),
+        ),
+    ];
     let mut seen = Vec::new();
-    for probe in ["probe-1659-first", "probe-1659-second"] {
-        let environment = client_environment()
+    for (probe, call) in calls {
+        let path = format!("/rho-client-1659:{}", std::env::var("PATH").unwrap());
+        let environment = sandbox
+            .client_environment()
             .into_iter()
             .chain([
+                ("PATH".to_owned(), path),
                 ("PROBE".to_owned(), probe.to_owned()),
                 ("XAI_API_KEY".to_owned(), "key-1659".to_owned()),
             ])
             .collect();
-        prompt_tool_call_in(&client, &session, &record, environment).await;
+        sandbox
+            .prompt_tool_call_with_environment(&client, &session, &call, environment)
+            .await;
+        // The turn waits for a background process it started.
         settled_job(&sandbox, &client, &session).await;
         seen.push(std::fs::read_to_string(sandbox.workspace.join("env.txt")).unwrap());
     }
@@ -174,13 +198,14 @@ async fn a_sessions_tools_run_with_the_prompting_clients_environment() {
     assert_eq!(
         seen,
         [
-            "probe-1659-first|unset|unset",
-            "probe-1659-second|unset|unset"
+            "/rho-client-1659|probe-1659-bash|unset|unset",
+            "/rho-client-1659|probe-1659-process|unset|unset"
         ],
         "log:\n{log}"
     );
     assert_eq!(
-        ["probe-1659", "key-1659"].map(|value| saved.contains(value) || log.contains(value)),
-        [false, false]
+        ["probe-1659", "key-1659", "rho-client-1659"]
+            .map(|value| saved.contains(value) || log.contains(value)),
+        [false, false, false]
     );
 }

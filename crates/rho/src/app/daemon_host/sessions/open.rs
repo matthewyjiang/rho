@@ -15,14 +15,14 @@
 //!
 //! The session's processes run with its client's environment minus
 //! provider credentials, not the daemon's (#1659): the opening client's,
-//! then each prompting client's (see [`client_environment`]).
+//! then each prompting client's (see [`session_environment`]).
 
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use rho_protocol::{ErrorCode, RpcError};
+use rho_protocol::{ClientEnvironment, ErrorCode, RpcError};
 use rho_sdk::ProcessEnvironment;
 use rho_tools::SharedProcessEnvironment;
 
@@ -102,21 +102,28 @@ pub(super) struct OpenedSession {
 /// The environment a client's `environment` gives a session's processes:
 /// exactly the client's variables, without provider credentials, so
 /// commands cannot read API keys a user exported in their shell, as no rho
-/// session's can read its own process's.
-pub(super) fn client_environment(environment: &rho_protocol::Environment) -> ProcessEnvironment {
-    let credentials =
-        rho_providers::credential_env_vars_from(environment.iter().map(|(name, _)| name));
-    ProcessEnvironment::Explicit {
-        variables: environment
-            .iter()
-            .filter(|(name, _)| {
-                credentials
-                    .binary_search_by(|credential| credential.as_str().cmp(name))
-                    .is_err()
-            })
-            .map(|(name, value)| (name.to_owned(), value.to_owned()))
-            .collect(),
-    }
+/// session's can read its own process's. A variable no process could be
+/// given is invalid params, naming it, so it fails the request rather than
+/// every later command (#1659).
+pub(super) fn session_environment(
+    environment: &ClientEnvironment,
+) -> Result<ProcessEnvironment, RpcError> {
+    let variables = environment
+        .iter()
+        .filter(|(name, _)| !rho_providers::is_credential_env_var(name))
+        .map(|(name, value)| {
+            if name.is_empty() || name.contains(['=', '\0']) || value.contains('\0') {
+                return Err(RpcError::new(
+                    ErrorCode::InvalidParams,
+                    format!(
+                        "invalid environment variable {name:?}: a name must be nonempty without `=` or NUL, and a value without NUL"
+                    ),
+                ));
+            }
+            Ok((name.to_owned(), value.to_owned()))
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(ProcessEnvironment::Explicit { variables })
 }
 
 /// Opens the session `opening` says, whose turns are job `job`, with its
@@ -250,3 +257,7 @@ fn bind_agent(cwd: &Path, config: &Config, id: &str) -> anyhow::Result<BoundAgen
         config,
     )
 }
+
+#[cfg(test)]
+#[path = "open_tests.rs"]
+mod tests;

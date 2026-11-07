@@ -20,8 +20,8 @@ pub(crate) struct HostIo {
 
 impl HostIo {
     /// The environment the session's processes start with: the host's, or
-    /// this process's own without provider credentials, snapshotted now so
-    /// tools cannot read host API keys from it.
+    /// this process's own without the provider credentials it sets now, so
+    /// tools cannot read host API keys.
     pub(crate) fn process_environment(&self) -> rho_tools::SharedProcessEnvironment {
         self.environment.clone().unwrap_or_else(|| {
             rho_sdk::ProcessEnvironment::inherit_except(rho_providers::credential_env_vars()).into()

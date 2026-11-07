@@ -304,7 +304,12 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
                 request_with_params(
                     3,
                     SESSION_PROMPT,
-                    serde_json::json!({"session": "s", "text": "hi", "later_field": 1}),
+                    serde_json::json!({
+                        "session": "s",
+                        "text": "hi",
+                        "environment": {},
+                        "later_field": 1,
+                    }),
                 ),
             ],
             vec![
@@ -488,8 +493,14 @@ fn detached(reason: DetachReason) -> Seen {
     })
 }
 
+/// A request naming session `s`, with the empty client environment
+/// `rho/session/attach` requires; other methods ignore it.
 fn session_line(id: i64, method: &str) -> String {
-    request_with_params(id, method, serde_json::json!({"session": "s"}))
+    request_with_params(
+        id,
+        method,
+        serde_json::json!({"session": "s", "environment": {}}),
+    )
 }
 
 /// The client end of one served connection.

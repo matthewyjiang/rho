@@ -63,6 +63,25 @@ impl DaemonSandbox {
         command
     }
 
+    /// The environment a client in the sandbox sends, which its sessions'
+    /// processes run with (#1659): this process's, changed as [`Self::rho`]
+    /// changes a child's, so nothing a session runs reaches the developer's
+    /// rho home or daemon.
+    pub(crate) fn client_environment(&self) -> rho_protocol::ClientEnvironment {
+        let mut variables: std::collections::BTreeMap<String, String> =
+            rho_protocol::ClientEnvironment::of_this_process()
+                .into_iter()
+                .collect();
+        for (name, value) in self.rho().get_envs() {
+            let name = name.to_str().unwrap().to_owned();
+            match value {
+                Some(value) => variables.insert(name, value.to_str().unwrap().to_owned()),
+                None => variables.remove(&name),
+            };
+        }
+        variables.into_iter().collect()
+    }
+
     /// Calls `attempt` every [`POLL_INTERVAL`] until it returns `Some`, and
     /// fails with the daemon log once `deadline` passes.
     pub(crate) async fn poll_until<T>(

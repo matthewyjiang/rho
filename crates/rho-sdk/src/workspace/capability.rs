@@ -194,9 +194,8 @@ pub enum ProcessEnvironment {
     InheritExcept {
         variable_names: Vec<String>,
     },
-    /// Exactly these variables, none of the ambient environment: a daemon
-    /// session's processes run with its client's environment, not the
-    /// daemon's (#1659).
+    /// Exactly these variables, none of the ambient environment, such as a
+    /// daemon client's (#1659).
     Explicit {
         variables: EnvironmentVariables,
     },
@@ -205,7 +204,7 @@ pub enum ProcessEnvironment {
 /// Environment variables a process runs with in place of the ambient
 /// environment. Values are secrets, so `Debug` shows only how many there
 /// are. Clones share one map.
-#[derive(Clone, Default, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct EnvironmentVariables(Arc<BTreeMap<String, String>>);
 
 impl EnvironmentVariables {
@@ -221,10 +220,12 @@ impl EnvironmentVariables {
             .map(|(name, value)| (name.as_str(), value.as_str()))
     }
 
+    /// How many variables there are.
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
+    /// Whether there are none.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }

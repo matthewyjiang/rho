@@ -60,7 +60,7 @@ pub use credentials::{
 };
 pub use http;
 pub use model::{ModelError, TransportError, TransportFailureKind};
-pub use provider::{auth_profiles, credential_env_vars, credential_env_vars_from};
+pub use provider::{auth_profiles, credential_env_vars, is_credential_env_var};
 pub use providers::{
     build_automation_provider, build_sdk_provider, build_sdk_provider_with_source,
     ProviderBuildOptions, UnavailableProvider,

@@ -57,24 +57,18 @@ impl fmt::Display for SessionId {
 /// A client's environment variables, which a daemon session's processes
 /// run with in place of the daemon's own (#1659): its tools' commands and
 /// background processes, minus provider credentials. Values are secrets:
-/// the daemon never logs or saves them, and `Debug` shows only how many
-/// there are.
-#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// the daemon never logs or saves them.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
-pub struct Environment(BTreeMap<String, String>);
+pub struct ClientEnvironment(BTreeMap<String, String>);
 
-impl Environment {
+impl ClientEnvironment {
     /// This process's environment. A variable whose name or value is not
     /// UTF-8 is left out, since the wire carries strings.
     pub fn of_this_process() -> Self {
         std::env::vars_os()
             .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
             .collect()
-    }
-
-    /// The value of `name`, if set.
-    pub fn get(&self, name: &str) -> Option<&str> {
-        self.0.get(name).map(String::as_str)
     }
 
     /// Every variable, by name.
@@ -85,13 +79,13 @@ impl Environment {
     }
 }
 
-impl FromIterator<(String, String)> for Environment {
+impl FromIterator<(String, String)> for ClientEnvironment {
     fn from_iter<I: IntoIterator<Item = (String, String)>>(variables: I) -> Self {
         Self(variables.into_iter().collect())
     }
 }
 
-impl IntoIterator for Environment {
+impl IntoIterator for ClientEnvironment {
     type Item = (String, String);
     type IntoIter = std::collections::btree_map::IntoIter<String, String>;
 
@@ -100,10 +94,11 @@ impl IntoIterator for Environment {
     }
 }
 
-impl fmt::Debug for Environment {
+/// Shows only how many variables there are: the values are secrets.
+impl fmt::Debug for ClientEnvironment {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("Environment")
+            .debug_struct("ClientEnvironment")
             .field("len", &self.0.len())
             .finish_non_exhaustive()
     }
@@ -118,7 +113,7 @@ pub struct SessionNewParams {
     pub cwd: PathBuf,
     /// The client's environment, which the session's processes run with
     /// until a prompt brings another.
-    pub environment: Environment,
+    pub environment: ClientEnvironment,
 }
 
 /// Result of [`SESSION_NEW`]: the session is loaded and its job is
@@ -145,7 +140,7 @@ pub struct SessionPromptParams {
     /// The prompting client's environment, which the processes this turn
     /// starts run with, and those of later turns until another prompt
     /// brings another. Processes already running keep theirs.
-    pub environment: Environment,
+    pub environment: ClientEnvironment,
 }
 
 /// Result of [`SESSION_PROMPT`]: the prompt is saved and its turn is
@@ -197,10 +192,10 @@ pub struct SessionAttachParams {
     /// another stream, or older than the daemon keeps: [`Replay::Reset`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after: Option<Cursor>,
-    /// The client's environment, used only when the attach reopens a
-    /// session the daemon does not have loaded (#1661): the session's
-    /// processes run with it until a prompt brings another.
-    pub environment: Environment,
+    /// The environment the session opens with if this attach reopens it
+    /// (#1661): its processes run with it until a prompt brings another.
+    /// A session the daemon has loaded keeps its own.
+    pub environment: ClientEnvironment,
 }
 
 /// Result of [`SESSION_ATTACH`]. The session's events then arrive as

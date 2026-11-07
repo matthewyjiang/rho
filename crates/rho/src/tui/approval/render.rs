@@ -316,7 +316,7 @@ fn format_environment_summary(environment: &ProcessEnvironment) -> String {
         }
         // Values are secrets; only the count is shown.
         ProcessEnvironment::Explicit { variables } => {
-            format!("env client ({} variables)", variables.len())
+            format!("env explicit ({} variables)", variables.len())
         }
         ProcessEnvironment::InheritListed { variable_names } => {
             // Allowlists are the authorization surface; show sanitized names.

@@ -60,7 +60,7 @@ mod unload;
 
 use feed::{Attached, Feed};
 use inputs::Inputs;
-use open::{client_environment, open_session, OpenedSession, Opening, Workspace};
+use open::{open_session, session_environment, OpenedSession, Opening, Workspace};
 use reopen::ReopenLocks;
 use turn::{PromptStart, TurnLimit, TurnTask};
 use unload::Residency;
@@ -346,7 +346,7 @@ impl Sessions {
         let job = JobId::generate();
         let opened = open_session(
             Opening::New(workspace),
-            client_environment(&params.environment),
+            session_environment(&params.environment)?,
             &self.logouts,
             &self.subagents,
             &job,
@@ -405,7 +405,7 @@ impl Sessions {
         params: SessionPromptParams,
     ) -> Result<SessionPromptResponse, RpcError> {
         self.refuse_when_stopping()?;
-        let environment = client_environment(&params.environment);
+        let environment = session_environment(&params.environment)?;
         let (session, cancel) = self
             .enter_session(&params.session, &environment, |session, turn| {
                 match self.jobs.start_turn(&session.job) {
@@ -533,7 +533,7 @@ impl Sessions {
         let (session, attached) = self
             .enter_session(
                 &params.session,
-                &client_environment(&params.environment),
+                &session_environment(&params.environment)?,
                 |session, _turn| Ok(session.feed.attach(params.after.as_ref())),
             )
             .await?;

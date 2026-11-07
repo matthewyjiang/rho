@@ -174,6 +174,11 @@ impl ProcessManager {
             .kill_on_drop(true);
         super::prepare_child_command(&mut cmd);
         rho_tools::apply_process_environment(&mut cmd, execution.environment())?;
+        if is_login_bash(&execution) {
+            if let Some(path) = rho_tools::parent_path_for(execution.environment()) {
+                cmd.env(rho_tools::PARENT_PATH_VAR, path);
+            }
+        }
         let timeout = execution.output_limits().timeout();
 
         let id = Uuid::new_v4().to_string();
@@ -557,6 +562,15 @@ fn record_command(invocation: &ProcessInvocation) -> Result<String, String> {
     }
 }
 
+/// Whether `execution` runs a login `bash -lc`, whose init may reset `PATH`.
+fn is_login_bash(execution: &ProcessExecution) -> bool {
+    matches!(
+        execution.invocation(),
+        ProcessInvocation::Shell { executable, arguments, .. }
+            if executable == "bash" && arguments.iter().any(|argument| argument == "-lc")
+    )
+}
+
 fn command_from_execution(execution: &ProcessExecution) -> Result<tokio::process::Command, String> {
     match execution.invocation() {
         ProcessInvocation::Shell {
@@ -566,7 +580,14 @@ fn command_from_execution(execution: &ProcessExecution) -> Result<tokio::process
             ..
         } => {
             let mut cmd = tokio::process::Command::new(executable);
-            cmd.args(arguments).arg(command);
+            // As the shell tool runs it: login init may reset `PATH`, so the
+            // parent's, or a daemon client's (#1659), is re-prepended.
+            let script = if is_login_bash(execution) {
+                rho_tools::login_shell_script(command)
+            } else {
+                command.clone()
+            };
+            cmd.args(arguments).arg(script);
             Ok(cmd)
         }
         ProcessInvocation::Executable {
