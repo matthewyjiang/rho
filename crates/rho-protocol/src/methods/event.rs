@@ -9,7 +9,7 @@ use std::{fmt, path::PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::JobState;
+use super::{InputRequest, InputRequestId, JobState, Resolution};
 
 /// Declares a transparent string id with `new`, `as_str`, and `Display`,
 /// like [`super::SessionId`].
@@ -110,6 +110,15 @@ pub enum SessionEvent {
     Card { title: String, markdown: String },
     /// Something to tell the user that is not part of the conversation.
     Notice { text: String },
+    /// The turn waits for a person to answer `request` with
+    /// [`super::SESSION_ANSWER`] (#1660).
+    InputRequested { request: InputRequest },
+    /// Input request `id` closed: a client answered it or the turn
+    /// withdrew it. Clients that show it stop.
+    InputResolved {
+        id: InputRequestId,
+        resolution: Resolution,
+    },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]

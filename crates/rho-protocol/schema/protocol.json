@@ -1,5 +1,153 @@
 {
   "$defs": {
+    "ApprovalAsk": {
+      "description": "A tool asks to use a capability its session's permission mode does not\ngrant on its own.",
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/Operation",
+          "description": "What it would do."
+        },
+        "reason": {
+          "description": "Why the policy asks, in its words.",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/ApprovalSource",
+          "description": "Who asks."
+        }
+      },
+      "required": [
+        "source",
+        "operation",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ApprovalSource": {
+      "anyOf": [
+        {
+          "description": "One of Rho's own tools.",
+          "properties": {
+            "kind": {
+              "const": "built_in_tool",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A tool a host or integration provides, such as an MCP server's: a\ndifferent trust boundary from Rho's own.",
+          "properties": {
+            "kind": {
+              "const": "host_tool",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Rho itself, as when it builds a prompt.",
+          "properties": {
+            "kind": {
+              "const": "rho",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Who asks for a capability."
+    },
+    "Ask": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ApprovalAsk",
+          "description": "May a tool use a capability? Answer [`InputAnswer::AllowOnce`],\n[`InputAnswer::AllowForSession`], or [`InputAnswer::Deny`].",
+          "properties": {
+            "kind": {
+              "const": "approval",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/PlanApprovalAsk",
+          "description": "May the session leave plan mode to carry out its plan? Answer\n[`InputAnswer::ApprovePlan`] or [`InputAnswer::KeepPlanning`].",
+          "properties": {
+            "kind": {
+              "const": "plan_approval",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/QuestionAsk",
+          "description": "Questions for the user. Answer [`InputAnswer::Answers`],\n[`InputAnswer::Decline`], or [`InputAnswer::Dismiss`].",
+          "properties": {
+            "kind": {
+              "const": "question",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What an input request asks."
+    },
     "Budget": {
       "anyOf": [
         {
@@ -19,6 +167,29 @@
         }
       ],
       "description": "A concurrency budget jobs wait on, named for the setting that sizes it.\nProtocol minors may add budgets."
+    },
+    "Choice": {
+      "description": "One choice a question offers.",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "description": "What an answer sends when it picks this choice.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "label"
+      ],
+      "type": "object"
     },
     "ClientInfo": {
       "description": "Who is connecting. Logged by the daemon; never used for authorization.",
@@ -176,6 +347,46 @@
       ],
       "type": "object"
     },
+    "DefaultAnswer": {
+      "description": "The answer the agent suggests for a question.",
+      "properties": {
+        "style": {
+          "$ref": "#/$defs/DefaultStyle"
+        },
+        "values": {
+          "description": "What the answer would send: the value of each choice it names, or\nthe agent's own text where it names none.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "values",
+        "style"
+      ],
+      "type": "object"
+    },
+    "DefaultStyle": {
+      "anyOf": [
+        {
+          "const": "selected",
+          "description": "Pre-select it.",
+          "type": "string"
+        },
+        {
+          "const": "focused",
+          "description": "Only focus or mark it, so the user still picks it.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How a client offers a question's suggested answer."
+    },
     "DetachReason": {
       "anyOf": [
         {
@@ -237,6 +448,168 @@
         "capabilities"
       ],
       "type": "object"
+    },
+    "InputAnswer": {
+      "description": "An answer to an input request. Each [`Ask`] lists the answers it takes;\nany other is [`crate::ErrorCode::InvalidParams`].",
+      "oneOf": [
+        {
+          "description": "Approve this one use of the capability.",
+          "properties": {
+            "kind": {
+              "const": "allow_once",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Approve this exact use for the rest of the session.",
+          "properties": {
+            "kind": {
+              "const": "allow_for_session",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Refuse it; the tool learns `reason`, or that the user denied it.",
+          "properties": {
+            "kind": {
+              "const": "deny",
+              "type": "string"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Leave plan mode and carry out the plan in `mode`, one of the\nrequest's `modes`.",
+          "properties": {
+            "kind": {
+              "const": "approve_plan",
+              "type": "string"
+            },
+            "mode": {
+              "$ref": "#/$defs/PermissionMode"
+            }
+          },
+          "required": [
+            "kind",
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Stay in plan mode.",
+          "properties": {
+            "kind": {
+              "const": "keep_planning",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Answers keyed by question id: the values of the chosen choices, or\nthe user's own text where a question allows it.",
+          "properties": {
+            "answers": {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": "object"
+            },
+            "kind": {
+              "const": "answers",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "answers"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The user declined to answer the questions.",
+          "properties": {
+            "kind": {
+              "const": "decline",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The user dismissed the questions without choosing.",
+          "properties": {
+            "kind": {
+              "const": "dismiss",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "InputRequest": {
+      "description": "One thing a turn waits on a person for.",
+      "properties": {
+        "ask": {
+          "$ref": "#/$defs/Ask"
+        },
+        "id": {
+          "$ref": "#/$defs/InputRequestId"
+        },
+        "tool_call": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolCallId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The tool call that asks, when a tool call does."
+        }
+      },
+      "required": [
+        "id",
+        "ask"
+      ],
+      "type": "object"
+    },
+    "InputRequestId": {
+      "description": "Identifies one input request among its session's, for as long as the\ndaemon has the session loaded.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
     },
     "JobId": {
       "description": "A job's id. Opaque to clients: send back the string the daemon gave.",
@@ -309,7 +682,7 @@
         },
         {
           "const": "waiting_for_input",
-          "description": "The turn waits for an approval, a plan approval, or a question to be\nanswered. Nothing is auto-denied because no client is attached; until\nclients can answer (#1660), only [`super::SESSION_CANCEL`] ends the\nwait.",
+          "description": "The turn waits for an approval, a plan approval, or a question to be\nanswered with [`super::SESSION_ANSWER`]. Nothing is denied because no\nclient is attached; the wait ends with an answer or a cancel.",
           "type": "string"
         },
         {
@@ -440,6 +813,261 @@
       "description": "Identifies one message in a session's event stream: chunks with the\nsame id extend one message.",
       "type": "string"
     },
+    "Operation": {
+      "anyOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "read_path",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "scope": {
+              "$ref": "#/$defs/PathScope"
+            }
+          },
+          "required": [
+            "kind",
+            "path",
+            "scope"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "write_path",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "scope": {
+              "$ref": "#/$defs/PathScope"
+            }
+          },
+          "required": [
+            "kind",
+            "path",
+            "scope"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "discover_instructions",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "scope": {
+              "$ref": "#/$defs/PathScope"
+            }
+          },
+          "required": [
+            "kind",
+            "path",
+            "scope"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Run `program` with `args` in `cwd`. `shell_command` is the command\nline, when the program is a shell running one.",
+          "properties": {
+            "args": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "run_process",
+              "type": "string"
+            },
+            "program": {
+              "type": "string"
+            },
+            "shell_command": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "program",
+            "args",
+            "cwd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Reach the network, at `url` when the tool names one.",
+          "properties": {
+            "kind": {
+              "const": "network",
+              "type": "string"
+            },
+            "url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "load_skill",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What a capability would let a tool do."
+    },
+    "PathScope": {
+      "anyOf": [
+        {
+          "description": "Under the session's workspace.",
+          "properties": {
+            "kind": {
+              "const": "workspace",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Under a directory the user added to the session, `root`.",
+          "properties": {
+            "kind": {
+              "const": "granted_root",
+              "type": "string"
+            },
+            "root": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "root"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Anywhere: outside every root the session knows.",
+          "properties": {
+            "kind": {
+              "const": "unrestricted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Where a path an operation names lies."
+    },
+    "PermissionMode": {
+      "anyOf": [
+        {
+          "enum": [
+            "bypass",
+            "auto",
+            "allow_edits",
+            "plan",
+            "supervised"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "A session's permission mode, as `/permissions` names it."
+    },
+    "PlanApprovalAsk": {
+      "description": "The session, in plan mode, asks to carry out its plan.",
+      "properties": {
+        "modes": {
+          "description": "The permission modes the session may carry the plan out in; an\napproval names one.",
+          "items": {
+            "$ref": "#/$defs/PermissionMode"
+          },
+          "type": "array"
+        },
+        "plan": {
+          "description": "The plan, as markdown.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan",
+        "modes"
+      ],
+      "type": "object"
+    },
     "PlanEntry": {
       "description": "One step of the agent's plan.",
       "properties": {
@@ -496,6 +1124,88 @@
       ],
       "type": "object"
     },
+    "Question": {
+      "description": "One question, with the choices it offers.",
+      "properties": {
+        "allow_other": {
+          "description": "Whether an answer may give its own text instead of a choice.",
+          "type": "boolean"
+        },
+        "choices": {
+          "items": {
+            "$ref": "#/$defs/Choice"
+          },
+          "type": "array"
+        },
+        "default": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DefaultAnswer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The answer the agent suggests, if any."
+        },
+        "header": {
+          "description": "A short label for the question, such as a tab title.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "help": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Names the question in an answer's `answers`.",
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "required": {
+          "description": "Whether an answer must answer this question.",
+          "type": "boolean"
+        },
+        "selection": {
+          "$ref": "#/$defs/Selection",
+          "description": "How many choices an answer may pick."
+        }
+      },
+      "required": [
+        "id",
+        "prompt",
+        "choices",
+        "selection",
+        "allow_other",
+        "required"
+      ],
+      "type": "object"
+    },
+    "QuestionAsk": {
+      "description": "Questions the agent asks the user, answered together.",
+      "properties": {
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/Question"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "questions"
+      ],
+      "type": "object"
+    },
     "QueuePlace": {
       "description": "Where a queued job waits: the budget it waits on, that budget's limit,\nand its place in the budget's queue.",
       "properties": {
@@ -537,11 +1247,73 @@
         }
       ]
     },
+    "Resolution": {
+      "anyOf": [
+        {
+          "const": "answered",
+          "description": "A client answered it.",
+          "type": "string"
+        },
+        {
+          "const": "withdrawn",
+          "description": "The turn no longer waits for it, as when the turn was cancelled.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How an input request closed, as [`super::SessionEvent::InputResolved`]\ntells every attached client."
+    },
+    "Selection": {
+      "anyOf": [
+        {
+          "enum": [
+            "one",
+            "many"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How many choices a question's answer may pick."
+    },
     "Seq": {
       "description": "Position in a stream: the number of live events sent before and\nincluding this one, from 1. `Seq(0)` is not a position: a reset's\ntranscript events carry it (see [`super::SessionEventParams::seq`]), and\na cursor at 0 always resets.",
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
+    },
+    "SessionAnswerParams": {
+      "description": "Params of [`SESSION_ANSWER`].",
+      "properties": {
+        "answer": {
+          "$ref": "#/$defs/InputAnswer",
+          "description": "One of the answers the request's [`Ask`] lists."
+        },
+        "request": {
+          "$ref": "#/$defs/InputRequestId"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session",
+        "request",
+        "answer"
+      ],
+      "type": "object"
+    },
+    "SessionAnswerResponse": {
+      "description": "Result of [`SESSION_ANSWER`]: the answer won, and the daemon handed it\nto the turn. An answer that lost, to another client's or to the turn\nwithdrawing the request, is [`crate::ErrorCode::InputNotOpen`]. A turn\nthat stops waiting at the same moment, because it was cancelled or the\ntool that asked gave up, ignores an answer that won.",
+      "type": "object"
     },
     "SessionAttachParams": {
       "description": "Params of [`SESSION_ATTACH`].",
@@ -569,6 +1341,13 @@
     "SessionAttachResponse": {
       "description": "Result of [`SESSION_ATTACH`]. The session's events then arrive as\n[`SESSION_EVENT`] notifications, never before this response. Attaching\nagain on the same connection replaces the earlier attachment.",
       "properties": {
+        "inputs": {
+          "description": "The input requests open when the attachment began, oldest first:\nwhat a client may answer even when the replay no longer holds the\nevents that opened them (#1660). The replay may repeat some; an\ninput request's id names it.",
+          "items": {
+            "$ref": "#/$defs/InputRequest"
+          },
+          "type": "array"
+        },
         "replay": {
           "$ref": "#/$defs/Replay"
         },
@@ -584,7 +1363,8 @@
       "required": [
         "stream",
         "replay",
-        "state"
+        "state",
+        "inputs"
       ],
       "type": "object"
     },
@@ -824,6 +1604,44 @@
           "required": [
             "type",
             "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The turn waits for a person to answer `request` with\n[`super::SESSION_ANSWER`] (#1660).",
+          "properties": {
+            "request": {
+              "$ref": "#/$defs/InputRequest"
+            },
+            "type": {
+              "const": "input_requested",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Input request `id` closed: a client answered it or the turn\nwithdrew it. Clients that show it stop.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/InputRequestId"
+            },
+            "resolution": {
+              "$ref": "#/$defs/Resolution"
+            },
+            "type": {
+              "const": "input_resolved",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "resolution"
           ],
           "type": "object"
         },
@@ -1213,6 +2031,9 @@
     "-32010": {
       "name": "TurnCancelled"
     },
+    "-32011": {
+      "name": "InputNotOpen"
+    },
     "-32600": {
       "name": "InvalidRequest"
     },
@@ -1260,6 +2081,14 @@
       },
       "result": {
         "$ref": "#/$defs/JobListResponse"
+      }
+    },
+    "rho/session/answer": {
+      "params": {
+        "$ref": "#/$defs/SessionAnswerParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionAnswerResponse"
       }
     },
     "rho/session/attach": {

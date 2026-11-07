@@ -16,13 +16,14 @@ use crate::{
     forward::Forwarders,
     jsonrpc,
     methods::{
-        Hello, JobList, JobListParams, JobListResponse, Method, SessionAttach, SessionAttachParams,
-        SessionAttachResponse, SessionCancel, SessionCancelParams, SessionCancelResponse,
-        SessionDetach, SessionDetachParams, SessionDetachResponse, SessionNew, SessionNewParams,
+        Hello, JobList, JobListParams, JobListResponse, Method, SessionAnswer, SessionAnswerParams,
+        SessionAnswerResponse, SessionAttach, SessionAttachParams, SessionAttachResponse,
+        SessionCancel, SessionCancelParams, SessionCancelResponse, SessionDetach,
+        SessionDetachParams, SessionDetachResponse, SessionNew, SessionNewParams,
         SessionNewResponse, SessionPrompt, SessionPromptParams, SessionPromptResponse,
         SessionSteer, SessionSteerParams, SessionSteerResponse, Status, Stop, DAEMON_STATUS,
-        DAEMON_STOP, HELLO, JOB_LIST, SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH, SESSION_NEW,
-        SESSION_PROMPT, SESSION_STEER,
+        DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL,
+        SESSION_DETACH, SESSION_NEW, SESSION_PROMPT, SESSION_STEER,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -90,6 +91,13 @@ pub trait Service: Send + Sync {
         &self,
         params: SessionSteerParams,
     ) -> impl Future<Output = Result<SessionSteerResponse, RpcError>> + Send;
+
+    /// Handles `rho/session/answer`: hand the answer to the turn that
+    /// waits for the request, if the request is still open.
+    fn answer_session(
+        &self,
+        params: SessionAnswerParams,
+    ) -> impl Future<Output = Result<SessionAnswerResponse, RpcError>> + Send;
 
     /// Handles `rho/session/attach`: subscribe this connection to the
     /// session's events (see [`crate::subscription()`]). The connection sends
@@ -378,6 +386,7 @@ enum ServiceCall {
     PromptSession(SessionPromptParams),
     CancelSession(SessionCancelParams),
     SteerSession(SessionSteerParams),
+    AnswerSession(SessionAnswerParams),
     ListJobs,
 }
 
@@ -437,6 +446,7 @@ impl ServiceCall {
             SESSION_PROMPT => decode_params::<SessionPrompt>(params).map(Self::PromptSession),
             SESSION_CANCEL => decode_params::<SessionCancel>(params).map(Self::CancelSession),
             SESSION_STEER => decode_params::<SessionSteer>(params).map(Self::SteerSession),
+            SESSION_ANSWER => decode_params::<SessionAnswer>(params).map(Self::AnswerSession),
             JOB_LIST => decode_params::<JobList>(params).map(|JobListParams {}| Self::ListJobs),
             method => Err(RpcError::new(
                 ErrorCode::MethodNotFound,
@@ -464,6 +474,9 @@ impl ServiceCall {
             }
             Self::SteerSession(params) => {
                 encode_result::<SessionSteer>(&service.steer_session(params).await?)
+            }
+            Self::AnswerSession(params) => {
+                encode_result::<SessionAnswer>(&service.answer_session(params).await?)
             }
             Self::ListJobs => encode_result::<JobList>(&service.list_jobs().await),
         }

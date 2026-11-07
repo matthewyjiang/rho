@@ -15,6 +15,9 @@ use rho_sdk::{
     WorkspacePolicy,
 };
 
+/// What a tool learns when a person denies its approval without a reason.
+pub(crate) const DENIED_BY_USER: &str = "denied by user";
+
 /// Lightweight permission mode that gates the model's most sensitive actions.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum PermissionMode {

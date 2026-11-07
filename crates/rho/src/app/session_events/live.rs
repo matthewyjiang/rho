@@ -185,7 +185,8 @@ impl LiveEvents {
             // The daemon reports the job's state itself: a turn's start, its
             // waits for input, and its end.
             SessionEvent::RunStarted | SessionEvent::RunFinished { .. } => Vec::new(),
-            // Approvals, plan approvals and questions reach clients in #1660.
+            // The host opens these as input requests with ids of its own
+            // (the daemon's `sessions::inputs`, #1660).
             SessionEvent::ApprovalRequested { .. }
             | SessionEvent::ApprovalWithdrawn { .. }
             | SessionEvent::PlanApprovalRequested { .. }
@@ -309,7 +310,7 @@ impl LiveEvents {
             | RunEvent::Failed { .. } => Vec::new(),
             // [`SessionEvent::BoundaryApplied`] carried the rows it shows.
             RunEvent::BoundaryInputApplied { .. } => Vec::new(),
-            // Questions arrive as [`SessionEvent::QuestionAsked`] (#1660).
+            // Questions arrive as [`SessionEvent::QuestionAsked`].
             RunEvent::HostInputRequested { .. } | RunEvent::ToolHostInputRequested { .. } => {
                 Vec::new()
             }

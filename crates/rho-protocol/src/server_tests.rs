@@ -75,6 +75,13 @@ macro_rules! hosts_no_sessions {
             Err(no_such_session())
         }
 
+        async fn answer_session(
+            &self,
+            _: SessionAnswerParams,
+        ) -> Result<SessionAnswerResponse, RpcError> {
+            Err(no_such_session())
+        }
+
         async fn list_jobs(&self) -> JobListResponse {
             JobListResponse { jobs: Vec::new() }
         }
@@ -439,6 +446,7 @@ impl Service for AttachService {
             stream: StreamId::new("stream"),
             replay: Replay::Reset,
             state: JobState::Idle,
+            inputs: Vec::new(),
         };
         Ok((response, subscription))
     }

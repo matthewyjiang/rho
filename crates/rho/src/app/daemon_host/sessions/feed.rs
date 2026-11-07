@@ -19,7 +19,7 @@
 //! transcript holds no cursor past 0 and resets again.
 
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     sync::{Mutex, MutexGuard, PoisonError},
 };
 
@@ -70,6 +70,10 @@ struct FeedState {
     /// The job state the last state event sent, so an attach reports the
     /// state its replay ends in.
     job: wire::JobState,
+    /// The input requests opened and not yet resolved, so an attach reports
+    /// them even once the buffer no longer holds the events that opened
+    /// them.
+    inputs: BTreeMap<wire::InputRequestId, wire::InputRequest>,
     subscribers: Vec<Publisher>,
     /// Set by [`Feed::close`]: a client attaching later is detached at once.
     closed: Option<DetachReason>,
@@ -87,6 +91,8 @@ pub(super) struct Attached {
     pub(super) replay: Replay,
     /// The job state as of the attach, which the replay ends in.
     pub(super) job: wire::JobState,
+    /// The input requests open as of the attach, oldest first.
+    pub(super) inputs: Vec<wire::InputRequest>,
     pub(super) subscription: Subscription,
 }
 
@@ -103,6 +109,7 @@ impl Feed {
                 turn_start_evicted: false,
                 transcript: Vec::new(),
                 job: wire::JobState::Idle,
+                inputs: BTreeMap::new(),
                 subscribers: Vec::new(),
                 closed: None,
             }),
@@ -149,6 +156,7 @@ impl Feed {
             stream: state.stream.clone(),
             replay,
             job: state.job,
+            inputs: state.inputs.values().cloned().collect(),
             subscription,
         }
     }
@@ -177,8 +185,15 @@ impl FeedState {
         let Some(bytes) = encoded_len(&event) else {
             return;
         };
-        if let wire::SessionEvent::State { state, .. } = &event {
-            self.job = *state;
+        match &event {
+            wire::SessionEvent::State { state, .. } => self.job = *state,
+            wire::SessionEvent::InputRequested { request } => {
+                self.inputs.insert(request.id, request.clone());
+            }
+            wire::SessionEvent::InputResolved { id, .. } => {
+                self.inputs.remove(id);
+            }
+            _ => {}
         }
         let seq = Seq(self.last.0 + 1);
         self.last = seq;

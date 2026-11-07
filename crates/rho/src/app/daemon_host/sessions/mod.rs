@@ -21,17 +21,17 @@ use std::{
 };
 
 use rho_protocol::{
-    DetachReason, ErrorCode, RpcError, SessionAttachParams, SessionAttachResponse,
-    SessionCancelParams, SessionCancelResponse, SessionNewParams, SessionNewResponse,
-    SessionPromptParams, SessionPromptResponse, SessionSteerParams, SessionSteerResponse,
-    Subscription,
+    DetachReason, ErrorCode, RpcError, SessionAnswerParams, SessionAnswerResponse,
+    SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
+    SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
+    SessionSteerParams, SessionSteerResponse, Subscription,
 };
 use rho_sdk::{CancellationToken, SessionId, UserInput};
 
 use super::{
-    jobs::{JobId, JobRecord, JobRegistry, StartTurnError},
+    jobs::{JobEvent, JobId, JobRecord, JobRegistry, StartTurnError},
     subagents::Subagents,
-    wire::{session_from_wire, session_to_wire},
+    wire::{session_from_wire, session_to_wire, state_event},
 };
 use crate::{
     app::{
@@ -42,10 +42,14 @@ use crate::{
 };
 
 mod feed;
+mod inputs;
 mod open;
+#[cfg(test)]
+mod test_events;
 mod turn;
 
 use feed::{Attached, Feed};
+use inputs::Inputs;
 use open::{open_session, OpenedSession, Workspace};
 use turn::{PromptStart, TurnTask};
 
@@ -74,8 +78,9 @@ pub(super) struct Sessions {
 
 /// A session this daemon loaded.
 struct LoadedSession {
-    /// The job that records the session's turns.
+    /// The job that records the session's turns, in `jobs`.
     job: JobId,
+    jobs: Arc<JobRegistry>,
     /// Held by the turn under way; taken when the daemon stops.
     runtime: tokio::sync::Mutex<Option<SessionRuntime>>,
     handle: SessionHandle,
@@ -91,19 +96,58 @@ struct LoadedSession {
     /// Turns the runtime's events into the feed's; only the turn under way
     /// uses it, so the lock is never contended.
     live: Mutex<LiveEvents>,
+    /// The input requests the turn under way has open (#1660).
+    inputs: Mutex<Inputs>,
 }
 
 impl LoadedSession {
     /// A session opened new: nothing saved yet, so its feed starts empty.
-    fn new(job: JobId, runtime: SessionRuntime, config: Config) -> Self {
+    /// Its turns are recorded on `job` in `jobs`.
+    fn new(job: JobId, jobs: Arc<JobRegistry>, runtime: SessionRuntime, config: Config) -> Self {
         Self {
             job,
+            jobs,
             handle: runtime.handle(),
             live: Mutex::new(LiveEvents::new(runtime.workspace_root(), runtime.tools())),
             feed: Feed::new(),
             runtime: tokio::sync::Mutex::new(Some(runtime)),
             config,
             turn_cancel: Mutex::default(),
+            inputs: Mutex::default(),
+        }
+    }
+
+    /// Changes the session's open input requests with `change`, tells
+    /// attached clients what it opened and resolved, moves the job between
+    /// running and waiting for input to match, and only then hands the
+    /// turns the answers it accepted. All under the requests' lock, so
+    /// clients see requests open and close, and the job's state follow
+    /// them, in the order they happened, and before anything the turn does
+    /// with an answer.
+    fn change_inputs<T>(&self, change: impl FnOnce(&mut Inputs) -> T) -> T {
+        // A panic mid-change leaves the requests as they were or with one
+        // request moved, which the turn's end clears.
+        let mut inputs = self.inputs.lock().unwrap_or_else(PoisonError::into_inner);
+        let was_waiting = inputs.waiting();
+        let result = change(&mut inputs);
+        self.feed.publish(inputs.take_events());
+        match (was_waiting, inputs.waiting()) {
+            (false, true) => self.record(JobEvent::InputOpened),
+            (true, false) => self.record(JobEvent::InputSettled),
+            (false, false) | (true, true) => {}
+        }
+        inputs.send_answers();
+        result
+    }
+
+    /// Applies `event` to the session's job and tells attached clients the
+    /// state it left the job in.
+    fn record(&self, event: JobEvent) {
+        match self.jobs.record(&self.job, event) {
+            Ok(state) => self.feed.publish([state_event(&state)]),
+            Err(error) => {
+                tracing::warn!(job = %self.job, %error, "could not record a turn's progress");
+            }
         }
     }
 
@@ -192,7 +236,8 @@ impl Sessions {
                 );
                 Some((runtime, error))
             } else {
-                let entry = LoadedSession::new(job.clone(), runtime, config);
+                let entry =
+                    LoadedSession::new(job.clone(), Arc::clone(&self.jobs), runtime, config);
                 loaded.insert(session.clone(), Arc::new(entry));
                 None
             }
@@ -239,7 +284,6 @@ impl Sessions {
         // end apart from this request: the transport joins every request it
         // read, but this one stops waiting once the daemon stops.
         let start = TurnTask {
-            jobs: Arc::clone(&self.jobs),
             session,
             stopping: self.stopping.clone(),
             cancel,
@@ -303,6 +347,17 @@ impl Sessions {
         }
     }
 
+    /// Hands a client's answer to one of a session's open input requests
+    /// (#1660). The first answer wins: a later one finds the request gone.
+    pub(super) fn answer(
+        &self,
+        params: SessionAnswerParams,
+    ) -> Result<SessionAnswerResponse, RpcError> {
+        let session = self.loaded_session(&params.session)?;
+        session.change_inputs(|inputs| inputs.answer(params.request, params.answer))?;
+        Ok(SessionAnswerResponse {})
+    }
+
     /// Subscribes a client to a session's events, resuming after its cursor
     /// when the session's feed still can.
     pub(super) fn attach(
@@ -315,12 +370,14 @@ impl Sessions {
             stream,
             replay,
             job,
+            inputs,
             subscription,
         } = session.feed.attach(params.after.as_ref());
         let response = SessionAttachResponse {
             stream,
             replay,
             state: job,
+            inputs,
         };
         Ok((response, subscription))
     }

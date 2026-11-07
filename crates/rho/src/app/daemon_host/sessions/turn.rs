@@ -2,28 +2,27 @@
 //! client that sent the prompt disconnects.
 //!
 //! The turn reports to a [`DaemonView`], which sends its events to the
-//! session's attached clients (#1657) and keeps the job's state in step with
-//! it: `waiting_for_input` while an approval, plan approval, or question is
-//! open, `running` otherwise. Nothing answers those requests until #1660, so
-//! a turn that asks parks until `rho/session/cancel` withdraws its requests.
-//! A request is never denied because no client is attached.
+//! session's attached clients (#1657) and opens and withdraws the session's
+//! input requests as the turn asks (#1660): its job is `waiting_for_input`
+//! while an approval, plan approval, or question is open, `running`
+//! otherwise. A request is never denied because no client is attached.
 
-use std::{collections::HashSet, future::Future, sync::Arc};
+use std::{future::Future, sync::Arc};
 
-use rho_sdk::{CancellationToken, HostInputId, UserInput};
+use rho_sdk::{CancellationToken, UserInput};
 use tokio::sync::{mpsc, oneshot};
 
 use super::{
     super::{
-        jobs::{JobEvent, JobRegistry, JobState, TurnEnd},
+        jobs::{JobEvent, JobState, TurnEnd},
         wire::state_event,
     },
+    inputs::Inputs,
     LoadedSession,
 };
 use crate::{
     app::session_runtime::{
-        ApprovalId, PlanApprovalId, PlanReport, SessionEvent, SessionRuntime, Turn, TurnControl,
-        TurnIo, TurnOutcome, TurnView,
+        PlanReport, SessionEvent, SessionRuntime, Turn, TurnControl, TurnIo, TurnOutcome, TurnView,
     },
     config::Config,
 };
@@ -57,7 +56,6 @@ impl PromptStart {
 
 /// One turn of a session whose job already recorded the turn's start.
 pub(super) struct TurnTask {
-    pub(super) jobs: Arc<JobRegistry>,
     pub(super) session: Arc<LoadedSession>,
     /// Cancelled once the daemon stops: a turn cancelled then was
     /// interrupted, not cancelled by a client.
@@ -79,7 +77,6 @@ impl TurnTask {
 
     async fn run(self, text: String, started: oneshot::Sender<PromptStart>) {
         let Self {
-            jobs,
             session,
             stopping,
             cancel,
@@ -91,7 +88,7 @@ impl TurnTask {
         let mut runtime = session.runtime.lock().await;
         // Declared after the lock, so even a panic records the end (see
         // `DaemonView`'s drop) before the lock is released.
-        let mut view = DaemonView::new(Arc::clone(&session), jobs, started);
+        let mut view = DaemonView::new(Arc::clone(&session), started);
         // The prompt that spawned this turn recorded its job running.
         view.publish_state(&JobState::Running);
         let ended = match &mut *runtime {
@@ -169,37 +166,27 @@ async fn run_turn(
 /// when its task stops without ending it.
 const UNEXPECTED_STOP: &str = "the turn stopped unexpectedly; see the daemon log";
 
-/// Shows a session's turn to its job: the job's state follows the requests
-/// the turn has open, and the request that sent the prompt learns how the
-/// turn began.
+/// Shows a session's turn to its clients and its job: the session's input
+/// requests follow the turn's, and the request that sent the prompt learns
+/// how the turn began.
 ///
 /// Records the turn's end exactly once: through [`Self::end`], or, when the
 /// view drops without it, as the turn task panicking, failed with
 /// [`UNEXPECTED_STOP`].
 struct DaemonView {
     session: Arc<LoadedSession>,
-    jobs: Arc<JobRegistry>,
     /// Answered `Saved` once the turn saved its prompt, or with how the
     /// turn ended if it ends first.
     started: Option<oneshot::Sender<PromptStart>>,
-    /// Kept across the turn's `show` calls: a plan handoff opens the next
-    /// model turn while the requests of the last may still be open.
-    open: OpenInputs,
     /// Whether the turn's end is recorded.
     ended: bool,
 }
 
 impl DaemonView {
-    fn new(
-        session: Arc<LoadedSession>,
-        jobs: Arc<JobRegistry>,
-        started: oneshot::Sender<PromptStart>,
-    ) -> Self {
+    fn new(session: Arc<LoadedSession>, started: oneshot::Sender<PromptStart>) -> Self {
         Self {
             session,
-            jobs,
             started: Some(started),
-            open: OpenInputs::default(),
             ended: false,
         }
     }
@@ -213,20 +200,12 @@ impl DaemonView {
     /// waiting for the turn to begin.
     fn finish(&mut self, end: TurnEnd) {
         let start = PromptStart::ended(&end);
-        self.record(JobEvent::TurnEnded(end));
+        // A turn that ended waits for nothing.
+        self.session.change_inputs(Inputs::withdraw_all);
+        self.session.record(JobEvent::TurnEnded(end));
         self.ended = true;
         if let (Some(started), Some(start)) = (self.started.take(), start) {
             let _ = started.send(start);
-        }
-    }
-
-    /// Applies `event` to the job and tells attached clients the state it
-    /// left the job in.
-    fn record(&self, event: JobEvent) {
-        let job = &self.session.job;
-        match self.jobs.record(job, event) {
-            Ok(state) => self.publish_state(&state),
-            Err(error) => tracing::warn!(%job, %error, "could not record a turn's progress"),
         }
     }
 
@@ -234,13 +213,14 @@ impl DaemonView {
         self.session.feed.publish([state_event(state)]);
     }
 
-    /// Takes the turn's events until it drops its sender. Holds
-    /// `_control`, the turn's answer channel, until then: a turn whose
-    /// control channel closes fails, and parked requests must stay open.
+    /// Takes the model turn's events until it drops its sender, opening
+    /// and withdrawing input requests whose answers go to `control`. Holds
+    /// `control` until then: a turn whose control channel closes fails, and
+    /// requests nobody answered yet must stay open.
     async fn show(
         &mut self,
         mut events: mpsc::UnboundedReceiver<SessionEvent>,
-        _control: mpsc::UnboundedSender<TurnControl>,
+        control: mpsc::UnboundedSender<TurnControl>,
     ) {
         while let Some(event) = events.recv().await {
             let wire = self.session.live().map(&event);
@@ -250,14 +230,8 @@ impl DaemonView {
                     let _ = started.send(PromptStart::Saved);
                 }
             }
-            let was_waiting = self.open.waiting();
-            self.open.note(&event);
-            let event = match (was_waiting, self.open.waiting()) {
-                (false, true) => JobEvent::InputOpened,
-                (true, false) => JobEvent::InputSettled,
-                (false, false) | (true, true) => continue,
-            };
-            self.record(event);
+            self.session
+                .change_inputs(|inputs| inputs.note(&control, &event));
         }
     }
 }
@@ -291,55 +265,6 @@ impl TurnView for DaemonView {
         _report: PlanReport,
     ) -> impl Future<Output = ()> + Send {
         std::future::ready(())
-    }
-}
-
-/// The requests a turn has open, which only a person can answer. A request
-/// leaves only when the turn withdraws it; #1660, which sends answers, must
-/// remove the request it answers, since an answered request is not
-/// withdrawn.
-#[derive(Debug, Default)]
-struct OpenInputs {
-    approvals: HashSet<ApprovalId>,
-    plans: HashSet<PlanApprovalId>,
-    questions: HashSet<HostInputId>,
-}
-
-impl OpenInputs {
-    /// Notes the request `event` opens or closes, if any.
-    fn note(&mut self, event: &SessionEvent) {
-        match event {
-            SessionEvent::ApprovalRequested { id, .. } => {
-                self.approvals.insert(*id);
-            }
-            SessionEvent::ApprovalWithdrawn { id } => {
-                self.approvals.remove(id);
-            }
-            SessionEvent::PlanApprovalRequested { id, .. } => {
-                self.plans.insert(*id);
-            }
-            SessionEvent::PlanApprovalWithdrawn { id } => {
-                self.plans.remove(id);
-            }
-            SessionEvent::QuestionAsked { id, .. } => {
-                self.questions.insert(id.clone());
-            }
-            SessionEvent::QuestionWithdrawn { id } => {
-                self.questions.remove(id);
-            }
-            SessionEvent::MessageInserted(_)
-            | SessionEvent::RunStarted
-            | SessionEvent::Run(_)
-            | SessionEvent::BoundaryApplied { .. }
-            | SessionEvent::Notice { .. }
-            | SessionEvent::RunClosed { .. }
-            | SessionEvent::RunFinished { .. } => {}
-        }
-    }
-
-    /// Whether the turn waits on a person.
-    fn waiting(&self) -> bool {
-        !(self.approvals.is_empty() && self.plans.is_empty() && self.questions.is_empty())
     }
 }
 

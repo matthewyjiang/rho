@@ -10,7 +10,7 @@ use std::{fmt, path::PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{Cursor, JobState, Seq, SessionEvent, StreamId};
+use super::{Cursor, InputRequest, JobState, Seq, SessionEvent, StreamId};
 
 /// Open a new session in a workspace, before its first prompt.
 pub const SESSION_NEW: &str = "rho/session/new";
@@ -139,6 +139,11 @@ pub struct SessionAttachResponse {
     pub replay: Replay,
     /// The session's job state when the attachment began.
     pub state: JobState,
+    /// The input requests open when the attachment began, oldest first:
+    /// what a client may answer even when the replay no longer holds the
+    /// events that opened them (#1660). The replay may repeat some; an
+    /// input request's id names it.
+    pub inputs: Vec<InputRequest>,
 }
 
 /// What the events after a [`SessionAttachResponse`] start with.

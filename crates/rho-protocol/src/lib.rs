@@ -67,14 +67,17 @@ pub use jsonrpc::{
     RequestId, Response, RpcError, MAX_LINE_BYTES,
 };
 pub use methods::{
-    Budget, ClientInfo, ContentBlock, Cursor, DaemonInfo, DaemonStatus, DetachReason, HelloParams,
-    HelloResponse, JobId, JobKind, JobListParams, JobListResponse, JobState, JobSummary, Location,
-    MessageId, PlanEntry, PlanStatus, QueuePlace, Replay, Seq, SessionAttachParams,
+    ApprovalAsk, ApprovalSource, Ask, Budget, Choice, ClientInfo, ContentBlock, Cursor, DaemonInfo,
+    DaemonStatus, DefaultAnswer, DefaultStyle, DetachReason, HelloParams, HelloResponse,
+    InputAnswer, InputRequest, InputRequestId, JobId, JobKind, JobListParams, JobListResponse,
+    JobState, JobSummary, Location, MessageId, Operation, PathScope, PermissionMode,
+    PlanApprovalAsk, PlanEntry, PlanStatus, Question, QuestionAsk, QueuePlace, Replay, Resolution,
+    Selection, Seq, SessionAnswerParams, SessionAnswerResponse, SessionAttachParams,
     SessionAttachResponse, SessionCancelParams, SessionCancelResponse, SessionDetachParams,
     SessionDetachResponse, SessionDetachedParams, SessionEvent, SessionEventParams, SessionId,
     SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
     SessionSteerParams, SessionSteerResponse, StatusParams, StopParams, StopResponse, StreamId,
-    ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
+    ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus, SESSION_ANSWER,
 };
 pub use server::{serve_connection, ServerInfo, Service, CLOSE_GRACE};
 pub use subscription::{subscription, Published, Publisher, Subscription};
