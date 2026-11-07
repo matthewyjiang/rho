@@ -244,11 +244,9 @@ fn control_for(waiting: &Waiting, answer: InputAnswer) -> Result<TurnControl, Rp
                 InputAnswer::Deny { reason } => ApprovalDecision::Deny {
                     reason: reason.unwrap_or_else(|| DENIED_BY_USER.to_owned()),
                 },
-                InputAnswer::ApprovePlan { .. }
-                | InputAnswer::KeepPlanning
-                | InputAnswer::Answers { .. }
-                | InputAnswer::Decline
-                | InputAnswer::Dismiss => {
+                // Another kind of request's answer, or a kind a newer protocol
+                // adds.
+                _ => {
                     return Err(invalid(
                         "an approval takes allow_once, allow_for_session, or deny",
                     ))
@@ -265,12 +263,9 @@ fn control_for(waiting: &Waiting, answer: InputAnswer) -> Result<TurnControl, Rp
                     PlanPermissionAnswer::Approve(mode)
                 }
                 InputAnswer::KeepPlanning => PlanPermissionAnswer::KeepPlanning,
-                InputAnswer::AllowOnce
-                | InputAnswer::AllowForSession
-                | InputAnswer::Deny { .. }
-                | InputAnswer::Answers { .. }
-                | InputAnswer::Decline
-                | InputAnswer::Dismiss => {
+                // Another kind of request's answer, or a kind a newer protocol
+                // adds.
+                _ => {
                     return Err(invalid(
                         "a plan approval takes approve_plan or keep_planning",
                     ))
@@ -283,13 +278,9 @@ fn control_for(waiting: &Waiting, answer: InputAnswer) -> Result<TurnControl, Rp
                 InputAnswer::Answers { answers } => Ok(answered(request, answers)?),
                 InputAnswer::Decline => Err(HostInputRefusal::Declined),
                 InputAnswer::Dismiss => Err(HostInputRefusal::Dismissed),
-                InputAnswer::AllowOnce
-                | InputAnswer::AllowForSession
-                | InputAnswer::Deny { .. }
-                | InputAnswer::ApprovePlan { .. }
-                | InputAnswer::KeepPlanning => {
-                    return Err(invalid("a question takes answers, decline, or dismiss"))
-                }
+                // Another kind of request's answer, or a kind a newer protocol
+                // adds.
+                _ => return Err(invalid("a question takes answers, decline, or dismiss")),
             };
             Ok(TurnControl::AnswerQuestion {
                 id: id.clone(),

@@ -286,6 +286,7 @@ pub struct SessionAnswerParams {
 /// any other is [`crate::ErrorCode::InvalidParams`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum InputAnswer {
     /// Approve this one use of the capability.
     AllowOnce,
