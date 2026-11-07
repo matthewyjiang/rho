@@ -587,6 +587,17 @@
         "id": {
           "$ref": "#/$defs/InputRequestId"
         },
+        "timeout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InputTimeout"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the daemon answers the request itself, if it will; absent once\nthe request is held."
+        },
         "tool_call": {
           "anyOf": [
             {
@@ -610,6 +621,31 @@
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
+    },
+    "InputTimeout": {
+      "description": "An answer the daemon gives an input request at a deadline, unless a\nclient answers the request or holds it first. Only a question whose\nagent offered fallback answers, in a session whose user set\n`[questionnaire] timeout_seconds`, has one (#1660).",
+      "properties": {
+        "answer": {
+          "$ref": "#/$defs/InputAnswer",
+          "description": "What the daemon answers with."
+        },
+        "deadline": {
+          "description": "Unix time, in milliseconds, when the daemon answers.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "description": "Why the agent offered that answer.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "deadline",
+        "answer",
+        "reason"
+      ],
+      "type": "object"
     },
     "JobId": {
       "description": "A job's id. Opaque to clients: send back the string the daemon gave.",
@@ -682,7 +718,7 @@
         },
         {
           "const": "waiting_for_input",
-          "description": "The turn waits for an approval, a plan approval, or a question to be\nanswered with [`super::SESSION_ANSWER`]. Nothing is denied because no\nclient is attached; the wait ends with an answer or a cancel.",
+          "description": "The turn waits for an approval, a plan approval, or a question to be\nanswered with [`super::SESSION_ANSWER`]. Nothing is denied because no\nclient is attached; the wait ends with an answer, a cancel, or a\ntimeout the user configured ([`super::InputTimeout`]).",
           "type": "string"
         },
         {
@@ -1260,6 +1296,11 @@
           "type": "string"
         },
         {
+          "const": "timed_out",
+          "description": "Nobody answered or held it by its timeout's deadline, so the daemon\nanswered it with the timeout's answer.",
+          "type": "string"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "type": "string",
           "x-rho-other": true
@@ -1625,7 +1666,7 @@
           "type": "object"
         },
         {
-          "description": "Input request `id` closed: a client answered it or the turn\nwithdrew it. Clients that show it stop.",
+          "description": "Input request `id` closed: a client answered it, the turn withdrew\nit, or it timed out. Clients that show it stop.",
           "properties": {
             "id": {
               "$ref": "#/$defs/InputRequestId"
@@ -1642,6 +1683,23 @@
             "type",
             "id",
             "resolution"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Input request `id`'s timeout stopped: a client held it with\n[`super::SESSION_HOLD`], so it waits for an answer.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/InputRequestId"
+            },
+            "type": {
+              "const": "input_held",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id"
           ],
           "type": "object"
         },
@@ -1680,6 +1738,26 @@
         "seq",
         "event"
       ],
+      "type": "object"
+    },
+    "SessionHoldParams": {
+      "description": "Params of [`SESSION_HOLD`].",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/InputRequestId"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session",
+        "request"
+      ],
+      "type": "object"
+    },
+    "SessionHoldResponse": {
+      "description": "Result of [`SESSION_HOLD`]: the request no longer times out, and every\nattached client saw [`super::SessionEvent::InputHeld`]. Holding a\nrequest that has no timeout, or one already held, changes nothing. A\nrequest that closed is [`crate::ErrorCode::InputNotOpen`].",
       "type": "object"
     },
     "SessionId": {
@@ -2113,6 +2191,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionDetachResponse"
+      }
+    },
+    "rho/session/hold": {
+      "params": {
+        "$ref": "#/$defs/SessionHoldParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionHoldResponse"
       }
     },
     "rho/session/new": {

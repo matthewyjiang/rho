@@ -20,7 +20,7 @@ use rho_protocol::{
     JobState, JobSummary, Notifications, Operation, PathScope, Replay, Resolution, Seq,
     SessionAnswerParams, SessionAttachParams, SessionAttachResponse, SessionCancelParams,
     SessionDetachParams, SessionDetachedParams, SessionEvent, SessionId, SessionNewParams,
-    SessionPromptParams, StreamId, ToolCallId,
+    SessionPromptParams, StreamId, ToolCallId, ToolContent, ToolStatus,
 };
 use tokio::net::UnixStream;
 
@@ -800,6 +800,7 @@ async fn an_approval_waits_for_any_client_to_answer() {
                     reason,
                 }),
                 tool_call: Some(ToolCallId::new("edit")),
+                timeout: None,
             }],
             JobState::WaitingForInput,
             Ok(()),
@@ -862,6 +863,102 @@ async fn a_turn_that_asks_tells_the_hooks() {
             true,
         ),
         "event: {event:#}\nlog:\n{}",
+        sandbox.daemon_log()
+    );
+}
+
+// Covers: with `[questionnaire] timeout_seconds` set, a question whose
+// agent offered fallback answers tells clients when and how it will be
+// answered, and, with nobody answering, the daemon answers it with the
+// fallback when the timeout passes: clients see it time out and the tool
+// gets the fallback answers (#1660).
+// Owner: daemon input requests.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_question_nobody_answers_times_out_with_its_fallback() {
+    let sandbox = Sandbox::new();
+    // The shortest timeout the config takes.
+    std::fs::write(
+        sandbox.daemon.home().join("config.toml"),
+        format!("{CONFIG}\n[questionnaire]\ntimeout_seconds = 1\n"),
+    )
+    .unwrap();
+    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let session = new_session(&client, &sandbox.workspace).await;
+    let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let call = serde_json::json!({
+        "id": "ask",
+        "name": "questionnaire",
+        "arguments": {
+            "questions": [{
+                "id": "color",
+                "question": "Which color?",
+                "choices": ["Red", "Blue"],
+            }],
+            "on_timeout": {"answers": {"color": "Blue"}, "reason": "either works"},
+        },
+    });
+    client
+        .request::<SessionPrompt>(&SessionPromptParams {
+            session: session.clone(),
+            text: call.to_string(),
+        })
+        .await
+        .unwrap();
+
+    watcher
+        .read_until(|event| matches!(event, SessionEvent::InputResolved { .. }))
+        .await;
+    let job = settled(&sandbox, &client, |job| {
+        job.session.as_ref() == Some(&session)
+    })
+    .await;
+    watcher
+        .read_until(|event| {
+            matches!(event, SessionEvent::ToolCall(update)
+                if update.id == ToolCallId::new("ask") && update.status == Some(ToolStatus::Completed))
+        })
+        .await;
+
+    let timeout = watcher.events.iter().find_map(|(_, event)| match event {
+        SessionEvent::InputRequested { request } => request
+            .timeout
+            .as_ref()
+            .map(|timeout| (timeout.answer.clone(), timeout.reason.clone())),
+        _ => None,
+    });
+    let resolution = watcher.events.iter().find_map(|(_, event)| match event {
+        SessionEvent::InputResolved { resolution, .. } => Some(*resolution),
+        _ => None,
+    });
+    let result: String = watcher
+        .events
+        .iter()
+        .filter_map(|(_, event)| match event {
+            SessionEvent::ToolCall(update) if update.id == ToolCallId::new("ask") => {
+                update.content.clone()
+            }
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|content| match content {
+            ToolContent::Text { text } => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        (timeout, resolution, job.state, result.contains("Blue")),
+        (
+            Some((
+                InputAnswer::Answers {
+                    answers: [("color".to_owned(), vec!["Blue".to_owned()])].into(),
+                },
+                "either works".to_owned(),
+            )),
+            Some(Resolution::TimedOut),
+            JobState::Completed,
+            true,
+        ),
+        "tool result: {result}\nlog:\n{}",
         sandbox.daemon_log()
     );
 }

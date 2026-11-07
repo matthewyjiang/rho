@@ -82,6 +82,13 @@ macro_rules! hosts_no_sessions {
             Err(no_such_session())
         }
 
+        async fn hold_session(
+            &self,
+            _: SessionHoldParams,
+        ) -> Result<SessionHoldResponse, RpcError> {
+            Err(no_such_session())
+        }
+
         async fn list_jobs(&self) -> JobListResponse {
             JobListResponse { jobs: Vec::new() }
         }

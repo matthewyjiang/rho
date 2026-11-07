@@ -193,6 +193,11 @@ impl FeedState {
             wire::SessionEvent::InputResolved { id, .. } => {
                 self.inputs.remove(id);
             }
+            wire::SessionEvent::InputHeld { id } => {
+                if let Some(request) = self.inputs.get_mut(id) {
+                    request.timeout = None;
+                }
+            }
             _ => {}
         }
         let seq = Seq(self.last.0 + 1);

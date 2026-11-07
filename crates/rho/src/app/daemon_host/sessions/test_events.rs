@@ -2,7 +2,7 @@
 
 use rho_sdk::{
     ApprovalRequest, CapabilityRequest, CapabilitySource, HostChoice, HostInputId,
-    HostInputRequest, HostQuestion, PathScope, SelectionMode, ToolCallId,
+    HostInputRequest, HostInputResponse, HostQuestion, PathScope, SelectionMode, ToolCallId,
 };
 
 use crate::{
@@ -52,6 +52,27 @@ pub(super) fn question_id(name: &str) -> HostInputId {
 }
 
 pub(super) fn question(name: &str) -> SessionEvent {
+    SessionEvent::QuestionAsked {
+        id: question_id(name),
+        call_id: None,
+        request: questionnaire(),
+    }
+}
+
+/// A question whose agent offers answering `yes`, for `reason`, if nobody
+/// answers in time.
+pub(super) fn question_with_fallback(name: &str, reason: &str) -> SessionEvent {
+    let request = questionnaire()
+        .with_timeout_fallback(HostInputResponse::new().answer("answer", ["yes"]), reason)
+        .unwrap();
+    SessionEvent::QuestionAsked {
+        id: question_id(name),
+        call_id: None,
+        request,
+    }
+}
+
+fn questionnaire() -> HostInputRequest {
     let question = HostQuestion::new(
         "answer",
         "choose",
@@ -59,11 +80,7 @@ pub(super) fn question(name: &str) -> SessionEvent {
         SelectionMode::One,
     )
     .unwrap();
-    SessionEvent::QuestionAsked {
-        id: question_id(name),
-        call_id: None,
-        request: HostInputRequest::questionnaire("ask", vec![question]).unwrap(),
-    }
+    HostInputRequest::questionnaire("ask", vec![question]).unwrap()
 }
 
 pub(super) fn question_withdrawn(name: &str) -> SessionEvent {

@@ -73,7 +73,8 @@ pub enum JobState {
     Running,
     /// The turn waits for an approval, a plan approval, or a question to be
     /// answered with [`super::SESSION_ANSWER`]. Nothing is denied because no
-    /// client is attached; the wait ends with an answer or a cancel.
+    /// client is attached; the wait ends with an answer, a cancel, or a
+    /// timeout the user configured ([`super::InputTimeout`]).
     WaitingForInput,
     Completed,
     /// The turn failed; [`JobSummary::error`] says why.

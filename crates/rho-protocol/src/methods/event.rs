@@ -113,12 +113,15 @@ pub enum SessionEvent {
     /// The turn waits for a person to answer `request` with
     /// [`super::SESSION_ANSWER`] (#1660).
     InputRequested { request: InputRequest },
-    /// Input request `id` closed: a client answered it or the turn
-    /// withdrew it. Clients that show it stop.
+    /// Input request `id` closed: a client answered it, the turn withdrew
+    /// it, or it timed out. Clients that show it stop.
     InputResolved {
         id: InputRequestId,
         resolution: Resolution,
     },
+    /// Input request `id`'s timeout stopped: a client held it with
+    /// [`super::SESSION_HOLD`], so it waits for an answer.
+    InputHeld { id: InputRequestId },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
