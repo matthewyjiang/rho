@@ -1417,9 +1417,15 @@
         "replay": {
           "$ref": "#/$defs/Replay"
         },
+        "replay_events": {
+          "description": "How many events the replay holds: the first this many\n[`SESSION_EVENT`] notifications after this response replay what the\nclient missed, and the rest are live (#1669). A reset replays the\nlast turn's [`super::SessionEvent::TurnEnded`] until the next turn\nsaves, so a client tells how the turn it attached after ended only\nonce it knows where the replay stops.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "state": {
           "$ref": "#/$defs/JobState",
-          "description": "The session's job state when the attachment began."
+          "description": "The session's job state when the attachment began, which the replay\nends in."
         },
         "stream": {
           "$ref": "#/$defs/StreamId",
@@ -1429,6 +1435,7 @@
       "required": [
         "stream",
         "replay",
+        "replay_events",
         "state",
         "inputs"
       ],

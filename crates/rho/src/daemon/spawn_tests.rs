@@ -56,7 +56,7 @@ async fn racing_clients_spawn_one_daemon_and_all_connect() {
             tokio::spawn(async move {
                 connect_or_spawn(&paths, cli_client_info(), spawner.as_ref())
                     .await
-                    .map(|(_, hello)| hello.daemon.pid)
+                    .map(|connection| connection.hello.daemon.pid)
             })
         })
         .collect();

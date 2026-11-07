@@ -30,7 +30,7 @@ use rho_protocol::{
 use rho_sdk::{CancellationToken, SessionId, UserInput};
 
 use super::{
-    jobs::{JobEvent, JobId, JobRecord, JobRegistry, StartTurnError},
+    jobs::{JobEvent, JobId, JobRecord, JobRegistry, JobState, StartTurnError},
     subagents::Subagents,
     wire::{session_from_wire, session_to_wire, state_event},
 };
@@ -161,10 +161,20 @@ impl LoadedSession {
     /// Applies `event` to the session's job and tells attached clients the
     /// state it left the job in.
     fn record(&self, event: JobEvent) {
+        self.record_after(None, event);
+    }
+
+    /// Applies `event` to the session's job and tells attached clients
+    /// `before`, if any, then the state it left the job in, in one publish,
+    /// so no client's replay holds one without the other (#1669).
+    fn record_after(&self, before: Option<rho_protocol::SessionEvent>, event: JobEvent) {
         match self.jobs.record(&self.job, event) {
-            Ok(state) => self.feed.publish([state_event(&state)]),
+            Ok(state) => self
+                .feed
+                .publish(before.into_iter().chain([state_event(&state)])),
             Err(error) => {
                 tracing::warn!(job = %self.job, %error, "could not record a turn's progress");
+                self.feed.publish(before);
             }
         }
     }
@@ -281,7 +291,11 @@ impl Sessions {
         let cancel = {
             let mut turn_cancel = session.turn_cancel();
             match self.jobs.start_turn(&session.job) {
-                Ok(()) => {}
+                // Told under the `turn_cancel` lock, which the last turn's
+                // end is told under too, so the feed never says `running`
+                // before the last turn's end, nor a turn's end after the next
+                // turn began.
+                Ok(()) => session.feed.publish([state_event(&JobState::Running)]),
                 Err(StartTurnError::Busy) => {
                     return Err(RpcError::new(
                         ErrorCode::SessionBusy,
@@ -392,16 +406,24 @@ impl Sessions {
     ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
         self.refuse_when_stopping()?;
         let session = self.loaded_session(&params.session)?;
+        // Taken under the `turn_cancel` lock a prompt starts its turn under,
+        // so an attach never sees the last turn's end once the job list says
+        // the next turn runs.
         let Attached {
             stream,
             replay,
+            replay_events,
             job,
             inputs,
             subscription,
-        } = session.feed.attach(params.after.as_ref());
+        } = {
+            let _turn = session.turn_cancel();
+            session.feed.attach(params.after.as_ref())
+        };
         let response = SessionAttachResponse {
             stream,
             replay,
+            replay_events,
             state: job,
             inputs,
         };

@@ -5,6 +5,7 @@ mod active_prompt;
 mod agent_binding;
 pub(crate) mod agent_concurrency;
 pub(crate) mod agent_executor;
+mod attach;
 mod automation;
 pub(crate) mod automation_protocol;
 mod bootstrap;

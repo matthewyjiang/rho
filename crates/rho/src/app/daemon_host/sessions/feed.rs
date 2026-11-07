@@ -89,6 +89,8 @@ struct Buffered {
 pub(super) struct Attached {
     pub(super) stream: StreamId,
     pub(super) replay: Replay,
+    /// How many events the replay holds.
+    pub(super) replay_events: u64,
     /// The job state as of the attach, which the replay ends in.
     pub(super) job: wire::JobState,
     /// The input requests open as of the attach, oldest first.
@@ -144,6 +146,8 @@ impl Feed {
     pub(super) fn attach(&self, after: Option<&Cursor>) -> Attached {
         let mut state = self.state();
         let (replay, events) = state.replay_from(after);
+        // A replay is in memory, so far below `u64::MAX` events.
+        let replay_events = u64::try_from(events.len()).unwrap_or(u64::MAX);
         let (publisher, subscription) = rho_protocol::subscription(SUBSCRIBER_BACKLOG, events);
         // Clients that left an idle session would otherwise stay until the
         // next event.
@@ -155,6 +159,7 @@ impl Feed {
         Attached {
             stream: state.stream.clone(),
             replay,
+            replay_events,
             job: state.job,
             inputs: state.inputs.values().cloned().collect(),
             subscription,

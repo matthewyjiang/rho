@@ -27,6 +27,10 @@ pub(crate) enum TerminalReason {
     MaxSteps,
     Timeout,
     Interrupted,
+    /// A client cancelled the turn `rho attach` followed.
+    Cancelled,
+    /// `rho attach` detached on a signal; the turn runs on.
+    Detached,
     Authentication,
     ProviderError,
     ToolHostError,

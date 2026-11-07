@@ -22,22 +22,34 @@ use {
     std::{sync::Arc, time::Duration},
 };
 
+/// Why a daemon command fails on Windows.
+#[cfg(not(unix))]
+pub(super) const UNSUPPORTED: &str = "the rho daemon is not supported on Windows yet (#1665)";
+
 #[cfg(not(unix))]
 pub(super) async fn run(_command: Option<DaemonCommand>) -> anyhow::Result<()> {
-    anyhow::bail!("the rho daemon is not supported on Windows yet (#1665)")
+    anyhow::bail!(UNSUPPORTED)
 }
 
 #[cfg(unix)]
 pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
-    let rho_home = crate::paths::rho_dir()?;
-    let rho_home = daemon::real_home(&rho_home)
-        .with_context(|| format!("could not resolve rho home {}", rho_home.display()))?;
-    let paths = DaemonPaths::resolve(&rho_home, |name| std::env::var_os(name))?;
+    let paths = paths()?;
     match command.unwrap_or(DaemonCommand::Run) {
         DaemonCommand::Run => run_foreground(&paths).await,
         DaemonCommand::Status { json } => status(&paths, json).await,
         DaemonCommand::Stop => stop(&paths).await,
     }
+}
+
+/// The daemon's paths for this rho home, from the process environment.
+#[cfg(unix)]
+pub(super) fn paths() -> anyhow::Result<DaemonPaths> {
+    let rho_home = crate::paths::rho_dir()?;
+    let rho_home = daemon::real_home(&rho_home)
+        .with_context(|| format!("could not resolve rho home {}", rho_home.display()))?;
+    Ok(DaemonPaths::resolve(&rho_home, |name| {
+        std::env::var_os(name)
+    })?)
 }
 
 /// Whether this invocation runs the daemon, which installs its own always-on
@@ -205,7 +217,7 @@ fn stderr_is_journal_stream(stream: &std::ffi::OsStr) -> bool {
 
 #[cfg(unix)]
 async fn status(paths: &DaemonPaths, json: bool) -> anyhow::Result<()> {
-    let (client, _) = daemon::connect(paths, cli_client_info()).await?;
+    let client = daemon::connect(paths, cli_client_info()).await?.client;
     let status = client.request::<methods::Status>(&StatusParams {}).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&status)?);
@@ -236,9 +248,12 @@ fn status_text(status: &DaemonStatus) -> String {
 #[cfg(unix)]
 async fn stop(paths: &DaemonPaths) -> anyhow::Result<()> {
     let pid = match daemon::connect(paths, cli_client_info()).await {
-        Ok((client, hello)) => {
-            client.request::<methods::Stop>(&StopParams {}).await?;
-            hello.daemon.pid
+        Ok(connection) => {
+            connection
+                .client
+                .request::<methods::Stop>(&StopParams {})
+                .await?;
+            connection.hello.daemon.pid
         }
         // An incompatible daemon cannot take requests. SIGTERM triggers the
         // same graceful shutdown, so the version-mismatch advice to run

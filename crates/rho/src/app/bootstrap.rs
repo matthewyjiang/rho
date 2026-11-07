@@ -215,6 +215,11 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
             super::acp_fixture_agent::run(args).await,
         ));
     }
+    if let Some(Command::Attach { id, output }) = &cli.command {
+        return Ok(EarlyDispatch::Handled(
+            super::attach::run(id, *output).await,
+        ));
+    }
     if matches!(cli.command, Some(Command::Update)) {
         return Ok(EarlyDispatch::Handled(
             update::run_update(env!("CARGO_PKG_VERSION")).await,

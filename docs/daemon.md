@@ -9,8 +9,9 @@ The rho daemon is one long-lived background process per user and rho home (`~/.r
 | `rho daemon` | Run the daemon in the foreground until it is stopped. Same as `rho daemon run`. |
 | `rho daemon status` | Show the running daemon's pid, version, protocol, uptime, jobs, and socket. Add `--json` for one JSON document. |
 | `rho daemon stop` | Ask the daemon to shut down and wait for it to exit. |
+| `rho attach <ID>` | Follow a session's turn until it ends, and exit as it ended; Ctrl+C detaches. See [Attaching to a daemon session](/automation-cli#attaching-to-a-daemon-session). |
 
-`status` and `stop` never start a daemon. With none running, they print `rho daemon is not running` and exit with status 1.
+`status`, `stop`, and `attach` never start a daemon. With none running, they print `rho daemon is not running` and exit with status 1.
 
 Only one daemon runs per rho home. A second `rho daemon run` fails with the pid, version, and socket of the one already running.
 
@@ -54,7 +55,7 @@ A session's turn that asks for approval, a plan approval, or answers to question
 
 ### Following a session
 
-Any number of clients can follow a session with `rho/session/attach`: they receive its conversation as events, live, and a client that comes back resumes where it left off, or gets the saved conversation again when the daemon no longer buffers what it missed. See [Following a session](/protocol#following-a-session) in the protocol reference.
+Any number of clients can follow a session with `rho/session/attach`: they receive its conversation as events, live, and a client that comes back resumes where it left off, or gets the saved conversation again when the daemon no longer buffers what it missed. See [Following a session](/protocol#following-a-session) in the protocol reference. From a terminal, [`rho attach`](/automation-cli#attaching-to-a-daemon-session) follows one.
 
 Each job's record is a JSON file in `~/.rho/daemon/jobs/` (`$RHO_HOME/daemon/jobs/` with `RHO_HOME`), rewritten on every state change. Records are kept: nothing deletes them yet, so a daemon lists the jobs earlier daemons ran. A daemon serves only the sessions it opened itself; it cannot load a saved session yet ([#1661](https://github.com/matthewyjiang/rho/issues/1661)). A request for a session it has not loaded, such as one an earlier daemon ran, one the TUI saved, or one that does not exist, is refused with `SessionNotLoaded` (-32003); telling those apart comes with reopen.
 

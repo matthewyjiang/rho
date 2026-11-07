@@ -184,7 +184,9 @@ Exit codes are part of the automation contract:
 
 The JSONL `run_ended` gives a more exact `reason`, such as `completed`,
 `max_steps`, `timeout`, `interrupted`, `authentication`, `provider_error`,
-`tool_host_error`, `configuration_error`, `output_error`, or `other_error`.
+`tool_host_error`, `configuration_error`, `output_error`, or `other_error`;
+[`rho attach`](#attaching-to-a-daemon-session) adds `cancelled` and
+`detached`.
 A failed tool call can still lead to a successful run if the model recovers.
 
 For CI, save the stream as an artifact and use the process status for the main
@@ -204,6 +206,45 @@ result:
     name: rho-events
     path: rho-events.jsonl
 ```
+
+### Attaching to a daemon session
+
+`rho attach <ID>` follows a session the [daemon](/daemon) hosts until its turn
+ends, then exits as `rho run` would have: with its [exit status](#exit-status)
+and, in JSONL, a `run_ended` that says how. `ID` is the session's id or its
+job's, as `rho/job/list` reports them.
+
+```bash
+# Follow the turn under way, and exit with how it ended.
+rho attach "$SESSION"
+
+# The same events a foreground `rho run --output jsonl` writes.
+rho attach "$SESSION" --output jsonl | jq -c 'select(.type == "event") | .event.type'
+```
+
+- With a turn under way, it replays the session and follows the turn to its
+  end. With none, it reports how the session's last turn ended; before the
+  session's first prompt, it waits for that turn.
+- `--output text` streams the conversation to stdout: the prompt quoted, the
+  reply, and a line per tool call. Notices and the input requests the turn
+  waits on go to stderr.
+- `--output jsonl` writes `run_started`, then every event of the daemon's
+  [replay](/protocol#following-a-session) and of the turn, then `run_ended`. A
+  daemon session has a job, so unlike a foreground run's the stream holds
+  `state` and `input_*` events.
+- Ctrl+C detaches: the turn runs on in the daemon, and `rho attach` exits 130
+  (143 on SIGTERM) with the reason `detached`.
+- A client that cancels the turn ends it with the reason `cancelled`, exit 1;
+  a daemon that stops before the turn ends, with `interrupted`, exit 1.
+- Subagent and workflow runs do not stream their events yet (#1668): their
+  job ids are refused, and the error names the session they run in.
+- A session an earlier daemon ran cannot be followed until the daemon reopens
+  saved sessions (#1661); `rho attach` fails with exit 1.
+- A client that falls too far behind is detached and attaches again. When the
+  daemon no longer buffers what it missed, the replay starts over, so the
+  conversation is written again.
+
+`rho attach` never starts a daemon; with none running it fails with exit 1.
 
 ## `rho login`
 
@@ -302,6 +343,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | --- | --- |
 | `rho` | Start an interactive TUI session in the current working directory. Add `--prompt` to send the first message as the session opens. |
 | `rho run [OPTIONS] [PROMPT]...` | Send one prompt, optionally append stdin, print the final answer, and exit. |
+| `rho attach [OPTIONS] <ID>` | Follow a daemon session's turn until it ends, and exit as it ended. See [Attaching to a daemon session](#attaching-to-a-daemon-session). |
 | `rho acp [--t3code]` | Serve Agent Client Protocol over stdio for an editor host. `--t3code` runs subagents as T3 Code threads. See [ACP](/integrations/acp). |
 | `rho workflow <COMMAND>` | Use `list`, `validate`, `plan`, `run`, `status`, `cancel`, or `resume <RUN_ID>` for a [durable workflow](/workflows). |
 | `rho sessions list [--all-projects] [--search TEXT] [--limit N] [--json]` | List saved sessions for the current workspace, or every workspace with cwd context. |

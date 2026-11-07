@@ -1,5 +1,6 @@
 //! `rho daemon` through the real binary: its lifecycle (status, single
-//! instance, and stop) here, and the sessions it hosts in [`sessions`].
+//! instance, and stop) here, the sessions it hosts in [`sessions`], and
+//! `rho attach` following them in [`attach`].
 #![cfg(unix)]
 
 use std::{
@@ -16,6 +17,9 @@ mod harness;
 #[path = "support/daemon_sessions.rs"]
 mod sessions;
 
+#[path = "support/daemon_attach.rs"]
+mod attach;
+
 use harness::{DaemonProcess, DaemonSandbox};
 
 /// Failure bound for each wait on the daemon process. Startup and shutdown
@@ -26,7 +30,7 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-// Covers: status and stop report a missing daemon without starting one; a
+// Covers: status, stop, and attach report a missing daemon without starting one; a
 // running daemon reports its pid, refuses a second instance by name, and
 // `rho daemon stop` makes it exit cleanly and remove its socket.
 // Owner: CLI process (daemon lifecycle).
@@ -34,12 +38,19 @@ fn stderr(output: &Output) -> String {
 async fn daemon_lifecycle_through_the_cli() {
     let sandbox = DaemonSandbox::new();
     let output = |args: &[&str]| sandbox.rho().args(args).output().unwrap();
-    for args in [["daemon", "status"], ["daemon", "stop"]] {
+    for args in [
+        ["daemon", "status"],
+        ["daemon", "stop"],
+        ["attach", "session"],
+    ] {
         let output = output(&args);
         assert_eq!(output.status.code(), Some(1), "{args:?}: {output:?}");
         assert_eq!(stderr(&output), "Error: rho daemon is not running\n");
     }
-    assert!(!sandbox.socket().exists(), "status and stop never spawn");
+    assert!(
+        !sandbox.socket().exists(),
+        "status, stop, and attach never spawn"
+    );
 
     let mut daemon = DaemonProcess(
         sandbox
