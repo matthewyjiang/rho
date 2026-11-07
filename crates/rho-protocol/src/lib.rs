@@ -67,6 +67,11 @@ pub use jsonrpc::{
     RequestId, Response, RpcError, MAX_LINE_BYTES,
 };
 pub use methods::{
+    ApprovalAsk, ApprovalSource, Ask, Choice, InputAnswer, InputRequest, InputRequestId, Operation,
+    PathScope, PermissionMode, PlanApprovalAsk, Question, QuestionAsk, Resolution,
+    SessionAnswerParams, SessionAnswerResponse, SESSION_ANSWER,
+};
+pub use methods::{
     Budget, ClientInfo, ContentBlock, Cursor, DaemonInfo, DaemonStatus, DetachReason, HelloParams,
     HelloResponse, JobId, JobKind, JobListParams, JobListResponse, JobState, JobSummary, Location,
     MessageId, PlanEntry, PlanStatus, QueuePlace, Replay, Seq, SessionAttachParams,

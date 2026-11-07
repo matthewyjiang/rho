@@ -21,17 +21,17 @@ use std::{
 };
 
 use rho_protocol::{
-    DetachReason, ErrorCode, RpcError, SessionAttachParams, SessionAttachResponse,
-    SessionCancelParams, SessionCancelResponse, SessionNewParams, SessionNewResponse,
-    SessionPromptParams, SessionPromptResponse, SessionSteerParams, SessionSteerResponse,
-    Subscription,
+    self as wire, DetachReason, ErrorCode, RpcError, SessionAnswerParams, SessionAnswerResponse,
+    SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
+    SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
+    SessionSteerParams, SessionSteerResponse, Subscription,
 };
 use rho_sdk::{CancellationToken, SessionId, UserInput};
 
 use super::{
-    jobs::{JobId, JobRecord, JobRegistry, StartTurnError},
+    jobs::{JobEvent, JobId, JobRecord, JobRegistry, StartTurnError},
     subagents::Subagents,
-    wire::{session_from_wire, session_to_wire},
+    wire::{session_from_wire, session_to_wire, state_event},
 };
 use crate::{
     app::{
@@ -42,10 +42,14 @@ use crate::{
 };
 
 mod feed;
+mod inputs;
 mod open;
+#[cfg(test)]
+mod test_events;
 mod turn;
 
 use feed::{Attached, Feed};
+use inputs::Inputs;
 use open::{open_session, OpenedSession, Workspace};
 use turn::{PromptStart, TurnTask};
 
@@ -91,6 +95,8 @@ struct LoadedSession {
     /// Turns the runtime's events into the feed's; only the turn under way
     /// uses it, so the lock is never contended.
     live: Mutex<LiveEvents>,
+    /// The input requests the turn under way has open (#1660).
+    inputs: Mutex<Inputs>,
 }
 
 impl LoadedSession {
@@ -104,6 +110,42 @@ impl LoadedSession {
             runtime: tokio::sync::Mutex::new(Some(runtime)),
             config,
             turn_cancel: Mutex::default(),
+            inputs: Mutex::default(),
+        }
+    }
+
+    /// Changes the session's open input requests with `change`, which
+    /// returns what attached clients learn of it, and moves the job between
+    /// running and waiting for input to match. All under the requests'
+    /// lock, so clients see requests open and close, and the job's state
+    /// follow them, in the order they happened.
+    fn change_inputs<T>(
+        &self,
+        jobs: &JobRegistry,
+        change: impl FnOnce(&mut Inputs) -> (T, Vec<wire::SessionEvent>),
+    ) -> T {
+        // A panic mid-change leaves the requests as they were or with one
+        // request moved, which the turn's end clears.
+        let mut inputs = self.inputs.lock().unwrap_or_else(PoisonError::into_inner);
+        let was_waiting = inputs.waiting();
+        let (result, events) = change(&mut inputs);
+        self.feed.publish(events);
+        match (was_waiting, inputs.waiting()) {
+            (false, true) => self.record(jobs, JobEvent::InputOpened),
+            (true, false) => self.record(jobs, JobEvent::InputSettled),
+            (false, false) | (true, true) => {}
+        }
+        result
+    }
+
+    /// Applies `event` to the session's job and tells attached clients the
+    /// state it left the job in.
+    fn record(&self, jobs: &JobRegistry, event: JobEvent) {
+        match jobs.record(&self.job, event) {
+            Ok(state) => self.feed.publish([state_event(&state)]),
+            Err(error) => {
+                tracing::warn!(job = %self.job, %error, "could not record a turn's progress");
+            }
         }
     }
 
@@ -301,6 +343,21 @@ impl Sessions {
                 format!("could not steer session: {error}"),
             )),
         }
+    }
+
+    /// Hands a client's answer to one of a session's open input requests
+    /// (#1660). The first answer wins: a later one finds the request gone.
+    pub(super) fn answer(
+        &self,
+        params: SessionAnswerParams,
+    ) -> Result<SessionAnswerResponse, RpcError> {
+        let session = self.loaded_session(&params.session)?;
+        session.change_inputs(&self.jobs, |inputs| {
+            match inputs.answer(params.request, params.answer) {
+                Ok(resolved) => (Ok(SessionAnswerResponse {}), vec![resolved]),
+                Err(error) => (Err(error), Vec::new()),
+            }
+        })
     }
 
     /// Subscribes a client to a session's events, resuming after its cursor

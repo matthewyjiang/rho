@@ -5,14 +5,13 @@ use std::{
 };
 
 use pretty_assertions::assert_eq;
-use rho_sdk::{
-    ApprovalRequest, CapabilityRequest, CapabilitySource, HostChoice, HostInputId,
-    HostInputRequest, HostQuestion, PathScope, SelectionMode, ToolCallId,
-};
 use tempfile::TempDir;
 use tokio::sync::{mpsc, oneshot};
 
 use super::{DaemonView, PromptStart, TurnTask, UNEXPECTED_STOP};
+use crate::app::daemon_host::sessions::test_events::{
+    approval, approval_withdrawn, plan, plan_withdrawn, question, question_withdrawn,
+};
 use crate::{
     app::{
         daemon_host::{
@@ -20,78 +19,14 @@ use crate::{
             sessions::LoadedSession,
         },
         session_runtime::{
-            unattended_runtime_on, ApprovalId, HangUntilCancel, InsertedMessage, PlanApprovalId,
-            PlanApprovalRequest, QuestionSupport, SessionEvent,
+            unattended_runtime_on, HangUntilCancel, InsertedMessage, QuestionSupport, SessionEvent,
         },
     },
     config::Config,
-    permission::PermissionMode,
 };
 
 /// Bounds each wait on an explicit signal; never the way a test syncs.
 const TEST_BUDGET: Duration = Duration::from_secs(5);
-
-fn approval(n: u64) -> SessionEvent {
-    SessionEvent::ApprovalRequested {
-        id: ApprovalId::nth_for_tests(n),
-        request: ApprovalRequest::new(
-            CapabilityRequest::write_path(
-                "/workspace/file.rs",
-                PathScope::PrimaryWorkspace,
-                CapabilitySource::built_in_tool("write"),
-            ),
-            "edit file",
-        ),
-    }
-}
-
-fn approval_withdrawn(n: u64) -> SessionEvent {
-    SessionEvent::ApprovalWithdrawn {
-        id: ApprovalId::nth_for_tests(n),
-    }
-}
-
-fn plan(n: u64) -> SessionEvent {
-    SessionEvent::PlanApprovalRequested {
-        id: PlanApprovalId::nth_for_tests(n),
-        request: PlanApprovalRequest {
-            call_id: ToolCallId::from_string("call").unwrap(),
-            plan: "the plan".into(),
-            targets: vec![PermissionMode::Auto],
-        },
-    }
-}
-
-fn plan_withdrawn(n: u64) -> SessionEvent {
-    SessionEvent::PlanApprovalWithdrawn {
-        id: PlanApprovalId::nth_for_tests(n),
-    }
-}
-
-fn question_id(name: &str) -> HostInputId {
-    HostInputId::from_string(name).unwrap()
-}
-
-fn question(name: &str) -> SessionEvent {
-    let question = HostQuestion::new(
-        "answer",
-        "choose",
-        vec![HostChoice::new("yes", "yes")],
-        SelectionMode::One,
-    )
-    .unwrap();
-    SessionEvent::QuestionAsked {
-        id: question_id(name),
-        call_id: None,
-        request: HostInputRequest::questionnaire("ask", vec![question]).unwrap(),
-    }
-}
-
-fn question_withdrawn(name: &str) -> SessionEvent {
-    SessionEvent::QuestionWithdrawn {
-        id: question_id(name),
-    }
-}
 
 fn inserted() -> SessionEvent {
     SessionEvent::MessageInserted(InsertedMessage::Unreplayed)

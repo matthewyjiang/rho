@@ -11,9 +11,13 @@ use std::{
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{JobList, SessionAttach, SessionCancel, SessionDetach, SessionNew, SessionPrompt},
-    Client, ClientError, ClientInfo, Cursor, DaemonNotification, DetachReason, ErrorCode, JobKind,
-    JobListParams, JobState, JobSummary, Notifications, Replay, Seq, SessionAttachParams,
+    methods::{
+        JobList, SessionAnswer, SessionAttach, SessionCancel, SessionDetach, SessionNew,
+        SessionPrompt,
+    },
+    Ask, Client, ClientError, ClientInfo, Cursor, DaemonNotification, DetachReason, ErrorCode,
+    InputAnswer, InputRequestId, JobKind, JobListParams, JobState, JobSummary, Notifications,
+    Operation, Replay, Resolution, Seq, SessionAnswerParams, SessionAttachParams,
     SessionCancelParams, SessionDetachParams, SessionDetachedParams, SessionEvent, SessionId,
     SessionNewParams, SessionPromptParams, StreamId,
 };
@@ -671,6 +675,131 @@ async fn clients_that_leave_and_come_back_see_the_same_turn() {
             session: session.clone(),
             reason: DetachReason::DaemonStopping,
         })),
+        "log:\n{}",
+        sandbox.daemon_log()
+    );
+}
+
+/// Answers `request` of `session` with `answer` on `client`.
+async fn answer(
+    client: &Client,
+    session: &SessionId,
+    request: InputRequestId,
+    answer: InputAnswer,
+) -> Result<(), Option<ErrorCode>> {
+    client
+        .request::<SessionAnswer>(&SessionAnswerParams {
+            session: session.clone(),
+            request,
+            answer,
+        })
+        .await
+        .map(|_| ())
+        .map_err(|error| match error {
+            ClientError::Rpc { error, .. } => error.error_code(),
+            error => panic!("answer failed outside the protocol: {error}"),
+        })
+}
+
+// Covers: a supervised turn's approval waits in the daemon with no client
+// attached; the job is waiting for input meanwhile; a client that attaches
+// later sees the open request in its replay and answers it, every client
+// learns it was answered, a second answer finds it no longer open, and the
+// turn goes on with the answer (#1660).
+// Owner: daemon input requests.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_approval_waits_for_any_client_to_answer() {
+    let sandbox = Sandbox::new();
+    std::fs::write(
+        sandbox.daemon.home().join("config.toml"),
+        format!("permission_mode = \"supervised\"\n{CONFIG}"),
+    )
+    .unwrap();
+    // The fixture makes the call the prompt spells out as JSON.
+    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let session = new_session(&client, &sandbox.workspace).await;
+    let (mut asker, _, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let call = serde_json::json!({
+        "id": "edit",
+        "name": "write",
+        "arguments": {"path": "note.txt", "content": "approved"},
+    });
+    client
+        .request::<SessionPrompt>(&SessionPromptParams {
+            session: session.clone(),
+            text: call.to_string(),
+        })
+        .await
+        .unwrap();
+    asker
+        .read_until(|event| matches!(event, SessionEvent::InputRequested { .. }))
+        .await;
+    asker.read_until(is_state(JobState::WaitingForInput)).await;
+    let asked = asker.leave().await;
+
+    let (mut answerer, replay, state) =
+        Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    answerer
+        .read_until(|event| matches!(event, SessionEvent::InputRequested { .. }))
+        .await;
+    let request = answerer
+        .events
+        .iter()
+        .find_map(|(_, event)| match event {
+            SessionEvent::InputRequested { request } => Some(request.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let first = answer(
+        &answerer.client,
+        &session,
+        request.id,
+        InputAnswer::AllowOnce,
+    )
+    .await;
+    answerer
+        .read_until(|event| matches!(event, SessionEvent::InputResolved { .. }))
+        .await;
+    let second = answer(
+        &client,
+        &session,
+        request.id,
+        InputAnswer::Deny { reason: None },
+    )
+    .await;
+    let job = settled_job(&sandbox, &client, &session).await;
+
+    let Ask::Approval(approval) = &request.ask else {
+        panic!("a write asks for approval: {:?}", request.ask);
+    };
+    assert_eq!(
+        (
+            asked.iter().any(|(_, event)| {
+                matches!(event, SessionEvent::InputRequested { request: seen } if *seen == request)
+            }),
+            replay,
+            state,
+            matches!(&approval.operation, Operation::WritePath { path, .. } if path.ends_with("note.txt")),
+            first,
+            answerer.events.last().map(|(_, event)| event.clone()),
+            second,
+            job.state,
+            std::fs::read_to_string(sandbox.workspace.join("note.txt")).ok(),
+        ),
+        (
+            true,
+            Replay::Reset,
+            JobState::WaitingForInput,
+            true,
+            Ok(()),
+            Some(SessionEvent::InputResolved {
+                id: request.id,
+                resolution: Resolution::Answered,
+            }),
+            Err(Some(ErrorCode::InputNotOpen)),
+            JobState::Completed,
+            Some("approved".to_owned()),
+        ),
         "log:\n{}",
         sandbox.daemon_log()
     );

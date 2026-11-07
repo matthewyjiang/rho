@@ -50,7 +50,7 @@ A workflow run a session starts with the `workflow` tool (`start`, `run`, or `re
 
 A run's capability approvals follow its permission mode as for any background run: nobody is asked. A run the daemon's stop cuts short ends `interrupted` and resumes like a run whose process died: the session's `workflow` tool or `rho workflow resume` picks it up, with `recover_uncertain` (`--recover-uncertain`) once you have checked that no process an interrupted node started is still running. The daemon does not resume runs on its own. A resume through a daemon session's `workflow` tool drives the run in the daemon as a new `workflow` job; `rho workflow resume` drives it in your terminal.
 
-Clients cannot yet answer a turn's requests ([#1660](https://github.com/matthewyjiang/rho/issues/1660)). A turn that asks for approval or input waits in `waiting_for_input` until a client can answer; it is never denied because no client is attached. Until then, only `rho/session/cancel` ends the wait.
+A session's turn that asks for approval, a plan approval, or answers to questions waits in `waiting_for_input` until a client answers or the turn is cancelled. It is never denied because no client is attached: a client that leaves and comes back finds it still open. Any client following the session can answer, and the first answer wins; see [Answering a turn's requests](/protocol#answering-a-turn-s-requests).
 
 ### Following a session
 

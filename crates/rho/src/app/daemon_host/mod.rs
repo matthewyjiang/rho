@@ -15,15 +15,16 @@ use std::{
 };
 
 use rho_protocol::{
-    DaemonStatus, JobListResponse, RpcError, Service, SessionAttachParams, SessionAttachResponse,
-    SessionCancelParams, SessionCancelResponse, SessionNewParams, SessionNewResponse,
-    SessionPromptParams, SessionPromptResponse, SessionSteerParams, SessionSteerResponse,
-    Subscription, PROTOCOL_VERSION,
+    DaemonStatus, JobListResponse, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
+    SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
+    SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
+    SessionSteerParams, SessionSteerResponse, Subscription, PROTOCOL_VERSION,
 };
 use rho_sdk::CancellationToken;
 
 use crate::daemon::DaemonLock;
 
+mod asks;
 mod jobs;
 mod sessions;
 mod subagents;
@@ -140,6 +141,13 @@ impl Service for DaemonHost {
         params: SessionSteerParams,
     ) -> Result<SessionSteerResponse, RpcError> {
         self.sessions.steer(params)
+    }
+
+    async fn answer_session(
+        &self,
+        params: SessionAnswerParams,
+    ) -> Result<SessionAnswerResponse, RpcError> {
+        self.sessions.answer(params)
     }
 
     async fn attach_session(

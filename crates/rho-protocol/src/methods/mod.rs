@@ -13,6 +13,7 @@
 //! | [`SESSION_PROMPT`] | [`SessionPromptParams`] | [`SessionPromptResponse`] |
 //! | [`SESSION_CANCEL`] | [`SessionCancelParams`] | [`SessionCancelResponse`] |
 //! | [`SESSION_STEER`] | [`SessionSteerParams`] | [`SessionSteerResponse`] |
+//! | [`SESSION_ANSWER`] | [`SessionAnswerParams`] | [`SessionAnswerResponse`] |
 //! | [`SESSION_ATTACH`] | [`SessionAttachParams`] | [`SessionAttachResponse`] |
 //! | [`SESSION_DETACH`] | [`SessionDetachParams`] | [`SessionDetachResponse`] |
 //! | [`JOB_LIST`] | [`JobListParams`] | [`JobListResponse`] |
@@ -36,6 +37,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 mod daemon;
 mod event;
+mod input;
 mod job;
 mod session;
 
@@ -46,6 +48,11 @@ pub use daemon::{
 pub use event::{
     ContentBlock, Cursor, Location, MessageId, PlanEntry, PlanStatus, Seq, SessionEvent, StreamId,
     ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
+};
+pub use input::{
+    ApprovalAsk, ApprovalSource, Ask, Choice, InputAnswer, InputRequest, InputRequestId, Operation,
+    PathScope, PermissionMode, PlanApprovalAsk, Question, QuestionAsk, Resolution,
+    SessionAnswerParams, SessionAnswerResponse, SESSION_ANSWER,
 };
 pub use job::{
     Budget, JobId, JobKind, JobListParams, JobListResponse, JobState, JobSummary, QueuePlace,
@@ -137,6 +144,7 @@ protocol! {
         SessionPrompt = SESSION_PROMPT: SessionPromptParams => SessionPromptResponse,
         SessionCancel = SESSION_CANCEL: SessionCancelParams => SessionCancelResponse,
         SessionSteer = SESSION_STEER: SessionSteerParams => SessionSteerResponse,
+        SessionAnswer = SESSION_ANSWER: SessionAnswerParams => SessionAnswerResponse,
         SessionAttach = SESSION_ATTACH: SessionAttachParams => SessionAttachResponse,
         SessionDetach = SESSION_DETACH: SessionDetachParams => SessionDetachResponse,
         JobList = JOB_LIST: JobListParams => JobListResponse,

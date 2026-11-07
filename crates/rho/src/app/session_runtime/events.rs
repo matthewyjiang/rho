@@ -135,6 +135,7 @@ pub(crate) enum RunEnd {
 
 /// A host's answer to one request a running turn raised. Answers to ids the
 /// turn does not know, or no longer waits on, are ignored.
+#[derive(Debug, PartialEq)]
 pub(crate) enum TurnControl {
     RespondApproval {
         id: ApprovalId,

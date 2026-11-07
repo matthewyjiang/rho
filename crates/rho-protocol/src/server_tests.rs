@@ -75,6 +75,13 @@ macro_rules! hosts_no_sessions {
             Err(no_such_session())
         }
 
+        async fn answer_session(
+            &self,
+            _: SessionAnswerParams,
+        ) -> Result<SessionAnswerResponse, RpcError> {
+            Err(no_such_session())
+        }
+
         async fn list_jobs(&self) -> JobListResponse {
             JobListResponse { jobs: Vec::new() }
         }

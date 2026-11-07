@@ -109,6 +109,10 @@ error_codes! {
         /// The turn was cancelled before its prompt was saved, as when
         /// `rho/session/cancel` arrives before the turn begins.
         TurnCancelled = -32010,
+        /// The session has no open input request with that id: another
+        /// client answered it first, or the turn withdrew it, as when the
+        /// turn was cancelled (#1660).
+        InputNotOpen = -32011,
     }
 }
 

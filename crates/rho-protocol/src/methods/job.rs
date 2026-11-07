@@ -72,9 +72,8 @@ pub enum JobState {
     Queued,
     Running,
     /// The turn waits for an approval, a plan approval, or a question to be
-    /// answered. Nothing is auto-denied because no client is attached; until
-    /// clients can answer (#1660), only [`super::SESSION_CANCEL`] ends the
-    /// wait.
+    /// answered with [`super::SESSION_ANSWER`]. Nothing is denied because no
+    /// client is attached; the wait ends with an answer or a cancel.
     WaitingForInput,
     Completed,
     /// The turn failed; [`JobSummary::error`] says why.
