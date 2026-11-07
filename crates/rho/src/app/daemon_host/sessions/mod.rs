@@ -80,8 +80,10 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(4);
 /// their turns.
 pub(super) struct Sessions {
     jobs: Arc<JobRegistry>,
+    /// Lock order: a session's turn lock, then this; never the reverse.
     loaded: Mutex<HashMap<SessionId, Arc<LoadedSession>>>,
-    /// The saved sessions being reopened, one at a time each.
+    /// The saved sessions being reopened, one at a time each, and those the
+    /// idle unload is tearing down, which a reopen waits for.
     reopening: ReopenLocks,
     /// The daemon-wide budget the sessions' subagents share, and their jobs.
     subagents: Subagents,
@@ -89,8 +91,8 @@ pub(super) struct Sessions {
     logouts: Logouts,
     /// Cancelled once the daemon starts stopping ([`Self::begin_stop`]).
     stopping: CancellationToken,
-    /// Read-held while the idle unload tears a session down; the stop
-    /// write-locks it to wait for that teardown.
+    /// Read-held from each idle unload decision through its teardown; the
+    /// stop write-locks it to wait for that teardown.
     unloading: tokio::sync::RwLock<()>,
 }
 
@@ -106,8 +108,9 @@ struct LoadedSession {
     config: Config,
     /// The directory the session works in.
     workspace: PathBuf,
-    /// What a prompt starting a turn, an attach, a turn's end, a cancel,
-    /// and the idle unload each change whole, under this lock.
+    /// The turn's cancel and the session's residency. A prompt's start, an
+    /// attach, a turn's end, a cancel, and the idle unload are ordered by
+    /// this lock.
     turn: Mutex<TurnSlot>,
     /// The session's events, as attached clients follow them.
     feed: Feed,
@@ -393,36 +396,31 @@ impl Sessions {
         params: SessionPromptParams,
     ) -> Result<SessionPromptResponse, RpcError> {
         self.refuse_when_stopping()?;
-        let (session, cancel) = loop {
-            let session = self.session(&params.session).await?;
-            let Some(mut turn) = session.enter() else {
-                // Unloaded since it was found: the next lookup reopens it.
-                continue;
-            };
-            match self.jobs.start_turn(&session.job) {
-                // Told under the turn lock, which the last turn's
-                // end is told under too, so the feed never says `running`
-                // before the last turn's end, nor a turn's end after the next
-                // turn began.
-                Ok(()) => session.feed.publish([state_event(&JobState::Running)]),
-                Err(StartTurnError::Busy) => {
-                    return Err(RpcError::new(
-                        ErrorCode::SessionBusy,
-                        "session already has a turn in progress",
-                    ))
+        let (session, cancel) = self
+            .enter_session(&params.session, |session, turn| {
+                match self.jobs.start_turn(&session.job) {
+                    // Told under the turn lock, which the last turn's
+                    // end is told under too, so the feed never says `running`
+                    // before the last turn's end, nor a turn's end after the next
+                    // turn began.
+                    Ok(()) => session.feed.publish([state_event(&JobState::Running)]),
+                    Err(StartTurnError::Busy) => {
+                        return Err(RpcError::new(
+                            ErrorCode::SessionBusy,
+                            "session already has a turn in progress",
+                        ))
+                    }
+                    Err(StartTurnError::Unknown(_)) => {
+                        return Err(RpcError::new(
+                            ErrorCode::InternalError,
+                            format!("session's job {} is not recorded", session.job),
+                        ))
+                    }
                 }
-                Err(StartTurnError::Unknown(_)) => {
-                    return Err(RpcError::new(
-                        ErrorCode::InternalError,
-                        format!("session's job {} is not recorded", session.job),
-                    ))
-                }
-            }
-            turn.cancel = CancellationToken::new();
-            let cancel = turn.cancel.clone();
-            drop(turn);
-            break (session, cancel);
-        };
+                turn.cancel = CancellationToken::new();
+                Ok(turn.cancel.clone())
+            })
+            .await?;
         // Spawned before anything awaits, so the turn runs and records its
         // end apart from this request: the transport joins every request it
         // read, but this one stops waiting once the daemon stops.
@@ -519,16 +517,11 @@ impl Sessions {
         // attach never sees the last turn's end once the job list says the
         // next turn runs, and the idle unload never takes a session a client
         // just attached to.
-        let (session, attached) = loop {
-            let session = self.session(&params.session).await?;
-            let Some(turn) = session.enter() else {
-                // Unloaded since it was found: the next lookup reopens it.
-                continue;
-            };
-            let attached = session.feed.attach(params.after.as_ref());
-            drop(turn);
-            break (session, attached);
-        };
+        let (session, attached) = self
+            .enter_session(&params.session, |session, _turn| {
+                Ok(session.feed.attach(params.after.as_ref()))
+            })
+            .await?;
         let Attached {
             stream,
             replay,

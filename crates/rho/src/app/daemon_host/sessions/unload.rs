@@ -1,15 +1,19 @@
 //! Unloading idle sessions (#1661). A loaded session holds its file's lease,
 //! which keeps every other rho process from opening it, and its MCP
-//! servers. Once it sits idle, with no turn under way and no client
-//! attached, for the daemon's grace, the daemon tears it down; the next
-//! prompt or attach reopens it from its file.
+//! servers. Once it sits idle for the daemon's grace, the daemon tears it
+//! down; the next prompt or attach reopens it from its file.
+//!
+//! A session is busy, never idle, while a turn or a subagent writes it, a
+//! client follows it, background work its prompts started runs on or holds
+//! a result, or it has saved nothing yet, so a reopen would not find it.
 //!
 //! A sweep every grace marks each idle session idle from then, and unloads
 //! one a sweep already marked a grace ago, so a session unloads between one
-//! and two graces after it went idle. A prompt, an attach, and a turn's end
-//! mark it in use again. Each happens under the session's turn lock, which
-//! the unload decides under, so a request either uses the session before
-//! the unload sees it, keeping it, or finds it unloaded and reopens it.
+//! and two graces after it went idle. Sweeps mark a busy session in use, and
+//! so do a prompt and an attach. Each happens under the session's turn lock,
+//! which the unload decides under, so a request either uses the session
+//! before the unload sees it, keeping it, or finds it unloaded and reopens
+//! it.
 
 use std::{sync::Arc, time::Duration};
 
@@ -27,7 +31,9 @@ use crate::app::daemon_host::jobs::SessionJob;
 // debug build, 15 sessions each, as cold minus warm attach: 7 ms median
 // (26 ms max) with the fixture config, 10 ms (28 ms) with a real config,
 // 21 ms (41 ms) with a stdio MCP server added. A tripwire past that, not a
-// measured reconnect gap.
+// measured reconnect gap. The price of a longer one: another process, such
+// as the TUI, is refused an idle session as in use for up to twice this.
+// `rho daemon run --help` and docs/daemon.md state it; keep them in step.
 pub(in crate::app) const UNLOAD_IDLE_AFTER: Duration = Duration::from_secs(60);
 
 /// Whether a session is in use, idle, or unloaded.
@@ -84,16 +90,16 @@ impl Sessions {
     /// Unloads `session`, loaded as `id`, if a sweep marked it idle `grace`
     /// ago and it is idle still; marks it idle or in use otherwise.
     async fn unload_if_idle(&self, id: &SessionId, session: &Arc<LoadedSession>, grace: Duration) {
-        // Both held until the session is torn down: the stop waits for the
-        // first, and a request reopens the session only once it gets the
-        // second.
+        // Both held from the decision until the session is torn down. The
+        // stop waits for the first. A reopen waits for the second, since the
+        // old runtime holds the session's file until it is torn down.
         let _unloading = self.unloading.read().await;
         let _reopening = self.reopening.lock(id).await;
         let idle_since = {
             let mut turn = session.turn();
-            // A turn or a subagent writes the session, or a client follows it.
-            let busy =
-                matches!(self.jobs.session_job(id), SessionJob::Busy(_)) || session.feed.followed();
+            let busy = matches!(self.jobs.session_job(id), SessionJob::Busy(_))
+                || session.feed.followed()
+                || session.runtime_keeps_loaded();
             let now = Instant::now();
             let idle_since = match turn.residency {
                 Residency::Unloaded => return,
@@ -110,6 +116,7 @@ impl Sessions {
             };
             // Under the lock `begin_stop` takes, so a session the stop did
             // not drain is torn down before the stop's wait on `unloading`.
+            // Lock order: the turn lock, then `loaded`.
             let mut loaded = self.loaded();
             let current = loaded
                 .get(id)
@@ -133,6 +140,21 @@ impl Sessions {
             unload_idle_after = ?grace,
             "unloaded idle session"
         );
+    }
+}
+
+impl LoadedSession {
+    /// Whether the session's runtime keeps it loaded: it has saved nothing
+    /// yet, or background work its prompts started runs on or holds a
+    /// result, which a teardown would stop or drop. So does a runtime a turn
+    /// that just ended still holds.
+    fn runtime_keeps_loaded(&self) -> bool {
+        match self.runtime.try_lock() {
+            Ok(runtime) => runtime
+                .as_ref()
+                .is_some_and(|runtime| !runtime.is_saved() || runtime.has_background_work()),
+            Err(_) => true,
+        }
     }
 }
 
