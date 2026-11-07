@@ -28,7 +28,7 @@ mod spawn;
 #[cfg(test)]
 mod test_support;
 
-pub(crate) use client::{cli_client_info, connect, ConnectError};
+pub(crate) use client::{cli_client_info, connect, ConnectError, Connection};
 pub(crate) use lock::{
     acquire as acquire_lock, terminate_recorded_daemon, wait_until_released, DaemonLock,
 };

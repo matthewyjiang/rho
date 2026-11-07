@@ -1,7 +1,8 @@
-//! How a failed `rho run` ends: what its JSONL stream's `turn_ended` says,
-//! and its reason, exit code, and message.
+//! How a `rho run` or `rho attach` ends: what a failed run's JSONL stream's
+//! `turn_ended` says, and the reason, exit code, and message of a turn's
+//! end.
 
-use rho_protocol::{TurnError, TurnErrorKind};
+use rho_protocol::{TurnError, TurnErrorKind, TurnOutcome};
 
 use super::{AutomationExit, TerminalReason};
 use crate::app::session_events::outcome;
@@ -23,6 +24,8 @@ pub(super) fn turn_error(error: &anyhow::Error, provider: &str, auth: &str) -> T
         | TerminalReason::MaxSteps
         | TerminalReason::Timeout
         | TerminalReason::Interrupted
+        | TerminalReason::Cancelled
+        | TerminalReason::Detached
         | TerminalReason::OutputError
         | TerminalReason::OtherError => TurnErrorKind::Other,
     };
@@ -39,6 +42,39 @@ pub(super) fn failure(error: &anyhow::Error, turn: TurnError) -> AutomationExit 
     if let Some(exit) = error.downcast_ref::<AutomationExit>() {
         return exit.clone();
     }
+    failed(turn)
+}
+
+/// The exit of a turn that ended as `outcome`: none for an answer.
+pub(in crate::app) fn outcome_exit(outcome: &TurnOutcome) -> Result<(), AutomationExit> {
+    match outcome {
+        TurnOutcome::Answered { .. } => Ok(()),
+        TurnOutcome::MaxSteps { .. } => Err(AutomationExit::new(
+            124,
+            TerminalReason::MaxSteps,
+            MAX_STEPS_MESSAGE,
+        )),
+        TurnOutcome::Cancelled => Err(AutomationExit::new(
+            1,
+            TerminalReason::Cancelled,
+            "the turn was cancelled",
+        )),
+        TurnOutcome::Failed { error } => Err(failed(error.clone())),
+        // `TurnOutcome` is non-exhaustive; an end a newer daemon sends is
+        // another error.
+        _ => Err(AutomationExit::new(
+            1,
+            TerminalReason::OtherError,
+            "the turn ended in a way this rho does not know",
+        )),
+    }
+}
+
+/// What the run says when its turn stopped at its model-step limit.
+pub(super) const MAX_STEPS_MESSAGE: &str = "the turn reached its model-step limit";
+
+/// The exit of a turn that failed as `turn` says.
+fn failed(turn: TurnError) -> AutomationExit {
     let TurnError { kind, message } = turn;
     let (reason, code) = match kind {
         TurnErrorKind::Authentication => (TerminalReason::Authentication, 1),

@@ -9,10 +9,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rho_protocol::{Client, ClientInfo, HelloResponse};
+use rho_protocol::ClientInfo;
 
 use super::{
-    client::{connect, ConnectError},
+    client::{connect, ConnectError, Connection},
     paths::{DaemonPathError, DaemonPaths},
 };
 
@@ -109,7 +109,7 @@ pub(crate) async fn connect_or_spawn(
     paths: &DaemonPaths,
     client: ClientInfo,
     spawner: &dyn DaemonSpawner,
-) -> Result<(Client, HelloResponse), SpawnError> {
+) -> Result<Connection, SpawnError> {
     match connect(paths, client.clone()).await {
         Err(ConnectError::NotRunning) => {}
         connected => return Ok(connected?),

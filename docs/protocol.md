@@ -23,7 +23,7 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/session/prompt` | `session`, `text` | Starts a turn and returns `{}` once the turn has saved the prompt. A session runs one turn at a time; a prompt while a turn is under way gets `SessionBusy`. |
 | `rho/session/cancel` | `session` | Cancels the turn under way, if any. The turn ends `cancelled`, or `interrupted` when the daemon is stopping. |
 | `rho/session/steer` | `session`, `text` | Adds `text` to the running turn's next model request. Gets `NotSteerable` when no model request is taking input. |
-| `rho/session/attach` | `session`, `after`? | Follows the session's events ([below](#following-a-session)). Returns its `stream`, the `replay` that follows (`tail` or `reset`), its job `state`, and the input requests open now (`inputs`). |
+| `rho/session/attach` | `session`, `after`? | Follows the session's events ([below](#following-a-session)). Returns its `stream`, the `replay` that follows (`tail` or `reset`) and how many events it holds (`replay_events`), its job `state`, and the input requests open now (`inputs`). |
 | `rho/session/detach` | `session` | Stops following the session; no event of it arrives after the response. |
 | `rho/session/answer` | `session`, `request`, `answer` | Answers one of the turn's open input requests ([below](#answering-a-turn-s-requests)) and returns `{}` once the daemon has handed the answer to the turn. |
 | `rho/session/hold` | `session`, `request` | Stops an open input request's timeout, so it waits for an answer ([below](#timeouts)), and returns `{}`. |
@@ -59,7 +59,9 @@ After `rho/session/attach`, the daemon sends the session's events as `rho/sessio
 Each loaded session has one stream of events, numbered by `seq` from 1. A client keeps the `stream` and the highest `seq` it has handled since its attach response as its cursor, and passes them as `after` when it attaches again, for example after the TUI is closed and reopened. The response's `replay` says what follows:
 
 - `tail`: the daemon still buffers every event after the cursor, and sends those, then the live ones. The client continues where it was.
-- `reset`: the cursor is from another stream, too old, at 0, or absent. The client drops what it shows and its cursor. The daemon sends the session's saved conversation, then the events of the turn under way. The saved conversation's events carry `seq` 0, except the last, which carries the `seq` the turn under way began after, so a client that detaches before it has the whole conversation holds no cursor and resets again.
+- `reset`: the cursor is from another stream, too old, at 0, or absent. The client drops what it shows and its cursor. The daemon sends the session's saved conversation, then the events since the last turn saved: the last turn's `turn_ended` and `state`, and the turn under way. The saved conversation's events carry `seq` 0, except the last, which carries the `seq` the turn under way began after, so a client that detaches before it has the whole conversation holds no cursor and resets again.
+
+The first `replay_events` events after the response are the replay; the rest are live. The replay ends in the response's `state`, so a client that attached after a turn ended finds how it ended at the replay's end, and one that attached during a turn waits for a live `turn_ended`. `rho attach` follows a session this way.
 
 The daemon buffers up to 16 MiB of a session's recent events for clients that resume. A turn larger than that still resets correctly once it is saved; a client that resets while it is under way gets a notice that its start is missing.
 

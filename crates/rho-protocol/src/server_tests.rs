@@ -452,6 +452,7 @@ impl Service for AttachService {
         let response = SessionAttachResponse {
             stream: StreamId::new("stream"),
             replay: Replay::Reset,
+            replay_events: 0,
             state: JobState::Idle,
             inputs: Vec::new(),
         };

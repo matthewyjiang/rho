@@ -395,6 +395,7 @@ impl Sessions {
         let Attached {
             stream,
             replay,
+            replay_events,
             job,
             inputs,
             subscription,
@@ -402,6 +403,7 @@ impl Sessions {
         let response = SessionAttachResponse {
             stream,
             replay,
+            replay_events,
             state: job,
             inputs,
         };

@@ -2,7 +2,7 @@
 
 use std::{io, path::PathBuf};
 
-use rho_protocol::{Client, ClientError, ClientInfo, HelloResponse};
+use rho_protocol::{Client, ClientError, ClientInfo, HelloResponse, Notifications};
 use tokio::net::UnixStream;
 
 use super::paths::DaemonPaths;
@@ -26,13 +26,20 @@ pub(crate) fn cli_client_info() -> ClientInfo {
     }
 }
 
+/// A connection to the daemon: requests go through its client, and the
+/// sessions it attaches to send their events to its notifications.
+pub(crate) struct Connection {
+    pub(crate) client: Client,
+    pub(crate) notifications: Notifications,
+    pub(crate) hello: HelloResponse,
+}
+
 /// Connects to the running daemon and completes the handshake. Never starts
-/// a daemon. The connection's notifications are dropped: the CLI attaches
-/// to no session.
+/// a daemon.
 pub(crate) async fn connect(
     paths: &DaemonPaths,
     client: ClientInfo,
-) -> Result<(Client, HelloResponse), ConnectError> {
+) -> Result<Connection, ConnectError> {
     let stream = match UnixStream::connect(&paths.socket).await {
         Ok(stream) => stream,
         // No socket, or a socket left by a daemon that died without cleanup.
@@ -51,6 +58,10 @@ pub(crate) async fn connect(
             })
         }
     };
-    let (client, _notifications, hello) = Client::handshake(stream, client).await?;
-    Ok((client, hello))
+    let (client, notifications, hello) = Client::handshake(stream, client).await?;
+    Ok(Connection {
+        client,
+        notifications,
+        hello,
+    })
 }

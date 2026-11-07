@@ -137,7 +137,15 @@ pub struct SessionAttachResponse {
     /// The stream the events belong to; a cursor names it to resume.
     pub stream: StreamId,
     pub replay: Replay,
-    /// The session's job state when the attachment began.
+    /// How many events the replay holds: the first this many
+    /// [`SESSION_EVENT`] notifications after this response replay what the
+    /// client missed, and the rest are live (#1669). A reset replays the
+    /// last turn's [`super::SessionEvent::TurnEnded`] until the next turn
+    /// saves, so a client tells how the turn it attached after ended only
+    /// once it knows where the replay stops.
+    pub replay_events: u64,
+    /// The session's job state when the attachment began, which the replay
+    /// ends in.
     pub state: JobState,
     /// The input requests open when the attachment began, oldest first:
     /// what a client may answer even when the replay no longer holds the

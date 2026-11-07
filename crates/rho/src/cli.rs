@@ -41,6 +41,16 @@ pub enum OutputFormat {
     Jsonl,
 }
 
+/// How `rho attach` writes a session's events.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum AttachOutput {
+    /// Stream the conversation to stdout, and notices to stderr.
+    #[default]
+    Text,
+    /// Stream `rho run --output jsonl`'s JSON Lines events.
+    Jsonl,
+}
+
 /// Output contract for workflow plans and snapshots.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum WorkflowDocumentFormat {
@@ -206,6 +216,19 @@ pub enum Command {
         /// Prompt text to send to the agent.
         #[arg(value_name = "PROMPT", num_args = 0..)]
         prompt: Vec<String>,
+    },
+    /// Follow a daemon session's turn until it ends, and exit as it ended.
+    ///
+    /// Without a turn under way, report the session's last turn. Ctrl+C
+    /// detaches; the turn runs on in the daemon.
+    Attach {
+        /// The session's id, or its job's.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Write the session's events as text or as the JSON Lines stream
+        /// `rho run --output jsonl` writes.
+        #[arg(long, value_enum, default_value_t)]
+        output: AttachOutput,
     },
     /// Log in to a provider with an API key, browser, or device-code flow.
     Login {

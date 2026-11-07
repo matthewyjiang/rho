@@ -29,11 +29,11 @@ use super::harness::{DaemonProcess, DaemonSandbox};
 
 /// Failure bound for each wait on the daemon. Every turn here answers from
 /// the fixture provider without network; this only stops a hung test.
-const DEADLINE: Duration = Duration::from_secs(60);
+pub(super) const DEADLINE: Duration = Duration::from_secs(60);
 
 /// The reply the fixture provider gives, which the test finds in the
 /// session file.
-const REPLY: &str = "reply saved by the daemon session";
+pub(super) const REPLY: &str = "reply saved by the daemon session";
 
 const CONFIG: &str = r#"provider = "xai"
 model = "grok-fixture"
@@ -67,14 +67,14 @@ description: Fixture agent for a daemon workflow run
 Do the task.
 ";
 
-struct Sandbox {
+pub(super) struct Sandbox {
     daemon: DaemonSandbox,
     /// The session's workspace, canonicalized as the daemon records it.
-    workspace: PathBuf,
+    pub(super) workspace: PathBuf,
 }
 
 impl Sandbox {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let daemon = DaemonSandbox::new();
         std::fs::write(daemon.home().join("config.toml"), CONFIG).unwrap();
         let workspace = daemon.root().join("workspace");
@@ -85,7 +85,7 @@ impl Sandbox {
 
     /// `rho` in the workspace with its credential store inside the sandbox
     /// and the fixture provider in `mode`.
-    fn rho(&self, mode: &str) -> Command {
+    pub(super) fn rho(&self, mode: &str) -> Command {
         let mut command = self.daemon.rho();
         command
             .current_dir(&self.workspace)
@@ -104,7 +104,7 @@ impl Sandbox {
 
     /// Starts `rho daemon run` with the fixture in `mode` and connects to
     /// it once it answers.
-    async fn start_daemon(&self, mode: &str) -> (DaemonProcess, Client) {
+    pub(super) async fn start_daemon(&self, mode: &str) -> (DaemonProcess, Client) {
         // Outside every session's workspace, as a service manager starts it,
         // so nothing a session runs can lean on the daemon's own directory.
         let daemon = DaemonProcess(
@@ -147,7 +147,7 @@ impl Sandbox {
             .map(|(client, notifications, _)| (client, notifications))
     }
 
-    fn daemon_log(&self) -> String {
+    pub(super) fn daemon_log(&self) -> String {
         self.daemon.daemon_log()
     }
 
@@ -173,7 +173,7 @@ impl Sandbox {
     }
 }
 
-async fn new_session(client: &Client, workspace: &Path) -> SessionId {
+pub(super) async fn new_session(client: &Client, workspace: &Path) -> SessionId {
     client
         .request::<SessionNew>(&SessionNewParams {
             cwd: workspace.to_path_buf(),
@@ -183,7 +183,7 @@ async fn new_session(client: &Client, workspace: &Path) -> SessionId {
         .session
 }
 
-async fn prompt(client: &Client, session: &SessionId) -> Result<(), Option<ErrorCode>> {
+pub(super) async fn prompt(client: &Client, session: &SessionId) -> Result<(), Option<ErrorCode>> {
     client
         .request::<SessionPrompt>(&SessionPromptParams {
             session: session.clone(),
@@ -199,7 +199,11 @@ async fn prompt(client: &Client, session: &SessionId) -> Result<(), Option<Error
 
 /// Polls `rho/job/list` until the job of `session`'s turns is in a state
 /// other than running or waiting for input, and returns the job then.
-async fn settled_job(sandbox: &Sandbox, client: &Client, session: &SessionId) -> JobSummary {
+pub(super) async fn settled_job(
+    sandbox: &Sandbox,
+    client: &Client,
+    session: &SessionId,
+) -> JobSummary {
     settled(sandbox, client, |job| job.session.as_ref() == Some(session)).await
 }
 

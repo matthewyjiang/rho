@@ -40,6 +40,8 @@ use crate::{
 
 mod terminal;
 
+pub(super) use terminal::outcome_exit;
+
 /// Error returned after an automation run has cleaned up and selected a stable exit code.
 #[derive(Clone, Debug)]
 pub struct AutomationExit {
@@ -130,7 +132,8 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
             prompt_from_stdin(prompt.clone(), *stdin).map(Some)
         }
         Some(
-            Command::Login { .. }
+            Command::Attach { .. }
+            | Command::Login { .. }
             | Command::CredentialStore { .. }
             | Command::Sessions { .. }
             | Command::Mcp { .. }
@@ -167,8 +170,25 @@ fn end_failed(stream: &mut JsonlStream, exit: AutomationExit) -> AutomationExit 
     stream.failure().map_or(exit, output_error)
 }
 
-/// The exit of a run whose JSONL stream failed with `failure`.
-fn output_error(failure: &str) -> AutomationExit {
+/// Ends `stream` as a run that ended with `exit` did, and returns the exit,
+/// unless the stream could not be written, which is an output error.
+pub(super) fn end_stream(
+    stream: &mut JsonlStream,
+    exit: Result<(), AutomationExit>,
+) -> Result<(), AutomationExit> {
+    match exit {
+        Ok(()) => {
+            stream.end(&RunEnd::completed());
+            stream
+                .failure()
+                .map_or(Ok(()), |failure| Err(output_error(failure)))
+        }
+        Err(exit) => Err(end_failed(stream, exit)),
+    }
+}
+
+/// The exit of a run whose output failed with `failure`.
+pub(super) fn output_error(failure: &str) -> AutomationExit {
     AutomationExit::new(1, TerminalReason::OutputError, failure)
 }
 
@@ -397,7 +417,6 @@ fn write_text_answer(answer: &rho_sdk::RunOutcome, has_reporter: bool) -> anyhow
     })
 }
 
-const MAX_STEPS_MESSAGE: &str = "rho run reached its model-step limit";
 const TIMEOUT_MESSAGE: &str = "rho run timed out";
 
 /// How the run's prompt ended, decided once for the JSONL stream, the
@@ -463,13 +482,9 @@ fn emit_and_exit_terminal(
             if jsonl.is_none() {
                 write_text_answer(&answer, has_reporter)?;
             }
-            match outcome {
-                WireOutcome::MaxSteps { .. } => exited(AutomationExit::new(
-                    124,
-                    TerminalReason::MaxSteps,
-                    MAX_STEPS_MESSAGE,
-                )),
-                _ => (RunEnd::completed(), Ok(())),
+            match terminal::outcome_exit(&outcome) {
+                Ok(()) => (RunEnd::completed(), Ok(())),
+                Err(exit) => exited(exit),
             }
         }
         RunTerminal::Timeout => exited(AutomationExit::new(
