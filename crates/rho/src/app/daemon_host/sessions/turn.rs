@@ -14,10 +14,7 @@ use rho_sdk::{CancellationToken, UserInput};
 use tokio::sync::{mpsc, oneshot};
 
 use super::{
-    super::{
-        jobs::{JobEvent, JobState, TurnEnd},
-        wire::state_event,
-    },
+    super::jobs::{JobEvent, TurnEnd},
     inputs::Inputs,
     LoadedSession,
 };
@@ -94,8 +91,6 @@ impl TurnTask {
         // Declared after the lock, so even a panic records the end (see
         // `DaemonView`'s drop) before the lock is released.
         let mut view = DaemonView::new(Arc::clone(&session), started);
-        // The prompt that spawned this turn recorded its job running.
-        view.publish_state(&JobState::Running);
         let ended = match &mut *runtime {
             Some(runtime) => run_turn(runtime, &mut view, text, &session.config, &cancel).await,
             // Only the daemon's stop takes the runtime, after its last turn.
@@ -227,20 +222,18 @@ impl DaemonView {
         let start = PromptStart::ended(&end);
         // A turn that ended waits for nothing.
         self.session.change_inputs(Inputs::withdraw_all);
-        if let Some(outcome) = outcome {
-            self.session
-                .feed
-                .publish([wire::SessionEvent::TurnEnded { outcome }]);
+        {
+            // See `prompt`: the next turn's `running` cannot come before this.
+            let _turn_cancel = self.session.turn_cancel();
+            self.session.record_after(
+                outcome.map(|outcome| wire::SessionEvent::TurnEnded { outcome }),
+                JobEvent::TurnEnded(end),
+            );
         }
-        self.session.record(JobEvent::TurnEnded(end));
         self.ended = true;
         if let (Some(started), Some(start)) = (self.started.take(), start) {
             let _ = started.send(start);
         }
-    }
-
-    fn publish_state(&self, state: &JobState) {
-        self.session.feed.publish([state_event(state)]);
     }
 
     /// Takes the model turn's events until it drops its sender, opening

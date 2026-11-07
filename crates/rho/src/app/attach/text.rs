@@ -44,6 +44,7 @@ impl<O: Write, E: Write> TextView<O, E> {
                     .map(|block| match block {
                         ContentBlock::Text { text } => text.as_str(),
                         ContentBlock::Image { .. } => "[image]",
+                        // `ContentBlock` is non-exhaustive.
                         _ => "[content]",
                     })
                     .collect::<Vec<_>>()
@@ -53,7 +54,7 @@ impl<O: Write, E: Write> TextView<O, E> {
             SessionEvent::AgentMessageChunk { text, .. } => self.write(text)?,
             SessionEvent::ToolCall(update) => self.tool_call(update)?,
             SessionEvent::Card { title, markdown } => {
-                self.block(&format!("{title}\n{markdown}\n"))?;
+                self.block(&format!("{title}\n{}\n", markdown.trim_end_matches('\n')))?;
             }
             SessionEvent::Notice { text } => writeln!(self.err, "rho: {text}")?,
             SessionEvent::InputRequested { request } => {
@@ -144,7 +145,7 @@ fn asked(ask: &Ask) -> String {
     match ask {
         Ask::Approval(approval) => format!("an approval: {}", approval.reason),
         Ask::PlanApproval(_) => "its plan to be approved".to_owned(),
-        Ask::Question(question) => format!("answers to {:?}", question.title),
+        Ask::Question(question) => format!("answers to \"{}\"", question.title),
         // `Ask` is non-exhaustive.
         _ => "input".to_owned(),
     }

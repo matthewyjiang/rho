@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use pretty_assertions::assert_eq;
 use rho_protocol::{JobId, JobKind, JobState, JobSummary, SessionId};
 
-use super::unix::{resolve, Target};
+use super::{resolve, Target};
 
 fn job(id: &str, kind: JobKind, parent: Option<&str>, session: Option<&str>) -> JobSummary {
     JobSummary {
@@ -21,9 +21,9 @@ fn job(id: &str, kind: JobKind, parent: Option<&str>, session: Option<&str>) -> 
     }
 }
 
-// Covers: an id names a session job by its own id or its session's, and a
-// subagent or workflow run, which does not stream its events yet, names
-// the session it runs in, through any workflow between them.
+// Covers: an id names a session job by its own id or its session's; a
+// subagent or workflow run, which does not stream its events yet, is
+// refused, naming the session it runs in through any workflow between them.
 // Owner: rho attach id resolution (unit).
 #[test]
 fn an_id_names_a_session_or_the_session_a_run_belongs_to() {
@@ -60,7 +60,7 @@ fn an_id_names_a_session_or_the_session_a_run_belongs_to() {
         ),
         (
             "orphan-job",
-            Err("job orphan-job is a subagent run; subagent and workflow runs do not stream their events yet (#1668)".to_owned()),
+            Err("job orphan-job is a subagent run: subagent and workflow runs do not stream their events yet (#1668)".to_owned()),
         ),
         (
             "missing",

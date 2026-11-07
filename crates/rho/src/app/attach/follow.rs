@@ -17,11 +17,11 @@ use rho_protocol::{
 pub(super) enum Ending {
     /// The turn ended as `turn_ended` said.
     Turn(TurnOutcome),
-    /// The daemon stopped, or died, before the turn ended.
+    /// The daemon stopped before the turn ended.
     Interrupted,
-    /// The job's last turn ended as `state`, but the replay no longer holds
-    /// its `turn_ended`.
-    Unrecorded(JobState),
+    /// A reset's replay ended in a finished job but held no `turn_ended`,
+    /// which the daemon promises it does: a daemon bug.
+    Unreported,
 }
 
 /// One attachment's place in its session's events.
@@ -38,10 +38,9 @@ pub(super) struct Follow {
 }
 
 impl Follow {
-    /// Starts following from an attach response. Returns how the turn
-    /// ended when the response alone says it: a reset with nothing to
-    /// replay, after the job's last turn ended.
-    pub(super) fn new(response: &SessionAttachResponse) -> (Self, Option<Ending>) {
+    /// Starts following from the first attach's response. Returns how the
+    /// turn ended when the response alone says it.
+    pub(super) fn attached(response: &SessionAttachResponse) -> (Self, Option<Ending>) {
         let mut follow = Self {
             stream: response.stream.clone(),
             history: 0,
@@ -53,29 +52,35 @@ impl Follow {
         (follow, ending)
     }
 
-    /// Starts over from a reattach's response, keeping the cursor. Returns
-    /// how the turn ended when the response alone says it.
+    /// Starts over from a reattach's response, keeping the cursor unless it
+    /// resets. Returns how the turn ended when the response alone says it.
     pub(super) fn reattached(&mut self, response: &SessionAttachResponse) -> Option<Ending> {
         self.stream = response.stream.clone();
         self.state = response.state;
         self.replayed = None;
-        self.history = match response.replay {
+        match response.replay {
             Replay::Reset => {
                 // A reset starts the client over, cursor included.
                 self.cursor = None;
-                response.replay_events
+                self.history = response.replay_events;
+                if self.history == 0 {
+                    self.settled()
+                } else {
+                    None
+                }
             }
-            Replay::Tail => 0,
-        };
-        match response.replay {
-            Replay::Reset if self.history == 0 => self.settled(),
-            Replay::Reset | Replay::Tail => None,
+            Replay::Tail => {
+                self.history = 0;
+                None
+            }
         }
     }
 
-    /// Takes the session's next event, numbered `seq`. Returns how the turn
-    /// ended once it has.
-    pub(super) fn take(&mut self, seq: Seq, event: &SessionEvent) -> Option<Ending> {
+    /// Observes the session's next event, numbered `seq`. Returns how the
+    /// turn ended once it has.
+    pub(super) fn observe(&mut self, seq: Seq, event: &SessionEvent) -> Option<Ending> {
+        // A reset's saved conversation carries seq 0, which is no position
+        // to resume after.
         if seq > Seq(0) {
             self.cursor = Some(Cursor {
                 stream: self.stream.clone(),
@@ -114,7 +119,7 @@ impl Follow {
             JobState::Completed | JobState::Failed | JobState::Cancelled => {
                 Some(match &self.replayed {
                     Some(outcome) => Ending::Turn(outcome.clone()),
-                    None => Ending::Unrecorded(self.state),
+                    None => Ending::Unreported,
                 })
             }
             JobState::Interrupted => Some(Ending::Interrupted),

@@ -22,9 +22,13 @@ use {
     std::{sync::Arc, time::Duration},
 };
 
+/// Why a daemon command fails on Windows.
+#[cfg(not(unix))]
+pub(super) const UNSUPPORTED: &str = "the rho daemon is not supported on Windows yet (#1665)";
+
 #[cfg(not(unix))]
 pub(super) async fn run(_command: Option<DaemonCommand>) -> anyhow::Result<()> {
-    anyhow::bail!("the rho daemon is not supported on Windows yet (#1665)")
+    anyhow::bail!(UNSUPPORTED)
 }
 
 #[cfg(unix)]

@@ -236,8 +236,13 @@ rho attach "$SESSION" --output jsonl | jq -c 'select(.type == "event") | .event.
   (143 on SIGTERM) with the reason `detached`.
 - A client that cancels the turn ends it with the reason `cancelled`, exit 1;
   a daemon that stops before the turn ends, with `interrupted`, exit 1.
-- Subagent and workflow runs do not stream their events yet (#1668), so their
-  job ids name the session they run in instead.
+- Subagent and workflow runs do not stream their events yet (#1668): their
+  job ids are refused, and the error names the session they run in.
+- A session an earlier daemon ran cannot be followed until the daemon reopens
+  saved sessions (#1661); `rho attach` fails with exit 1.
+- A client that falls too far behind is detached and attaches again. When the
+  daemon no longer buffers what it missed, the replay starts over, so the
+  conversation is written again.
 
 `rho attach` never starts a daemon; with none running it fails with exit 1.
 

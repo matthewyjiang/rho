@@ -52,7 +52,7 @@ pub(in crate::app) fn outcome_exit(outcome: &TurnOutcome) -> Result<(), Automati
         TurnOutcome::MaxSteps { .. } => Err(AutomationExit::new(
             124,
             TerminalReason::MaxSteps,
-            MAX_STEPS_MESSAGE,
+            "the turn reached its model-step limit",
         )),
         TurnOutcome::Cancelled => Err(AutomationExit::new(
             1,
@@ -69,9 +69,6 @@ pub(in crate::app) fn outcome_exit(outcome: &TurnOutcome) -> Result<(), Automati
         )),
     }
 }
-
-/// What the run says when its turn stopped at its model-step limit.
-pub(super) const MAX_STEPS_MESSAGE: &str = "the turn reached its model-step limit";
 
 /// The exit of a turn that failed as `turn` says.
 fn failed(turn: TurnError) -> AutomationExit {

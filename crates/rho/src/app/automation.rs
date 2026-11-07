@@ -166,8 +166,7 @@ pub(super) fn emit_startup_failure(exit: AutomationExit) -> AutomationExit {
 /// Ends `stream` as a run that failed with `exit` did, and returns the
 /// exit, unless the stream could not be written, which is an output error.
 fn end_failed(stream: &mut JsonlStream, exit: AutomationExit) -> AutomationExit {
-    stream.end(&exit.end);
-    stream.failure().map_or(exit, output_error)
+    end_stream(stream, Err(exit)).expect_err("a failed run ends failed")
 }
 
 /// Ends `stream` as a run that ended with `exit` did, and returns the exit,
@@ -176,15 +175,20 @@ pub(super) fn end_stream(
     stream: &mut JsonlStream,
     exit: Result<(), AutomationExit>,
 ) -> Result<(), AutomationExit> {
-    match exit {
-        Ok(()) => {
-            stream.end(&RunEnd::completed());
-            stream
-                .failure()
-                .map_or(Ok(()), |failure| Err(output_error(failure)))
-        }
-        Err(exit) => Err(end_failed(stream, exit)),
-    }
+    let end = match &exit {
+        Ok(()) => RunEnd::completed(),
+        Err(exit) => exit.end.clone(),
+    };
+    stream.end(&end);
+    stream_written(stream)?;
+    exit
+}
+
+/// The output error of a stream that could not be written, if it could not.
+pub(super) fn stream_written(stream: &JsonlStream) -> Result<(), AutomationExit> {
+    stream
+        .failure()
+        .map_or(Ok(()), |failure| Err(output_error(failure)))
 }
 
 /// The exit of a run whose output failed with `failure`.
@@ -513,9 +517,7 @@ fn emit_and_exit_terminal(
         stream.end(&end);
         // A stream that could not be written ends the run as an output
         // error, whatever the run's own end.
-        if let Some(failure) = stream.failure() {
-            return Err(output_error(failure).into());
-        }
+        stream_written(stream)?;
     }
     exit
 }

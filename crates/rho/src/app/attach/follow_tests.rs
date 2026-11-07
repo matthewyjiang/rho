@@ -82,10 +82,10 @@ fn an_attachment_ends_with_the_turn_it_follows() {
             ends: Some((5, Ending::Turn(failed.clone()))),
         },
         Case {
-            name: "an empty reset of an ended job reports it at once",
+            name: "a reset of an ended job that holds no turn end is a daemon bug",
             response: response(Replay::Reset, 0, JobState::Cancelled),
             events: vec![],
-            ends: Some((0, Ending::Unrecorded(JobState::Cancelled))),
+            ends: Some((0, Ending::Unreported)),
         },
         Case {
             name: "an idle session waits for its first turn",
@@ -113,13 +113,13 @@ fn an_attachment_ends_with_the_turn_it_follows() {
         },
     ];
     for case in cases {
-        let (mut follow, mut ending) = Follow::new(&case.response);
+        let (mut follow, mut ending) = Follow::attached(&case.response);
         let mut taken = 0;
         for (seq, event) in (1..).zip(&case.events) {
             if ending.is_some() {
                 break;
             }
-            ending = follow.take(Seq(seq), event);
+            ending = follow.observe(Seq(seq), event);
             taken += 1;
         }
         let ended = ending.map(|ending| (taken, ending));
@@ -132,11 +132,11 @@ fn an_attachment_ends_with_the_turn_it_follows() {
 // Owner: rho attach follow logic (unit).
 #[test]
 fn the_cursor_is_the_highest_seq_seen_since_the_last_reset() {
-    let (mut follow, _) = Follow::new(&response(Replay::Reset, 3, JobState::Running));
-    follow.take(Seq(0), &chunk("saved"));
+    let (mut follow, _) = Follow::attached(&response(Replay::Reset, 3, JobState::Running));
+    follow.observe(Seq(0), &chunk("saved"));
     assert_eq!(follow.cursor(), None);
-    follow.take(Seq(4), &chunk("saved, last"));
-    follow.take(Seq(5), &chunk("live"));
+    follow.observe(Seq(4), &chunk("saved, last"));
+    follow.observe(Seq(5), &chunk("live"));
     let cursor = Cursor {
         stream: StreamId::new("stream"),
         seq: Seq(5),
