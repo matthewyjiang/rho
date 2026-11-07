@@ -1,8 +1,8 @@
 //! `rho daemon` through the real binary: its lifecycle (status, single
 //! instance, and stop) here, the sessions it hosts in [`sessions`],
 //! `rho attach` following them in [`attach`], and `rho run --detach`
-//! starting them in [`detach`], and the tools those sessions run, which the
-//! daemon's stop ends, in [`tools`].
+//! starting them in [`detach`]; the tool processes the daemon's stop ends
+//! are in [`tools`].
 #![cfg(unix)]
 
 use std::{
