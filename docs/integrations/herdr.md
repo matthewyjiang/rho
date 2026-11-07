@@ -58,7 +58,7 @@ Launch flags are repeated as given. Model, auth, reasoning, and permission mode 
 
 A session that is not saved yet (before the first prompt, after `/new`, or with `--no-save`) has no resume command. Resume needs Herdr 0.9.2 or later. To turn it off, set `[session] resume_agents_on_restore = false` in Herdr's config.
 
-`rho run` and `rho acp` report state but no resume command. `rho run` and `rho acp` report under their own source, so one started from a tool inside an interactive pane cannot clear that session's resume command.
+`rho run` and `rho acp` report state but no resume command. They report under their own source, so one started from a tool inside an interactive pane cannot clear that session's resume command.
 
 ## Images and graphics
 
