@@ -56,7 +56,13 @@ async fn loaded_session(root: &Path, jobs: &Arc<JobRegistry>, job: JobId) -> Arc
         .unwrap();
     let runtime =
         unattended_runtime_on(root, &config, QuestionSupport::Unavailable, sdk, provider).await;
-    Arc::new(LoadedSession::new(job, Arc::clone(jobs), runtime, config))
+    Arc::new(LoadedSession::new(
+        job,
+        Arc::clone(jobs),
+        runtime,
+        config,
+        &JobState::Idle,
+    ))
 }
 
 /// Shows `events` to `view` as one model turn.

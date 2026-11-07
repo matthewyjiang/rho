@@ -10,7 +10,8 @@ use std::{
 };
 
 use super::{
-    state::TransitionRefused, unix_now, JobEvent, JobId, JobRecord, JobState, JobStore, TurnEnd,
+    state::TransitionRefused, unix_now, JobEvent, JobId, JobRecord, JobState, JobStore, JobSubject,
+    TurnEnd,
 };
 
 /// The daemon's jobs: the ones it runs and the records it loaded at
@@ -56,6 +57,20 @@ pub(in crate::app::daemon_host) enum StartTurnError {
     /// A turn is already running or waiting for input.
     #[error("a turn is already in progress")]
     Busy,
+}
+
+/// What the registry knows of a session, for reopening it (#1661).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::app::daemon_host) enum SessionJob {
+    /// No job has run its turns, as for a session the TUI saved: a reopen
+    /// registers one.
+    New,
+    /// The latest job of its turns, which a reopen records its next turns
+    /// on.
+    Last(JobRecord),
+    /// This job writes the session right now, as a subagent run does, so
+    /// the daemon must not open it a second time.
+    Busy(JobId),
 }
 
 /// Why an event did not apply.
@@ -117,6 +132,39 @@ impl JobRegistry {
         let mut jobs: Vec<_> = self.lock().values().cloned().collect();
         jobs.sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
         jobs
+    }
+
+    /// What the registry knows of `session`: the job writing it, if one is
+    /// under way, else the latest job of its turns.
+    pub(in crate::app::daemon_host) fn session_job(
+        &self,
+        session: &rho_sdk::SessionId,
+    ) -> SessionJob {
+        let jobs = self.lock();
+        let mut last: Option<&JobRecord> = None;
+        for record in jobs.values() {
+            let (writes, turns) = match &record.subject {
+                JobSubject::Session { session: written } => (written == session, true),
+                JobSubject::Subagent {
+                    session: Some(written),
+                } => (written == session, false),
+                JobSubject::Subagent { session: None } | JobSubject::Workflow { .. } => {
+                    (false, false)
+                }
+            };
+            if !writes {
+                continue;
+            }
+            if record.state.in_progress() {
+                return SessionJob::Busy(record.id.clone());
+            }
+            let later = last
+                .is_none_or(|last| (last.created_at, &last.id) < (record.created_at, &record.id));
+            if turns && later {
+                last = Some(record);
+            }
+        }
+        last.map_or(SessionJob::New, |record| SessionJob::Last(record.clone()))
     }
 
     /// How many jobs have a turn under way.

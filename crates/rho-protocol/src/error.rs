@@ -83,10 +83,8 @@ error_codes! {
         /// `rho/hello` named an incompatible protocol major. `data` is a
         /// [`crate::VersionMismatch`] saying which side must change.
         VersionMismatch = -32001 => crate::VersionMismatch,
-        /// This daemon has not loaded that session, so it cannot take a
-        /// prompt, a cancel, or steering. The session may not exist: telling
-        /// the two apart comes with reopen (#1661).
-        SessionNotLoaded = -32003,
+        /// No saved session has that id, in any workspace.
+        SessionNotFound = -32003,
         /// The session already has a turn running or waiting for input.
         /// Prompt again once it ends.
         SessionBusy = -32004,
@@ -111,6 +109,9 @@ error_codes! {
         /// client answered it first, or the turn withdrew it, as when the
         /// turn was cancelled (#1660).
         InputNotOpen = -32011,
+        /// Another rho process, such as the TUI, has the session open, so
+        /// the daemon cannot reopen it (#1661). Close it there first.
+        SessionInUse = -32012,
     }
 }
 

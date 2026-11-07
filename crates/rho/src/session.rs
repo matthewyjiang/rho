@@ -293,6 +293,13 @@ impl Session {
         Self::open_target_with_histories_in_root(&session_root()?, target)
     }
 
+    /// The workspace the session saved under exactly `id` belongs to, from
+    /// any workspace, or `None` when nothing is saved under it. Opening it
+    /// there is [`Self::open_exact_in_workspace`].
+    pub(crate) fn workspace_of(id: &str) -> anyhow::Result<Option<PathBuf>> {
+        SessionStore::workspace_of(&session_root()?, id)
+    }
+
     /// Opens the session saved under exactly `id` in `cwd`'s workspace, or
     /// `None` when nothing is. Unlike [`Self::open_by_id_with_histories`],
     /// `id` is never read as a prefix and no other workspace is searched.

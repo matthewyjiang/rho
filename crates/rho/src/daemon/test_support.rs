@@ -95,7 +95,7 @@ impl Service for StubHost {
 
 fn no_sessions() -> RpcError {
     RpcError::new(
-        ErrorCode::SessionNotLoaded,
+        ErrorCode::SessionNotFound,
         "the stub host hosts no sessions",
     )
 }

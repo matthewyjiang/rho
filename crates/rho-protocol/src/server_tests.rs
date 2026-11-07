@@ -44,7 +44,7 @@ fn test_info() -> ServerInfo {
 
 /// The error every test service answers session requests with.
 fn no_such_session() -> RpcError {
-    RpcError::new(ErrorCode::SessionNotLoaded, "no such session")
+    RpcError::new(ErrorCode::SessionNotFound, "no such session")
 }
 
 /// The session and job methods of a test service that hosts no sessions.
@@ -310,7 +310,7 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
             vec![
                 (id(1), Ok(())),
                 (id(2), Err(Some(ErrorCode::InvalidParams))),
-                (id(3), Err(Some(ErrorCode::SessionNotLoaded))),
+                (id(3), Err(Some(ErrorCode::SessionNotFound))),
             ],
         ),
         (
@@ -451,6 +451,7 @@ impl Service for AttachService {
         self.publishers.send(publisher).unwrap();
         let response = SessionAttachResponse {
             stream: StreamId::new("stream"),
+            workspace: "/work".into(),
             replay: Replay::Reset,
             replay_events: 0,
             state: JobState::Idle,

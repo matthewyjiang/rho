@@ -317,7 +317,7 @@ fn wire_tool_call(id: &ToolCallId) -> wire::ToolCallId {
     wire::ToolCallId::new(id.as_str())
 }
 
-fn not_open(id: InputRequestId) -> RpcError {
+pub(super) fn not_open(id: InputRequestId) -> RpcError {
     RpcError::new(
         ErrorCode::InputNotOpen,
         format!(

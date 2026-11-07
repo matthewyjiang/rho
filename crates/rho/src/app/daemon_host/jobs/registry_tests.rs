@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use super::{JobRegistry, RegisterError, StartTurnError};
+use super::{JobRegistry, RegisterError, SessionJob, StartTurnError};
 use crate::app::daemon_host::jobs::{JobEvent, JobId, JobRecord, JobState, JobStore, TurnEnd};
 
 fn states(records: Vec<JobRecord>) -> Vec<(JobId, JobState)> {
@@ -124,4 +124,66 @@ fn a_closed_registry_interrupts_its_turns_and_takes_no_new_jobs() {
     ));
     assert_eq!(states(registry.list()), expected);
     assert_eq!(states(store.load().unwrap()), expected);
+}
+
+// Covers: what a reopen finds for a session (#1661): nothing when no job ran
+// its turns (another session's, or a finished subagent run that wrote it,
+// does not count); the latest of its session jobs otherwise; and the job
+// that writes it while one has a turn under way, a subagent run's included,
+// so the session is not opened twice.
+// Owner: daemon job registry session lookup.
+#[test]
+fn a_session_reopens_on_its_latest_job_unless_one_writes_it() {
+    let session = rho_sdk::SessionId::new();
+    let turns = |created_at, state| JobRecord {
+        state,
+        created_at,
+        ..JobRecord::new_session(JobId::generate(), PathBuf::from("/work"), session.clone())
+    };
+    let subagent = |state| JobRecord {
+        state,
+        ..JobRecord::new_subagent(
+            JobId::generate(),
+            PathBuf::from("/work"),
+            Some(session.clone()),
+        )
+    };
+    let other = JobRecord::new_session(
+        JobId::generate(),
+        PathBuf::from("/work"),
+        rho_sdk::SessionId::new(),
+    );
+    let older = turns(1, JobState::Ended(TurnEnd::Completed));
+    let newer = turns(2, JobState::Ended(TurnEnd::Interrupted));
+    let running = turns(3, JobState::Running);
+    let writing = subagent(JobState::Running);
+    let wrote = subagent(JobState::Ended(TurnEnd::Completed));
+    let cases = [
+        ("nothing", vec![], SessionJob::New),
+        ("another session", vec![other.clone()], SessionJob::New),
+        ("a finished subagent", vec![wrote.clone()], SessionJob::New),
+        (
+            "two session jobs",
+            vec![newer.clone(), older.clone(), wrote],
+            SessionJob::Last(newer.clone()),
+        ),
+        (
+            "a running turn",
+            vec![older.clone(), running.clone()],
+            SessionJob::Busy(running.id.clone()),
+        ),
+        (
+            "a running subagent",
+            vec![newer, other, writing.clone()],
+            SessionJob::Busy(writing.id.clone()),
+        ),
+    ];
+    for (name, records, expected) in cases {
+        let home = TempDir::new().unwrap();
+        let registry = JobRegistry::open(JobStore::open(home.path()).unwrap());
+        for record in records {
+            registry.register(record).unwrap();
+        }
+        assert_eq!(registry.session_job(&session), expected, "{name}");
+    }
 }

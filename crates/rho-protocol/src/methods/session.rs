@@ -144,6 +144,9 @@ pub struct SessionAttachParams {
 pub struct SessionAttachResponse {
     /// The stream the events belong to; a cursor names it to resume.
     pub stream: StreamId,
+    /// The directory the session works in: the one it was saved in, for a
+    /// session the daemon reopened (#1661).
+    pub workspace: PathBuf,
     pub replay: Replay,
     /// How many events the replay holds: the first this many
     /// [`SESSION_EVENT`] notifications after this response replay what the

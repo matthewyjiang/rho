@@ -22,7 +22,7 @@ mod registry;
 mod state;
 mod store;
 
-pub(super) use registry::{JobRegistry, RegisterError, StartTurnError};
+pub(super) use registry::{JobRegistry, RegisterError, SessionJob, StartTurnError};
 pub(super) use state::{JobEvent, JobState, TurnEnd};
 pub(super) use store::JobStore;
 

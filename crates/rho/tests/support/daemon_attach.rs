@@ -183,7 +183,7 @@ async fn attach_reports_how_the_last_turn_ended() {
         ),
         (
             Some(1),
-            "Error: the rho daemon has no job or session nope\n".to_owned()
+            "Error: could not attach to session nope: rho daemon rejected rho/session/attach: no session is saved under nope (code -32003)\n".to_owned()
         )
     );
 }

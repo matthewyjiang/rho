@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use pretty_assertions::assert_eq;
 use rho_protocol::{JobId, JobKind, JobState, JobSummary, SessionId};
 
-use super::{resolve, Target};
+use super::resolve;
 
 fn job(id: &str, kind: JobKind, parent: Option<&str>, session: Option<&str>) -> JobSummary {
     JobSummary {
@@ -23,7 +23,8 @@ fn job(id: &str, kind: JobKind, parent: Option<&str>, session: Option<&str>) -> 
 
 // Covers: an id names a session job by its own id or its session's; a
 // subagent or workflow run, which does not stream its events yet, is
-// refused, naming the session it runs in through any workflow between them.
+// refused, naming the session it runs in through any workflow between them;
+// an id no job has is taken as a session id for the daemon to reopen.
 // Owner: rho attach id resolution (unit).
 #[test]
 fn an_id_names_a_session_or_the_session_a_run_belongs_to() {
@@ -43,10 +44,7 @@ fn an_id_names_a_session_or_the_session_a_run_belongs_to() {
         ),
         job("orphan-job", JobKind::Subagent, Some("gone"), None),
     ];
-    let target = Ok(Target {
-        session: SessionId::new("parent-session"),
-        workspace: PathBuf::from("/work/session-job"),
-    });
+    let target = Ok(SessionId::new("parent-session"));
     let cases = [
         ("session-job", target.clone()),
         ("parent-session", target),
@@ -62,10 +60,7 @@ fn an_id_names_a_session_or_the_session_a_run_belongs_to() {
             "orphan-job",
             Err("job orphan-job is a subagent run: subagent and workflow runs do not stream their events yet (#1668)".to_owned()),
         ),
-        (
-            "missing",
-            Err("the rho daemon has no job or session missing".to_owned()),
-        ),
+        ("tui-session", Ok(SessionId::new("tui-session"))),
     ];
     for (id, expected) in cases {
         let resolved = resolve(&jobs, id).map_err(|exit| exit.to_string());

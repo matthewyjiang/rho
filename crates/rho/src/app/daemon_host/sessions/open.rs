@@ -1,7 +1,9 @@
-//! Opening a new session. The config is the user's global config, read
-//! when the session is opened, so a config edit applies to the next session
-//! without a daemon restart; the agents and instructions are those of the
-//! session's workspace, as `rho` launched there would find them.
+//! Opening a session: a new one, or one saved earlier, which the daemon
+//! reopens as the agent it was saved as (#1661). The config is the user's
+//! global config, read when the session is opened, so a config edit applies
+//! to the next session opened without a daemon restart; the agents and
+//! instructions are those of the session's workspace, as `rho` launched
+//! there would find them.
 //!
 //! The session runs as the default agent with the configured permission
 //! mode. Its host answers approvals and questions (both reach the daemon as
@@ -39,7 +41,7 @@ use crate::{
         },
     },
     config::Config,
-    session::SessionPersistence,
+    session::{Session as StoredSession, SessionPersistence},
     tools::{host_io::HostIo, mcp::McpAuthorizationMode},
 };
 
@@ -68,6 +70,23 @@ impl Workspace {
     }
 }
 
+/// What a session opens from.
+pub(super) enum Opening {
+    /// Nothing yet: a new session in this workspace.
+    New(Workspace),
+    /// The session saved here, opened in its own workspace.
+    Saved(StoredSession),
+}
+
+impl Opening {
+    fn cwd(&self) -> &Path {
+        match self {
+            Self::New(Workspace(cwd)) => cwd,
+            Self::Saved(stored) => stored.cwd(),
+        }
+    }
+}
+
 /// A session, open, and the config it runs with.
 pub(super) struct OpenedSession {
     pub(super) runtime: SessionRuntime,
@@ -75,15 +94,15 @@ pub(super) struct OpenedSession {
     pub(super) config: Config,
 }
 
-/// Opens a new, saved session in `workspace`, whose turns are job `job`.
-/// Its file is written with its first prompt.
+/// Opens the session `opening` says, whose turns are job `job`. A new
+/// session's file is written with its first prompt.
 pub(super) async fn open_session(
-    workspace: &Workspace,
+    opening: Opening,
     logouts: &Logouts,
     subagents: &Subagents,
     job: &JobId,
 ) -> anyhow::Result<OpenedSession> {
-    let Workspace(cwd) = workspace;
+    let cwd = &opening.cwd().to_path_buf();
     let repository = ConfigRepository::new(None);
     let config_path = repository.configured_path()?;
     let config = repository.load()?;
@@ -131,7 +150,7 @@ pub(super) async fn open_session(
             hook_labels: Default::default(),
         },
     };
-    let opening = SessionOpening {
+    let session = SessionOpening {
         build,
         process_config: &config,
         host_mcp: Default::default(),
@@ -140,12 +159,17 @@ pub(super) async fn open_session(
         logouts,
     };
     // Opening a session builds a large future; keep it on the heap.
-    let runtime = Box::pin(SessionRuntime::open_new(
-        opening,
-        rho_sdk::SessionId::new(),
-        SessionPersistence::Saved,
-    ))
-    .await?;
+    let runtime = match opening {
+        Opening::New(_) => {
+            Box::pin(SessionRuntime::open_new(
+                session,
+                rho_sdk::SessionId::new(),
+                SessionPersistence::Saved,
+            ))
+            .await?
+        }
+        Opening::Saved(stored) => Box::pin(SessionRuntime::open_saved(session, stored)).await?,
+    };
     // Only a session that opened resizes every session's budget.
     subagents.set_limit(&config);
     Ok(OpenedSession { runtime, config })

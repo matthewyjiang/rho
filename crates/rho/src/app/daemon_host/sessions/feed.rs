@@ -99,8 +99,11 @@ pub(super) struct Attached {
 }
 
 impl Feed {
-    /// The stream of a new session: nothing saved yet, its job idle.
-    pub(super) fn new() -> Self {
+    /// A stream that begins with `transcript`, the session's saved rows as
+    /// wire events, its job in `job`: nothing and idle for a new session, a
+    /// reopened session's saved conversation and its job's last state
+    /// (#1661).
+    pub(super) fn new(transcript: Vec<wire::SessionEvent>, job: wire::JobState) -> Self {
         Self {
             state: Mutex::new(FeedState {
                 stream: StreamId::new(uuid::Uuid::new_v4().to_string()),
@@ -109,8 +112,11 @@ impl Feed {
                 buffered_bytes: 0,
                 turn_start: Seq(0),
                 turn_start_evicted: false,
-                transcript: Vec::new(),
-                job: wire::JobState::Idle,
+                transcript: transcript
+                    .into_iter()
+                    .filter(|event| encoded_len(event).is_some())
+                    .collect(),
+                job,
                 inputs: BTreeMap::new(),
                 subscribers: Vec::new(),
                 closed: None,

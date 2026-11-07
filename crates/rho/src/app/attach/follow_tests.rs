@@ -9,6 +9,7 @@ use super::{Ending, Follow};
 fn response(replay: Replay, replay_events: u64, state: JobState) -> SessionAttachResponse {
     SessionAttachResponse {
         stream: StreamId::new("stream"),
+        workspace: "/work".into(),
         replay,
         replay_events,
         state,

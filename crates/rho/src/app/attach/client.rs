@@ -2,12 +2,12 @@
 //! events, hands text mode's terminal what it answers and steers with, and
 //! turns how the turn ended into the process's exit.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rho_protocol::{
     methods::{JobList, SessionAttach},
-    Client, Cursor, DaemonNotification, DetachReason, ErrorCode, JobKind, JobListParams,
-    JobSummary, Replay, SessionAttachParams, SessionAttachResponse, SessionEvent, SessionId,
+    Client, Cursor, DaemonNotification, DetachReason, JobKind, JobListParams, JobSummary, Replay,
+    SessionAttachParams, SessionAttachResponse, SessionEvent, SessionId,
 };
 
 use super::{
@@ -105,13 +105,6 @@ impl View {
     }
 }
 
-/// The session an attachment follows.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Target {
-    session: SessionId,
-    workspace: PathBuf,
-}
-
 /// Follows the session `id` names until its turn ends, writing its events
 /// to `view`, and returns the exit that end makes. A signal detaches at any
 /// point, connecting included.
@@ -149,9 +142,9 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
             AutomationExit::other(format!("could not list the daemon's jobs: {error}"))
         })?
         .jobs;
-    let target = resolve(&jobs, id)?;
-    view.started(&target.session, &target.workspace)?;
-    let response = attach_session(&client, &target.session, None).await?;
+    let session = resolve(&jobs, id)?;
+    let response = attach_session(&client, &session, None).await?;
+    view.started(&session, &response.workspace)?;
     let (mut follow, ending) = Follow::attached(&response);
     if let Some(ending) = ending {
         return ended(ending);
@@ -170,7 +163,7 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
             notification = notifications.recv() => match notification {
                 None => return Err(AutomationExit::other("lost the connection to the rho daemon")),
                 Some(DaemonNotification::SessionEvent(params))
-                    if params.session == target.session =>
+                    if params.session == session =>
                 {
                     view.show(&params.event)?;
                     // A replayed event is history the attach response's open
@@ -181,14 +174,14 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
                     follow.observe(params.seq, &params.event)
                 }
                 Some(DaemonNotification::SessionDetached(params))
-                    if params.session == target.session =>
+                    if params.session == session =>
                 {
                     match params.reason {
                         // Resumes after the last event seen, or starts over
                         // when the daemon no longer buffers it.
                         DetachReason::Lagged => {
                             let response =
-                                attach_session(&client, &target.session, follow.cursor()).await?;
+                                attach_session(&client, &session, follow.cursor()).await?;
                             if response.replay == Replay::Reset {
                                 view.restart()?;
                             }
@@ -206,7 +199,7 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
             },
             typed = next_line(&mut terminal), if pending.is_none() => {
                 let (terminal, line) = typed?;
-                terminal.line(&client, &target.session, &line).await?;
+                terminal.line(&client, &session, &line).await?;
                 None
             }
         };
@@ -242,34 +235,25 @@ async fn attach_session(
         .request::<SessionAttach>(&params)
         .await
         .map_err(|error| {
-            if error.error_code() == Some(ErrorCode::SessionNotLoaded) {
-                AutomationExit::other(format!(
-                    "could not attach to session {session}: this rho daemon has not loaded it; a session an earlier daemon ran cannot be followed yet (#1661)"
-                ))
-            } else {
-                AutomationExit::other(format!("could not attach to session {session}: {error}"))
-            }
+            AutomationExit::other(format!("could not attach to session {session}: {error}"))
         })
 }
 
-/// The session `id` names among `jobs`: a session job's id, or its
-/// session's. Subagent and workflow runs do not stream their events yet
-/// (#1668), so a job of theirs is refused, naming the session it runs in.
-fn resolve(jobs: &[JobSummary], id: &str) -> Result<Target, AutomationExit> {
-    let job = jobs
-        .iter()
-        .find(|job| job.id.as_str() == id || job.session.as_ref().is_some_and(|s| s.as_str() == id))
-        .ok_or_else(|| {
-            AutomationExit::other(format!("the rho daemon has no job or session {id}"))
-        })?;
+/// The session `id` names: a session job's id, or a session id. A session
+/// no job of the daemon's ran, such as one the TUI saved, is named by its own
+/// id, and the daemon reopens it (#1661). Subagent and workflow runs do not
+/// stream their events yet (#1668), so a job of theirs is refused, naming
+/// the session it runs in.
+fn resolve(jobs: &[JobSummary], id: &str) -> Result<SessionId, AutomationExit> {
+    let Some(job) = jobs.iter().find(|job| {
+        job.id.as_str() == id || job.session.as_ref().is_some_and(|s| s.as_str() == id)
+    }) else {
+        return Ok(SessionId::new(id));
+    };
     let run = match job.kind {
         JobKind::Session => {
-            let session = job.session.clone().ok_or_else(|| {
+            return job.session.clone().ok_or_else(|| {
                 AutomationExit::other(format!("session job {} has no session", job.id))
-            })?;
-            return Ok(Target {
-                session,
-                workspace: job.workspace.clone(),
             });
         }
         JobKind::Subagent => "a subagent run",

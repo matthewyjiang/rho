@@ -239,10 +239,12 @@ rho attach "$SESSION"
 
 ### Attaching to a daemon session
 
-`rho attach <ID>` follows a session the [daemon](/daemon) hosts until its turn
-ends, then exits as `rho run` would have: with its [exit status](#exit-status)
-and, in JSONL, a `run_ended` that says how. `ID` is the session's id or its
-job's, as `rho/job/list` reports them.
+`rho attach <ID>` follows a session through the [daemon](/daemon) until its
+turn ends, then exits as `rho run` would have: with its [exit status](#exit-status)
+and, in JSONL, a `run_ended` that says how. `ID` is a session's id, or its
+job's as `rho/job/list` reports it. Any saved session works, from any
+workspace: the daemon reopens one it has not loaded, such as one an earlier
+daemon ran or one the TUI saved.
 
 ```bash
 # Follow the turn under way, and exit with how it ended.
@@ -253,8 +255,9 @@ rho attach "$SESSION" --output jsonl | jq -c 'select(.type == "event") | .event.
 ```
 
 - With a turn under way, it replays the session and follows the turn to its
-  end. With none, it reports how the session's last turn ended; before the
-  session's first prompt, it waits for that turn.
+  end. With none, it reports how the session's last turn ended. Before the
+  session's first daemon turn, as for one the TUI saved, it waits for that
+  turn.
 - `--output text` streams the conversation to stdout: the prompt quoted, the
   reply, and a line per tool call. Notices and the input requests the turn
   waits on go to stderr, and lines typed on stdin answer them; see
@@ -270,8 +273,9 @@ rho attach "$SESSION" --output jsonl | jq -c 'select(.type == "event") | .event.
   the daemon cancelled at its `--timeout` ends with `timeout`, exit 124.
 - Subagent and workflow runs do not stream their events yet (#1668): their
   job ids are refused, and the error names the session they run in.
-- A session an earlier daemon ran cannot be followed until the daemon reopens
-  saved sessions (#1661); `rho attach` fails with exit 1.
+- A session another process has open, such as a TUI or a foreground
+  `rho run`, is refused until that process closes it; `rho attach` fails with
+  exit 1.
 - A client that falls too far behind is detached and attaches again. When the
   daemon no longer buffers what it missed, the replay starts over, so the
   conversation is written again.
