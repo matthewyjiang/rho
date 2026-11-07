@@ -95,3 +95,30 @@ fn finishing_mid_reply_ends_the_line() {
     drop(view);
     assert_eq!(String::from_utf8(out).unwrap(), "partial\n");
 }
+
+// Covers: a restart, as a reset replay makes, shows the tool calls shown
+// before again and starts on a line of its own.
+// Owner: rho attach text output (unit).
+#[test]
+fn a_restart_shows_tool_calls_again() {
+    let mut out = Vec::new();
+    let mut view = TextView::new(&mut out, Vec::new());
+    for event in [
+        tool_call(Some("Read docs/index.md"), ToolStatus::InProgress),
+        chunk("partial"),
+    ] {
+        view.show(&event).unwrap();
+    }
+    view.restart().unwrap();
+    view.show(&tool_call(
+        Some("Read docs/index.md"),
+        ToolStatus::InProgress,
+    ))
+    .unwrap();
+    drop(view);
+
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        "• Read docs/index.md\npartial\n• Read docs/index.md\n"
+    );
+}

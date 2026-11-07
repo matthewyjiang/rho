@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use rho_protocol::{
     methods::{JobList, SessionAttach},
     Client, ClientError, Cursor, DaemonNotification, DetachReason, ErrorCode, JobKind,
-    JobListParams, JobSummary, SessionAttachParams, SessionAttachResponse, SessionEvent, SessionId,
+    JobListParams, JobSummary, Replay, SessionAttachParams, SessionAttachResponse, SessionEvent,
+    SessionId,
 };
 
 use super::{
@@ -52,6 +53,17 @@ impl View {
                 stream.run_started(session.as_str(), workspace);
                 automation::stream_written(stream)
             }
+        }
+    }
+
+    /// Starts the output over for a reset replay.
+    fn restart(&mut self) -> Result<(), AutomationExit> {
+        match self {
+            Self::Text(view) => view.restart().map_err(|error| {
+                automation::output_error(&format!("could not write output: {error}"))
+            }),
+            // JSONL readers see the replay's events as they come.
+            Self::Jsonl(_) => Ok(()),
         }
     }
 
@@ -147,6 +159,9 @@ async fn follow(id: &str, view: &mut View) -> Result<(), AutomationExit> {
                     DetachReason::Lagged => {
                         let response =
                             attach_session(&client, &target.session, follow.cursor()).await?;
+                        if response.replay == Replay::Reset {
+                            view.restart()?;
+                        }
                         follow.reattached(&response)
                     }
                     DetachReason::DaemonStopping => Some(Ending::Interrupted),

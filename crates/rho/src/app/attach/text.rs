@@ -118,6 +118,13 @@ impl<O: Write, E: Write> TextView<O, E> {
         self.out.flush()
     }
 
+    /// Starts the conversation over, as a reset replay writes it again from
+    /// the start: tool calls shown before are shown again.
+    pub(super) fn restart(&mut self) -> io::Result<()> {
+        self.calls.clear();
+        self.end_line()
+    }
+
     fn end_line(&mut self) -> io::Result<()> {
         if self.line_ended {
             return Ok(());

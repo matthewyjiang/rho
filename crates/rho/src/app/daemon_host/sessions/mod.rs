@@ -406,6 +406,9 @@ impl Sessions {
     ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
         self.refuse_when_stopping()?;
         let session = self.loaded_session(&params.session)?;
+        // Taken under the `turn_cancel` lock a prompt starts its turn under,
+        // so an attach never sees the last turn's end once the job list says
+        // the next turn runs.
         let Attached {
             stream,
             replay,
@@ -413,7 +416,10 @@ impl Sessions {
             job,
             inputs,
             subscription,
-        } = session.feed.attach(params.after.as_ref());
+        } = {
+            let _turn = session.turn_cancel();
+            session.feed.attach(params.after.as_ref())
+        };
         let response = SessionAttachResponse {
             stream,
             replay,
