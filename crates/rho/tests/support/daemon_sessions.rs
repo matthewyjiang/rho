@@ -169,6 +169,26 @@ impl Sandbox {
         self.daemon.daemon_log()
     }
 
+    /// Writes the fixture config with `permission_mode = "<mode>"`, which a
+    /// daemon started after reads.
+    pub(super) fn set_permission_mode(&self, mode: &str) {
+        std::fs::write(
+            self.daemon.home().join("config.toml"),
+            format!("permission_mode = \"{mode}\"\n{CONFIG}"),
+        )
+        .unwrap();
+    }
+
+    /// Calls `attempt` until it returns `Some`, failing with the daemon log
+    /// after [`DEADLINE`].
+    pub(super) async fn poll_until<T>(
+        &self,
+        what: &str,
+        attempt: impl AsyncFnMut() -> Option<T>,
+    ) -> T {
+        self.daemon.poll_until(what, DEADLINE, attempt).await
+    }
+
     /// The directory `session` is saved in, once it is: each session is a
     /// directory named for its id, below its workspace's.
     fn session_dir(&self, session: &SessionId) -> Option<PathBuf> {
@@ -239,6 +259,23 @@ pub(super) async fn prompt(client: &Client, session: &SessionId) -> Result<(), O
         })
 }
 
+/// Prompts `session` with the tool call `call`, which the `tool-call`
+/// fixture makes; returns once the turn saved the prompt.
+pub(super) async fn prompt_tool_call(
+    client: &Client,
+    session: &SessionId,
+    call: &serde_json::Value,
+) {
+    client
+        .request::<SessionPrompt>(&SessionPromptParams {
+            session: session.clone(),
+            text: call.to_string(),
+            timeout_ms: None,
+        })
+        .await
+        .unwrap();
+}
+
 /// Polls `rho/job/list` until the job of `session`'s turns is in a state
 /// other than running or waiting for input, and returns the job then.
 pub(super) async fn settled_job(
@@ -257,8 +294,7 @@ async fn settled(
     pick: impl Fn(&JobSummary) -> bool,
 ) -> JobSummary {
     sandbox
-        .daemon
-        .poll_until("the job to end", DEADLINE, async || {
+        .poll_until("the job to end", async || {
             let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
             let job = jobs
                 .jobs
@@ -424,14 +460,7 @@ async fn a_subagent_is_a_child_job_of_its_session() {
         "name": "agent",
         "arguments": {"agent_id": "explorer", "prompt": "Look around."},
     });
-    client
-        .request::<SessionPrompt>(&SessionPromptParams {
-            session: session.clone(),
-            text: call.to_string(),
-            timeout_ms: None,
-        })
-        .await
-        .unwrap();
+    prompt_tool_call(&client, &session, &call).await;
 
     let parent = settled_job(&sandbox, &client, &session).await;
     let child = settled(&sandbox, &client, |job| {
@@ -491,14 +520,7 @@ async fn a_workflow_run_is_a_child_job_of_its_session() {
         "name": "workflow",
         "arguments": {"action": "start", "file": "wf/main.star"},
     });
-    client
-        .request::<SessionPrompt>(&SessionPromptParams {
-            session: session.clone(),
-            text: call.to_string(),
-            timeout_ms: None,
-        })
-        .await
-        .unwrap();
+    prompt_tool_call(&client, &session, &call).await;
 
     let parent = settled_job(&sandbox, &client, &session).await;
     let workflow = settled(&sandbox, &client, |job| {
@@ -649,8 +671,7 @@ async fn a_session_another_process_saved_reopens_once_it_lets_go() {
     let started: serde_json::Value = serde_json::from_str(&started).unwrap();
     let session = SessionId::new(started["session"].as_str().unwrap());
     sandbox
-        .daemon
-        .poll_until("the run to save its prompt", DEADLINE, async || {
+        .poll_until("the run to save its prompt", async || {
             sandbox.saved_a_user_message(&session).then_some(())
         })
         .await;
@@ -776,12 +797,9 @@ async fn an_idle_session_is_unloaded_and_its_file_let_go() {
     };
 
     sandbox
-        .daemon
-        .poll_until(
-            "the daemon to let the idle session go",
-            DEADLINE,
-            async || delete(&idle).then_some(()),
-        )
+        .poll_until("the daemon to let the idle session go", async || {
+            delete(&idle).then_some(())
+        })
         .await;
     let followed_deleted = delete(&followed);
 
@@ -1020,11 +1038,7 @@ async fn answer(
 pub(super) async fn prompt_a_supervised_write(
     sandbox: &Sandbox,
 ) -> (DaemonProcess, Client, SessionId) {
-    std::fs::write(
-        sandbox.daemon.home().join("config.toml"),
-        format!("permission_mode = \"supervised\"\n{CONFIG}"),
-    )
-    .unwrap();
+    sandbox.set_permission_mode("supervised");
     // The fixture makes the call the prompt spells out as JSON.
     let (daemon, client) = sandbox.start_daemon("tool-call").await;
     let session = new_session(&client, &sandbox.workspace).await;
@@ -1033,14 +1047,7 @@ pub(super) async fn prompt_a_supervised_write(
         "name": "write",
         "arguments": {"path": "note.txt", "content": "approved"},
     });
-    client
-        .request::<SessionPrompt>(&SessionPromptParams {
-            session: session.clone(),
-            text: call.to_string(),
-            timeout_ms: None,
-        })
-        .await
-        .unwrap();
+    prompt_tool_call(&client, &session, &call).await;
     (daemon, client, session)
 }
 
@@ -1056,8 +1063,7 @@ async fn an_approval_waits_for_any_client_to_answer() {
     let (_daemon, client, session) = prompt_a_supervised_write(&sandbox).await;
     // Nobody is attached while the turn asks.
     sandbox
-        .daemon
-        .poll_until("the turn to ask", DEADLINE, async || {
+        .poll_until("the turn to ask", async || {
             let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
             jobs.jobs.into_iter().find(|job| {
                 job.session.as_ref() == Some(&session) && job.state == JobState::WaitingForInput
@@ -1159,8 +1165,7 @@ async fn a_turn_that_asks_tells_the_hooks() {
     let (_daemon, _client, session) = prompt_a_supervised_write(&sandbox).await;
 
     let event: serde_json::Value = sandbox
-        .daemon
-        .poll_until("the hook to run", DEADLINE, async || {
+        .poll_until("the hook to run", async || {
             let written = std::fs::read_to_string(&events).ok()?;
             serde_json::from_str(written.lines().next()?).ok()
         })
@@ -1212,14 +1217,7 @@ async fn ask_color_with_fallback(client: &Client, session: &SessionId) {
             "on_timeout": {"answers": {"color": "Blue"}, "reason": "either works"},
         },
     });
-    client
-        .request::<SessionPrompt>(&SessionPromptParams {
-            session: session.clone(),
-            text: call.to_string(),
-            timeout_ms: None,
-        })
-        .await
-        .unwrap();
+    prompt_tool_call(client, session, &call).await;
 }
 
 fn blue() -> InputAnswer {
