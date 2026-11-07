@@ -67,7 +67,7 @@ A reopen is refused when:
 - it is a subagent's or workflow node's session, which only the session that started it continues: `SessionOpenFailed` (-32008);
 - nothing is saved under the id: `SessionNotFound` (-32003).
 
-A reopened session stays loaded, and keeps the session open to other processes, until the daemon stops. Its job state is the daemon's last record of it: a session continued in the TUI since then still reports how the daemon's last turn ended, until the TUI runs through the daemon ([#1667](https://github.com/matthewyjiang/rho/issues/1667)).
+A reopened session stays loaded until the daemon stops, and until then other processes cannot open it. Its job state is the daemon's last record of it: a session continued in the TUI since then still reports how the daemon's last turn ended, until the TUI runs through the daemon ([#1667](https://github.com/matthewyjiang/rho/issues/1667)).
 
 Tools in a session run with the daemon's own environment, minus provider credentials, as tools in every rho session do. A daemon that a frontend started automatically has that frontend's environment. Clients will send their own environment later ([#1659](https://github.com/matthewyjiang/rho/issues/1659)).
 

@@ -133,8 +133,8 @@ impl Drop for ReopenGuard<'_> {
         // The map's and this guard's are the only clones unless a request
         // waits on the lock, and clones are taken only under the map's lock,
         // held here. Removing a lock someone waits on would let the next
-        // request reopen beside that waiter. A waiter that gives up leaves
-        // the lock for the next request on the session to remove.
+        // request reopen beside that waiter. Waiters never give up: the
+        // transport runs every request to its end.
         if Arc::strong_count(OwnedMutexGuard::mutex(&self.held)) == 2 {
             map.remove(&self.id);
         }

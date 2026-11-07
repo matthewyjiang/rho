@@ -134,7 +134,7 @@ fn saved_replay(
             tracing::warn!(
                 %job,
                 error = format!("{error:#}"),
-                "could not read the session's saved rows; clients that reset replay its unsaved turns live until a later turn saves"
+                "could not read the session's saved rows; a reset replays only the turns since, live, until a later turn saves"
             );
             None
         }
