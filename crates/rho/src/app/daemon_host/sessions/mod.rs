@@ -4,8 +4,11 @@
 //! A loaded session owns its [`SessionRuntime`] and the [`SessionHandle`]
 //! that cancels and steers it without waiting for the turn, and its turns
 //! are one job in the registry. Requests name the session by its session
-//! id. A session this daemon has not loaded, such as one an earlier daemon
-//! ran or one the TUI saved, is refused until reopening lands (#1661).
+//! id. A prompt or an attach for a saved session the daemon has not loaded,
+//! such as one an earlier daemon ran or one the TUI saved, reopens it from
+//! its file in its own workspace, recording its turns on the session's last
+//! job (#1661). Cancel, steer, answer, and hold never load a session: one
+//! that is not loaded has no turn to act on.
 //!
 //! Clients attach to a loaded session to follow its events (#1657); see
 //! [`feed`].
@@ -16,6 +19,7 @@
 
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::{Arc, Mutex, MutexGuard, PoisonError, Weak},
     time::Duration,
 };
@@ -30,9 +34,11 @@ use rho_protocol::{
 use rho_sdk::{CancellationToken, SessionId, UserInput};
 
 use super::{
-    jobs::{JobEvent, JobId, JobRecord, JobRegistry, JobState, StartTurnError},
+    jobs::{
+        JobEvent, JobId, JobRecord, JobRegistry, JobState, SessionJob, StartTurnError, TurnEnd,
+    },
     subagents::Subagents,
-    wire::{session_from_wire, session_to_wire, state_event},
+    wire::{session_to_wire, state_event},
 };
 use crate::{
     app::{
@@ -45,13 +51,15 @@ use crate::{
 mod feed;
 mod inputs;
 mod open;
+mod reopen;
 #[cfg(test)]
 mod test_events;
 mod turn;
 
 use feed::{Attached, Feed};
 use inputs::Inputs;
-use open::{open_session, OpenedSession, Workspace};
+use open::{open_session, OpenedSession, Opening, Workspace};
+use reopen::ReopenLocks;
 use turn::{PromptStart, TurnLimit, TurnTask};
 
 /// How long the daemon's stop waits for its turns to save once it was
@@ -61,7 +69,7 @@ use turn::{PromptStart, TurnLimit, TurnTask};
 // fires only on a turn stuck in a tool that ignores the cancel. It runs from
 // the stop request and stays under `DAEMON_STOP_TIMEOUT` (5 s) with room for
 // the rest of the exit (44 ms max measured), so `rho daemon stop` still sees
-// the daemon go. Draining that waits for turns to finish is #1661's to size.
+// the daemon go. Draining that waits for turns to finish is #1713's to size.
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// Every session the daemon has loaded, and the job registry that records
@@ -69,6 +77,8 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(4);
 pub(super) struct Sessions {
     jobs: Arc<JobRegistry>,
     loaded: Mutex<HashMap<SessionId, Arc<LoadedSession>>>,
+    /// The saved sessions being reopened, one at a time each.
+    reopening: ReopenLocks,
     /// The daemon-wide budget the sessions' subagents share, and their jobs.
     subagents: Subagents,
     /// The daemon's logouts, which every session's credentials follow.
@@ -87,6 +97,8 @@ struct LoadedSession {
     handle: SessionHandle,
     /// The config the session was opened with, which each turn reads.
     config: Config,
+    /// The directory the session works in.
+    workspace: PathBuf,
     /// The cancel of the session's current or last turn. A prompt replaces
     /// it as its turn starts, and a cancel trips it and the session's
     /// handle, both under this lock, so a cancel never reaches a turn it did
@@ -110,16 +122,54 @@ async fn time_out(session: Weak<LoadedSession>, id: rho_protocol::InputRequestId
     }
 }
 
+/// The rows `runtime` has saved, replayed through `live` as the feed's
+/// events, or `None` when it has saved none yet or they could not be read.
+fn saved_replay(
+    live: &mut LiveEvents,
+    runtime: &SessionRuntime,
+    job: &JobId,
+) -> Option<Vec<rho_protocol::SessionEvent>> {
+    let saved = runtime.saved_history()?;
+    match saved.display_rows() {
+        Ok(rows) => live.replay(&rows, saved.cwd(), saved.tools()),
+        Err(error) => {
+            tracing::warn!(
+                %job,
+                error = format!("{error:#}"),
+                "could not read the session's saved rows; a reset replays only the turns since, live, until a later turn saves"
+            );
+            None
+        }
+    }
+}
+
 impl LoadedSession {
-    /// A session opened new: nothing saved yet, so its feed starts empty.
-    /// Its turns are recorded on `job` in `jobs`.
-    fn new(job: JobId, jobs: Arc<JobRegistry>, runtime: SessionRuntime, config: Config) -> Self {
+    /// A session opened as `opened`, whose turns are recorded on `job` in
+    /// `jobs`: a new job for a new session, the last one for a reopened one.
+    /// Its feed begins with the conversation the session has saved and how
+    /// the job's last turn ended, which a new session has neither of, so a
+    /// client attaching to a reopened session learns that end (#1661).
+    fn new(job: &JobRecord, jobs: Arc<JobRegistry>, opened: OpenedSession) -> Self {
+        let OpenedSession { runtime, config } = opened;
+        let mut live = LiveEvents::new(runtime.workspace_root(), runtime.tools());
+        let feed = Feed::new((&job.state).into());
+        if let Some(saved) = saved_replay(&mut live, &runtime, &job.id) {
+            feed.end_turn(saved);
+        }
+        if let Some(outcome) = job.outcome.clone() {
+            feed.publish([
+                rho_protocol::SessionEvent::TurnEnded { outcome },
+                state_event(&job.state),
+            ]);
+        }
+        let job = job.id.clone();
         Self {
+            handle: runtime.handle(),
+            workspace: runtime.workspace_root().to_path_buf(),
+            live: Mutex::new(live),
+            feed,
             job,
             jobs,
-            handle: runtime.handle(),
-            live: Mutex::new(LiveEvents::new(runtime.workspace_root(), runtime.tools())),
-            feed: Feed::new(),
             runtime: tokio::sync::Mutex::new(Some(runtime)),
             inputs: Mutex::new(Inputs::new(
                 config
@@ -161,20 +211,29 @@ impl LoadedSession {
     /// Applies `event` to the session's job and tells attached clients the
     /// state it left the job in.
     fn record(&self, event: JobEvent) {
-        self.record_after(None, event);
-    }
-
-    /// Applies `event` to the session's job and tells attached clients
-    /// `before`, if any, then the state it left the job in, in one publish,
-    /// so no client's replay holds one without the other (#1669).
-    fn record_after(&self, before: Option<rho_protocol::SessionEvent>, event: JobEvent) {
         match self.jobs.record(&self.job, event) {
-            Ok(state) => self
-                .feed
-                .publish(before.into_iter().chain([state_event(&state)])),
+            Ok(state) => self.feed.publish([state_event(&state)]),
             Err(error) => {
                 tracing::warn!(job = %self.job, %error, "could not record a turn's progress");
-                self.feed.publish(before);
+            }
+        }
+    }
+
+    /// Records that the turn ended as `end`, keeping `outcome` on the job for
+    /// a later daemon to replay, and tells attached clients `outcome`, if
+    /// any, then the state it left the job in, in one publish, so no
+    /// client's replay holds one without the other (#1669).
+    fn end_turn(&self, outcome: Option<TurnOutcome>, end: TurnEnd) {
+        let ended = outcome
+            .clone()
+            .map(|outcome| rho_protocol::SessionEvent::TurnEnded { outcome });
+        match self.jobs.end_turn(&self.job, end, outcome) {
+            Ok(state) => self
+                .feed
+                .publish(ended.into_iter().chain([state_event(&state)])),
+            Err(error) => {
+                tracing::warn!(job = %self.job, %error, "could not record a turn's end");
+                self.feed.publish(ended);
             }
         }
     }
@@ -214,6 +273,7 @@ impl Sessions {
             subagents: Subagents::new(Arc::clone(&jobs), stopping.clone()),
             jobs,
             loaded: Mutex::default(),
+            reopening: ReopenLocks::default(),
             logouts: Logouts::default(),
             stopping,
         }
@@ -230,8 +290,8 @@ impl Sessions {
     /// `daemon_stopping`. Call before the transport closes the connections,
     /// so each client learns why. Calling again does nothing.
     pub(super) fn begin_stop(&self) {
-        // Under the lock `open_new` checks `stopping` under, so no session
-        // is added after this with its feed open.
+        // Under the lock `add` checks `stopping` under, so no session is
+        // added after this with its feed open.
         let loaded = self.loaded();
         self.stopping.cancel();
         for session in loaded.values() {
@@ -247,49 +307,57 @@ impl Sessions {
         self.refuse_when_stopping()?;
         let workspace = Workspace::parse(&params.cwd)?;
         let job = JobId::generate();
-        let OpenedSession { runtime, config } =
-            open_session(&workspace, &self.logouts, &self.subagents, &job)
-                .await
-                .map_err(|error| {
-                    RpcError::new(
-                        ErrorCode::SessionOpenFailed,
-                        format!("could not open session: {error:#}"),
-                    )
-                })?;
-        let session = runtime.session_id().clone();
+        let opened = open_session(
+            Opening::New(workspace),
+            &self.logouts,
+            &self.subagents,
+            &job,
+        )
+        .await
+        .map_err(open_failed)?;
+        let session = opened.runtime.session_id().clone();
         let record = JobRecord::new_session(
             job.clone(),
-            runtime.workspace_root().to_path_buf(),
+            opened.runtime.workspace_root().to_path_buf(),
             session.clone(),
         );
-        // Checked, recorded, and added under the lock the stop drains the
-        // sessions under, so a session opened while the daemon stops is
-        // closed here, neither left running nor recorded.
-        let refused = {
-            let mut loaded = self.loaded();
-            if self.stopping.is_cancelled() {
-                Some((runtime, stopping()))
-            } else if let Err(error) = self.jobs.register(record) {
-                let error = RpcError::new(
-                    ErrorCode::InternalError,
-                    format!("could not record the session's job: {error}"),
-                );
-                Some((runtime, error))
-            } else {
-                let entry =
-                    LoadedSession::new(job.clone(), Arc::clone(&self.jobs), runtime, config);
-                loaded.insert(session.clone(), Arc::new(entry));
-                None
-            }
-        };
-        if let Some((runtime, error)) = refused {
-            runtime.shutdown().await;
-            return Err(error);
-        }
+        self.add(SessionJobRecord::Register(record), opened).await?;
         tracing::info!(%session, %job, "opened session");
         Ok(SessionNewResponse {
             session: session_to_wire(session),
         })
+    }
+
+    /// Adds `opened`, whose turns are recorded as `job` says. Checked,
+    /// recorded, and added under the lock the stop drains the sessions
+    /// under, so a session opened while the daemon stops is shut down here,
+    /// neither left running nor recorded. Its saved conversation is replayed
+    /// before that lock, which every request takes.
+    async fn add(
+        &self,
+        job: SessionJobRecord,
+        opened: OpenedSession,
+    ) -> Result<Arc<LoadedSession>, RpcError> {
+        let session = opened.runtime.session_id().clone();
+        let entry = LoadedSession::new(job.job(), Arc::clone(&self.jobs), opened);
+        let refused = {
+            let mut loaded = self.loaded();
+            match self
+                .refuse_when_stopping()
+                .and_then(|()| job.claim(&self.jobs, &session))
+            {
+                Ok(()) => {
+                    let entry = Arc::new(entry);
+                    loaded.insert(session, Arc::clone(&entry));
+                    return Ok(entry);
+                }
+                Err(error) => error,
+            }
+        };
+        if let Some(runtime) = entry.runtime.into_inner() {
+            runtime.shutdown().await;
+        }
+        Err(refused)
     }
 
     /// Starts a turn of `text` on a session and returns once the turn saved
@@ -299,7 +367,7 @@ impl Sessions {
         params: SessionPromptParams,
     ) -> Result<SessionPromptResponse, RpcError> {
         self.refuse_when_stopping()?;
-        let session = self.loaded_session(&params.session)?;
+        let session = self.session(&params.session).await?;
         let cancel = {
             let mut turn_cancel = session.turn_cancel();
             match self.jobs.start_turn(&session.job) {
@@ -352,27 +420,30 @@ impl Sessions {
 
     /// Cancels a session's turn, if one is under way, even one that has not
     /// begun its prompt yet.
-    pub(super) fn cancel(
+    pub(super) async fn cancel(
         &self,
         params: SessionCancelParams,
     ) -> Result<SessionCancelResponse, RpcError> {
-        self.loaded_session(&params.session)?.cancel_turn();
+        if let Some(session) = self.loaded_session(&params.session).await? {
+            session.cancel_turn();
+        }
         Ok(SessionCancelResponse {})
     }
 
     /// Stages `text` for the running turn's next model request. The receipt
     /// is dropped: the turn reports what it applied with its events.
-    pub(super) fn steer(
+    pub(super) async fn steer(
         &self,
         params: SessionSteerParams,
     ) -> Result<SessionSteerResponse, RpcError> {
-        let session = self.loaded_session(&params.session)?;
+        let not_steerable =
+            || RpcError::new(ErrorCode::NotSteerable, "no model request is taking input");
+        let Some(session) = self.loaded_session(&params.session).await? else {
+            return Err(not_steerable());
+        };
         match session.handle.steer(UserInput::text(params.text)) {
             Ok(_receipt) => Ok(SessionSteerResponse {}),
-            Err(SteerError::NotRunning) => Err(RpcError::new(
-                ErrorCode::NotSteerable,
-                "no model request is taking input",
-            )),
+            Err(SteerError::NotRunning) => Err(not_steerable()),
             Err(SteerError::Refused(error)) => Err(RpcError::new(
                 ErrorCode::SteerRefused,
                 format!("could not steer session: {error}"),
@@ -382,31 +453,38 @@ impl Sessions {
 
     /// Hands a client's answer to one of a session's open input requests
     /// (#1660). The first answer wins: a later one finds the request gone.
-    pub(super) fn answer(
+    pub(super) async fn answer(
         &self,
         params: SessionAnswerParams,
     ) -> Result<SessionAnswerResponse, RpcError> {
-        let session = self.loaded_session(&params.session)?;
+        let Some(session) = self.loaded_session(&params.session).await? else {
+            return Err(inputs::not_open(params.request));
+        };
         session.change_inputs(|inputs| inputs.answer(params.request, params.answer))?;
         Ok(SessionAnswerResponse {})
     }
 
     /// Stops one of a session's open input requests from timing out, for a
     /// client whose user started on it (#1660).
-    pub(super) fn hold(&self, params: SessionHoldParams) -> Result<SessionHoldResponse, RpcError> {
-        let session = self.loaded_session(&params.session)?;
+    pub(super) async fn hold(
+        &self,
+        params: SessionHoldParams,
+    ) -> Result<SessionHoldResponse, RpcError> {
+        let Some(session) = self.loaded_session(&params.session).await? else {
+            return Err(inputs::not_open(params.request));
+        };
         session.change_inputs(|inputs| inputs.hold(params.request))?;
         Ok(SessionHoldResponse {})
     }
 
     /// Subscribes a client to a session's events, resuming after its cursor
     /// when the session's feed still can.
-    pub(super) fn attach(
+    pub(super) async fn attach(
         &self,
         params: SessionAttachParams,
     ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
         self.refuse_when_stopping()?;
-        let session = self.loaded_session(&params.session)?;
+        let session = self.session(&params.session).await?;
         // Taken under the `turn_cancel` lock a prompt starts its turn under,
         // so an attach never sees the last turn's end once the job list says
         // the next turn runs.
@@ -423,6 +501,7 @@ impl Sessions {
         };
         let response = SessionAttachResponse {
             stream,
+            workspace: session.workspace.clone(),
             replay,
             replay_events,
             state: job,
@@ -465,20 +544,6 @@ impl Sessions {
         self.jobs.close();
     }
 
-    /// The loaded session `id` names. A well-formed id this daemon has not
-    /// loaded is `SessionNotLoaded`; whether such a session exists at all
-    /// is told apart once the daemon can reopen sessions (#1661).
-    fn loaded_session(&self, id: &rho_protocol::SessionId) -> Result<Arc<LoadedSession>, RpcError> {
-        let id = session_from_wire(id)
-            .map_err(|_| RpcError::new(ErrorCode::InvalidParams, "not a session id"))?;
-        self.loaded().get(&id).cloned().ok_or_else(|| {
-            RpcError::new(
-                ErrorCode::SessionNotLoaded,
-                "session is not loaded in this daemon",
-            )
-        })
-    }
-
     fn refuse_when_stopping(&self) -> Result<(), RpcError> {
         if self.stopping.is_cancelled() {
             Err(stopping())
@@ -488,10 +553,65 @@ impl Sessions {
     }
 
     fn loaded(&self) -> MutexGuard<'_, HashMap<SessionId, Arc<LoadedSession>>> {
-        // The map is only inserted into and drained, so a panic cannot leave
-        // it half-changed.
+        // The map is only inserted into, removed from, and drained, so a
+        // panic cannot leave it half-changed.
         self.loaded.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// How a session's turns are recorded once it is added.
+enum SessionJobRecord {
+    /// On a new job, registered as the session is added.
+    Register(JobRecord),
+    /// On the session's last job, which an earlier daemon or an earlier load
+    /// recorded.
+    Reuse(JobRecord),
+}
+
+impl SessionJobRecord {
+    fn job(&self) -> &JobRecord {
+        match self {
+            Self::Register(record) | Self::Reuse(record) => record,
+        }
+    }
+
+    /// Records the job in `jobs` as the one of `session`'s turns, refusing
+    /// it when the registry no longer agrees, as when another job began
+    /// writing the session while it reopened (#1661).
+    fn claim(self, jobs: &JobRegistry, session: &SessionId) -> Result<(), RpcError> {
+        match (self, jobs.session_job(session)) {
+            (Self::Register(record), SessionJob::New) => jobs.register(record).map_err(|error| {
+                RpcError::new(
+                    ErrorCode::InternalError,
+                    format!("could not record the session's job: {error}"),
+                )
+            }),
+            (Self::Reuse(record), SessionJob::Last(last)) if last.id == record.id => Ok(()),
+            (_, SessionJob::Busy(job)) => Err(writing(&job, session)),
+            (Self::Register(_) | Self::Reuse(_), SessionJob::New | SessionJob::Last(_)) => {
+                Err(RpcError::new(
+                    ErrorCode::SessionBusy,
+                    format!("session {session}'s job changed while the daemon opened it"),
+                ))
+            }
+        }
+    }
+}
+
+/// The error for a session job `job` writes, so the daemon must not open it
+/// a second time.
+fn writing(job: &JobId, session: &SessionId) -> RpcError {
+    RpcError::new(
+        ErrorCode::SessionBusy,
+        format!("job {job} is writing session {session}"),
+    )
+}
+
+fn open_failed(error: anyhow::Error) -> RpcError {
+    RpcError::new(
+        ErrorCode::SessionOpenFailed,
+        format!("could not open session: {error:#}"),
+    )
 }
 
 fn stopping() -> RpcError {

@@ -83,12 +83,11 @@ error_codes! {
         /// `rho/hello` named an incompatible protocol major. `data` is a
         /// [`crate::VersionMismatch`] saying which side must change.
         VersionMismatch = -32001 => crate::VersionMismatch,
-        /// This daemon has not loaded that session, so it cannot take a
-        /// prompt, a cancel, or steering. The session may not exist: telling
-        /// the two apart comes with reopen (#1661).
-        SessionNotLoaded = -32003,
-        /// The session already has a turn running or waiting for input.
-        /// Prompt again once it ends.
+        /// No saved session has that id, in any workspace.
+        SessionNotFound = -32003,
+        /// The session already has a turn running or waiting for input, or
+        /// another job of the daemon's writes it, so it cannot be reopened
+        /// (#1661). Try again once that ends.
         SessionBusy = -32004,
         /// No model request is taking input.
         NotSteerable = -32005,
@@ -100,7 +99,9 @@ error_codes! {
         /// the stop begins is answered with this.
         DaemonStopping = -32007,
         /// The daemon could not open the session, for example because the
-        /// config or the default agent is invalid.
+        /// config is invalid, the agent a saved session was saved as changed
+        /// or is gone, or the session is a subagent's or workflow node's,
+        /// which only its parent continues (#1661).
         SessionOpenFailed = -32008,
         /// The turn ended before its prompt was saved, as when a cancel
         /// arrives before the turn begins, its time limit passes, or it
@@ -111,6 +112,9 @@ error_codes! {
         /// client answered it first, or the turn withdrew it, as when the
         /// turn was cancelled (#1660).
         InputNotOpen = -32011,
+        /// Another rho process, such as the TUI, has the session open, so
+        /// the daemon cannot reopen it (#1661). Close it there first.
+        SessionInUse = -32012,
     }
 }
 

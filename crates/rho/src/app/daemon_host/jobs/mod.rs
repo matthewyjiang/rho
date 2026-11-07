@@ -22,7 +22,7 @@ mod registry;
 mod state;
 mod store;
 
-pub(super) use registry::{JobRegistry, RegisterError, StartTurnError};
+pub(super) use registry::{JobRegistry, RegisterError, SessionJob, StartTurnError};
 pub(super) use state::{JobEvent, JobState, TurnEnd};
 pub(super) use store::JobStore;
 
@@ -111,6 +111,12 @@ pub(super) struct JobRecord {
     pub(super) created_at: u64,
     /// Unix time, in seconds, of the job's last transition.
     pub(super) updated_at: u64,
+    /// How the job's last turn ended, as the session's clients were told,
+    /// so a later daemon that reopens the session tells them again (#1661).
+    /// `None` while no turn has ended, for a turn the daemon's stop or death
+    /// interrupted, and for jobs other than a session's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) outcome: Option<rho_protocol::TurnOutcome>,
 }
 
 impl JobRecord {
@@ -171,6 +177,7 @@ impl JobRecord {
             parent,
             created_at: now,
             updated_at: now,
+            outcome: None,
         }
     }
 }

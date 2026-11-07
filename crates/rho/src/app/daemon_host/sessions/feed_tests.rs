@@ -31,7 +31,7 @@ fn cursor(feed: &Feed, seq: u64) -> Option<Cursor> {
 #[test]
 fn attach_resumes_a_buffered_cursor_and_resets_anything_else() {
     // One saved turn, then a turn in progress.
-    let feed = Feed::new();
+    let feed = Feed::new(wire::JobState::Idle);
     feed.publish(notices(&["live"]));
     feed.end_turn(notices(&["saved"]));
     feed.publish(notices(&["a", "b", "c"]));
@@ -80,7 +80,7 @@ fn attach_resumes_a_buffered_cursor_and_resets_anything_else() {
 
 #[test]
 fn a_saved_turn_moves_into_the_transcript_without_repeating_or_dropping_events() {
-    let feed = Feed::new();
+    let feed = Feed::new(wire::JobState::Idle);
     feed.publish(notices(&["first live"]));
     feed.end_turn(notices(&["first turn"]));
     feed.publish(notices(&["live prompt", "live reply"]));
@@ -115,7 +115,7 @@ fn a_saved_turn_moves_into_the_transcript_without_repeating_or_dropping_events()
 // resets once the next turn starts.
 #[test]
 fn a_turn_that_did_not_save_replays_live_until_a_later_turn_saves_it() {
-    let feed = Feed::new();
+    let feed = Feed::new(wire::JobState::Idle);
     feed.publish(notices(&["unsaved turn"]));
     feed.publish(notices(&["next turn"]));
     assert_eq!(
@@ -135,7 +135,7 @@ fn a_turn_that_did_not_save_replays_live_until_a_later_turn_saves_it() {
 
 #[test]
 fn a_turn_larger_than_the_buffer_resets_with_a_notice_instead_of_its_start() {
-    let feed = Feed::new();
+    let feed = Feed::new(wire::JobState::Idle);
     let large = "x".repeat(REPLAY_BUFFER_BYTES / 4);
     feed.publish(std::iter::repeat_with(|| notice(&large)).take(5));
     feed.publish(notices(&["latest"]));
@@ -155,7 +155,7 @@ fn a_turn_larger_than_the_buffer_resets_with_a_notice_instead_of_its_start() {
 
 #[test]
 fn an_attach_reports_the_job_state_its_replay_ends_in() {
-    let feed = Feed::new();
+    let feed = Feed::new(wire::JobState::Idle);
     assert_eq!(feed.attach(None).job, wire::JobState::Idle);
     feed.publish([wire::SessionEvent::State {
         state: wire::JobState::Running,
@@ -183,7 +183,7 @@ fn an_attach_reports_open_requests_as_they_stand() {
             reason: "safe".into(),
         }),
     };
-    let feed = Feed::new();
+    let feed = Feed::new(wire::JobState::Idle);
     feed.publish([
         wire::SessionEvent::InputRequested {
             request: Box::new(request(0)),
@@ -230,7 +230,7 @@ fn events_json_cannot_hold_are_dropped_live_and_saved() {
             }]),
         })
     };
-    let feed = Feed::new();
+    let feed = Feed::new(wire::JobState::Idle);
     feed.publish([unencodable(), notice("live")]);
     assert_eq!(
         replay(&feed, None),

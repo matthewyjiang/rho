@@ -20,11 +20,7 @@ use tokio::{
     time::Instant,
 };
 
-use super::{
-    super::jobs::{JobEvent, TurnEnd},
-    inputs::Inputs,
-    LoadedSession,
-};
+use super::{super::jobs::TurnEnd, inputs::Inputs, saved_replay, LoadedSession};
 use crate::{
     app::{
         session_commands::{self, BuiltInCommand, CommandScope, CommandSet, PromptCommand},
@@ -189,23 +185,10 @@ impl TurnTask {
 /// Moves what the turn saved into the session's feed transcript, so a
 /// client that attaches from now on replays it from the saved rows.
 fn save_transcript(session: &LoadedSession, runtime: &SessionRuntime) {
-    // A session that has saved nothing yet has no file to replay.
-    let Some(saved) = runtime.saved_history() else {
-        return;
-    };
-    match saved.display_rows() {
-        Ok(rows) => {
-            // A turn that saved no rows stays in the buffer, as one whose
-            // rows could not be read does, until a later turn saves.
-            if let Some(replayed) = session.live().replay(&rows, saved.cwd(), saved.tools()) {
-                session.feed.end_turn(replayed);
-            }
-        }
-        Err(error) => tracing::warn!(
-            job = %session.job,
-            error = format!("{error:#}"),
-            "could not read the turn's saved rows; clients that reset replay it live until a later turn saves"
-        ),
+    // A turn that saved no rows stays in the buffer, as one whose rows could
+    // not be read does, until a later turn saves.
+    if let Some(saved) = saved_replay(&mut session.live(), runtime, &session.job) {
+        session.feed.end_turn(saved);
     }
 }
 
@@ -332,10 +315,7 @@ impl DaemonView {
         {
             // See `prompt`: the next turn's `running` cannot come before this.
             let _turn_cancel = self.session.turn_cancel();
-            self.session.record_after(
-                outcome.map(|outcome| wire::SessionEvent::TurnEnded { outcome }),
-                JobEvent::TurnEnded(end),
-            );
+            self.session.end_turn(outcome, end);
         }
         self.ended = true;
         if let (Some(started), Some(start)) = (self.started.take(), start) {

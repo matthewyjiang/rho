@@ -71,7 +71,7 @@ pub(super) fn runs_daemon(command: Option<&Command>) -> bool {
 // 24 cores saturated. A daemon with turns under way also waits up to
 // `DRAIN_TIMEOUT` (4 s, in `daemon_host::sessions`) for them to save, which
 // this covers: that wait runs from the stop request. Draining that lets turns
-// finish (#1661) needs its own budget.
+// finish (#1713) needs its own budget.
 #[cfg(unix)]
 const DAEMON_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 

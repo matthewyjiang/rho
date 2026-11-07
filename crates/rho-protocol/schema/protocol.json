@@ -1435,10 +1435,15 @@
         "stream": {
           "$ref": "#/$defs/StreamId",
           "description": "The stream the events belong to; a cursor names it to resume."
+        },
+        "workspace": {
+          "description": "The directory the session works in: the one it was saved in, for a\nsession the daemon reopened (#1661).",
+          "type": "string"
         }
       },
       "required": [
         "stream",
+        "workspace",
         "replay",
         "replay_events",
         "state",
@@ -2299,7 +2304,7 @@
       "name": "VersionMismatch"
     },
     "-32003": {
-      "name": "SessionNotLoaded"
+      "name": "SessionNotFound"
     },
     "-32004": {
       "name": "SessionBusy"
@@ -2324,6 +2329,9 @@
     },
     "-32011": {
       "name": "InputNotOpen"
+    },
+    "-32012": {
+      "name": "SessionInUse"
     },
     "-32600": {
       "name": "InvalidRequest"

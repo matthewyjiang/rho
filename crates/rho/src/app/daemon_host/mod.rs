@@ -133,35 +133,35 @@ impl Service for DaemonHost {
         &self,
         params: SessionCancelParams,
     ) -> Result<SessionCancelResponse, RpcError> {
-        self.sessions.cancel(params)
+        self.sessions.cancel(params).await
     }
 
     async fn steer_session(
         &self,
         params: SessionSteerParams,
     ) -> Result<SessionSteerResponse, RpcError> {
-        self.sessions.steer(params)
+        self.sessions.steer(params).await
     }
 
     async fn answer_session(
         &self,
         params: SessionAnswerParams,
     ) -> Result<SessionAnswerResponse, RpcError> {
-        self.sessions.answer(params)
+        self.sessions.answer(params).await
     }
 
     async fn hold_session(
         &self,
         params: SessionHoldParams,
     ) -> Result<SessionHoldResponse, RpcError> {
-        self.sessions.hold(params)
+        self.sessions.hold(params).await
     }
 
     async fn attach_session(
         &self,
         params: SessionAttachParams,
     ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
-        self.sessions.attach(params)
+        self.sessions.attach(params).await
     }
 
     async fn list_jobs(&self) -> JobListResponse {

@@ -16,7 +16,7 @@ use crate::{
     app::{
         daemon_host::{
             jobs::{JobId, JobRecord, JobRegistry, JobState, JobStore, TurnEnd},
-            sessions::LoadedSession,
+            sessions::{open::OpenedSession, LoadedSession},
         },
         session_runtime::{
             unattended_runtime_on, HangUntilCancel, InsertedMessage, QuestionSupport, SessionEvent,
@@ -56,7 +56,11 @@ async fn loaded_session(root: &Path, jobs: &Arc<JobRegistry>, job: JobId) -> Arc
         .unwrap();
     let runtime =
         unattended_runtime_on(root, &config, QuestionSupport::Unavailable, sdk, provider).await;
-    Arc::new(LoadedSession::new(job, Arc::clone(jobs), runtime, config))
+    Arc::new(LoadedSession::new(
+        &jobs.get(&job).unwrap(),
+        Arc::clone(jobs),
+        OpenedSession { runtime, config },
+    ))
 }
 
 /// Shows `events` to `view` as one model turn.

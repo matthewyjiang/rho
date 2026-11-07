@@ -10,7 +10,8 @@ use std::{
 };
 
 use super::{
-    state::TransitionRefused, unix_now, JobEvent, JobId, JobRecord, JobState, JobStore, TurnEnd,
+    state::TransitionRefused, unix_now, JobEvent, JobId, JobRecord, JobState, JobStore, JobSubject,
+    TurnEnd,
 };
 
 /// The daemon's jobs: the ones it runs and the records it loaded at
@@ -56,6 +57,20 @@ pub(in crate::app::daemon_host) enum StartTurnError {
     /// A turn is already running or waiting for input.
     #[error("a turn is already in progress")]
     Busy,
+}
+
+/// What the registry knows of a session, for reopening it (#1661).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::app::daemon_host) enum SessionJob {
+    /// No job has run its turns, as for a session the TUI saved: a reopen
+    /// registers one.
+    New,
+    /// The latest job of its turns, which a reopen records its next turns
+    /// on.
+    Last(JobRecord),
+    /// This job writes the session right now, as a subagent run does, so
+    /// the daemon must not open it a second time.
+    Busy(JobId),
 }
 
 /// Why an event did not apply.
@@ -119,6 +134,38 @@ impl JobRegistry {
         jobs
     }
 
+    /// What the registry knows of `session`: the job writing it, if one is
+    /// under way, else the latest job of its turns.
+    pub(in crate::app::daemon_host) fn session_job(
+        &self,
+        session: &rho_sdk::SessionId,
+    ) -> SessionJob {
+        let jobs = self.lock();
+        let mut last: Option<&JobRecord> = None;
+        for record in jobs.values() {
+            // Whether the job runs the session's turns, of the jobs that
+            // write it at all.
+            let turns = match &record.subject {
+                JobSubject::Session { session: written } if written == session => true,
+                JobSubject::Subagent {
+                    session: Some(written),
+                } if written == session => false,
+                JobSubject::Session { .. }
+                | JobSubject::Subagent { .. }
+                | JobSubject::Workflow { .. } => continue,
+            };
+            if record.state.in_progress() {
+                return SessionJob::Busy(record.id.clone());
+            }
+            let later = last
+                .is_none_or(|last| (last.created_at, &last.id) < (record.created_at, &record.id));
+            if turns && later {
+                last = Some(record);
+            }
+        }
+        last.map_or(SessionJob::New, |record| SessionJob::Last(record.clone()))
+    }
+
     /// How many jobs have a turn under way.
     pub(in crate::app::daemon_host) fn in_progress(&self) -> usize {
         self.lock()
@@ -153,6 +200,23 @@ impl JobRegistry {
         Ok(record.state.clone())
     }
 
+    /// Records that job `id`'s turn ended as `end`, which its clients were
+    /// told as `outcome`, if they were, and returns the state it left the
+    /// job in.
+    pub(in crate::app::daemon_host) fn end_turn(
+        &self,
+        id: &JobId,
+        end: TurnEnd,
+        outcome: Option<rho_protocol::TurnOutcome>,
+    ) -> Result<JobState, TransitionError> {
+        let mut jobs = self.lock();
+        let record = jobs.get_mut(id).ok_or(UnknownJob)?;
+        apply(record, JobEvent::TurnEnded(end))?;
+        record.outcome = outcome;
+        persist(&self.store, record);
+        Ok(record.state.clone())
+    }
+
     /// For the daemon's stop, once its turns saved: records every job
     /// still under way as interrupted, and takes no new job after, so a
     /// run a workflow drive starts during the stop is not left listed as
@@ -180,9 +244,14 @@ impl JobRegistry {
     }
 }
 
-/// Moves `record` on by `event`.
+/// Moves `record` on by `event`. An ended turn forgets the last one's
+/// outcome; [`JobRegistry::end_turn`] then records its own.
 fn apply(record: &mut JobRecord, event: JobEvent) -> Result<(), TransitionRefused> {
+    let ends_turn = matches!(event, JobEvent::TurnEnded(_));
     record.state = record.state.after(event)?;
+    if ends_turn {
+        record.outcome = None;
+    }
     record.updated_at = unix_now();
     Ok(())
 }

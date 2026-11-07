@@ -109,6 +109,25 @@ impl SessionStore {
         self.resolve_local_where(id_prefix, |_| true)
     }
 
+    /// The workspace of the session saved under exactly `id`, in whichever
+    /// workspace it is, or `None` when nothing is. The index is reconciled
+    /// once on a miss, so a session another process saved before indexing it
+    /// is still found.
+    pub(super) fn workspace_of(root: &Path, id: &str) -> anyhow::Result<Option<PathBuf>> {
+        let find = || -> anyhow::Result<Option<PathBuf>> {
+            let exact: Vec<_> = index::matching_sessions_any_workspace(root, id)?
+                .into_iter()
+                .filter(|(path, _)| session_id_from_path(path).as_deref() == Some(id))
+                .collect();
+            Ok(single_match(&exact, id)?.map(|(_, cwd)| cwd.clone()))
+        };
+        if let Some(cwd) = find()? {
+            return Ok(Some(cwd));
+        }
+        index::reconcile_all_workspaces(root)?;
+        find()
+    }
+
     /// The session saved under exactly `id` in this workspace, if any. Unlike
     /// [`Self::resolve_local`], `id` is never read as a prefix.
     pub(super) fn resolve_exact_local(&self, id: &str) -> anyhow::Result<Option<ResolvedSession>> {

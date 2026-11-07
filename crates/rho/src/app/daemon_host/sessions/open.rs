@@ -1,10 +1,13 @@
-//! Opening a new session. The config is the user's global config, read
-//! when the session is opened, so a config edit applies to the next session
-//! without a daemon restart; the agents and instructions are those of the
-//! session's workspace, as `rho` launched there would find them.
+//! Opening a session: a new one, or one saved earlier, which the daemon
+//! reopens as the agent it was saved as (#1661). The config is the user's
+//! global config, read when the session is opened, so a config edit applies
+//! to the next session opened without a daemon restart; the agents and
+//! instructions are those of the session's workspace, as `rho` launched
+//! there would find them.
 //!
-//! The session runs as the default agent with the configured permission
-//! mode. Its host answers approvals and questions (both reach the daemon as
+//! A new session runs as the default agent, a reopened one as the agent it
+//! was saved as, which must still be defined as it was; both with the
+//! configured permission mode. Its host answers approvals and questions (both reach the daemon as
 //! turn events), its children run in the daemon on the daemon-wide budget,
 //! each a child job of the session's (see `subagents.rs`), and an MCP
 //! server's browser login is refused rather than left waiting for a
@@ -39,7 +42,7 @@ use crate::{
         },
     },
     config::Config,
-    session::SessionPersistence,
+    session::{Session as StoredSession, SessionPersistence},
     tools::{host_io::HostIo, mcp::McpAuthorizationMode},
 };
 
@@ -68,6 +71,23 @@ impl Workspace {
     }
 }
 
+/// What a session opens from.
+pub(super) enum Opening {
+    /// Nothing yet: a new session in this workspace.
+    New(Workspace),
+    /// The session saved here, opened in its own workspace.
+    Saved(StoredSession),
+}
+
+impl Opening {
+    fn cwd(&self) -> &Path {
+        match self {
+            Self::New(Workspace(cwd)) => cwd,
+            Self::Saved(stored) => stored.cwd(),
+        }
+    }
+}
+
 /// A session, open, and the config it runs with.
 pub(super) struct OpenedSession {
     pub(super) runtime: SessionRuntime,
@@ -75,22 +95,25 @@ pub(super) struct OpenedSession {
     pub(super) config: Config,
 }
 
-/// Opens a new, saved session in `workspace`, whose turns are job `job`.
-/// Its file is written with its first prompt.
+/// Opens the session `opening` says, whose turns are job `job`. A new
+/// session's file is written with its first prompt.
 pub(super) async fn open_session(
-    workspace: &Workspace,
+    opening: Opening,
     logouts: &Logouts,
     subagents: &Subagents,
     job: &JobId,
 ) -> anyhow::Result<OpenedSession> {
-    let Workspace(cwd) = workspace;
+    let cwd = &opening.cwd().to_path_buf();
     let repository = ConfigRepository::new(None);
     let config_path = repository.configured_path()?;
     let config = repository.load()?;
     // The last config read publishes its custom providers to the daemon,
     // as each rho process publishes its own at startup.
     config.providers.activate()?;
-    let agent = bind_default_agent(cwd, &config)?;
+    let agent = match &opening {
+        Opening::New(_) => bind_agent(cwd, &config, DEFAULT_AGENT_ID)?,
+        Opening::Saved(stored) => bind_saved_agent(cwd, &config, stored)?,
+    };
     // The agent's own config, which may pin a model and reasoning, replaces
     // the loaded one; an agent on another runtime keeps it.
     let config = agent.rho_config().cloned().unwrap_or(config);
@@ -131,7 +154,7 @@ pub(super) async fn open_session(
             hook_labels: Default::default(),
         },
     };
-    let opening = SessionOpening {
+    let session = SessionOpening {
         build,
         process_config: &config,
         host_mcp: Default::default(),
@@ -140,22 +163,50 @@ pub(super) async fn open_session(
         logouts,
     };
     // Opening a session builds a large future; keep it on the heap.
-    let runtime = Box::pin(SessionRuntime::open_new(
-        opening,
-        rho_sdk::SessionId::new(),
-        SessionPersistence::Saved,
-    ))
-    .await?;
+    let runtime = match opening {
+        Opening::New(_) => {
+            Box::pin(SessionRuntime::open_new(
+                session,
+                rho_sdk::SessionId::new(),
+                SessionPersistence::Saved,
+            ))
+            .await?
+        }
+        Opening::Saved(stored) => Box::pin(SessionRuntime::open_saved(session, stored)).await?,
+    };
     // Only a session that opened resizes every session's budget.
     subagents.set_limit(&config);
     Ok(OpenedSession { runtime, config })
 }
 
-/// The default agent of `cwd`'s catalog, bound as a person's root session
-/// with every tool this platform offers.
-fn bind_default_agent(cwd: &Path, config: &Config) -> anyhow::Result<BoundAgent> {
+/// The agent `stored` runs as, bound as its root: the one it was saved as,
+/// refused when its definition changed or is gone, so a reopen never widens
+/// a session to another agent's tools (#1661). A session `/agent:` rebound
+/// runs as the default agent, under which the runtime binds the child again
+/// with the child's own checks.
+fn bind_saved_agent(
+    cwd: &Path,
+    config: &Config,
+    stored: &StoredSession,
+) -> anyhow::Result<BoundAgent> {
+    if stored.delegated_agent_id()?.is_some() {
+        return bind_agent(cwd, config, DEFAULT_AGENT_ID);
+    }
+    let Some((id, _fingerprint)) = stored.stored_agent_identity()? else {
+        anyhow::bail!(
+            "the session has no saved agent, so the daemon cannot tell which agent to reopen it as"
+        );
+    };
+    let agent = bind_agent(cwd, config, &id)?;
+    stored.validate_agent_definition_identity(agent.definition())?;
+    Ok(agent)
+}
+
+/// Agent `id` of `cwd`'s catalog, bound as a person's root session with
+/// every tool this platform offers.
+fn bind_agent(cwd: &Path, config: &Config, id: &str) -> anyhow::Result<BoundAgent> {
     let catalog = AgentCatalog::discover(cwd)?;
-    let definition = Arc::new(catalog.find(DEFAULT_AGENT_ID)?.definition.clone());
+    let definition = Arc::new(catalog.find(id)?.definition.clone());
     AgentBinder::bind(
         definition,
         AgentInvocation {

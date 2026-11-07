@@ -99,8 +99,10 @@ pub(super) struct Attached {
 }
 
 impl Feed {
-    /// The stream of a new session: nothing saved yet, its job idle.
-    pub(super) fn new() -> Self {
+    /// A stream with nothing saved yet, its job in `job`: idle for a new
+    /// session, its last turn's end for a reopened one (#1661), whose saved
+    /// conversation [`Self::end_turn`] then adds.
+    pub(super) fn new(job: wire::JobState) -> Self {
         Self {
             state: Mutex::new(FeedState {
                 stream: StreamId::new(uuid::Uuid::new_v4().to_string()),
@@ -110,7 +112,7 @@ impl Feed {
                 turn_start: Seq(0),
                 turn_start_evicted: false,
                 transcript: Vec::new(),
-                job: wire::JobState::Idle,
+                job,
                 inputs: BTreeMap::new(),
                 subscribers: Vec::new(),
                 closed: None,

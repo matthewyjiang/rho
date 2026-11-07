@@ -16,14 +16,17 @@ use rho_protocol::{
         SessionNew, SessionPrompt,
     },
     AnswerStop, ApprovalAsk, ApprovalSource, Ask, Client, ClientError, ClientInfo, Cursor,
-    DaemonNotification, DetachReason, ErrorCode, InputAnswer, InputRequest, InputRequestId,
+    DaemonNotification, DetachReason, ErrorCode, InputAnswer, InputRequest, InputRequestId, JobId,
     JobKind, JobListParams, JobState, JobSummary, Notifications, Operation, PathScope, Replay,
     Resolution, Seq, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
     SessionCancelParams, SessionDetachParams, SessionDetachedParams, SessionEvent,
     SessionHoldParams, SessionId, SessionNewParams, SessionPromptParams, StreamId, ToolCallId,
     ToolContent, ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
 };
-use tokio::net::UnixStream;
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    net::UnixStream,
+};
 
 use super::harness::{DaemonProcess, DaemonSandbox};
 
@@ -59,6 +62,14 @@ const WORKFLOW: &str = r#"def build(inputs):
 
 WORKFLOW = define(inputs = {}, build = build)
 "#;
+
+/// An agent a session is saved as, other than the default.
+const ARCHIVIST_AGENT: &str = "---
+description: Fixture agent a session is saved as
+---
+
+Archive.
+";
 
 const WORKFLOW_AGENT: &str = "---
 description: Fixture agent for a daemon workflow run
@@ -151,20 +162,43 @@ impl Sandbox {
         self.daemon.daemon_log()
     }
 
-    /// The records saved in `session`'s file.
-    fn session_records(&self, session: &SessionId) -> Vec<serde_json::Value> {
-        // Each session is a directory named for its id, below its
-        // workspace's.
+    /// The directory `session` is saved in, once it is: each session is a
+    /// directory named for its id, below its workspace's.
+    fn session_dir(&self, session: &SessionId) -> Option<PathBuf> {
         let suffix = format!("_{session}");
-        let session = std::fs::read_dir(self.daemon.home().join("sessions"))
-            .unwrap()
+        std::fs::read_dir(self.daemon.home().join("sessions"))
+            .ok()?
             .flatten()
             .filter_map(|workspace| std::fs::read_dir(workspace.path()).ok())
             .flatten()
             .flatten()
             .find(|entry| entry.file_name().to_string_lossy().ends_with(&suffix))
-            .unwrap_or_else(|| panic!("no session directory for {session}"))
-            .path();
+            .map(|entry| entry.path())
+    }
+
+    /// Whether `session`'s file has saved a user message yet. A record still
+    /// being written is skipped.
+    fn saved_a_user_message(&self, session: &SessionId) -> bool {
+        self.session_dir(session)
+            .and_then(|dir| std::fs::read_to_string(dir.join("session.jsonl")).ok())
+            .is_some_and(|file| {
+                file.lines()
+                    .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                    .flat_map(|record| {
+                        record["transition"]["delta"]["appended_history"]
+                            .as_array()
+                            .cloned()
+                            .unwrap_or_default()
+                    })
+                    .any(|message| message.get("User").is_some())
+            })
+    }
+
+    /// The records saved in `session`'s file.
+    fn session_records(&self, session: &SessionId) -> Vec<serde_json::Value> {
+        let session = self
+            .session_dir(session)
+            .unwrap_or_else(|| panic!("no session directory for {session}"));
         std::fs::read_to_string(session.join("session.jsonl"))
             .unwrap()
             .lines()
@@ -272,7 +306,7 @@ async fn a_turn_outlives_the_client_that_prompted_it() {
             None,
             Some(session.clone()),
             None,
-            Err(Some(ErrorCode::SessionNotLoaded))
+            Err(Some(ErrorCode::SessionNotFound))
         ),
         "log:\n{}",
         sandbox.daemon_log()
@@ -369,7 +403,8 @@ enum Ending {
 
 // Covers: a subagent a daemon session starts runs in the daemon and is
 // listed as a child job of the session's job, in the session's workspace,
-// completed once it finished, with the session it saved its reply in.
+// completed once it finished, with the session it saved its reply in, which
+// a client cannot reopen: only its parent continues it (#1661).
 // Owner: daemon subagent jobs.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_subagent_is_a_child_job_of_its_session() {
@@ -423,6 +458,10 @@ async fn a_subagent_is_a_child_job_of_its_session() {
             .iter()
             .any(|record| record.to_string().contains(REPLY)),
         "the subagent saved its reply: {records:#?}"
+    );
+    assert_eq!(
+        prompt(&client, &child_session).await,
+        Err(Some(ErrorCode::SessionOpenFailed))
     );
 }
 
@@ -491,33 +530,35 @@ async fn a_workflow_run_is_a_child_job_of_its_session() {
 }
 
 // Covers: a turn cancelled through `rho/session/cancel` is recorded
-// cancelled and its session takes the next prompt; a turn the daemon's stop
-// interrupts is recorded interrupted, within `rho daemon stop`'s wait; a
-// turn whose daemon died is recorded interrupted by the next daemon. A
-// session an earlier daemon saved is listed with its job but refuses
-// prompts as not loaded.
+// cancelled; a turn the daemon's stop interrupts is recorded interrupted,
+// within `rho daemon stop`'s wait; a turn whose daemon died (`kill -9`) is
+// recorded interrupted by the next daemon. Either way the session comes back
+// (#1661): an attach reopens it, in its workspace, replaying its saved
+// conversation and its job's state, and the next prompt continues it on the
+// same job.
 // Owner: daemon session hosting and job records.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_turn_ended_early_is_recorded_on_its_job() {
+async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
     let cases = [
-        (Ending::Cancel, JobState::Cancelled, Ok(())),
-        (
-            Ending::Stop,
-            JobState::Interrupted,
-            Err(Some(ErrorCode::SessionNotLoaded)),
-        ),
-        (
-            Ending::Kill,
-            JobState::Interrupted,
-            Err(Some(ErrorCode::SessionNotLoaded)),
-        ),
+        (Ending::Cancel, JobState::Cancelled),
+        (Ending::Stop, JobState::Interrupted),
+        (Ending::Kill, JobState::Interrupted),
     ];
-    for (ending, expected_state, expected_next_prompt) in cases {
+    for (ending, expected_state) in cases {
         let sandbox = Sandbox::new();
         // The fixture holds each turn until it is cancelled.
         let (mut daemon, client) = sandbox.start_daemon("delay").await;
         let session = new_session(&client, &sandbox.workspace).await;
         assert_eq!(prompt(&client, &session).await, Ok(()), "{ending:?}");
+        let jobs_of_session = async |client: &Client| -> Vec<JobId> {
+            let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
+            jobs.jobs
+                .into_iter()
+                .filter(|job| job.session.as_ref() == Some(&session))
+                .map(|job| job.id)
+                .collect()
+        };
+        let job = jobs_of_session(&client).await;
 
         let (_daemon, client) = match ending {
             Ending::Cancel => {
@@ -547,15 +588,153 @@ async fn a_turn_ended_early_is_recorded_on_its_job() {
             }
         };
         let state = settled_job(&sandbox, &client, &session).await.state;
+        let (mut follower, attached) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+        follower
+            .read_until(|event| matches!(event, SessionEvent::UserMessage { .. }))
+            .await;
         let next_prompt = prompt(&client, &session).await;
 
         assert_eq!(
-            (state, next_prompt),
-            (expected_state, expected_next_prompt),
+            (
+                state,
+                attached.replay,
+                attached.workspace,
+                attached.state,
+                next_prompt,
+                jobs_of_session(&client).await,
+            ),
+            (
+                expected_state,
+                Replay::Reset,
+                sandbox.workspace.clone(),
+                expected_state,
+                Ok(()),
+                job,
+            ),
             "{ending:?}: log:\n{}",
             sandbox.daemon_log()
         );
     }
+}
+
+// Covers: a session no daemon ran, saved by a foreground `rho run`, is
+// refused as in use while that run has it open; once the run is gone, an
+// attach reopens it (#1661) in its own workspace, on a new session job that
+// has run no turn yet, replaying its saved conversation, and it takes the
+// next prompt.
+// Owner: daemon session reopening.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_another_process_saved_reopens_once_it_lets_go() {
+    let sandbox = Sandbox::new();
+    let (_daemon, client) = sandbox.start_daemon("delay").await;
+    // The fixture's model call waits, so the run holds its session open.
+    let mut run = tokio::process::Command::from(sandbox.rho("delay"));
+    run.args(["run", "--output", "jsonl", "hello"])
+        .stdout(Stdio::piped())
+        .kill_on_drop(true);
+    let mut run = run.spawn().unwrap();
+    let mut lines = BufReader::new(run.stdout.take().unwrap()).lines();
+    let started = tokio::time::timeout(DEADLINE, lines.next_line())
+        .await
+        .expect("the run starts")
+        .unwrap()
+        .expect("the run writes run_started");
+    let started: serde_json::Value = serde_json::from_str(&started).unwrap();
+    let session = SessionId::new(started["session"].as_str().unwrap());
+    sandbox
+        .daemon
+        .poll_until("the run to save its prompt", DEADLINE, async || {
+            sandbox.saved_a_user_message(&session).then_some(())
+        })
+        .await;
+    let attach = async |client: &Client| {
+        client
+            .request::<SessionAttach>(&SessionAttachParams {
+                session: session.clone(),
+                after: None,
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| error.error_code())
+    };
+    let in_use = attach(&client).await;
+
+    run.kill().await.unwrap();
+    let (mut follower, attached) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    follower
+        .read_until(|event| matches!(event, SessionEvent::UserMessage { .. }))
+        .await;
+    let jobs: Vec<_> = client
+        .request::<JobList>(&JobListParams {})
+        .await
+        .unwrap()
+        .jobs
+        .into_iter()
+        .filter(|job| job.session.as_ref() == Some(&session))
+        .map(|job| (job.kind, job.state))
+        .collect();
+    let next_prompt = prompt(&client, &session).await;
+
+    assert_eq!(
+        (
+            in_use,
+            attached.workspace,
+            attached.state,
+            jobs,
+            next_prompt
+        ),
+        (
+            Err(Some(ErrorCode::SessionInUse)),
+            sandbox.workspace.clone(),
+            JobState::Idle,
+            vec![(JobKind::Session, JobState::Idle)],
+            Ok(())
+        ),
+        "log:\n{}",
+        sandbox.daemon_log()
+    );
+}
+
+// Covers: a session saved as an agent other than the default reopens as
+// that agent while its definition is unchanged, and is refused once the
+// definition changed, rather than reopened as the default agent (#1661).
+// Owner: daemon session reopening.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_reopens_only_as_the_agent_it_was_saved_as() {
+    let sandbox = Sandbox::new();
+    let archivist = sandbox.daemon.root().join(".agents/agents/archivist.md");
+    std::fs::create_dir_all(archivist.parent().unwrap()).unwrap();
+    std::fs::write(&archivist, ARCHIVIST_AGENT).unwrap();
+    let saved_as_archivist = || {
+        let run = sandbox
+            .rho("fixed")
+            .args(["run", "--agent", "archivist", "--output", "jsonl", "hello"])
+            .stdout(Stdio::piped())
+            .output()
+            .unwrap();
+        assert!(run.status.success(), "{run:?}");
+        let started = String::from_utf8(run.stdout).unwrap();
+        let started: serde_json::Value =
+            serde_json::from_str(started.lines().next().unwrap()).unwrap();
+        SessionId::new(started["session"].as_str().unwrap())
+    };
+    let (kept, edited) = (saved_as_archivist(), saved_as_archivist());
+    let (_daemon, client) = sandbox.start_daemon("fixed").await;
+
+    let while_unchanged = prompt(&client, &kept).await;
+    std::fs::write(
+        &archivist,
+        ARCHIVIST_AGENT.replace("Archive.", "Archive everything."),
+    )
+    .unwrap();
+    let once_changed = prompt(&client, &edited).await;
+
+    assert_eq!(
+        (while_unchanged, once_changed),
+        (Ok(()), Err(Some(ErrorCode::SessionOpenFailed))),
+        "log:\n{}",
+        sandbox.daemon_log()
+    );
 }
 
 /// A client following one session's events on its own connection, as a
