@@ -1,6 +1,9 @@
 //! Terminal classification and messages for a finished `rho run`.
 
+use rho_protocol::TurnErrorKind;
+
 use super::{AutomationExit, TerminalReason};
+use crate::app::session_events::outcome::{authentication_message, failure_kind};
 
 /// Human-readable terminal messages for one run's classified errors.
 pub(super) struct TerminalMessages {
@@ -13,25 +16,9 @@ impl TerminalMessages {
     /// It names only those config identifiers and how to fix them, never the
     /// provider's error text, which may echo credentials.
     pub(super) fn for_selection(provider: &str, auth: &str) -> Self {
-        let alternatives = rho_providers::provider::provider_descriptor(provider)
-            .into_iter()
-            .flat_map(|descriptor| descriptor.auth_modes())
-            .filter(|mode| {
-                mode.id != auth
-                    && !matches!(
-                        mode.auth_kind,
-                        rho_providers::provider::ProviderAuthKind::None
-                    )
-            })
-            .map(|mode| format!("--auth {}", mode.id))
-            .collect::<Vec<_>>();
-        let mut authentication =
-            format!("authentication failed for {provider} (auth: {auth}); run /login {provider}");
-        if !alternatives.is_empty() {
-            authentication.push_str(" or pass ");
-            authentication.push_str(&alternatives.join(" or "));
+        Self {
+            authentication: authentication_message(provider, auth),
         }
-        Self { authentication }
     }
 
     /// Builds the terminal message for a classified automation error.
@@ -60,35 +47,13 @@ pub(super) fn classify_error(error: &anyhow::Error) -> (TerminalReason, u8) {
     if let Some(exit) = error.downcast_ref::<AutomationExit>() {
         return (exit.reason(), exit.exit_code());
     }
-    for cause in error.chain() {
-        if let Some(error) = cause.downcast_ref::<rho_sdk::Error>() {
-            return match error {
-                rho_sdk::Error::Authentication { .. } => (TerminalReason::Authentication, 1),
-                rho_sdk::Error::Provider(provider)
-                    if provider.kind() == rho_sdk::ProviderErrorKind::Authentication =>
-                {
-                    (TerminalReason::Authentication, 1)
-                }
-                rho_sdk::Error::Provider(_) => (TerminalReason::ProviderError, 1),
-                rho_sdk::Error::Tool(_) => (TerminalReason::ToolHostError, 1),
-                rho_sdk::Error::InvalidConfiguration { .. } => {
-                    (TerminalReason::ConfigurationError, 2)
-                }
-                _ => (TerminalReason::OtherError, 1),
-            };
-        }
-        if let Some(error) = cause.downcast_ref::<rho_providers::model::ModelError>() {
-            use rho_providers::model::ModelError;
-            return match error {
-                ModelError::MissingCredentials(_) | ModelError::Credentials(_) => {
-                    (TerminalReason::Authentication, 1)
-                }
-                ModelError::UnsupportedReasoning { .. } | ModelError::UnsupportedProvider(_) => {
-                    (TerminalReason::ConfigurationError, 2)
-                }
-                _ => (TerminalReason::ProviderError, 1),
-            };
-        }
+    match failure_kind(error) {
+        TurnErrorKind::Authentication => (TerminalReason::Authentication, 1),
+        TurnErrorKind::Provider => (TerminalReason::ProviderError, 1),
+        TurnErrorKind::ToolHost => (TerminalReason::ToolHostError, 1),
+        TurnErrorKind::Configuration => (TerminalReason::ConfigurationError, 2),
+        // `TurnErrorKind` is non-exhaustive; a kind a newer protocol adds is
+        // another error.
+        _ => (TerminalReason::OtherError, 1),
     }
-    (TerminalReason::OtherError, 1)
 }

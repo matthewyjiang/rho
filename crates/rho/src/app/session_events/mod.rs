@@ -8,6 +8,9 @@
 //! so a conversation reads the same whether a client watched it live or
 //! received it replayed, apart from how its text was chunked.
 //!
+//! [`outcome`] says how a turn ended, for the daemon's clients and
+//! `rho run` alike.
+//!
 //! Ported from the ACP `EventMapper`; the ACP adapter maps these wire events
 //! instead, and drops its own mapper, in #1670.
 
@@ -31,6 +34,7 @@ use crate::{
 };
 
 mod live;
+pub(crate) mod outcome;
 mod replay;
 #[cfg(test)]
 mod test_support;

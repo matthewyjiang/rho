@@ -2,6 +2,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use super::*;
+use crate::methods::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome};
 
 // Covers: every event's wire form (the `type` tag, snake_case names, and
 // absent optionals left out) round-trips, which an ACP adapter or another
@@ -13,17 +14,35 @@ fn every_session_event_round_trips_through_its_wire_form() {
     let cases = [
         (
             SessionEvent::State {
-                state: JobState::Failed,
-                error: Some("provider down".into()),
-            },
-            json!({"type": "state", "state": "failed", "error": "provider down"}),
-        ),
-        (
-            SessionEvent::State {
                 state: JobState::Running,
-                error: None,
             },
             json!({"type": "state", "state": "running"}),
+        ),
+        (
+            SessionEvent::TurnEnded {
+                outcome: TurnOutcome::Answered {
+                    text: "done".into(),
+                    stop: AnswerStop::EndTurn,
+                },
+            },
+            json!({"type": "turn_ended", "outcome": {"type": "answered", "text": "done", "stop": "end_turn"}}),
+        ),
+        (
+            SessionEvent::TurnEnded {
+                outcome: TurnOutcome::Failed {
+                    error: TurnError {
+                        kind: TurnErrorKind::Provider,
+                        message: "provider down".into(),
+                    },
+                },
+            },
+            json!({"type": "turn_ended", "outcome": {"type": "failed", "error": {"kind": "provider", "message": "provider down"}}}),
+        ),
+        (
+            SessionEvent::TurnEnded {
+                outcome: TurnOutcome::Cancelled,
+            },
+            json!({"type": "turn_ended", "outcome": {"type": "cancelled"}}),
         ),
         (
             SessionEvent::UserMessage {

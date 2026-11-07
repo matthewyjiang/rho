@@ -56,7 +56,6 @@ fn failure(state: &JobState) -> Option<String> {
 pub(super) fn state_event(state: &JobState) -> wire::SessionEvent {
     wire::SessionEvent::State {
         state: state.into(),
-        error: failure(state),
     }
 }
 

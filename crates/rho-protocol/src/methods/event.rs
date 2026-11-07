@@ -79,13 +79,8 @@ pub struct Cursor {
 #[non_exhaustive]
 pub enum SessionEvent {
     /// The session's job changed state: a turn started (`running`), waits
-    /// for input, or ended.
-    State {
-        state: JobState,
-        /// Why the turn failed, when `state` is [`JobState::Failed`].
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
-    },
+    /// for input, or ended. An ended turn's [`Self::TurnEnded`] comes first.
+    State { state: JobState },
     /// A user message, whole.
     UserMessage {
         message: MessageId,
@@ -122,6 +117,8 @@ pub enum SessionEvent {
     /// Input request `id`'s timeout stopped: a client held it with
     /// [`super::SESSION_HOLD`], so it waits for an answer.
     InputHeld { id: InputRequestId },
+    /// The turn ended, and how (#1669).
+    TurnEnded { outcome: super::TurnOutcome },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]

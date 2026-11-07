@@ -15,12 +15,13 @@ use rho_protocol::{
         JobList, SessionAnswer, SessionAttach, SessionCancel, SessionDetach, SessionHold,
         SessionNew, SessionPrompt,
     },
-    ApprovalAsk, ApprovalSource, Ask, Client, ClientError, ClientInfo, Cursor, DaemonNotification,
-    DetachReason, ErrorCode, InputAnswer, InputRequest, InputRequestId, JobKind, JobListParams,
-    JobState, JobSummary, Notifications, Operation, PathScope, Replay, Resolution, Seq,
-    SessionAnswerParams, SessionAttachParams, SessionAttachResponse, SessionCancelParams,
-    SessionDetachParams, SessionDetachedParams, SessionEvent, SessionHoldParams, SessionId,
-    SessionNewParams, SessionPromptParams, StreamId, ToolCallId, ToolContent, ToolStatus,
+    AnswerStop, ApprovalAsk, ApprovalSource, Ask, Client, ClientError, ClientInfo, Cursor,
+    DaemonNotification, DetachReason, ErrorCode, InputAnswer, InputRequest, InputRequestId,
+    JobKind, JobListParams, JobState, JobSummary, Notifications, Operation, PathScope, Replay,
+    Resolution, Seq, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
+    SessionCancelParams, SessionDetachParams, SessionDetachedParams, SessionEvent,
+    SessionHoldParams, SessionId, SessionNewParams, SessionPromptParams, StreamId, ToolCallId,
+    ToolContent, ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
 };
 use tokio::net::UnixStream;
 
@@ -277,6 +278,76 @@ async fn a_turn_outlives_the_client_that_prompted_it() {
             .any(|record| record.to_string().contains(REPLY)),
         "the session saved the reply: {records:#?}"
     );
+}
+
+// Covers: a turn's end reaches attached clients as how it ended, before
+// the job state that records it: the model's answer whole, or why it
+// failed, with an authentication failure naming only the provider, auth,
+// and how to log in, never the provider's text, here and in the job list
+// (#1669).
+// Owner: daemon session event feed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_turn_tells_clients_how_it_ended() {
+    let cases = [
+        (
+            "fixed",
+            TurnOutcome::Answered {
+                text: REPLY.into(),
+                stop: AnswerStop::EndTurn,
+            },
+            JobState::Completed,
+        ),
+        (
+            "fail",
+            TurnOutcome::Failed {
+                error: TurnError {
+                    kind: TurnErrorKind::Provider,
+                    message: "provider failed: deterministic provider failure".into(),
+                },
+            },
+            JobState::Failed,
+        ),
+        (
+            "auth-failure",
+            TurnOutcome::Failed {
+                error: TurnError {
+                    kind: TurnErrorKind::Authentication,
+                    message: "authentication failed for xai (auth: xai-oauth); run /login xai or pass --auth xai-api-key".into(),
+                },
+            },
+            JobState::Failed,
+        ),
+    ];
+    for (mode, outcome, state) in cases {
+        let sandbox = Sandbox::new();
+        let (_daemon, client) = sandbox.start_daemon(mode).await;
+        let session = new_session(&client, &sandbox.workspace).await;
+        let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+        // A turn that fails before it saves the prompt answers the prompt
+        // with the failure; the clients learn it all the same.
+        let _ = prompt(&client, &session).await;
+        watcher.read_until(is_state(state)).await;
+
+        let ending: Vec<SessionEvent> = watcher.events[watcher.events.len() - 2..]
+            .iter()
+            .map(|(_, event)| event.clone())
+            .collect();
+        let listed = match &outcome {
+            TurnOutcome::Failed { error } => Some(error.message.clone()),
+            _ => None,
+        };
+        assert_eq!(
+            ending,
+            vec![
+                SessionEvent::TurnEnded { outcome },
+                SessionEvent::State { state }
+            ],
+            "{mode}: log:\n{}",
+            sandbox.daemon_log()
+        );
+        let job = settled_job(&sandbox, &client, &session).await;
+        assert_eq!((job.state, job.error), (state, listed), "{mode}: job list");
+    }
 }
 
 /// How a test ends a turn the fixture holds open.
@@ -659,6 +730,13 @@ async fn clients_that_leave_and_come_back_see_the_same_turn() {
             .any(|event| matches!(event, SessionEvent::UserMessage { .. })),
         "the turn showed its prompt: {:#?}",
         watcher.events
+    );
+    assert_eq!(
+        conversation(&watcher.events).last(),
+        Some(&SessionEvent::TurnEnded {
+            outcome: TurnOutcome::Cancelled
+        }),
+        "the turn ended cancelled"
     );
 
     let stop = sandbox

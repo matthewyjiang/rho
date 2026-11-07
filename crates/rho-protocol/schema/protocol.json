@@ -1,5 +1,30 @@
 {
   "$defs": {
+    "AnswerStop": {
+      "anyOf": [
+        {
+          "const": "end_turn",
+          "description": "It finished its answer.",
+          "type": "string"
+        },
+        {
+          "const": "max_tokens",
+          "description": "The provider cut the answer off at its output token limit.",
+          "type": "string"
+        },
+        {
+          "const": "refusal",
+          "description": "The model refused.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Why the model stopped at its final answer. A daemon that does not know\nwhy, as for a reason a newer SDK adds, sends `unknown`."
+    },
     "ApprovalAsk": {
       "description": "A tool asks to use a capability its session's permission mode does not\ngrant on its own.",
       "properties": {
@@ -1460,15 +1485,8 @@
     "SessionEvent": {
       "anyOf": [
         {
-          "description": "The session's job changed state: a turn started (`running`), waits\nfor input, or ended.",
+          "description": "The session's job changed state: a turn started (`running`), waits\nfor input, or ended. An ended turn's [`Self::TurnEnded`] comes first.",
           "properties": {
-            "error": {
-              "description": "Why the turn failed, when `state` is [`JobState::Failed`].",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
             "state": {
               "$ref": "#/$defs/JobState"
             },
@@ -1700,6 +1718,23 @@
           "required": [
             "type",
             "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The turn ended, and how (#1669).",
+          "properties": {
+            "outcome": {
+              "$ref": "#/$defs/TurnOutcome"
+            },
+            "type": {
+              "const": "turn_ended",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "outcome"
           ],
           "type": "object"
         },
@@ -2037,6 +2072,144 @@
         }
       ],
       "description": "Where a tool call is."
+    },
+    "TurnError": {
+      "description": "Why a turn failed.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/TurnErrorKind"
+        },
+        "message": {
+          "description": "What went wrong, for a person. An authentication failure names only\nthe provider and auth and how to log in, never the provider's own\ntext, which may echo credentials.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ],
+      "type": "object"
+    },
+    "TurnErrorKind": {
+      "anyOf": [
+        {
+          "const": "authentication",
+          "description": "The provider rejected the credentials, or there were none.",
+          "type": "string"
+        },
+        {
+          "const": "provider",
+          "description": "The provider failed the request.",
+          "type": "string"
+        },
+        {
+          "const": "tool_host",
+          "description": "A tool's host failed, not just one tool call.",
+          "type": "string"
+        },
+        {
+          "const": "configuration",
+          "description": "The session's config cannot run, such as a model the provider does\nnot offer.",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Anything else.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What kind of failure ended a turn."
+    },
+    "TurnOutcome": {
+      "anyOf": [
+        {
+          "description": "The model gave its final answer. `text` is the answer whole, as the\nturn saved it, which a client that missed chunks or saw a provider\nretry restart a reply can show instead of what it gathered.",
+          "properties": {
+            "stop": {
+              "$ref": "#/$defs/AnswerStop"
+            },
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "answered",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text",
+            "stop"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The turn used its model-step limit before the model answered; `text`\nis the reply text of its last step, possibly empty.",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "max_steps",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A client cancelled it.",
+          "properties": {
+            "type": {
+              "const": "cancelled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "It failed.",
+          "properties": {
+            "error": {
+              "$ref": "#/$defs/TurnError"
+            },
+            "type": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "error"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How a turn ended."
     },
     "VersionFix": {
       "description": "Which side of an incompatible pair has to change.",

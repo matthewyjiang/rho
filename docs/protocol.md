@@ -43,7 +43,7 @@ After `rho/session/attach`, the daemon sends the session's events as `rho/sessio
 
 | Event | What it carries |
 | --- | --- |
-| `state` | The job's new `state`, and the `error` when it is `failed`. |
+| `state` | The job's new `state`. An ended turn's `turn_ended` comes first. |
 | `user_message` | A user message, whole: its `message` id and `content`. |
 | `agent_message_chunk`, `thought_chunk` | More `text` of the agent's reply or reasoning, under a `message` id. |
 | `tool_call` | Opens a tool call, or updates the call with the same `id`: its title, kind, status, input, content, and locations. Absent fields are unchanged. |
@@ -54,6 +54,7 @@ After `rho/session/attach`, the daemon sends the session's events as `rho/sessio
 | `input_requested` | The turn waits for a person: the `request`, with its `id`, what it `ask`s ([below](#answering-a-turn-s-requests)), the `tool_call` that asks, if one does, and its `timeout`, if it has one ([below](#timeouts)). |
 | `input_resolved` | The request `id` closed, with its `resolution`: `answered`, `withdrawn`, or `timed_out`. |
 | `input_held` | The request `id`'s timeout stopped; it waits for an answer. |
+| `turn_ended` | The turn ended, with its `outcome` ([below](#how-a-turn-ends)). |
 
 Each loaded session has one stream of events, numbered by `seq` from 1. A client keeps the `stream` and the highest `seq` it has handled since its attach response as its cursor, and passes them as `after` when it attaches again, for example after the TUI is closed and reopened. The response's `replay` says what follows:
 
@@ -68,6 +69,19 @@ The daemon detaches a client with `rho/session/detached`, after which no event o
 - `daemon_stopping`: the daemon is stopping.
 
 Attaching a session the connection already follows replaces the earlier attachment.
+
+### How a turn ends
+
+A turn that ends sends one `turn_ended` event; the `state` that records the job's end follows, unless the daemon could not record it. A turn the daemon's stop cuts short sends none: the stop first detaches every client with `daemon_stopping`, and `rho/job/list` shows the job `interrupted`, as it does for a turn whose daemon died. The `outcome` has a `type`:
+
+| Outcome | Job state | What it carries |
+| --- | --- | --- |
+| `answered` | `completed` | The model's answer whole as `text`, and why it stopped: `end_turn`, `max_tokens` (the provider cut it off), or `refusal`. Show `text` rather than the chunks you gathered when they differ, as after a provider retry restarted the reply. |
+| `max_steps` | `completed` | The turn used its model-step limit before the model answered; `text` is its last step's reply, possibly empty. |
+| `cancelled` | `cancelled` | A client cancelled the turn. |
+| `failed` | `failed` | The `error`: its `kind` (`authentication`, `provider`, `tool_host`, `configuration`, or `other`) and a `message`. An authentication failure's message names only the provider, the auth, and how to log in, never the provider's own text, which may echo credentials. |
+
+A client that resets finds, after the saved conversation, the `turn_ended` of each turn since the last one that saved to it. Outcomes are not saved with the conversation.
 
 ## Answering a turn's requests
 

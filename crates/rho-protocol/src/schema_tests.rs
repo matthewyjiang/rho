@@ -7,9 +7,9 @@ use serde_json::{json, Value};
 
 use super::OTHER;
 use crate::methods::{
-    ApprovalSource, Ask, Budget, ContentBlock, DefaultStyle, DetachReason, JobKind, JobState,
-    Operation, PathScope, PermissionMode, PlanStatus, Resolution, Selection, SessionEvent,
-    ToolContent, ToolKind, ToolStatus,
+    AnswerStop, ApprovalSource, Ask, Budget, ContentBlock, DefaultStyle, DetachReason, JobKind,
+    JobState, Operation, PathScope, PermissionMode, PlanStatus, Resolution, Selection,
+    SessionEvent, ToolContent, ToolKind, ToolStatus, TurnErrorKind, TurnOutcome,
 };
 
 // Covers: the committed schema/protocol.json is what the wire types
@@ -49,7 +49,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 18] = [
+    let cases: [(&str, bool); 21] = [
         ("JobKind", reads_as(unseen(), JobKind::Unknown)),
         ("JobState", reads_as(unseen(), JobState::Unknown)),
         ("Budget", reads_as(unseen(), Budget::Unknown)),
@@ -62,6 +62,9 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
             reads_as(unseen(), PermissionMode::Unknown),
         ),
         ("Resolution", reads_as(unseen(), Resolution::Unknown)),
+        ("AnswerStop", reads_as(unseen(), AnswerStop::Unknown)),
+        ("TurnErrorKind", reads_as(unseen(), TurnErrorKind::Unknown)),
+        ("TurnOutcome", reads_as(unseen_tag(), TurnOutcome::Unknown)),
         ("Selection", reads_as(unseen(), Selection::Unknown)),
         ("DefaultStyle", reads_as(unseen(), DefaultStyle::Unknown)),
         ("Ask", reads_as(unseen_kind(), Ask::Unknown)),

@@ -40,6 +40,7 @@ mod daemon;
 mod event;
 mod input;
 mod job;
+mod outcome;
 mod session;
 
 pub use daemon::{
@@ -60,6 +61,7 @@ pub use job::{
     Budget, JobId, JobKind, JobListParams, JobListResponse, JobState, JobSummary, QueuePlace,
     JOB_LIST,
 };
+pub use outcome::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome};
 pub use session::{
     DetachReason, Replay, SessionAttachParams, SessionAttachResponse, SessionCancelParams,
     SessionCancelResponse, SessionDetachParams, SessionDetachResponse, SessionDetachedParams,
