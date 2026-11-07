@@ -1,11 +1,14 @@
 //! Fake Cursor ACP runtime delegation, fence, permission answers, and attach.
 
 use pretty_assertions::assert_eq;
-use rho_tui_pty::{IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan, WaitTimeout};
+use rho_tui_pty::{IsolatedHome, PtyHarness, PtySize, RhoLaunchPlan, WaitTimeout};
 use serde_json::{json, Value};
 use std::{path::PathBuf, time::Duration};
 
-use super::acp_e2e::{self, FakeAcpAgent};
+use super::{
+    acp_e2e::{self, FakeAcpAgent},
+    attach_view,
+};
 
 const FAKE_CURSOR: FakeAcpAgent = FakeAcpAgent {
     program: "cursor-agent",
@@ -131,17 +134,8 @@ fn fake_cursor_acp_runtime_end_to_end() {
     assert_eq!(replies, expected.iter().collect::<Vec<_>>());
 
     // Replay the on-disk artifacts in the in-place attach view: the shell card
-    // and final text survive. The picker starts on running runs; Ctrl+R lists
-    // the finished one.
-    harness.submit_text("/attach").unwrap();
-    harness
-        .wait_for_text("attach subagent", WaitTimeout::secs(10, "attach picker"))
-        .unwrap();
-    harness.inject_key(&Key::Ctrl('r')).unwrap();
-    harness
-        .wait_for_text("running only", WaitTimeout::secs(10, "finished runs"))
-        .unwrap();
-    harness.inject_key(&Key::Enter).unwrap();
+    // and final text survive.
+    attach_view::open(&mut harness, WaitTimeout::secs(10, "attach view"));
     harness
         .wait_for_text(
             &format!("attach {run_id}"),
@@ -157,9 +151,6 @@ fn fake_cursor_acp_runtime_end_to_end() {
             WaitTimeout::secs(5, "attach final text"),
         )
         .unwrap();
-    harness.inject_key(&Key::Esc).unwrap();
-    harness
-        .wait_for_text_gone("q back", WaitTimeout::secs(5, "leave attach view"))
-        .unwrap();
+    attach_view::leave(&mut harness, WaitTimeout::secs(5, "leave attach view"));
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }

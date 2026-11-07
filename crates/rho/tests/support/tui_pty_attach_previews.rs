@@ -7,6 +7,8 @@ use std::{
 
 use rho_tui_pty::{IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan, WaitTimeout};
 
+use super::attach_view;
+
 fn find_journal(root: &Path) -> Option<PathBuf> {
     for entry in std::fs::read_dir(root).ok()?.flatten() {
         let path = entry.path();
@@ -20,22 +22,6 @@ fn find_journal(root: &Path) -> Option<PathBuf> {
         }
     }
     None
-}
-
-/// Open the only workspace run in the in-place attach view. Ctrl+R lists
-/// finished runs too, so this works before and after the run ends.
-fn open_attach_view(parent: &mut PtyHarness, wait: WaitTimeout) {
-    parent.submit_text("/attach").unwrap();
-    parent.wait_for_text("attach subagent", wait).unwrap();
-    parent.inject_key(&Key::Ctrl('r')).unwrap();
-    parent.wait_for_text("running only", wait).unwrap();
-    parent.inject_key(&Key::Enter).unwrap();
-    parent.wait_for_text("q back", wait).unwrap();
-}
-
-fn leave_attach_view(parent: &mut PtyHarness, wait: WaitTimeout) {
-    parent.inject_key(&Key::Esc).unwrap();
-    parent.wait_for_text_gone("q back", wait).unwrap();
 }
 
 // Covers: transient argument cards must stay live without bloating durable replay.
@@ -58,7 +44,7 @@ fn delegated_argument_previews_live_and_replay() {
     parent
         .wait_for_text("delegated write dispatched", wait)
         .unwrap();
-    open_attach_view(&mut parent, wait);
+    attach_view::open(&mut parent, wait);
     parent.inject_key(&Key::Ctrl('o')).unwrap();
     parent.wait_for_text("FIRST_WRITE_FRAGMENT", wait).unwrap();
     let journal = find_journal(&home.home.join(".rho")).expect("delegated journal");
@@ -76,8 +62,8 @@ fn delegated_argument_previews_live_and_replay() {
         .exists());
     // Reopen the view so a fresh reader joins mid-run and still sees the
     // replaceable preview.
-    leave_attach_view(&mut parent, wait);
-    open_attach_view(&mut parent, wait);
+    attach_view::leave(&mut parent, wait);
+    attach_view::open(&mut parent, wait);
     parent
         .wait_for_text(".rho-tui-fixture-streamed-write.txt", wait)
         .unwrap();
@@ -96,17 +82,17 @@ fn delegated_argument_previews_live_and_replay() {
             .unwrap(),
         "FIRST_WRITE_FRAGMENT\nSECOND_WRITE_FRAGMENT\n",
     );
-    leave_attach_view(&mut parent, wait);
+    attach_view::leave(&mut parent, wait);
 
     // Replay the finished run from its durable journal.
     super::acp_e2e::wait_for_terminal_result(journal.parent().unwrap(), Duration::from_secs(10));
-    open_attach_view(&mut parent, wait);
+    attach_view::open(&mut parent, wait);
     parent
         .wait_for_text("streamed write completed successfully", wait)
         .unwrap();
     parent.inject_key(&Key::Ctrl('o')).unwrap();
     parent.wait_for_text("SECOND_WRITE_FRAGMENT", wait).unwrap();
-    leave_attach_view(&mut parent, wait);
+    attach_view::leave(&mut parent, wait);
     parent.submit_text("/exit").unwrap();
     assert_eq!(parent.wait_for_exit(wait).unwrap(), 0);
 }

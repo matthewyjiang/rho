@@ -1,14 +1,9 @@
 //! Terminal ownership for a picker without a conversation or provider.
 
-use crossterm::event::Event;
-
-use super::{
-    runner::{self, EventHandling},
-    UiPicker,
-};
+use super::{runner, UiPicker};
 use crate::{
     keybindings::Keybindings,
-    tui::{keyboard_modes, mouse_capture, terminal_events::TerminalEvents, Theme},
+    tui::{keyboard_modes, mouse_capture, Theme},
 };
 
 pub(in crate::tui) async fn select(
@@ -23,23 +18,7 @@ pub(in crate::tui) async fn select(
     };
     Theme::initialize_from_terminal();
     Theme::apply_committed(theme);
-    let mut events = TerminalEvents::new();
-    runner::run(
-        &mut terminal,
-        &mut events,
-        picker,
-        keybindings,
-        |picker, event| {
-            if let Event::Paste(text) = event {
-                for ch in text.chars().filter(|ch| !ch.is_control()) {
-                    picker.push_filter_char(ch);
-                }
-                return EventHandling::Handled;
-            }
-            EventHandling::Continue
-        },
-    )
-    .await
+    runner::run(&mut terminal, picker, keybindings).await
 }
 
 /// Undo terminal modes in reverse order of acquisition, then leave the

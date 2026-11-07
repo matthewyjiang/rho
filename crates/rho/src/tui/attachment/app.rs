@@ -50,8 +50,7 @@ const TOGGLE_WIDTH_FALLBACK: usize = 80;
 /// Result of routing one terminal event through the attach view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AttachInput {
-    Ignored,
-    Handled,
+    Stay,
     Leave,
     Quit,
 }
@@ -67,27 +66,13 @@ pub(crate) struct AttachmentDisplaySettings {
     pub max_tool_output_lines: usize,
 }
 
-impl Default for AttachmentDisplaySettings {
-    fn default() -> Self {
-        let config = crate::config::Config::default();
-        Self::from_runtime(
-            config.show_reasoning_output,
-            config.zen_mode,
-            config.max_tool_output_lines,
-        )
-    }
-}
-
 impl AttachmentDisplaySettings {
-    pub(crate) fn from_runtime(
-        show_reasoning_output: bool,
-        zen_mode: bool,
-        max_tool_output_lines: usize,
-    ) -> Self {
+    /// The parent TUI's current display settings.
+    pub(crate) fn from_runtime(runtime: &crate::tui::RuntimeModelView) -> Self {
         Self {
-            show_reasoning_output,
-            zen_mode,
-            max_tool_output_lines: max_tool_output_lines.max(1),
+            show_reasoning_output: runtime.show_reasoning_output,
+            zen_mode: runtime.zen_mode,
+            max_tool_output_lines: runtime.max_tool_output_lines.max(1),
         }
     }
 
@@ -483,19 +468,19 @@ impl AttachmentApp {
                 KeyCode::Char('q') | KeyCode::Esc => AttachInput::Leave,
                 KeyCode::Up => {
                     self.scroll_lines(now, -1);
-                    AttachInput::Handled
+                    AttachInput::Stay
                 }
                 KeyCode::Down => {
                     self.scroll_lines(now, 1);
-                    AttachInput::Handled
+                    AttachInput::Stay
                 }
                 KeyCode::PageUp => {
                     self.scroll_lines(now, -(self.viewport_height.max(1) as isize));
-                    AttachInput::Handled
+                    AttachInput::Stay
                 }
                 KeyCode::PageDown => {
                     self.scroll_lines(now, self.viewport_height.max(1) as isize);
-                    AttachInput::Handled
+                    AttachInput::Stay
                 }
                 KeyCode::Home => {
                     self.scroll
@@ -503,23 +488,23 @@ impl AttachmentApp {
                     if !matches!(self.scroll.scroll(), HistoryScroll::Bottom) {
                         self.scroll.reveal(now, HISTORY_SCROLLBAR_REVEAL_DURATION);
                     }
-                    AttachInput::Handled
+                    AttachInput::Stay
                 }
                 KeyCode::End => {
                     self.scroll.scroll_to_bottom();
-                    AttachInput::Handled
+                    AttachInput::Stay
                 }
                 KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     self.toggle_latest_tool();
-                    AttachInput::Handled
+                    AttachInput::Stay
                 }
-                _ => AttachInput::Ignored,
+                _ => AttachInput::Stay,
             },
             Event::Mouse(mouse) => {
                 if matches!(mouse.kind, MouseEventKind::Moved)
                     && self.last_mouse_position == Some((mouse.column, mouse.row))
                 {
-                    return AttachInput::Ignored;
+                    return AttachInput::Stay;
                 }
                 if matches!(mouse.kind, MouseEventKind::Moved) {
                     self.last_mouse_position = Some((mouse.column, mouse.row));
@@ -564,28 +549,28 @@ impl AttachmentApp {
                                 press.and_then(|key| self.target_for_tool_key(&key))
                             {
                                 self.toggle_tool_at(target);
-                                return AttachInput::Handled;
+                                return AttachInput::Stay;
                             }
                         }
                     }
                     _ => {}
                 }
-                AttachInput::Handled
+                AttachInput::Stay
             }
             Event::FocusGained => {
                 self.clear_press();
                 mouse_capture::reassert();
-                AttachInput::Ignored
+                AttachInput::Stay
             }
             Event::FocusLost => {
                 self.clear_press();
-                AttachInput::Ignored
+                AttachInput::Stay
             }
             Event::Resize(_, _) => {
                 self.clear_press();
-                AttachInput::Handled
+                AttachInput::Stay
             }
-            _ => AttachInput::Ignored,
+            _ => AttachInput::Stay,
         }
     }
 

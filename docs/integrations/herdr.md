@@ -60,10 +60,6 @@ A session that is not saved yet (before the first prompt, after `/new`, or with 
 
 `rho run` and `rho acp` report state but no resume command. `rho run` and `rho acp` report under their own source, so one started from a tool inside an interactive pane cannot clear that session's resume command.
 
-## Watch a subagent
-
-Activating a subagent row, or choosing one from `/attach`, opens a read-only attach view in the same terminal. The parent session keeps streaming. Press `q` or Escape to return. Detaching does not stop the delegated run. See [attachment and artifacts](/subagents/attachment-and-artifacts).
-
 ## Images and graphics
 
 Hosts such as Herdr may paste clipboard images as a filesystem path. Rho treats a single-line paste of a PNG, JPEG, GIF, or WebP path as an image attachment. Details: [attachments](/interactive-tui/attachments).

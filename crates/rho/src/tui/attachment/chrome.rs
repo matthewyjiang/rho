@@ -1,4 +1,5 @@
-//! Header, footer, and usage chrome for the attach view.
+//! Header, footer, and usage chrome for the attach view. Footer copy and
+//! parent badges live here so `AttachmentApp` stays a viewer.
 
 use ratatui::text::{Line, Span};
 use rho_sdk::model::{ContextUsage, ModelUsage};
@@ -20,8 +21,7 @@ const FIELD_SEP: &str = " · ";
 /// Footer key hints for the in-place attach view.
 const FOOTER_HINT: &str = "scroll · Tab cycle · Ctrl+O expand · q back · Ctrl+C back/again quit";
 
-/// Parent session state shown in the attach footer. Footer copy and parent
-/// badges live here so `AttachmentApp` stays a viewer.
+/// Parent session state shown in the attach footer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ParentNotice {
     Approval,

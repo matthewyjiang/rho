@@ -114,11 +114,7 @@ impl App {
         &mut self,
         target: &SubagentAttachTarget,
     ) -> anyhow::Result<()> {
-        let display = AttachmentDisplaySettings::from_runtime(
-            self.info.runtime.show_reasoning_output,
-            self.info.runtime.zen_mode,
-            self.info.runtime.max_tool_output_lines,
-        );
+        let display = AttachmentDisplaySettings::from_runtime(&self.info.runtime);
         let view = open_view(target, display)?;
         let parent_turn_armed = match &self.exclusive {
             ExclusiveOccupant::Attach {
@@ -163,7 +159,7 @@ impl App {
                 self.notify_status("left attach view; press ctrl-c again to quit");
                 self.ctrl_c_streak = 1;
             }
-            AttachInput::Ignored | AttachInput::Handled => {}
+            AttachInput::Stay => {}
         }
         resize
     }

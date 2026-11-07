@@ -8,6 +8,7 @@ use std::{fs, path::PathBuf, time::Duration};
 
 use super::{
     acp_e2e::{self, FakeAcpPaths},
+    attach_view,
     claude_e2e::FAKE_CLAUDE,
 };
 
@@ -175,17 +176,8 @@ fn fake_claude_runtime_end_to_end_success() {
         )
     );
 
-    // Replay the real on-disk artifacts in the in-place attach view. The
-    // picker starts on running runs; Ctrl+R lists the finished one.
-    harness.submit_text("/attach").unwrap();
-    harness
-        .wait_for_text("attach subagent", WaitTimeout::secs(10, "attach picker"))
-        .unwrap();
-    harness.inject_key(&Key::Ctrl('r')).unwrap();
-    harness
-        .wait_for_text("running only", WaitTimeout::secs(10, "finished runs"))
-        .unwrap();
-    harness.inject_key(&Key::Enter).unwrap();
+    // Replay the real on-disk artifacts in the in-place attach view.
+    attach_view::open(&mut harness, WaitTimeout::secs(10, "attach view"));
     for (text, label) in [
         (format!("attach {run_id}"), "attach startup"),
         ("Say hello in one short sentence.".into(), "attach prompt"),
@@ -197,10 +189,7 @@ fn fake_claude_runtime_end_to_end_success() {
             .wait_for_text(&text, WaitTimeout::secs(10, label))
             .unwrap();
     }
-    harness.inject_key(&Key::Esc).unwrap();
-    harness
-        .wait_for_text_gone("q back", WaitTimeout::secs(5, "leave attach view"))
-        .unwrap();
+    attach_view::leave(&mut harness, WaitTimeout::secs(5, "leave attach view"));
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 

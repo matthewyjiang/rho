@@ -16,14 +16,38 @@ fn resolved_identity_line(
     identity_line(status, status.and_then(attach_reasoning), usage, now)
 }
 
+/// The display settings of a parent TUI on the default config.
+fn default_display() -> AttachmentDisplaySettings {
+    let config = crate::config::Config::default();
+    AttachmentDisplaySettings {
+        show_reasoning_output: config.show_reasoning_output,
+        zen_mode: config.zen_mode,
+        max_tool_output_lines: config.max_tool_output_lines,
+    }
+}
+
 fn test_app() -> (TempDir, AttachmentApp) {
     let directory = TempDir::new().unwrap();
-    let app = AttachmentApp::new(
-        "abc123",
-        directory.path().to_path_buf(),
-        AttachmentDisplaySettings::default(),
-    );
+    let app = AttachmentApp::new("abc123", directory.path().to_path_buf(), default_display());
     (directory, app)
+}
+
+/// The view's first three header rows as drawn at 100 columns.
+fn header_rows(app: &mut AttachmentApp) -> Vec<String> {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+    terminal
+        .draw(|frame| app.draw(frame, /*parent_notice*/ None))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    (0..3)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        })
+        .collect()
 }
 
 fn line_text(lines: &[Line<'static>]) -> Vec<String> {
@@ -219,11 +243,7 @@ fn multi_step_usage_replaces_live_run_snapshot() {
 #[test]
 fn history_lines_follow_display_settings() {
     let directory = TempDir::new().unwrap();
-    let mut app = AttachmentApp::new(
-        "abc123",
-        directory.path().to_path_buf(),
-        AttachmentDisplaySettings::default(),
-    );
+    let mut app = AttachmentApp::new("abc123", directory.path().to_path_buf(), default_display());
     app.apply_event(AttachmentEvent::Prompt("task".into()));
     app.apply_event(AttachmentEvent::ReasoningDelta("secret plan".into()));
     app.apply_event(AttachmentEvent::AssistantTextDelta("answer".into()));
@@ -343,7 +363,7 @@ fn history_lines_honor_max_tool_output_lines() {
         directory.path().to_path_buf(),
         AttachmentDisplaySettings {
             max_tool_output_lines: 1,
-            ..AttachmentDisplaySettings::default()
+            ..default_display()
         },
     );
     let body = (0..5).map(|i| format!("line-{i}")).collect::<Vec<_>>();
@@ -961,4 +981,47 @@ fn ctrl_o_prefers_pending_and_collapses_others() {
     )));
     assert!(!transcript_tool(&app, 0).expanded);
     assert!(transcript_tool(&app, 1).expanded);
+}
+
+// Covers: the open view follows the run's status file as the run finishes:
+// state, activity, and the finished elapsed time replace the running ones.
+// Owner: AttachmentApp::refresh
+#[test]
+fn refresh_follows_the_run_status_to_completion() {
+    let (directory, mut app) = test_app();
+    let status_path = directory.path().join(subagent::RESULT_FILE_NAME);
+    std::fs::write(
+        &status_path,
+        r#"{"state": "running", "agent_id": "explorer", "started_at": 1700000000,
+            "turns": 1, "last_activity": "assistant text"}"#,
+    )
+    .unwrap();
+    assert!(app.refresh().unwrap());
+    let running = header_rows(&mut app);
+    // The running elapsed time counts from the wall clock; skip that row.
+    assert_eq!(
+        [&running[0], &running[2]],
+        ["rho  attach abc123 · explorer · running", "assistant text"]
+    );
+    assert!(
+        !app.refresh().unwrap(),
+        "an unchanged status is not a change"
+    );
+
+    std::fs::write(
+        &status_path,
+        r#"{"state": "ok", "agent_id": "explorer", "started_at": 1700000000,
+            "finished_at": 1700000065, "turns": 1, "last_activity": "complete",
+            "result": "watchable answer"}"#,
+    )
+    .unwrap();
+    assert!(app.refresh().unwrap());
+    assert_eq!(
+        header_rows(&mut app),
+        [
+            "rho  attach abc123 · explorer · ok",
+            "turn 1 · 1m 05s",
+            "complete",
+        ]
+    );
 }
