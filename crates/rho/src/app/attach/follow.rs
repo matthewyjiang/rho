@@ -27,8 +27,10 @@ pub(super) enum Ending {
 /// One attachment's place in its session's events.
 pub(super) struct Follow {
     stream: StreamId,
-    /// Events of a reset replay still to come.
-    history: u64,
+    /// The kind of the last replay.
+    replay: Replay,
+    /// Events of the last replay still to come.
+    replaying: u64,
     /// The job state the replay ends in.
     state: JobState,
     /// How the last turn the replay holds ended.
@@ -43,7 +45,8 @@ impl Follow {
     pub(super) fn attached(response: &SessionAttachResponse) -> (Self, Option<Ending>) {
         let mut follow = Self {
             stream: response.stream.clone(),
-            history: 0,
+            replay: response.replay,
+            replaying: 0,
             state: JobState::Idle,
             replayed: None,
             cursor: None,
@@ -58,21 +61,19 @@ impl Follow {
         self.stream = response.stream.clone();
         self.state = response.state;
         self.replayed = None;
+        self.replay = response.replay;
+        self.replaying = response.replay_events;
         match response.replay {
             Replay::Reset => {
                 // A reset starts the client over, cursor included.
                 self.cursor = None;
-                self.history = response.replay_events;
-                if self.history == 0 {
+                if self.replaying == 0 {
                     self.settled()
                 } else {
                     None
                 }
             }
-            Replay::Tail => {
-                self.history = 0;
-                None
-            }
+            Replay::Tail => None,
         }
     }
 
@@ -87,12 +88,13 @@ impl Follow {
                 seq,
             });
         }
-        if self.history > 0 {
-            self.history -= 1;
+        let replayed = self.replaying > 0;
+        self.replaying = self.replaying.saturating_sub(1);
+        if replayed && self.replay == Replay::Reset {
             if let SessionEvent::TurnEnded { outcome } = event {
                 self.replayed = Some(outcome.clone());
             }
-            return if self.history == 0 {
+            return if self.replaying == 0 {
                 self.settled()
             } else {
                 None
@@ -105,6 +107,11 @@ impl Follow {
             } => Some(Ending::Interrupted),
             _ => None,
         }
+    }
+
+    /// Whether the next event is one a replay holds, rather than news.
+    pub(super) fn replaying(&self) -> bool {
+        self.replaying > 0
     }
 
     /// Where a reattach resumes from.

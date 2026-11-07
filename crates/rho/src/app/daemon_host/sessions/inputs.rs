@@ -354,7 +354,8 @@ fn control_for(waiting: &Waiting, answer: InputAnswer) -> Result<TurnControl, Rp
         Waiting::Plan { id, modes } => {
             let answer = match answer {
                 InputAnswer::ApprovePlan { mode } => {
-                    let mode = asks::mode_from_wire(mode)
+                    let mode = PermissionMode::try_from(mode)
+                        .ok()
                         .filter(|mode| modes.contains(mode))
                         .ok_or_else(|| invalid("the plan approval does not offer that mode"))?;
                     PlanPermissionAnswer::Approve(mode)

@@ -8,10 +8,13 @@ use rho_sdk::{
 };
 
 use super::{ApprovalChoice, ApprovalComposer};
-use crate::tui::{
-    composer_pointer::ComposerHit,
-    render::{push_wrapped_text, truncate_one_line, LineFill},
-    theme::Theme,
+use crate::{
+    control_chars::{escape_controls, LineBreaks},
+    tui::{
+        composer_pointer::ComposerHit,
+        render::{push_wrapped_text, truncate_one_line, LineFill},
+        theme::Theme,
+    },
 };
 
 /// Fixed composer rows outside the detail window: title, choices, status, footer.
@@ -348,39 +351,5 @@ fn format_json_strings<'a>(values: impl IntoIterator<Item = &'a str>) -> String 
 }
 
 fn sanitize_controls(text: &str) -> String {
-    text.chars()
-        .map(|ch| match ch {
-            '\n' => "\\n".into(),
-            '\r' => "\\r".into(),
-            '\t' => "\\t".into(),
-            ch if ch.is_control() || is_unicode_format_control(ch) => {
-                format!("\\u{{{:x}}}", ch as u32)
-            }
-            ch => ch.to_string(),
-        })
-        .collect()
-}
-
-fn is_unicode_format_control(ch: char) -> bool {
-    matches!(
-        ch,
-        '\u{00ad}'
-            | '\u{061c}'
-            | '\u{070f}'
-            | '\u{0890}'..='\u{0891}'
-            | '\u{08e2}'
-            | '\u{180e}'
-            | '\u{200b}'..='\u{200f}'
-            | '\u{202a}'..='\u{202e}'
-            | '\u{2060}'..='\u{206f}'
-            | '\u{feff}'
-            | '\u{fff9}'..='\u{fffb}'
-            | '\u{110bd}'
-            | '\u{110cd}'
-            | '\u{13430}'..='\u{1343f}'
-            | '\u{1bca0}'..='\u{1bca3}'
-            | '\u{1d173}'..='\u{1d17a}'
-            | '\u{e0001}'
-            | '\u{e0020}'..='\u{e007f}'
-    )
+    escape_controls(text, LineBreaks::Escape)
 }

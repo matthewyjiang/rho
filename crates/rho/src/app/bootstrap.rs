@@ -215,9 +215,9 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
             super::acp_fixture_agent::run(args).await,
         ));
     }
-    if let Some(Command::Attach { id, output }) = &cli.command {
+    if let Some(Command::Attach { id, output, input }) = &cli.command {
         return Ok(EarlyDispatch::Handled(
-            super::attach::run(id, *output).await,
+            super::attach::run(id, *output, *input).await,
         ));
     }
     if matches!(cli.command, Some(Command::Update)) {

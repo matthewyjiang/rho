@@ -1,17 +1,18 @@
 //! The daemon client side of `rho attach`: names the session, follows its
-//! events, and turns how the turn ended into the process's exit.
+//! events, hands text mode's terminal what it answers and steers with, and
+//! turns how the turn ended into the process's exit.
 
 use std::path::{Path, PathBuf};
 
 use rho_protocol::{
     methods::{JobList, SessionAttach},
-    Client, ClientError, Cursor, DaemonNotification, DetachReason, ErrorCode, JobKind,
-    JobListParams, JobSummary, Replay, SessionAttachParams, SessionAttachResponse, SessionEvent,
-    SessionId,
+    Client, Cursor, DaemonNotification, DetachReason, ErrorCode, JobKind, JobListParams,
+    JobSummary, Replay, SessionAttachParams, SessionAttachResponse, SessionEvent, SessionId,
 };
 
 use super::{
     follow::{Ending, Follow},
+    terminal::{Line, Lines, Terminal},
     text::TextView,
 };
 use crate::{
@@ -21,13 +22,17 @@ use crate::{
         daemon_cli,
         shutdown_signal::ShutdownSignals,
     },
-    cli::AttachOutput,
+    cli::{AttachInput, AttachOutput},
     daemon::{self, cli_client_info, Connection},
 };
 
-pub(in crate::app) async fn run(id: &str, output: AttachOutput) -> anyhow::Result<()> {
+pub(in crate::app) async fn run(
+    id: &str,
+    output: AttachOutput,
+    input: AttachInput,
+) -> anyhow::Result<()> {
     let mut view = View::new(output);
-    let exit = attach(id, &mut view).await;
+    let exit = attach(id, &mut view, Lines::of(input)).await;
     Ok(view.end(exit)?)
 }
 
@@ -45,6 +50,15 @@ impl View {
         }
     }
 
+    /// The terminal that tells and answers the session's input requests:
+    /// text output's; JSONL readers answer through the protocol.
+    fn terminal(&self, lines: Lines) -> Result<Option<Terminal>, AutomationExit> {
+        match self {
+            Self::Text(_) => Terminal::open(lines).map(Some),
+            Self::Jsonl(_) => Ok(None),
+        }
+    }
+
     /// Starts the output for `session`, which runs in `workspace`.
     fn started(&mut self, session: &SessionId, workspace: &Path) -> Result<(), AutomationExit> {
         match self {
@@ -59,9 +73,7 @@ impl View {
     /// Starts the output over for a reset replay.
     fn restart(&mut self) -> Result<(), AutomationExit> {
         match self {
-            Self::Text(view) => view.restart().map_err(|error| {
-                automation::output_error(&format!("could not write output: {error}"))
-            }),
+            Self::Text(view) => view.restart().map_err(automation::write_failed),
             // JSONL readers see the replay's events as they come.
             Self::Jsonl(_) => Ok(()),
         }
@@ -69,9 +81,7 @@ impl View {
 
     fn show(&mut self, event: &SessionEvent) -> Result<(), AutomationExit> {
         match self {
-            Self::Text(view) => view.show(event).map_err(|error| {
-                automation::output_error(&format!("could not write output: {error}"))
-            }),
+            Self::Text(view) => view.show(event).map_err(automation::write_failed),
             Self::Jsonl(stream) => {
                 stream.event(event);
                 automation::stream_written(stream)
@@ -105,11 +115,11 @@ struct Target {
 /// Follows the session `id` names until its turn ends, writing its events
 /// to `view`, and returns the exit that end makes. A signal detaches at any
 /// point, connecting included.
-async fn attach(id: &str, view: &mut View) -> Result<(), AutomationExit> {
+async fn attach(id: &str, view: &mut View, lines: Lines) -> Result<(), AutomationExit> {
     let mut signals = ShutdownSignals::install()
         .map_err(|error| other(format!("could not install signal handlers: {error}")))?;
     tokio::select! {
-        exit = follow(id, view) => exit,
+        exit = follow(id, view, lines) => exit,
         signal = signals.recv() => {
             let signal =
                 signal.map_err(|error| other(format!("could not wait for signals: {error}")))?;
@@ -122,7 +132,7 @@ async fn attach(id: &str, view: &mut View) -> Result<(), AutomationExit> {
     }
 }
 
-async fn follow(id: &str, view: &mut View) -> Result<(), AutomationExit> {
+async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), AutomationExit> {
     let paths = daemon_cli::paths().map_err(|error| other(format!("{error:#}")))?;
     let Connection {
         client,
@@ -143,38 +153,76 @@ async fn follow(id: &str, view: &mut View) -> Result<(), AutomationExit> {
     if let Some(ending) = ending {
         return ended(ending);
     }
+    let mut terminal = view.terminal(lines)?;
+    // The response's open requests, held until its replay is written, so a
+    // prompt follows the conversation it belongs to; lines wait with them.
+    let mut pending = Some(response);
     loop {
-        let ending = match notifications.recv().await {
-            None => return Err(other("lost the connection to the rho daemon")),
-            Some(DaemonNotification::SessionEvent(params)) if params.session == target.session => {
-                view.show(&params.event)?;
-                follow.observe(params.seq, &params.event)
+        if let Some(terminal) = terminal.as_mut().filter(|_| !follow.replaying()) {
+            if let Some(response) = pending.take() {
+                terminal.attached(&response.inputs, response.replay)?;
             }
-            Some(DaemonNotification::SessionDetached(params))
-                if params.session == target.session =>
-            {
-                match params.reason {
-                    // Resumes after the last event seen, or starts over when
-                    // the daemon no longer buffers it.
-                    DetachReason::Lagged => {
-                        let response =
-                            attach_session(&client, &target.session, follow.cursor()).await?;
-                        if response.replay == Replay::Reset {
-                            view.restart()?;
-                        }
-                        follow.reattached(&response)
+        }
+        let ending = tokio::select! {
+            notification = notifications.recv() => match notification {
+                None => return Err(other("lost the connection to the rho daemon")),
+                Some(DaemonNotification::SessionEvent(params))
+                    if params.session == target.session =>
+                {
+                    view.show(&params.event)?;
+                    // A replayed event is history the attach response's open
+                    // requests already account for.
+                    if let Some(terminal) = terminal.as_mut().filter(|_| !follow.replaying()) {
+                        terminal.event(&params.event)?;
                     }
-                    DetachReason::DaemonStopping => Some(Ending::Interrupted),
-                    // `DetachReason` is non-exhaustive.
-                    _ => return Err(other("the rho daemon detached this client")),
+                    follow.observe(params.seq, &params.event)
                 }
+                Some(DaemonNotification::SessionDetached(params))
+                    if params.session == target.session =>
+                {
+                    match params.reason {
+                        // Resumes after the last event seen, or starts over
+                        // when the daemon no longer buffers it.
+                        DetachReason::Lagged => {
+                            let response =
+                                attach_session(&client, &target.session, follow.cursor()).await?;
+                            if response.replay == Replay::Reset {
+                                view.restart()?;
+                            }
+                            let ending = follow.reattached(&response);
+                            pending = Some(response);
+                            ending
+                        }
+                        DetachReason::DaemonStopping => Some(Ending::Interrupted),
+                        // `DetachReason` is non-exhaustive.
+                        _ => return Err(other("the rho daemon detached this client")),
+                    }
+                }
+                // Another session's, or a notification a newer daemon sends.
+                Some(_) => None,
+            },
+            typed = next_line(&mut terminal), if pending.is_none() => {
+                let (terminal, line) = typed?;
+                terminal.line(&client, &target.session, &line).await?;
+                None
             }
-            // Another session's, or a notification a newer daemon sends.
-            Some(_) => None,
         };
         if let Some(ending) = ending {
             return ended(ending);
         }
+    }
+}
+
+/// The next line typed at `terminal`, with it; never ready without one.
+async fn next_line(
+    terminal: &mut Option<Terminal>,
+) -> Result<(&mut Terminal, Line), AutomationExit> {
+    match terminal {
+        Some(terminal) => {
+            let line = terminal.next_line().await?;
+            Ok((terminal, line))
+        }
+        None => std::future::pending().await,
     }
 }
 
@@ -190,15 +238,14 @@ async fn attach_session(
     client
         .request::<SessionAttach>(&params)
         .await
-        .map_err(|error| match &error {
-            ClientError::Rpc { error, .. }
-                if error.error_code() == Some(ErrorCode::SessionNotLoaded) =>
-            {
+        .map_err(|error| {
+            if error.error_code() == Some(ErrorCode::SessionNotLoaded) {
                 other(format!(
                     "could not attach to session {session}: this rho daemon has not loaded it; a session an earlier daemon ran cannot be followed yet (#1661)"
                 ))
+            } else {
+                other(format!("could not attach to session {session}: {error}"))
             }
-            _ => other(format!("could not attach to session {session}: {error}")),
         })
 }
 

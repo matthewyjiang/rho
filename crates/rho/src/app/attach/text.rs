@@ -1,13 +1,14 @@
 //! `rho attach`'s text output: the conversation on stdout, as it streams,
-//! and what is not part of it, such as notices and input requests, on
-//! stderr.
+//! and notices on stderr. The console tells and answers input requests.
 
 use std::{
     collections::{hash_map::Entry, HashMap},
     io::{self, Write},
 };
 
-use rho_protocol::{Ask, ContentBlock, SessionEvent, ToolCallId, ToolCallUpdate, ToolStatus};
+use rho_protocol::{ContentBlock, SessionEvent, ToolCallId, ToolCallUpdate, ToolStatus};
+
+use crate::control_chars::{escape_controls, LineBreaks};
 
 /// Writes one session's events for a person reading a terminal.
 pub(super) struct TextView<O = io::Stdout, E = io::Stderr> {
@@ -56,15 +57,15 @@ impl<O: Write, E: Write> TextView<O, E> {
             SessionEvent::Card { title, markdown } => {
                 self.block(&format!("{title}\n{}\n", markdown.trim_end_matches('\n')))?;
             }
-            SessionEvent::Notice { text } => writeln!(self.err, "rho: {text}")?,
-            SessionEvent::InputRequested { request } => {
-                writeln!(self.err, "rho: the turn waits for {}", asked(&request.ask))?;
+            SessionEvent::Notice { text } => {
+                writeln!(self.err, "rho: {}", escape_controls(text, LineBreaks::Keep))?
             }
             SessionEvent::TurnEnded { .. } => self.end_line()?,
             SessionEvent::ThoughtChunk { .. }
             | SessionEvent::Plan { .. }
             | SessionEvent::Usage { .. }
             | SessionEvent::State { .. }
+            | SessionEvent::InputRequested { .. }
             | SessionEvent::InputResolved { .. }
             | SessionEvent::InputHeld { .. } => {}
             // `SessionEvent` is non-exhaustive; an event a newer daemon sends
@@ -136,7 +137,10 @@ impl<O: Write, E: Write> TextView<O, E> {
         if text.is_empty() {
             return Ok(());
         }
-        self.out.write_all(text.as_bytes())?;
+        // The conversation is the model's: escaped, so it cannot steer the
+        // terminal, such as hide the requests the console shows after it.
+        self.out
+            .write_all(escape_controls(text, LineBreaks::Keep).as_bytes())?;
         self.line_ended = text.ends_with('\n');
         Ok(())
     }
@@ -152,17 +156,6 @@ struct ShownCall {
 /// `text` as a quoted block: each line starts with `> `.
 fn quoted(text: &str) -> String {
     text.lines().map(|line| format!("> {line}\n")).collect()
-}
-
-/// What `ask` waits for, for a notice.
-fn asked(ask: &Ask) -> String {
-    match ask {
-        Ask::Approval(approval) => format!("an approval: {}", approval.reason),
-        Ask::PlanApproval(_) => "its plan to be approved".to_owned(),
-        Ask::Question(question) => format!("answers to \"{}\"", question.title),
-        // `Ask` is non-exhaustive.
-        _ => "input".to_owned(),
-    }
 }
 
 #[cfg(test)]

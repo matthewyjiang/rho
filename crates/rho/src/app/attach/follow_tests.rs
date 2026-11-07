@@ -148,3 +148,22 @@ fn the_cursor_is_the_highest_seq_seen_since_the_last_reset() {
     follow.reattached(&response(Replay::Reset, 1, JobState::Running));
     assert_eq!(follow.cursor(), None);
 }
+
+// Covers: the events either kind of replay holds count as replayed, which
+// the console skips, and the events after them as news.
+// Owner: rho attach follow logic (unit).
+#[test]
+fn both_kinds_of_replay_count_as_replayed() {
+    let (mut follow, _) = Follow::attached(&response(Replay::Reset, 1, JobState::Running));
+    let mut replaying = Vec::new();
+    for seq in [1, 2] {
+        replaying.push(follow.replaying());
+        follow.observe(Seq(seq), &chunk("event"));
+    }
+    follow.reattached(&response(Replay::Tail, 1, JobState::Running));
+    for seq in [3, 4] {
+        replaying.push(follow.replaying());
+        follow.observe(Seq(seq), &chunk("event"));
+    }
+    assert_eq!(replaying, [true, false, true, false]);
+}

@@ -96,6 +96,17 @@ pub enum ClientError {
     },
 }
 
+impl ClientError {
+    /// The protocol error code the daemon answered with, if it rejected the
+    /// request with one this crate knows.
+    pub fn error_code(&self) -> Option<ErrorCode> {
+        match self {
+            Self::Rpc { error, .. } => error.error_code(),
+            _ => None,
+        }
+    }
+}
+
 /// A message for the writer task, and where to report its write.
 type Write = (Message, oneshot::Sender<Result<(), FrameError>>);
 

@@ -14,7 +14,7 @@ use rho_sdk::{
 };
 use serde_json::Value;
 
-use crate::{app::session_runtime::PlanApprovalRequest, permission::PermissionMode};
+use crate::app::session_runtime::PlanApprovalRequest;
 
 /// The wire ask for a tool approval.
 pub(super) fn approval(request: &ApprovalRequest) -> Ask {
@@ -90,7 +90,12 @@ fn path_scope(scope: &PathScope) -> wire::PathScope {
 pub(super) fn plan_approval(request: &PlanApprovalRequest) -> Ask {
     Ask::PlanApproval(PlanApprovalAsk {
         plan: request.plan.clone(),
-        modes: request.targets.iter().copied().map(mode_to_wire).collect(),
+        modes: request
+            .targets
+            .iter()
+            .copied()
+            .map(wire::PermissionMode::from)
+            .collect(),
     })
 }
 
@@ -178,28 +183,6 @@ fn scalar_text(value: &Value) -> Option<String> {
         Value::Bool(flag) => Some(flag.to_string()),
         Value::Number(number) => Some(number.to_string()),
         Value::String(_) | Value::Null | Value::Array(_) | Value::Object(_) => None,
-    }
-}
-
-fn mode_to_wire(mode: PermissionMode) -> wire::PermissionMode {
-    match mode {
-        PermissionMode::Bypass => wire::PermissionMode::Bypass,
-        PermissionMode::Auto => wire::PermissionMode::Auto,
-        PermissionMode::AllowEdits => wire::PermissionMode::AllowEdits,
-        PermissionMode::Plan => wire::PermissionMode::Plan,
-        PermissionMode::Supervised => wire::PermissionMode::Supervised,
-    }
-}
-
-/// The mode a client named, or `None` for one this daemon does not know.
-pub(super) fn mode_from_wire(mode: wire::PermissionMode) -> Option<PermissionMode> {
-    match mode {
-        wire::PermissionMode::Bypass => Some(PermissionMode::Bypass),
-        wire::PermissionMode::Auto => Some(PermissionMode::Auto),
-        wire::PermissionMode::AllowEdits => Some(PermissionMode::AllowEdits),
-        wire::PermissionMode::Plan => Some(PermissionMode::Plan),
-        wire::PermissionMode::Supervised => Some(PermissionMode::Supervised),
-        _ => None,
     }
 }
 
