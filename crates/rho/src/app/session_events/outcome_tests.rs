@@ -131,3 +131,33 @@ fn a_failure_is_classified_by_type_and_hides_authentication_text() {
         );
     }
 }
+
+// Covers: an authentication failure's message offers `--auth` only for the
+// provider's other keyed mode, if it has one.
+// Owner: turn outcome on the wire.
+#[test]
+fn an_authentication_failure_names_the_way_to_log_in() {
+    let error = anyhow::Error::new(rho_sdk::Error::Provider(rho_sdk::ProviderError::new(
+        rho_sdk::ProviderErrorKind::Authentication,
+        "token fixture-secret rejected",
+        rho_sdk::Retryability::Permanent,
+    )));
+    for (provider, auth, expected) in [
+        (
+            "openai-codex",
+            "codex",
+            "authentication failed for openai-codex (auth: codex); run /login openai-codex",
+        ),
+        (
+            "xai",
+            "xai-api-key",
+            "authentication failed for xai (auth: xai-api-key); run /login xai or pass --auth xai-oauth",
+        ),
+    ] {
+        assert_eq!(
+            turn_error(&error, provider, auth).message,
+            expected,
+            "{provider}/{auth}"
+        );
+    }
+}

@@ -60,10 +60,10 @@ Each `rho run` saves its session like an interactive one, recorded as a `run`
 session. Session lists leave runs out, so a script's runs never crowd the
 sessions you had yourself: `rho sessions list`, the `/resume` picker and
 `/sessions` manager, `-c`, ACP session lists, and the `sessions` tool's
-search scopes skip them. A run opens by its id, which the JSONL stream reports
-as `session_id`: `rho sessions export <ID>` writes its transcript and
-`rho --resume <ID>` continues it in the TUI. A run does not ask a model to
-title its session; `rho sessions rename` names it.
+search scopes skip them. A run opens by its id, which the JSONL stream's
+`run_started` reports as `session`: `rho sessions export <ID>` writes its
+transcript and `rho --resume <ID>` continues it in the TUI. A run does not ask
+a model to title its session; `rho sessions rename` names it.
 
 Pass `rho run --no-save` to skip saving. The run's session stays in memory:
 no session folder or index row is written, so nothing is left to export or
@@ -101,7 +101,7 @@ flowchart TD
     start[rho run] --> mode{--output}
     mode -->|text| final[One final answer on stdout]
     mode -->|jsonl| stream[JSONL event stream]
-    stream --> terminal[run.completed / failed / stopped]
+    stream --> terminal[turn_ended, then run_ended]
     final --> exit[Process exit code]
     terminal --> exit
 ```
@@ -112,7 +112,7 @@ tool lifecycle events, diagnostics, and errors stay off stdout. Actionable error
 go to stderr and keep their detail (for example a spanned TOML parse error).
 Authentication failures stay generic so credentials never appear on stderr or in
 JSONL. This keeps command substitution, pipes, and redirected output stable.
-Use `--output jsonl` when a script needs progress or terminal state:
+Use `--output jsonl` when a script needs the session's events or terminal state:
 
 ```bash
 rho run --output jsonl --max-steps 12 --timeout 20m \
@@ -120,27 +120,40 @@ rho run --output jsonl --max-steps 12 --timeout 20m \
 
 # Read the authoritative final answer.
 rho run --output jsonl "summarize this repository" \
-  | jq -r 'select(.type == "run.completed") | .text'
+  | jq -r 'select(.event.type == "turn_ended") | .event.outcome.text // empty'
 ```
 
 JSONL mode writes one JSON object per physical line and flushes each object.
-Every object has `schema_version` (currently `1`), a run-local monotonic `seq`,
-and a stable `type`. The stream can contain these event types:
+Every object has `schema_version` (currently `2`), a run-local monotonic `seq`
+starting at 1, and a `type`:
 
-- `run.started`, with run and session IDs and the workspace path
-- `assistant.text_delta` and `assistant.text_reset`
-- `tool.started`, `tool.updated`, and `tool.finished`
-- one final `run.completed`, `run.failed`, or `run.stopped`
+| `type` | When | Fields |
+| --- | --- | --- |
+| `run_started` | The run's session opened. | `session`, its id; `workspace`, the working directory. |
+| `event` | Each of the session's events. | `event`: a [daemon protocol session event](/protocol#following-a-session) of the conversation, as a client attached to a daemon session receives it. A run has no job, and nobody answers its requests, so the stream holds no `state` or `input_*` events. |
+| `run_ended` | Last, unless writing to stdout failed: then the stream stops, and the run exits 1 with the write error on stderr. | `reason`, `exit_code` (the process's [exit status](#exit-status)), and a `message` unless the run completed. |
 
-Assistant deltas include an `attempt` number. A provider retry emits
-`assistant.text_reset` before a new attempt starts. Delta boundaries can change
-between releases, and retried text can be discarded. Use `run.completed.text`
-as the final answer. `run.failed` and `run.stopped` may omit `text`.
+Once the session opened, its last event is `turn_ended`, whose `outcome` says
+how the prompt ended ([outcomes](/protocol#how-a-turn-ends)), as a daemon
+session's would:
 
-Tool events omit arguments and raw output. Progress includes only safe, bounded
-fields. Provider and fatal errors use Rho's existing sanitization. Assistant text
-is free-form model output and can contain data from the workspace, so do not
-send the JSONL stream to a system that should not receive that data.
+- `answered` carries the model's whole answer as `text`. Use it as the final
+  answer rather than the `agent_message_chunk` text: a provider retry restarts
+  the reply, and the stream holds a `notice` saying so.
+- A timeout or a signal cancels the turn, so its outcome is `cancelled`, and
+  `run_ended` names the cause.
+- A slash command `rho run` cannot run fails the prompt before any model call,
+  as a `configuration` failure.
+
+A run that fails before its session opens, such as on invalid configuration,
+writes only `run_ended`.
+
+Tool calls carry their input and content, as protocol clients see them.
+Provider and fatal errors use Rho's existing sanitization: an authentication
+failure names only the provider, the auth, and how to log in. Provider
+diagnostics go to stderr only. Assistant text and tool content can contain data
+from the workspace, so do not send the JSONL stream to a system that should not
+receive that data.
 
 `--output-file` has a separate contract. It updates the existing mutable status
 artifact used for delegated runs, while `--output jsonl` writes an immutable
@@ -169,7 +182,7 @@ Exit codes are part of the automation contract:
 | `130` | SIGINT, after cleanup |
 | `143` | SIGTERM, after cleanup |
 
-The terminal JSONL event gives a more exact reason, such as `completed`,
+The JSONL `run_ended` gives a more exact `reason`, such as `completed`,
 `max_steps`, `timeout`, `interrupted`, `authentication`, `provider_error`,
 `tool_host_error`, `configuration_error`, `output_error`, or `other_error`.
 A failed tool call can still lead to a successful run if the model recovers.

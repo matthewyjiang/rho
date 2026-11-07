@@ -159,27 +159,28 @@ credential_store = "file"
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let events = String::from_utf8(output.stdout).unwrap();
-    let mut receipts = events
+    // How each agent call ended; a provider's call id is its first wire id.
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let mut receipts = stdout
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
-        .filter(|event| event["type"] == "tool.finished")
-        .map(|event| {
-            (
-                event["call_id"].as_str().unwrap().to_owned(),
-                event["status"].as_str().unwrap().to_owned(),
-            )
+        .filter(|line| line["type"] == "event" && line["event"]["type"] == "tool_call")
+        .filter_map(|line| {
+            let call = &line["event"];
+            let status = call["status"].as_str()?;
+            matches!(status, "completed" | "failed")
+                .then(|| (call["id"].as_str().unwrap().to_owned(), status.to_owned()))
         })
         .collect::<Vec<_>>();
     receipts.sort_unstable();
     assert_eq!(
         receipts,
         [
-            ("review-0".into(), "success".into()),
-            ("review-1".into(), "success".into()),
-            ("review-2".into(), "success".into()),
-            ("review-3".into(), "failure".into()),
-            ("review-4".into(), "failure".into()),
+            ("review-0".into(), "completed".into()),
+            ("review-1".into(), "completed".into()),
+            ("review-2".into(), "completed".into()),
+            ("review-3".into(), "failed".into()),
+            ("review-4".into(), "failed".into()),
         ]
     );
     let requests = requests.lock().unwrap();

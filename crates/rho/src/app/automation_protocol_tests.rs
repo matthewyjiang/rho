@@ -1,13 +1,8 @@
 use std::time::Duration;
 
 use pretty_assertions::assert_eq;
-use rho_sdk::{
-    tool::ToolProgress, ProviderStreamResetReason, Revision, RunEvent, RunId, ToolCallId,
-    ToolCompletion,
-};
-use serde_json::json;
 
-use super::{parse_duration, JsonlAdapter};
+use super::{parse_duration, JsonlStream, RunEnd};
 
 #[test]
 fn parses_human_durations_and_rejects_invalid_values() {
@@ -17,122 +12,72 @@ fn parses_human_durations_and_rejects_invalid_values() {
         .contains("invalid duration"));
 }
 
-#[test]
-fn serializes_started_event_with_version_and_monotonic_sequence() {
-    let mut adapter = JsonlAdapter::new();
-    adapter.set_run_context("session-1", std::path::Path::new("/workspace"));
-    let run_id = RunId::from_string("run-1").unwrap();
-
-    let started = adapter
-        .event(&RunEvent::Started {
-            run_id,
-            revision: Revision::from_u64(0),
-        })
-        .unwrap();
-    let delta = adapter
-        .event(&RunEvent::AssistantTextDelta { text: "hi".into() })
-        .unwrap();
-
-    assert_eq!(
-        serde_json::to_value(started).unwrap(),
-        json!({
-            "schema_version": 1,
-            "seq": 1,
-            "type": "run.started",
-            "run_id": "run-1",
-            "session_id": "session-1",
-            "workspace": "/workspace"
-        })
-    );
-    assert_eq!(
-        serde_json::to_value(delta).unwrap(),
-        json!({
-            "schema_version": 1,
-            "seq": 2,
-            "type": "assistant.text_delta",
-            "attempt": 1,
-            "text": "hi"
-        })
-    );
+/// A writer that fails its writes from the `fails_at`th on, keeping what it
+/// was given before.
+struct Failing {
+    written: Vec<u8>,
+    writes: usize,
+    fails_at: usize,
 }
 
-#[test]
-fn emits_safe_tool_lifecycle_fields_only() {
-    let mut adapter = JsonlAdapter::new();
-    let call_id = ToolCallId::from_string("call-1").unwrap();
+impl std::io::Write for Failing {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.writes += 1;
+        if self.writes >= self.fails_at {
+            return Err(std::io::ErrorKind::BrokenPipe.into());
+        }
+        self.written.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
 
-    assert!(adapter
-        .event(&RunEvent::ToolUpdated {
-            call_id: call_id.clone(),
-            progress: ToolProgress::new("private progress text"),
-        })
-        .is_none());
-    let updated = adapter
-        .event(&RunEvent::ToolUpdated {
-            call_id: call_id.clone(),
-            progress: ToolProgress::new("private progress text").units(1, 2),
-        })
-        .unwrap();
-    let finished = adapter
-        .event(&RunEvent::ToolFinished {
-            call_id,
-            result: ToolCompletion::Unavailable,
-        })
-        .unwrap();
-
-    assert_eq!(
-        serde_json::to_value(updated).unwrap(),
-        json!({
-            "schema_version": 1,
-            "seq": 1,
-            "type": "tool.updated",
-            "call_id": "call-1",
-            "completed_units": 1,
-            "total_units": 2
-        })
-    );
-    assert_eq!(
-        serde_json::to_value(finished).unwrap(),
-        json!({
-            "schema_version": 1,
-            "seq": 2,
-            "type": "tool.finished",
-            "call_id": "call-1",
-            "status": "unavailable"
-        })
-    );
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
+// Covers: lines are numbered from 1 under `schema_version` 2; a completed
+// run's `run_ended` says nothing more; the first failed write is the
+// stream's failure and nothing is written after it, not even the end.
+// Owner: rho run JSONL framing.
 #[test]
-fn reset_closes_the_old_attempt_and_advances_new_deltas() {
-    let mut adapter = JsonlAdapter::new();
-    let first = adapter
-        .event(&RunEvent::AssistantTextDelta {
-            text: "discarded".into(),
-        })
-        .unwrap();
-    let reset = adapter
-        .event(&RunEvent::ProviderStreamReset {
-            reason: ProviderStreamResetReason::InvalidResponse,
-            detail: "private provider detail".into(),
-        })
-        .unwrap();
-    let second = adapter
-        .event(&RunEvent::AssistantTextDelta {
-            text: "kept".into(),
-        })
-        .unwrap();
-
-    assert_eq!(serde_json::to_value(first).unwrap()["attempt"], 1);
+fn the_stream_numbers_its_lines_and_stops_at_its_first_failure() {
+    let lines = |stream: &JsonlStream<Failing>| -> Vec<serde_json::Value> {
+        String::from_utf8(stream.out.written.clone())
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    };
+    let mut stream = JsonlStream::new(Failing {
+        written: Vec::new(),
+        writes: 0,
+        fails_at: usize::MAX,
+    });
+    stream.run_started("session-1", std::path::Path::new("/workspace"));
+    stream.event(&rho_protocol::SessionEvent::Notice {
+        text: "hello".into(),
+    });
+    stream.end(&RunEnd::completed());
     assert_eq!(
-        serde_json::to_value(reset).unwrap(),
-        json!({
-            "schema_version": 1,
-            "seq": 2,
-            "type": "assistant.text_reset",
-            "attempt": 1
-        })
+        lines(&stream),
+        [
+            serde_json::json!({"schema_version": 2, "seq": 1, "type": "run_started", "session": "session-1", "workspace": "/workspace"}),
+            serde_json::json!({"schema_version": 2, "seq": 2, "type": "event", "event": {"type": "notice", "text": "hello"}}),
+            serde_json::json!({"schema_version": 2, "seq": 3, "type": "run_ended", "reason": "completed", "exit_code": 0}),
+        ]
     );
-    assert_eq!(serde_json::to_value(second).unwrap()["attempt"], 2);
-    assert_eq!(adapter.partial_text().as_deref(), Some("kept"));
+    assert_eq!(stream.failure(), None);
+
+    let mut broken = JsonlStream::new(Failing {
+        written: Vec::new(),
+        writes: 0,
+        fails_at: 1,
+    });
+    broken.run_started("session-1", std::path::Path::new("/workspace"));
+    broken.end(&RunEnd::completed());
+    assert_eq!(broken.out.writes, 1, "nothing is written after the failure");
+    assert_eq!(
+        broken.failure(),
+        Some("could not write JSONL output: broken pipe")
+    );
 }
