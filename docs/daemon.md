@@ -9,7 +9,7 @@ The rho daemon is one long-lived background process per user and rho home (`~/.r
 | `rho daemon` | Run the daemon in the foreground until it is stopped. Same as `rho daemon run`. |
 | `rho daemon status` | Show the running daemon's pid, version, protocol, uptime, jobs, and socket. Add `--json` for one JSON document. |
 | `rho daemon stop` | Ask the daemon to shut down and wait for it to exit. |
-| `rho attach <ID>` | Follow a session's turn until it ends, and exit as it ended; Ctrl+C detaches. See [Attaching to a daemon session](/automation-cli#attaching-to-a-daemon-session). |
+| `rho attach <ID>` | Follow a session's turn until it ends, and exit as it ended; answer its requests, steer it, or cancel it from the terminal; Ctrl+C detaches. See [Attaching to a daemon session](/automation-cli#attaching-to-a-daemon-session). |
 
 `status`, `stop`, and `attach` never start a daemon. With none running, they print `rho daemon is not running` and exit with status 1.
 

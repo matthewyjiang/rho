@@ -51,6 +51,17 @@ pub enum AttachOutput {
     Jsonl,
 }
 
+/// Where text-mode `rho attach` reads the lines that answer and steer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum AttachInput {
+    /// Stdin, when it is the terminal and `rho attach` runs in its
+    /// foreground; otherwise requests are only told.
+    #[default]
+    Terminal,
+    /// Stdin, whatever it is, such as a pipe a script writes answers to.
+    Stdin,
+}
+
 /// Output contract for workflow plans and snapshots.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum WorkflowDocumentFormat {
@@ -219,8 +230,10 @@ pub enum Command {
     },
     /// Follow a daemon session's turn until it ends, and exit as it ended.
     ///
-    /// Without a turn under way, report the session's last turn. Ctrl+C
-    /// detaches; the turn runs on in the daemon.
+    /// Without a turn under way, report the session's last turn. In text
+    /// mode, lines typed at the terminal answer the turn's requests, steer
+    /// it, or cancel it with `/cancel`. Ctrl+C detaches; the turn runs on in
+    /// the daemon.
     Attach {
         /// The session's id, or its job's.
         #[arg(value_name = "ID")]
@@ -229,6 +242,10 @@ pub enum Command {
         /// `rho run --output jsonl` writes.
         #[arg(long, value_enum, default_value_t)]
         output: AttachOutput,
+        /// In text mode, where to read the lines that answer the turn's
+        /// requests and steer it.
+        #[arg(long, value_enum, default_value_t)]
+        input: AttachInput,
     },
     /// Log in to a provider with an API key, browser, or device-code flow.
     Login {

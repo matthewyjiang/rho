@@ -783,7 +783,9 @@ async fn answer(
 
 /// Starts a supervised daemon and prompts a new session's turn to `write`
 /// `note.txt`, which waits for approval with nobody attached.
-async fn prompt_a_supervised_write(sandbox: &Sandbox) -> (DaemonProcess, Client, SessionId) {
+pub(super) async fn prompt_a_supervised_write(
+    sandbox: &Sandbox,
+) -> (DaemonProcess, Client, SessionId) {
     std::fs::write(
         sandbox.daemon.home().join("config.toml"),
         format!("permission_mode = \"supervised\"\n{CONFIG}"),

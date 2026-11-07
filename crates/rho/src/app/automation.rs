@@ -196,6 +196,11 @@ pub(super) fn output_error(failure: &str) -> AutomationExit {
     AutomationExit::new(1, TerminalReason::OutputError, failure)
 }
 
+/// The exit of a run whose output could not be written.
+pub(super) fn write_failed(error: io::Error) -> AutomationExit {
+    output_error(&format!("could not write output: {error}"))
+}
+
 pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Result<()> {
     let mut jsonl = (startup.output == OutputFormat::Jsonl).then(JsonlStream::stdout);
     let deadline = startup
@@ -411,14 +416,7 @@ fn write_text_answer(answer: &rho_sdk::RunOutcome, has_reporter: bool) -> anyhow
         }
         stdout.flush()
     })();
-    result.map_err(|error| {
-        AutomationExit::new(
-            1,
-            TerminalReason::OutputError,
-            format!("could not write output: {error}"),
-        )
-        .into()
-    })
+    result.map_err(|error| write_failed(error).into())
 }
 
 const TIMEOUT_MESSAGE: &str = "rho run timed out";

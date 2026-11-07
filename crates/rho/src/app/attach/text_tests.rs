@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    AnswerStop, ApprovalAsk, ApprovalSource, Ask, ContentBlock, InputRequest, InputRequestId,
-    MessageId, Operation, SessionEvent, ToolCallId, ToolCallUpdate, ToolStatus, TurnOutcome,
+    AnswerStop, ContentBlock, MessageId, SessionEvent, ToolCallId, ToolCallUpdate, ToolStatus,
+    TurnOutcome,
 };
 
 use super::TextView;
@@ -27,7 +27,7 @@ fn chunk(text: &str) -> SessionEvent {
 
 // Covers: the conversation streams to stdout with the prompt quoted, each
 // tool call on a line of its own once titled and once more if it fails,
-// and the reply ending its line; notices and input requests go to stderr.
+// and the reply ending its line; notices go to stderr.
 // Owner: rho attach text output (unit).
 #[test]
 fn text_output_streams_the_conversation_and_tells_the_rest_on_stderr() {
@@ -45,18 +45,6 @@ fn text_output_streams_the_conversation_and_tells_the_rest_on_stderr() {
         tool_call(None, ToolStatus::Failed),
         SessionEvent::Notice {
             text: "retrying the request".into(),
-        },
-        SessionEvent::InputRequested {
-            request: Box::new(InputRequest {
-                id: InputRequestId(1),
-                ask: Ask::Approval(ApprovalAsk {
-                    source: ApprovalSource::Rho,
-                    operation: Operation::Network { url: None },
-                    reason: "fetch the docs".into(),
-                }),
-                tool_call: None,
-                timeout: None,
-            }),
         },
         chunk("Done."),
         SessionEvent::TurnEnded {
@@ -78,7 +66,7 @@ fn text_output_streams_the_conversation_and_tells_the_rest_on_stderr() {
     );
     assert_eq!(
         String::from_utf8(err).unwrap(),
-        "rho: retrying the request\nrho: the turn waits for an approval: fetch the docs\n"
+        "rho: retrying the request\n"
     );
 }
 

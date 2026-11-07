@@ -227,7 +227,8 @@ rho attach "$SESSION" --output jsonl | jq -c 'select(.type == "event") | .event.
   session's first prompt, it waits for that turn.
 - `--output text` streams the conversation to stdout: the prompt quoted, the
   reply, and a line per tool call. Notices and the input requests the turn
-  waits on go to stderr.
+  waits on go to stderr, and lines typed on stdin answer them; see
+  [Answering and steering](#answering-and-steering).
 - `--output jsonl` writes `run_started`, then every event of the daemon's
   [replay](/protocol#following-a-session) and of the turn, then `run_ended`. A
   daemon session has a job, so unlike a foreground run's the stream holds
@@ -245,6 +246,51 @@ rho attach "$SESSION" --output jsonl | jq -c 'select(.type == "event") | .event.
   conversation is written again.
 
 `rho attach` never starts a daemon; with none running it fails with exit 1.
+
+#### Answering and steering
+
+In text mode, `rho attach` reads the lines typed at the terminal while it
+follows the turn. When the turn waits for input, it shows the oldest open
+request, and the next line answers it:
+
+```text
+rho: the turn waits for an approval to write /repo/note.txt
+  1 allow once · 2 allow for session · 3 deny
+```
+
+- An approval names what it allows, a command in full, with any line breaks
+  shown as `\n`. It takes `1`, `2`, or `3`. A plan approval takes the number of
+  the permission mode to carry the plan out in, or of `keep planning`.
+- Questions are asked one at a time and sent together. Pick a choice by its
+  number, several as `1,3` where a question allows it, or type your own answer
+  where it allows that. Enter takes a pre-selected suggestion or skips an
+  optional question. `/decline` or `/dismiss` closes the questions unanswered.
+- A line that does not answer says why and shows the question again.
+- Requests that open while you answer one are told as they open, and asked in
+  turn.
+- A request the user configured to time out
+  ([`[questionnaire] timeout_seconds`](/configuration#questionnaire-timeout))
+  says when the daemon answers it. `/hold`, or any line that starts on it
+  without answering it, holds it, so it waits for your answer.
+- When another client answers the request you are on, or the daemon does at
+  its timeout, `rho attach` says so and moves on.
+- A line means what was shown when you typed it. One typed before the request
+  now shown appeared, or for a request that has since closed, is dropped, and
+  `rho attach` says so.
+
+While the turn waits for nothing, a line steers it: the text joins the turn's
+next model request. `/cancel` cancels the turn at any point, which ends
+`rho attach` with the reason `cancelled`. A slash and one word, such as a
+mistyped `/cancle`, is refused rather than sent to the model.
+
+`rho attach` reads stdin only when, as it starts, stdin is the terminal and
+`rho attach` runs in its foreground, so a script's stdin is not taken for
+answers. Otherwise it only tells the requests, and any client can answer them.
+It does the same at the end of input; a request it held then no longer times
+out. `--input stdin` reads stdin whatever it is, for a script that writes
+answers to it. Such a script waits for each request on stderr before it writes
+the answer: a line written earlier is dropped, or steers the turn when nothing
+was asked. JSONL output reads no input.
 
 ## `rho login`
 

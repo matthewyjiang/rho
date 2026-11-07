@@ -17,6 +17,7 @@ mod compaction;
 mod compaction_metrics;
 mod config;
 mod config_writer;
+mod control_chars;
 mod credential_store;
 mod cursor_runtime;
 #[cfg(unix)]

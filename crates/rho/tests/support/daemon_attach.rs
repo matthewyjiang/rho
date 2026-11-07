@@ -1,6 +1,7 @@
 //! `rho attach` through the real binary, against a daemon hosting a
 //! session: it reports how the session's last turn ended, follows a turn
-//! under way to its end, and detaches on Ctrl+C while the turn runs on.
+//! under way to its end, detaches on Ctrl+C while the turn runs on, and
+//! answers and cancels from lines typed on stdin.
 
 use std::process::{ExitStatus, Stdio};
 
@@ -11,11 +12,13 @@ use rho_protocol::{
 };
 use serde_json::{json, Value};
 use tokio::{
-    io::{AsyncBufReadExt, BufReader, Lines},
-    process::{Child, ChildStdout},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
+    process::{Child, ChildStderr, ChildStdin, ChildStdout},
 };
 
-use super::sessions::{new_session, prompt, settled_job, Sandbox, DEADLINE, REPLY};
+use super::sessions::{
+    new_session, prompt, prompt_a_supervised_write, settled_job, Sandbox, DEADLINE, REPLY,
+};
 
 /// A `rho attach` process and its JSONL stream.
 struct Attach {
@@ -30,6 +33,7 @@ impl Attach {
         command
             .arg("attach")
             .args(args)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .kill_on_drop(true);
         let mut child = command.spawn().unwrap();
@@ -246,6 +250,120 @@ async fn attach_follows_a_turn_and_detaches_on_ctrl_c() {
             Some(&json!({"type": "turn_ended", "outcome": {"type": "cancelled"}})),
         ),
         "log:\n{}",
+        sandbox.daemon_log()
+    );
+}
+
+/// A text-mode `rho attach` process typed at through its stdin.
+struct Typed {
+    child: Child,
+    stdin: ChildStdin,
+    stderr: Lines<BufReader<ChildStderr>>,
+    told: Vec<String>,
+}
+
+impl Typed {
+    fn spawn(sandbox: &Sandbox, mode: &str, session: &SessionId) -> Self {
+        let mut command = tokio::process::Command::from(sandbox.rho(mode));
+        command
+            .args(["attach", session.as_str(), "--input", "stdin"])
+            .stdin(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let mut child = command.spawn().unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stderr = BufReader::new(child.stderr.take().unwrap()).lines();
+        Self {
+            child,
+            stdin,
+            stderr,
+            told: Vec::new(),
+        }
+    }
+
+    /// Reads stderr until a line is `line`.
+    async fn told(&mut self, line: &str) {
+        loop {
+            let next = tokio::time::timeout(DEADLINE, self.stderr.next_line())
+                .await
+                .expect("rho attach tells its next line")
+                .unwrap()
+                .unwrap_or_else(|| {
+                    panic!("rho attach ended before telling {line:?}: {:#?}", self.told)
+                });
+            let found = next == line;
+            self.told.push(next);
+            if found {
+                return;
+            }
+        }
+    }
+
+    async fn type_line(&mut self, line: &str) {
+        self.stdin
+            .write_all(format!("{line}\n").as_bytes())
+            .await
+            .unwrap();
+    }
+
+    async fn finish(mut self) -> (Option<i32>, Vec<String>) {
+        while let Some(line) = tokio::time::timeout(DEADLINE, self.stderr.next_line())
+            .await
+            .expect("rho attach ends")
+            .unwrap()
+        {
+            self.told.push(line);
+        }
+        let status = tokio::time::timeout(DEADLINE, self.child.wait())
+            .await
+            .expect("rho attach exits")
+            .unwrap();
+        (status.code(), self.told)
+    }
+}
+
+// Covers: in text mode with `--input stdin`, `rho attach` tells a
+// supervised turn's approval with its choices and answers it from a line
+// written to its stdin, and the turn carries on to its end.
+// Owner: rho attach CLI (process contract).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attach_answers_an_approval_written_to_stdin() {
+    let sandbox = Sandbox::new();
+    let (_daemon, client, session) = prompt_a_supervised_write(&sandbox).await;
+    let mut approver = Typed::spawn(&sandbox, "tool-call", &session);
+    approver
+        .told("  1 allow once · 2 allow for session · 3 deny")
+        .await;
+    approver.type_line("1").await;
+    let (status, told) = approver.finish().await;
+    let written = std::fs::read_to_string(sandbox.workspace.join("note.txt")).ok();
+    let job = settled_job(&sandbox, &client, &session).await;
+
+    assert_eq!(
+        (status, written, job.state),
+        (Some(0), Some("approved".to_owned()), JobState::Completed),
+        "{told:#?}"
+    );
+}
+
+// Covers: a /cancel line written to `rho attach`'s stdin cancels the turn
+// under way, which ends the attachment as a cancelled turn.
+// Owner: rho attach CLI (process contract).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attach_cancels_the_turn_on_a_cancel_line() {
+    let sandbox = Sandbox::new();
+    let (_daemon, client) = sandbox.start_daemon("delay").await;
+    let session = new_session(&client, &sandbox.workspace).await;
+    assert_eq!(prompt(&client, &session).await, Ok(()));
+    let mut canceller = Typed::spawn(&sandbox, "delay", &session);
+    // Lines are read once it is attached; one written earlier waits for it.
+    canceller.type_line("/cancel").await;
+    let (status, told) = canceller.finish().await;
+
+    assert_eq!(
+        (status, told.last().cloned()),
+        (Some(1), Some("Error: the turn was cancelled".to_owned())),
+        "{told:#?}\nlog:\n{}",
         sandbox.daemon_log()
     );
 }

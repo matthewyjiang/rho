@@ -50,6 +50,39 @@ pub(crate) enum PermissionMode {
     Supervised,
 }
 
+/// A wire permission mode this rho does not know, such as one a newer
+/// daemon or client sends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct UnknownMode;
+
+impl TryFrom<rho_protocol::PermissionMode> for PermissionMode {
+    type Error = UnknownMode;
+
+    fn try_from(mode: rho_protocol::PermissionMode) -> Result<Self, UnknownMode> {
+        match mode {
+            rho_protocol::PermissionMode::Bypass => Ok(Self::Bypass),
+            rho_protocol::PermissionMode::Auto => Ok(Self::Auto),
+            rho_protocol::PermissionMode::AllowEdits => Ok(Self::AllowEdits),
+            rho_protocol::PermissionMode::Plan => Ok(Self::Plan),
+            rho_protocol::PermissionMode::Supervised => Ok(Self::Supervised),
+            // `rho_protocol::PermissionMode` is non-exhaustive.
+            _ => Err(UnknownMode),
+        }
+    }
+}
+
+impl From<PermissionMode> for rho_protocol::PermissionMode {
+    fn from(mode: PermissionMode) -> Self {
+        match mode {
+            PermissionMode::Bypass => Self::Bypass,
+            PermissionMode::Auto => Self::Auto,
+            PermissionMode::AllowEdits => Self::AllowEdits,
+            PermissionMode::Plan => Self::Plan,
+            PermissionMode::Supervised => Self::Supervised,
+        }
+    }
+}
+
 impl PermissionMode {
     pub const ALL: [Self; 5] = [
         Self::Bypass,
