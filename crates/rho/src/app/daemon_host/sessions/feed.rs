@@ -188,10 +188,15 @@ impl FeedState {
         match &event {
             wire::SessionEvent::State { state, .. } => self.job = *state,
             wire::SessionEvent::InputRequested { request } => {
-                self.inputs.insert(request.id, request.clone());
+                self.inputs.insert(request.id, (**request).clone());
             }
             wire::SessionEvent::InputResolved { id, .. } => {
                 self.inputs.remove(id);
+            }
+            wire::SessionEvent::InputHeld { id } => {
+                if let Some(request) = self.inputs.get_mut(id) {
+                    request.timeout = None;
+                }
             }
             _ => {}
         }

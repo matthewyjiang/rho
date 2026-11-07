@@ -14,6 +14,7 @@
 //! | [`SESSION_CANCEL`] | [`SessionCancelParams`] | [`SessionCancelResponse`] |
 //! | [`SESSION_STEER`] | [`SessionSteerParams`] | [`SessionSteerResponse`] |
 //! | [`SESSION_ANSWER`] | [`SessionAnswerParams`] | [`SessionAnswerResponse`] |
+//! | [`SESSION_HOLD`] | [`SessionHoldParams`] | [`SessionHoldResponse`] |
 //! | [`SESSION_ATTACH`] | [`SessionAttachParams`] | [`SessionAttachResponse`] |
 //! | [`SESSION_DETACH`] | [`SessionDetachParams`] | [`SessionDetachResponse`] |
 //! | [`JOB_LIST`] | [`JobListParams`] | [`JobListResponse`] |
@@ -51,8 +52,9 @@ pub use event::{
 };
 pub use input::{
     ApprovalAsk, ApprovalSource, Ask, Choice, DefaultAnswer, DefaultStyle, InputAnswer,
-    InputRequest, InputRequestId, Operation, PathScope, PermissionMode, PlanApprovalAsk, Question,
-    QuestionAsk, Resolution, Selection, SessionAnswerParams, SessionAnswerResponse, SESSION_ANSWER,
+    InputRequest, InputRequestId, InputTimeout, Operation, PathScope, PermissionMode,
+    PlanApprovalAsk, Question, QuestionAsk, Resolution, Selection, SessionAnswerParams,
+    SessionAnswerResponse, SessionHoldParams, SessionHoldResponse, SESSION_ANSWER, SESSION_HOLD,
 };
 pub use job::{
     Budget, JobId, JobKind, JobListParams, JobListResponse, JobState, JobSummary, QueuePlace,
@@ -145,6 +147,7 @@ protocol! {
         SessionCancel = SESSION_CANCEL: SessionCancelParams => SessionCancelResponse,
         SessionSteer = SESSION_STEER: SessionSteerParams => SessionSteerResponse,
         SessionAnswer = SESSION_ANSWER: SessionAnswerParams => SessionAnswerResponse,
+        SessionHold = SESSION_HOLD: SessionHoldParams => SessionHoldResponse,
         SessionAttach = SESSION_ATTACH: SessionAttachParams => SessionAttachResponse,
         SessionDetach = SESSION_DETACH: SessionDetachParams => SessionDetachResponse,
         JobList = JOB_LIST: JobListParams => JobListResponse,

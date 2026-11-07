@@ -7,7 +7,7 @@
 //! while an approval, plan approval, or question is open, `running`
 //! otherwise. A request is never denied because no client is attached.
 
-use std::{future::Future, sync::Arc};
+use std::{future::Future, sync::Arc, time::SystemTime};
 
 use rho_sdk::{CancellationToken, UserInput};
 use tokio::sync::{mpsc, oneshot};
@@ -231,7 +231,7 @@ impl DaemonView {
                 }
             }
             self.session
-                .change_inputs(|inputs| inputs.note(&control, &event));
+                .change_inputs(|inputs| inputs.note(&control, &event, SystemTime::now()));
         }
     }
 }

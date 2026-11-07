@@ -16,15 +16,16 @@
 
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    sync::{Arc, Mutex, MutexGuard, PoisonError, Weak},
     time::Duration,
 };
 
 use rho_protocol::{
     DetachReason, ErrorCode, RpcError, SessionAnswerParams, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
-    SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
-    SessionSteerParams, SessionSteerResponse, Subscription,
+    SessionHoldParams, SessionHoldResponse, SessionNewParams, SessionNewResponse,
+    SessionPromptParams, SessionPromptResponse, SessionSteerParams, SessionSteerResponse,
+    Subscription,
 };
 use rho_sdk::{CancellationToken, SessionId, UserInput};
 
@@ -100,6 +101,15 @@ struct LoadedSession {
     inputs: Mutex<Inputs>,
 }
 
+/// Times out input request `id` of `session` after `after`, unless the
+/// request closed or was held by then, or the daemon dropped the session.
+async fn time_out(session: Weak<LoadedSession>, id: rho_protocol::InputRequestId, after: Duration) {
+    tokio::time::sleep(after).await;
+    if let Some(session) = session.upgrade() {
+        session.change_inputs(|inputs| inputs.time_out(id));
+    }
+}
+
 impl LoadedSession {
     /// A session opened new: nothing saved yet, so its feed starts empty.
     /// Its turns are recorded on `job` in `jobs`.
@@ -111,9 +121,14 @@ impl LoadedSession {
             live: Mutex::new(LiveEvents::new(runtime.workspace_root(), runtime.tools())),
             feed: Feed::new(),
             runtime: tokio::sync::Mutex::new(Some(runtime)),
+            inputs: Mutex::new(Inputs::new(
+                config
+                    .questionnaire
+                    .timeout_seconds
+                    .map(|seconds| Duration::from_secs(seconds.get())),
+            )),
             config,
             turn_cancel: Mutex::default(),
-            inputs: Mutex::default(),
         }
     }
 
@@ -123,8 +138,8 @@ impl LoadedSession {
     /// turns the answers it accepted. All under the requests' lock, so
     /// clients see requests open and close, and the job's state follow
     /// them, in the order they happened, and before anything the turn does
-    /// with an answer.
-    fn change_inputs<T>(&self, change: impl FnOnce(&mut Inputs) -> T) -> T {
+    /// with an answer. Starts the timeouts the change opened.
+    fn change_inputs<T>(self: &Arc<Self>, change: impl FnOnce(&mut Inputs) -> T) -> T {
         // A panic mid-change leaves the requests as they were or with one
         // request moved, which the turn's end clears.
         let mut inputs = self.inputs.lock().unwrap_or_else(PoisonError::into_inner);
@@ -137,6 +152,9 @@ impl LoadedSession {
             (false, false) | (true, true) => {}
         }
         inputs.send_answers();
+        for (id, after) in inputs.take_timeouts() {
+            tokio::spawn(time_out(Arc::downgrade(self), id, after));
+        }
         result
     }
 
@@ -356,6 +374,14 @@ impl Sessions {
         let session = self.loaded_session(&params.session)?;
         session.change_inputs(|inputs| inputs.answer(params.request, params.answer))?;
         Ok(SessionAnswerResponse {})
+    }
+
+    /// Stops one of a session's open input requests from timing out, for a
+    /// client whose user started on it (#1660).
+    pub(super) fn hold(&self, params: SessionHoldParams) -> Result<SessionHoldResponse, RpcError> {
+        let session = self.loaded_session(&params.session)?;
+        session.change_inputs(|inputs| inputs.hold(params.request))?;
+        Ok(SessionHoldResponse {})
     }
 
     /// Subscribes a client to a session's events, resuming after its cursor

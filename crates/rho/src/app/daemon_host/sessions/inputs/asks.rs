@@ -94,6 +94,20 @@ pub(super) fn plan_approval(request: &PlanApprovalRequest) -> Ask {
     })
 }
 
+/// The wire timeout of a question whose agent offered fallback answers,
+/// when the daemon answers it with them at `deadline_ms`; `None` for a
+/// question without.
+pub(super) fn timeout(request: &HostInputRequest, deadline_ms: u64) -> Option<wire::InputTimeout> {
+    let (fallback, reason) = request.timeout_fallback().zip(request.timeout_reason())?;
+    Some(wire::InputTimeout {
+        deadline_ms,
+        answer: wire::InputAnswer::Answers {
+            answers: fallback.answers().clone(),
+        },
+        reason: reason.to_owned(),
+    })
+}
+
 /// The wire ask for a questionnaire.
 pub(super) fn question(request: &HostInputRequest) -> Ask {
     Ask::Question(QuestionAsk {

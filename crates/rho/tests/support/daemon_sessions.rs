@@ -12,15 +12,15 @@ use std::{
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{
-        JobList, SessionAnswer, SessionAttach, SessionCancel, SessionDetach, SessionNew,
-        SessionPrompt,
+        JobList, SessionAnswer, SessionAttach, SessionCancel, SessionDetach, SessionHold,
+        SessionNew, SessionPrompt,
     },
     ApprovalAsk, ApprovalSource, Ask, Client, ClientError, ClientInfo, Cursor, DaemonNotification,
     DetachReason, ErrorCode, InputAnswer, InputRequest, InputRequestId, JobKind, JobListParams,
     JobState, JobSummary, Notifications, Operation, PathScope, Replay, Resolution, Seq,
     SessionAnswerParams, SessionAttachParams, SessionAttachResponse, SessionCancelParams,
-    SessionDetachParams, SessionDetachedParams, SessionEvent, SessionId, SessionNewParams,
-    SessionPromptParams, StreamId, ToolCallId,
+    SessionDetachParams, SessionDetachedParams, SessionEvent, SessionHoldParams, SessionId,
+    SessionNewParams, SessionPromptParams, StreamId, ToolCallId, ToolContent, ToolStatus,
 };
 use tokio::net::UnixStream;
 
@@ -800,6 +800,7 @@ async fn an_approval_waits_for_any_client_to_answer() {
                     reason,
                 }),
                 tool_call: Some(ToolCallId::new("edit")),
+                timeout: None,
             }],
             JobState::WaitingForInput,
             Ok(()),
@@ -862,6 +863,191 @@ async fn a_turn_that_asks_tells_the_hooks() {
             true,
         ),
         "event: {event:#}\nlog:\n{}",
+        sandbox.daemon_log()
+    );
+}
+
+/// A sandbox whose config sets `[questionnaire] timeout_seconds`.
+fn sandbox_with_question_timeout(seconds: u64) -> Sandbox {
+    let sandbox = Sandbox::new();
+    std::fs::write(
+        sandbox.daemon.home().join("config.toml"),
+        format!("{CONFIG}\n[questionnaire]\ntimeout_seconds = {seconds}\n"),
+    )
+    .unwrap();
+    sandbox
+}
+
+/// Prompts `session` to ask which color, with `Blue` as the fallback
+/// answers, through the `tool-call` fixture.
+async fn ask_color_with_fallback(client: &Client, session: &SessionId) {
+    let call = serde_json::json!({
+        "id": "ask",
+        "name": "questionnaire",
+        "arguments": {
+            "questions": [{
+                "id": "color",
+                "question": "Which color?",
+                "choices": ["Red", "Blue"],
+            }],
+            "on_timeout": {"answers": {"color": "Blue"}, "reason": "either works"},
+        },
+    });
+    client
+        .request::<SessionPrompt>(&SessionPromptParams {
+            session: session.clone(),
+            text: call.to_string(),
+        })
+        .await
+        .unwrap();
+}
+
+fn blue() -> InputAnswer {
+    InputAnswer::Answers {
+        answers: [("color".to_owned(), vec!["Blue".to_owned()])].into(),
+    }
+}
+
+/// Reads until the color question's tool call completes, and returns its
+/// result as JSON.
+async fn color_result(follower: &mut Follower) -> serde_json::Value {
+    let ask = ToolCallId::new("ask");
+    follower
+        .read_until(|event| {
+            matches!(event, SessionEvent::ToolCall(update)
+                if update.id == ask && update.status == Some(ToolStatus::Completed))
+        })
+        .await;
+    let text: String = follower
+        .events
+        .iter()
+        .filter_map(|(_, event)| match event {
+            SessionEvent::ToolCall(update) if update.id == ask => update.content.clone(),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|content| match content {
+            ToolContent::Text { text } => Some(text),
+            _ => None,
+        })
+        .collect();
+    serde_json::from_str(&text).unwrap_or_else(|error| panic!("{error}: {text}"))
+}
+
+/// The first input request `events` open.
+fn first_request(events: &[(Seq, SessionEvent)]) -> InputRequest {
+    events
+        .iter()
+        .find_map(|(_, event)| match event {
+            SessionEvent::InputRequested { request } => Some((**request).clone()),
+            _ => None,
+        })
+        .expect("a request opened")
+}
+
+fn resolutions(events: &[(Seq, SessionEvent)]) -> Vec<Resolution> {
+    events
+        .iter()
+        .filter_map(|(_, event)| match event {
+            SessionEvent::InputResolved { resolution, .. } => Some(*resolution),
+            _ => None,
+        })
+        .collect()
+}
+
+// Covers: with `[questionnaire] timeout_seconds` set, a question whose
+// agent offered fallback answers tells clients with what and why it will
+// be answered, and, with nobody answering, the daemon answers it with the
+// fallback when the timeout passes: clients see it time out and the tool
+// gets the fallback answers, marked as the fallback (#1660).
+// Owner: daemon input requests.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_question_nobody_answers_times_out_with_its_fallback() {
+    // The shortest timeout the config takes.
+    let sandbox = sandbox_with_question_timeout(1);
+    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let session = new_session(&client, &sandbox.workspace).await;
+    let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    ask_color_with_fallback(&client, &session).await;
+
+    let result = color_result(&mut watcher).await;
+    let job = settled(&sandbox, &client, |job| {
+        job.session.as_ref() == Some(&session)
+    })
+    .await;
+    let timeout = first_request(&watcher.events)
+        .timeout
+        .map(|timeout| (timeout.answer, timeout.reason));
+
+    assert_eq!(
+        (timeout, resolutions(&watcher.events), result, job.state),
+        (
+            Some((blue(), "either works".to_owned())),
+            vec![Resolution::TimedOut],
+            serde_json::json!({
+                "answers": [{"id": "color", "answer": "Blue"}],
+                "source": "timeout_fallback",
+            }),
+            JobState::Completed,
+        ),
+        "log:\n{}",
+        sandbox.daemon_log()
+    );
+}
+
+// Covers: `rho/session/hold` stops a question's timeout: attached clients
+// see `input_held`, a client that attaches later finds the request without
+// a timeout, and the user's answer then reaches the tool as their own
+// (#1660).
+// Owner: daemon input requests.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_held_question_waits_for_the_users_answer() {
+    // Far longer than the test, so the hold always comes first.
+    let sandbox = sandbox_with_question_timeout(3600);
+    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let session = new_session(&client, &sandbox.workspace).await;
+    let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    ask_color_with_fallback(&client, &session).await;
+    watcher
+        .read_until(|event| matches!(event, SessionEvent::InputRequested { .. }))
+        .await;
+    let request = first_request(&watcher.events).id;
+
+    client
+        .request::<SessionHold>(&SessionHoldParams {
+            session: session.clone(),
+            request,
+        })
+        .await
+        .unwrap();
+    watcher
+        .read_until(|event| matches!(event, SessionEvent::InputHeld { .. }))
+        .await;
+    let (_late, attached) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let answered = answer(&client, &session, request, blue()).await;
+    let result = color_result(&mut watcher).await;
+
+    assert_eq!(
+        (
+            attached
+                .inputs
+                .iter()
+                .map(|request| (request.id, request.timeout.clone()))
+                .collect::<Vec<_>>(),
+            answered,
+            resolutions(&watcher.events),
+            result,
+        ),
+        (
+            vec![(request, None)],
+            Ok(()),
+            vec![Resolution::Answered],
+            serde_json::json!({
+                "answers": [{"id": "color", "answer": "Blue"}],
+                "source": "user",
+            }),
+        ),
+        "log:\n{}",
         sandbox.daemon_log()
     );
 }

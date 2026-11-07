@@ -9,6 +9,11 @@
 //! sees [`super::SessionEvent::InputResolved`]. A client that detaches or
 //! disconnects answers nothing: with nobody attached the request stays
 //! open until someone answers it or the turn is cancelled.
+//!
+//! A request with an [`InputTimeout`] is the exception the user configured:
+//! the daemon answers it itself at the deadline, unless a client answers it
+//! first or holds it with [`SESSION_HOLD`], as a client does once its user
+//! starts on the request.
 
 use std::{collections::BTreeMap, fmt, path::PathBuf};
 
@@ -19,6 +24,9 @@ use super::{SessionId, ToolCallId};
 
 /// Answer one of a session's open input requests.
 pub const SESSION_ANSWER: &str = "rho/session/answer";
+
+/// Stop an open input request's timeout, so it waits for an answer.
+pub const SESSION_HOLD: &str = "rho/session/hold";
 
 /// Identifies one input request among its session's, for as long as the
 /// daemon has the session loaded.
@@ -42,6 +50,24 @@ pub struct InputRequest {
     /// The tool call that asks, when a tool call does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call: Option<ToolCallId>,
+    /// When the daemon answers the request itself, if it will; absent once
+    /// the request is held.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<InputTimeout>,
+}
+
+/// An answer the daemon gives an input request at a deadline, unless a
+/// client answers the request or holds it first. Only a question whose
+/// agent offered fallback answers, in a session whose user set
+/// `[questionnaire] timeout_seconds`, has one (#1660).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct InputTimeout {
+    /// Unix time, in milliseconds, when the daemon answers.
+    pub deadline_ms: u64,
+    /// What the daemon answers with.
+    pub answer: InputAnswer,
+    /// Why the agent offered that answer.
+    pub reason: String,
 }
 
 /// What an input request asks.
@@ -267,6 +293,9 @@ pub enum Resolution {
     Answered,
     /// The turn no longer waits for it, as when the turn was cancelled.
     Withdrawn,
+    /// Nobody answered or held it by its timeout's deadline, so the daemon
+    /// answered it with the timeout's answer.
+    TimedOut,
     /// A value a newer daemon sends that this crate does not know.
     #[serde(other)]
     #[schemars(extend("x-rho-other" = true))]
@@ -320,3 +349,17 @@ pub enum InputAnswer {
 /// tool that asked gave up, ignores an answer that won.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionAnswerResponse {}
+
+/// Params of [`SESSION_HOLD`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionHoldParams {
+    pub session: SessionId,
+    pub request: InputRequestId,
+}
+
+/// Result of [`SESSION_HOLD`]: the request no longer times out, and every
+/// attached client saw [`super::SessionEvent::InputHeld`]. Holding a
+/// request that has no timeout, or one already held, changes nothing. A
+/// request that closed is [`crate::ErrorCode::InputNotOpen`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionHoldResponse {}

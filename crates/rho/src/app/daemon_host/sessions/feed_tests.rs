@@ -165,6 +165,51 @@ fn an_attach_reports_the_job_state_its_replay_ends_in() {
     assert_eq!(feed.attach(None).job, wire::JobState::Running);
 }
 
+// Covers: an attach reports the input requests open as they stand after
+// its replay: resolved ones gone, and a held one without the timeout it
+// opened with, so a late client neither shows a countdown nor misses one.
+// Owner: daemon session feed.
+#[test]
+fn an_attach_reports_open_requests_as_they_stand() {
+    let request = |id: u64| wire::InputRequest {
+        id: wire::InputRequestId(id),
+        ask: wire::Ask::PlanApproval(wire::PlanApprovalAsk {
+            plan: "the plan".into(),
+            modes: vec![wire::PermissionMode::Auto],
+        }),
+        tool_call: None,
+        timeout: Some(wire::InputTimeout {
+            deadline_ms: 1,
+            answer: wire::InputAnswer::KeepPlanning,
+            reason: "safe".into(),
+        }),
+    };
+    let feed = Feed::new();
+    feed.publish([
+        wire::SessionEvent::InputRequested {
+            request: Box::new(request(0)),
+        },
+        wire::SessionEvent::InputRequested {
+            request: Box::new(request(1)),
+        },
+        wire::SessionEvent::InputRequested {
+            request: Box::new(request(2)),
+        },
+        wire::SessionEvent::InputHeld {
+            id: wire::InputRequestId(0),
+        },
+        wire::SessionEvent::InputResolved {
+            id: wire::InputRequestId(1),
+            resolution: wire::Resolution::TimedOut,
+        },
+    ]);
+    let held = wire::InputRequest {
+        timeout: None,
+        ..request(0)
+    };
+    assert_eq!(feed.attach(None).inputs, vec![held, request(2)]);
+}
+
 // Covers: an event JSON cannot hold, live or saved, never reaches a reset or
 // a subscriber, whose forwarder relies on every event encoding.
 #[cfg(unix)]

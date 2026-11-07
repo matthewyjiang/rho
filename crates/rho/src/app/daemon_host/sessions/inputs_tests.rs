@@ -1,15 +1,19 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    time::{Duration, UNIX_EPOCH},
+};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{self as wire, ErrorCode, InputAnswer, InputRequestId, Resolution};
-use rho_sdk::{ApprovalDecision, HostInputRefusal, HostInputResponse};
+use rho_sdk::{ApprovalDecision, HostInputRefusal, HostInputResponse, HostInputSource};
 use tokio::sync::mpsc;
 
 use super::Inputs;
 use crate::{
     app::{
         daemon_host::sessions::test_events::{
-            approval, approval_withdrawn, plan, question, question_id, question_withdrawn,
+            approval, approval_withdrawn, plan, question, question_id, question_with_fallback,
+            question_withdrawn,
         },
         session_runtime::{ApprovalId, PlanApprovalId, SessionEvent, TurnControl},
     },
@@ -24,14 +28,14 @@ fn open(
     event: &SessionEvent,
 ) -> (InputRequestId, mpsc::UnboundedReceiver<TurnControl>) {
     let (control, answers) = mpsc::unbounded_channel();
-    inputs.note(&control, event);
+    inputs.note(&control, event, UNIX_EPOCH);
     (opened(inputs).id, answers)
 }
 
 /// The request the last change opened, its only one.
 fn opened(inputs: &mut Inputs) -> wire::InputRequest {
     match inputs.take_events().as_slice() {
-        [wire::SessionEvent::InputRequested { request }] => request.clone(),
+        [wire::SessionEvent::InputRequested { request }] => (**request).clone(),
         _ => panic!("the event opens a request"),
     }
 }
@@ -149,7 +153,7 @@ fn a_request_hands_the_turn_only_the_answers_it_takes() {
         ),
     ];
     for (index, (event, answer, expected)) in cases.into_iter().enumerate() {
-        let mut inputs = Inputs::default();
+        let mut inputs = Inputs::new(/*question_timeout*/ None);
         let (id, mut turn) = open(&mut inputs, &event);
         let refused = matches!(expected, Outcome::Refused(_));
 
@@ -188,7 +192,7 @@ fn a_request_hands_the_turn_only_the_answers_it_takes() {
 #[test]
 fn only_the_first_answer_to_an_open_request_wins() {
     let code = |error: rho_protocol::RpcError| error.error_code();
-    let mut inputs = Inputs::default();
+    let mut inputs = Inputs::new(/*question_timeout*/ None);
     let (approved, mut turn) = open(&mut inputs, &approval(0));
     let (asked, _asking) = open(&mut inputs, &question("q"));
     let (abandoned, ended) = open(&mut inputs, &approval(1));
@@ -197,7 +201,7 @@ fn only_the_first_answer_to_an_open_request_wins() {
     // withdrawal of a request with the same runtime id closes nothing.
     let (other_turn, _) = mpsc::unbounded_channel();
     let (asking_turn, _) = mpsc::unbounded_channel();
-    inputs.note(&asking_turn, &question("q"));
+    inputs.note(&asking_turn, &question("q"), UNIX_EPOCH);
     let reasked = opened(&mut inputs);
 
     let first = inputs
@@ -206,9 +210,9 @@ fn only_the_first_answer_to_an_open_request_wins() {
     let second = inputs
         .answer(approved, InputAnswer::Deny { reason: None })
         .map_err(code);
-    inputs.note(&other_turn, &approval_withdrawn(0));
-    inputs.note(&other_turn, &question_withdrawn("q"));
-    inputs.note(&asking_turn, &question_withdrawn("q"));
+    inputs.note(&other_turn, &approval_withdrawn(0), UNIX_EPOCH);
+    inputs.note(&other_turn, &question_withdrawn("q"), UNIX_EPOCH);
+    inputs.note(&asking_turn, &question_withdrawn("q"), UNIX_EPOCH);
     let to_withdrawn = inputs
         .answer(reasked.id, InputAnswer::Decline)
         .map_err(code);
@@ -258,4 +262,215 @@ fn only_the_first_answer_to_an_open_request_wins() {
             ],
         )
     );
+}
+
+/// A session's question timeout in these tests; every request opens at
+/// `UNIX_EPOCH`, so one that times out has its deadline this far past it.
+const QUESTION_TIMEOUT: Duration = Duration::from_secs(60);
+
+// Covers: only a question whose agent offered fallback answers, in a
+// session whose questions time out, gets a timeout: clients see when and
+// with what the daemon answers it, and why, and the caller is handed the
+// timeout to run.
+// Owner: daemon input requests.
+#[test]
+fn only_a_question_with_fallback_answers_times_out() {
+    let times_out = (
+        Some(wire::InputTimeout {
+            deadline_ms: 60_000,
+            answer: answers(&[("answer", &["yes"])]),
+            reason: "safe default".into(),
+        }),
+        vec![(InputRequestId(0), QUESTION_TIMEOUT)],
+    );
+    let cases = [
+        (
+            "question with fallback answers",
+            Some(QUESTION_TIMEOUT),
+            question_with_fallback("q", "safe default"),
+            times_out,
+        ),
+        (
+            "question without",
+            Some(QUESTION_TIMEOUT),
+            question("q"),
+            (None, Vec::new()),
+        ),
+        (
+            "approval",
+            Some(QUESTION_TIMEOUT),
+            approval(0),
+            (None, Vec::new()),
+        ),
+        (
+            "questions do not time out",
+            None,
+            question_with_fallback("q", "safe default"),
+            (None, Vec::new()),
+        ),
+    ];
+    for (case, question_timeout, event, expected) in cases {
+        let mut inputs = Inputs::new(question_timeout);
+        let (control, _turn) = mpsc::unbounded_channel();
+        inputs.note(&control, &event, UNIX_EPOCH);
+        let request = opened(&mut inputs);
+
+        assert_eq!(
+            (request.timeout, inputs.take_timeouts()),
+            expected,
+            "{case}"
+        );
+    }
+}
+
+/// Something that happens to an open question with a timeout.
+#[derive(Clone, Copy, Debug)]
+enum Step {
+    Answer,
+    Hold,
+    EndTurn,
+    TimeOut,
+}
+
+/// What came of a question with a timeout after some steps.
+#[derive(Debug, PartialEq)]
+struct Played {
+    /// The codes of the steps refused.
+    refused: Vec<ErrorCode>,
+    events: Vec<wire::SessionEvent>,
+    turn: Option<TurnControl>,
+    open: bool,
+}
+
+/// Opens the question `event` asks in a session whose questions time out,
+/// plays `steps` on it, and reports what came of it.
+fn play(event: &SessionEvent, steps: &[Step]) -> Played {
+    let mut inputs = Inputs::new(Some(QUESTION_TIMEOUT));
+    let (id, mut turn) = open(&mut inputs, event);
+    let mut refused = Vec::new();
+    for step in steps {
+        let result = match step {
+            Step::Answer => inputs.answer(id, InputAnswer::Decline),
+            Step::Hold => inputs.hold(id),
+            Step::EndTurn => {
+                turn.close();
+                Ok(())
+            }
+            Step::TimeOut => {
+                inputs.time_out(id);
+                Ok(())
+            }
+        };
+        refused.extend(result.err().and_then(|error| error.error_code()));
+    }
+    inputs.send_answers();
+    Played {
+        refused,
+        events: inputs.take_events(),
+        turn: turn.try_recv().ok(),
+        open: inputs.waiting(),
+    }
+}
+
+// Covers: a question still open and not held when its timeout fires hands
+// the turn its fallback answers, marked as the fallback, and tells clients
+// it timed out; one answered or held first, or whose model turn ended,
+// does not time out.
+// Owner: daemon input requests.
+#[test]
+fn a_question_times_out_only_while_open_and_not_held() {
+    let id = InputRequestId(0);
+    let cases = [
+        (
+            "nobody answered",
+            &[Step::TimeOut][..],
+            vec![resolved(id, Resolution::TimedOut)],
+            Some(TurnControl::AnswerQuestion {
+                id: question_id("q"),
+                answer: Ok(HostInputResponse::new()
+                    .answer("answer", ["yes"])
+                    .with_source(HostInputSource::TimeoutFallback)),
+            }),
+            false,
+        ),
+        (
+            "answered first",
+            &[Step::Answer, Step::TimeOut],
+            vec![resolved(id, Resolution::Answered)],
+            Some(TurnControl::AnswerQuestion {
+                id: question_id("q"),
+                answer: Err(HostInputRefusal::Declined),
+            }),
+            false,
+        ),
+        (
+            "held first",
+            &[Step::Hold, Step::TimeOut],
+            vec![wire::SessionEvent::InputHeld { id }],
+            None,
+            true,
+        ),
+        (
+            "model turn ended",
+            &[Step::EndTurn, Step::TimeOut],
+            vec![resolved(id, Resolution::Withdrawn)],
+            None,
+            false,
+        ),
+    ];
+    for (case, steps, events, turn, open) in cases {
+        let expected = Played {
+            refused: Vec::new(),
+            events,
+            turn,
+            open,
+        };
+        let timed = question_with_fallback("q", "safe");
+        assert_eq!(play(&timed, steps), expected, "{case}");
+    }
+}
+
+// Covers: holding a question stops its timeout once and tells clients;
+// holding it again, or one without a timeout, tells nobody; a closed
+// question cannot be held.
+// Owner: daemon input requests.
+#[test]
+fn holding_tells_clients_only_when_it_stops_a_timeout() {
+    let id = InputRequestId(0);
+    let held = wire::SessionEvent::InputHeld { id };
+    let timed = question_with_fallback("q", "safe");
+    let cases = [
+        (
+            "held",
+            &timed,
+            &[Step::Hold][..],
+            Vec::new(),
+            vec![held.clone()],
+        ),
+        (
+            "held twice",
+            &timed,
+            &[Step::Hold, Step::Hold],
+            Vec::new(),
+            vec![held],
+        ),
+        (
+            "without a timeout",
+            &question("q"),
+            &[Step::Hold],
+            Vec::new(),
+            Vec::new(),
+        ),
+        (
+            "held after it timed out",
+            &timed,
+            &[Step::TimeOut, Step::Hold],
+            vec![ErrorCode::InputNotOpen],
+            vec![resolved(id, Resolution::TimedOut)],
+        ),
+    ];
+    for (case, event, steps, refused, events) in cases {
+        let played = play(event, steps);
+        assert_eq!((played.refused, played.events), (refused, events), "{case}");
+    }
 }
