@@ -116,6 +116,7 @@ fn validate_cli_rejects_session_flags_with_non_interactive_commands() {
                 max_steps: None,
                 timeout: None,
                 no_save: false,
+                detach: false,
                 prompt: Vec::new(),
             },
             Command::Update,
@@ -144,6 +145,7 @@ fn validate_cli_rejects_prompt_outside_interactive_session() {
             max_steps: None,
             timeout: None,
             no_save: false,
+            detach: false,
             prompt: Vec::new(),
         }),
         ..test_cli()
@@ -864,4 +866,69 @@ async fn cli_custom_host_refresh_uses_stored_key_for_configured_keyless_host() {
 
     refresh.unwrap();
     assert!(sent_key, "model-list refresh must send the stored key");
+}
+
+// Covers: `rho run --detach` refuses, by name, every flag that would change
+// how its session opens, which the daemon cannot take; it takes `rho run`'s
+// own options, and a plain run takes those flags.
+// Owner: cli config validation
+#[test]
+fn validate_cli_refuses_session_flags_with_a_detached_run() {
+    let refused = |args: &[&str]| {
+        let cli = Cli::try_parse_from(args).unwrap();
+        validate(&cli).err().map(|error| error.to_string())
+    };
+    let cases: [(&[&str], Option<&str>); 4] = [
+        (
+            &["rho", "run", "--detach", "--timeout", "5m", "--stdin", "go"],
+            None,
+        ),
+        (&["rho", "--model", "m", "run", "go"], None),
+        (
+            &[
+                "rho", "--model", "m", "--agent", "a", "run", "--detach", "go",
+            ],
+            Some("--model, --agent"),
+        ),
+        (
+            &[
+                "rho",
+                "--provider",
+                "p",
+                "--config",
+                "c.toml",
+                "--auth",
+                "api-key",
+                "--no-system-prompt",
+                "--no-tools",
+                "--no-subagents",
+                "--reasoning",
+                "high",
+                "--permission-mode",
+                "plan",
+                "--add-dir",
+                "/x",
+                "--save",
+                "run",
+                "--detach",
+                "go",
+            ],
+            Some(
+                "--provider, --config, --auth, --no-system-prompt, --no-tools, \
+                 --no-subagents, --reasoning, --permission-mode, --add-dir, --save",
+            ),
+        ),
+    ];
+    let found: Vec<_> = cases.iter().map(|(args, _)| refused(args)).collect();
+    let expected: Vec<_> = cases
+        .iter()
+        .map(|(_, flags)| {
+            flags.map(|flags| {
+                format!(
+                    "rho run --detach does not take {flags}: the daemon opens the session with the workspace's config"
+                )
+            })
+        })
+        .collect();
+    assert_eq!(found, expected);
 }

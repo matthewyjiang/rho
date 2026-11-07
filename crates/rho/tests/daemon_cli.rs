@@ -1,6 +1,7 @@
 //! `rho daemon` through the real binary: its lifecycle (status, single
-//! instance, and stop) here, the sessions it hosts in [`sessions`], and
-//! `rho attach` following them in [`attach`].
+//! instance, and stop) here, the sessions it hosts in [`sessions`],
+//! `rho attach` following them in [`attach`], and `rho run --detach`
+//! starting them in [`detach`].
 #![cfg(unix)]
 
 use std::{
@@ -19,6 +20,9 @@ mod sessions;
 
 #[path = "support/daemon_attach.rs"]
 mod attach;
+
+#[path = "support/daemon_detach.rs"]
+mod detach;
 
 use harness::{DaemonProcess, DaemonSandbox};
 

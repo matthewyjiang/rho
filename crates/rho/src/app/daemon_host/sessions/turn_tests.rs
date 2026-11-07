@@ -8,7 +8,7 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 use tokio::sync::{mpsc, oneshot};
 
-use super::{DaemonView, PromptStart, TurnTask, UNEXPECTED_STOP};
+use super::{DaemonView, PromptStart, TurnLimit, TurnTask, UNEXPECTED_STOP};
 use crate::app::daemon_host::sessions::test_events::{
     approval, approval_withdrawn, plan, plan_withdrawn, question, question_withdrawn,
 };
@@ -247,7 +247,7 @@ async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
                 Some(rho_protocol::TurnOutcome::Cancelled),
                 TurnEnd::Cancelled,
             )),
-            start: Some(PromptStart::Cancelled),
+            start: Some(PromptStart::Ended(rho_protocol::TurnOutcome::Cancelled)),
         },
         EndCase {
             name: "interrupted before saving",
@@ -259,7 +259,7 @@ async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
             name: "failed before saving",
             events: vec![],
             release: Release::End(failed()),
-            start: Some(PromptStart::Failed("provider refused the request".into())),
+            start: failed().0.map(PromptStart::Ended),
         },
         EndCase {
             name: "dropped while waiting for input",
@@ -271,7 +271,12 @@ async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
             name: "dropped before saving",
             events: vec![],
             release: Release::Drop,
-            start: Some(PromptStart::Failed(UNEXPECTED_STOP.into())),
+            start: Some(PromptStart::Ended(rho_protocol::TurnOutcome::Failed {
+                error: rho_protocol::TurnError {
+                    kind: rho_protocol::TurnErrorKind::Other,
+                    message: UNEXPECTED_STOP.into(),
+                },
+            })),
         },
     ];
     let root = TempDir::new().unwrap();
@@ -321,6 +326,7 @@ async fn a_cancel_before_the_prompt_begins_saves_nothing() {
         session: Arc::clone(&session),
         stopping: rho_sdk::CancellationToken::new(),
         cancel,
+        limit: None,
     }
     .spawn("hello".into());
     let start = tokio::time::timeout(TEST_BUDGET, start)
@@ -338,9 +344,127 @@ async fn a_cancel_before_the_prompt_begins_saves_nothing() {
     assert_eq!(
         (start, jobs.get(&job).map(|record| record.state), messages),
         (
-            Some(PromptStart::Cancelled),
+            Some(PromptStart::Ended(rho_protocol::TurnOutcome::Cancelled)),
             Some(JobState::Ended(TurnEnd::Cancelled)),
             Some(0)
         )
     );
+}
+
+/// A turn with a time limit of `timeout_ms`, whose session is busy until
+/// the limit passed when `busy`, with a client's cancel sent before that when
+/// `cancelled_first`. A turn whose session is free reaches its limit after
+/// it saved its prompt, by the test moving the clock there.
+struct LimitCase {
+    name: &'static str,
+    timeout_ms: u64,
+    busy: bool,
+    cancelled_first: bool,
+    start: PromptStart,
+    end: TurnEnd,
+    saved: usize,
+}
+
+// Covers: the daemon cancels a turn still running at its time limit, and
+// the turn ends timed out with the limit: one whose limit passed while it
+// waited for the session, which the limit counts, saves nothing and answers
+// the prompt with how it ended; one that saved first runs, its model call
+// hanging, until the limit cancels it. A client's cancel that came before
+// the limit stays a cancel, though the turn had not ended by then.
+// Owner: daemon session turn task.
+#[tokio::test]
+async fn the_daemon_times_a_turn_out_at_its_limit() {
+    let ended = |end: &TurnEnd| {
+        PromptStart::Ended(match *end {
+            TurnEnd::TimedOut { timeout_ms } => rho_protocol::TurnOutcome::TimedOut { timeout_ms },
+            _ => rho_protocol::TurnOutcome::Cancelled,
+        })
+    };
+    let cases = [
+        LimitCase {
+            name: "limit passed waiting for the session",
+            timeout_ms: 1,
+            busy: true,
+            cancelled_first: false,
+            start: ended(&TurnEnd::TimedOut { timeout_ms: 1 }),
+            end: TurnEnd::TimedOut { timeout_ms: 1 },
+            saved: 0,
+        },
+        LimitCase {
+            name: "limit passed mid-turn",
+            // Never reached in real time: the test moves the clock there.
+            timeout_ms: 3_600_000,
+            busy: false,
+            cancelled_first: false,
+            start: PromptStart::Saved,
+            end: TurnEnd::TimedOut {
+                timeout_ms: 3_600_000,
+            },
+            saved: 1,
+        },
+        LimitCase {
+            name: "cancelled before the limit passed",
+            timeout_ms: 1,
+            busy: true,
+            cancelled_first: true,
+            start: ended(&TurnEnd::Cancelled),
+            end: TurnEnd::Cancelled,
+            saved: 0,
+        },
+    ];
+    let root = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
+    for case in cases {
+        let job = started_job(&jobs);
+        let session = loaded_session(root.path(), &jobs, job.clone()).await;
+        let runtime = case.busy.then(|| session.runtime.try_lock().unwrap());
+
+        let start = TurnTask {
+            session: Arc::clone(&session),
+            stopping: rho_sdk::CancellationToken::new(),
+            // The session's own, as a prompt passes it, which the limit's
+            // cancel trips.
+            cancel: session.turn_cancel().clone(),
+            limit: Some(TurnLimit::starting_now(case.timeout_ms)),
+        }
+        .spawn("hello".into());
+        if case.cancelled_first {
+            session.cancel_turn();
+        }
+        if let Some(runtime) = runtime {
+            // Waits on the clock, not on the turn, which waits for this.
+            tokio::time::sleep(Duration::from_millis(case.timeout_ms + 1)).await;
+            drop(runtime);
+        }
+        let start = tokio::time::timeout(TEST_BUDGET, start)
+            .await
+            .expect("the turn answers its prompt")
+            .ok();
+        if !case.busy {
+            // The prompt is saved and the model call hangs: move the clock
+            // to the limit rather than wait for it, then let it run again for
+            // the budget below.
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_millis(case.timeout_ms)).await;
+            tokio::time::resume();
+        }
+        // Released once the turn recorded its end.
+        let messages = tokio::time::timeout(TEST_BUDGET, session.runtime.lock())
+            .await
+            .expect("the limit ends the turn")
+            .as_ref()
+            .map(|runtime| runtime.history_for_tests().len());
+
+        assert_eq!(
+            (start, jobs.get(&job).map(|record| record.state), messages),
+            (
+                Some(case.start),
+                Some(JobState::Ended(case.end)),
+                Some(case.saved)
+            ),
+            "{}",
+            case.name
+        );
+    }
 }

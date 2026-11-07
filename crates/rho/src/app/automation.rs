@@ -59,6 +59,16 @@ impl AutomationExit {
         }
     }
 
+    /// An invalid invocation or configuration: exit 2.
+    pub(super) fn configuration(message: impl Into<String>) -> Self {
+        Self::new(2, TerminalReason::ConfigurationError, message)
+    }
+
+    /// Any other failure, such as not reaching the daemon: exit 1.
+    pub(super) fn other(message: impl Into<String>) -> Self {
+        Self::new(1, TerminalReason::OtherError, message)
+    }
+
     /// Returns the documented process exit code for this automation result.
     pub fn exit_code(&self) -> u8 {
         self.end.exit_code
@@ -356,9 +366,8 @@ async fn run_text(
             command = session_commands::resolve(input.clone(), &scope, RUN_COMMANDS) => command,
         }
     };
-    let rejected = |message: String| -> anyhow::Error {
-        AutomationExit::new(2, TerminalReason::ConfigurationError, message).into()
-    };
+    let rejected =
+        |message: String| -> anyhow::Error { AutomationExit::configuration(message).into() };
     view.prompt(&input);
     match command.map_err(|rejected_command| rejected(rejected_command.to_string()))? {
         PromptCommand::Turn {
@@ -541,7 +550,7 @@ fn print_provider_diagnostic(error: &anyhow::Error) {
     }
 }
 
-fn prompt_from_stdin(parts: Vec<String>, read_stdin: bool) -> anyhow::Result<String> {
+pub(super) fn prompt_from_stdin(parts: Vec<String>, read_stdin: bool) -> anyhow::Result<String> {
     if !read_stdin && crate::stdio::stdin_is_redirected() {
         anyhow::bail!(
             "stdin is redirected but --stdin was not set; pass --stdin to include piped input"

@@ -224,6 +224,12 @@ pub enum Command {
         /// run's record.
         #[arg(long)]
         no_save: bool,
+        /// Start the run in the rho daemon, starting one if none runs, and
+        /// exit once its prompt is saved, printing the session's id. The
+        /// turn runs on; `rho attach <ID>` follows it and answers its
+        /// approvals and questions. `--timeout` is enforced by the daemon.
+        #[arg(long, conflicts_with_all = ["output_file", "output", "max_steps", "no_save"])]
+        detach: bool,
         /// Prompt text to send to the agent.
         #[arg(value_name = "PROMPT", num_args = 0..)]
         prompt: Vec<String>,

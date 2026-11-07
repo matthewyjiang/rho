@@ -188,6 +188,7 @@ pub(super) async fn prompt(client: &Client, session: &SessionId) -> Result<(), O
         .request::<SessionPrompt>(&SessionPromptParams {
             session: session.clone(),
             text: "hello".into(),
+            timeout_ms: None,
         })
         .await
         .map(|_| ())
@@ -229,6 +230,7 @@ async fn settled(
                 | JobState::Completed
                 | JobState::Failed
                 | JobState::Cancelled
+                | JobState::TimedOut
                 | JobState::Interrupted => Some(job),
                 state => panic!("the daemon sent a job state this test does not know: {state:?}"),
             }
@@ -384,6 +386,7 @@ async fn a_subagent_is_a_child_job_of_its_session() {
         .request::<SessionPrompt>(&SessionPromptParams {
             session: session.clone(),
             text: call.to_string(),
+            timeout_ms: None,
         })
         .await
         .unwrap();
@@ -446,6 +449,7 @@ async fn a_workflow_run_is_a_child_job_of_its_session() {
         .request::<SessionPrompt>(&SessionPromptParams {
             session: session.clone(),
             text: call.to_string(),
+            timeout_ms: None,
         })
         .await
         .unwrap();
@@ -803,6 +807,7 @@ pub(super) async fn prompt_a_supervised_write(
         .request::<SessionPrompt>(&SessionPromptParams {
             session: session.clone(),
             text: call.to_string(),
+            timeout_ms: None,
         })
         .await
         .unwrap();
@@ -981,6 +986,7 @@ async fn ask_color_with_fallback(client: &Client, session: &SessionId) {
         .request::<SessionPrompt>(&SessionPromptParams {
             session: session.clone(),
             text: call.to_string(),
+            timeout_ms: None,
         })
         .await
         .unwrap();

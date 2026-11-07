@@ -20,8 +20,8 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/daemon/status` | | `pid`, `version`, `protocol`, `started_at`, `uptime_secs`, `jobs` (jobs queued, running, or waiting for input), `socket`. |
 | `rho/daemon/stop` | | `{}`; the daemon then shuts down as [described](/daemon#commands). |
 | `rho/session/new` | `cwd` | Opens a new session whose workspace is `cwd`, an absolute path to an existing directory, and returns its `session` id. |
-| `rho/session/prompt` | `session`, `text` | Starts a turn and returns `{}` once the turn has saved the prompt. A session runs one turn at a time; a prompt while a turn is under way gets `SessionBusy`. |
-| `rho/session/cancel` | `session` | Cancels the turn under way, if any. The turn ends `cancelled`, or `interrupted` when the daemon is stopping. |
+| `rho/session/prompt` | `session`, `text`, optional `timeout_ms` | Starts a turn and returns `{}` once the turn has saved the prompt. A session runs one turn at a time; a prompt while a turn is under way gets `SessionBusy`. With `timeout_ms`, the daemon cancels a turn still running that many milliseconds after it took the prompt, and the turn ends `timed_out`. |
+| `rho/session/cancel` | `session` | Cancels the turn under way, if any. The turn ends `cancelled`, or `interrupted` when the daemon is stopping; one already past its `timeout_ms` ends `timed_out`. |
 | `rho/session/steer` | `session`, `text` | Adds `text` to the running turn's next model request. Gets `NotSteerable` when no model request is taking input. |
 | `rho/session/attach` | `session`, `after`? | Follows the session's events ([below](#following-a-session)). Returns its `stream`, the `replay` that follows (`tail` or `reset`) and how many events it holds (`replay_events`), its job `state`, and the input requests open now (`inputs`). |
 | `rho/session/detach` | `session` | Stops following the session; no event of it arrives after the response. |
@@ -31,9 +31,10 @@ When the client stops sending, the daemon answers every request it has already r
 
 A prompt whose turn ends before it saves the prompt returns an error instead of a result:
 
-- `TurnCancelled` when a cancel arrived before the turn began. Nothing is saved and the model is not called.
+- `TurnEnded`, whose `data` is the turn's [outcome](#how-a-turn-ends): `cancelled` when a cancel arrived before the turn began, `timed_out` when its `timeout_ms` passed first, or `failed` with the reason, such as unreadable provider credentials or a slash command the daemon does not run. Nothing is saved and the model is not called. A turn that stopped unexpectedly fails with `the turn stopped unexpectedly; see the daemon log`.
 - `DaemonStopping` when the daemon starts stopping while the prompt waits for its turn to save it.
-- `TurnFailed` with the reason when the turn failed, such as unreadable provider credentials. A turn that stopped unexpectedly answers `the turn stopped unexpectedly; see the daemon log`.
+
+A prompt that starts with a slash command resolves as it does in [`rho run`](/automation-cli#sessions-commands-and-questions): prompt templates, MCP prompts, `/init`, and `$skill` mentions work. `/compact`, `/workflow:<name>`, and `/agent:<name>` do not run in the daemon yet, and the turn fails as a `configuration` error.
 
 What a session runs, and what its job states mean, is described in [Sessions and jobs](/daemon#sessions-and-jobs).
 
@@ -81,6 +82,7 @@ A turn that ends sends one `turn_ended` event; the `state` that records the job'
 | `answered` | `completed` | The model's answer whole as `text`, and why it stopped: `end_turn`, `max_tokens` (the provider cut it off), or `refusal`. Show `text` rather than the chunks you gathered when they differ, as after a provider retry restarted the reply. |
 | `max_steps` | `completed` | The turn used its model-step limit before the model answered; `text` is its last step's reply, possibly empty. |
 | `cancelled` | `cancelled` | A client cancelled the turn. |
+| `timed_out` | `timed_out` | The daemon cancelled the turn at its prompt's `timeout_ms`, which it repeats. |
 | `failed` | `failed` | The `error`: its `kind` (`authentication`, `provider`, `tool_host`, `configuration`, or `other`) and a `message`. An authentication failure's message names only the provider, the auth, and how to log in, never the provider's own text, which may echo credentials. |
 
 A client that resets finds, after the saved conversation, the `turn_ended` of each turn since the last one that saved to it. Outcomes are not saved with the conversation.
@@ -126,8 +128,7 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 | -32006 | `SteerRefused` | The running turn refused the steering input. |
 | -32007 | `DaemonStopping` | The daemon is stopping and starts nothing new. |
 | -32008 | `SessionOpenFailed` | The daemon could not open the session, for example because the config is invalid. |
-| -32009 | `TurnFailed` | The turn failed before it saved the prompt; the message says why. |
-| -32010 | `TurnCancelled` | The turn was cancelled before it saved the prompt. |
+| -32009 | `TurnEnded` | The turn ended before it saved the prompt; `data` is its outcome. |
 | -32011 | `InputNotOpen` | The input request is not open: another client answered it first, it timed out, or the turn withdrew it. |
 
 ## Versions and compatibility

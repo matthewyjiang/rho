@@ -752,6 +752,11 @@
           "type": "string"
         },
         {
+          "const": "timed_out",
+          "description": "The turn ran past the limit its prompt set and was cancelled;\n[`crate::TurnOutcome::TimedOut`] says the limit.",
+          "type": "string"
+        },
+        {
           "const": "interrupted",
           "description": "The daemon stopped, or died, before the turn ended.",
           "type": "string"
@@ -1454,7 +1459,7 @@
       "type": "object"
     },
     "SessionCancelResponse": {
-      "description": "Result of [`SESSION_CANCEL`]: the turn in progress, if any, has been\nasked to stop. The turn saves what it did and ends\n[`crate::JobState::Cancelled`], or [`crate::JobState::Interrupted`] when\nthe daemon is stopping. A cancel that arrives before a prompted turn\nbegins still cancels it, and that prompt answers\n[`crate::ErrorCode::TurnCancelled`].",
+      "description": "Result of [`SESSION_CANCEL`]: the turn in progress, if any, has been\nasked to stop. The turn saves what it did and ends\n[`crate::JobState::Cancelled`], or [`crate::JobState::Interrupted`] when\nthe daemon is stopping; one already past its\n[`SessionPromptParams::timeout_ms`] ends [`crate::JobState::TimedOut`].\nA cancel that arrives before a prompted turn begins still cancels it,\nand that prompt answers [`crate::ErrorCode::TurnEnded`].",
       "type": "object"
     },
     "SessionDetachParams": {
@@ -1838,8 +1843,17 @@
           "$ref": "#/$defs/SessionId"
         },
         "text": {
-          "description": "The user message, sent to the model as written.",
+          "description": "The user message. A leading slash command the session runs, such as\n`/init`, a prompt template, or an MCP prompt, is expanded first, as\n`rho run` expands it; other text reaches the model as written.",
           "type": "string"
+        },
+        "timeout_ms": {
+          "description": "How long the turn may run, in milliseconds from when the daemon\ntakes the prompt. A turn still running then is cancelled and ends\n[`crate::TurnOutcome::TimedOut`]. `None` sets no limit.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [
@@ -1849,7 +1863,7 @@
       "type": "object"
     },
     "SessionPromptResponse": {
-      "description": "Result of [`SESSION_PROMPT`]: the prompt is saved and its turn is\nrunning. The turn runs on in the daemon; [`super::JOB_LIST`] reports how\nit ends.\n\nA turn that ends before its prompt is saved answers with an error\ninstead: [`crate::ErrorCode::TurnFailed`] with the reason,\n[`crate::ErrorCode::TurnCancelled`] when a cancel stopped it, or\n[`crate::ErrorCode::DaemonStopping`] when the daemon stopped it.",
+      "description": "Result of [`SESSION_PROMPT`]: the prompt is saved and its turn is\nrunning. The turn runs on in the daemon; [`super::JOB_LIST`] reports how\nit ends.\n\nA turn that ends before its prompt is saved answers with an error\ninstead: [`crate::ErrorCode::TurnEnded`], whose `data` is the turn's\n[`crate::TurnOutcome`], or [`crate::ErrorCode::DaemonStopping`] when the\ndaemon stopped it.",
       "type": "object"
     },
     "SessionSteerParams": {
@@ -2186,6 +2200,25 @@
           "type": "object"
         },
         {
+          "description": "The daemon cancelled it at the time limit its prompt set,\n[`super::SessionPromptParams::timeout_ms`], repeated here.",
+          "properties": {
+            "timeout_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "timed_out",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "timeout_ms"
+          ],
+          "type": "object"
+        },
+        {
           "description": "It failed.",
           "properties": {
             "error": {
@@ -2284,10 +2317,10 @@
       "name": "SessionOpenFailed"
     },
     "-32009": {
-      "name": "TurnFailed"
-    },
-    "-32010": {
-      "name": "TurnCancelled"
+      "data": {
+        "$ref": "#/$defs/TurnOutcome"
+      },
+      "name": "TurnEnded"
     },
     "-32011": {
       "name": "InputNotOpen"

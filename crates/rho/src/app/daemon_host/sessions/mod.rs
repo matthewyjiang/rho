@@ -25,7 +25,7 @@ use rho_protocol::{
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
     SessionHoldParams, SessionHoldResponse, SessionNewParams, SessionNewResponse,
     SessionPromptParams, SessionPromptResponse, SessionSteerParams, SessionSteerResponse,
-    Subscription,
+    Subscription, TurnOutcome,
 };
 use rho_sdk::{CancellationToken, SessionId, UserInput};
 
@@ -52,7 +52,7 @@ mod turn;
 use feed::{Attached, Feed};
 use inputs::Inputs;
 use open::{open_session, OpenedSession, Workspace};
-use turn::{PromptStart, TurnTask};
+use turn::{PromptStart, TurnLimit, TurnTask};
 
 /// How long the daemon's stop waits for its turns to save once it was
 /// asked to stop, before it records them interrupted and exits anyway.
@@ -192,6 +192,18 @@ impl LoadedSession {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
+
+    /// Cancels the turn under way, if any, even one that has not begun its
+    /// prompt yet.
+    fn cancel_turn(&self) {
+        // Both under the `turn_cancel` lock, which a prompt takes to start
+        // its turn, so the handle's cancel cannot reach a turn started after
+        // this cancel. Lock order: `turn_cancel`, then the prompt gate's
+        // slot inside `handle.cancel()`; nothing takes them the other way.
+        let turn_cancel = self.turn_cancel();
+        turn_cancel.cancel();
+        self.handle.cancel();
+    }
 }
 
 impl Sessions {
@@ -319,6 +331,7 @@ impl Sessions {
             session,
             stopping: self.stopping.clone(),
             cancel,
+            limit: params.timeout_ms.map(TurnLimit::starting_now),
         }
         .spawn(params.text);
         // An answer that is already in wins over the stop, so a prompt the
@@ -328,11 +341,7 @@ impl Sessions {
             biased;
             start = start => match start {
                 Ok(PromptStart::Saved) => Ok(SessionPromptResponse {}),
-                Ok(PromptStart::Cancelled) => Err(RpcError::new(
-                    ErrorCode::TurnCancelled,
-                    "the turn was cancelled before it started",
-                )),
-                Ok(PromptStart::Failed(error)) => Err(RpcError::new(ErrorCode::TurnFailed, error)),
+                Ok(PromptStart::Ended(outcome)) => Err(ended_early(&outcome)),
                 // Only a turn the daemon's stop interrupted, or one whose
                 // task the exiting runtime dropped, sends no answer.
                 Err(_) => Err(stopping()),
@@ -347,15 +356,7 @@ impl Sessions {
         &self,
         params: SessionCancelParams,
     ) -> Result<SessionCancelResponse, RpcError> {
-        let session = self.loaded_session(&params.session)?;
-        // Both under the `turn_cancel` lock, which a prompt takes to start
-        // its turn, so the handle's cancel cannot reach a turn started after
-        // this cancel. Lock order: `turn_cancel`, then the prompt gate's
-        // slot inside `handle.cancel()`; nothing takes them the other way.
-        let turn_cancel = session.turn_cancel();
-        turn_cancel.cancel();
-        session.handle.cancel();
-        drop(turn_cancel);
+        self.loaded_session(&params.session)?.cancel_turn();
         Ok(SessionCancelResponse {})
     }
 
@@ -495,4 +496,20 @@ impl Sessions {
 
 fn stopping() -> RpcError {
     RpcError::new(ErrorCode::DaemonStopping, "the daemon is stopping")
+}
+
+/// The error a prompt answers when its turn ended, as `outcome` says,
+/// before it saved the prompt: `TurnEnded`, with the outcome as its data.
+fn ended_early(outcome: &TurnOutcome) -> RpcError {
+    let message = match outcome {
+        TurnOutcome::Failed { error } => error.message.clone(),
+        TurnOutcome::Cancelled => "the turn was cancelled before it started".to_owned(),
+        TurnOutcome::TimedOut { timeout_ms } => {
+            format!("the turn reached its {timeout_ms}ms time limit before it started")
+        }
+        // Only those three end a turn before its prompt is saved.
+        _ => "the turn ended before it started".to_owned(),
+    };
+    let data = serde_json::to_value(outcome).expect("a turn outcome serializes");
+    RpcError::new(ErrorCode::TurnEnded, message).with_data(data)
 }

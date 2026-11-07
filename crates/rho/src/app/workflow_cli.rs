@@ -25,8 +25,7 @@ use crate::{
 use crate::workflow::PlanConsent;
 
 use super::{
-    automation, automation_protocol::TerminalReason, bootstrap::host_capabilities, cli_config,
-    config_repository::ConfigRepository,
+    automation, bootstrap::host_capabilities, cli_config, config_repository::ConfigRepository,
 };
 
 #[cfg(test)]
@@ -685,8 +684,7 @@ fn workflow_error_message(error: &WorkflowError, audience: DiagnosticAudience) -
 }
 
 fn workflow_exit(message: &str) -> anyhow::Error {
-    automation::AutomationExit::new(2, TerminalReason::ConfigurationError, message.to_owned())
-        .into()
+    automation::AutomationExit::configuration(message).into()
 }
 
 #[cfg(test)]

@@ -7,11 +7,18 @@
 //! while an approval, plan approval, or question is open, `running`
 //! otherwise. A request is never denied because no client is attached.
 
-use std::{future::Future, sync::Arc, time::SystemTime};
+use std::{
+    future::Future,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use rho_protocol as wire;
 use rho_sdk::{CancellationToken, UserInput};
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::Instant,
+};
 
 use super::{
     super::jobs::{JobEvent, TurnEnd},
@@ -20,10 +27,11 @@ use super::{
 };
 use crate::{
     app::{
+        session_commands::{self, BuiltInCommand, CommandScope, CommandSet, PromptCommand},
         session_events::outcome,
         session_runtime::{
-            PlanReport, SessionEvent, SessionRuntime, Turn, TurnControl, TurnIo, TurnOutcome,
-            TurnView,
+            CommandRejected, PlanReport, SessionEvent, SessionRuntime, Turn, TurnControl, TurnIo,
+            TurnOutcome, TurnView,
         },
     },
     config::Config,
@@ -37,24 +45,49 @@ use crate::{
 pub(super) enum PromptStart {
     /// The turn saved the prompt and runs on.
     Saved,
-    /// A client cancelled the turn before it saved the prompt.
-    Cancelled,
-    /// The turn failed before it saved the prompt, for this reason.
-    Failed(String),
+    /// The turn ended before it saved the prompt, as this says: cancelled,
+    /// timed out, or failed.
+    Ended(wire::TurnOutcome),
 }
 
-impl PromptStart {
-    /// How a turn that ended with `end` before it reported saving its
-    /// prompt began, or `None` when the daemon's stop answers the request.
-    fn ended(end: &TurnEnd) -> Option<Self> {
-        match end {
-            TurnEnd::Completed => Some(Self::Saved),
-            TurnEnd::Cancelled => Some(Self::Cancelled),
-            TurnEnd::Interrupted => None,
-            TurnEnd::Failed(error) => Some(Self::Failed(error.clone())),
+/// A turn's time limit (#1669), counted from when the daemon took its
+/// prompt, waiting for the session included: the limit is the caller's
+/// wall clock.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct TurnLimit {
+    timeout_ms: u64,
+    deadline: Instant,
+}
+
+impl TurnLimit {
+    pub(super) fn starting_now(timeout_ms: u64) -> Self {
+        Self {
+            timeout_ms,
+            deadline: Instant::now() + Duration::from_millis(timeout_ms),
         }
     }
 }
+
+/// Waits until `limit` passes, and returns it in milliseconds; forever
+/// without one.
+async fn expired(limit: Option<TurnLimit>) -> u64 {
+    match limit {
+        Some(TurnLimit {
+            timeout_ms,
+            deadline,
+        }) => {
+            tokio::time::sleep_until(deadline).await;
+            timeout_ms
+        }
+        None => std::future::pending().await,
+    }
+}
+
+/// The commands a daemon session runs. `/compact` is not among them yet.
+const DAEMON_COMMANDS: CommandSet = CommandSet {
+    built_ins: &[BuiltInCommand::Init],
+    sessions_label: "daemon sessions",
+};
 
 /// One turn of a session whose job already recorded the turn's start.
 pub(super) struct TurnTask {
@@ -65,6 +98,8 @@ pub(super) struct TurnTask {
     /// Tripped by a cancel sent for this turn, even one sent before the
     /// turn began its prompt.
     pub(super) cancel: CancellationToken,
+    /// When the daemon cancels the turn as timed out; `None` sets no limit.
+    pub(super) limit: Option<TurnLimit>,
 }
 
 impl TurnTask {
@@ -82,6 +117,7 @@ impl TurnTask {
             session,
             stopping,
             cancel,
+            limit,
         } = self;
         // Locked for the whole turn and released only after the turn's end
         // is recorded, so the daemon's stop, which waits for the lock, finds
@@ -91,10 +127,27 @@ impl TurnTask {
         // Declared after the lock, so even a panic records the end (see
         // `DaemonView`'s drop) before the lock is released.
         let mut view = DaemonView::new(Arc::clone(&session), started);
-        let ended = match &mut *runtime {
-            Some(runtime) => run_turn(runtime, &mut view, text, &session.config, &cancel).await,
+        // With the limit, in milliseconds, when it cancelled the turn: not
+        // when a client's cancel came first and the turn was still winding
+        // down at the deadline.
+        let (ended, timed_out) = match &mut *runtime {
+            Some(runtime) => {
+                let turn = run_turn(runtime, &mut view, text, &session.config, &cancel);
+                tokio::pin!(turn);
+                // The deadline first, so a limit already past cancels the
+                // turn before it saves its prompt.
+                tokio::select! {
+                    biased;
+                    timeout_ms = expired(limit) => {
+                        let timed_out = (!cancel.is_cancelled()).then_some(timeout_ms);
+                        session.cancel_turn();
+                        (turn.await, timed_out)
+                    }
+                    ended = &mut turn => (ended, None),
+                }
+            }
             // Only the daemon's stop takes the runtime, after its last turn.
-            None => Ok(TurnOutcome::Cancelled),
+            None => (Ok(TurnOutcome::Cancelled), None),
         };
         // Before the end is recorded, so the state event that reports it
         // follows the transcript's cut: a client reset from then on gets the
@@ -102,13 +155,23 @@ impl TurnTask {
         if let Some(runtime) = &*runtime {
             save_transcript(&session, runtime);
         }
-        let (outcome, end) = match ended {
-            Ok(TurnOutcome::Completed(run)) => (Some(outcome::finished(&run)), TurnEnd::Completed),
+        let (outcome, end) = match (ended, timed_out) {
+            (Ok(TurnOutcome::Completed(run)), _) => {
+                (Some(outcome::finished(&run)), TurnEnd::Completed)
+            }
             // The daemon's stop already detached every client, so none
             // hears how the turn ended; the job records it interrupted.
-            Ok(TurnOutcome::Cancelled) if stopping.is_cancelled() => (None, TurnEnd::Interrupted),
-            Ok(TurnOutcome::Cancelled) => (Some(wire::TurnOutcome::Cancelled), TurnEnd::Cancelled),
-            Err(error) => {
+            (Ok(TurnOutcome::Cancelled), _) if stopping.is_cancelled() => {
+                (None, TurnEnd::Interrupted)
+            }
+            (Ok(TurnOutcome::Cancelled), Some(timeout_ms)) => (
+                Some(wire::TurnOutcome::TimedOut { timeout_ms }),
+                TurnEnd::TimedOut { timeout_ms },
+            ),
+            (Ok(TurnOutcome::Cancelled), None) => {
+                (Some(wire::TurnOutcome::Cancelled), TurnEnd::Cancelled)
+            }
+            (Err(error), _) => {
                 // Logged whole, to the daemon's own log only: the outcome
                 // hides an authentication failure's text, which may echo
                 // credentials, from clients.
@@ -146,8 +209,10 @@ fn save_transcript(session: &LoadedSession, runtime: &SessionRuntime) {
     }
 }
 
-/// Begins a prompt of `text` on `runtime` and runs its model turns. Slash
-/// commands are not expanded yet: the text goes to the model as written.
+/// Begins a prompt of `text` on `runtime` and runs it: its slash command
+/// when it starts with one the daemon runs, else a model turn on it. A
+/// command the daemon cannot run fails the turn as a configuration error
+/// before the prompt is saved.
 async fn run_turn(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,
@@ -164,11 +229,46 @@ async fn run_turn(
         return Ok(TurnOutcome::Cancelled);
     }
     let input = UserInput::text(text);
+    let home = crate::paths::home_dir();
+    let command = {
+        let commands = CommandScope::of(runtime, home.as_deref(), config);
+        // Expansion can wait on an MCP server, so a cancel drops it.
+        tokio::select! {
+            biased;
+            () = scope.cancellation().cancelled() => return Ok(TurnOutcome::Cancelled),
+            command = session_commands::resolve(input.clone(), &commands, DAEMON_COMMANDS) => command,
+        }
+    };
+    let (model, calls) = match command? {
+        PromptCommand::Turn { input, calls } => (input, calls),
+        // `DAEMON_COMMANDS` has no `/compact`, so the resolver rejects it
+        // first.
+        PromptCommand::Compact { .. } => {
+            return Err(CommandRejected(
+                "could not run /compact: not available in the daemon yet".into(),
+            )
+            .into())
+        }
+        PromptCommand::StartWorkflow(start) => {
+            return Err(CommandRejected(format!(
+                "could not run /workflow:{}: not available in the daemon yet; use rho workflow run",
+                start.workflow.label
+            ))
+            .into())
+        }
+        PromptCommand::RunAsAgent(_) => {
+            return Err(CommandRejected(
+                "could not run /agent: not available in the daemon yet".into(),
+            )
+            .into())
+        }
+    };
     view.session.live().prompt(&input);
+    // The command stays the shown message; the model gets its expansion.
     let turn = Turn {
-        display: input.clone(),
-        model: input,
-        calls: Vec::new(),
+        display: input,
+        model,
+        calls,
     };
     // A turn builds a large future; keep it on the heap.
     Box::pin(runtime.run_prompt_turn(view, &scope, turn, config)).await
@@ -219,7 +319,14 @@ impl DaemonView {
     /// Tells clients the turn ended with `outcome`, if any, records it as
     /// `end`, and tells a request still waiting for the turn to begin.
     fn finish(&mut self, outcome: Option<wire::TurnOutcome>, end: TurnEnd) {
-        let start = PromptStart::ended(&end);
+        // How the turn began, if it had not reported saving its prompt yet.
+        let start = match end {
+            TurnEnd::Completed => Some(PromptStart::Saved),
+            TurnEnd::Interrupted => None,
+            TurnEnd::Cancelled | TurnEnd::TimedOut { .. } | TurnEnd::Failed(_) => {
+                outcome.clone().map(PromptStart::Ended)
+            }
+        };
         // A turn that ended waits for nothing.
         self.session.change_inputs(Inputs::withdraw_all);
         {

@@ -19,11 +19,6 @@ mod client;
 mod lock;
 mod paths;
 mod server;
-#[expect(
-    dead_code,
-    reason = "frontends (the TUI, `rho acp`) start the daemon through this in follow-up PRs; \
-              until then production code never spawns and tests never use ProcessSpawner"
-)]
 mod spawn;
 #[cfg(test)]
 mod test_support;
@@ -34,3 +29,4 @@ pub(crate) use lock::{
 };
 pub(crate) use paths::{real_home, DaemonPaths};
 pub(crate) use server::bind;
+pub(crate) use spawn::{connect_or_spawn, ProcessSpawner};

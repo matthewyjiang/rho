@@ -2,6 +2,8 @@
 //! `turn_ended` says, and the reason, exit code, and message of a turn's
 //! end.
 
+use std::time::Duration;
+
 use rho_protocol::{TurnError, TurnErrorKind, TurnOutcome};
 
 use super::{AutomationExit, TerminalReason};
@@ -58,6 +60,14 @@ pub(in crate::app) fn outcome_exit(outcome: &TurnOutcome) -> Result<(), Automati
             1,
             TerminalReason::Cancelled,
             "the turn was cancelled",
+        )),
+        TurnOutcome::TimedOut { timeout_ms } => Err(AutomationExit::new(
+            124,
+            TerminalReason::Timeout,
+            format!(
+                "the turn timed out at its limit of {}",
+                humantime::format_duration(Duration::from_millis(*timeout_ms))
+            ),
         )),
         TurnOutcome::Failed { error } => Err(failed(error.clone())),
         // `TurnOutcome` is non-exhaustive; an end a newer daemon sends is

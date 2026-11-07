@@ -42,6 +42,9 @@ Options:
       --no-save             Do not save the run's session or its Rho and Claude
                             subagents' sessions, so none is left to export or
                             resume
+      --detach              Start the run in the rho daemon, starting one if none
+                            runs, and exit once its prompt is saved, printing the
+                            session's id
       --no-subagents        Do not expose the delegated-agent tools (agent/agents) to the model
       --agent <ID>          Select the agent definition used for this session or automation run
   -h, --help                Print help (see more with '--help')
@@ -207,6 +210,33 @@ result:
     path: rho-events.jsonl
 ```
 
+### Running in the daemon
+
+`rho run --detach` starts the run in the [daemon](/daemon) instead, starting one
+if none runs, and exits as soon as the daemon has saved the prompt. It prints
+the session's id on stdout. The turn runs on with no terminal attached, and
+`rho attach` follows it and answers its approvals and questions:
+
+```bash
+SESSION=$(rho run --detach --timeout 30m "migrate the config loader")
+# Later, from any terminal:
+rho attach "$SESSION"
+```
+
+- `--timeout` is enforced by the daemon: a turn still running then is
+  cancelled and ends `timed_out`, which `rho attach` reports with exit 124.
+- The daemon opens the session with the workspace's config, as `rho` started
+  there would. Flags that change it (`--model`, `--provider`, `--agent`,
+  `--permission-mode`, `--add-dir`, `--save`, and the like) are refused with
+  exit 2 rather than dropped; set them in [config](/configuration) instead.
+- Slash commands resolve as they do in a foreground run, except that
+  `/agent:<name>` does not run in the daemon yet; like `/compact` and
+  `/workflow:<name>`, it fails with exit 2.
+- `--output`, `--output-file`, `--max-steps`, and `--no-save` do not apply and
+  are refused.
+- The daemon is not supported on Windows yet
+  ([#1665](https://github.com/matthewyjiang/rho/issues/1665)).
+
 ### Attaching to a daemon session
 
 `rho attach <ID>` follows a session the [daemon](/daemon) hosts until its turn
@@ -236,7 +266,8 @@ rho attach "$SESSION" --output jsonl | jq -c 'select(.type == "event") | .event.
 - Ctrl+C detaches: the turn runs on in the daemon, and `rho attach` exits 130
   (143 on SIGTERM) with the reason `detached`.
 - A client that cancels the turn ends it with the reason `cancelled`, exit 1;
-  a daemon that stops before the turn ends, with `interrupted`, exit 1.
+  a daemon that stops before the turn ends, with `interrupted`, exit 1. A turn
+  the daemon cancelled at its `--timeout` ends with `timeout`, exit 124.
 - Subagent and workflow runs do not stream their events yet (#1668): their
   job ids are refused, and the error names the session they run in.
 - A session an earlier daemon ran cannot be followed until the daemon reopens
@@ -388,7 +419,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | Command | Description |
 | --- | --- |
 | `rho` | Start an interactive TUI session in the current working directory. Add `--prompt` to send the first message as the session opens. |
-| `rho run [OPTIONS] [PROMPT]...` | Send one prompt, optionally append stdin, print the final answer, and exit. |
+| `rho run [OPTIONS] [PROMPT]...` | Send one prompt, optionally append stdin, print the final answer, and exit. With `--detach`, start it in the daemon and exit at once; see [Running in the daemon](#running-in-the-daemon). |
 | `rho attach [OPTIONS] <ID>` | Follow a daemon session's turn until it ends, and exit as it ended. See [Attaching to a daemon session](#attaching-to-a-daemon-session). |
 | `rho acp [--t3code]` | Serve Agent Client Protocol over stdio for an editor host. `--t3code` runs subagents as T3 Code threads. See [ACP](/integrations/acp). |
 | `rho workflow <COMMAND>` | Use `list`, `validate`, `plan`, `run`, `status`, `cancel`, or `resume <RUN_ID>` for a [durable workflow](/workflows). |

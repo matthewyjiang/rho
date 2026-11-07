@@ -35,6 +35,7 @@ impl From<&JobState> for wire::JobState {
             JobState::Ended(TurnEnd::Completed) => Self::Completed,
             JobState::Ended(TurnEnd::Failed(_)) => Self::Failed,
             JobState::Ended(TurnEnd::Cancelled) => Self::Cancelled,
+            JobState::Ended(TurnEnd::TimedOut { .. }) => Self::TimedOut,
             JobState::Ended(TurnEnd::Interrupted) => Self::Interrupted,
         }
     }
@@ -48,7 +49,12 @@ fn failure(state: &JobState) -> Option<String> {
         | JobState::Queued
         | JobState::Running
         | JobState::WaitingForInput
-        | JobState::Ended(TurnEnd::Completed | TurnEnd::Cancelled | TurnEnd::Interrupted) => None,
+        | JobState::Ended(
+            TurnEnd::Completed
+            | TurnEnd::Cancelled
+            | TurnEnd::TimedOut { .. }
+            | TurnEnd::Interrupted,
+        ) => None,
     }
 }
 

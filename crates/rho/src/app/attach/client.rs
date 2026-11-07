@@ -116,13 +116,14 @@ struct Target {
 /// to `view`, and returns the exit that end makes. A signal detaches at any
 /// point, connecting included.
 async fn attach(id: &str, view: &mut View, lines: Lines) -> Result<(), AutomationExit> {
-    let mut signals = ShutdownSignals::install()
-        .map_err(|error| other(format!("could not install signal handlers: {error}")))?;
+    let mut signals = ShutdownSignals::install().map_err(|error| {
+        AutomationExit::other(format!("could not install signal handlers: {error}"))
+    })?;
     tokio::select! {
         exit = follow(id, view, lines) => exit,
         signal = signals.recv() => {
             let signal =
-                signal.map_err(|error| other(format!("could not wait for signals: {error}")))?;
+                signal.map_err(|error| AutomationExit::other(format!("could not wait for signals: {error}")))?;
             Err(AutomationExit::new(
                 signal.exit_code(),
                 TerminalReason::Detached,
@@ -133,18 +134,20 @@ async fn attach(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
 }
 
 async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), AutomationExit> {
-    let paths = daemon_cli::paths().map_err(|error| other(format!("{error:#}")))?;
+    let paths = daemon_cli::paths().map_err(|error| AutomationExit::other(format!("{error:#}")))?;
     let Connection {
         client,
         mut notifications,
         ..
     } = daemon::connect(&paths, cli_client_info())
         .await
-        .map_err(|error| other(format!("{error:#}")))?;
+        .map_err(|error| AutomationExit::other(format!("{error:#}")))?;
     let jobs = client
         .request::<JobList>(&JobListParams {})
         .await
-        .map_err(|error| other(format!("could not list the daemon's jobs: {error}")))?
+        .map_err(|error| {
+            AutomationExit::other(format!("could not list the daemon's jobs: {error}"))
+        })?
         .jobs;
     let target = resolve(&jobs, id)?;
     view.started(&target.session, &target.workspace)?;
@@ -165,7 +168,7 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
         }
         let ending = tokio::select! {
             notification = notifications.recv() => match notification {
-                None => return Err(other("lost the connection to the rho daemon")),
+                None => return Err(AutomationExit::other("lost the connection to the rho daemon")),
                 Some(DaemonNotification::SessionEvent(params))
                     if params.session == target.session =>
                 {
@@ -195,7 +198,7 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
                         }
                         DetachReason::DaemonStopping => Some(Ending::Interrupted),
                         // `DetachReason` is non-exhaustive.
-                        _ => return Err(other("the rho daemon detached this client")),
+                        _ => return Err(AutomationExit::other("the rho daemon detached this client")),
                     }
                 }
                 // Another session's, or a notification a newer daemon sends.
@@ -240,11 +243,11 @@ async fn attach_session(
         .await
         .map_err(|error| {
             if error.error_code() == Some(ErrorCode::SessionNotLoaded) {
-                other(format!(
+                AutomationExit::other(format!(
                     "could not attach to session {session}: this rho daemon has not loaded it; a session an earlier daemon ran cannot be followed yet (#1661)"
                 ))
             } else {
-                other(format!("could not attach to session {session}: {error}"))
+                AutomationExit::other(format!("could not attach to session {session}: {error}"))
             }
         })
 }
@@ -256,13 +259,14 @@ fn resolve(jobs: &[JobSummary], id: &str) -> Result<Target, AutomationExit> {
     let job = jobs
         .iter()
         .find(|job| job.id.as_str() == id || job.session.as_ref().is_some_and(|s| s.as_str() == id))
-        .ok_or_else(|| other(format!("the rho daemon has no job or session {id}")))?;
+        .ok_or_else(|| {
+            AutomationExit::other(format!("the rho daemon has no job or session {id}"))
+        })?;
     let run = match job.kind {
         JobKind::Session => {
-            let session = job
-                .session
-                .clone()
-                .ok_or_else(|| other(format!("session job {} has no session", job.id)))?;
+            let session = job.session.clone().ok_or_else(|| {
+                AutomationExit::other(format!("session job {} has no session", job.id))
+            })?;
             return Ok(Target {
                 session,
                 workspace: job.workspace.clone(),
@@ -272,7 +276,7 @@ fn resolve(jobs: &[JobSummary], id: &str) -> Result<Target, AutomationExit> {
         JobKind::Workflow => "a workflow run",
         // `JobKind` is non-exhaustive.
         _ => {
-            return Err(other(format!(
+            return Err(AutomationExit::other(format!(
                 "job {} is of a kind this rho cannot attach to",
                 job.id
             )))
@@ -282,7 +286,7 @@ fn resolve(jobs: &[JobSummary], id: &str) -> Result<Target, AutomationExit> {
         Some(session) => format!(" in session {session}; attach to the session"),
         None => String::new(),
     };
-    Err(other(format!(
+    Err(AutomationExit::other(format!(
         "job {} is {run}{place}: subagent and workflow runs do not stream their events yet (#1668)",
         job.id
     )))
@@ -312,14 +316,10 @@ fn ended(ending: Ending) -> Result<(), AutomationExit> {
             TerminalReason::Interrupted,
             "the rho daemon stopped before the turn ended",
         )),
-        Ending::Unreported => Err(other(
+        Ending::Unreported => Err(AutomationExit::other(
             "the rho daemon's replay ended after the turn without saying how it ended",
         )),
     }
-}
-
-fn other(message: impl Into<String>) -> AutomationExit {
-    AutomationExit::new(1, TerminalReason::OtherError, message)
 }
 
 #[cfg(test)]

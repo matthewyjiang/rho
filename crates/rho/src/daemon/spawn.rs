@@ -43,7 +43,9 @@ pub(crate) trait DaemonSpawner: Send + Sync {
 /// The daemon inherits the caller's environment on purpose: `RHO_HOME` and
 /// `XDG_RUNTIME_DIR` are what produced the caller's [`DaemonPaths`], so the
 /// child resolves the same socket the caller then polls. Passing a different
-/// home here would start a daemon the caller can never reach.
+/// home here would start a daemon the caller can never reach. It runs in `/`,
+/// so `RHO_HOME` is pinned to the home's canonical path: a relative one would
+/// otherwise name another directory there.
 pub(crate) struct ProcessSpawner {
     executable: PathBuf,
 }
@@ -57,13 +59,18 @@ impl ProcessSpawner {
 }
 
 impl DaemonSpawner for ProcessSpawner {
-    fn spawn(&self, _paths: &DaemonPaths) -> io::Result<()> {
+    fn spawn(&self, paths: &DaemonPaths) -> io::Result<()> {
         let mut command = Command::new(&self.executable);
         command
             .args(["daemon", "run"])
             // Its own process group, so Ctrl+C in the caller's terminal does
             // not reach the daemon.
             .process_group(0)
+            // Not the caller's directory, which the daemon would otherwise
+            // hold for its whole life (blocking an unmount, say). It opens
+            // each session in that session's own workspace.
+            .current_dir("/")
+            .env("RHO_HOME", &paths.home)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

@@ -80,6 +80,9 @@ pub enum JobState {
     /// The turn failed; [`JobSummary::error`] says why.
     Failed,
     Cancelled,
+    /// The turn ran past the limit its prompt set and was cancelled;
+    /// [`crate::TurnOutcome::TimedOut`] says the limit.
+    TimedOut,
     /// The daemon stopped, or died, before the turn ended.
     Interrupted,
     /// A state a newer daemon sends that this crate does not know. Reading
