@@ -90,6 +90,7 @@ flowchart TD
     tools --> before[before_tool_use blocking]
     before --> after[after_tool_use]
     after --> runEnd[run_completed or run_failed]
+    tools --> asked[input_requested]
     runEnd --> sessionEnd[session_completed or session_failed]
     tools --> workflow[workflow_* observational events]
 ```
@@ -101,6 +102,7 @@ flowchart TD
 | `after_tool_use` | observational | when a tool call resolves, successfully or not |
 | `run_completed` | observational | per run, when the run ends normally |
 | `run_failed` | observational | per run, when the run ends in an error |
+| `input_requested` | observational | when a run waits for a person: an approval, a plan approval, or questions |
 | `session_completed` | observational | when the session ends normally |
 | `session_failed` | observational | when the session ends after a failure |
 | `workflow_started` | observational | when a frozen workflow run starts |
@@ -113,6 +115,15 @@ flowchart TD
 `run_completed` and `run_failed` are what you want for "tell me when the agent
 finishes". In an interactive session, `session_completed` fires at exit, which
 can be hours after the last run.
+
+`input_requested` is what you want for "tell me when the agent needs me". A
+[daemon](/daemon) session's turn keeps waiting with no client attached, so a
+hook that sends a phone or desktop notification is how you hear about it. It
+fires in daemon and ACP sessions, and for questionnaires from delegated
+subagents. `rho run` has nobody to ask, so it never fires there. The
+interactive TUI's own approvals and questions do not fire it yet; the TUI
+notifies through the terminal instead (see `notifications` in
+[Configuration](/configuration)).
 
 `before_tool_use` fires per capability request, so it sees tool calls that ask
 for filesystem, process, network, skill, or instruction authority. A tool that

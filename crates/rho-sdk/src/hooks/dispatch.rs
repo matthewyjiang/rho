@@ -3,15 +3,20 @@ use std::{
     sync::Arc,
 };
 
-use crate::{workspace::CapabilityRequest, RunId, SessionId, ToolCallId};
+use crate::{
+    host_input::HostInputRequest,
+    workspace::{ApprovalRequest, CapabilityRequest},
+    RunId, SessionId, ToolCallId,
+};
 
 use super::{
     bounds::HookPayloadBounds,
     envelope::{HookEnvelope, HookEnvelopeBuilder, HookHostLabels, HookIdentity},
     gate::{HookDecision, PreToolUseGate, PreToolUseRequest},
+    input_summary,
     payload::{
-        bounded_failure, BoundedFailure, HookFailure, HookPayload, HookTool,
-        SessionCompletedPayload, SessionFailedPayload, ToolOutcomeRef,
+        bounded_failure, BoundedFailure, HookFailure, HookInputKind, HookPayload, HookTool,
+        InputRequestedPayload, SessionCompletedPayload, SessionFailedPayload, ToolOutcomeRef,
     },
 };
 
@@ -262,6 +267,50 @@ impl HookDispatcher {
             None,
             self.workspace_root.as_deref(),
             |_| HookPayload::SessionCompleted(SessionCompletedPayload { runs }),
+        );
+    }
+
+    /// Reports that a run of the session waits for a person to approve
+    /// `request`.
+    pub fn approval_requested(&self, session_id: &SessionId, request: &ApprovalRequest) {
+        self.input_requested(session_id, HookInputKind::Approval, || {
+            input_summary::approval(request)
+        });
+    }
+
+    /// Reports that a run of the session waits for a person to approve
+    /// carrying out `plan`, the host's plan text.
+    pub fn plan_approval_requested(&self, session_id: &SessionId, plan: &str) {
+        self.input_requested(session_id, HookInputKind::PlanApproval, || {
+            input_summary::plan(plan)
+        });
+    }
+
+    /// Reports that a run of the session waits for a person to answer
+    /// `request`'s questions.
+    pub fn question_requested(&self, session_id: &SessionId, request: &HostInputRequest) {
+        self.input_requested(session_id, HookInputKind::Question, || {
+            input_summary::question(request)
+        });
+    }
+
+    /// `summary` runs only when an observer is installed.
+    fn input_requested(
+        &self,
+        session_id: &SessionId,
+        kind: HookInputKind,
+        summary: impl FnOnce() -> String,
+    ) {
+        self.hooks.observe(
+            Some(session_id),
+            None,
+            self.workspace_root.as_deref(),
+            |builder| {
+                HookPayload::InputRequested(InputRequestedPayload {
+                    kind,
+                    summary: builder.bounded_string(summary(), "payload.summary"),
+                })
+            },
         );
     }
 

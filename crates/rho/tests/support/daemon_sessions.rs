@@ -699,22 +699,16 @@ async fn answer(
         })
 }
 
-// Covers: a supervised turn's approval, asked while no client is attached,
-// waits in the daemon with the job waiting for input; a client that
-// attaches later is told the open request in its attach response and
-// answers it, every attached client learns it was answered, a second answer
-// finds it no longer open, and the turn goes on with the answer (#1660).
-// Owner: daemon input requests.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_approval_waits_for_any_client_to_answer() {
-    let sandbox = Sandbox::new();
+/// Starts a supervised daemon and prompts a new session's turn to `write`
+/// `note.txt`, which waits for approval with nobody attached.
+async fn prompt_a_supervised_write(sandbox: &Sandbox) -> (DaemonProcess, Client, SessionId) {
     std::fs::write(
         sandbox.daemon.home().join("config.toml"),
         format!("permission_mode = \"supervised\"\n{CONFIG}"),
     )
     .unwrap();
     // The fixture makes the call the prompt spells out as JSON.
-    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let (daemon, client) = sandbox.start_daemon("tool-call").await;
     let session = new_session(&client, &sandbox.workspace).await;
     let call = serde_json::json!({
         "id": "edit",
@@ -728,6 +722,19 @@ async fn an_approval_waits_for_any_client_to_answer() {
         })
         .await
         .unwrap();
+    (daemon, client, session)
+}
+
+// Covers: a supervised turn's approval, asked while no client is attached,
+// waits in the daemon with the job waiting for input; a client that
+// attaches later is told the open request in its attach response and
+// answers it, every attached client learns it was answered, a second answer
+// finds it no longer open, and the turn goes on with the answer (#1660).
+// Owner: daemon input requests.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_approval_waits_for_any_client_to_answer() {
+    let sandbox = Sandbox::new();
+    let (_daemon, client, session) = prompt_a_supervised_write(&sandbox).await;
     // Nobody is attached while the turn asks.
     sandbox
         .daemon
@@ -805,6 +812,56 @@ async fn an_approval_waits_for_any_client_to_answer() {
             Some("approved".to_owned()),
         ),
         "log:\n{}",
+        sandbox.daemon_log()
+    );
+}
+
+// Covers: a daemon session's turn that waits for a person with nobody
+// attached runs the user's `input_requested` hooks, which name the session
+// and what it asks, so a user away from every client can be told (#1660).
+// Owner: daemon input requests.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_turn_that_asks_tells_the_hooks() {
+    let sandbox = Sandbox::new();
+    let home = sandbox.daemon.home();
+    let events = home.join("asked.jsonl");
+    let hook = home.join("on-input-requested");
+    std::fs::write(&hook, format!("#!/bin/sh\ncat >> '{}'\n", events.display())).unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::write(
+        home.join("hooks.toml"),
+        format!(
+            "version = 1\n\n[[hook]]\nid = \"notify\"\non = \"input_requested\"\ncommand = [\"{}\"]\ntimeout = \"5s\"\n",
+            hook.display()
+        ),
+    )
+    .unwrap();
+    let (_daemon, _client, session) = prompt_a_supervised_write(&sandbox).await;
+
+    let event: serde_json::Value = sandbox
+        .daemon
+        .poll_until("the hook to run", DEADLINE, async || {
+            let written = std::fs::read_to_string(&events).ok()?;
+            serde_json::from_str(written.lines().next()?).ok()
+        })
+        .await;
+
+    assert_eq!(
+        (
+            &event["event"],
+            &event["identity"]["session_id"],
+            &event["payload"]["kind"],
+            event["payload"]["summary"]
+                .as_str()
+                .is_some_and(|summary| !summary.is_empty()),
+        ),
+        (
+            &serde_json::json!("input_requested"),
+            &serde_json::json!(session.as_str()),
+            &serde_json::json!("approval"),
+            true,
+        ),
+        "event: {event:#}\nlog:\n{}",
         sandbox.daemon_log()
     );
 }

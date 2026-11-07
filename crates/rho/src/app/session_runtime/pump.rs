@@ -16,8 +16,8 @@ use std::{
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use rho_sdk::{
-    ApprovalRequestReceiver, CancellationToken, HostInputId, HostInputRefusal, HostInputResponse,
-    PendingApproval, RunEvent, UserInput,
+    hooks::HookDispatcher, ApprovalRequestReceiver, CancellationToken, HostInputId,
+    HostInputRefusal, HostInputResponse, PendingApproval, RunEvent, SessionId, UserInput,
 };
 use tokio::sync::oneshot;
 
@@ -110,6 +110,12 @@ pub(super) struct PumpSources<'a> {
     /// Background results offered to the run; tests of the event and
     /// approval plumbing pass `None`.
     pub(super) displays: Option<AppliedDisplays<'a>>,
+    /// The session's hooks, told whenever the turn waits for a person, so a
+    /// user away from every client can learn of it (#1660). They are told
+    /// after the host has the request, so a hook that reacts by attaching a
+    /// client finds it open.
+    pub(super) hooks: HookDispatcher,
+    pub(super) session: &'a SessionId,
 }
 
 /// Background results handed to the model during one turn. Each is shown
@@ -160,6 +166,8 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
         mut approvals,
         mut plan_approvals,
         mut displays,
+        hooks,
+        session,
     } = sources;
     let mut cancelled = cancel.is_cancelled();
     let mut events_open = true;
@@ -218,8 +226,9 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                             io.emit(SessionEvent::QuestionAsked {
                                 id: request.id().clone(),
                                 call_id,
-                                request,
+                                request: request.clone(),
                             });
+                            hooks.question_requested(session, &request);
                         }
                         // The run's cancellation ends the request.
                         (QuestionSupport::Available, true) => {}
@@ -247,6 +256,7 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                     id,
                     request: approval.request().clone(),
                 });
+                hooks.approval_requested(session, approval.request());
                 pending.approvals.insert(id, approval);
             }
 
@@ -270,6 +280,7 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                         targets: request.targets.clone(),
                     },
                 });
+                hooks.plan_approval_requested(session, &request.plan);
                 pending.plans.insert(id, answer);
                 plan_waits.push(Box::pin(wait_for_plan(id, request, answered)));
             }

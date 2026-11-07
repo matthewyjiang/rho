@@ -252,6 +252,8 @@ impl SessionRuntime {
                     offered: displays,
                     checkpoint,
                 }),
+                hooks: self.built.runtime.hooks(),
+                session: self.built.session.id(),
             },
             io,
         )
