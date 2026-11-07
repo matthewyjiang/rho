@@ -699,12 +699,11 @@ async fn answer(
         })
 }
 
-// Covers: a supervised turn's approval waits in the daemon after the
-// client that saw it ask leaves; the job is waiting for input meanwhile; a
-// client that attaches later is told the open request in its attach
-// response and answers it, every attached client learns it was answered, a
-// second answer finds it no longer open, and the turn goes on with the
-// answer (#1660).
+// Covers: a supervised turn's approval, asked while no client is attached,
+// waits in the daemon with the job waiting for input; a client that
+// attaches later is told the open request in its attach response and
+// answers it, every attached client learns it was answered, a second answer
+// finds it no longer open, and the turn goes on with the answer (#1660).
 // Owner: daemon input requests.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_approval_waits_for_any_client_to_answer() {
@@ -717,7 +716,6 @@ async fn an_approval_waits_for_any_client_to_answer() {
     // The fixture makes the call the prompt spells out as JSON.
     let (_daemon, client) = sandbox.start_daemon("tool-call").await;
     let session = new_session(&client, &sandbox.workspace).await;
-    let (mut asker, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
     let call = serde_json::json!({
         "id": "edit",
         "name": "write",
@@ -730,16 +728,16 @@ async fn an_approval_waits_for_any_client_to_answer() {
         })
         .await
         .unwrap();
-    asker.read_until(is_state(JobState::WaitingForInput)).await;
-    let asked: Vec<InputRequest> = asker
-        .leave()
-        .await
-        .into_iter()
-        .filter_map(|(_, event)| match event {
-            SessionEvent::InputRequested { request } => Some(request),
-            _ => None,
+    // Nobody is attached while the turn asks.
+    sandbox
+        .daemon
+        .poll_until("the turn to ask", DEADLINE, async || {
+            let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
+            jobs.jobs.into_iter().find(|job| {
+                job.session.as_ref() == Some(&session) && job.state == JobState::WaitingForInput
+            })
         })
-        .collect();
+        .await;
 
     let (mut answerer, attached) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
     let request = attached
@@ -773,7 +771,7 @@ async fn an_approval_waits_for_any_client_to_answer() {
     };
     assert_eq!(
         (
-            asked,
+            attached.inputs.clone(),
             attached.state,
             first,
             answerer.events.last().map(|(_, event)| event.clone()),
