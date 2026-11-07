@@ -353,7 +353,8 @@ async fn a_cancel_before_the_prompt_begins_saves_nothing() {
 
 /// A turn with a time limit of `timeout_ms`, whose session is busy until
 /// the limit passed when `busy`, with a client's cancel sent before that when
-/// `cancelled_first`.
+/// `cancelled_first`. A turn whose session is free reaches its limit after
+/// it saved its prompt, by the test moving the clock there.
 struct LimitCase {
     name: &'static str,
     timeout_ms: u64,
@@ -391,12 +392,14 @@ async fn the_daemon_times_a_turn_out_at_its_limit() {
         },
         LimitCase {
             name: "limit passed mid-turn",
-            // Long enough that the turn saves its prompt first.
-            timeout_ms: 1_000,
+            // Never reached in real time: the test moves the clock there.
+            timeout_ms: 3_600_000,
             busy: false,
             cancelled_first: false,
             start: PromptStart::Saved,
-            end: TurnEnd::TimedOut { timeout_ms: 1_000 },
+            end: TurnEnd::TimedOut {
+                timeout_ms: 3_600_000,
+            },
             saved: 1,
         },
         LimitCase {
@@ -438,6 +441,14 @@ async fn the_daemon_times_a_turn_out_at_its_limit() {
             .await
             .expect("the turn answers its prompt")
             .ok();
+        if !case.busy {
+            // The prompt is saved and the model call hangs: move the clock
+            // to the limit rather than wait for it, then let it run again for
+            // the budget below.
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_millis(case.timeout_ms)).await;
+            tokio::time::resume();
+        }
         // Released once the turn recorded its end.
         let messages = tokio::time::timeout(TEST_BUDGET, session.runtime.lock())
             .await
