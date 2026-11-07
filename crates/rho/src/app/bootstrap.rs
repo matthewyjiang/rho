@@ -21,7 +21,7 @@ use {
 use super::{
     acp,
     agent_binding::{root_host_tools, AgentBinder, AgentInvocation, AgentRole, SubagentTools},
-    automation, automation_protocol, classifier_eval, cli_config, compaction_eval, computer_cli,
+    automation, classifier_eval, cli_config, compaction_eval, computer_cli,
     config_repository::ConfigRepository,
     daemon_cli, doctor_cli, interactive, login, mcp_cli, plugins_cli,
     sdk_config::SdkBootstrapOptions,
@@ -53,11 +53,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         return Err(error);
     }
     if let Some(output) = run_output {
-        let exit = automation::AutomationExit::new(
-            2,
-            automation_protocol::TerminalReason::ConfigurationError,
-            error.to_string(),
-        );
+        let exit = automation::AutomationExit::configuration(error.to_string());
         if output == OutputFormat::Jsonl {
             return Err(automation::emit_startup_failure(exit).into());
         }
@@ -218,6 +214,18 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
     if let Some(Command::Attach { id, output, input }) = &cli.command {
         return Ok(EarlyDispatch::Handled(
             super::attach::run(id, *output, *input).await,
+        ));
+    }
+    if let Some(Command::Run {
+        detach: true,
+        prompt,
+        stdin,
+        timeout,
+        ..
+    }) = &cli.command
+    {
+        return Ok(EarlyDispatch::Handled(
+            super::detach::run(prompt.clone(), *stdin, *timeout).await,
         ));
     }
     if matches!(cli.command, Some(Command::Update)) {

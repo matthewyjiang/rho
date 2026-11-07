@@ -4,6 +4,8 @@
 use rho_protocol::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome};
 use rho_sdk::{RunOutcome, StopReason};
 
+use crate::app::session_runtime::CommandRejected;
+
 /// The outcome of a turn whose run finished with `outcome`.
 pub(crate) fn finished(outcome: &RunOutcome) -> TurnOutcome {
     let text = outcome.text().to_owned();
@@ -57,6 +59,11 @@ fn chain_message(error: &anyhow::Error) -> String {
 /// never from its text.
 fn failure_kind(error: &anyhow::Error) -> TurnErrorKind {
     for cause in error.chain() {
+        // A prompt command the session cannot run, as one a daemon session
+        // does not run yet.
+        if cause.downcast_ref::<CommandRejected>().is_some() {
+            return TurnErrorKind::Configuration;
+        }
         if let Some(error) = cause.downcast_ref::<rho_sdk::Error>() {
             return match error {
                 rho_sdk::Error::Authentication { .. } => TurnErrorKind::Authentication,

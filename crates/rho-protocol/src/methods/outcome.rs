@@ -19,6 +19,9 @@ pub enum TurnOutcome {
     MaxSteps { text: String },
     /// A client cancelled it.
     Cancelled,
+    /// The daemon cancelled it at the time limit its prompt set,
+    /// [`super::SessionPromptParams::timeout_ms`], repeated here.
+    TimedOut { timeout_ms: u64 },
     /// It failed.
     Failed { error: TurnError },
     /// A value a newer daemon sends that this crate does not know.

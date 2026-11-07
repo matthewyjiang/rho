@@ -74,7 +74,7 @@ def add_method(document: dict) -> None:
 
 
 def remove_error(document: dict) -> None:
-    del document["errors"]["-32010"]
+    del document["errors"]["-32011"]
 
 
 def refuse_unknown_fields(document: dict) -> None:
@@ -192,7 +192,7 @@ class CompatibilityTests(unittest.TestCase):
                 'one of "daemon_stopping", "lagged" (open) became one of "daemon_stopping", "lagged"',
             ),
             ("a removed method", remove_method, "method rho/session/steer params: removed"),
-            ("a removed error code", remove_error, "error -32010: removed"),
+            ("a removed error code", remove_error, "error -32011: removed"),
             (
                 "unknown fields refused",
                 refuse_unknown_fields,

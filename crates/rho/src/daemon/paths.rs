@@ -33,6 +33,8 @@ const MAX_SOCKET_PATH_BYTES: usize = SUN_PATH_BYTES - 1;
 /// create or verify them before anything is created inside.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DaemonPaths {
+    /// The rho home's canonical path, which the rest lay out under.
+    pub(crate) home: PathBuf,
     /// Holds the socket: `$XDG_RUNTIME_DIR/rho/<home id>` when
     /// `XDG_RUNTIME_DIR` is an absolute path, else `<rho home>/run`.
     pub(crate) runtime_dir: PathBuf,
@@ -114,6 +116,7 @@ impl DaemonPaths {
             state_dir,
             socket,
             runtime_dir,
+            home: rho_home.to_owned(),
         })
     }
 

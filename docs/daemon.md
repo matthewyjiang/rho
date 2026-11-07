@@ -35,6 +35,7 @@ A session's job state is the state of its current or last turn:
 | `completed` | The last turn finished. |
 | `failed` | The last turn failed; the job's `error` says why. |
 | `cancelled` | Someone cancelled the last turn. |
+| `timed_out` | The daemon cancelled the last turn at the time limit its prompt set, as `rho run --detach --timeout` does. |
 | `interrupted` | The daemon stopped, or died, before the last turn ended. |
 
 A new prompt moves a session's job from any state but `running` and `waiting_for_input` back to `running`. `rho daemon status` counts the jobs that are `queued`, `running`, or `waiting_for_input`.
@@ -55,7 +56,7 @@ A session's turn that asks for approval, a plan approval, or answers to question
 
 ### Following a session
 
-Any number of clients can follow a session with `rho/session/attach`: they receive its conversation as events, live, and a client that comes back resumes where it left off, or gets the saved conversation again when the daemon no longer buffers what it missed. See [Following a session](/protocol#following-a-session) in the protocol reference. From a terminal, [`rho attach`](/automation-cli#attaching-to-a-daemon-session) follows one.
+Any number of clients can follow a session with `rho/session/attach`: they receive its conversation as events, live, and a client that comes back resumes where it left off, or gets the saved conversation again when the daemon no longer buffers what it missed. See [Following a session](/protocol#following-a-session) in the protocol reference. From a terminal, [`rho run --detach`](/automation-cli#running-in-the-daemon) starts one and [`rho attach`](/automation-cli#attaching-to-a-daemon-session) follows it.
 
 Each job's record is a JSON file in `~/.rho/daemon/jobs/` (`$RHO_HOME/daemon/jobs/` with `RHO_HOME`), rewritten on every state change. Records are kept: nothing deletes them yet, so a daemon lists the jobs earlier daemons ran. A daemon serves only the sessions it opened itself; it cannot load a saved session yet ([#1661](https://github.com/matthewyjiang/rho/issues/1661)). A request for a session it has not loaded, such as one an earlier daemon ran, one the TUI saved, or one that does not exist, is refused with `SessionNotLoaded` (-32003); telling those apart comes with reopen.
 
@@ -63,7 +64,7 @@ Tools in a session run with the daemon's own environment, minus provider credent
 
 ## Starting automatically
 
-Frontends that use the daemon start it when none is running, so you rarely run `rho daemon` yourself. If several start at once, they agree on a single daemon. A frontend that starts one while the previous daemon is still shutting down can time out waiting for it; [#1657](https://github.com/matthewyjiang/rho/issues/1657) tracks waiting for the old daemon instead. The started daemon runs `rho daemon run` from the same `rho` executable in its own process group, so `Ctrl+C` in your terminal does not stop it.
+Frontends that use the daemon, such as `rho run --detach`, start it when none is running, so you rarely run `rho daemon` yourself. If several start at once, they agree on a single daemon. A frontend that starts one while the previous daemon is still shutting down can time out waiting for it; [#1657](https://github.com/matthewyjiang/rho/issues/1657) tracks waiting for the old daemon instead. The started daemon runs `rho daemon run` from the same `rho` executable in its own process group, so `Ctrl+C` in your terminal does not stop it.
 
 ## Versions
 

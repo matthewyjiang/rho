@@ -123,7 +123,7 @@ impl Follow {
     /// job is not running one.
     fn settled(&self) -> Option<Ending> {
         match self.state {
-            JobState::Completed | JobState::Failed | JobState::Cancelled => {
+            JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::TimedOut => {
                 Some(match &self.replayed {
                     Some(outcome) => Ending::Turn(outcome.clone()),
                     None => Ending::Unreported,

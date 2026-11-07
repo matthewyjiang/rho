@@ -43,6 +43,10 @@ pub(in crate::app::daemon_host) enum TurnEnd {
     Completed,
     /// A client cancelled it.
     Cancelled,
+    /// The daemon cancelled it at the limit its prompt set, `timeout_ms`.
+    TimedOut {
+        timeout_ms: u64,
+    },
     /// The daemon stopped, or died, before the turn ended.
     Interrupted,
     /// The turn failed, for this reason.
@@ -115,6 +119,7 @@ impl JobState {
             Self::WaitingForInput => "waiting_for_input",
             Self::Ended(TurnEnd::Completed) => "completed",
             Self::Ended(TurnEnd::Cancelled) => "cancelled",
+            Self::Ended(TurnEnd::TimedOut { .. }) => "timed_out",
             Self::Ended(TurnEnd::Interrupted) => "interrupted",
             Self::Ended(TurnEnd::Failed(_)) => "failed",
         }

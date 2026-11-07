@@ -102,13 +102,11 @@ error_codes! {
         /// The daemon could not open the session, for example because the
         /// config or the default agent is invalid.
         SessionOpenFailed = -32008,
-        /// The turn failed before its prompt was saved, for example
-        /// because the provider's credentials could not be read. The
-        /// message says why.
-        TurnFailed = -32009,
-        /// The turn was cancelled before its prompt was saved, as when
-        /// `rho/session/cancel` arrives before the turn begins.
-        TurnCancelled = -32010,
+        /// The turn ended before its prompt was saved, as when a cancel
+        /// arrives before the turn begins, its time limit passes, or it
+        /// fails first, for example because the provider's credentials
+        /// could not be read. `data` is how it ended.
+        TurnEnded = -32009 => crate::TurnOutcome,
         /// The session has no open input request with that id: another
         /// client answered it first, or the turn withdrew it, as when the
         /// turn was cancelled (#1660).

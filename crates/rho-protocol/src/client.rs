@@ -105,6 +105,18 @@ impl ClientError {
             _ => None,
         }
     }
+
+    /// How the turn ended, when the daemon refused a prompt with
+    /// [`ErrorCode::TurnEnded`] because its turn ended before it saved the
+    /// prompt.
+    pub fn turn_ended(&self) -> Option<crate::TurnOutcome> {
+        match self {
+            Self::Rpc { error, .. } if error.error_code() == Some(ErrorCode::TurnEnded) => {
+                serde_json::from_value(error.data.clone()?).ok()
+            }
+            _ => None,
+        }
+    }
 }
 
 /// A message for the writer task, and where to report its write.

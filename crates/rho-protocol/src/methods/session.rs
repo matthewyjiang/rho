@@ -75,8 +75,15 @@ pub struct SessionNewResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionPromptParams {
     pub session: SessionId,
-    /// The user message, sent to the model as written.
+    /// The user message. A leading slash command the session runs, such as
+    /// `/init`, a prompt template, or an MCP prompt, is expanded first, as
+    /// `rho run` expands it; other text reaches the model as written.
     pub text: String,
+    /// How long the turn may run, in milliseconds from when the daemon
+    /// takes the prompt. A turn still running then is cancelled and ends
+    /// [`crate::TurnOutcome::TimedOut`]. `None` sets no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
 }
 
 /// Result of [`SESSION_PROMPT`]: the prompt is saved and its turn is
@@ -84,9 +91,9 @@ pub struct SessionPromptParams {
 /// it ends.
 ///
 /// A turn that ends before its prompt is saved answers with an error
-/// instead: [`crate::ErrorCode::TurnFailed`] with the reason,
-/// [`crate::ErrorCode::TurnCancelled`] when a cancel stopped it, or
-/// [`crate::ErrorCode::DaemonStopping`] when the daemon stopped it.
+/// instead: [`crate::ErrorCode::TurnEnded`], whose `data` is the turn's
+/// [`crate::TurnOutcome`], or [`crate::ErrorCode::DaemonStopping`] when the
+/// daemon stopped it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionPromptResponse {}
 
@@ -99,9 +106,10 @@ pub struct SessionCancelParams {
 /// Result of [`SESSION_CANCEL`]: the turn in progress, if any, has been
 /// asked to stop. The turn saves what it did and ends
 /// [`crate::JobState::Cancelled`], or [`crate::JobState::Interrupted`] when
-/// the daemon is stopping. A cancel that arrives before a prompted turn
-/// begins still cancels it, and that prompt answers
-/// [`crate::ErrorCode::TurnCancelled`].
+/// the daemon is stopping; one already past its
+/// [`SessionPromptParams::timeout_ms`] ends [`crate::JobState::TimedOut`].
+/// A cancel that arrives before a prompted turn begins still cancels it,
+/// and that prompt answers [`crate::ErrorCode::TurnEnded`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionCancelResponse {}
 
