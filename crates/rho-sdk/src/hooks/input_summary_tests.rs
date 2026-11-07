@@ -1,11 +1,13 @@
 use pretty_assertions::assert_eq;
-use rho_sdk::{
-    ApprovalRequest, CapabilityRequest, CapabilitySource, HostChoice, HostInputRequest,
-    HostQuestion, NetworkTarget, PathScope, ProcessEnvironment, ProcessExecution,
-    ProcessInvocation, ProcessOutputLimits, SelectionMode,
-};
 
 use super::*;
+use crate::{
+    host_input::{HostChoice, HostQuestion, SelectionMode},
+    workspace::{
+        CapabilityRequest, CapabilitySource, NetworkTarget, PathScope, ProcessEnvironment,
+        ProcessExecution, ProcessInvocation, ProcessOutputLimits,
+    },
+};
 
 fn process(invocation: ProcessInvocation) -> CapabilityRequest {
     CapabilityRequest::process(
@@ -19,18 +21,18 @@ fn process(invocation: ProcessInvocation) -> CapabilityRequest {
     )
 }
 
+fn write(path: &str) -> CapabilityRequest {
+    CapabilityRequest::write_path(
+        path,
+        PathScope::PrimaryWorkspace,
+        CapabilitySource::built_in_tool("write"),
+    )
+}
+
 #[test]
-fn an_approval_names_its_operation_and_any_reason() {
+fn an_approval_names_its_operation_and_any_reason_on_one_line() {
     let cases = [
-        (
-            CapabilityRequest::write_path(
-                "/repo/note.txt",
-                PathScope::PrimaryWorkspace,
-                CapabilitySource::built_in_tool("write"),
-            ),
-            "",
-            "write /repo/note.txt",
-        ),
+        (write("/repo/note.txt"), "", "write /repo/note.txt"),
         (
             process(ProcessInvocation::shell(
                 "/bin/sh",
@@ -55,6 +57,11 @@ fn an_approval_names_its_operation_and_any_reason() {
             ),
             "",
             "access example.com",
+        ),
+        (
+            write("/repo/a\nb\u{1b}[2J.txt"),
+            "",
+            "write /repo/a b [2J.txt",
         ),
     ];
     let summaries: Vec<_> = cases

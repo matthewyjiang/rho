@@ -1,15 +1,19 @@
-//! One-line summaries of what a turn waits for a person to answer, for the
-//! `input_requested` hook (#1660). A notification shows one line, so each
-//! summary keeps only the first non-empty line of what it quotes.
+//! One-line summaries of what a run waits for a person to answer, for the
+//! `input_requested` event (#1660). A notification shows one line, so text
+//! that can span lines keeps its first non-empty line, and control
+//! characters, newlines in paths included, become spaces.
 
-use rho_sdk::{ApprovalRequest, CapabilityOperation, HostInputRequest};
+use crate::{
+    host_input::HostInputRequest,
+    workspace::{ApprovalRequest, CapabilityOperation},
+};
 
 /// What an approval asks to do, then its reason when it has one, for
 /// example `write /repo/note.txt` or `run git push (outside the workspace)`.
 ///
 /// Mode policies leave the reason empty for ordinary writes and commands, so
 /// the operation is what names the request. A network target names only its
-/// host: query strings routinely carry tokens.
+/// host: userinfo and query strings routinely carry tokens.
 pub(super) fn approval(request: &ApprovalRequest) -> String {
     let operation = match request.capability().operation() {
         CapabilityOperation::ReadPath { path, .. } => format!("read {}", path.display()),
@@ -42,28 +46,29 @@ pub(super) fn approval(request: &ApprovalRequest) -> String {
             }
         }
         CapabilityOperation::LoadSkill { name, .. } => format!("load skill {name}"),
-        _ => "use a capability".into(),
     };
-    match first_line(request.reason()) {
+    let summary = match first_line(request.reason()) {
         "" => operation,
         reason => format!("{operation} ({reason})"),
-    }
+    };
+    one_line(&summary)
 }
 
 /// A questionnaire's title, or its first question's prompt when untitled.
-pub(super) fn question(request: &HostInputRequest) -> &str {
-    match first_line(request.title()) {
+pub(super) fn question(request: &HostInputRequest) -> String {
+    let summary = match first_line(request.title()) {
         "" => request
             .questions()
             .first()
             .map_or("", |question| first_line(question.prompt())),
         title => title,
-    }
+    };
+    one_line(summary)
 }
 
 /// A plan's first line, usually its heading.
-pub(super) fn plan(plan: &str) -> &str {
-    first_line(plan)
+pub(super) fn plan(plan: &str) -> String {
+    one_line(first_line(plan))
 }
 
 fn first_line(text: &str) -> &str {
@@ -71,6 +76,18 @@ fn first_line(text: &str) -> &str {
         .map(str::trim)
         .find(|line| !line.is_empty())
         .unwrap_or_default()
+}
+
+fn one_line(text: &str) -> String {
+    text.chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

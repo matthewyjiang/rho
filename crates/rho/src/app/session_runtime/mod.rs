@@ -51,7 +51,6 @@ mod credentials;
 mod delegation;
 mod events;
 mod handle;
-mod input_summary;
 mod mode;
 mod open;
 mod persist;

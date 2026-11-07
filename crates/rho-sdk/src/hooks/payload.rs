@@ -319,12 +319,13 @@ pub struct RunFailedPayload {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct InputRequestedPayload {
     pub kind: HookInputKind,
-    /// What is asked, in the asker's words: an approval's reason, a plan's
-    /// first line, or a questionnaire's title.
+    /// What is asked, in one line: an approval's operation and any policy
+    /// reason, a plan's first line, or a questionnaire's title.
     pub summary: String,
 }
 
-/// The kind of answer a run waits for.
+/// The kind of answer a run waits for. Plan approvals are reported by hosts
+/// that offer a plan mode; the SDK itself asks only for the other two.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]

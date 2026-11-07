@@ -15,7 +15,7 @@ use super::{
     events::{RunEnd, SessionEvent, TurnControl},
     persist::TurnCheckpoint,
     prompt_gate::ActiveWork,
-    pump::{pump, AppliedDisplays, ApprovalSource, EventSource, InputHooks, PumpSources},
+    pump::{pump, AppliedDisplays, ApprovalSource, EventSource, PumpSources},
     title::TitleState,
     PromptScope, SessionRuntime,
 };
@@ -252,10 +252,8 @@ impl SessionRuntime {
                     offered: displays,
                     checkpoint,
                 }),
-                hooks: Some(InputHooks {
-                    hooks: self.built.runtime.hooks(),
-                    session: self.built.session.id(),
-                }),
+                hooks: self.built.runtime.hooks(),
+                session: self.built.session.id(),
             },
             io,
         )

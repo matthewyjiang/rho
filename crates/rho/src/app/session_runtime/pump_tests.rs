@@ -1,8 +1,14 @@
+use std::sync::Arc;
+
 use pretty_assertions::assert_eq;
 use rho_sdk::{
+    hooks::{
+        testing::{recording_dispatcher, RecordingObserver},
+        HookInputKind, HookPayload,
+    },
     ApprovalDecision, ApprovalRequest, CancellationToken, CapabilityRequest, CapabilitySource,
     HostChoice, HostInputId, HostInputRequest, HostQuestion, PathScope, PendingApproval, RunEvent,
-    SelectionMode, ToolCallId,
+    SelectionMode, SessionId, ToolCallId,
 };
 use tokio::{
     sync::{
@@ -72,6 +78,8 @@ struct Harness {
     approvals: UnboundedSender<PendingApproval>,
     plans: UnboundedSender<PlanPermissionRequest>,
     cancel: CancellationToken,
+    /// What the session's hooks were told.
+    hooks: Arc<RecordingObserver>,
     pump: JoinHandle<anyhow::Result<()>>,
 }
 
@@ -84,7 +92,9 @@ impl Harness {
         let (control, control_rx) = unbounded_channel();
         let cancel = CancellationToken::new();
         let pump_cancel = cancel.clone();
+        let (dispatcher, hooks) = recording_dispatcher();
         let pump = tokio::spawn(async move {
+            let session = SessionId::new();
             let mut io = TurnIo {
                 events: events_tx,
                 control: control_rx,
@@ -97,7 +107,8 @@ impl Harness {
                     approvals: ApprovalSource::Channel(&mut approval_rx),
                     plan_approvals: Some(&mut plan_rx),
                     displays: None,
-                    hooks: None,
+                    hooks: dispatcher,
+                    session: &session,
                 },
                 &mut io,
             )
@@ -110,8 +121,25 @@ impl Harness {
             approvals,
             plans,
             cancel,
+            hooks,
             pump,
         }
+    }
+
+    /// What the hooks were told of requests, once the pump has finished.
+    fn asked(&self) -> Vec<(HookInputKind, String)> {
+        assert!(
+            self.pump.is_finished(),
+            "read the hooks after the pump ends"
+        );
+        self.hooks
+            .envelopes()
+            .iter()
+            .map(|envelope| match envelope.payload() {
+                HookPayload::InputRequested(payload) => (payload.kind, payload.summary.clone()),
+                other => panic!("unexpected hook payload: {other:?}"),
+            })
+            .collect()
     }
 
     async fn next(&mut self) -> Seen {
@@ -292,4 +320,57 @@ async fn answers_reach_the_request_they_name() {
     });
     let error = harness.pump.await.unwrap().unwrap_err();
     assert_eq!(error.to_string(), "connection closed");
+}
+
+// Covers: the session's hooks hear of every request put to the host, once
+// each and with its kind, and of nothing the pump settles itself: requests
+// after a cancel, and questions a host cannot ask.
+// Owner: session runtime event pump
+#[tokio::test]
+async fn hooks_hear_of_each_request_put_to_the_host() {
+    let mut harness = Harness::start(QuestionSupport::Available);
+    let (waiting, _decision) = approval();
+    harness.approvals.send(waiting).unwrap();
+    assert_eq!(harness.next().await, Seen::ApprovalRequested(ApprovalId(0)));
+    let (plan, _answer) = plan();
+    harness.plans.send(plan).unwrap();
+    assert_eq!(harness.next().await, Seen::PlanRequested(PlanApprovalId(0)));
+    let request = question();
+    let question_id = request.id().clone();
+    harness.emit(RunEvent::HostInputRequested { request });
+    assert_eq!(
+        [harness.next().await, harness.next().await],
+        [Seen::Run, Seen::QuestionAsked(question_id)]
+    );
+    harness.cancel.cancel();
+    let (late, late_decision) = approval();
+    harness.approvals.send(late).unwrap();
+    assert_eq!(late_decision.await.unwrap(), cancelled_approval());
+    harness.emit(RunEvent::HostInputRequested {
+        request: question(),
+    });
+    harness.end_run();
+    (&mut harness.pump).await.unwrap().unwrap();
+
+    let mut unasked = Harness::start(QuestionSupport::Unavailable);
+    unasked.emit(RunEvent::HostInputRequested {
+        request: question(),
+    });
+    unasked.end_run();
+    (&mut unasked.pump).await.unwrap().unwrap();
+
+    assert_eq!(
+        (harness.asked(), unasked.asked()),
+        (
+            vec![
+                (
+                    HookInputKind::Approval,
+                    "write /workspace/file.rs (edit file)".into()
+                ),
+                (HookInputKind::PlanApproval, "1. edit".into()),
+                (HookInputKind::Question, "Confirm".into()),
+            ],
+            Vec::new(),
+        )
+    );
 }

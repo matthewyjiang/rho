@@ -119,9 +119,11 @@ can be hours after the last run.
 `input_requested` is what you want for "tell me when the agent needs me". A
 [daemon](/daemon) session's turn keeps waiting with no client attached, so a
 hook that sends a phone or desktop notification is how you hear about it. It
-fires in daemon, ACP, and `rho run` sessions. The interactive TUI notifies
-through the terminal instead (see `notifications` in
-[Configuration](/configuration)) and does not fire it yet.
+fires in daemon and ACP sessions, and for questionnaires from delegated
+subagents. `rho run` has nobody to ask, so it never fires there. The
+interactive TUI's own approvals and questions do not fire it yet; the TUI
+notifies through the terminal instead (see `notifications` in
+[Configuration](/configuration)).
 
 `before_tool_use` fires per capability request, so it sees tool calls that ask
 for filesystem, process, network, skill, or instruction authority. A tool that

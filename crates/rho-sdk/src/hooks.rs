@@ -60,6 +60,7 @@ mod dispatch;
 mod envelope;
 mod event;
 mod gate;
+mod input_summary;
 mod payload;
 pub mod testing;
 
