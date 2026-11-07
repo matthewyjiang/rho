@@ -7,16 +7,19 @@ use rho_sdk::{RunOutcome, StopReason};
 /// The outcome of a turn whose run finished with `outcome`.
 pub(crate) fn finished(outcome: &RunOutcome) -> TurnOutcome {
     let text = outcome.text().to_owned();
-    let stop = match outcome.stop_reason() {
-        StopReason::MaxSteps => return TurnOutcome::StepLimit { text },
-        StopReason::EndTurn => AnswerStop::EndTurn,
-        StopReason::MaxTokens => AnswerStop::MaxTokens,
-        StopReason::Refusal => AnswerStop::Refusal,
+    let answered = |stop| TurnOutcome::Answered {
+        text: text.clone(),
+        stop,
+    };
+    match outcome.stop_reason() {
+        StopReason::MaxSteps => TurnOutcome::MaxSteps { text: text.clone() },
+        StopReason::EndTurn => answered(AnswerStop::EndTurn),
+        StopReason::MaxTokens => answered(AnswerStop::MaxTokens),
+        StopReason::Refusal => answered(AnswerStop::Refusal),
         // `StopReason` is non-exhaustive; a reason a newer SDK adds still
         // ends at the model's answer.
-        _ => AnswerStop::Unknown,
-    };
-    TurnOutcome::Answered { text, stop }
+        _ => answered(AnswerStop::Unknown),
+    }
 }
 
 /// Why a turn that failed with `error` failed, in a session whose model
@@ -34,12 +37,12 @@ pub(crate) fn turn_error(error: &anyhow::Error, provider: &str, auth: &str) -> T
 }
 
 /// `error` and its causes, each said once: an error whose message already
-/// includes its source's, as the SDK's do, does not repeat it.
+/// ends with its source's, as the SDK's do, does not repeat it.
 fn chain_message(error: &anyhow::Error) -> String {
     let mut message = String::new();
     for cause in error.chain() {
         let text = cause.to_string();
-        if message.contains(&text) {
+        if message.ends_with(&text) {
             continue;
         }
         if !message.is_empty() {
@@ -63,7 +66,7 @@ pub(crate) fn failure_kind(error: &anyhow::Error) -> TurnErrorKind {
                     TurnErrorKind::Authentication
                 }
                 rho_sdk::Error::Provider(_) => TurnErrorKind::Provider,
-                rho_sdk::Error::Tool(_) => TurnErrorKind::Tool,
+                rho_sdk::Error::Tool(_) => TurnErrorKind::ToolHost,
                 rho_sdk::Error::InvalidConfiguration { .. } => TurnErrorKind::Configuration,
                 _ => TurnErrorKind::Other,
             };

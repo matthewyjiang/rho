@@ -114,11 +114,11 @@ pub enum SessionEvent {
         id: InputRequestId,
         resolution: Resolution,
     },
-    /// The turn ended, and how (#1669).
-    TurnEnded { outcome: super::TurnOutcome },
     /// Input request `id`'s timeout stopped: a client held it with
     /// [`super::SESSION_HOLD`], so it waits for an answer.
     InputHeld { id: InputRequestId },
+    /// The turn ended, and how (#1669).
+    TurnEnded { outcome: super::TurnOutcome },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]

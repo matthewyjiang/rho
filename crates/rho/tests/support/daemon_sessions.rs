@@ -283,7 +283,8 @@ async fn a_turn_outlives_the_client_that_prompted_it() {
 // Covers: a turn's end reaches attached clients as how it ended, before
 // the job state that records it: the model's answer whole, or why it
 // failed, with an authentication failure naming only the provider, auth,
-// and how to log in, never the provider's text (#1669).
+// and how to log in, never the provider's text, here and in the job list
+// (#1669).
 // Owner: daemon session event feed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_turn_tells_clients_how_it_ended() {
@@ -327,14 +328,14 @@ async fn a_turn_tells_clients_how_it_ended() {
         let _ = prompt(&client, &session).await;
         watcher.read_until(is_state(state)).await;
 
-        let ending: Vec<SessionEvent> = watcher
-            .events
+        let ending: Vec<SessionEvent> = watcher.events[watcher.events.len() - 2..]
             .iter()
-            .rev()
-            .take(2)
-            .rev()
             .map(|(_, event)| event.clone())
             .collect();
+        let listed = match &outcome {
+            TurnOutcome::Failed { error } => Some(error.message.clone()),
+            _ => None,
+        };
         assert_eq!(
             ending,
             vec![
@@ -344,6 +345,8 @@ async fn a_turn_tells_clients_how_it_ended() {
             "{mode}: log:\n{}",
             sandbox.daemon_log()
         );
+        let job = settled_job(&sandbox, &client, &session).await;
+        assert_eq!((job.state, job.error), (state, listed), "{mode}: job list");
     }
 }
 

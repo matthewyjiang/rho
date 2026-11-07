@@ -64,7 +64,7 @@ async fn a_finished_run_is_answered_only_when_the_model_answered() {
             "step limit",
             tool_call,
             NonZeroUsize::new(1),
-            TurnOutcome::StepLimit {
+            TurnOutcome::MaxSteps {
                 text: String::new(),
             },
         ),
@@ -75,7 +75,8 @@ async fn a_finished_run_is_answered_only_when_the_model_answered() {
 }
 
 // Covers: a failure's kind comes from the typed errors in its chain, never
-// its text; its message says each cause once, except an authentication
+// its text; its message says each cause once (dropping only a cause its
+// error's message ends with), except an authentication
 // failure's, which names only the provider and auth and how to log in.
 // Owner: turn outcome on the wire.
 #[test]
@@ -105,13 +106,18 @@ fn a_failure_is_classified_by_type_and_hides_authentication_text() {
         ),
         (
             tool,
-            TurnErrorKind::Tool,
+            TurnErrorKind::ToolHost,
             "the turn's tools stopped: tool failed: host failed",
         ),
         (
             anyhow::anyhow!("provider unavailable"),
             TurnErrorKind::Other,
             "provider unavailable",
+        ),
+        (
+            anyhow::anyhow!("disk full").context("write failed: disk full at /tmp"),
+            TurnErrorKind::Other,
+            "write failed: disk full at /tmp: disk full",
         ),
     ];
     for (error, kind, message) in cases {

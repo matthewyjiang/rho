@@ -16,11 +16,9 @@ pub enum TurnOutcome {
     Answered { text: String, stop: AnswerStop },
     /// The turn used its model-step limit before the model answered; `text`
     /// is the reply text of its last step, possibly empty.
-    StepLimit { text: String },
+    MaxSteps { text: String },
     /// A client cancelled it.
     Cancelled,
-    /// The daemon stopped, or died, before it ended.
-    Interrupted,
     /// It failed.
     Failed { error: TurnError },
     /// A value a newer daemon sends that this crate does not know.
@@ -29,7 +27,8 @@ pub enum TurnOutcome {
     Unknown,
 }
 
-/// Why the model stopped at its final answer.
+/// Why the model stopped at its final answer. A daemon that does not know
+/// why, as for a reason a newer SDK adds, sends `unknown`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -66,7 +65,7 @@ pub enum TurnErrorKind {
     /// The provider failed the request.
     Provider,
     /// A tool's host failed, not just one tool call.
-    Tool,
+    ToolHost,
     /// The session's config cannot run, such as a model the provider does
     /// not offer.
     Configuration,

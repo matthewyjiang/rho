@@ -3,7 +3,8 @@
 //!
 //! [`LiveEvents`] maps a loaded session's live runtime events as a turn
 //! emits them; [`replay`] maps the display rows a client that attaches with
-//! a reset receives first. Both open a tool call with the same card (title,
+//! a reset receives first; [`outcome`] says how a turn ended, for the
+//! daemon's clients and `rho run` alike. Both open a tool call with the same card (title,
 //! kind, raw input, locations) and close calls left unfinished as `failed`,
 //! so a conversation reads the same whether a client watched it live or
 //! received it replayed, apart from how its text was chunked.

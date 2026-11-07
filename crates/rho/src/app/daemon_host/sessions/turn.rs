@@ -107,20 +107,24 @@ impl TurnTask {
         if let Some(runtime) = &*runtime {
             save_transcript(&session, runtime);
         }
-        let config = &session.config;
-        view.end(match ended {
-            Ok(TurnOutcome::Completed(run)) => (outcome::finished(&run), TurnEnd::Completed),
-            Ok(TurnOutcome::Cancelled) if stopping.is_cancelled() => {
-                (wire::TurnOutcome::Interrupted, TurnEnd::Interrupted)
-            }
-            Ok(TurnOutcome::Cancelled) => (wire::TurnOutcome::Cancelled, TurnEnd::Cancelled),
+        let (outcome, end) = match ended {
+            Ok(TurnOutcome::Completed(run)) => (Some(outcome::finished(&run)), TurnEnd::Completed),
+            // The daemon's stop already detached every client, so none
+            // hears how the turn ended; the job records it interrupted.
+            Ok(TurnOutcome::Cancelled) if stopping.is_cancelled() => (None, TurnEnd::Interrupted),
+            Ok(TurnOutcome::Cancelled) => (Some(wire::TurnOutcome::Cancelled), TurnEnd::Cancelled),
             Err(error) => {
-                // Logged whole: the outcome hides an authentication
-                // failure's text, which may echo credentials, from clients.
+                // Logged whole, to the daemon's own log only: the outcome
+                // hides an authentication failure's text, which may echo
+                // credentials, from clients.
                 tracing::warn!(job = %session.job, error = format!("{error:#}"), "a turn failed");
-                failed(outcome::turn_error(&error, &config.provider, &config.auth))
+                let config = &session.config;
+                let (outcome, end) =
+                    failed(outcome::turn_error(&error, &config.provider, &config.auth));
+                (Some(outcome), end)
             }
-        });
+        };
+        view.end(outcome, end);
     }
 }
 
@@ -211,21 +215,23 @@ impl DaemonView {
         }
     }
 
-    /// Records that the turn ended with `outcome`, which its job records
-    /// as `end`.
-    fn end(mut self, (outcome, end): (wire::TurnOutcome, TurnEnd)) {
+    /// Records that the turn ended as `end`, telling clients `outcome`
+    /// when there are clients to tell (`None` while the daemon stops).
+    fn end(mut self, outcome: Option<wire::TurnOutcome>, end: TurnEnd) {
         self.finish(outcome, end);
     }
 
-    /// Tells clients the turn ended with `outcome`, records it as `end`,
-    /// and tells a request still waiting for the turn to begin.
-    fn finish(&mut self, outcome: wire::TurnOutcome, end: TurnEnd) {
+    /// Tells clients the turn ended with `outcome`, if any, records it as
+    /// `end`, and tells a request still waiting for the turn to begin.
+    fn finish(&mut self, outcome: Option<wire::TurnOutcome>, end: TurnEnd) {
         let start = PromptStart::ended(&end);
         // A turn that ended waits for nothing.
         self.session.change_inputs(Inputs::withdraw_all);
-        self.session
-            .feed
-            .publish([wire::SessionEvent::TurnEnded { outcome }]);
+        if let Some(outcome) = outcome {
+            self.session
+                .feed
+                .publish([wire::SessionEvent::TurnEnded { outcome }]);
+        }
         self.session.record(JobEvent::TurnEnded(end));
         self.ended = true;
         if let (Some(started), Some(start)) = (self.started.take(), start) {
@@ -267,7 +273,7 @@ impl Drop for DaemonView {
                 kind: wire::TurnErrorKind::Other,
                 message: UNEXPECTED_STOP.to_owned(),
             });
-            self.finish(outcome, end);
+            self.finish(Some(outcome), end);
         }
     }
 }

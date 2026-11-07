@@ -181,35 +181,18 @@ async fn the_job_waits_for_input_while_any_request_is_open() {
 
 /// How a test lets go of a view.
 enum Release {
-    /// The turn task records the turn's end.
-    End(TurnEnd),
+    /// The turn task records the turn's end: what clients are told, and
+    /// what the job records.
+    End((Option<rho_protocol::TurnOutcome>, TurnEnd)),
     /// The view drops without an end, as when the turn task panics.
     Drop,
-}
-
-/// An outcome clients could be told for a turn that ended as `end`; this
-/// test checks only what the job records.
-fn outcome_of(end: &TurnEnd) -> rho_protocol::TurnOutcome {
-    match end {
-        TurnEnd::Completed => rho_protocol::TurnOutcome::StepLimit {
-            text: String::new(),
-        },
-        TurnEnd::Cancelled => rho_protocol::TurnOutcome::Cancelled,
-        TurnEnd::Interrupted => rho_protocol::TurnOutcome::Interrupted,
-        TurnEnd::Failed(message) => rho_protocol::TurnOutcome::Failed {
-            error: rho_protocol::TurnError {
-                kind: rho_protocol::TurnErrorKind::Other,
-                message: message.clone(),
-            },
-        },
-    }
 }
 
 impl Release {
     /// The end the job records once the view is let go.
     fn recorded_end(&self) -> TurnEnd {
         match self {
-            Self::End(end) => end.clone(),
+            Self::End((_, end)) => end.clone(),
             Self::Drop => TurnEnd::Failed(UNEXPECTED_STOP.into()),
         }
     }
@@ -224,12 +207,25 @@ impl Release {
 // Owner: daemon session turn view.
 #[tokio::test]
 async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
-    let failed = || TurnEnd::Failed("provider refused the request".into());
+    let completed = || {
+        let answer = rho_protocol::TurnOutcome::Answered {
+            text: "done".into(),
+            stop: rho_protocol::AnswerStop::EndTurn,
+        };
+        (Some(answer), TurnEnd::Completed)
+    };
+    let failed = || {
+        let (outcome, end) = super::failed(rho_protocol::TurnError {
+            kind: rho_protocol::TurnErrorKind::Provider,
+            message: "provider refused the request".into(),
+        });
+        (Some(outcome), end)
+    };
     let cases = vec![
         EndCase {
             name: "completed after saving",
             events: vec![inserted()],
-            release: Release::End(TurnEnd::Completed),
+            release: Release::End(completed()),
             start: Some(PromptStart::Saved),
         },
         EndCase {
@@ -241,19 +237,22 @@ async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
         EndCase {
             name: "completed without a saved message",
             events: vec![],
-            release: Release::End(TurnEnd::Completed),
+            release: Release::End(completed()),
             start: Some(PromptStart::Saved),
         },
         EndCase {
             name: "cancelled before saving",
             events: vec![],
-            release: Release::End(TurnEnd::Cancelled),
+            release: Release::End((
+                Some(rho_protocol::TurnOutcome::Cancelled),
+                TurnEnd::Cancelled,
+            )),
             start: Some(PromptStart::Cancelled),
         },
         EndCase {
             name: "interrupted before saving",
             events: vec![],
-            release: Release::End(TurnEnd::Interrupted),
+            release: Release::End((None, TurnEnd::Interrupted)),
             start: None,
         },
         EndCase {
@@ -287,7 +286,7 @@ async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
         let expected_end = case.release.recorded_end();
 
         match case.release {
-            Release::End(end) => view.end((outcome_of(&end), end)),
+            Release::End((outcome, end)) => view.end(outcome, end),
             Release::Drop => drop(view),
         }
 

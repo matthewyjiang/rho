@@ -23,7 +23,7 @@
           "x-rho-other": true
         }
       ],
-      "description": "Why the model stopped at its final answer."
+      "description": "Why the model stopped at its final answer. A daemon that does not know\nwhy, as for a reason a newer SDK adds, sends `unknown`."
     },
     "ApprovalAsk": {
       "description": "A tool asks to use a capability its session's permission mode does not\ngrant on its own.",
@@ -1705,23 +1705,6 @@
           "type": "object"
         },
         {
-          "description": "The turn ended, and how (#1669).",
-          "properties": {
-            "outcome": {
-              "$ref": "#/$defs/TurnOutcome"
-            },
-            "type": {
-              "const": "turn_ended",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "outcome"
-          ],
-          "type": "object"
-        },
-        {
           "description": "Input request `id`'s timeout stopped: a client held it with\n[`super::SESSION_HOLD`], so it waits for an answer.",
           "properties": {
             "id": {
@@ -1735,6 +1718,23 @@
           "required": [
             "type",
             "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The turn ended, and how (#1669).",
+          "properties": {
+            "outcome": {
+              "$ref": "#/$defs/TurnOutcome"
+            },
+            "type": {
+              "const": "turn_ended",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "outcome"
           ],
           "type": "object"
         },
@@ -2103,7 +2103,7 @@
           "type": "string"
         },
         {
-          "const": "tool",
+          "const": "tool_host",
           "description": "A tool's host failed, not just one tool call.",
           "type": "string"
         },
@@ -2155,7 +2155,7 @@
               "type": "string"
             },
             "type": {
-              "const": "step_limit",
+              "const": "max_steps",
               "type": "string"
             }
           },
@@ -2170,19 +2170,6 @@
           "properties": {
             "type": {
               "const": "cancelled",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "The daemon stopped, or died, before it ended.",
-          "properties": {
-            "type": {
-              "const": "interrupted",
               "type": "string"
             }
           },

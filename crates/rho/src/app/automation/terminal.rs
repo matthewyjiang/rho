@@ -50,7 +50,7 @@ pub(super) fn classify_error(error: &anyhow::Error) -> (TerminalReason, u8) {
     match failure_kind(error) {
         TurnErrorKind::Authentication => (TerminalReason::Authentication, 1),
         TurnErrorKind::Provider => (TerminalReason::ProviderError, 1),
-        TurnErrorKind::Tool => (TerminalReason::ToolHostError, 1),
+        TurnErrorKind::ToolHost => (TerminalReason::ToolHostError, 1),
         TurnErrorKind::Configuration => (TerminalReason::ConfigurationError, 2),
         // `TurnErrorKind` is non-exhaustive; a kind a newer protocol adds is
         // another error.
