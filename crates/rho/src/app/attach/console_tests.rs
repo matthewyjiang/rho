@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     ApprovalAsk, ApprovalSource, Ask, Choice, DefaultAnswer, DefaultStyle, InputAnswer,
-    InputRequest, InputRequestId, InputTimeout, Operation, Question, QuestionAsk, Replay,
-    Resolution, Selection, SessionEvent,
+    InputRequest, InputRequestId, InputTimeout, Operation, PermissionMode, PlanApprovalAsk,
+    Question, QuestionAsk, Replay, Resolution, Selection, SessionEvent,
 };
 
 use super::{Action, Console, Refusal, Typed};
@@ -330,4 +330,30 @@ fn an_unconfirmed_hold_is_not_told_as_held() {
             "rho: no more input; another client can answer it\n".to_owned()
         )
     );
+}
+
+// Covers: a reset reattach, which writes the conversation again without the
+// plan, shows a plan approval being answered again whole, plan included,
+// as when it was first asked.
+// Owner: rho attach console (unit).
+#[test]
+fn a_reset_shows_a_plan_approval_again_with_its_plan() {
+    let plan = InputRequest {
+        id: InputRequestId(1),
+        ask: Ask::PlanApproval(PlanApprovalAsk {
+            plan: "1. edit\n2. test".into(),
+            modes: vec![PermissionMode::Auto],
+        }),
+        tool_call: None,
+        timeout: None,
+    };
+    let mut console = Console::new(Vec::new());
+    console
+        .attached(std::slice::from_ref(&plan), Replay::Reset, NOW_MS)
+        .unwrap();
+    let asked = String::from_utf8(std::mem::take(&mut console.err)).unwrap();
+    console.attached(&[plan], Replay::Reset, NOW_MS).unwrap();
+    let asked_again = String::from_utf8(console.err).unwrap();
+
+    assert_eq!(asked_again, asked);
 }

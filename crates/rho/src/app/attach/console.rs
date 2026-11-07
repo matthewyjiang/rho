@@ -121,7 +121,9 @@ impl<E: Write> Console<E> {
             let text = format!(
                 "rho: the turn waits for {}\n{}",
                 asked(&self.open[&prompt.id()].ask),
-                prompt.asking()
+                // Whole, a plan approval's plan included: the screen was
+                // written again without it.
+                prompt.opening()
             );
             self.say(&text)?;
         }
