@@ -154,10 +154,15 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
         return ended(ending);
     }
     let mut terminal = view.terminal(lines)?;
-    if let Some(terminal) = &mut terminal {
-        terminal.attached(&response.inputs, response.replay)?;
-    }
+    // The response's open requests, held until its replay is written, so a
+    // prompt follows the conversation it belongs to; lines wait with them.
+    let mut pending = Some(response);
     loop {
+        if let Some(terminal) = terminal.as_mut().filter(|_| !follow.replaying()) {
+            if let Some(response) = pending.take() {
+                terminal.attached(&response.inputs, response.replay)?;
+            }
+        }
         let ending = tokio::select! {
             notification = notifications.recv() => match notification {
                 None => return Err(other("lost the connection to the rho daemon")),
@@ -184,10 +189,9 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
                             if response.replay == Replay::Reset {
                                 view.restart()?;
                             }
-                            if let Some(terminal) = &mut terminal {
-                                terminal.attached(&response.inputs, response.replay)?;
-                            }
-                            follow.reattached(&response)
+                            let ending = follow.reattached(&response);
+                            pending = Some(response);
+                            ending
                         }
                         DetachReason::DaemonStopping => Some(Ending::Interrupted),
                         // `DetachReason` is non-exhaustive.
@@ -197,7 +201,7 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
                 // Another session's, or a notification a newer daemon sends.
                 Some(_) => None,
             },
-            typed = next_line(&mut terminal) => {
+            typed = next_line(&mut terminal), if pending.is_none() => {
                 let (terminal, line) = typed?;
                 terminal.line(&client, &target.session, &line).await?;
                 None

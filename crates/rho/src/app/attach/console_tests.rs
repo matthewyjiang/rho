@@ -114,7 +114,7 @@ fn network(page: u32) -> String {
 // now shown is dropped; a refused answer is asked again; a reset reattach
 // shows the prompt again; a slip of a command is not steered; a repeated
 // request is not asked twice; at the end of input the open prompt is left
-// to other clients, saying when this console held it, and later requests
+// to other clients, saying when it was held, and later requests
 // are only told; request fields are escaped, so one cannot add a line of
 // its own.
 // Owner: rho attach console (unit).
@@ -238,8 +238,15 @@ fn the_console_answers_open_requests_in_turn_and_steers_otherwise() {
             vec![Action::Hold(InputRequestId(5))],
             format!("rho: there is no choice 9\n{NAME}  pick one; {CLOSES}"),
         ),
+        // Held while this client caught up: it no longer times out.
         (
-            Step::Attached(vec![question(5, None)], Replay::Reset),
+            Step::Attached(
+                vec![InputRequest {
+                    timeout: None,
+                    ..question(5, None)
+                }],
+                Replay::Reset,
+            ),
             vec![],
             format!("rho: the turn waits for answers to \"Name\"\n{NAME}  pick one; {CLOSES}"),
         ),
@@ -292,4 +299,35 @@ fn the_console_answers_open_requests_in_turn_and_steers_otherwise() {
         let written = String::from_utf8(std::mem::take(&mut console.err)).unwrap();
         assert_eq!((taken, written), (actions, told), "step {n}");
     }
+}
+
+// Covers: a hold the daemon never confirmed leaves the request timed, so
+// at the end of input the console does not say it no longer times out.
+// Owner: rho attach console (unit).
+#[test]
+fn an_unconfirmed_hold_is_not_told_as_held() {
+    let mut console = Console::new(Vec::new());
+    console
+        .attached(&[question(1, None)], Replay::Reset, NOW_MS)
+        .unwrap();
+    let hold = console
+        .line(
+            Typed {
+                line: "/hold",
+                at_ms: NOW_MS,
+            },
+            NOW_MS,
+        )
+        .unwrap();
+    std::mem::take(&mut console.err);
+    console.closed().unwrap();
+    let written = String::from_utf8(console.err).unwrap();
+
+    assert_eq!(
+        (hold, written),
+        (
+            vec![Action::Hold(InputRequestId(1))],
+            "rho: no more input; another client can answer it\n".to_owned()
+        )
+    );
 }

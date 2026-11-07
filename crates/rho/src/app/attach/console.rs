@@ -60,7 +60,8 @@ pub(super) struct Console<E = io::Stderr> {
     open: BTreeMap<InputRequestId, InputRequest>,
     /// Requests this console answered whose resolution has not come yet.
     answered: BTreeSet<InputRequestId>,
-    /// Requests this console held, which no longer time out.
+    /// Requests the daemon says were held, by any client, so they no longer
+    /// time out.
     held: BTreeSet<InputRequestId>,
     input: Input,
     /// When `input` began, as Unix time in milliseconds: a line read before
@@ -96,10 +97,11 @@ impl<E: Write> Console<E> {
         }
     }
 
-    /// Takes an attach response's open requests, as of `now_ms`: they
-    /// replace the ones known, telling those that arrived and those that
-    /// closed meanwhile. After a `replay` that resets, which writes the
-    /// conversation again, the request being answered is shown again.
+    /// Takes an attach response's open requests, as of `now_ms`, once its
+    /// replay is written: they replace the ones known, telling those that
+    /// arrived and those that closed meanwhile. After a `replay` that
+    /// resets, which wrote the conversation again, the request being
+    /// answered is shown again.
     pub(super) fn attached(
         &mut self,
         inputs: &[InputRequest],
@@ -125,8 +127,14 @@ impl<E: Write> Console<E> {
         }
         for request in inputs {
             match self.open.get_mut(&request.id) {
-                // Known: only its timeout can have changed.
-                Some(known) => known.timeout = request.timeout.clone(),
+                // Known: only its timeout can have changed, which a hold
+                // while this client caught up stopped.
+                Some(known) => {
+                    if known.timeout.is_some() && request.timeout.is_none() {
+                        self.held.insert(request.id);
+                    }
+                    known.timeout = request.timeout.clone();
+                }
                 None => self.arrived(request.clone(), now_ms)?,
             }
         }
@@ -146,6 +154,7 @@ impl<E: Write> Console<E> {
             SessionEvent::InputHeld { id } => {
                 if let Some(request) = self.open.get_mut(id) {
                     request.timeout = None;
+                    self.held.insert(*id);
                 }
             }
             _ => return Ok(()),
@@ -267,10 +276,10 @@ impl<E: Write> Console<E> {
 
     /// The hold that stops request `id`'s timeout, if it has one, as once
     /// the user started on it. The timeout stays until `input_held` says
-    /// it stopped, so a hold the daemon refused is asked again.
+    /// it stopped, so a hold the daemon refused is asked again and never
+    /// counts as held.
     fn stop_timeout(&mut self, id: InputRequestId) -> Option<Action> {
         self.open.get(&id)?.timeout.as_ref()?;
-        self.held.insert(id);
         Some(Action::Hold(id))
     }
 
