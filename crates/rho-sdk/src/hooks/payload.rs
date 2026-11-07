@@ -268,6 +268,7 @@ pub enum HookPayload {
     AfterToolUse(AfterToolUsePayload),
     RunCompleted(RunCompletedPayload),
     RunFailed(RunFailedPayload),
+    InputRequested(InputRequestedPayload),
     SessionCompleted(SessionCompletedPayload),
     SessionFailed(SessionFailedPayload),
 }
@@ -314,6 +315,28 @@ pub struct RunFailedPayload {
     pub failure: HookFailure,
 }
 
+/// What a run waits for a person to answer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct InputRequestedPayload {
+    pub kind: HookInputKind,
+    /// What is asked, in the asker's words: an approval's reason, a plan's
+    /// first line, or a questionnaire's title.
+    pub summary: String,
+}
+
+/// The kind of answer a run waits for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum HookInputKind {
+    /// May a tool use a capability?
+    Approval,
+    /// May the session leave plan mode to carry out its plan?
+    PlanApproval,
+    /// Questions for the user.
+    Question,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct SessionCompletedPayload {
     pub runs: u64,
@@ -332,6 +355,7 @@ impl HookPayload {
             Self::AfterToolUse(_) => super::HookEventKind::AfterToolUse,
             Self::RunCompleted(_) => super::HookEventKind::RunCompleted,
             Self::RunFailed(_) => super::HookEventKind::RunFailed,
+            Self::InputRequested(_) => super::HookEventKind::InputRequested,
             Self::SessionCompleted(_) => super::HookEventKind::SessionCompleted,
             Self::SessionFailed(_) => super::HookEventKind::SessionFailed,
         }
@@ -345,6 +369,7 @@ impl HookPayload {
             Self::SessionStarted(_)
             | Self::RunCompleted(_)
             | Self::RunFailed(_)
+            | Self::InputRequested(_)
             | Self::SessionCompleted(_)
             | Self::SessionFailed(_) => None,
         }
@@ -360,7 +385,7 @@ impl HookPayload {
             }
             Self::RunCompleted(_) | Self::SessionCompleted(_) => Some(true),
             Self::RunFailed(_) | Self::SessionFailed(_) => Some(false),
-            Self::SessionStarted(_) | Self::BeforeToolUse(_) => None,
+            Self::SessionStarted(_) | Self::BeforeToolUse(_) | Self::InputRequested(_) => None,
         }
     }
 }

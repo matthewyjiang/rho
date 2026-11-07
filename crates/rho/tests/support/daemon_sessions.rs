@@ -808,3 +808,72 @@ async fn an_approval_waits_for_any_client_to_answer() {
         sandbox.daemon_log()
     );
 }
+
+// Covers: a daemon session's turn that waits for a person with nobody
+// attached runs the user's `input_requested` hooks, which name the session
+// and what it asks, so a user away from every client can be told (#1660).
+// Owner: daemon input requests.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_turn_that_asks_tells_the_hooks() {
+    let sandbox = Sandbox::new();
+    let home = sandbox.daemon.home();
+    std::fs::write(
+        home.join("config.toml"),
+        format!("permission_mode = \"supervised\"\n{CONFIG}"),
+    )
+    .unwrap();
+    let events = home.join("asked.jsonl");
+    let hook = home.join("on-input-requested");
+    std::fs::write(&hook, format!("#!/bin/sh\ncat >> '{}'\n", events.display())).unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::write(
+        home.join("hooks.toml"),
+        format!(
+            "version = 1\n\n[[hook]]\nid = \"notify\"\non = \"input_requested\"\ncommand = [\"{}\"]\ntimeout = \"5s\"\n",
+            hook.display()
+        ),
+    )
+    .unwrap();
+    // The fixture makes the call the prompt spells out as JSON.
+    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let session = new_session(&client, &sandbox.workspace).await;
+    let call = serde_json::json!({
+        "id": "edit",
+        "name": "write",
+        "arguments": {"path": "note.txt", "content": "approved"},
+    });
+    client
+        .request::<SessionPrompt>(&SessionPromptParams {
+            session: session.clone(),
+            text: call.to_string(),
+        })
+        .await
+        .unwrap();
+
+    let event: serde_json::Value = sandbox
+        .daemon
+        .poll_until("the hook to run", DEADLINE, async || {
+            let written = std::fs::read_to_string(&events).ok()?;
+            serde_json::from_str(written.lines().next()?).ok()
+        })
+        .await;
+
+    assert_eq!(
+        (
+            &event["event"],
+            &event["identity"]["session_id"],
+            &event["payload"]["kind"],
+            event["payload"]["summary"]
+                .as_str()
+                .is_some_and(|summary| !summary.is_empty()),
+        ),
+        (
+            &serde_json::json!("input_requested"),
+            &serde_json::json!(session.as_str()),
+            &serde_json::json!("approval"),
+            true,
+        ),
+        "event: {event:#}\nlog:\n{}",
+        sandbox.daemon_log()
+    );
+}

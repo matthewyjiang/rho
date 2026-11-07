@@ -97,6 +97,7 @@ impl Harness {
                     approvals: ApprovalSource::Channel(&mut approval_rx),
                     plan_approvals: Some(&mut plan_rx),
                     displays: None,
+                    hooks: None,
                 },
                 &mut io,
             )

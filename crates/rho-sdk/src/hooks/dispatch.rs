@@ -10,8 +10,8 @@ use super::{
     envelope::{HookEnvelope, HookEnvelopeBuilder, HookHostLabels, HookIdentity},
     gate::{HookDecision, PreToolUseGate, PreToolUseRequest},
     payload::{
-        bounded_failure, BoundedFailure, HookFailure, HookPayload, HookTool,
-        SessionCompletedPayload, SessionFailedPayload, ToolOutcomeRef,
+        bounded_failure, BoundedFailure, HookFailure, HookInputKind, HookPayload, HookTool,
+        InputRequestedPayload, SessionCompletedPayload, SessionFailedPayload, ToolOutcomeRef,
     },
 };
 
@@ -262,6 +262,22 @@ impl HookDispatcher {
             None,
             self.workspace_root.as_deref(),
             |_| HookPayload::SessionCompleted(SessionCompletedPayload { runs }),
+        );
+    }
+
+    /// Reports that a run of the session waits for a person to answer a
+    /// request of `kind`, which `summary` describes.
+    pub fn input_requested(&self, session_id: &SessionId, kind: HookInputKind, summary: &str) {
+        self.hooks.observe(
+            Some(session_id),
+            None,
+            self.workspace_root.as_deref(),
+            |builder| {
+                HookPayload::InputRequested(InputRequestedPayload {
+                    kind,
+                    summary: builder.bounded_string(summary, "payload.summary"),
+                })
+            },
         );
     }
 

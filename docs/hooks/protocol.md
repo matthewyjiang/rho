@@ -76,6 +76,19 @@ the hook field bound, each stream then keeps its **last** bytes and is named in
 `bounds.fields`. `status` is the tool outcome, not the process outcome: they
 usually agree, but read `exit_code` when you need the process's answer.
 
+`input_requested` names what the run waits for, as `approval`,
+`plan_approval`, or `question`, and summarizes it in one line: an approval's
+operation and policy reason, a plan's first line, or a questionnaire's title
+(its first question when untitled). `identity.run_id` is `null`. Answer the
+request from a client; a hook cannot.
+
+```json
+{
+  "kind": "approval",
+  "summary": "run git push --force"
+}
+```
+
 `parent_session_id` is filled in for delegated Rho subagents. A
 `runtime: claude-cli` child does not run Rho's tool loop, so it produces
 session-boundary events only.

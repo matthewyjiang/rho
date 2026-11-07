@@ -79,8 +79,9 @@ pub use envelope::{
 pub use event::HookEventKind;
 pub use gate::{AllowAllGate, HookDecision, HookGateFuture, PreToolUseGate, PreToolUseRequest};
 pub use payload::{
-    AfterToolUsePayload, BeforeToolUsePayload, HookCapability, HookFailure, HookPathScope,
-    HookPayload, HookPolicyOutcome, HookProcessEnvironment, HookProcessResult, HookStopReason,
-    HookTool, HookToolStatus, HookWorkspace, RunCompletedPayload, RunFailedPayload,
-    SessionCompletedPayload, SessionFailedPayload, SessionStartedPayload, PROMPT_CONSTRUCTION_TOOL,
+    AfterToolUsePayload, BeforeToolUsePayload, HookCapability, HookFailure, HookInputKind,
+    HookPathScope, HookPayload, HookPolicyOutcome, HookProcessEnvironment, HookProcessResult,
+    HookStopReason, HookTool, HookToolStatus, HookWorkspace, InputRequestedPayload,
+    RunCompletedPayload, RunFailedPayload, SessionCompletedPayload, SessionFailedPayload,
+    SessionStartedPayload, PROMPT_CONSTRUCTION_TOOL,
 };

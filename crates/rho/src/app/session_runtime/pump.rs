@@ -16,8 +16,9 @@ use std::{
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use rho_sdk::{
+    hooks::{HookDispatcher, HookInputKind},
     ApprovalRequestReceiver, CancellationToken, HostInputId, HostInputRefusal, HostInputResponse,
-    PendingApproval, RunEvent, UserInput,
+    PendingApproval, RunEvent, SessionId, UserInput,
 };
 use tokio::sync::oneshot;
 
@@ -27,6 +28,7 @@ use super::{
         cancelled_approval, ApprovalId, PlanApprovalId, PlanApprovalRequest, RunEnd, SessionEvent,
         TurnControl,
     },
+    input_summary,
     persist::TurnCheckpoint,
     turn::TurnIo,
     QuestionSupport,
@@ -110,6 +112,23 @@ pub(super) struct PumpSources<'a> {
     /// Background results offered to the run; tests of the event and
     /// approval plumbing pass `None`.
     pub(super) displays: Option<AppliedDisplays<'a>>,
+    /// Told whenever the turn waits for a person; tests of the event and
+    /// approval plumbing pass `None`.
+    pub(super) hooks: Option<InputHooks<'a>>,
+}
+
+/// The session's hooks, told when its turn waits for a person, so a user
+/// away from every client can learn of it (#1660).
+pub(super) struct InputHooks<'a> {
+    pub(super) hooks: HookDispatcher,
+    pub(super) session: &'a SessionId,
+}
+
+/// Reports to `hooks`, if any, that the turn waits for a person.
+fn tell(hooks: Option<&InputHooks<'_>>, kind: HookInputKind, summary: &str) {
+    if let Some(InputHooks { hooks, session }) = hooks {
+        hooks.input_requested(session, kind, summary);
+    }
 }
 
 /// Background results handed to the model during one turn. Each is shown
@@ -160,6 +179,7 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
         mut approvals,
         mut plan_approvals,
         mut displays,
+        hooks,
     } = sources;
     let mut cancelled = cancel.is_cancelled();
     let mut events_open = true;
@@ -214,6 +234,11 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                 if let Some((request, call_id)) = asked {
                     match (questions, cancelled) {
                         (QuestionSupport::Available, false) => {
+                            tell(
+                                hooks.as_ref(),
+                                HookInputKind::Question,
+                                input_summary::question(&request),
+                            );
                             pending.questions.insert(request.id().clone());
                             io.emit(SessionEvent::QuestionAsked {
                                 id: request.id().clone(),
@@ -241,6 +266,11 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                     let _ = approval.respond(cancelled_approval());
                     continue;
                 }
+                tell(
+                    hooks.as_ref(),
+                    HookInputKind::Approval,
+                    &input_summary::approval(approval.request()),
+                );
                 let id = ApprovalId(pending.next_approval);
                 pending.next_approval += 1;
                 io.emit(SessionEvent::ApprovalRequested {
@@ -259,6 +289,11 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                     // Dropping the reply reports the call as cancelled.
                     continue;
                 }
+                tell(
+                    hooks.as_ref(),
+                    HookInputKind::PlanApproval,
+                    input_summary::plan(&request.plan),
+                );
                 let id = PlanApprovalId(pending.next_plan);
                 pending.next_plan += 1;
                 let (answer, answered) = oneshot::channel();

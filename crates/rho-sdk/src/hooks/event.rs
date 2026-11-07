@@ -19,6 +19,9 @@ pub enum HookEventKind {
     RunCompleted,
     /// One run ended in an error.
     RunFailed,
+    /// A run waits for a person: an approval, a plan approval, or a
+    /// questionnaire.
+    InputRequested,
     /// The host closed a session normally.
     SessionCompleted,
     /// The host closed a session after a failure.
@@ -33,6 +36,7 @@ impl HookEventKind {
         Self::AfterToolUse,
         Self::RunCompleted,
         Self::RunFailed,
+        Self::InputRequested,
         Self::SessionCompleted,
         Self::SessionFailed,
     ];
@@ -45,6 +49,7 @@ impl HookEventKind {
             Self::AfterToolUse => "after_tool_use",
             Self::RunCompleted => "run_completed",
             Self::RunFailed => "run_failed",
+            Self::InputRequested => "input_requested",
             Self::SessionCompleted => "session_completed",
             Self::SessionFailed => "session_failed",
         }
@@ -69,6 +74,7 @@ impl HookEventKind {
             | Self::AfterToolUse
             | Self::RunCompleted
             | Self::RunFailed
+            | Self::InputRequested
             | Self::SessionCompleted
             | Self::SessionFailed => false,
         }
@@ -80,7 +86,10 @@ impl HookEventKind {
     pub const fn is_post_action(self) -> bool {
         match self {
             Self::AfterToolUse | Self::RunCompleted | Self::RunFailed | Self::SessionFailed => true,
-            Self::SessionStarted | Self::BeforeToolUse | Self::SessionCompleted => false,
+            Self::SessionStarted
+            | Self::BeforeToolUse
+            | Self::InputRequested
+            | Self::SessionCompleted => false,
         }
     }
 }
