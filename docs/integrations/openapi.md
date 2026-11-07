@@ -47,7 +47,7 @@ auth = { type = "api_key", in = "header", name = "X-Api-Key", value_env = "API_K
 auth = { type = "api_key", in = "query", name = "api_key", value_env = "API_KEY" }
 ```
 
-Credentials and headers, literal ones included, go only to the source's origin: `base_url`, or the spec's first server when `base_url` is unset. A source that sends credentials or headers must set `base_url`, and it must use HTTPS unless its host is loopback. Rho follows redirects only within the origin of the URL it authorized; a redirect to another origin fails the call, so no request leaves the server the call was approved for. A missing environment variable fails that source at session start.
+Credentials and headers, literal ones included, go only to the source's origin: `base_url`, or the spec's first server when `base_url` is unset. A source that sends credentials or headers must set `base_url`, and it must use HTTPS unless its host is loopback. Rho follows redirects only within the origin of the URL it authorized; a redirect to another origin fails the call, so no request leaves the server the call was approved for. A missing environment variable fails that source at session start. In a [daemon](../daemon.md) session, these variables are read from the environment of the client that opened (or reopened) the session.
 
 ### Project sources
 

@@ -33,6 +33,7 @@ use super::{
     config::{ConfiguredHookEvent, HookDefinition, WorkflowHookEventKind},
     protocol::parse_decision,
 };
+use crate::session_environment::SessionEnvironment;
 use workflow_event::{AppHookEnvelope, WorkflowPayload};
 
 /// Ceiling on the total time one `before_tool_use` dispatch may take.
@@ -63,15 +64,23 @@ pub struct HookEngine {
     activity: HookActivityLog,
     bounds: HookPayloadBounds,
     observational_sender: RwLock<Option<mpsc::Sender<ObservationalEvent>>>,
+    /// The session's environment; a hook takes the one current when it runs
+    /// (#1659).
+    environment: SessionEnvironment,
 }
 
 impl HookEngine {
-    pub fn new(catalog: HookCatalog, bounds: HookPayloadBounds) -> Self {
+    pub fn new(
+        catalog: HookCatalog,
+        bounds: HookPayloadBounds,
+        environment: SessionEnvironment,
+    ) -> Self {
         Self {
             catalog: RwLock::new(Arc::new(catalog)),
             activity: HookActivityLog::default(),
             bounds,
             observational_sender: RwLock::new(None),
+            environment,
         }
     }
 
@@ -445,22 +454,21 @@ async fn evaluate_one(
             format!("hook `{id}` was not run: the blocking hook budget was exhausted"),
         );
     }
-    let result =
-        match tokio::time::timeout_at(deadline, run_hook(hook, event, CancellationToken::new()))
-            .await
-        {
-            Ok(result) => result,
-            Err(_) => {
-                return record_denial(
-                    engine,
-                    &id,
-                    HookEventKind::BeforeToolUse,
-                    None,
-                    false,
-                    format!("hook `{id}` was stopped: the blocking hook budget was exhausted"),
-                );
-            }
-        };
+    let environment = engine.environment.current();
+    let run = run_hook(hook, event, &environment, CancellationToken::new());
+    let result = match tokio::time::timeout_at(deadline, run).await {
+        Ok(result) => result,
+        Err(_) => {
+            return record_denial(
+                engine,
+                &id,
+                HookEventKind::BeforeToolUse,
+                None,
+                false,
+                format!("hook `{id}` was stopped: the blocking hook budget was exhausted"),
+            );
+        }
+    };
     let output = match result {
         Ok(output) => output,
         Err(error) => {
@@ -758,7 +766,8 @@ async fn run_observational_hook(
 ) {
     let id = hook.qualified_id();
     // An observational failure is visible but never fails the run.
-    let outcome = match run_hook(&hook, &encoded, cancellation).await {
+    let environment = engine.environment.current();
+    let outcome = match run_hook(&hook, &encoded, &environment, cancellation).await {
         Ok(output) if output.succeeded() => (HookOutcome::Observed, Some(output)),
         Ok(output) => (
             HookOutcome::Failed {

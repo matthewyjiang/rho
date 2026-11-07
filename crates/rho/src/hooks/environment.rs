@@ -36,11 +36,6 @@ where
     environment
 }
 
-/// Reads the ambient environment for [`child_environment`].
-pub fn ambient(name: &str) -> Option<String> {
-    std::env::var(name).ok()
-}
-
 #[cfg(test)]
 #[path = "environment_tests.rs"]
 mod tests;

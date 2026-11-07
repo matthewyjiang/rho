@@ -14,6 +14,7 @@ use crate::{
         },
     },
     config::Config,
+    session_environment::{Ambient, SessionEnvironment},
 };
 
 const GRACE: Duration = Duration::from_secs(60);
@@ -59,7 +60,7 @@ async fn load(sessions: &Sessions, root: &TempDir, load: Load) -> Arc<LoadedSess
         OpenedSession {
             runtime,
             config,
-            environment: rho_sdk::ProcessEnvironment::InheritAll.into(),
+            environment: SessionEnvironment::new(Ambient::ThisProcess),
         },
     ));
     sessions.loaded().insert(id, Arc::clone(&session));

@@ -23,6 +23,7 @@ use crate::{
         },
     },
     config::Config,
+    session_environment::{Ambient, SessionEnvironment},
 };
 
 /// Bounds each wait on an explicit signal; never the way a test syncs.
@@ -62,7 +63,7 @@ async fn loaded_session(root: &Path, jobs: &Arc<JobRegistry>, job: JobId) -> Arc
         OpenedSession {
             runtime,
             config,
-            environment: rho_sdk::ProcessEnvironment::InheritAll.into(),
+            environment: SessionEnvironment::new(Ambient::ThisProcess),
         },
     ))
 }

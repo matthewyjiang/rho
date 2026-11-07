@@ -220,7 +220,7 @@
       "additionalProperties": {
         "type": "string"
       },
-      "description": "A client's environment variables, which a daemon session's processes\nrun with in place of the daemon's own (#1659): its tools' commands and\nbackground processes, minus provider credentials. Values are secrets:\nthe daemon never logs or saves them.",
+      "description": "A client's environment variables, which a daemon session's children\nsee in place of the daemon's own (#1659): its tools' commands and\nbackground processes (minus provider credentials), and its MCP servers,\nhooks, and OpenAPI sources. Values are secrets: the daemon never logs or\nsaves them.",
       "type": "object"
     },
     "ClientInfo": {

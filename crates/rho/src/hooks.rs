@@ -27,8 +27,8 @@
 //!   spawn contract is printable before trust is granted;
 //! - project hooks must name their program by path, so granting trust cannot
 //!   silently bind whatever `PATH` resolves to today;
-//! - a hook child gets a fixed base environment plus its own allowlist, never
-//!   the ambient environment.
+//! - a hook child gets a fixed base environment plus its own allowlist, read
+//!   from its session's environment (#1659), never the whole of it.
 //!
 //! A hook cannot widen anything. `before_tool_use` may only let the existing
 //! decision stand or deny it.
@@ -44,6 +44,8 @@ mod matcher;
 mod protocol;
 
 use std::sync::Arc;
+
+use crate::session_environment::SessionEnvironment;
 
 pub use catalog::{HookCatalog, ProjectTrust, TRUST_PROJECT_HOOKS_ENV};
 pub use config::HookConfigError;
@@ -94,13 +96,18 @@ pub struct HookPipeline {
 }
 
 impl HookPipeline {
-    /// Starts the hook pipeline, or returns `None` when nothing is configured.
+    /// Starts the hook pipeline, whose hooks run in `environment`, or returns
+    /// `None` when nothing is configured.
     ///
     /// A session without hooks then pays nothing: no gate, no observer, and no
     /// hook machinery in diagnostics. A session with only observational hooks
     /// does not install a pre-tool gate; a session with only blocking hooks does
     /// not start an observational worker.
-    pub fn start(catalog: HookCatalog, cancellation: rho_sdk::CancellationToken) -> Option<Self> {
+    pub fn start(
+        catalog: HookCatalog,
+        environment: SessionEnvironment,
+        cancellation: rho_sdk::CancellationToken,
+    ) -> Option<Self> {
         if catalog.is_empty() {
             return None;
         }
@@ -109,6 +116,7 @@ impl HookPipeline {
         let engine = Arc::new(HookEngine::new(
             catalog,
             rho_sdk::hooks::HookPayloadBounds::default(),
+            environment,
         ));
         let (observer, worker) = if has_observational {
             let (observer, worker) =
@@ -215,15 +223,19 @@ pub fn running_inside_hook() -> bool {
 /// How long queued observational hooks may finish after a session ends.
 pub const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Starts hooks for the workspace containing `cwd`.
+/// Starts hooks for the workspace containing `cwd`, run in `environment`, the
+/// session's.
 ///
 /// A hooks file that fails validation must not take the session down. The
 /// failure is logged and the session runs without hooks, which is the same
 /// outcome as having none configured.
-pub fn start_for_cwd(cwd: &std::path::Path) -> Option<HookPipeline> {
+pub fn start_for_cwd(
+    cwd: &std::path::Path,
+    environment: SessionEnvironment,
+) -> Option<HookPipeline> {
     let mut report = |message: String| tracing::info!(target: "rho::hooks", "{message}");
     match discover_for_cwd(cwd, &mut report) {
-        Ok(catalog) => HookPipeline::start(catalog, rho_sdk::CancellationToken::new()),
+        Ok(catalog) => HookPipeline::start(catalog, environment, rho_sdk::CancellationToken::new()),
         Err(error) => {
             tracing::warn!(target: "rho::hooks", "hooks are disabled: {error}");
             None

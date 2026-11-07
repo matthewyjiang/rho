@@ -4,6 +4,7 @@ use tempfile::TempDir;
 
 use super::super::{catalog::ProjectTrust, HookPipeline};
 use super::*;
+use crate::session_environment::{Ambient, SessionEnvironment};
 
 fn project_with_hook() -> TempDir {
     let project = TempDir::new().unwrap();
@@ -45,7 +46,12 @@ async fn an_untrusted_project_file_is_named_in_the_report() {
         ProjectTrust::Untrusted,
     )
     .unwrap();
-    let runtime = HookPipeline::start(catalog, rho_sdk::CancellationToken::new()).unwrap();
+    let runtime = HookPipeline::start(
+        catalog,
+        SessionEnvironment::new(Ambient::ThisProcess),
+        rho_sdk::CancellationToken::new(),
+    )
+    .unwrap();
 
     let report = HookInspector::new(&runtime).report();
 

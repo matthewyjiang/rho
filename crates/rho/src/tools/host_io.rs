@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use crate::session_environment::{Ambient, SessionEnvironment};
+
 /// What the embedding host does in place of local disk and local processes
 /// for one session's tools. Each part is absent unless the host offers it. Delegated Rho
 /// agents share their parent's, so both see the same files.
@@ -12,20 +14,20 @@ pub(crate) struct HostIo {
     /// Terminals the host runs shell commands in; see
     /// [`rho_tools::HostTerminals`].
     pub(crate) terminals: Option<Arc<dyn rho_tools::HostTerminals>>,
-    /// The environment the session's processes start with, in place of this
-    /// process's own minus provider credentials: a daemon session's is its
-    /// client's, replaced by each prompt (#1659).
-    pub(crate) environment: Option<rho_tools::SharedProcessEnvironment>,
+    /// The environment the session's children see, in place of this
+    /// process's own: a daemon session's is its client's, replaced by each
+    /// prompt (#1659).
+    pub(crate) environment: Option<SessionEnvironment>,
 }
 
 impl HostIo {
-    /// The environment the session's processes start with: the host's, or
-    /// this process's own without the provider credentials it sets now, so
-    /// tools cannot read host API keys.
-    pub(crate) fn process_environment(&self) -> rho_tools::SharedProcessEnvironment {
-        self.environment.clone().unwrap_or_else(|| {
-            rho_sdk::ProcessEnvironment::inherit_except(rho_providers::credential_env_vars()).into()
-        })
+    /// The environment the session's children see: the host's, or else this
+    /// process's own, which this call makes the host's, so the tools, MCP
+    /// servers, hooks, and OpenAPI sources of one session share one handle.
+    pub(crate) fn environment(&mut self) -> SessionEnvironment {
+        self.environment
+            .get_or_insert_with(|| SessionEnvironment::new(Ambient::ThisProcess))
+            .clone()
     }
 
     /// `options` with the host's parts installed.

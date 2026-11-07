@@ -11,6 +11,7 @@ use tokio::io::AsyncWriteExt;
 use crate::{
     cli_runtime::StderrTail,
     process_tree::{ProcessTree, SupervisedTree},
+    session_environment::Ambient,
 };
 
 use super::{config::HookDefinition, environment::child_environment, protocol::MAX_DECISION_BYTES};
@@ -56,17 +57,19 @@ pub enum HookRunError {
     Cancelled,
 }
 
-/// Runs `hook` with `event` on stdin.
+/// Runs `hook` with `event` on stdin, its environment taken from `environment`,
+/// its session's (#1659).
 ///
 /// Cancellation and timeout both kill the supervised tree before returning, so
 /// no descendant outlives the call.
 pub async fn run_hook(
     hook: &HookDefinition,
     event: &str,
+    environment: &Ambient,
     cancellation: rho_sdk::CancellationToken,
 ) -> Result<HookRunOutput, HookRunError> {
     let started = std::time::Instant::now();
-    let mut command = build_command(hook);
+    let mut command = build_command(hook, environment);
     SupervisedTree::prepare(&mut command);
     let mut child = command
         .spawn()
@@ -131,7 +134,7 @@ pub async fn run_hook(
     })
 }
 
-fn build_command(hook: &HookDefinition) -> tokio::process::Command {
+fn build_command(hook: &HookDefinition, environment: &Ambient) -> tokio::process::Command {
     let argv = hook.command();
     let mut command = tokio::process::Command::new(hook.executable());
     command
@@ -141,10 +144,11 @@ fn build_command(hook: &HookDefinition) -> tokio::process::Command {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        // Nothing ambient reaches a hook: the child gets the documented base set
-        // plus its own allowlist, so provider credentials cannot leak through.
+        // Nothing else of `environment` reaches a hook: the child gets the
+        // documented base set plus its own allowlist, so provider credentials
+        // cannot leak through.
         .env_clear()
-        .envs(child_environment(hook.env(), super::environment::ambient));
+        .envs(child_environment(hook.env(), |name| environment.read(name)));
     command
 }
 

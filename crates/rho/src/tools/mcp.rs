@@ -14,6 +14,7 @@ use std::{
 use rho_sdk::tool::Tool;
 
 use super::{code_mode::ContextExposure, sdk_registry::ToolBundle};
+use crate::session_environment::Ambient;
 use config::{McpConfig, McpServerConfig};
 
 pub(crate) mod catalog;
@@ -70,7 +71,8 @@ pub(crate) enum McpSessionPlan {
 ///
 /// The two server-to-client services default to off, so a caller that cannot
 /// serve them, such as the `rho mcp` inventory pass, gets the safe shape without
-/// saying anything.
+/// saying anything. Servers start in this process's environment unless a
+/// session's is given.
 #[derive(Clone, Debug)]
 pub(crate) struct McpSessionOptions {
     pub(crate) max_output_bytes: usize,
@@ -80,6 +82,9 @@ pub(crate) struct McpSessionOptions {
     pub(crate) authorization: McpAuthorizationMode,
     services: session::McpSessionServices,
     image_delivery: McpImageDelivery,
+    /// The environment servers start in and read `env_from_env` and
+    /// `headers_from_env` from.
+    environment: Ambient,
 }
 
 impl McpSessionOptions {
@@ -97,7 +102,15 @@ impl McpSessionOptions {
                 elicitation: McpElicitationSupport::Unavailable,
                 sampling: None,
             },
+            environment: Ambient::ThisProcess,
         }
+    }
+
+    /// Start servers in `environment`, a session's, in place of this
+    /// process's (#1659).
+    pub(crate) fn with_environment(mut self, environment: Ambient) -> Self {
+        self.environment = environment;
+        self
     }
 
     /// Declare that this run can put a server's question in front of a person.
@@ -213,6 +226,7 @@ impl McpBundle {
                 let roots = options.roots.clone();
                 let services = options.services.clone();
                 let authorization = options.authorization;
+                let environment = options.environment.clone();
                 async move {
                     let transport = McpTransportSummary::from_server(&server);
                     let result = session::connect_server_bounded(
@@ -221,6 +235,7 @@ impl McpBundle {
                         &roots,
                         &services,
                         authorization,
+                        &environment,
                     )
                     .await;
                     (identity, server, transport, result)

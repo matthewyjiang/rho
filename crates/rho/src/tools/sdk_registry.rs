@@ -284,8 +284,9 @@ impl AppToolSet {
                 config.workspace_rewind,
             ),
         );
-        // One child-process environment for every process tool.
-        let process_environment = tool_set.host_io.process_environment();
+        // One child-process environment for every process tool, which
+        // delegated agents share through `host_io`.
+        let process_environment = tool_set.host_io.environment().process();
 
         tool_set.add_bundle(super::coding::sdk_bundle(
             &capabilities,

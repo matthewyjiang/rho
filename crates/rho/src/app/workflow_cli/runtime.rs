@@ -29,6 +29,7 @@ use crate::{
     config::Config,
     permission::{remember_allowed_workspace_writes, PermissionMode, SessionWriteLog},
     permission_classifier_handler::ClassifierApprovalHandler,
+    session_environment::{Ambient, SessionEnvironment},
     tools::workflow_tracker::WorkflowRunTracker,
     workflow::{ResolvedNode, StoredRun, WorkflowOutcome},
 };
@@ -466,7 +467,9 @@ impl WorkflowRuntime {
             crate::credential_store::initialize_from_config(&mut config, &config_path)?;
         }
         let workspace = Workspace::new(&cwd)?.with_unrestricted_file_access();
-        let hooks = crate::hooks::start_for_cwd(&cwd);
+        // Workflows still run in this process's environment (#1659).
+        let hooks =
+            crate::hooks::start_for_cwd(&cwd, SessionEnvironment::new(Ambient::ThisProcess));
         let hook_engine = hooks.as_ref().map(|pipeline| Arc::clone(pipeline.engine()));
         let command_classifier = approvals
             .classifier

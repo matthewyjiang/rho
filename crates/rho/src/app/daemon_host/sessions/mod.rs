@@ -106,9 +106,9 @@ struct LoadedSession {
     handle: SessionHandle,
     /// The config the session was opened with, which each turn reads.
     config: Config,
-    /// The environment the session's processes start with, which each
-    /// prompt replaces with its client's (#1659).
-    environment: rho_tools::SharedProcessEnvironment,
+    /// The environment the session's children see, which each prompt
+    /// replaces with its client's (#1659).
+    environment: crate::session_environment::SessionEnvironment,
     /// The directory the session works in.
     workspace: PathBuf,
     /// The turn's cancel and the session's residency. A prompt's start, an
@@ -427,8 +427,8 @@ impl Sessions {
                         ))
                     }
                 }
-                // The turn's processes, and later turns' until another
-                // prompt, start in the prompting client's environment.
+                // The turn's processes and hooks, and later turns' until
+                // another prompt, start in the prompting client's environment.
                 session.environment.replace(environment.clone());
                 turn.cancel = CancellationToken::new();
                 Ok(turn.cancel.clone())

@@ -42,6 +42,8 @@ args = ["stdio"]
 env_from_env = { GITHUB_PERSONAL_ACCESS_TOKEN = "GITHUB_TOKEN" }
 ```
 
+In a [daemon](../daemon.md) session, the ambient environment is the session's: Rho looks `command` up on the `PATH` of the client that opened (or reopened) the session and reads the base set and `env_from_env` from that client's environment. `headers_from_env` below reads it too.
+
 The explicit overlay is applied after sanitization, so it may intentionally restore a variable under the name a server expects. **Configuration is the trust boundary:** enabling a server is permission to start it for discovery and to expose its tools. Tool calls are RPCs on that already-running session; they do not re-request process or network capabilities and are not blocked by plan mode. The process is not an operating-system sandbox and runs with the current user's rights.
 
 Rho closes MCP sessions during normal session shutdown. The stdio transport closes the child's input, waits for clean exit, and kills the child if it does not exit through the transport's cleanup path. Initialization failures also drop and clean up the child.

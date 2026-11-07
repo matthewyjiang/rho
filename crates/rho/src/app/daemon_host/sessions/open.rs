@@ -13,8 +13,8 @@
 //! server's browser login is refused rather than left waiting for a
 //! terminal nobody watches.
 //!
-//! The session's processes run with its client's environment minus
-//! provider credentials, not the daemon's (#1659): the opening client's,
+//! The session's processes, MCP servers, hooks, and OpenAPI sources run with
+//! its client's environment, not the daemon's (#1659): the opening client's,
 //! then each prompting client's (see [`session_environment`]).
 
 use std::{
@@ -23,8 +23,6 @@ use std::{
 };
 
 use rho_protocol::{ClientEnvironment, ErrorCode, RpcError};
-use rho_sdk::ProcessEnvironment;
-use rho_tools::SharedProcessEnvironment;
 
 use super::super::{jobs::JobId, subagents::Subagents};
 use crate::{
@@ -44,6 +42,7 @@ use crate::{
     },
     config::Config,
     session::{Session as StoredSession, SessionPersistence},
+    session_environment::{Ambient, SessionEnvironment},
     tools::{host_io::HostIo, mcp::McpAuthorizationMode},
 };
 
@@ -94,23 +93,19 @@ pub(super) struct OpenedSession {
     pub(super) runtime: SessionRuntime,
     /// The config the session was built with, which every prompt reads.
     pub(super) config: Config,
-    /// The environment the session's processes start with, which each
-    /// prompt replaces with its client's.
-    pub(super) environment: SharedProcessEnvironment,
+    /// The environment the session's children see, which each prompt
+    /// replaces with its client's.
+    pub(super) environment: SessionEnvironment,
 }
 
-/// The environment a client's `environment` gives a session's processes:
-/// exactly the client's variables, without provider credentials, so
-/// commands cannot read API keys a user exported in their shell, as no rho
-/// session's can read its own process's. A variable no process could be
-/// given is invalid params, naming it, so it fails the request rather than
-/// every later command (#1659).
-pub(super) fn session_environment(
-    environment: &ClientEnvironment,
-) -> Result<ProcessEnvironment, RpcError> {
+/// The environment a client's `environment` gives a session's children:
+/// exactly the client's variables; [`Ambient::process_environment`] keeps
+/// provider credentials from its tools' processes. A variable no process
+/// could be given is invalid params, naming it, so it fails the request
+/// rather than every later command (#1659).
+pub(super) fn session_environment(environment: &ClientEnvironment) -> Result<Ambient, RpcError> {
     let variables = environment
         .iter()
-        .filter(|(name, _)| !rho_providers::is_credential_env_var(name))
         .map(|(name, value)| {
             if name.is_empty() || name.contains(['=', '\0']) || value.contains('\0') {
                 return Err(RpcError::new(
@@ -123,21 +118,21 @@ pub(super) fn session_environment(
             Ok((name.to_owned(), value.to_owned()))
         })
         .collect::<Result<_, _>>()?;
-    Ok(ProcessEnvironment::Explicit { variables })
+    Ok(Ambient::Client(Arc::new(variables)))
 }
 
 /// Opens the session `opening` says, whose turns are job `job`, with its
-/// processes starting in `environment`. A new session's file is written
+/// children starting in `environment`. A new session's file is written
 /// with its first prompt.
 pub(super) async fn open_session(
     opening: Opening,
-    environment: ProcessEnvironment,
+    environment: Ambient,
     logouts: &Logouts,
     subagents: &Subagents,
     job: &JobId,
 ) -> anyhow::Result<OpenedSession> {
     let cwd = &opening.cwd().to_path_buf();
-    let environment = SharedProcessEnvironment::new(environment);
+    let environment = SessionEnvironment::new(environment);
     let repository = ConfigRepository::new(None);
     let config_path = repository.configured_path()?;
     let config = repository.load()?;

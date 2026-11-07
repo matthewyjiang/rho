@@ -4,7 +4,7 @@
 //! from this fixed base set. Callers add their own allowlists and overlays on
 //! top. Hooks and MCP stdio share this contract so the two cannot drift.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, ffi::OsString};
 
 /// Variables every sanitized child receives, on every platform.
 #[cfg(unix)]
@@ -41,11 +41,15 @@ where
         .collect()
 }
 
-/// Clears the child environment and installs only the base set from the parent.
-pub(crate) fn apply_base(command: &mut tokio::process::Command) {
+/// Clears the child environment and installs only the base names that `read`
+/// finds, such as a session's (see [`crate::session_environment::Ambient`]).
+pub(crate) fn apply_base<F>(command: &mut tokio::process::Command, mut read: F)
+where
+    F: FnMut(&str) -> Option<OsString>,
+{
     command.env_clear();
     for name in BASE_NAMES {
-        if let Some(value) = std::env::var_os(name) {
+        if let Some(value) = read(name) {
             command.env(name, value);
         }
     }

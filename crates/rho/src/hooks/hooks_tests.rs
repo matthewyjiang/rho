@@ -14,6 +14,7 @@ use rho_sdk::{
 use tempfile::TempDir;
 
 use super::*;
+use crate::session_environment::{Ambient, SessionEnvironment};
 
 /// Fixture workspace whose trusted project hook denies `bash` and whose post
 /// hook records every successful edit.
@@ -129,7 +130,11 @@ async fn run_tool(fixture: &Fixture, trust: ProjectTrust, tool: &'static str) ->
         .tool(CapabilityTool { name: tool })
         .workspace(Workspace::new(fixture.project.path()).unwrap())
         .workspace_policy(ScopedWorkspacePolicy::new().allow_read_paths());
-    let runtime = HookPipeline::start(fixture.catalog(trust), CancellationToken::new());
+    let runtime = HookPipeline::start(
+        fixture.catalog(trust),
+        SessionEnvironment::new(Ambient::ThisProcess),
+        CancellationToken::new(),
+    );
     let builder = match runtime.as_ref() {
         Some(hooks) => hooks.attach(builder),
         None => builder,
@@ -225,6 +230,7 @@ timeout = "10s"
     let parent = rho_sdk::SessionId::from_string("parent-session").unwrap();
     let hooks = HookPipeline::start(
         fixture.catalog(ProjectTrust::Trusted),
+        SessionEnvironment::new(Ambient::ThisProcess),
         CancellationToken::new(),
     )
     .expect("the fixture configures hooks");
@@ -278,6 +284,7 @@ timeout = "10s"
     .unwrap();
     let hooks = HookPipeline::start(
         fixture.catalog(ProjectTrust::Trusted),
+        SessionEnvironment::new(Ambient::ThisProcess),
         CancellationToken::new(),
     )
     .expect("the fixture configures hooks");

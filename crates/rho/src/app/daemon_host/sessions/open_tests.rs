@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
 use pretty_assertions::assert_eq;
 use rho_protocol::{ClientEnvironment, ErrorCode};
-use rho_sdk::ProcessEnvironment;
 
 use super::session_environment;
+use crate::session_environment::Ambient;
 
 fn client(variables: &[(&str, &str)]) -> ClientEnvironment {
     variables
@@ -11,21 +13,17 @@ fn client(variables: &[(&str, &str)]) -> ClientEnvironment {
         .collect()
 }
 
-// Covers: a client's environment reaches a session's processes without its
-// provider credentials, and a variable no process can be given fails the
-// request (#1659).
+// Covers: a session takes exactly its client's environment, credentials
+// included for the allowlists that name them, and a variable no process can
+// be given fails the request (#1659).
 // Owner: unit (daemon session environment)
 #[test]
-fn a_clients_environment_loses_credentials_and_refuses_what_no_process_takes() {
+fn a_clients_environment_is_taken_whole_unless_no_process_could_take_it() {
     let cases = [
         (
-            "credentials",
-            client(&[
-                ("PATH", "/bin"),
-                ("OPENAI_API_KEY", "secret"),
-                ("RHO_MYHOST_API_KEY", "secret"),
-            ]),
-            Ok(client(&[("PATH", "/bin")])),
+            "valid",
+            client(&[("PATH", "/bin"), ("OPENAI_API_KEY", "secret")]),
+            Ok(&[("PATH", "/bin"), ("OPENAI_API_KEY", "secret")][..]),
         ),
         (
             "empty name",
@@ -50,8 +48,13 @@ fn a_clients_environment_loses_credentials_and_refuses_what_no_process_takes() {
     ];
     for (name, environment, expected) in cases {
         let actual = session_environment(&environment).map_err(|error| error.error_code());
-        let expected = expected.map(|variables| ProcessEnvironment::Explicit {
-            variables: variables.into_iter().collect(),
+        let expected = expected.map(|variables| {
+            Ambient::Client(Arc::new(
+                variables
+                    .iter()
+                    .map(|(variable, value)| ((*variable).to_owned(), (*value).to_owned()))
+                    .collect(),
+            ))
         });
         assert_eq!(actual, expected.map_err(Some), "{name}");
     }

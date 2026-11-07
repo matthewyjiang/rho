@@ -8,7 +8,7 @@ use rho_sdk::hooks::{HookPayloadBounds, HookPolicyOutcome};
 use tempfile::TempDir;
 
 use super::*;
-use crate::hooks::catalog::ProjectTrust;
+use crate::{hooks::catalog::ProjectTrust, session_environment::Ambient};
 
 /// Builds a hooks file whose handlers are inline shell scripts.
 struct Fixture {
@@ -48,7 +48,11 @@ impl Fixture {
             HookCatalog::discover(Some(self.home.path()), None, ProjectTrust::Untrusted).unwrap();
         (
             self.home,
-            Arc::new(HookEngine::new(catalog, HookPayloadBounds::default())),
+            Arc::new(HookEngine::new(
+                catalog,
+                HookPayloadBounds::default(),
+                SessionEnvironment::new(Ambient::ThisProcess),
+            )),
         )
     }
 }
@@ -359,6 +363,7 @@ async fn drain_owns_queue_closure_even_while_an_observer_is_attached() {
     let engine = Arc::new(HookEngine::new(
         HookCatalog::default(),
         HookPayloadBounds::default(),
+        SessionEnvironment::new(Ambient::ThisProcess),
     ));
     let cancellation = rho_sdk::CancellationToken::new();
     let (observer, worker) = observational_channel(Arc::clone(&engine), cancellation.clone());
