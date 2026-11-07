@@ -55,7 +55,7 @@ fn chain_message(error: &anyhow::Error) -> String {
 
 /// What kind of failure `error` is, from the typed errors in its chain,
 /// never from its text.
-pub(crate) fn failure_kind(error: &anyhow::Error) -> TurnErrorKind {
+fn failure_kind(error: &anyhow::Error) -> TurnErrorKind {
     for cause in error.chain() {
         if let Some(error) = cause.downcast_ref::<rho_sdk::Error>() {
             return match error {
@@ -90,7 +90,7 @@ pub(crate) fn failure_kind(error: &anyhow::Error) -> TurnErrorKind {
 /// What an authentication failure says for `provider` with `auth`: only
 /// those config identifiers and how to fix them, offering the provider's
 /// other keyed auth modes as `--auth` fixes.
-pub(crate) fn authentication_message(provider: &str, auth: &str) -> String {
+fn authentication_message(provider: &str, auth: &str) -> String {
     let alternatives = rho_providers::provider::provider_descriptor(provider)
         .into_iter()
         .flat_map(|descriptor| descriptor.auth_modes())

@@ -159,27 +159,38 @@ credential_store = "file"
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let events = String::from_utf8(output.stdout).unwrap();
-    let mut receipts = events
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap())
-        .filter(|event| event["type"] == "tool.finished")
-        .map(|event| {
-            (
-                event["call_id"].as_str().unwrap().to_owned(),
-                event["status"].as_str().unwrap().to_owned(),
-            )
-        })
+    // Each agent call's model, from the call's input, and how the call ended.
+    let mut models = std::collections::HashMap::new();
+    let mut ends = std::collections::HashMap::new();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    for line in stdout.lines() {
+        let line = serde_json::from_str::<Value>(line).unwrap();
+        let call = &line["event"];
+        if line["type"] != "event" || call["type"] != "tool_call" {
+            continue;
+        }
+        let id = call["id"].as_str().unwrap().to_owned();
+        if let Some(input) = call.get("raw_input") {
+            let model = input["model"].as_str().unwrap_or("(parent)").to_owned();
+            models.insert(id.clone(), model);
+        }
+        if let Some(status) = call["status"].as_str() {
+            ends.insert(id, status.to_owned());
+        }
+    }
+    let mut receipts = ends
+        .into_iter()
+        .map(|(id, status)| (models[&id].clone(), status))
         .collect::<Vec<_>>();
     receipts.sort_unstable();
     assert_eq!(
         receipts,
         [
-            ("review-0".into(), "success".into()),
-            ("review-1".into(), "success".into()),
-            ("review-2".into(), "success".into()),
-            ("review-3".into(), "failure".into()),
-            ("review-4".into(), "failure".into()),
+            ("".into(), "failed".into()),
+            ("(parent)".into(), "completed".into()),
+            ("@review".into(), "completed".into()),
+            ("child/vendor/review".into(), "completed".into()),
+            ("xai/grok-4.7".into(), "failed".into()),
         ]
     );
     let requests = requests.lock().unwrap();

@@ -54,7 +54,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     }
     if run_output == Some(OutputFormat::Jsonl) {
         let message = error.to_string();
-        automation::emit_startup_failure(message.clone())?;
+        automation::emit_startup_failure(&message)?;
         return Err(automation::AutomationExit::new(
             2,
             automation_protocol::TerminalReason::ConfigurationError,

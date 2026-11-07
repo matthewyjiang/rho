@@ -4,7 +4,7 @@ use std::{
 };
 
 use rho_tools::compact_display_path;
-use serde_json::Value;
+use serde_json::{json, Value};
 use tempfile::TempDir;
 
 const MODE_ENV: &str = "RHO_AUTOMATION_TEST_MODE";
@@ -235,8 +235,13 @@ fn provider_and_tool_failures_stay_off_stdout() {
     assert!(tool_failure.stderr.is_empty());
 }
 
+// Covers: the JSONL stream is schema 2: numbered lines from `run_started`,
+// naming the session and workspace, through the daemon protocol's session
+// events, the turn's `turn_ended` with the whole answer, and `run_ended`
+// (#1669).
+// Owner: rho run JSONL contract (process contract)
 #[test]
-fn jsonl_success_emits_versioned_events_and_authoritative_text() {
+fn jsonl_streams_the_sessions_events_between_start_and_end() {
     let root = TempDir::new().unwrap();
     let mut command = command(&root, "fixed");
     command
@@ -250,34 +255,50 @@ fn jsonl_success_emits_versioned_events_and_authoritative_text() {
     assert_eq!(
         events
             .iter()
-            .map(|event| event["seq"].as_u64().unwrap())
+            .map(|event| (event["schema_version"].as_u64(), event["seq"].as_u64()))
             .collect::<Vec<_>>(),
-        (1..=events.len() as u64).collect::<Vec<_>>()
+        (1..=events.len() as u64)
+            .map(|seq| (Some(2), Some(seq)))
+            .collect::<Vec<_>>()
     );
-    assert!(events.iter().all(|event| event["schema_version"] == 1));
-    assert_eq!(events.first().unwrap()["type"], "run.started");
-    assert!(same_file::is_same_file(
-        events.first().unwrap()["workspace"].as_str().unwrap(),
-        root.path(),
-    )
-    .unwrap());
-    assert!(events.iter().any(|event| {
-        event["type"] == "assistant.text_delta"
-            && event["attempt"] == 1
-            && event["text"] == "answer for automation"
-    }));
+    let started = &events[0];
+    assert_eq!(started["type"], "run_started");
+    assert!(started["session"].as_str().is_some_and(|id| !id.is_empty()));
+    assert!(same_file::is_same_file(started["workspace"].as_str().unwrap(), root.path()).unwrap());
     assert_eq!(
-        events.last().unwrap(),
-        &serde_json::json!({
-            "schema_version": 1,
-            "seq": events.len(),
-            "type": "run.completed",
-            "reason": "completed",
-            "text": "answer for automation"
-        })
+        session_events(&events)
+            .iter()
+            .map(|event| event["type"].as_str().unwrap())
+            .filter(|kind| *kind != "usage")
+            .collect::<Vec<_>>(),
+        ["user_message", "agent_message_chunk", "turn_ended"]
+    );
+    assert_eq!(
+        &events[events.len() - 2..],
+        [
+            json!({
+                "schema_version": 2,
+                "seq": events.len() - 1,
+                "type": "event",
+                "event": {
+                    "type": "turn_ended",
+                    "outcome": {"type": "answered", "text": "answer for automation", "stop": "end_turn"}
+                }
+            }),
+            json!({
+                "schema_version": 2,
+                "seq": events.len(),
+                "type": "run_ended",
+                "reason": "completed",
+                "exit_code": 0
+            }),
+        ]
     );
 }
 
+// Covers: a provider retry shows as a notice, and the turn's answer holds
+// only the retried response's text; the provider's error stays out.
+// Owner: rho run JSONL contract (process contract)
 #[test]
 fn jsonl_tracks_provider_retries_without_exposing_diagnostics() {
     let root = TempDir::new().unwrap();
@@ -288,18 +309,21 @@ fn jsonl_tracks_provider_retries_without_exposing_diagnostics() {
     let output = command.output().unwrap();
 
     assert_success(&output);
-    let events = jsonl_events(&output);
-    assert!(events
-        .iter()
-        .any(|event| { event["type"] == "assistant.text_reset" && event["attempt"] == 1 }));
-    assert!(events.iter().any(|event| {
-        event["type"] == "assistant.text_delta"
-            && event["attempt"] == 2
-            && event["text"] == "recovered"
-    }));
+    let lines = jsonl_events(&output);
+    let events = session_events(&lines);
+    assert!(events.iter().any(|event| event["type"] == "notice"
+        && event["text"] == "provider response discarded; retrying"));
+    assert_eq!(
+        events.last().unwrap()["outcome"]["text"],
+        "recovered",
+        "{events:#?}"
+    );
     assert!(!stdout(&output).contains("deterministic retryable failure"));
 }
 
+// Covers: a tool call that fails shows as a failed call, and a model that
+// recovers still completes the run.
+// Owner: rho run JSONL contract (process contract)
 #[test]
 fn jsonl_reports_recoverable_tool_failure_and_run_completion() {
     let root = TempDir::new().unwrap();
@@ -311,66 +335,81 @@ fn jsonl_reports_recoverable_tool_failure_and_run_completion() {
 
     assert_success(&output);
     let events = jsonl_events(&output);
-    assert!(events.iter().any(|event| {
-        event["type"] == "tool.started"
-            && event["call_id"] == "fixture-tool-failure"
-            && event["name"] == "read_file"
-    }));
-    assert!(events.iter().any(|event| {
-        event["type"] == "tool.finished"
-            && event["call_id"] == "fixture-tool-failure"
-            && event["status"] == "failure"
-    }));
-    assert_eq!(events.last().unwrap()["type"], "run.completed");
-    assert!(!stdout(&output).contains("outside-workspace"));
+    assert!(
+        session_events(&events)
+            .iter()
+            .any(|event| event["type"] == "tool_call" && event["status"] == "failed"),
+        "{events:#?}"
+    );
+    assert_eq!(run_ended(&events), ("completed", 0));
 }
 
+// Covers: a failed turn ends with its failure's kind and message, then one
+// `run_ended`; an authentication failure names only the provider, auth,
+// and how to log in, never the provider's text; the provider's diagnostic
+// goes to stderr only.
+// Owner: rho run JSONL contract (process contract)
 #[test]
-fn jsonl_reports_provider_failure_as_the_only_terminal_event() {
-    let root = TempDir::new().unwrap();
-    let output = run(&root, "fail", &["run", "--output", "jsonl", "hello"], None);
+fn jsonl_reports_a_failed_turn_and_hides_authentication_text() {
+    let cases = [
+        (
+            "fail",
+            "provider",
+            "provider_error",
+            "provider failed: deterministic provider failure",
+        ),
+        (
+            "auth-failure",
+            "authentication",
+            "authentication",
+            "authentication failed for openai (auth: api-key); run /login openai",
+        ),
+    ];
+    for (mode, kind, reason, message) in cases {
+        let root = TempDir::new().unwrap();
+        let output = run(&root, mode, &["run", "--output", "jsonl", "hello"], None);
 
-    assert_eq!(output.status.code(), Some(1));
-    let events = jsonl_events(&output);
-    let terminals = events
-        .iter()
-        .filter(|event| {
-            matches!(
-                event["type"].as_str(),
-                Some("run.completed" | "run.failed" | "run.stopped")
-            )
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(terminals.len(), 1);
-    assert_eq!(terminals[0]["type"], "run.failed");
-    assert_eq!(terminals[0]["reason"], "provider_error");
-    assert_eq!(events.last().unwrap(), terminals[0]);
-    // Diagnostics are for the person at the terminal, not JSONL consumers.
-    assert!(!stdout(&output).contains("fixture provider diagnostic"));
-    assert!(stderr(&output).contains("provider diagnostic: fixture provider diagnostic"));
-}
-
-#[test]
-fn jsonl_sanitizes_authentication_failures() {
-    let root = TempDir::new().unwrap();
-    let output = run(
-        &root,
-        "auth-failure",
-        &["run", "--output", "jsonl", "hello"],
-        None,
-    );
-
-    assert_eq!(output.status.code(), Some(1));
-    let events = jsonl_events(&output);
-    assert_eq!(events.last().unwrap()["type"], "run.failed");
-    assert_eq!(events.last().unwrap()["reason"], "authentication");
-    // Names the selection that failed, never the provider's own error text.
-    assert_eq!(
-        events.last().unwrap()["message"],
-        "authentication failed for openai (auth: api-key); run /login openai"
-    );
-    assert!(!stdout(&output).contains("fixture-secret"));
-    assert!(!stderr(&output).contains("fixture-secret"));
+        assert_eq!(output.status.code(), Some(1), "{mode}");
+        let events = jsonl_events(&output);
+        let ended: Vec<&Value> = events
+            .iter()
+            .filter(|event| event["type"] == "run_ended")
+            .collect();
+        assert_eq!(
+            ended,
+            [events.last().unwrap()],
+            "{mode}: one run_ended, last"
+        );
+        assert_eq!(
+            &events[events.len() - 2..],
+            [
+                json!({
+                    "schema_version": 2,
+                    "seq": events.len() - 1,
+                    "type": "event",
+                    "event": {
+                        "type": "turn_ended",
+                        "outcome": {"type": "failed", "error": {"kind": kind, "message": message}}
+                    }
+                }),
+                json!({
+                    "schema_version": 2,
+                    "seq": events.len(),
+                    "type": "run_ended",
+                    "reason": reason,
+                    "exit_code": 1,
+                    "message": message
+                }),
+            ],
+            "{mode}"
+        );
+        assert!(!stdout(&output).contains("fixture-secret"), "{mode}");
+        assert!(!stderr(&output).contains("fixture-secret"), "{mode}");
+        assert!(
+            !stdout(&output).contains("fixture provider diagnostic"),
+            "{mode}"
+        );
+    }
 }
 
 #[test]
@@ -395,8 +434,11 @@ fn explicit_step_limit_stops_with_status_124() {
 
     assert_eq!(output.status.code(), Some(124));
     let events = jsonl_events(&output);
-    assert_eq!(events.last().unwrap()["type"], "run.stopped");
-    assert_eq!(events.last().unwrap()["reason"], "max_steps");
+    assert_eq!(run_ended(&events), ("max_steps", 124));
+    assert_eq!(
+        session_events(&events).last().unwrap()["outcome"]["type"],
+        "max_steps"
+    );
     let result: Value =
         serde_json::from_str(&std::fs::read_to_string(output_file).unwrap()).unwrap();
     assert_eq!(result["state"], "stopped");
@@ -432,8 +474,11 @@ fn timeout_stops_with_status_124() {
 
     assert_eq!(output.status.code(), Some(124));
     let events = jsonl_events(&output);
-    assert_eq!(events.last().unwrap()["type"], "run.stopped");
-    assert_eq!(events.last().unwrap()["reason"], "timeout");
+    assert_eq!(run_ended(&events), ("timeout", 124));
+    assert_eq!(
+        session_events(&events).last().unwrap()["outcome"]["type"],
+        "cancelled"
+    );
 }
 
 #[test]
@@ -445,10 +490,9 @@ fn startup_failure_emits_a_terminal_json_object() {
     assert_eq!(output.status.code(), Some(2));
     let events = jsonl_events(&output);
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0]["schema_version"], 1);
+    assert_eq!(events[0]["schema_version"], 2);
     assert_eq!(events[0]["seq"], 1);
-    assert_eq!(events[0]["type"], "run.failed");
-    assert_eq!(events[0]["reason"], "configuration_error");
+    assert_eq!(run_ended(&events), ("configuration_error", 2));
     let message = events[0]["message"].as_str().unwrap();
     assert_ne!(message, "configuration failed");
     assert!(
@@ -638,7 +682,7 @@ fn run_saves_its_session_as_a_hidden_run_unless_told_not_to() {
         let output = run.output().unwrap();
         assert_success(&output);
         let events = jsonl_events(&output);
-        let session_id = events.first().unwrap()["session_id"]
+        let session_id = events.first().unwrap()["session"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -730,21 +774,9 @@ fn resolves_slash_commands_and_rejects_the_ones_it_cannot_run() {
         );
         assert_eq!(rejected.status.code(), Some(2), "{prompt}");
         let events = jsonl_events(&rejected);
-        let terminal = events.last().unwrap();
-        assert_eq!(
-            (&terminal["type"], &terminal["reason"]),
-            (
-                &Value::from("run.failed"),
-                &Value::from("configuration_error")
-            ),
-            "{prompt}"
-        );
-        assert!(
-            !events
-                .iter()
-                .any(|event| event["type"] == "assistant.text_delta"),
-            "{prompt} reached the model"
-        );
+        assert_eq!(run_ended(&events), ("configuration_error", 2), "{prompt}");
+        // No turn began, so the stream holds no session event.
+        assert_eq!(session_events(&events), Vec::<&Value>::new(), "{prompt}");
     }
 }
 
@@ -760,7 +792,7 @@ fn jsonl_sigterm_emits_stopped_event_after_cleanup() {
     let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
     let mut stream = String::new();
     stdout.read_line(&mut stream).unwrap();
-    assert!(stream.contains("\"type\":\"run.started\""));
+    assert!(stream.contains("\"type\":\"run_started\""));
 
     let signal_status = Command::new("kill")
         .args(["-TERM", &child.id().to_string()])
@@ -775,8 +807,7 @@ fn jsonl_sigterm_emits_stopped_event_after_cleanup() {
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(events.last().unwrap()["type"], "run.stopped");
-    assert_eq!(events.last().unwrap()["reason"], "interrupted");
+    assert_eq!(run_ended(&events), ("interrupted", 143));
 }
 
 fn run(root: &TempDir, mode: &str, args: &[&str], input: Option<&str>) -> Output {
@@ -826,6 +857,25 @@ fn jsonl_events(output: &Output) -> Vec<Value> {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
+}
+
+/// The session events in a JSONL stream's `events`, in order.
+fn session_events(events: &[Value]) -> Vec<&Value> {
+    events
+        .iter()
+        .filter(|line| line["type"] == "event")
+        .map(|line| &line["event"])
+        .collect()
+}
+
+/// The reason and exit code of the stream's last line, its `run_ended`.
+fn run_ended(events: &[Value]) -> (&str, u64) {
+    let last = events.last().expect("the stream has lines");
+    assert_eq!(last["type"], "run_ended", "{events:#?}");
+    (
+        last["reason"].as_str().unwrap(),
+        last["exit_code"].as_u64().unwrap(),
+    )
 }
 
 fn inspection(output: &Output) -> Value {

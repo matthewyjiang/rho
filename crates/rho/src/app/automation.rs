@@ -1,5 +1,5 @@
 //! `rho run`: one prompt on a saved session with no person watching, its
-//! events written as text or as the versioned JSONL stream (see
+//! answer written as text or its events as the versioned JSONL stream (see
 //! `automation_protocol.rs`), ending with a documented exit code.
 //!
 //! The session runs on the headless host (`headless_host.rs`); this module
@@ -14,13 +14,15 @@ use std::{
     time::Duration,
 };
 
+use rho_protocol::{SessionEvent, TurnOutcome as WireOutcome};
 use rho_sdk::UserInput;
 
 use super::{
     agent_binding::BoundAgent,
-    automation_protocol::{write_event, JsonlAdapter, TerminalReason, WireEvent},
+    automation_protocol::{JsonlStream, TerminalReason},
     headless_host::{self, HeadlessView, PromptEnd, RunReporter, StopCause, Stops},
     session_commands::{self, BuiltInCommand, CommandScope, CommandSet, PromptCommand},
+    session_events::outcome,
     session_runtime::{
         CommandRejected, HostCapabilities, Logouts, PromptScope, RunShape, SessionBuild,
         SessionLaunch, SessionOpening, SessionRole, SessionRuntime, Turn, TurnOutcome,
@@ -37,10 +39,9 @@ use crate::{
 };
 
 mod terminal;
-use terminal::{classify_error, TerminalMessages};
 
 /// Error returned after an automation run has cleaned up and selected a stable exit code.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct AutomationExit {
     code: u8,
     reason: TerminalReason,
@@ -59,10 +60,6 @@ impl AutomationExit {
     /// Returns the documented process exit code for this automation result.
     pub fn exit_code(&self) -> u8 {
         self.code
-    }
-
-    fn reason(&self) -> TerminalReason {
-        self.reason
     }
 }
 
@@ -157,17 +154,22 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
     }
 }
 
-pub(super) fn emit_startup_failure(message: impl Into<String>) -> anyhow::Result<()> {
-    let mut adapter = JsonlAdapter::new();
-    let event = adapter.failed(TerminalReason::ConfigurationError, message.into(), None);
-    emit(event)
+/// Writes the JSONL stream of a run that failed to start with `message`:
+/// only its `run_ended`.
+pub(super) fn emit_startup_failure(message: &str) -> anyhow::Result<()> {
+    JsonlStream::default()
+        .end(TerminalReason::ConfigurationError, 2, Some(message))
+        .map_err(jsonl_write_failure)
 }
 
 pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Result<()> {
-    let mut jsonl = (startup.output == OutputFormat::Jsonl).then(JsonlAdapter::new);
+    let mut jsonl = (startup.output == OutputFormat::Jsonl).then(JsonlStream::default);
     // The bound agent may pin its own provider and auth; that is what runs.
     let selection = startup.agent.rho_config().unwrap_or(startup.config);
-    let messages = TerminalMessages::for_selection(&selection.provider, &selection.auth);
+    let selection = Selection {
+        provider: &selection.provider,
+        auth: &selection.auth,
+    };
     let deadline = startup
         .timeout
         .map(|timeout| tokio::time::Instant::now() + timeout);
@@ -192,10 +194,9 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
     let mut reporter = match reporter_result {
         Ok(reporter) => reporter,
         Err(error) => {
-            emit_failure(&mut jsonl, TerminalReason::OutputError, &error, &messages)?;
-            return Err(
-                AutomationExit::new(1, TerminalReason::OutputError, error.to_string()).into(),
-            );
+            let exit = AutomationExit::new(1, TerminalReason::OutputError, error.to_string());
+            end_jsonl(&mut jsonl, || unreachable!("no turn began"), &exit)?;
+            return Err(exit.into());
         }
     };
 
@@ -217,7 +218,7 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
             RunTerminal::Failed(error) => reporter.finish_error(error),
         }
     }
-    emit_and_exit_terminal(terminal, &mut jsonl, reporter.is_some(), &messages)
+    emit_and_exit_terminal(terminal, &mut jsonl, reporter.is_some(), selection)
 }
 
 /// Runs the prompt on a new session saved as `rho run`'s, unless
@@ -230,7 +231,7 @@ async fn run_session(
     startup: &Startup<'_>,
     stops: &mut Stops,
     reporter: Option<&mut RunReporter>,
-    jsonl: Option<&mut JsonlAdapter>,
+    jsonl: Option<&mut JsonlStream>,
 ) -> PromptEnd {
     let build = SessionBuild {
         launch: SessionLaunch {
@@ -262,8 +263,8 @@ async fn run_session(
     if let Some(reporter) = reporter {
         view = view.reporting_to(reporter);
     }
-    if let Some(adapter) = jsonl {
-        view = view.streaming_jsonl(adapter);
+    if let Some(stream) = jsonl {
+        view = view.streaming_jsonl(stream);
     }
     let herdr = &startup.herdr;
     let open = async {
@@ -324,6 +325,7 @@ async fn run_text(
             input: model,
             calls,
         } => {
+            view.prompt(&input);
             let turn = Turn {
                 display: input,
                 model,
@@ -343,6 +345,7 @@ async fn run_text(
                 })?;
             // The rebound agent has tools of its own.
             view.bind(runtime);
+            view.prompt(&input);
             // The command stays the shown message; the model gets the task.
             let turn = Turn {
                 display: input,
@@ -385,40 +388,44 @@ fn write_text_answer(answer: &rho_sdk::RunOutcome, has_reporter: bool) -> anyhow
     })
 }
 
-fn emit(event: WireEvent) -> anyhow::Result<()> {
-    let mut stdout = io::stdout().lock();
-    write_event(&mut stdout, &event).map_err(|error| {
-        AutomationExit::new(
-            1,
-            TerminalReason::OutputError,
-            format!("could not write JSONL output: {error}"),
-        )
-        .into()
-    })
+/// The exit of a run whose JSONL stream could not be written.
+fn jsonl_write_failure(error: io::Error) -> anyhow::Error {
+    AutomationExit::new(
+        1,
+        TerminalReason::OutputError,
+        format!("could not write JSONL output: {error}"),
+    )
+    .into()
 }
 
-fn emit_stopped(adapter: &mut Option<JsonlAdapter>, reason: TerminalReason) -> anyhow::Result<()> {
-    if let Some(adapter) = adapter.as_mut() {
-        let text = adapter.partial_text();
-        let event = adapter.stopped(reason, text);
-        emit(event)?;
-    }
-    Ok(())
-}
-
-fn emit_failure(
-    adapter: &mut Option<JsonlAdapter>,
-    reason: TerminalReason,
-    error: &anyhow::Error,
-    messages: &TerminalMessages,
+/// Ends the JSONL stream, if the run writes one, as `exit` says: the turn's
+/// `turn_ended` with `outcome`, if the turn began, then `run_ended`.
+fn end_jsonl(
+    jsonl: &mut Option<JsonlStream>,
+    outcome: impl FnOnce() -> WireOutcome,
+    exit: &AutomationExit,
 ) -> anyhow::Result<()> {
-    if let Some(adapter) = adapter.as_mut() {
-        let text = adapter.partial_text();
-        let message = messages.for_error(reason, error);
-        let event = adapter.failed(reason, message, text);
-        emit(event)?;
+    let Some(stream) = jsonl.as_mut() else {
+        return Ok(());
+    };
+    if stream.turn_began() {
+        let outcome = outcome();
+        stream
+            .event(&SessionEvent::TurnEnded { outcome })
+            .map_err(jsonl_write_failure)?;
     }
-    Ok(())
+    let message = (exit.reason != TerminalReason::Completed).then_some(exit.message.as_str());
+    stream
+        .end(exit.reason, exit.code, message)
+        .map_err(jsonl_write_failure)
+}
+
+/// The provider and auth the run's model uses, which an authentication
+/// failure names.
+#[derive(Clone, Copy)]
+struct Selection<'a> {
+    provider: &'a str,
+    auth: &'a str,
 }
 
 const MAX_STEPS_MESSAGE: &str = "rho run reached its model-step limit";
@@ -451,49 +458,64 @@ fn classify_run_terminal(end: PromptEnd) -> RunTerminal {
 
 fn emit_and_exit_terminal(
     terminal: RunTerminal,
-    jsonl: &mut Option<JsonlAdapter>,
+    jsonl: &mut Option<JsonlStream>,
     has_reporter: bool,
-    messages: &TerminalMessages,
+    selection: Selection<'_>,
 ) -> anyhow::Result<()> {
     match terminal {
         RunTerminal::Timeout => {
-            emit_stopped(jsonl, TerminalReason::Timeout)?;
-            Err(AutomationExit::new(124, TerminalReason::Timeout, TIMEOUT_MESSAGE).into())
+            let exit = AutomationExit::new(124, TerminalReason::Timeout, TIMEOUT_MESSAGE);
+            end_jsonl(jsonl, || WireOutcome::Cancelled, &exit)?;
+            Err(exit.into())
         }
         RunTerminal::Interrupted(signal) => {
-            emit_stopped(jsonl, TerminalReason::Interrupted)?;
-            Err(AutomationInterrupted::new(signal).into())
+            let interrupted = AutomationInterrupted::new(signal);
+            let exit = AutomationExit::new(
+                interrupted.exit_code(),
+                TerminalReason::Interrupted,
+                interrupted.to_string(),
+            );
+            end_jsonl(jsonl, || WireOutcome::Cancelled, &exit)?;
+            Err(interrupted.into())
         }
         RunTerminal::MaxSteps(answer) => {
-            if let Some(adapter) = jsonl.as_mut() {
-                let text = (!answer.text().is_empty()).then(|| answer.text().into());
-                let event = adapter.stopped(TerminalReason::MaxSteps, text);
-                emit(event)?;
-            } else {
-                write_text_answer(&answer, has_reporter)?;
-            }
-            Err(AutomationExit::new(124, TerminalReason::MaxSteps, MAX_STEPS_MESSAGE).into())
+            let exit = AutomationExit::new(124, TerminalReason::MaxSteps, MAX_STEPS_MESSAGE);
+            write_answer(jsonl, &answer, &exit, has_reporter)?;
+            Err(exit.into())
         }
         RunTerminal::Completed(answer) => {
-            if let Some(adapter) = jsonl.as_mut() {
-                let event = adapter.completed(answer.text().into());
-                emit(event)?;
-            } else {
-                write_text_answer(&answer, has_reporter)?;
-            }
-            Ok(())
+            let exit = AutomationExit::new(0, TerminalReason::Completed, "");
+            write_answer(jsonl, &answer, &exit, has_reporter)
         }
         RunTerminal::Failed(error) => {
-            let (reason, code) = classify_error(&error);
-            if reason == TerminalReason::ProviderError {
+            let exit = terminal::failure(&error, selection.provider, selection.auth);
+            if exit.reason == TerminalReason::ProviderError {
                 print_provider_diagnostic(&error);
             }
-            if reason != TerminalReason::OutputError {
-                emit_failure(jsonl, reason, &error, messages)?;
+            // A failed JSONL write broke the stream; nothing more goes out.
+            if exit.reason != TerminalReason::OutputError {
+                let outcome = || WireOutcome::Failed {
+                    error: outcome::turn_error(&error, selection.provider, selection.auth),
+                };
+                end_jsonl(jsonl, outcome, &exit)?;
             }
-            let message = messages.for_error(reason, &error);
-            Err(AutomationExit::new(code, reason, message).into())
+            Err(exit.into())
         }
+    }
+}
+
+/// Writes the run's `answer`: as the end of its JSONL stream, if it writes
+/// one, else as text.
+fn write_answer(
+    jsonl: &mut Option<JsonlStream>,
+    answer: &rho_sdk::RunOutcome,
+    exit: &AutomationExit,
+    has_reporter: bool,
+) -> anyhow::Result<()> {
+    if jsonl.is_some() {
+        end_jsonl(jsonl, || outcome::finished(answer), exit)
+    } else {
+        write_text_answer(answer, has_reporter)
     }
 }
 
