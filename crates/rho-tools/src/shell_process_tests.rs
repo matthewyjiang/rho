@@ -276,45 +276,67 @@ fn finished_success_keeps_time_and_stdout_label() {
     assert_eq!(result, "stdout:\nhello\n\ntime: 0.2s");
 }
 
-// Covers: environment policy decides whether the parent PATH is re-exported
+// Covers: environment policy decides whether the parent PATH is re-exported,
+// and an explicit environment's own PATH is (#1659)
 // Owner: pure unit (shell process)
 #[test]
 fn parent_path_follows_environment_policy() {
+    let expected_path = std::env::var_os("PATH");
+    assert!(expected_path.is_some(), "test process must have a PATH");
+    let inherited = expected_path.clone();
     let cases = [
-        ("empty", ProcessEnvironment::Empty, false),
-        ("inherit_all", ProcessEnvironment::InheritAll, true),
+        ("empty", ProcessEnvironment::Empty, None),
+        (
+            "inherit_all",
+            ProcessEnvironment::InheritAll,
+            inherited.clone(),
+        ),
         (
             "inherit_except_other",
             ProcessEnvironment::inherit_except(["HOME"]),
-            true,
+            inherited.clone(),
         ),
         (
             "inherit_except_path",
             ProcessEnvironment::inherit_except(["PATH"]),
-            false,
+            None,
         ),
         (
             "inherit_listed_with_path",
             ProcessEnvironment::InheritListed {
                 variable_names: vec!["PATH".into()],
             },
-            true,
+            inherited.clone(),
         ),
         (
             "inherit_listed_without_path",
             ProcessEnvironment::InheritListed {
                 variable_names: vec!["HOME".into()],
             },
-            false,
+            None,
+        ),
+        (
+            "explicit_with_path",
+            ProcessEnvironment::Explicit {
+                variables: [("PATH".to_owned(), "/client/bin".to_owned())]
+                    .into_iter()
+                    .collect(),
+            },
+            Some("/client/bin".into()),
+        ),
+        (
+            "explicit_without_path",
+            ProcessEnvironment::Explicit {
+                variables: [("HOME".to_owned(), "/client".to_owned())]
+                    .into_iter()
+                    .collect(),
+            },
+            None,
         ),
     ];
-    let expected_path = std::env::var_os("PATH");
-    assert!(expected_path.is_some(), "test process must have a PATH");
 
-    for (name, environment, inherits) in cases {
-        let actual = parent_path_for(&environment);
-        let expected = inherits.then(|| expected_path.clone()).flatten();
-        assert_eq!(actual, expected, "{name}");
+    for (name, environment, expected) in cases {
+        assert_eq!(parent_path_for(&environment), expected, "{name}");
     }
 }
 

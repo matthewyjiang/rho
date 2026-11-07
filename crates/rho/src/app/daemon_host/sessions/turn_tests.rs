@@ -59,7 +59,11 @@ async fn loaded_session(root: &Path, jobs: &Arc<JobRegistry>, job: JobId) -> Arc
     Arc::new(LoadedSession::new(
         &jobs.get(&job).unwrap(),
         Arc::clone(jobs),
-        OpenedSession { runtime, config },
+        OpenedSession {
+            runtime,
+            config,
+            environment: rho_sdk::ProcessEnvironment::InheritAll.into(),
+        },
     ))
 }
 

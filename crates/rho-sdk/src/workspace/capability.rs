@@ -1,6 +1,8 @@
 use std::{
+    collections::BTreeMap,
     fmt,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -192,6 +194,56 @@ pub enum ProcessEnvironment {
     InheritExcept {
         variable_names: Vec<String>,
     },
+    /// Exactly these variables, none of the ambient environment, such as a
+    /// daemon client's (#1659).
+    Explicit {
+        variables: EnvironmentVariables,
+    },
+}
+
+/// Environment variables a process runs with in place of the ambient
+/// environment. Values are secrets, so `Debug` shows only how many there
+/// are. Clones share one map.
+#[derive(Clone, PartialEq, Eq)]
+pub struct EnvironmentVariables(Arc<BTreeMap<String, String>>);
+
+impl EnvironmentVariables {
+    /// The value of `name`, if set.
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.0.get(name).map(String::as_str)
+    }
+
+    /// Every variable, by name.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.0
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+    }
+
+    /// How many variables there are.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether there are none.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl FromIterator<(String, String)> for EnvironmentVariables {
+    fn from_iter<I: IntoIterator<Item = (String, String)>>(variables: I) -> Self {
+        Self(Arc::new(variables.into_iter().collect()))
+    }
+}
+
+impl fmt::Debug for EnvironmentVariables {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EnvironmentVariables")
+            .field("len", &self.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl ProcessEnvironment {

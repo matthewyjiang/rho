@@ -63,12 +63,12 @@ pub use job::{
 };
 pub use outcome::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome};
 pub use session::{
-    DetachReason, Replay, SessionAttachParams, SessionAttachResponse, SessionCancelParams,
-    SessionCancelResponse, SessionDetachParams, SessionDetachResponse, SessionDetachedParams,
-    SessionEventParams, SessionId, SessionNewParams, SessionNewResponse, SessionPromptParams,
-    SessionPromptResponse, SessionSteerParams, SessionSteerResponse, SESSION_ATTACH,
-    SESSION_CANCEL, SESSION_DETACH, SESSION_DETACHED, SESSION_EVENT, SESSION_NEW, SESSION_PROMPT,
-    SESSION_STEER,
+    ClientEnvironment, DetachReason, Replay, SessionAttachParams, SessionAttachResponse,
+    SessionCancelParams, SessionCancelResponse, SessionDetachParams, SessionDetachResponse,
+    SessionDetachedParams, SessionEventParams, SessionId, SessionNewParams, SessionNewResponse,
+    SessionPromptParams, SessionPromptResponse, SessionSteerParams, SessionSteerResponse,
+    SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH, SESSION_DETACHED, SESSION_EVENT, SESSION_NEW,
+    SESSION_PROMPT, SESSION_STEER,
 };
 
 /// A request method with typed params and result.

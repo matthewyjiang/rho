@@ -13,17 +13,18 @@
 //! server's browser login is refused rather than left waiting for a
 //! terminal nobody watches.
 //!
-//! Until clients send their environment (#1659), the session's tools run
-//! with the daemon's own environment minus provider credentials, as every
-//! rho session's tools do: whatever environment the daemon started with,
-//! which for an auto-spawned daemon is that of the client that spawned it.
+//! The session's processes run with its client's environment minus
+//! provider credentials, not the daemon's (#1659): the opening client's,
+//! then each prompting client's (see [`session_environment`]).
 
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use rho_protocol::{ErrorCode, RpcError};
+use rho_protocol::{ClientEnvironment, ErrorCode, RpcError};
+use rho_sdk::ProcessEnvironment;
+use rho_tools::SharedProcessEnvironment;
 
 use super::super::{jobs::JobId, subagents::Subagents};
 use crate::{
@@ -93,17 +94,50 @@ pub(super) struct OpenedSession {
     pub(super) runtime: SessionRuntime,
     /// The config the session was built with, which every prompt reads.
     pub(super) config: Config,
+    /// The environment the session's processes start with, which each
+    /// prompt replaces with its client's.
+    pub(super) environment: SharedProcessEnvironment,
 }
 
-/// Opens the session `opening` says, whose turns are job `job`. A new
-/// session's file is written with its first prompt.
+/// The environment a client's `environment` gives a session's processes:
+/// exactly the client's variables, without provider credentials, so
+/// commands cannot read API keys a user exported in their shell, as no rho
+/// session's can read its own process's. A variable no process could be
+/// given is invalid params, naming it, so it fails the request rather than
+/// every later command (#1659).
+pub(super) fn session_environment(
+    environment: &ClientEnvironment,
+) -> Result<ProcessEnvironment, RpcError> {
+    let variables = environment
+        .iter()
+        .filter(|(name, _)| !rho_providers::is_credential_env_var(name))
+        .map(|(name, value)| {
+            if name.is_empty() || name.contains(['=', '\0']) || value.contains('\0') {
+                return Err(RpcError::new(
+                    ErrorCode::InvalidParams,
+                    format!(
+                        "invalid environment variable {name:?}: a name must be nonempty without `=` or NUL, and a value without NUL"
+                    ),
+                ));
+            }
+            Ok((name.to_owned(), value.to_owned()))
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(ProcessEnvironment::Explicit { variables })
+}
+
+/// Opens the session `opening` says, whose turns are job `job`, with its
+/// processes starting in `environment`. A new session's file is written
+/// with its first prompt.
 pub(super) async fn open_session(
     opening: Opening,
+    environment: ProcessEnvironment,
     logouts: &Logouts,
     subagents: &Subagents,
     job: &JobId,
 ) -> anyhow::Result<OpenedSession> {
     let cwd = &opening.cwd().to_path_buf();
+    let environment = SharedProcessEnvironment::new(environment);
     let repository = ConfigRepository::new(None);
     let config_path = repository.configured_path()?;
     let config = repository.load()?;
@@ -143,7 +177,10 @@ pub(super) async fn open_session(
             // Nothing wakes an idle session yet, so background work holds the
             // turn open, as it does for `rho run`.
             background_wait: BackgroundWait::HoldPrompt,
-            host_io: HostIo::default(),
+            host_io: HostIo {
+                environment: Some(environment.clone()),
+                ..HostIo::default()
+            },
             mcp_authorization: McpAuthorizationMode::NonInteractive,
             approvals: ApprovalPolicy::Host,
             parent_notices: None,
@@ -176,7 +213,11 @@ pub(super) async fn open_session(
     };
     // Only a session that opened resizes every session's budget.
     subagents.set_limit(&config);
-    Ok(OpenedSession { runtime, config })
+    Ok(OpenedSession {
+        runtime,
+        config,
+        environment,
+    })
 }
 
 /// The agent `stored` runs as, bound as its root: the one it was saved as,
@@ -216,3 +257,7 @@ fn bind_agent(cwd: &Path, config: &Config, id: &str) -> anyhow::Result<BoundAgen
         config,
     )
 }
+
+#[cfg(test)]
+#[path = "open_tests.rs"]
+mod tests;

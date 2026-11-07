@@ -85,7 +85,7 @@ pub(crate) fn access_tools_with_store(
 pub(super) fn sdk_bundle(
     config: &crate::config::Config,
     capabilities: &crate::agent::AgentCapabilities,
-    process_environment: rho_sdk::ProcessEnvironment,
+    process_environment: rho_tools::SharedProcessEnvironment,
     store: WebAccessStore,
 ) -> super::sdk_registry::StaticToolBundle {
     use crate::agent::ToolCapability;

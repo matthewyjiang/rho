@@ -19,11 +19,11 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/hello` | `protocol` (`{major, minor}`), `client` (`{name, version}`) | The daemon's `protocol`, `daemon` (`{version, pid}`), and `capabilities`. |
 | `rho/daemon/status` | | `pid`, `version`, `protocol`, `started_at`, `uptime_secs`, `jobs` (jobs queued, running, or waiting for input), `socket`. |
 | `rho/daemon/stop` | | `{}`; the daemon then shuts down as [described](/daemon#commands). |
-| `rho/session/new` | `cwd` | Opens a new session whose workspace is `cwd`, an absolute path to an existing directory, and returns its `session` id. |
-| `rho/session/prompt` | `session`, `text`, optional `timeout_ms` | Starts a turn and returns `{}` once the turn has saved the prompt. A session runs one turn at a time; a prompt while a turn is under way gets `SessionBusy`. With `timeout_ms`, the daemon cancels a turn still running that many milliseconds after it took the prompt, and the turn ends `timed_out`. |
+| `rho/session/new` | `cwd`, `environment` | Opens a new session whose workspace is `cwd`, an absolute path to an existing directory, and returns its `session` id. `environment` is the client's environment variables, an object of strings, which the session's commands run with ([below](#the-client-s-environment)). |
+| `rho/session/prompt` | `session`, `text`, optional `timeout_ms`, `environment` | Starts a turn, whose commands and those of later turns run with `environment`, and returns `{}` once the turn has saved the prompt. A session runs one turn at a time; a prompt while a turn is under way gets `SessionBusy`. With `timeout_ms`, the daemon cancels a turn still running that many milliseconds after it took the prompt, and the turn ends `timed_out`. |
 | `rho/session/cancel` | `session` | Cancels the turn under way, if any. The turn ends `cancelled`, or `interrupted` when the daemon is stopping; one already past its `timeout_ms` ends `timed_out`. |
 | `rho/session/steer` | `session`, `text` | Adds `text` to the running turn's next model request. Gets `NotSteerable` when no model request is taking input. |
-| `rho/session/attach` | `session`, `after`? | Follows the session's events ([below](#following-a-session)). Returns its `stream`, its `workspace`, the `replay` that follows (`tail` or `reset`) and how many events it holds (`replay_events`), its job `state`, and the input requests open now (`inputs`). |
+| `rho/session/attach` | `session`, `after`?, `environment` | Follows the session's events, reopening an unloaded session with its commands in `environment` ([below](#following-a-session)). Returns its `stream`, its `workspace`, the `replay` that follows (`tail` or `reset`) and how many events it holds (`replay_events`), its job `state`, and the input requests open now (`inputs`). |
 | `rho/session/detach` | `session` | Stops following the session; no event of it arrives after the response. |
 | `rho/session/answer` | `session`, `request`, `answer` | Answers one of the turn's open input requests ([below](#answering-a-turn-s-requests)) and returns `{}` once the daemon has handed the answer to the turn. |
 | `rho/session/hold` | `session`, `request` | Stops an open input request's timeout, so it waits for an answer ([below](#timeouts)), and returns `{}`. |
@@ -108,6 +108,10 @@ When the user sets [`[questionnaire] timeout_seconds`](/configuration#questionna
 Never answer a timeout yourself: an answer sent with `rho/session/answer` counts as the user's own, so the tool would take the fallback as the user's choice. The daemon answers it.
 
 Once the user starts on the request, on their first key, paste, or click in it, call `rho/session/hold`. The request is then held for good, with no timeout: every attached client receives `input_held`, the request waits for an answer like any other, and a client that attaches later finds it in `inputs` without a `timeout`. Holding a request that has no timeout, or one already held, changes nothing. The setting applies to sessions opened after it changes.
+
+## The client's environment
+
+A session's commands run with its client's environment, not the daemon's ([#1659](https://github.com/matthewyjiang/rho/issues/1659)). `rho/session/new`, `rho/session/prompt`, and `rho/session/attach` each carry `environment`, the client's environment variables as an object of strings; a client leaves out a variable whose name or value is not UTF-8. A new session's commands start with the opening client's, each prompt replaces it with the prompting client's, and an attach uses its own only when it reopens a session the daemon had unloaded. Processes already running keep the environment they started with. The daemon leaves out provider credentials, never logs the environment, and never saves it, so a session reopened after a restart takes the reopening client's.
 
 ## Errors
 

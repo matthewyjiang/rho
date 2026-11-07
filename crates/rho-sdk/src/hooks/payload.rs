@@ -49,6 +49,7 @@ pub enum HookProcessEnvironment {
     InheritAll,
     InheritListed,
     InheritExcept,
+    Explicit,
 }
 
 /// Safe structured summary of the authority a tool asked for.
@@ -440,6 +441,7 @@ impl From<&ProcessEnvironment> for HookProcessEnvironment {
             ProcessEnvironment::InheritAll => Self::InheritAll,
             ProcessEnvironment::InheritListed { .. } => Self::InheritListed,
             ProcessEnvironment::InheritExcept { .. } => Self::InheritExcept,
+            ProcessEnvironment::Explicit { .. } => Self::Explicit,
         }
     }
 }

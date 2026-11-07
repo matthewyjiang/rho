@@ -12,9 +12,22 @@ pub(crate) struct HostIo {
     /// Terminals the host runs shell commands in; see
     /// [`rho_tools::HostTerminals`].
     pub(crate) terminals: Option<Arc<dyn rho_tools::HostTerminals>>,
+    /// The environment the session's processes start with, in place of this
+    /// process's own minus provider credentials: a daemon session's is its
+    /// client's, replaced by each prompt (#1659).
+    pub(crate) environment: Option<rho_tools::SharedProcessEnvironment>,
 }
 
 impl HostIo {
+    /// The environment the session's processes start with: the host's, or
+    /// this process's own without the provider credentials it sets now, so
+    /// tools cannot read host API keys.
+    pub(crate) fn process_environment(&self) -> rho_tools::SharedProcessEnvironment {
+        self.environment.clone().unwrap_or_else(|| {
+            rho_sdk::ProcessEnvironment::inherit_except(rho_providers::credential_env_vars()).into()
+        })
+    }
+
     /// `options` with the host's parts installed.
     pub(crate) fn coding_options(
         &self,

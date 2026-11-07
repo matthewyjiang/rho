@@ -49,7 +49,7 @@ impl ToolBundle for SdkProcessBundle {
 
 pub(super) fn sdk_bundle(
     max_output_bytes: usize,
-    environment: rho_sdk::ProcessEnvironment,
+    environment: rho_tools::SharedProcessEnvironment,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
     keep_warm: KeepWarmOffer,
 ) -> SdkProcessBundle {

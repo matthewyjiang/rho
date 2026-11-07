@@ -6,8 +6,7 @@ use rho_sdk::{
         ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
         ToolProgress, ToolResource, ToolResourceAccess, ToolSecurity,
     },
-    CapabilityKind, CapabilityRequest, CapabilitySource, ProcessEnvironment, ProcessExecution,
-    ProcessOutputLimits,
+    CapabilityKind, CapabilityRequest, CapabilitySource, ProcessExecution, ProcessOutputLimits,
 };
 use rho_tools::tool::{Tool as LegacyTool, ToolContext as LegacyToolContext};
 
@@ -16,7 +15,7 @@ use super::{Process, ProcessArgs};
 pub(crate) struct SdkProcess {
     process: Process,
     max_output_bytes: usize,
-    environment: ProcessEnvironment,
+    environment: rho_tools::SharedProcessEnvironment,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 }
 
@@ -25,15 +24,15 @@ impl SdkProcess {
     pub(crate) fn new(
         process: Process,
         max_output_bytes: usize,
-        environment: ProcessEnvironment,
+        environment: rho_sdk::ProcessEnvironment,
     ) -> Self {
-        Self::with_mutation_observer(process, max_output_bytes, environment, Arc::new(()))
+        Self::with_mutation_observer(process, max_output_bytes, environment.into(), Arc::new(()))
     }
 
     pub(crate) fn with_mutation_observer(
         process: Process,
         max_output_bytes: usize,
-        environment: ProcessEnvironment,
+        environment: rho_tools::SharedProcessEnvironment,
         mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
     ) -> Self {
         Self {
@@ -101,7 +100,7 @@ impl SdkProcess {
         let execution = ProcessExecution::new(
             cwd.path(),
             rho_tools::shell_invocation(command),
-            self.environment.clone(),
+            self.environment.current(),
             ProcessOutputLimits::new(self.max_output_bytes, timeout),
         );
         context
@@ -296,7 +295,7 @@ fn map_legacy_error(error: rho_tools::tool::ToolError) -> ToolError {
 pub(super) fn tool(
     process: Process,
     max_output_bytes: usize,
-    environment: ProcessEnvironment,
+    environment: rho_tools::SharedProcessEnvironment,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 ) -> Arc<dyn rho_sdk::tool::Tool> {
     Arc::new(SdkProcess::with_mutation_observer(

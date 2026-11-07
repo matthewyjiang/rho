@@ -22,6 +22,7 @@ mod image_preview;
 mod path_glob;
 mod paths;
 mod process_env;
+pub use process_env::SharedProcessEnvironment;
 #[cfg(unix)]
 #[doc(hidden)]
 pub mod process_session;

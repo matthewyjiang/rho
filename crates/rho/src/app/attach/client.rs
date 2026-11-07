@@ -230,6 +230,8 @@ async fn attach_session(
     let params = SessionAttachParams {
         session: session.clone(),
         after: after.cloned(),
+        // Only a session the attach reopens takes it (#1659).
+        environment: rho_protocol::ClientEnvironment::of_this_process(),
     };
     client
         .request::<SessionAttach>(&params)

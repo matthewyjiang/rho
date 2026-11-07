@@ -737,6 +737,14 @@ pub fn credential_env_vars() -> Vec<String> {
     credential_env_vars_from(std::env::vars().map(|(name, _)| name))
 }
 
+/// Whether `name` is one of [`credential_env_vars`] in an environment that
+/// sets it, such as a daemon client's (#1659).
+pub fn is_credential_env_var(name: &str) -> bool {
+    credential_env_vars_from([name])
+        .iter()
+        .any(|credential| credential == name)
+}
+
 pub(crate) fn credential_env_vars_from(
     env: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> Vec<String> {

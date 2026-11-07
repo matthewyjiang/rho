@@ -63,7 +63,7 @@ async fn run_fetch(
         arguments,
         SdkFetchContent::new(
             12_000,
-            rho_sdk::ProcessEnvironment::InheritAll,
+            rho_sdk::ProcessEnvironment::InheritAll.into(),
             super::storage::WebAccessStore::new(),
         ),
     )

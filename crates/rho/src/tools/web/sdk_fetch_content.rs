@@ -28,7 +28,7 @@ pub(in crate::tools) struct SdkFetchContent {
     /// pinned to SSRF-vetted addresses, so they never borrow this one.
     github_client: reqwest::Client,
     max_output_bytes: usize,
-    process_environment: rho_sdk::ProcessEnvironment,
+    process_environment: rho_tools::SharedProcessEnvironment,
     store: WebAccessStore,
     /// Test-only override installed around the tool future so the fetch choke
     /// point can allow loopback without threading policy through plan types.
@@ -39,7 +39,7 @@ pub(in crate::tools) struct SdkFetchContent {
 impl SdkFetchContent {
     pub(in crate::tools) fn new(
         max_output_bytes: usize,
-        process_environment: rho_sdk::ProcessEnvironment,
+        process_environment: rho_tools::SharedProcessEnvironment,
         store: WebAccessStore,
     ) -> Self {
         Self {
@@ -60,7 +60,7 @@ impl SdkFetchContent {
         Self {
             github_client: util::http_client(),
             max_output_bytes,
-            process_environment: rho_sdk::ProcessEnvironment::InheritAll,
+            process_environment: rho_sdk::ProcessEnvironment::InheritAll.into(),
             store: WebAccessStore::new(),
             allow_ranges_override: Some(allow_ranges),
         }
@@ -418,7 +418,7 @@ impl Tool for SdkFetchContent {
                 invocation.into_arguments(),
                 &context,
                 self.max_output_bytes,
-                self.process_environment.clone(),
+                self.process_environment.current(),
                 self.store.clone(),
             )?;
             plan.authorize(&context).await?;

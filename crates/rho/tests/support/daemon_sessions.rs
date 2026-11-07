@@ -4,7 +4,7 @@
 //! the same events.
 
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, Stdio},
     time::Duration,
 };
@@ -15,13 +15,13 @@ use rho_protocol::{
         JobList, SessionAnswer, SessionAttach, SessionCancel, SessionDetach, SessionHold,
         SessionNew, SessionPrompt,
     },
-    AnswerStop, ApprovalAsk, ApprovalSource, Ask, Client, ClientError, ClientInfo, Cursor,
-    DaemonNotification, DetachReason, ErrorCode, InputAnswer, InputRequest, InputRequestId, JobId,
-    JobKind, JobListParams, JobState, JobSummary, Notifications, Operation, PathScope, Replay,
-    Resolution, Seq, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
-    SessionCancelParams, SessionDetachParams, SessionDetachedParams, SessionEvent,
-    SessionHoldParams, SessionId, SessionNewParams, SessionPromptParams, StreamId, ToolCallId,
-    ToolContent, ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
+    AnswerStop, ApprovalAsk, ApprovalSource, Ask, Client, ClientEnvironment, ClientError,
+    ClientInfo, Cursor, DaemonNotification, DetachReason, ErrorCode, InputAnswer, InputRequest,
+    InputRequestId, JobId, JobKind, JobListParams, JobState, JobSummary, Notifications, Operation,
+    PathScope, Replay, Resolution, Seq, SessionAnswerParams, SessionAttachParams,
+    SessionAttachResponse, SessionCancelParams, SessionDetachParams, SessionDetachedParams,
+    SessionEvent, SessionHoldParams, SessionId, SessionNewParams, SessionPromptParams, StreamId,
+    ToolCallId, ToolContent, ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -189,6 +189,77 @@ impl Sandbox {
         self.daemon.poll_until(what, DEADLINE, attempt).await
     }
 
+    /// Opens a new session in the workspace.
+    pub(super) async fn new_session(&self, client: &Client) -> SessionId {
+        client
+            .request::<SessionNew>(&SessionNewParams {
+                cwd: self.workspace.clone(),
+                environment: self.daemon.client_environment(),
+            })
+            .await
+            .unwrap()
+            .session
+    }
+
+    /// Prompts `session` with "hello"; the error code of a refused prompt.
+    pub(super) async fn prompt(
+        &self,
+        client: &Client,
+        session: &SessionId,
+    ) -> Result<(), Option<ErrorCode>> {
+        client
+            .request::<SessionPrompt>(&SessionPromptParams {
+                session: session.clone(),
+                text: "hello".into(),
+                timeout_ms: None,
+                environment: self.daemon.client_environment(),
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| match error {
+                ClientError::Rpc { error, .. } => error.error_code(),
+                error => panic!("prompt failed outside the protocol: {error}"),
+            })
+    }
+
+    /// Prompts `session` with the tool call `call`, which the `tool-call`
+    /// fixture makes; returns once the turn saved the prompt.
+    pub(super) async fn prompt_tool_call(
+        &self,
+        client: &Client,
+        session: &SessionId,
+        call: &serde_json::Value,
+    ) {
+        let environment = self.daemon.client_environment();
+        self.prompt_tool_call_with_environment(client, session, call, environment)
+            .await;
+    }
+
+    /// [`Self::prompt_tool_call`] from a client whose environment is
+    /// `environment`.
+    pub(super) async fn prompt_tool_call_with_environment(
+        &self,
+        client: &Client,
+        session: &SessionId,
+        call: &serde_json::Value,
+        environment: ClientEnvironment,
+    ) {
+        client
+            .request::<SessionPrompt>(&SessionPromptParams {
+                session: session.clone(),
+                text: call.to_string(),
+                timeout_ms: None,
+                environment,
+            })
+            .await
+            .unwrap();
+    }
+
+    /// The environment a client in the sandbox sends.
+    pub(super) fn client_environment(&self) -> ClientEnvironment {
+        self.daemon.client_environment()
+    }
+
     /// The directory `session` is saved in, once it is: each session is a
     /// directory named for its id, below its workspace's.
     fn session_dir(&self, session: &SessionId) -> Option<PathBuf> {
@@ -222,7 +293,7 @@ impl Sandbox {
     }
 
     /// The records saved in `session`'s file.
-    fn session_records(&self, session: &SessionId) -> Vec<serde_json::Value> {
+    pub(super) fn session_records(&self, session: &SessionId) -> Vec<serde_json::Value> {
         let session = self
             .session_dir(session)
             .unwrap_or_else(|| panic!("no session directory for {session}"));
@@ -232,48 +303,6 @@ impl Sandbox {
             .map(|line| serde_json::from_str(line).unwrap())
             .collect()
     }
-}
-
-pub(super) async fn new_session(client: &Client, workspace: &Path) -> SessionId {
-    client
-        .request::<SessionNew>(&SessionNewParams {
-            cwd: workspace.to_path_buf(),
-        })
-        .await
-        .unwrap()
-        .session
-}
-
-pub(super) async fn prompt(client: &Client, session: &SessionId) -> Result<(), Option<ErrorCode>> {
-    client
-        .request::<SessionPrompt>(&SessionPromptParams {
-            session: session.clone(),
-            text: "hello".into(),
-            timeout_ms: None,
-        })
-        .await
-        .map(|_| ())
-        .map_err(|error| match error {
-            ClientError::Rpc { error, .. } => error.error_code(),
-            error => panic!("prompt failed outside the protocol: {error}"),
-        })
-}
-
-/// Prompts `session` with the tool call `call`, which the `tool-call`
-/// fixture makes; returns once the turn saved the prompt.
-pub(super) async fn prompt_tool_call(
-    client: &Client,
-    session: &SessionId,
-    call: &serde_json::Value,
-) {
-    client
-        .request::<SessionPrompt>(&SessionPromptParams {
-            session: session.clone(),
-            text: call.to_string(),
-            timeout_ms: None,
-        })
-        .await
-        .unwrap();
 }
 
 /// Polls `rho/job/list` until the job of `session`'s turns is in a state
@@ -324,13 +353,15 @@ async fn settled(
 async fn a_turn_outlives_the_client_that_prompted_it() {
     let sandbox = Sandbox::new();
     let (_daemon, client) = sandbox.start_daemon("fixed").await;
-    let session = new_session(&client, &sandbox.workspace).await;
-    assert_eq!(prompt(&client, &session).await, Ok(()));
+    let session = sandbox.new_session(&client).await;
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
     drop(client);
 
     let client = sandbox.connect().await;
     let job = settled_job(&sandbox, &client, &session).await;
-    let unknown = prompt(&client, &SessionId::new("no-such-session")).await;
+    let unknown = sandbox
+        .prompt(&client, &SessionId::new("no-such-session"))
+        .await;
 
     assert_eq!(
         (
@@ -404,11 +435,11 @@ async fn a_turn_tells_clients_how_it_ended() {
     for (mode, outcome, state) in cases {
         let sandbox = Sandbox::new();
         let (_daemon, client) = sandbox.start_daemon(mode).await;
-        let session = new_session(&client, &sandbox.workspace).await;
+        let session = sandbox.new_session(&client).await;
         let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
         // A turn that fails before it saves the prompt answers the prompt
         // with the failure; the clients learn it all the same.
-        let _ = prompt(&client, &session).await;
+        let _ = sandbox.prompt(&client, &session).await;
         watcher.read_until(is_state(state)).await;
 
         let ending: Vec<SessionEvent> = watcher.events[watcher.events.len() - 2..]
@@ -454,13 +485,13 @@ async fn a_subagent_is_a_child_job_of_its_session() {
     let sandbox = Sandbox::new();
     // The fixture makes the call the prompt spells out as JSON.
     let (_daemon, client) = sandbox.start_daemon("tool-call").await;
-    let session = new_session(&client, &sandbox.workspace).await;
+    let session = sandbox.new_session(&client).await;
     let call = serde_json::json!({
         "id": "delegate",
         "name": "agent",
         "arguments": {"agent_id": "explorer", "prompt": "Look around."},
     });
-    prompt_tool_call(&client, &session, &call).await;
+    sandbox.prompt_tool_call(&client, &session, &call).await;
 
     let parent = settled_job(&sandbox, &client, &session).await;
     let child = settled(&sandbox, &client, |job| {
@@ -496,7 +527,7 @@ async fn a_subagent_is_a_child_job_of_its_session() {
         "the subagent saved its reply: {records:#?}"
     );
     assert_eq!(
-        prompt(&client, &child_session).await,
+        sandbox.prompt(&client, &child_session).await,
         Err(Some(ErrorCode::SessionOpenFailed))
     );
 }
@@ -514,13 +545,13 @@ async fn a_workflow_run_is_a_child_job_of_its_session() {
     std::fs::write(workflows.join("main.star"), WORKFLOW).unwrap();
     std::fs::write(workflows.join("agents/fixture.md"), WORKFLOW_AGENT).unwrap();
     let (_daemon, client) = sandbox.start_daemon("tool-call").await;
-    let session = new_session(&client, &sandbox.workspace).await;
+    let session = sandbox.new_session(&client).await;
     let call = serde_json::json!({
         "id": "start",
         "name": "workflow",
         "arguments": {"action": "start", "file": "wf/main.star"},
     });
-    prompt_tool_call(&client, &session, &call).await;
+    sandbox.prompt_tool_call(&client, &session, &call).await;
 
     let parent = settled_job(&sandbox, &client, &session).await;
     let workflow = settled(&sandbox, &client, |job| {
@@ -577,8 +608,12 @@ async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
         let sandbox = Sandbox::new();
         // The fixture holds each turn until it is cancelled.
         let (mut daemon, client) = sandbox.start_daemon("delay").await;
-        let session = new_session(&client, &sandbox.workspace).await;
-        assert_eq!(prompt(&client, &session).await, Ok(()), "{ending:?}");
+        let session = sandbox.new_session(&client).await;
+        assert_eq!(
+            sandbox.prompt(&client, &session).await,
+            Ok(()),
+            "{ending:?}"
+        );
         let jobs_of_session = async |client: &Client| -> Vec<JobId> {
             let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
             jobs.jobs
@@ -621,7 +656,7 @@ async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
         follower
             .read_until(|event| matches!(event, SessionEvent::UserMessage { .. }))
             .await;
-        let next_prompt = prompt(&client, &session).await;
+        let next_prompt = sandbox.prompt(&client, &session).await;
 
         assert_eq!(
             (
@@ -680,6 +715,7 @@ async fn a_session_another_process_saved_reopens_once_it_lets_go() {
             .request::<SessionAttach>(&SessionAttachParams {
                 session: session.clone(),
                 after: None,
+                environment: sandbox.client_environment(),
             })
             .await
             .map(|_| ())
@@ -701,7 +737,7 @@ async fn a_session_another_process_saved_reopens_once_it_lets_go() {
         .filter(|job| job.session.as_ref() == Some(&session))
         .map(|job| (job.kind, job.state))
         .collect();
-    let next_prompt = prompt(&client, &session).await;
+    let next_prompt = sandbox.prompt(&client, &session).await;
 
     assert_eq!(
         (
@@ -749,13 +785,13 @@ async fn a_session_reopens_only_as_the_agent_it_was_saved_as() {
     let (kept, edited) = (saved_as_archivist(), saved_as_archivist());
     let (_daemon, client) = sandbox.start_daemon("fixed").await;
 
-    let while_unchanged = prompt(&client, &kept).await;
+    let while_unchanged = sandbox.prompt(&client, &kept).await;
     std::fs::write(
         &archivist,
         ARCHIVIST_AGENT.replace("Archive.", "Archive everything."),
     )
     .unwrap();
-    let once_changed = prompt(&client, &edited).await;
+    let once_changed = sandbox.prompt(&client, &edited).await;
 
     assert_eq!(
         (while_unchanged, once_changed),
@@ -778,8 +814,8 @@ async fn an_idle_session_is_unloaded_and_its_file_let_go() {
         .await;
     // Saved, so another process finds it.
     let saved_session = async || {
-        let session = new_session(&client, &sandbox.workspace).await;
-        prompt(&client, &session).await.unwrap();
+        let session = sandbox.new_session(&client).await;
+        sandbox.prompt(&client, &session).await.unwrap();
         settled_job(&sandbox, &client, &session).await;
         session
     };
@@ -831,6 +867,7 @@ impl Follower {
             .request::<SessionAttach>(&SessionAttachParams {
                 session: session.clone(),
                 after,
+                environment: sandbox.client_environment(),
             })
             .await
             .unwrap();
@@ -930,11 +967,11 @@ async fn clients_that_leave_and_come_back_see_the_same_turn() {
     let sandbox = Sandbox::new();
     // The fixture holds the turn until it is cancelled.
     let (_daemon, client) = sandbox.start_daemon("delay").await;
-    let session = new_session(&client, &sandbox.workspace).await;
+    let session = sandbox.new_session(&client).await;
     let (mut watcher, watched) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
     let (mut leaver, ..) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
 
-    assert_eq!(prompt(&client, &session).await, Ok(()));
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
     let saved_prompt = |event: &SessionEvent| matches!(event, SessionEvent::UserMessage { .. });
     leaver.read_until(saved_prompt).await;
     let cursor = leaver.cursor();
@@ -1041,13 +1078,13 @@ pub(super) async fn prompt_a_supervised_write(
     sandbox.set_permission_mode("supervised");
     // The fixture makes the call the prompt spells out as JSON.
     let (daemon, client) = sandbox.start_daemon("tool-call").await;
-    let session = new_session(&client, &sandbox.workspace).await;
+    let session = sandbox.new_session(&client).await;
     let call = serde_json::json!({
         "id": "edit",
         "name": "write",
         "arguments": {"path": "note.txt", "content": "approved"},
     });
-    prompt_tool_call(&client, &session, &call).await;
+    sandbox.prompt_tool_call(&client, &session, &call).await;
     (daemon, client, session)
 }
 
@@ -1204,7 +1241,7 @@ fn sandbox_with_question_timeout(seconds: u64) -> Sandbox {
 
 /// Prompts `session` to ask which color, with `Blue` as the fallback
 /// answers, through the `tool-call` fixture.
-async fn ask_color_with_fallback(client: &Client, session: &SessionId) {
+async fn ask_color_with_fallback(sandbox: &Sandbox, client: &Client, session: &SessionId) {
     let call = serde_json::json!({
         "id": "ask",
         "name": "questionnaire",
@@ -1217,7 +1254,7 @@ async fn ask_color_with_fallback(client: &Client, session: &SessionId) {
             "on_timeout": {"answers": {"color": "Blue"}, "reason": "either works"},
         },
     });
-    prompt_tool_call(client, session, &call).await;
+    sandbox.prompt_tool_call(client, session, &call).await;
 }
 
 fn blue() -> InputAnswer {
@@ -1284,9 +1321,9 @@ async fn a_question_nobody_answers_times_out_with_its_fallback() {
     // The shortest timeout the config takes.
     let sandbox = sandbox_with_question_timeout(1);
     let (_daemon, client) = sandbox.start_daemon("tool-call").await;
-    let session = new_session(&client, &sandbox.workspace).await;
+    let session = sandbox.new_session(&client).await;
     let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
-    ask_color_with_fallback(&client, &session).await;
+    ask_color_with_fallback(&sandbox, &client, &session).await;
 
     let result = color_result(&mut watcher).await;
     let job = settled(&sandbox, &client, |job| {
@@ -1323,9 +1360,9 @@ async fn a_held_question_waits_for_the_users_answer() {
     // Far longer than the test, so the hold always comes first.
     let sandbox = sandbox_with_question_timeout(3600);
     let (_daemon, client) = sandbox.start_daemon("tool-call").await;
-    let session = new_session(&client, &sandbox.workspace).await;
+    let session = sandbox.new_session(&client).await;
     let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
-    ask_color_with_fallback(&client, &session).await;
+    ask_color_with_fallback(&sandbox, &client, &session).await;
     watcher
         .read_until(|event| matches!(event, SessionEvent::InputRequested { .. }))
         .await;

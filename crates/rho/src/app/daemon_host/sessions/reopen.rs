@@ -14,7 +14,7 @@ use std::{
 };
 
 use rho_protocol::{ErrorCode, RpcError};
-use rho_sdk::SessionId;
+use rho_sdk::{ProcessEnvironment, SessionId};
 use tokio::sync::OwnedMutexGuard;
 
 use super::{
@@ -31,11 +31,13 @@ use crate::{
 
 impl Sessions {
     /// The session `id` names, loaded: one the daemon has loaded, or a saved
-    /// one it reopens. Two requests for the same unloaded session open it
-    /// once; different sessions open at the same time.
+    /// one it reopens with its processes starting in `environment`. Two
+    /// requests for the same unloaded session open it once; different
+    /// sessions open at the same time.
     pub(super) async fn session(
         &self,
         id: &rho_protocol::SessionId,
+        environment: &ProcessEnvironment,
     ) -> Result<Arc<LoadedSession>, RpcError> {
         let id = parse_session(id)?;
         if let Some(session) = self.loaded().get(&id) {
@@ -46,21 +48,23 @@ impl Sessions {
         let loaded = self.loaded().get(&id).cloned();
         match loaded {
             Some(session) => Ok(session),
-            None => self.reopen(&id).await,
+            None => self.reopen(&id, environment).await,
         }
     }
 
-    /// Runs `use_session` on the session `id` names, loaded, under its turn
-    /// lock and marked in use, so the idle unload cannot take it meanwhile
-    /// (#1661). A session the unload took after the lookup is looked up
-    /// again, which reopens it: an unloaded session is never in `loaded`.
+    /// Runs `use_session` on the session `id` names, loaded as
+    /// [`Self::session`] loads it, under its turn lock and marked in use, so
+    /// the idle unload cannot take it meanwhile (#1661). A session the
+    /// unload took after the lookup is looked up again, which reopens it:
+    /// an unloaded session is never in `loaded`.
     pub(super) async fn enter_session<T>(
         &self,
         id: &rho_protocol::SessionId,
+        environment: &ProcessEnvironment,
         use_session: impl FnOnce(&LoadedSession, &mut TurnSlot) -> Result<T, RpcError>,
     ) -> Result<(Arc<LoadedSession>, T), RpcError> {
         loop {
-            let session = self.session(id).await?;
+            let session = self.session(id, environment).await?;
             let Some(mut turn) = session.enter() else {
                 continue;
             };
@@ -84,9 +88,14 @@ impl Sessions {
         saved_workspace(&id).await.map(|_| None)
     }
 
-    /// Reopens saved session `id` from its file and records its turns on
-    /// the session's last job, or a new one when no daemon has run it.
-    async fn reopen(&self, id: &SessionId) -> Result<Arc<LoadedSession>, RpcError> {
+    /// Reopens saved session `id` from its file, with its processes
+    /// starting in `environment`, and records its turns on the session's
+    /// last job, or a new one when no daemon has run it.
+    async fn reopen(
+        &self,
+        id: &SessionId,
+        environment: &ProcessEnvironment,
+    ) -> Result<Arc<LoadedSession>, RpcError> {
         self.refuse_when_stopping()?;
         let last = match self.jobs.session_job(id) {
             SessionJob::Busy(job) => return Err(writing(&job, id)),
@@ -103,9 +112,15 @@ impl Sessions {
             )),
         };
         let job = record.job().id.clone();
-        let opened = open_session(Opening::Saved(stored), &self.logouts, &self.subagents, &job)
-            .await
-            .map_err(open_failed)?;
+        let opened = open_session(
+            Opening::Saved(stored),
+            environment.clone(),
+            &self.logouts,
+            &self.subagents,
+            &job,
+        )
+        .await
+        .map_err(open_failed)?;
         let session = self.add(record, opened).await?;
         tracing::info!(session = %id, %job, "reopened session");
         Ok(session)

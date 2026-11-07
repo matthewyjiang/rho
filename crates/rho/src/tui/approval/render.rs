@@ -314,6 +314,10 @@ fn format_environment_summary(environment: &ProcessEnvironment) -> String {
             // Scrub lists are not decision content; only the count matters.
             format!("env inherit ({} stripped)", variable_names.len())
         }
+        // Values are secrets; only the count is shown.
+        ProcessEnvironment::Explicit { variables } => {
+            format!("env explicit ({} variables)", variables.len())
+        }
         ProcessEnvironment::InheritListed { variable_names } => {
             // Allowlists are the authorization surface; show sanitized names.
             format!(

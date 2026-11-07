@@ -31,7 +31,7 @@ pub(super) async fn run(
 
     use rho_protocol::{
         methods::{SessionNew, SessionPrompt},
-        ErrorCode, SessionNewParams, SessionPromptParams,
+        ClientEnvironment, ErrorCode, SessionNewParams, SessionPromptParams,
     };
 
     use super::{
@@ -52,6 +52,9 @@ pub(super) async fn run(
         })
         .transpose()?;
     let text = automation::prompt_from_stdin(parts, read_stdin)?;
+    // The session's processes run with this environment, not the daemon's
+    // (#1659).
+    let environment = ClientEnvironment::of_this_process();
     let cwd = std::env::current_dir().map_err(|error| {
         AutomationExit::other(format!("could not read the current directory: {error}"))
     })?;
@@ -66,7 +69,10 @@ pub(super) async fn run(
         })?
         .client;
     let session = client
-        .request::<SessionNew>(&SessionNewParams { cwd })
+        .request::<SessionNew>(&SessionNewParams {
+            cwd,
+            environment: environment.clone(),
+        })
         .await
         .map_err(|error| {
             let message = format!("could not open a daemon session: {error}");
@@ -81,6 +87,7 @@ pub(super) async fn run(
             session: session.clone(),
             text,
             timeout_ms,
+            environment,
         })
         .await
         .map_err(|error| {

@@ -36,12 +36,16 @@ pub fn login_shell_script(command: &str) -> String {
     format!("export PATH=\"${{{PARENT_PATH_VAR}:+${PARENT_PATH_VAR}:}}$PATH\"; {command}")
 }
 
-/// Returns the parent `PATH` when `environment` lets the child inherit it.
+/// Returns the parent `PATH` when `environment` lets the child inherit it,
+/// or the `PATH` an explicit environment sets.
 ///
 /// `Empty` and `InheritListed` without `PATH` deliberately hide the parent path,
 /// so re-exporting it through [`PARENT_PATH_VAR`] would bypass that policy.
 pub fn parent_path_for(environment: &ProcessEnvironment) -> Option<OsString> {
     let inherits_path = match environment {
+        // A login shell's init may reset `PATH`; the explicit one, such as a
+        // daemon client's, is re-prepended as the parent's would be.
+        ProcessEnvironment::Explicit { variables } => return variables.get("PATH").map(Into::into),
         ProcessEnvironment::Empty => false,
         ProcessEnvironment::InheritAll => true,
         ProcessEnvironment::InheritExcept { variable_names } => {

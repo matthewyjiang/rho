@@ -61,6 +61,9 @@ impl ClientIo {
                 .terminals
                 .clone()
                 .map(|terminals| terminals as Arc<dyn rho_tools::HostTerminals>),
+            // The ACP client started this process, so its environment is
+            // already the client's.
+            environment: None,
         }
     }
 

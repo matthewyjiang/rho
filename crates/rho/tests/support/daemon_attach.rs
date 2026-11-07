@@ -16,9 +16,7 @@ use tokio::{
     process::{Child, ChildStderr, ChildStdin, ChildStdout},
 };
 
-use super::sessions::{
-    new_session, prompt, prompt_a_supervised_write, settled_job, Sandbox, DEADLINE, REPLY,
-};
+use super::sessions::{prompt_a_supervised_write, settled_job, Sandbox, DEADLINE, REPLY};
 
 /// A `rho attach` process and its JSONL stream.
 struct Attach {
@@ -126,8 +124,8 @@ async fn job_of(client: &rho_protocol::Client, session: &SessionId) -> rho_proto
 async fn attach_reports_how_the_last_turn_ended() {
     let sandbox = Sandbox::new();
     let (daemon, client) = sandbox.start_daemon("fixed").await;
-    let session = new_session(&client, &sandbox.workspace).await;
-    assert_eq!(prompt(&client, &session).await, Ok(()));
+    let session = sandbox.new_session(&client).await;
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
     let job = settled_job(&sandbox, &client, &session).await;
 
     let (status, lines) = Attach::spawn(&sandbox, "fixed", &[job.id.as_str(), "--output", "jsonl"])
@@ -225,8 +223,8 @@ async fn attach_follows_a_turn_and_detaches_on_ctrl_c() {
     let sandbox = Sandbox::new();
     // The fixture holds the turn until it is cancelled.
     let (_daemon, client) = sandbox.start_daemon("delay").await;
-    let session = new_session(&client, &sandbox.workspace).await;
-    assert_eq!(prompt(&client, &session).await, Ok(()));
+    let session = sandbox.new_session(&client).await;
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
 
     let mut detached = Attach::spawn(&sandbox, "delay", &[session.as_str(), "--output", "jsonl"]);
     // Events flow only once it is attached.
@@ -381,8 +379,8 @@ async fn attach_answers_an_approval_written_to_stdin() {
 async fn attach_cancels_the_turn_on_a_cancel_line() {
     let sandbox = Sandbox::new();
     let (_daemon, client) = sandbox.start_daemon("delay").await;
-    let session = new_session(&client, &sandbox.workspace).await;
-    assert_eq!(prompt(&client, &session).await, Ok(()));
+    let session = sandbox.new_session(&client).await;
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
     let mut canceller = Typed::spawn(&sandbox, "delay", &session);
     // Lines are read once it is attached; one written earlier waits for it.
     canceller.type_line("/cancel").await;

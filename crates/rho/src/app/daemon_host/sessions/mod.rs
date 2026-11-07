@@ -60,7 +60,7 @@ mod unload;
 
 use feed::{Attached, Feed};
 use inputs::Inputs;
-use open::{open_session, OpenedSession, Opening, Workspace};
+use open::{open_session, session_environment, OpenedSession, Opening, Workspace};
 use reopen::ReopenLocks;
 use turn::{PromptStart, TurnLimit, TurnTask};
 use unload::Residency;
@@ -106,6 +106,9 @@ struct LoadedSession {
     handle: SessionHandle,
     /// The config the session was opened with, which each turn reads.
     config: Config,
+    /// The environment the session's processes start with, which each
+    /// prompt replaces with its client's (#1659).
+    environment: rho_tools::SharedProcessEnvironment,
     /// The directory the session works in.
     workspace: PathBuf,
     /// The turn's cancel and the session's residency. A prompt's start, an
@@ -169,7 +172,11 @@ impl LoadedSession {
     /// the job's last turn ended, which a new session has neither of, so a
     /// client attaching to a reopened session learns that end (#1661).
     fn new(job: &JobRecord, jobs: Arc<JobRegistry>, opened: OpenedSession) -> Self {
-        let OpenedSession { runtime, config } = opened;
+        let OpenedSession {
+            runtime,
+            config,
+            environment,
+        } = opened;
         let mut live = LiveEvents::new(runtime.workspace_root(), runtime.tools());
         let feed = Feed::new((&job.state).into());
         if let Some(saved) = saved_replay(&mut live, &runtime, &job.id) {
@@ -197,6 +204,7 @@ impl LoadedSession {
                     .map(|seconds| Duration::from_secs(seconds.get())),
             )),
             config,
+            environment,
             turn: Mutex::new(TurnSlot {
                 cancel: CancellationToken::new(),
                 residency: Residency::InUse,
@@ -338,6 +346,7 @@ impl Sessions {
         let job = JobId::generate();
         let opened = open_session(
             Opening::New(workspace),
+            session_environment(&params.environment)?,
             &self.logouts,
             &self.subagents,
             &job,
@@ -396,8 +405,9 @@ impl Sessions {
         params: SessionPromptParams,
     ) -> Result<SessionPromptResponse, RpcError> {
         self.refuse_when_stopping()?;
+        let environment = session_environment(&params.environment)?;
         let (session, cancel) = self
-            .enter_session(&params.session, |session, turn| {
+            .enter_session(&params.session, &environment, |session, turn| {
                 match self.jobs.start_turn(&session.job) {
                     // Told under the turn lock, which the last turn's
                     // end is told under too, so the feed never says `running`
@@ -417,6 +427,9 @@ impl Sessions {
                         ))
                     }
                 }
+                // The turn's processes, and later turns' until another
+                // prompt, start in the prompting client's environment.
+                session.environment.replace(environment.clone());
                 turn.cancel = CancellationToken::new();
                 Ok(turn.cancel.clone())
             })
@@ -518,9 +531,11 @@ impl Sessions {
         // next turn runs, and the idle unload never takes a session a client
         // just attached to.
         let (session, attached) = self
-            .enter_session(&params.session, |session, _turn| {
-                Ok(session.feed.attach(params.after.as_ref()))
-            })
+            .enter_session(
+                &params.session,
+                &session_environment(&params.environment)?,
+                |session, _turn| Ok(session.feed.attach(params.after.as_ref())),
+            )
             .await?;
         let Attached {
             stream,
