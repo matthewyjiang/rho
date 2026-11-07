@@ -8,7 +8,6 @@ mod render;
 pub(in crate::tui) use render::approval_frame;
 use render::{approval_detail_line_count, approval_detail_page_lines};
 
-const DENIED_BY_USER_REASON: &str = "denied by user";
 const CANCELLED_BY_USER_REASON: &str = "cancelled by user";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,7 +41,7 @@ impl ApprovalChoice {
             Self::AllowOnce => ApprovalDecision::AllowOnce,
             Self::AllowForSession => ApprovalDecision::AllowForSession,
             Self::Deny => ApprovalDecision::Deny {
-                reason: DENIED_BY_USER_REASON.into(),
+                reason: crate::permission::DENIED_BY_USER.into(),
             },
         }
     }
@@ -204,7 +203,7 @@ impl App {
     pub(super) fn cancel_approval(&mut self) {
         if matches!(self.input_ui.composer(), ComposerMode::Approval(_)) {
             self.finish_approval(Some(ApprovalDecision::Deny {
-                reason: DENIED_BY_USER_REASON.into(),
+                reason: crate::permission::DENIED_BY_USER.into(),
             }));
         }
     }

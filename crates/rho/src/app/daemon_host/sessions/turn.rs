@@ -14,9 +14,10 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::{
     super::{
-        jobs::{JobEvent, JobRegistry, JobState, TurnEnd},
+        jobs::{JobEvent, JobState, TurnEnd},
         wire::state_event,
     },
+    inputs::Inputs,
     LoadedSession,
 };
 use crate::{
@@ -55,7 +56,6 @@ impl PromptStart {
 
 /// One turn of a session whose job already recorded the turn's start.
 pub(super) struct TurnTask {
-    pub(super) jobs: Arc<JobRegistry>,
     pub(super) session: Arc<LoadedSession>,
     /// Cancelled once the daemon stops: a turn cancelled then was
     /// interrupted, not cancelled by a client.
@@ -77,7 +77,6 @@ impl TurnTask {
 
     async fn run(self, text: String, started: oneshot::Sender<PromptStart>) {
         let Self {
-            jobs,
             session,
             stopping,
             cancel,
@@ -89,7 +88,7 @@ impl TurnTask {
         let mut runtime = session.runtime.lock().await;
         // Declared after the lock, so even a panic records the end (see
         // `DaemonView`'s drop) before the lock is released.
-        let mut view = DaemonView::new(Arc::clone(&session), jobs, started);
+        let mut view = DaemonView::new(Arc::clone(&session), started);
         // The prompt that spawned this turn recorded its job running.
         view.publish_state(&JobState::Running);
         let ended = match &mut *runtime {
@@ -176,7 +175,6 @@ const UNEXPECTED_STOP: &str = "the turn stopped unexpectedly; see the daemon log
 /// [`UNEXPECTED_STOP`].
 struct DaemonView {
     session: Arc<LoadedSession>,
-    jobs: Arc<JobRegistry>,
     /// Answered `Saved` once the turn saved its prompt, or with how the
     /// turn ended if it ends first.
     started: Option<oneshot::Sender<PromptStart>>,
@@ -185,14 +183,9 @@ struct DaemonView {
 }
 
 impl DaemonView {
-    fn new(
-        session: Arc<LoadedSession>,
-        jobs: Arc<JobRegistry>,
-        started: oneshot::Sender<PromptStart>,
-    ) -> Self {
+    fn new(session: Arc<LoadedSession>, started: oneshot::Sender<PromptStart>) -> Self {
         Self {
             session,
-            jobs,
             started: Some(started),
             ended: false,
         }
@@ -207,25 +200,13 @@ impl DaemonView {
     /// waiting for the turn to begin.
     fn finish(&mut self, end: TurnEnd) {
         let start = PromptStart::ended(&end);
-        self.withdraw_inputs();
-        self.record(JobEvent::TurnEnded(end));
+        // A turn that ended waits for nothing.
+        self.session.change_inputs(Inputs::withdraw_all);
+        self.session.record(JobEvent::TurnEnded(end));
         self.ended = true;
         if let (Some(started), Some(start)) = (self.started.take(), start) {
             let _ = started.send(start);
         }
-    }
-
-    /// Applies `event` to the job and tells attached clients the state it
-    /// left the job in.
-    fn record(&self, event: JobEvent) {
-        self.session.record(&self.jobs, event);
-    }
-
-    /// Withdraws every input request still open, as a turn that ended
-    /// waits for none.
-    fn withdraw_inputs(&self) {
-        self.session
-            .change_inputs(&self.jobs, |inputs| ((), inputs.withdraw_all()));
     }
 
     fn publish_state(&self, state: &JobState) {
@@ -249,9 +230,8 @@ impl DaemonView {
                     let _ = started.send(PromptStart::Saved);
                 }
             }
-            self.session.change_inputs(&self.jobs, |inputs| {
-                ((), inputs.note(&control, &event).into_iter().collect())
-            });
+            self.session
+                .change_inputs(|inputs| inputs.note(&control, &event));
         }
     }
 }

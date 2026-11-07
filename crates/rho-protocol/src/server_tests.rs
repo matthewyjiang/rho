@@ -446,6 +446,7 @@ impl Service for AttachService {
             stream: StreamId::new("stream"),
             replay: Replay::Reset,
             state: JobState::Idle,
+            inputs: Vec::new(),
         };
         Ok((response, subscription))
     }

@@ -50,9 +50,9 @@ pub use event::{
     ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
 };
 pub use input::{
-    ApprovalAsk, ApprovalSource, Ask, Choice, InputAnswer, InputRequest, InputRequestId, Operation,
-    PathScope, PermissionMode, PlanApprovalAsk, Question, QuestionAsk, Resolution,
-    SessionAnswerParams, SessionAnswerResponse, SESSION_ANSWER,
+    ApprovalAsk, ApprovalSource, Ask, Choice, DefaultAnswer, DefaultStyle, InputAnswer,
+    InputRequest, InputRequestId, Operation, PathScope, PermissionMode, PlanApprovalAsk, Question,
+    QuestionAsk, Resolution, Selection, SessionAnswerParams, SessionAnswerResponse, SESSION_ANSWER,
 };
 pub use job::{
     Budget, JobId, JobKind, JobListParams, JobListResponse, JobState, JobSummary, QueuePlace,

@@ -15,11 +15,12 @@ use rho_protocol::{
         JobList, SessionAnswer, SessionAttach, SessionCancel, SessionDetach, SessionNew,
         SessionPrompt,
     },
-    Ask, Client, ClientError, ClientInfo, Cursor, DaemonNotification, DetachReason, ErrorCode,
-    InputAnswer, InputRequestId, JobKind, JobListParams, JobState, JobSummary, Notifications,
-    Operation, Replay, Resolution, Seq, SessionAnswerParams, SessionAttachParams,
-    SessionCancelParams, SessionDetachParams, SessionDetachedParams, SessionEvent, SessionId,
-    SessionNewParams, SessionPromptParams, StreamId,
+    ApprovalAsk, ApprovalSource, Ask, Client, ClientError, ClientInfo, Cursor, DaemonNotification,
+    DetachReason, ErrorCode, InputAnswer, InputRequest, InputRequestId, JobKind, JobListParams,
+    JobState, JobSummary, Notifications, Operation, PathScope, Replay, Resolution, Seq,
+    SessionAnswerParams, SessionAttachParams, SessionAttachResponse, SessionCancelParams,
+    SessionDetachParams, SessionDetachedParams, SessionEvent, SessionId, SessionNewParams,
+    SessionPromptParams, StreamId, ToolCallId,
 };
 use tokio::net::UnixStream;
 
@@ -497,7 +498,7 @@ impl Follower {
         session: &SessionId,
         events: Vec<(Seq, SessionEvent)>,
         after: Option<Cursor>,
-    ) -> (Self, Replay, JobState) {
+    ) -> (Self, SessionAttachResponse) {
         let (client, notifications) = sandbox.connect_following().await;
         let attached = client
             .request::<SessionAttach>(&SessionAttachParams {
@@ -510,10 +511,10 @@ impl Follower {
             client,
             notifications,
             session: session.clone(),
-            stream: attached.stream,
+            stream: attached.stream.clone(),
             events,
         };
-        (follower, attached.replay, attached.state)
+        (follower, attached)
     }
 
     /// Where the follower is: the last event it has.
@@ -603,8 +604,7 @@ async fn clients_that_leave_and_come_back_see_the_same_turn() {
     // The fixture holds the turn until it is cancelled.
     let (_daemon, client) = sandbox.start_daemon("delay").await;
     let session = new_session(&client, &sandbox.workspace).await;
-    let (mut watcher, watcher_replay, watcher_state) =
-        Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let (mut watcher, watched) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
     let (mut leaver, ..) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
 
     assert_eq!(prompt(&client, &session).await, Ok(()));
@@ -620,11 +620,9 @@ async fn clients_that_leave_and_come_back_see_the_same_turn() {
         .unwrap();
     watcher.read_until(is_state(JobState::Cancelled)).await;
 
-    let (mut leaver, resumed_replay, resumed_state) =
-        Follower::attach(&sandbox, &session, kept, Some(cursor)).await;
+    let (mut leaver, resumed) = Follower::attach(&sandbox, &session, kept, Some(cursor)).await;
     leaver.read_until(is_state(JobState::Cancelled)).await;
-    let (mut latecomer, late_replay, _) =
-        Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let (mut latecomer, late) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
     latecomer.read_until(is_state(JobState::Cancelled)).await;
 
     let seqs: Vec<u64> = watcher.events.iter().map(|(seq, _)| seq.0).collect();
@@ -635,9 +633,9 @@ async fn clients_that_leave_and_come_back_see_the_same_turn() {
     );
     assert_eq!(
         (
-            (watcher_replay, watcher_state),
-            (resumed_replay, resumed_state),
-            late_replay
+            (watched.replay, watched.state),
+            (resumed.replay, resumed.state),
+            late.replay
         ),
         (
             (Replay::Reset, JobState::Idle),
@@ -701,11 +699,12 @@ async fn answer(
         })
 }
 
-// Covers: a supervised turn's approval waits in the daemon with no client
-// attached; the job is waiting for input meanwhile; a client that attaches
-// later sees the open request in its replay and answers it, every client
-// learns it was answered, a second answer finds it no longer open, and the
-// turn goes on with the answer (#1660).
+// Covers: a supervised turn's approval waits in the daemon after the
+// client that saw it ask leaves; the job is waiting for input meanwhile; a
+// client that attaches later is told the open request in its attach
+// response and answers it, every attached client learns it was answered, a
+// second answer finds it no longer open, and the turn goes on with the
+// answer (#1660).
 // Owner: daemon input requests.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_approval_waits_for_any_client_to_answer() {
@@ -718,7 +717,7 @@ async fn an_approval_waits_for_any_client_to_answer() {
     // The fixture makes the call the prompt spells out as JSON.
     let (_daemon, client) = sandbox.start_daemon("tool-call").await;
     let session = new_session(&client, &sandbox.workspace).await;
-    let (mut asker, _, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let (mut asker, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
     let call = serde_json::json!({
         "id": "edit",
         "name": "write",
@@ -731,25 +730,23 @@ async fn an_approval_waits_for_any_client_to_answer() {
         })
         .await
         .unwrap();
-    asker
-        .read_until(|event| matches!(event, SessionEvent::InputRequested { .. }))
-        .await;
     asker.read_until(is_state(JobState::WaitingForInput)).await;
-    let asked = asker.leave().await;
-
-    let (mut answerer, replay, state) =
-        Follower::attach(&sandbox, &session, Vec::new(), None).await;
-    answerer
-        .read_until(|event| matches!(event, SessionEvent::InputRequested { .. }))
-        .await;
-    let request = answerer
-        .events
-        .iter()
-        .find_map(|(_, event)| match event {
-            SessionEvent::InputRequested { request } => Some(request.clone()),
+    let asked: Vec<InputRequest> = asker
+        .leave()
+        .await
+        .into_iter()
+        .filter_map(|(_, event)| match event {
+            SessionEvent::InputRequested { request } => Some(request),
             _ => None,
         })
-        .unwrap();
+        .collect();
+
+    let (mut answerer, attached) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let request = attached
+        .inputs
+        .first()
+        .expect("the request is open")
+        .clone();
     let first = answer(
         &answerer.client,
         &session,
@@ -769,17 +766,15 @@ async fn an_approval_waits_for_any_client_to_answer() {
     .await;
     let job = settled_job(&sandbox, &client, &session).await;
 
-    let Ask::Approval(approval) = &request.ask else {
-        panic!("a write asks for approval: {:?}", request.ask);
+    // The policy words its reason; the rest is what the call asked for.
+    let reason = match &request.ask {
+        Ask::Approval(approval) => approval.reason.clone(),
+        ask => panic!("a write asks for approval: {ask:?}"),
     };
     assert_eq!(
         (
-            asked.iter().any(|(_, event)| {
-                matches!(event, SessionEvent::InputRequested { request: seen } if *seen == request)
-            }),
-            replay,
-            state,
-            matches!(&approval.operation, Operation::WritePath { path, .. } if path.ends_with("note.txt")),
+            asked,
+            attached.state,
             first,
             answerer.events.last().map(|(_, event)| event.clone()),
             second,
@@ -787,10 +782,21 @@ async fn an_approval_waits_for_any_client_to_answer() {
             std::fs::read_to_string(sandbox.workspace.join("note.txt")).ok(),
         ),
         (
-            true,
-            Replay::Reset,
+            vec![InputRequest {
+                id: request.id,
+                ask: Ask::Approval(ApprovalAsk {
+                    source: ApprovalSource::BuiltInTool {
+                        name: "write".into(),
+                    },
+                    operation: Operation::WritePath {
+                        path: sandbox.workspace.join("note.txt"),
+                        scope: PathScope::Workspace,
+                    },
+                    reason,
+                }),
+                tool_call: Some(ToolCallId::new("edit")),
+            }],
             JobState::WaitingForInput,
-            true,
             Ok(()),
             Some(SessionEvent::InputResolved {
                 id: request.id,

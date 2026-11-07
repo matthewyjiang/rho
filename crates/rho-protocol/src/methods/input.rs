@@ -3,8 +3,9 @@
 //! A turn that needs a tool approval, a plan approval, or answers to a
 //! question opens an [`InputRequest`] and its job waits in
 //! [`super::JobState::WaitingForInput`]. Attached clients learn of it from a
-//! [`super::SessionEvent::InputRequested`] event and may answer it with
-//! [`SESSION_ANSWER`]. The first answer wins; every attached client then
+//! [`super::SessionEvent::InputRequested`] event, or a client that attaches
+//! later from [`super::SessionAttachResponse::inputs`], and may answer it
+//! with [`SESSION_ANSWER`]. The first answer wins; every attached client then
 //! sees [`super::SessionEvent::InputResolved`]. A client that detaches or
 //! disconnects answers nothing: with nobody attached the request stays
 //! open until someone answers it or the turn is cancelled.
@@ -38,6 +39,9 @@ impl fmt::Display for InputRequestId {
 pub struct InputRequest {
     pub id: InputRequestId,
     pub ask: Ask,
+    /// The tool call that asks, when a tool call does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call: Option<ToolCallId>,
 }
 
 /// What an input request asks.
@@ -71,9 +75,6 @@ pub struct ApprovalAsk {
     pub operation: Operation,
     /// Why the policy asks, in its words.
     pub reason: String,
-    /// The tool call that asks, if a tool call does.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_call: Option<ToolCallId>,
 }
 
 /// Who asks for a capability.
@@ -196,20 +197,54 @@ pub struct Question {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub header: Option<String>,
     pub choices: Vec<Choice>,
-    /// Whether an answer may pick several choices, rather than one.
-    pub multiple: bool,
+    /// How many choices an answer may pick.
+    pub selection: Selection,
     /// Whether an answer may give its own text instead of a choice.
     pub allow_other: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub help: Option<String>,
-    /// The answer the agent suggests, as it gave it.
+    /// The answer the agent suggests, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default: Option<serde_json::Value>,
-    /// Whether to pre-select `default` (`true`) or only focus it, so the
-    /// user still picks it (`false`).
-    pub preselect_default: bool,
+    pub default: Option<DefaultAnswer>,
     /// Whether an answer must answer this question.
     pub required: bool,
+}
+
+/// How many choices a question's answer may pick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Selection {
+    One,
+    Many,
+    /// A value a newer daemon sends that this crate does not know.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+/// The answer the agent suggests for a question.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DefaultAnswer {
+    /// What the answer would send: the value of each choice it names, or
+    /// the agent's own text where it names none.
+    pub values: Vec<String>,
+    pub style: DefaultStyle,
+}
+
+/// How a client offers a question's suggested answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum DefaultStyle {
+    /// Pre-select it.
+    Selected,
+    /// Only focus or mark it, so the user still picks it.
+    Focused,
+    /// A value a newer daemon sends that this crate does not know.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
 }
 
 /// One choice a question offers.
@@ -277,8 +312,10 @@ pub enum InputAnswer {
     Dismiss,
 }
 
-/// Result of [`SESSION_ANSWER`]: the answer won, and the turn has it.
-/// An answer that lost, to another client's or to the turn withdrawing the
-/// request, is [`crate::ErrorCode::InputNotOpen`].
+/// Result of [`SESSION_ANSWER`]: the answer won, and the daemon handed it
+/// to the turn. An answer that lost, to another client's or to the turn
+/// withdrawing the request, is [`crate::ErrorCode::InputNotOpen`]. A turn
+/// that stops waiting at the same moment, because it was cancelled or the
+/// tool that asked gave up, ignores an answer that won.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionAnswerResponse {}

@@ -24,7 +24,6 @@ use rho_sdk::CancellationToken;
 
 use crate::daemon::DaemonLock;
 
-mod asks;
 mod jobs;
 mod sessions;
 mod subagents;

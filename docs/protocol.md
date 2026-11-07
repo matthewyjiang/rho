@@ -23,9 +23,9 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/session/prompt` | `session`, `text` | Starts a turn and returns `{}` once the turn has saved the prompt. A session runs one turn at a time; a prompt while a turn is under way gets `SessionBusy`. |
 | `rho/session/cancel` | `session` | Cancels the turn under way, if any. The turn ends `cancelled`, or `interrupted` when the daemon is stopping. |
 | `rho/session/steer` | `session`, `text` | Adds `text` to the running turn's next model request. Gets `NotSteerable` when no model request is taking input. |
-| `rho/session/attach` | `session`, `after`? | Follows the session's events ([below](#following-a-session)). Returns its `stream`, the `replay` that follows (`tail` or `reset`), and its job `state`. |
+| `rho/session/attach` | `session`, `after`? | Follows the session's events ([below](#following-a-session)). Returns its `stream`, the `replay` that follows (`tail` or `reset`), its job `state`, and the input requests open now (`inputs`). |
 | `rho/session/detach` | `session` | Stops following the session; no event of it arrives after the response. |
-| `rho/session/answer` | `session`, `request`, `answer` | Answers one of the turn's open input requests ([below](#answering-a-turn-s-requests)) and returns `{}` once the turn has the answer. |
+| `rho/session/answer` | `session`, `request`, `answer` | Answers one of the turn's open input requests ([below](#answering-a-turn-s-requests)) and returns `{}` once the daemon has handed the answer to the turn. |
 | `rho/job/list` | | `jobs`: every job the daemon knows, including those earlier daemons ran, oldest first. Each has its `id`, `kind` (`session`, `subagent`, or `workflow`), `state`, `workspace`, and timestamps; the `session` it writes, absent for a workflow and for a subagent on another runtime; the `parent` job that started it, for a subagent or workflow; the `workflow_run` it drives, for a workflow; the `error` when it failed; and, usually while it is `queued`, its `queue` place: the `budget` it waits on, that budget's `limit`, and its `position`, 1 for the next to start. |
 
 A prompt whose turn ends before it saves the prompt returns an error instead of a result:
@@ -50,7 +50,7 @@ After `rho/session/attach`, the daemon sends the session's events as `rho/sessio
 | `usage` | How full the model's context is. |
 | `card` | A titled card shown outside the conversation, such as a background result. |
 | `notice` | Something to tell the user that is not part of the conversation. |
-| `input_requested` | The turn waits for a person: the `request`, with its `id` and what it `ask`s ([below](#answering-a-turn-s-requests)). |
+| `input_requested` | The turn waits for a person: the `request`, with its `id`, what it `ask`s ([below](#answering-a-turn-s-requests)), and the `tool_call` that asks, if one does. |
 | `input_resolved` | The request `id` closed, with its `resolution`: `answered` or `withdrawn`. |
 
 Each loaded session has one stream of events, numbered by `seq` from 1. A client keeps the `stream` and the highest `seq` it has handled since its attach response as its cursor, and passes them as `after` when it attaches again, for example after the TUI is closed and reopened. The response's `replay` says what follows:
@@ -69,17 +69,17 @@ Attaching a session the connection already follows replaces the earlier attachme
 
 ## Answering a turn's requests
 
-A turn that needs a person, for an approval, a plan approval, or questions, opens an input request and sends `input_requested` to every attached client. The job is `waiting_for_input` while any request is open. A request waits for as long as it takes: it is never denied because no client is attached, and a client that attaches later finds it among the events of the turn under way.
+A turn that needs a person, for an approval, a plan approval, or questions, opens an input request and sends `input_requested` to every attached client. The job is `waiting_for_input` while any request is open. A request waits for as long as it takes: it is never denied because no client is attached. A client that attaches later finds every open request in the attach response's `inputs`, even when the replay no longer holds the event that opened it; the replay may repeat some, so key requests by `id`.
 
-Any client may answer with `rho/session/answer`. The first answer wins and every attached client receives `input_resolved` with `answered`; a later answer, or one to a request the turn withdrew, gets `InputNotOpen`. A turn withdraws its open requests, with `withdrawn`, when it is cancelled or ends. Request ids are unique within the session for as long as the daemon has it loaded.
+Any client may answer with `rho/session/answer`. The first answer wins and every attached client receives `input_resolved` with `answered`; a later answer, or one to a request the turn withdrew, gets `InputNotOpen`. A turn withdraws its open requests, with `withdrawn`, when it is cancelled or ends, and a plan approval when the tool that asked stops waiting; a turn that stops waiting just as an answer wins ignores the answer. Request ids are unique within the session for as long as the daemon has it loaded.
 
 Each request's `ask` has a `kind`, which decides the answers it takes; any other answer gets `InvalidParams` and leaves the request open:
 
 | `kind` | What it carries | Answers (`answer.kind`) |
 | --- | --- | --- |
-| `approval` | The tool or part of rho that asks (`source`), the `operation` it would perform (read or write a path, discover instructions, run a process, reach the network, or load a skill), the policy's `reason`, and the `tool_call` that asks, if one does. | `allow_once`, `allow_for_session`, or `deny` with an optional `reason` for the tool. |
+| `approval` | The tool or part of rho that asks (`source`), the `operation` it would perform (read or write a path, discover instructions, run a process, reach the network, or load a skill), and the policy's `reason`. | `allow_once`, `allow_for_session`, or `deny` with an optional `reason` for the tool. |
 | `plan_approval` | The `plan`, as markdown, and the permission `modes` it may be carried out in. | `approve_plan` with one of those `mode`s, or `keep_planning`. |
-| `question` | A `title` and its `questions`, each with an `id`, `prompt`, `choices` (`value`, `label`), whether it takes `multiple` choices or its own text (`allow_other`), and whether it is `required`. | `answers`, mapping question ids to the chosen choices' values or the user's text; `decline`; or `dismiss`. |
+| `question` | A `title` and its `questions`, each with an `id`, `prompt`, `choices` (`value`, `label`), its `selection` (`one` or `many`), whether it takes the user's own text (`allow_other`), whether it is `required`, and the answer the agent suggests, if any (`default`: the `values` it would send and whether to pre-select it, `style` `selected`, or only focus it, `focused`). | `answers`, mapping question ids to the chosen choices' values or the user's text; `decline`; or `dismiss`. |
 
 ## Errors
 

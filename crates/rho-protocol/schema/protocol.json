@@ -14,17 +14,6 @@
         "source": {
           "$ref": "#/$defs/ApprovalSource",
           "description": "Who asks."
-        },
-        "tool_call": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ToolCallId"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The tool call that asks, if a tool call does."
         }
       },
       "required": [
@@ -358,6 +347,46 @@
       ],
       "type": "object"
     },
+    "DefaultAnswer": {
+      "description": "The answer the agent suggests for a question.",
+      "properties": {
+        "style": {
+          "$ref": "#/$defs/DefaultStyle"
+        },
+        "values": {
+          "description": "What the answer would send: the value of each choice it names, or\nthe agent's own text where it names none.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "values",
+        "style"
+      ],
+      "type": "object"
+    },
+    "DefaultStyle": {
+      "anyOf": [
+        {
+          "const": "selected",
+          "description": "Pre-select it.",
+          "type": "string"
+        },
+        {
+          "const": "focused",
+          "description": "Only focus or mark it, so the user still picks it.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How a client offers a question's suggested answer."
+    },
     "DetachReason": {
       "anyOf": [
         {
@@ -557,6 +586,17 @@
         },
         "id": {
           "$ref": "#/$defs/InputRequestId"
+        },
+        "tool_call": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolCallId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The tool call that asks, when a tool call does."
         }
       },
       "required": [
@@ -1098,7 +1138,15 @@
           "type": "array"
         },
         "default": {
-          "description": "The answer the agent suggests, as it gave it."
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DefaultAnswer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The answer the agent suggests, if any."
         },
         "header": {
           "description": "A short label for the question, such as a tab title.",
@@ -1117,29 +1165,24 @@
           "description": "Names the question in an answer's `answers`.",
           "type": "string"
         },
-        "multiple": {
-          "description": "Whether an answer may pick several choices, rather than one.",
-          "type": "boolean"
-        },
-        "preselect_default": {
-          "description": "Whether to pre-select `default` (`true`) or only focus it, so the\nuser still picks it (`false`).",
-          "type": "boolean"
-        },
         "prompt": {
           "type": "string"
         },
         "required": {
           "description": "Whether an answer must answer this question.",
           "type": "boolean"
+        },
+        "selection": {
+          "$ref": "#/$defs/Selection",
+          "description": "How many choices an answer may pick."
         }
       },
       "required": [
         "id",
         "prompt",
         "choices",
-        "multiple",
+        "selection",
         "allow_other",
-        "preselect_default",
         "required"
       ],
       "type": "object"
@@ -1224,6 +1267,23 @@
       ],
       "description": "How an input request closed, as [`super::SessionEvent::InputResolved`]\ntells every attached client."
     },
+    "Selection": {
+      "anyOf": [
+        {
+          "enum": [
+            "one",
+            "many"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How many choices a question's answer may pick."
+    },
     "Seq": {
       "description": "Position in a stream: the number of live events sent before and\nincluding this one, from 1. `Seq(0)` is not a position: a reset's\ntranscript events carry it (see [`super::SessionEventParams::seq`]), and\na cursor at 0 always resets.",
       "format": "uint64",
@@ -1252,7 +1312,7 @@
       "type": "object"
     },
     "SessionAnswerResponse": {
-      "description": "Result of [`SESSION_ANSWER`]: the answer won, and the turn has it.\nAn answer that lost, to another client's or to the turn withdrawing the\nrequest, is [`crate::ErrorCode::InputNotOpen`].",
+      "description": "Result of [`SESSION_ANSWER`]: the answer won, and the daemon handed it\nto the turn. An answer that lost, to another client's or to the turn\nwithdrawing the request, is [`crate::ErrorCode::InputNotOpen`]. A turn\nthat stops waiting at the same moment, because it was cancelled or the\ntool that asked gave up, ignores an answer that won.",
       "type": "object"
     },
     "SessionAttachParams": {
@@ -1281,6 +1341,13 @@
     "SessionAttachResponse": {
       "description": "Result of [`SESSION_ATTACH`]. The session's events then arrive as\n[`SESSION_EVENT`] notifications, never before this response. Attaching\nagain on the same connection replaces the earlier attachment.",
       "properties": {
+        "inputs": {
+          "description": "The input requests open when the attachment began, oldest first:\nwhat a client may answer even when the replay no longer holds the\nevents that opened them (#1660). The replay may repeat some; an\ninput request's id names it.",
+          "items": {
+            "$ref": "#/$defs/InputRequest"
+          },
+          "type": "array"
+        },
         "replay": {
           "$ref": "#/$defs/Replay"
         },
@@ -1296,7 +1363,8 @@
       "required": [
         "stream",
         "replay",
-        "state"
+        "state",
+        "inputs"
       ],
       "type": "object"
     },
