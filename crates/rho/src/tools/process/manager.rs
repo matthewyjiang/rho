@@ -328,6 +328,16 @@ impl ProcessManager {
             .any(|record| record.lock().unwrap().result_pending())
     }
 
+    /// True while any process is still running.
+    pub(crate) fn has_live(&self) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .records
+            .values()
+            .any(|record| record.lock().unwrap().state.is_live())
+    }
+
     /// True while a process started at or after `since` is still running.
     /// Headless hosts hold a prompt open only for processes that prompt
     /// started, so a server from an earlier prompt does not pin every later one.

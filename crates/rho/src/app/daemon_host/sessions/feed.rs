@@ -168,6 +168,13 @@ impl Feed {
         }
     }
 
+    /// Whether a client still follows the session's events.
+    pub(super) fn followed(&self) -> bool {
+        let mut state = self.state();
+        state.subscribers.retain(|publisher| !publisher.is_gone());
+        !state.subscribers.is_empty()
+    }
+
     /// Ends every client's subscription with `reason`, and detaches each
     /// client that attaches later with it. Closing again keeps the first
     /// reason.

@@ -92,6 +92,28 @@ impl<'a> BackgroundSources<'a> {
             workflows: tools.workflow_tracker(),
         }
     }
+
+    /// Whether work of session `session_id`'s still runs or holds a result
+    /// no prompt delivered: a subagent, a workflow run, or a background
+    /// process, whichever prompt started it.
+    pub(super) fn has_work(&self, session_id: &str) -> bool {
+        self.subagents
+            .is_some_and(|manager| manager.has_active_or_pending_notification(session_id))
+            || self
+                .workflows
+                .has_active_or_pending_notification(session_id)
+            || self.processes.is_some_and(|processes| {
+                processes.has_live() || processes.has_pending_notification()
+            })
+    }
+}
+
+impl HeldNotices {
+    /// Whether a child's notice waits for the next prompt.
+    pub(super) fn has_undelivered(&self) -> bool {
+        let Self(delivery) = self;
+        !delivery.pending.is_empty() || !delivery.notices.is_empty()
+    }
 }
 
 impl Delegation {

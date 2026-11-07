@@ -57,7 +57,7 @@ After `rho/session/attach`, the daemon sends the session's events as `rho/sessio
 | `input_held` | The request `id`'s timeout stopped; it waits for an answer. |
 | `turn_ended` | The turn ended, with its `outcome` ([below](#how-a-turn-ends)). |
 
-Each loaded session has one stream of events, numbered by `seq` from 1. A client keeps the `stream` and the highest `seq` it has handled since its attach response as its cursor, and passes them as `after` when it attaches again, for example after the TUI is closed and reopened. The response's `replay` says what follows:
+Each loaded session has one stream of events, numbered by `seq` from 1. A client keeps the `stream` and the highest `seq` it has handled since its attach response as its cursor, and passes them as `after` when it attaches again, for example after the TUI is closed and reopened. A session the daemon [unloaded](/daemon#unloading-idle-sessions) and reopened since has a new stream. The response's `replay` says what follows:
 
 - `tail`: the daemon still buffers every event after the cursor, and sends those, then the live ones. The client continues where it was.
 - `reset`: the cursor is from another stream, too old, at 0, or absent. The client drops what it shows and its cursor. The daemon sends the session's saved conversation, then the events since the last turn saved: the last turn's `turn_ended` and `state`, and the turn under way. The saved conversation's events carry `seq` 0, except the last, which carries the `seq` the turn under way began after, so a client that detaches before it has the whole conversation holds no cursor and resets again.

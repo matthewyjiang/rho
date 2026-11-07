@@ -11,7 +11,8 @@
 //! that is not loaded has no turn to act on.
 //!
 //! Clients attach to a loaded session to follow its events (#1657); see
-//! [`feed`].
+//! [`feed`]. A session that sits idle, with no turn under way and no client
+//! attached, is unloaded until a request reopens it; see [`unload`].
 //!
 //! Once the daemon starts stopping, it refuses new sessions and prompts and
 //! detaches every client; then it stops the turns under way, waits for them
@@ -55,12 +56,15 @@ mod reopen;
 #[cfg(test)]
 mod test_events;
 mod turn;
+mod unload;
 
 use feed::{Attached, Feed};
 use inputs::Inputs;
 use open::{open_session, OpenedSession, Opening, Workspace};
 use reopen::ReopenLocks;
 use turn::{PromptStart, TurnLimit, TurnTask};
+use unload::Residency;
+pub(in crate::app) use unload::UNLOAD_IDLE_AFTER;
 
 /// How long the daemon's stop waits for its turns to save once it was
 /// asked to stop, before it records them interrupted and exits anyway.
@@ -76,8 +80,10 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(4);
 /// their turns.
 pub(super) struct Sessions {
     jobs: Arc<JobRegistry>,
+    /// Lock order: a session's turn lock, then this; never the reverse.
     loaded: Mutex<HashMap<SessionId, Arc<LoadedSession>>>,
-    /// The saved sessions being reopened, one at a time each.
+    /// The saved sessions being reopened, one at a time each, and those the
+    /// idle unload is tearing down, which a reopen waits for.
     reopening: ReopenLocks,
     /// The daemon-wide budget the sessions' subagents share, and their jobs.
     subagents: Subagents,
@@ -85,6 +91,9 @@ pub(super) struct Sessions {
     logouts: Logouts,
     /// Cancelled once the daemon starts stopping ([`Self::begin_stop`]).
     stopping: CancellationToken,
+    /// Read-held from each idle unload decision through its teardown; the
+    /// stop write-locks it to wait for that teardown.
+    unloading: tokio::sync::RwLock<()>,
 }
 
 /// A session this daemon loaded.
@@ -99,11 +108,10 @@ struct LoadedSession {
     config: Config,
     /// The directory the session works in.
     workspace: PathBuf,
-    /// The cancel of the session's current or last turn. A prompt replaces
-    /// it as its turn starts, and a cancel trips it and the session's
-    /// handle, both under this lock, so a cancel never reaches a turn it did
-    /// not see start.
-    turn_cancel: Mutex<CancellationToken>,
+    /// The turn's cancel and the session's residency. A prompt's start, an
+    /// attach, a turn's end, a cancel, and the idle unload are ordered by
+    /// this lock.
+    turn: Mutex<TurnSlot>,
     /// The session's events, as attached clients follow them.
     feed: Feed,
     /// Turns the runtime's events into the feed's; only the turn under way
@@ -111,6 +119,17 @@ struct LoadedSession {
     live: Mutex<LiveEvents>,
     /// The input requests the turn under way has open (#1660).
     inputs: Mutex<Inputs>,
+}
+
+/// The state a session's turn lock guards.
+struct TurnSlot {
+    /// The cancel of the session's current or last turn. A prompt replaces
+    /// it as its turn starts, and a cancel trips it and the session's
+    /// handle, so a cancel never reaches a turn it did not see start.
+    cancel: CancellationToken,
+    /// Whether the session is in use, idle, or unloaded, as the idle unload
+    /// tracks it.
+    residency: Residency,
 }
 
 /// Times out input request `id` of `session` after `after`, unless the
@@ -178,7 +197,10 @@ impl LoadedSession {
                     .map(|seconds| Duration::from_secs(seconds.get())),
             )),
             config,
-            turn_cancel: Mutex::default(),
+            turn: Mutex::new(TurnSlot {
+                cancel: CancellationToken::new(),
+                residency: Residency::InUse,
+            }),
         }
     }
 
@@ -244,23 +266,29 @@ impl LoadedSession {
         self.live.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn turn_cancel(&self) -> MutexGuard<'_, CancellationToken> {
-        // Only ever replaced or cancelled whole, so a panic cannot leave it
-        // half-changed.
-        self.turn_cancel
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    fn turn(&self) -> MutexGuard<'_, TurnSlot> {
+        // Its fields are only ever replaced or cancelled whole, so a panic
+        // cannot leave it half-changed.
+        self.turn.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The turn lock of a request that uses the session, marked in use, or
+    /// `None` once the idle unload took the session: the request reopens it
+    /// instead.
+    fn enter(&self) -> Option<MutexGuard<'_, TurnSlot>> {
+        let mut turn = self.turn();
+        turn.residency.mark_in_use().then_some(turn)
     }
 
     /// Cancels the turn under way, if any, even one that has not begun its
     /// prompt yet.
     fn cancel_turn(&self) {
-        // Both under the `turn_cancel` lock, which a prompt takes to start
-        // its turn, so the handle's cancel cannot reach a turn started after
-        // this cancel. Lock order: `turn_cancel`, then the prompt gate's
+        // Both under the turn lock, which a prompt takes to start its turn,
+        // so the handle's cancel cannot reach a turn started after this
+        // cancel. Lock order: the turn lock, then the prompt gate's
         // slot inside `handle.cancel()`; nothing takes them the other way.
-        let turn_cancel = self.turn_cancel();
-        turn_cancel.cancel();
+        let turn = self.turn();
+        turn.cancel.cancel();
         self.handle.cancel();
     }
 }
@@ -276,6 +304,7 @@ impl Sessions {
             reopening: ReopenLocks::default(),
             logouts: Logouts::default(),
             stopping,
+            unloading: tokio::sync::RwLock::new(()),
         }
     }
 
@@ -367,31 +396,31 @@ impl Sessions {
         params: SessionPromptParams,
     ) -> Result<SessionPromptResponse, RpcError> {
         self.refuse_when_stopping()?;
-        let session = self.session(&params.session).await?;
-        let cancel = {
-            let mut turn_cancel = session.turn_cancel();
-            match self.jobs.start_turn(&session.job) {
-                // Told under the `turn_cancel` lock, which the last turn's
-                // end is told under too, so the feed never says `running`
-                // before the last turn's end, nor a turn's end after the next
-                // turn began.
-                Ok(()) => session.feed.publish([state_event(&JobState::Running)]),
-                Err(StartTurnError::Busy) => {
-                    return Err(RpcError::new(
-                        ErrorCode::SessionBusy,
-                        "session already has a turn in progress",
-                    ))
+        let (session, cancel) = self
+            .enter_session(&params.session, |session, turn| {
+                match self.jobs.start_turn(&session.job) {
+                    // Told under the turn lock, which the last turn's
+                    // end is told under too, so the feed never says `running`
+                    // before the last turn's end, nor a turn's end after the next
+                    // turn began.
+                    Ok(()) => session.feed.publish([state_event(&JobState::Running)]),
+                    Err(StartTurnError::Busy) => {
+                        return Err(RpcError::new(
+                            ErrorCode::SessionBusy,
+                            "session already has a turn in progress",
+                        ))
+                    }
+                    Err(StartTurnError::Unknown(_)) => {
+                        return Err(RpcError::new(
+                            ErrorCode::InternalError,
+                            format!("session's job {} is not recorded", session.job),
+                        ))
+                    }
                 }
-                Err(StartTurnError::Unknown(_)) => {
-                    return Err(RpcError::new(
-                        ErrorCode::InternalError,
-                        format!("session's job {} is not recorded", session.job),
-                    ))
-                }
-            }
-            *turn_cancel = CancellationToken::new();
-            turn_cancel.clone()
-        };
+                turn.cancel = CancellationToken::new();
+                Ok(turn.cancel.clone())
+            })
+            .await?;
         // Spawned before anything awaits, so the turn runs and records its
         // end apart from this request: the transport joins every request it
         // read, but this one stops waiting once the daemon stops.
@@ -484,10 +513,15 @@ impl Sessions {
         params: SessionAttachParams,
     ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
         self.refuse_when_stopping()?;
-        let session = self.session(&params.session).await?;
-        // Taken under the `turn_cancel` lock a prompt starts its turn under,
-        // so an attach never sees the last turn's end once the job list says
-        // the next turn runs.
+        // Taken under the turn lock a prompt starts its turn under, so an
+        // attach never sees the last turn's end once the job list says the
+        // next turn runs, and the idle unload never takes a session a client
+        // just attached to.
+        let (session, attached) = self
+            .enter_session(&params.session, |session, _turn| {
+                Ok(session.feed.attach(params.after.as_ref()))
+            })
+            .await?;
         let Attached {
             stream,
             replay,
@@ -495,10 +529,7 @@ impl Sessions {
             job,
             inputs,
             subscription,
-        } = {
-            let _turn = session.turn_cancel();
-            session.feed.attach(params.after.as_ref())
-        };
+        } = attached;
         let response = SessionAttachResponse {
             stream,
             workspace: session.workspace.clone(),
@@ -513,8 +544,8 @@ impl Sessions {
     /// Stops every session for the daemon's exit, beginning the stop if
     /// [`Self::begin_stop`] has not. Stops each turn, waits until
     /// [`DRAIN_TIMEOUT`] after `stop_requested` for the turns to save and
-    /// the runtimes to tear down, and records every job still under way as
-    /// interrupted.
+    /// the runtimes to tear down, the idle unload's included, and records
+    /// every job still under way as interrupted.
     pub(super) async fn stop(&self, stop_requested: tokio::time::Instant) {
         self.begin_stop();
         let sessions: Vec<_> = self.loaded().drain().map(|(_, session)| session).collect();
@@ -532,7 +563,12 @@ impl Sessions {
         });
         let drained = tokio::time::timeout_at(
             stop_requested + DRAIN_TIMEOUT,
-            futures_util::future::join_all(teardowns),
+            futures_util::future::join(
+                futures_util::future::join_all(teardowns),
+                // The unload decides under the lock `begin_stop` took, so a
+                // session it took from `loaded` is torn down under this.
+                self.unloading.write(),
+            ),
         )
         .await;
         if drained.is_err() {

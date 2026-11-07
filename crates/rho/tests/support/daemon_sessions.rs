@@ -116,12 +116,19 @@ impl Sandbox {
     /// Starts `rho daemon run` with the fixture in `mode` and connects to
     /// it once it answers.
     pub(super) async fn start_daemon(&self, mode: &str) -> (DaemonProcess, Client) {
+        self.start_daemon_with(mode, &[]).await
+    }
+
+    /// Starts `rho daemon run` with `args` and the fixture in `mode`, and
+    /// connects to it once it answers.
+    async fn start_daemon_with(&self, mode: &str, args: &[&str]) -> (DaemonProcess, Client) {
         // Outside every session's workspace, as a service manager starts it,
         // so nothing a session runs can lean on the daemon's own directory.
         let daemon = DaemonProcess(
             self.rho(mode)
                 .current_dir(self.daemon.home())
                 .args(["daemon", "run"])
+                .args(args)
                 .spawn()
                 .unwrap(),
         );
@@ -735,6 +742,50 @@ async fn a_session_reopens_only_as_the_agent_it_was_saved_as() {
         "log:\n{}",
         sandbox.daemon_log()
     );
+}
+
+// Covers: a session that sits idle, with no turn under way and no client
+// attached, past `--unload-idle-after` is unloaded, letting go of its file
+// so another process can take it, here `rho sessions rm`; one a client
+// follows, idle as long, stays loaded and held (#1661).
+// Owner: daemon idle session unload.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_idle_session_is_unloaded_and_its_file_let_go() {
+    let sandbox = Sandbox::new();
+    let (_daemon, client) = sandbox
+        .start_daemon_with("fixed", &["--unload-idle-after", "200ms"])
+        .await;
+    // Saved, so another process finds it.
+    let saved_session = async || {
+        let session = new_session(&client, &sandbox.workspace).await;
+        prompt(&client, &session).await.unwrap();
+        settled_job(&sandbox, &client, &session).await;
+        session
+    };
+    // First, so without its follower it would unload no later than the other.
+    let followed = saved_session().await;
+    let (_follower, _) = Follower::attach(&sandbox, &followed, Vec::new(), None).await;
+    let idle = saved_session().await;
+    let delete = |session: &SessionId| {
+        sandbox
+            .rho("fixed")
+            .args(["sessions", "rm", "--yes", session.as_str()])
+            .status()
+            .unwrap()
+            .success()
+    };
+
+    sandbox
+        .daemon
+        .poll_until(
+            "the daemon to let the idle session go",
+            DEADLINE,
+            async || delete(&idle).then_some(()),
+        )
+        .await;
+    let followed_deleted = delete(&followed);
+
+    assert!(!followed_deleted, "log:\n{}", sandbox.daemon_log());
 }
 
 /// A client following one session's events on its own connection, as a

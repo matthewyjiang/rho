@@ -160,6 +160,29 @@ pub(in crate::app) async fn unattended_runtime_on(
     SessionRuntime::for_tests_with(build, built, SessionStorage::saved(stored), config)
 }
 
+/// A runtime around a [`built_with`] session on the SDK `runtime`, whose
+/// file under `root`, also its workspace, is created on its first save, as
+/// a new daemon session's is, for a host nobody watches.
+pub(in crate::app) async fn unsaved_unattended_runtime_on(
+    root: &Path,
+    config: &Config,
+    runtime: rho_sdk::Rho,
+    provider: Arc<dyn ModelProvider>,
+) -> SessionRuntime {
+    let id = rho_sdk::SessionId::new();
+    let built = built_with(config, id.clone(), runtime, provider).await;
+    let mut build = test_build(config, root);
+    build.host = HostCapabilities::unattended(UnattendedApprovals::Alone);
+    let (file_root, id) = (root.to_path_buf(), id.to_string());
+    let storage = SessionStorage::unsaved(
+        root.to_path_buf(),
+        Box::new(move || {
+            StoredSession::create_with_id_in_root_for_test(&file_root, &file_root, &id)
+        }),
+    );
+    SessionRuntime::for_tests_with(build, built, storage, config)
+}
+
 /// How a test session is built: as a [`root_agent`] whose host answers its
 /// approvals, configured from `workspace_root`.
 pub(in crate::app) fn test_build(config: &Config, workspace_root: &Path) -> SessionBuild {

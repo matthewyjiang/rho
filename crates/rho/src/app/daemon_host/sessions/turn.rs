@@ -314,7 +314,7 @@ impl DaemonView {
         self.session.change_inputs(Inputs::withdraw_all);
         {
             // See `prompt`: the next turn's `running` cannot come before this.
-            let _turn_cancel = self.session.turn_cancel();
+            let _turn = self.session.turn();
             self.session.end_turn(outcome, end);
         }
         self.ended = true;

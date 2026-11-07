@@ -19,7 +19,7 @@ use tokio::sync::OwnedMutexGuard;
 
 use super::{
     open::{open_session, Opening},
-    open_failed, writing, LoadedSession, SessionJobRecord, Sessions,
+    open_failed, writing, LoadedSession, SessionJobRecord, Sessions, TurnSlot,
 };
 use crate::{
     app::daemon_host::{
@@ -47,6 +47,26 @@ impl Sessions {
         match loaded {
             Some(session) => Ok(session),
             None => self.reopen(&id).await,
+        }
+    }
+
+    /// Runs `use_session` on the session `id` names, loaded, under its turn
+    /// lock and marked in use, so the idle unload cannot take it meanwhile
+    /// (#1661). A session the unload took after the lookup is looked up
+    /// again, which reopens it: an unloaded session is never in `loaded`.
+    pub(super) async fn enter_session<T>(
+        &self,
+        id: &rho_protocol::SessionId,
+        use_session: impl FnOnce(&LoadedSession, &mut TurnSlot) -> Result<T, RpcError>,
+    ) -> Result<(Arc<LoadedSession>, T), RpcError> {
+        loop {
+            let session = self.session(id).await?;
+            let Some(mut turn) = session.enter() else {
+                continue;
+            };
+            let used = use_session(&session, &mut turn);
+            drop(turn);
+            return used.map(|used| (session, used));
         }
     }
 
@@ -94,7 +114,9 @@ impl Sessions {
 
 /// One lock per saved session being reopened, so concurrent requests for a
 /// session reopen it once while different sessions reopen at the same time.
-/// A session's lock is removed once no request holds or waits on it.
+/// The idle unload holds a session's through its teardown, so a reopen does
+/// not find the file still held by the old runtime. A session's lock is
+/// removed once nothing holds or waits on it.
 #[derive(Default)]
 pub(super) struct ReopenLocks(Mutex<HashMap<SessionId, Arc<tokio::sync::Mutex<()>>>>);
 
@@ -133,8 +155,9 @@ impl Drop for ReopenGuard<'_> {
         // The map's and this guard's are the only clones unless a request
         // waits on the lock, and clones are taken only under the map's lock,
         // held here. Removing a lock someone waits on would let the next
-        // request reopen beside that waiter. Waiters never give up: the
-        // transport runs every request to its end.
+        // request reopen beside that waiter. Requests never give up: the
+        // transport runs every request to its end. The sweeper aborted at
+        // the daemon's exit can leave one entry, which nothing reads then.
         if Arc::strong_count(OwnedMutexGuard::mutex(&self.held)) == 2 {
             map.remove(&self.id);
         }

@@ -13,6 +13,23 @@ fn parse_permission_mode(value: &str) -> Result<PermissionMode, PermissionModePa
     value.parse()
 }
 
+/// The shortest `rho daemon run --unload-idle-after`. Shorter, a session
+/// could unload between one client's consecutive requests, as a reopen
+/// takes up to 41 ms measured (`UNLOAD_IDLE_AFTER` has the receipt), and
+/// the sweep, which runs once per period, would spin.
+const MIN_UNLOAD_IDLE_AFTER: Duration = Duration::from_millis(100);
+
+fn parse_unload_idle_after(value: &str) -> Result<Duration, String> {
+    let duration = parse_duration(value)?;
+    if duration < MIN_UNLOAD_IDLE_AFTER {
+        return Err(format!(
+            "invalid duration '{value}': must be at least {}",
+            humantime::format_duration(MIN_UNLOAD_IDLE_AFTER)
+        ));
+    }
+    Ok(duration)
+}
+
 fn parse_credential_store_backend(value: &str) -> Result<CredentialStoreBackend, String> {
     CredentialStoreBackend::parse(value).map_err(|error| error.to_string())
 }
@@ -578,7 +595,14 @@ pub enum WorkflowCommand {
 #[derive(Subcommand, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DaemonCommand {
     /// Run the daemon in the foreground until stopped. The default.
-    Run,
+    Run {
+        /// Unload a session once it has sat idle this long: no turn under
+        /// way and no client attached. Unloading closes its MCP servers and
+        /// lets other rho processes open it; the next prompt or attach
+        /// reopens it. Defaults to 60s; at least 100ms.
+        #[arg(long, value_name = "DURATION", value_parser = parse_unload_idle_after)]
+        unload_idle_after: Option<Duration>,
+    },
     /// Show the running daemon's pid, version, uptime, and socket.
     ///
     /// Never starts a daemon. Exits with status 1 when none is running.

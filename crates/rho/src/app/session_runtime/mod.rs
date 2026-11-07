@@ -97,7 +97,9 @@ pub(crate) use prompt_turn::{PlanReport, TurnView};
 pub(crate) use session_tools::SessionTools;
 pub(crate) use settings::SettingChangeError;
 #[cfg(test)]
-pub(in crate::app) use test_support::{unattended_runtime_on, HangUntilCancel};
+pub(in crate::app) use test_support::{
+    unattended_runtime_on, unsaved_unattended_runtime_on, HangUntilCancel,
+};
 pub(crate) use title::TitleJob;
 use title::TitleState;
 pub(crate) use turn::{Turn, TurnIo, TurnOutcome, TurnStart};
@@ -259,6 +261,24 @@ impl SessionRuntime {
             model: identity.model.clone(),
             auth: self.auth.clone(),
         }
+    }
+
+    /// Whether the session has saved its file yet: a new session saves it
+    /// with its first prompt.
+    pub(crate) fn is_saved(&self) -> bool {
+        self.storage.file().is_some()
+    }
+
+    /// Whether background work the session's prompts started still runs or
+    /// holds a result for the next prompt, which [`Self::shutdown`] would
+    /// stop or drop (#1661).
+    pub(crate) fn has_background_work(&self) -> bool {
+        let session_id = self.built.session.id().to_string();
+        delegation::BackgroundSources::of(&self.built.tools).has_work(&session_id)
+            || self
+                .held_notices
+                .as_ref()
+                .is_some_and(delegation::HeldNotices::has_undelivered)
     }
 
     /// Cancels any prompt and tears the session down.
