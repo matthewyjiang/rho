@@ -38,7 +38,7 @@ pub(super) struct Inputs {
     /// How long a question with fallback answers waits before the daemon
     /// answers it with them: the session's `[questionnaire]
     /// timeout_seconds`, if set.
-    questions_time_out: Option<Duration>,
+    question_timeout: Option<Duration>,
     /// The id of the session's next request: ids are never reused while
     /// the daemon has the session loaded.
     next: u64,
@@ -81,10 +81,10 @@ enum Waiting {
 
 impl Inputs {
     /// No requests open yet. Questions with fallback answers time out after
-    /// `questions_time_out`, if set.
-    pub(super) fn new(questions_time_out: Option<Duration>) -> Self {
+    /// `question_timeout`, if set.
+    pub(super) fn new(question_timeout: Option<Duration>) -> Self {
         Self {
-            questions_time_out,
+            question_timeout,
             next: 0,
             open: BTreeMap::new(),
             events: Vec::new(),
@@ -119,11 +119,12 @@ impl Inputs {
     }
 
     /// Opens or withdraws the request `event` names, if any, for the model
-    /// turn whose answers go to `control`.
+    /// turn whose answers go to `control`, at `now`.
     pub(super) fn note(
         &mut self,
         control: &mpsc::UnboundedSender<TurnControl>,
         event: &SessionEvent,
+        now: SystemTime,
     ) {
         let (waiting, ask, tool_call) = match event {
             SessionEvent::ApprovalRequested { id, request } => (
@@ -179,46 +180,41 @@ impl Inputs {
         };
         let id = InputRequestId(self.next);
         self.next += 1;
-        let timeout = self.timeout_for(&waiting);
-        let wire_timeout = timeout.as_ref().map(|timeout| {
-            self.timeouts.push((id, timeout.after));
-            Box::new(timeout.wire())
-        });
+        // Only a question whose agent offered fallback answers times out,
+        // and only when the session's questions do.
+        let (wire_timeout, timeout) = match (&waiting, self.question_timeout) {
+            (Waiting::Question { id: asked, request }, Some(after)) => request
+                .timeout_fallback()
+                .zip(asks::timeout(request, deadline_ms(now, after)))
+                .map(|(fallback, wire_timeout)| {
+                    self.timeouts.push((id, after));
+                    let answer = TurnControl::AnswerQuestion {
+                        id: asked.clone(),
+                        answer: Ok(fallback.clone()),
+                    };
+                    (wire_timeout, answer)
+                }),
+            (Waiting::Question { .. }, None) | (Waiting::Approval(_) | Waiting::Plan { .. }, _) => {
+                None
+            }
+        }
+        .unzip();
         self.open.insert(
             id,
             Open {
                 control: control.clone(),
                 waiting,
-                timeout: timeout.map(|timeout| timeout.control),
+                timeout,
             },
         );
         self.events.push(wire::SessionEvent::InputRequested {
-            request: wire::InputRequest {
+            request: Box::new(wire::InputRequest {
                 id,
                 ask,
                 tool_call: tool_call.map(wire_tool_call),
                 timeout: wire_timeout,
-            },
+            }),
         });
-    }
-
-    /// The timeout a newly opened request gets, if any: only a question
-    /// whose agent offered fallback answers, when questions time out.
-    fn timeout_for(&self, waiting: &Waiting) -> Option<Timeout> {
-        let Waiting::Question { id, request } = waiting else {
-            return None;
-        };
-        let after = self.questions_time_out?;
-        let fallback = request.timeout_fallback()?;
-        Some(Timeout {
-            after,
-            answers: fallback.answers().clone(),
-            reason: request.timeout_reason().unwrap_or_default().to_owned(),
-            control: TurnControl::AnswerQuestion {
-                id: id.clone(),
-                answer: Ok(fallback.clone()),
-            },
-        })
     }
 
     /// Takes out the request of the model turn whose answers go to
@@ -303,32 +299,14 @@ impl Inputs {
     }
 }
 
-/// A newly opened request's timeout.
-struct Timeout {
-    after: Duration,
-    /// The fallback answers, as clients see them.
-    answers: BTreeMap<String, Vec<String>>,
-    reason: String,
-    /// What the turn gets when it times out.
-    control: TurnControl,
-}
-
-impl Timeout {
-    fn wire(&self) -> wire::InputTimeout {
-        let deadline = SystemTime::now()
-            .checked_add(self.after)
-            .and_then(|deadline| deadline.duration_since(UNIX_EPOCH).ok())
-            .map_or(u64::MAX, |deadline| {
-                u64::try_from(deadline.as_millis()).unwrap_or(u64::MAX)
-            });
-        wire::InputTimeout {
-            deadline,
-            answer: InputAnswer::Answers {
-                answers: self.answers.clone(),
-            },
-            reason: self.reason.clone(),
-        }
-    }
+/// `after` past `now`, in Unix milliseconds; saturates, as no deadline
+/// that far out is ever reached.
+fn deadline_ms(now: SystemTime, after: Duration) -> u64 {
+    now.checked_add(after)
+        .and_then(|deadline| deadline.duration_since(UNIX_EPOCH).ok())
+        .map_or(u64::MAX, |deadline| {
+            u64::try_from(deadline.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 fn resolved(id: InputRequestId, resolution: Resolution) -> wire::SessionEvent {

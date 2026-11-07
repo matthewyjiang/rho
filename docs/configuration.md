@@ -346,6 +346,6 @@ timeout_seconds = 60
 
 That value is an example, not a default. Omit `timeout_seconds` to disable automatic answers. Zero, negative values, fractions, and strings are invalid. In `/config` → **Agent behavior** → **Questionnaire timeout**, enter positive seconds or clear the field. Changes apply when the next form opens, including forms from delegated agents, not to an already-open form.
 
-A [daemon](/daemon) session enforces the timeout itself, with or without a client attached, using the value it was opened with. A client pauses the countdown for good once you start on the form ([Timeouts](/protocol#timeouts)).
+A [daemon](/daemon) session enforces the timeout itself, with or without a client attached, using the value it was opened with. A client holds the question once you start on the form, and it then waits for your answer ([Timeouts](/protocol#timeouts)).
 
 What the TUI shows, and what does not count as consent: [Questionnaire fallbacks](/interactive-tui#questionnaire-fallbacks).

@@ -112,7 +112,7 @@ pub enum SessionEvent {
     Notice { text: String },
     /// The turn waits for a person to answer `request` with
     /// [`super::SESSION_ANSWER`] (#1660).
-    InputRequested { request: InputRequest },
+    InputRequested { request: Box<InputRequest> },
     /// Input request `id` closed: a client answered it, the turn withdrew
     /// it, or it timed out. Clients that show it stop.
     InputResolved {

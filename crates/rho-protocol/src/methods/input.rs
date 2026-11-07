@@ -53,7 +53,7 @@ pub struct InputRequest {
     /// When the daemon answers the request itself, if it will; absent once
     /// the request is held.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout: Option<Box<InputTimeout>>,
+    pub timeout: Option<InputTimeout>,
 }
 
 /// An answer the daemon gives an input request at a deadline, unless a
@@ -63,7 +63,7 @@ pub struct InputRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct InputTimeout {
     /// Unix time, in milliseconds, when the daemon answers.
-    pub deadline: u64,
+    pub deadline_ms: u64,
     /// What the daemon answers with.
     pub answer: InputAnswer,
     /// Why the agent offered that answer.

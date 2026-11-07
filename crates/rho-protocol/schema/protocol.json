@@ -629,7 +629,7 @@
           "$ref": "#/$defs/InputAnswer",
           "description": "What the daemon answers with."
         },
-        "deadline": {
+        "deadline_ms": {
           "description": "Unix time, in milliseconds, when the daemon answers.",
           "format": "uint64",
           "minimum": 0,
@@ -641,7 +641,7 @@
         }
       },
       "required": [
-        "deadline",
+        "deadline_ms",
         "answer",
         "reason"
       ],
