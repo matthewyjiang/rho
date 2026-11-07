@@ -4,7 +4,7 @@ use super::{
     types::{terminal, ProcessLimits},
     Chunk, Snapshot, State,
 };
-use rho_sdk::{ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits};
+use rho_sdk::{ProcessExecution, ProcessInvocation, ProcessOutputLimits};
 use std::{
     collections::{HashMap, VecDeque},
     path::Path,
@@ -74,7 +74,7 @@ struct Inner {
 #[derive(Clone)]
 pub struct ProcessManager {
     inner: Arc<Mutex<Inner>>,
-    environment: ProcessEnvironment,
+    environment: rho_tools::SharedProcessEnvironment,
     exited: Arc<Notify>,
 }
 
@@ -85,17 +85,20 @@ impl ProcessManager {
     /// stricter child-process policy.
     #[cfg(test)]
     pub fn new(limits: ProcessLimits) -> Self {
-        Self::with_environment(limits, ProcessEnvironment::InheritAll)
+        Self::with_environment(limits, rho_sdk::ProcessEnvironment::InheritAll)
     }
 
-    pub fn with_environment(limits: ProcessLimits, environment: ProcessEnvironment) -> Self {
+    pub fn with_environment(
+        limits: ProcessLimits,
+        environment: impl Into<rho_tools::SharedProcessEnvironment>,
+    ) -> Self {
         let exited = Arc::new(Notify::new());
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 records: HashMap::new(),
                 limits,
             })),
-            environment,
+            environment: environment.into(),
             exited,
         }
     }
@@ -127,7 +130,7 @@ impl ProcessManager {
         let execution = ProcessExecution::new(
             cwd,
             rho_tools::shell_invocation(command),
-            self.environment.clone(),
+            self.environment.current(),
             ProcessOutputLimits::new(1, timeout),
         );
         // Keep the user-facing command, not the platform wrapper PowerShell

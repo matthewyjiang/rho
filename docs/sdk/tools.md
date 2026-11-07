@@ -177,12 +177,12 @@ Parent traversal is rejected even if lexical normalization would return inside t
 - `ProcessInvocation`, distinguishing direct execution from intentional shell execution
 - executable selection as an exact path or `PATH` search
 - an argument vector separate from shell command text
-- environment policy as empty, fully inherited, inherited-except-named, or an explicit inherited-name list
+- environment policy as empty, fully inherited, inherited-except-named, an explicit inherited-name list, or explicit variables (`ProcessEnvironment::Explicit`, whose `Debug` shows only the count)
 - output byte limit and optional wall-time limit
 
 An approval UI can therefore identify the shell boundary, executable lookup, cwd, environment inheritance, timeout, and output budget without parsing shell text. Shell text remains available through a dedicated accessor for display or policy, but its `Debug` representation is redacted. Arguments are also omitted from `Debug`.
 
-Rho's built-in shell and background-process adapters authorize these facts before spawning. They use a canonical workspace cwd, closed stdin, explicit shell arguments, bounded output, `kill_on_drop`, Unix process groups or Windows job objects, and descendant cleanup on timeout, stop, drop, or shutdown. Rho composes one explicit child-process environment at tool construction time: `ProcessEnvironment::inherit_except(rho_providers::credential_env_vars())`, so provider credential overrides are stripped from agent child processes. Generic SDK shell defaults remain `ProcessEnvironment::InheritAll`; security-sensitive hosts should require approval or inject a stricter process environment when constructing adapters.
+Rho's built-in shell and background-process adapters authorize these facts before spawning. They use a canonical workspace cwd, closed stdin, explicit shell arguments, bounded output, `kill_on_drop`, Unix process groups or Windows job objects, and descendant cleanup on timeout, stop, drop, or shutdown. Rho composes one child-process environment per session: `ProcessEnvironment::inherit_except(rho_providers::credential_env_vars())`, so provider credential overrides are stripped from agent child processes, or, for a daemon session, its client's variables without credentials as `ProcessEnvironment::Explicit`. The adapters take it as a `rho_tools::SharedProcessEnvironment`, which a host can replace between turns; each call uses the environment current when it is prepared. Generic SDK shell defaults remain `ProcessEnvironment::InheritAll`; security-sensitive hosts should require approval or inject a stricter process environment when constructing adapters.
 
 ## Network and skill policy
 

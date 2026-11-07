@@ -1,6 +1,7 @@
 //! The processes a daemon session's tools start, through the real binary:
-//! the daemon's stop ends them, as closing a session ends them in every
-//! rho host (#1661).
+//! they run with the prompting client's environment (#1659), and the
+//! daemon's stop ends them, as closing a session ends them in every rho
+//! host (#1661).
 
 use std::path::Path;
 
@@ -8,7 +9,9 @@ use pretty_assertions::assert_eq;
 use rho_protocol::{methods::SessionCancel, JobState, SessionCancelParams};
 use serde_json::json;
 
-use super::sessions::{new_session, prompt_tool_call, settled_job, Sandbox};
+use super::sessions::{
+    client_environment, new_session, prompt_tool_call, prompt_tool_call_in, settled_job, Sandbox,
+};
 
 /// A command whose shell starts a child that sleeps, records the child's
 /// pid in `file` in the workspace, and waits for it. The child is the
@@ -130,5 +133,54 @@ async fn the_daemons_stop_ends_the_processes_its_sessions_started() {
         (JobState::Cancelled, [true, true]),
         "log:\n{}",
         sandbox.daemon_log()
+    );
+}
+
+// Covers: a daemon session's tool processes run with the prompting client's
+// environment, without its provider credentials and with none of the
+// daemon's own, and the next prompt's replaces it; neither the session file
+// nor the daemon log holds its values (#1659).
+// Owner: daemon session environment.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_sessions_tools_run_with_the_prompting_clients_environment() {
+    let sandbox = Sandbox::new();
+    sandbox.set_permission_mode("bypass");
+    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let session = new_session(&client, &sandbox.workspace).await;
+    // The daemon has the fixture's mode set; no client sends it.
+    let record = json!({
+        "id": "environment",
+        "name": "bash",
+        "arguments": {
+            "command": "printf '%s|%s|%s' \"$PROBE\" \"${XAI_API_KEY-unset}\" \"${RHO_AUTOMATION_TEST_MODE-unset}\" > env.txt",
+        },
+    });
+    let mut seen = Vec::new();
+    for probe in ["probe-1659-first", "probe-1659-second"] {
+        let environment = client_environment()
+            .into_iter()
+            .chain([
+                ("PROBE".to_owned(), probe.to_owned()),
+                ("XAI_API_KEY".to_owned(), "key-1659".to_owned()),
+            ])
+            .collect();
+        prompt_tool_call_in(&client, &session, &record, environment).await;
+        settled_job(&sandbox, &client, &session).await;
+        seen.push(std::fs::read_to_string(sandbox.workspace.join("env.txt")).unwrap());
+    }
+    let saved = serde_json::to_string(&sandbox.session_records(&session)).unwrap();
+    let log = sandbox.daemon_log();
+
+    assert_eq!(
+        seen,
+        [
+            "probe-1659-first|unset|unset",
+            "probe-1659-second|unset|unset"
+        ],
+        "log:\n{log}"
+    );
+    assert_eq!(
+        ["probe-1659", "key-1659"].map(|value| saved.contains(value) || log.contains(value)),
+        [false, false]
     );
 }

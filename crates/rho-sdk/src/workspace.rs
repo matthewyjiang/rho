@@ -16,9 +16,9 @@ pub(crate) use approval::{ApprovalAuditLog, SessionApprovals};
 pub(crate) use authorization::authorize;
 pub(crate) use authorization::{authorize_for_call, AuthorizationScope, AuthorizationServices};
 pub use capability::{
-    CapabilityKind, CapabilityOperation, CapabilityRequest, CapabilitySource, ExecutableSelection,
-    NetworkTarget, PathScope, ProcessEnvironment, ProcessExecution, ProcessInvocation,
-    ProcessOutputLimits,
+    CapabilityKind, CapabilityOperation, CapabilityRequest, CapabilitySource, EnvironmentVariables,
+    ExecutableSelection, NetworkTarget, PathScope, ProcessEnvironment, ProcessExecution,
+    ProcessInvocation, ProcessOutputLimits,
 };
 pub use path::{
     ResolvedWorkspacePath, Workspace, WorkspacePathError, WorkspacePathErrorKind,

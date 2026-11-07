@@ -432,6 +432,13 @@
       ],
       "description": "Why the daemon dropped an attachment."
     },
+    "Environment": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "A client's environment variables, which a daemon session's processes\nrun with in place of the daemon's own (#1659): its tools' commands and\nbackground processes, minus provider credentials. Values are secrets:\nthe daemon never logs or saves them, and `Debug` shows only how many\nthere are.",
+      "type": "object"
+    },
     "HelloParams": {
       "description": "Params of [`HELLO`].",
       "properties": {
@@ -1400,12 +1407,17 @@
           ],
           "description": "The last event this client has, to resume after it. Absent, from\nanother stream, or older than the daemon keeps: [`Replay::Reset`]."
         },
+        "environment": {
+          "$ref": "#/$defs/Environment",
+          "description": "The client's environment, used only when the attach reopens a\nsession the daemon does not have loaded (#1661): the session's\nprocesses run with it until a prompt brings another."
+        },
         "session": {
           "$ref": "#/$defs/SessionId"
         }
       },
       "required": [
-        "session"
+        "session",
+        "environment"
       ],
       "type": "object"
     },
@@ -1822,10 +1834,15 @@
         "cwd": {
           "description": "The session's workspace, an absolute path to an existing directory.\nThe daemon reads config and agents for it as `rho` started there\nwould.",
           "type": "string"
+        },
+        "environment": {
+          "$ref": "#/$defs/Environment",
+          "description": "The client's environment, which the session's processes run with\nuntil a prompt brings another."
         }
       },
       "required": [
-        "cwd"
+        "cwd",
+        "environment"
       ],
       "type": "object"
     },
@@ -1844,6 +1861,10 @@
     "SessionPromptParams": {
       "description": "Params of [`SESSION_PROMPT`].",
       "properties": {
+        "environment": {
+          "$ref": "#/$defs/Environment",
+          "description": "The prompting client's environment, which the processes this turn\nstarts run with, and those of later turns until another prompt\nbrings another. Processes already running keep theirs."
+        },
         "session": {
           "$ref": "#/$defs/SessionId"
         },
@@ -1863,7 +1884,8 @@
       },
       "required": [
         "session",
-        "text"
+        "text",
+        "environment"
       ],
       "type": "object"
     },

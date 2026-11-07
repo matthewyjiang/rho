@@ -27,7 +27,7 @@ use super::{
 #[derive(Clone)]
 pub struct ShellToolOptions {
     max_output_bytes: usize,
-    environment: ProcessEnvironment,
+    environment: crate::SharedProcessEnvironment,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
     host_terminals: Option<Arc<dyn crate::HostTerminals>>,
     rtk: Option<Rtk>,
@@ -37,7 +37,7 @@ impl Default for ShellToolOptions {
     fn default() -> Self {
         Self {
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
-            environment: ProcessEnvironment::InheritAll,
+            environment: ProcessEnvironment::InheritAll.into(),
             mutation_observer: None,
             host_terminals: None,
             rtk: None,
@@ -55,8 +55,11 @@ impl ShellToolOptions {
         self
     }
 
-    pub fn environment(mut self, environment: ProcessEnvironment) -> Self {
-        self.environment = environment;
+    /// The environment commands start with: a fixed [`ProcessEnvironment`],
+    /// or a [`crate::SharedProcessEnvironment`] the host replaces between
+    /// turns.
+    pub fn environment(mut self, environment: impl Into<crate::SharedProcessEnvironment>) -> Self {
+        self.environment = environment.into();
         self
     }
 
@@ -107,7 +110,7 @@ enum ShellKind {
 struct SdkShellTool {
     kind: ShellKind,
     max_output_bytes: usize,
-    environment: ProcessEnvironment,
+    environment: crate::SharedProcessEnvironment,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
     host_terminals: Option<Arc<dyn crate::HostTerminals>>,
     rtk: Option<Rtk>,
@@ -355,7 +358,7 @@ impl Tool for SdkShellTool {
                 invocation.into_arguments(),
                 context.workspace(),
                 self.max_output_bytes,
-                self.environment.clone(),
+                self.environment.current(),
                 self.rtk.as_ref(),
             )
             .await?;

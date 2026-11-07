@@ -284,11 +284,8 @@ impl AppToolSet {
                 config.workspace_rewind,
             ),
         );
-        // Compose one child-process environment policy for every process tool.
-        // Provider credential env vars are excluded so agent commands cannot
-        // read host API keys from the ambient environment.
-        let process_environment =
-            rho_sdk::ProcessEnvironment::inherit_except(rho_providers::credential_env_vars());
+        // One child-process environment for every process tool.
+        let process_environment = tool_set.host_io.process_environment();
 
         tool_set.add_bundle(super::coding::sdk_bundle(
             &capabilities,

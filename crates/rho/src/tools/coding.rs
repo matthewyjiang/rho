@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::host_io::HostIo;
 use crate::agent::{AgentCapabilities, ToolCapability};
-use rho_sdk::{tool::Tool, ProcessEnvironment};
+use rho_sdk::tool::Tool;
 
 /// Build the mid-session/startup edit tool with one shared options policy.
 pub(super) fn edit_tool(
@@ -25,7 +25,7 @@ pub(super) fn edit_tool(
 pub(super) fn sdk_bundle(
     capabilities: &AgentCapabilities,
     max_output_bytes: usize,
-    process_environment: ProcessEnvironment,
+    process_environment: rho_tools::SharedProcessEnvironment,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
     edit_format: rho_tools::EditFormat,
     rtk_enabled: bool,

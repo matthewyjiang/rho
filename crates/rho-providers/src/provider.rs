@@ -737,9 +737,9 @@ pub fn credential_env_vars() -> Vec<String> {
     credential_env_vars_from(std::env::vars().map(|(name, _)| name))
 }
 
-pub(crate) fn credential_env_vars_from(
-    env: impl IntoIterator<Item = impl AsRef<str>>,
-) -> Vec<String> {
+/// [`credential_env_vars`] for an environment whose variable names are
+/// `env`, such as a daemon client's (#1659).
+pub fn credential_env_vars_from(env: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<String> {
     let mut vars: Vec<String> = builtin_providers()
         .iter()
         .chain(custom_openai_compatible::interned_custom_providers())

@@ -56,7 +56,11 @@ async fn load(sessions: &Sessions, root: &TempDir, load: Load) -> Arc<LoadedSess
     let session = Arc::new(LoadedSession::new(
         &sessions.jobs.get(&job).unwrap(),
         Arc::clone(&sessions.jobs),
-        OpenedSession { runtime, config },
+        OpenedSession {
+            runtime,
+            config,
+            environment: rho_sdk::ProcessEnvironment::InheritAll.into(),
+        },
     ));
     sessions.loaded().insert(id, Arc::clone(&session));
     session

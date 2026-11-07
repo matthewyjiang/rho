@@ -77,7 +77,7 @@ A session sits idle while no turn is under way, no subagent or workflow node wri
 
 A reopen starts the session afresh from its file and the current config: a permission mode a plan approval switched to, and approvals granted for the session, do not carry over, and a session whose agent definition changed since is refused, as for any reopen.
 
-Tools in a session run with the daemon's own environment, minus provider credentials, as tools in every rho session do. A daemon that a frontend started automatically has that frontend's environment. Clients will send their own environment later ([#1659](https://github.com/matthewyjiang/rho/issues/1659)).
+A session's commands run with its client's environment, not the daemon's: each frontend sends its environment variables when it opens, prompts, or attaches to a session, so `bash` finds the same `PATH`, mise shims, `SSH_AUTH_SOCK`, and virtualenv as the terminal you prompted from ([#1659](https://github.com/matthewyjiang/rho/issues/1659)). Each prompt brings the prompting client's environment, so after `mise use` or `export FOO=bar` the next prompt's commands see the change; a background process keeps the environment it started with. An attach changes the environment only when it reopens a session the daemon had unloaded. Provider credentials, such as an exported `OPENAI_API_KEY`, are left out, as tools in every rho session go without them, and the daemon's own credential lookups still read the daemon's environment. The daemon never logs or saves the environment, so a session reopened after a restart takes the environment of the client that reopens it. MCP servers, hooks, workflow commands, and CLI subagents still start with the daemon's environment for now.
 
 ## Starting automatically
 

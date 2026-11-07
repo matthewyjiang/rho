@@ -16,12 +16,12 @@ use rho_protocol::{
         SessionNew, SessionPrompt,
     },
     AnswerStop, ApprovalAsk, ApprovalSource, Ask, Client, ClientError, ClientInfo, Cursor,
-    DaemonNotification, DetachReason, ErrorCode, InputAnswer, InputRequest, InputRequestId, JobId,
-    JobKind, JobListParams, JobState, JobSummary, Notifications, Operation, PathScope, Replay,
-    Resolution, Seq, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
-    SessionCancelParams, SessionDetachParams, SessionDetachedParams, SessionEvent,
-    SessionHoldParams, SessionId, SessionNewParams, SessionPromptParams, StreamId, ToolCallId,
-    ToolContent, ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
+    DaemonNotification, DetachReason, Environment, ErrorCode, InputAnswer, InputRequest,
+    InputRequestId, JobId, JobKind, JobListParams, JobState, JobSummary, Notifications, Operation,
+    PathScope, Replay, Resolution, Seq, SessionAnswerParams, SessionAttachParams,
+    SessionAttachResponse, SessionCancelParams, SessionDetachParams, SessionDetachedParams,
+    SessionEvent, SessionHoldParams, SessionId, SessionNewParams, SessionPromptParams, StreamId,
+    ToolCallId, ToolContent, ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -222,7 +222,7 @@ impl Sandbox {
     }
 
     /// The records saved in `session`'s file.
-    fn session_records(&self, session: &SessionId) -> Vec<serde_json::Value> {
+    pub(super) fn session_records(&self, session: &SessionId) -> Vec<serde_json::Value> {
         let session = self
             .session_dir(session)
             .unwrap_or_else(|| panic!("no session directory for {session}"));
@@ -234,10 +234,21 @@ impl Sandbox {
     }
 }
 
+/// The environment test clients send, which their sessions' processes run
+/// with (#1659): this process's, without the variables that locate a rho
+/// home or daemon, so nothing a session runs reaches the developer's.
+pub(super) fn client_environment() -> Environment {
+    Environment::of_this_process()
+        .into_iter()
+        .filter(|(name, _)| !["HOME", "RHO_HOME", "XDG_RUNTIME_DIR"].contains(&name.as_str()))
+        .collect()
+}
+
 pub(super) async fn new_session(client: &Client, workspace: &Path) -> SessionId {
     client
         .request::<SessionNew>(&SessionNewParams {
             cwd: workspace.to_path_buf(),
+            environment: client_environment(),
         })
         .await
         .unwrap()
@@ -250,6 +261,7 @@ pub(super) async fn prompt(client: &Client, session: &SessionId) -> Result<(), O
             session: session.clone(),
             text: "hello".into(),
             timeout_ms: None,
+            environment: client_environment(),
         })
         .await
         .map(|_| ())
@@ -266,11 +278,22 @@ pub(super) async fn prompt_tool_call(
     session: &SessionId,
     call: &serde_json::Value,
 ) {
+    prompt_tool_call_in(client, session, call, client_environment()).await;
+}
+
+/// [`prompt_tool_call`] from a client whose environment is `environment`.
+pub(super) async fn prompt_tool_call_in(
+    client: &Client,
+    session: &SessionId,
+    call: &serde_json::Value,
+    environment: Environment,
+) {
     client
         .request::<SessionPrompt>(&SessionPromptParams {
             session: session.clone(),
             text: call.to_string(),
             timeout_ms: None,
+            environment,
         })
         .await
         .unwrap();
@@ -680,6 +703,7 @@ async fn a_session_another_process_saved_reopens_once_it_lets_go() {
             .request::<SessionAttach>(&SessionAttachParams {
                 session: session.clone(),
                 after: None,
+                environment: client_environment(),
             })
             .await
             .map(|_| ())
@@ -831,6 +855,7 @@ impl Follower {
             .request::<SessionAttach>(&SessionAttachParams {
                 session: session.clone(),
                 after,
+                environment: client_environment(),
             })
             .await
             .unwrap();
