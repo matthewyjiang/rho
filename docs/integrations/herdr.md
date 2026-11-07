@@ -12,7 +12,6 @@ Herdr support is Unix-only. On other platforms Rho ignores Herdr environment var
 | --- | --- |
 | Agent state | Rho reports `idle`, `working`, and `blocked` so Herdr can show pane status. Rho's own terminal [notifications](/configuration) stay off so you are not notified twice. |
 | Session restore | After a Herdr server restart, the pane reopens the same Rho session |
-| Subagent attach | Click a subagent row in the activity rail, or use `/attach`, to open the in-place attach view |
 | Image paste | A single-line paste of an image path becomes an attachment instead of plain text |
 | Image previews | Standard Kitty graphics, rendered natively by Herdr 0.9.2 or later |
 

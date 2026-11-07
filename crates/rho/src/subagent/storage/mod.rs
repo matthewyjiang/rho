@@ -78,8 +78,7 @@ fn list_indexed_runs_in_root(
 /// Indexed runs started in `cwd`, including finished transcripts.
 ///
 /// Membership comes from the workspace key written at reservation. Rows with a
-/// missing key (pre-migration) stay out of the picker; lookup by id through
-/// [`resolve_run_directory`] still finds them from any directory.
+/// missing key (pre-migration) stay out of the picker.
 pub(crate) fn list_workspace_runs(cwd: &Path) -> anyhow::Result<Vec<RunningRun>> {
     list_workspace_runs_in_root(&crate::paths::rho_dir()?, cwd)
 }

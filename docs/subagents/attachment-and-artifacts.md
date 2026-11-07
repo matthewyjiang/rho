@@ -50,7 +50,7 @@ Older journals remain readable without a preview file. Existing logs are not rew
 If live preview publication fails, the journal records a notice and continues
 retaining durable events and the latest input at its lifecycle boundary.
 
-Run IDs stay globally unique. Opening a run by id first checks the global run index, then scans folder-layout sessions, then checks the legacy global path. This finds a run from any working directory while keeping unindexed older runs available.
+Run IDs stay globally unique. Opening a listed run first checks the global run index, then scans folder-layout sessions, then checks the legacy global path. The `/attach` picker lists only the runs started in the current directory, so runs from another directory, and older runs the index has no directory for, cannot be opened from the TUI.
 
 Detaching does not cancel execution. The interactive TUI opens this viewer in place and does not own the delegated task. Artifacts remain available for post-run inspection and may contain prompts or workspace content.
 
