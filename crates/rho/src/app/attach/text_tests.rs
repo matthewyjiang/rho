@@ -81,3 +81,17 @@ fn text_output_streams_the_conversation_and_tells_the_rest_on_stderr() {
         "rho: retrying the request\nrho: the turn waits for an approval: fetch the docs\n"
     );
 }
+
+// Covers: an attachment that ends mid-reply, as a detach does, ends the
+// reply's line, so the reason it ended starts a line of its own.
+// Owner: rho attach text output (unit).
+#[test]
+fn finishing_mid_reply_ends_the_line() {
+    let mut out = Vec::new();
+    let mut view = TextView::new(&mut out, Vec::new());
+    view.show(&chunk("partial")).unwrap();
+    view.finish().unwrap();
+    view.finish().unwrap();
+    drop(view);
+    assert_eq!(String::from_utf8(out).unwrap(), "partial\n");
+}

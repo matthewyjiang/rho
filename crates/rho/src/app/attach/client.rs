@@ -71,7 +71,13 @@ impl View {
     /// exit, unless the output could not be written.
     fn end(&mut self, exit: Result<(), AutomationExit>) -> Result<(), AutomationExit> {
         match self {
-            Self::Text(_) => exit,
+            Self::Text(view) => {
+                // An ending without `turn_ended`, such as a detach, can stop
+                // mid-reply; a terminal that cannot take the newline either
+                // already failed the output or ends here anyway.
+                let _ = view.finish();
+                exit
+            }
             Self::Jsonl(stream) => automation::end_stream(stream, exit),
         }
     }

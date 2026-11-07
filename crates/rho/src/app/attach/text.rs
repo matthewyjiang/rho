@@ -111,6 +111,13 @@ impl<O: Write, E: Write> TextView<O, E> {
         self.write(text)
     }
 
+    /// Ends the line the conversation stopped on, so what follows on the
+    /// terminal, such as why the attachment ended, starts a line of its own.
+    pub(super) fn finish(&mut self) -> io::Result<()> {
+        self.end_line()?;
+        self.out.flush()
+    }
+
     fn end_line(&mut self) -> io::Result<()> {
         if self.line_ended {
             return Ok(());
