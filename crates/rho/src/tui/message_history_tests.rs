@@ -29,7 +29,7 @@ fn notification_display_preserves_ownership() {
         subtitle: None,
         body: "First finding\nSecond finding".into(),
         output: None,
-        details: vec!["attach: rho attach abc123".into()],
+        details: vec!["status: running".into()],
     };
     let display =
         DisplayTranscript(vec![DisplayRow::Notification(Box::new(card.clone()))]).display_message();

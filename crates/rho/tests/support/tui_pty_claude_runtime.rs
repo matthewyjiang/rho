@@ -8,6 +8,7 @@ use std::{fs, path::PathBuf, time::Duration};
 
 use super::{
     acp_e2e::{self, FakeAcpPaths},
+    attach_view,
     claude_e2e::FAKE_CLAUDE,
 };
 
@@ -58,7 +59,7 @@ fn methods(requests: &[Value]) -> Vec<&str> {
 /// Full fake-Claude runtime path: matrix parent -> agent tool -> binder/executor
 /// -> `claude-agent-acp` spawn -> scripted ACP agent (`rho __acp-fixture-agent`)
 /// -> mode, session options, prompt -> artifacts -> parent completion ->
-/// `rho attach` replay. Never touches a real Claude install or the network.
+/// `/attach` replay. Never touches a real Claude install or the network.
 #[test]
 fn fake_claude_runtime_end_to_end_success() {
     let home = IsolatedHome::new().unwrap();
@@ -175,22 +176,8 @@ fn fake_claude_runtime_end_to_end_success() {
         )
     );
 
-    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
-
-    // Replay the real on-disk artifacts through `rho attach`.
-    let mut plan = RhoLaunchPlan::matrix(
-        PathBuf::from(env!("CARGO_BIN_EXE_rho")),
-        &home,
-        PtySize {
-            rows: 28,
-            cols: 120,
-        },
-    )
-    .with_arg("attach")
-    .with_arg(&run_id);
-    plan.cwd = home.path().join("attach-workspace");
-    fs::create_dir_all(&plan.cwd).unwrap();
-    let mut attach = PtyHarness::spawn_named(&plan, "fake_claude_runtime_e2e_attach").unwrap();
+    // Replay the real on-disk artifacts in the in-place attach view.
+    attach_view::open(&mut harness, WaitTimeout::secs(10, "attach view"));
     for (text, label) in [
         (format!("attach {run_id}"), "attach startup"),
         ("Say hello in one short sentence.".into(), "attach prompt"),
@@ -198,17 +185,12 @@ fn fake_claude_runtime_end_to_end_success() {
         ("ran as claude-sonnet-5".into(), "attach resolved model"),
         ("claude-planner".into(), "attach agent id"),
     ] {
-        attach
+        harness
             .wait_for_text(&text, WaitTimeout::secs(10, label))
             .unwrap();
     }
-    attach.inject_key(&Key::Char('q')).unwrap();
-    assert_eq!(
-        attach
-            .wait_for_exit(WaitTimeout::secs(5, "detach"))
-            .unwrap(),
-        0
-    );
+    attach_view::leave(&mut harness, WaitTimeout::secs(5, "leave attach view"));
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
 /// Background Claude completion path: the reported session cost must fold

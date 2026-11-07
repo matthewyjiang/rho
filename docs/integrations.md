@@ -4,7 +4,7 @@ Rho ships host and shell integrations in the binary. You do not install a plugin
 
 | Integration | Role | Page |
 | --- | --- | --- |
-| Herdr | Agent state, sibling-pane attach, host image paste under a Herdr workspace | [Herdr](/integrations/herdr) |
+| Herdr | Agent state, session restore, host image paste under a Herdr workspace | [Herdr](/integrations/herdr) |
 | RTK | Rewrites agent shell commands when the `rtk` binary is on `PATH` | [RTK](/integrations/rtk) |
 | MCP | Native stdio and Streamable HTTP tools | [Model Context Protocol](/integrations/mcp) |
 | OpenAPI | Read-only REST tools generated from an OpenAPI spec | [OpenAPI](/integrations/openapi) |

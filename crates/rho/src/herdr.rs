@@ -39,7 +39,7 @@ struct HerdrConfig {
 /// Herdr reserves the `herdr:` prefix for its own integrations.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum HerdrSource {
-    /// The interactive TUI and `rho attach`.
+    /// The interactive TUI.
     #[default]
     Interactive,
     /// `rho run` and `rho acp`.

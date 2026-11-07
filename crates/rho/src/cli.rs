@@ -207,14 +207,6 @@ pub enum Command {
         #[arg(value_name = "PROMPT", num_args = 0..)]
         prompt: Vec<String>,
     },
-    /// Watch a delegated agent run in a read-only TUI.
-    Attach {
-        /// Delegated run ID shown when the agent was started.
-        ///
-        /// Omit to pick from subagents in this directory.
-        #[arg(value_name = "ID")]
-        id: Option<String>,
-    },
     /// Log in to a provider with an API key, browser, or device-code flow.
     Login {
         /// Provider to authenticate, for example openai-codex or github-copilot,

@@ -1,12 +1,10 @@
 use std::{
     collections::BTreeMap,
-    io::IsTerminal,
     ops::Range,
     path::PathBuf,
     time::{Duration, Instant},
 };
 
-use crate::tui::DefaultTerminal;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
@@ -19,9 +17,8 @@ use rho_sdk::model::ContextUsage;
 use rho_tools::tool_card::ToolCard;
 
 use crate::{
-    herdr::{HerdrReporter, HerdrSession, HerdrState},
     run_artifacts::{AttachmentEvent, AttachmentReader},
-    subagent::{self, RunState, RunStatus},
+    subagent::{self, RunStatus},
 };
 
 use super::super::{
@@ -31,7 +28,6 @@ use super::super::{
     provider_attempt::ProviderAttempt,
     render::truncate_one_line,
     scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
-    terminal_events::TerminalEvents,
     theme::Theme,
     tool_card_hover,
     usage_cost::AttemptAwareRunUsage,
@@ -41,33 +37,25 @@ use super::super::{
 #[cfg(test)]
 use super::chrome::format_run_cost;
 use super::chrome::{
-    activity_metrics_line, attach_reasoning, footer_line, header_title_line, herdr_status,
-    identity_line, AttachChrome,
+    activity_metrics_line, attach_reasoning, footer_line, header_title_line, identity_line,
+    ParentNotice,
 };
 use super::tool_toggle::{
     latest_toggle_target, status_fallback_items, tool_card_at_line, HistoryItem, PaintedHistory,
     ToggleTarget,
 };
 
-const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 const TOGGLE_WIDTH_FALLBACK: usize = 80;
 
 /// Result of routing one terminal event through the attach view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AttachInput {
-    Ignored,
-    Handled,
+    Stay,
     Leave,
     Quit,
 }
 
-impl AttachInput {
-    pub(crate) fn redraws(self) -> bool {
-        !matches!(self, Self::Ignored)
-    }
-}
-
-/// Display policy for `rho attach`, mirrored from interactive config.
+/// Display policy for the attach view, mirrored from interactive config.
 ///
 /// Keep ingest complete (including hidden reasoning) so journal replay and
 /// provider-attempt bookkeeping stay stable; filter at render time.
@@ -78,31 +66,14 @@ pub(crate) struct AttachmentDisplaySettings {
     pub max_tool_output_lines: usize,
 }
 
-impl Default for AttachmentDisplaySettings {
-    fn default() -> Self {
-        Self::from_config(&crate::config::Config::default())
-    }
-}
-
 impl AttachmentDisplaySettings {
-    pub(crate) fn from_runtime(
-        show_reasoning_output: bool,
-        zen_mode: bool,
-        max_tool_output_lines: usize,
-    ) -> Self {
+    /// The parent TUI's current display settings.
+    pub(crate) fn from_runtime(runtime: &crate::tui::RuntimeModelView) -> Self {
         Self {
-            show_reasoning_output,
-            zen_mode,
-            max_tool_output_lines: max_tool_output_lines.max(1),
+            show_reasoning_output: runtime.show_reasoning_output,
+            zen_mode: runtime.zen_mode,
+            max_tool_output_lines: runtime.max_tool_output_lines.max(1),
         }
-    }
-
-    pub(crate) fn from_config(config: &crate::config::Config) -> Self {
-        Self::from_runtime(
-            config.show_reasoning_output,
-            config.zen_mode,
-            config.max_tool_output_lines,
-        )
     }
 
     /// Exclusive reasoning display policy; matches interactive TUI chrome.
@@ -142,60 +113,6 @@ impl AttachmentDisplaySettings {
             Entry::Tool(tool) => !self.shows_work_chrome() && !tool.visible_in_zen(),
             _ => false,
         }
-    }
-}
-
-pub(crate) async fn run(
-    id: Option<&str>,
-    display: AttachmentDisplaySettings,
-    theme: &str,
-    herdr: HerdrReporter,
-) -> anyhow::Result<()> {
-    if !crate::stdio::stdin_is_terminal() || !std::io::stdout().is_terminal() {
-        anyhow::bail!("rho attach requires an interactive terminal");
-    }
-    let _syntax_warmup = tokio::task::spawn_blocking(crate::tui::syntax::warm_syntax_set);
-    let mut terminal = crate::tui::synced_backend::init();
-    let _restore_terminal = RestoreTerminal {
-        mouse_capture: mouse_capture::Guard::acquire(),
-    };
-    Theme::initialize_from_terminal();
-    Theme::apply_committed(theme);
-    let mut events = TerminalEvents::new();
-    let id = match id {
-        Some(id) => subagent::normalize_id(id)?,
-        None => match super::select::select_running_run(&mut terminal, &mut events).await? {
-            Some(id) => id,
-            None => return Ok(()),
-        },
-    };
-    let lookup_id = id.clone();
-    let directory =
-        tokio::task::spawn_blocking(move || subagent::resolve_run_directory(&lookup_id)).await??;
-    let message = format!("attached to agent run {id}");
-    let _ = herdr
-        .report_state(
-            HerdrState::Working,
-            Some(&message),
-            Some(&HerdrSession::without_resume(&id)),
-        )
-        .await;
-    let result = AttachmentApp::new(&id, directory, display)
-        .run(&mut terminal, &mut events, &herdr)
-        .await;
-    let _ = herdr.release().await;
-    result
-}
-
-struct RestoreTerminal {
-    mouse_capture: mouse_capture::Guard,
-}
-
-impl Drop for RestoreTerminal {
-    fn drop(&mut self) {
-        // Disable mouse capture before leaving the alternate screen.
-        self.mouse_capture.release();
-        ratatui::restore();
     }
 }
 
@@ -287,70 +204,6 @@ impl AttachmentApp {
 
     pub(crate) fn note_drawn(&mut self) {
         self.last_drawn_elapsed_secs = self.live_elapsed_secs();
-    }
-
-    async fn run(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        terminal_events: &mut TerminalEvents,
-        herdr: &HerdrReporter,
-    ) -> anyhow::Result<()> {
-        let mut refresh = tokio::time::interval(REFRESH_INTERVAL);
-        refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let mut reported_state = None;
-        self.refresh()?;
-        self.report_herdr(herdr, &mut reported_state).await;
-        terminal.draw(|frame| self.draw(frame, AttachChrome::Standalone))?;
-        self.note_drawn();
-
-        loop {
-            let redraw = tokio::select! {
-                event = terminal_events.next() => {
-                    let event = event?;
-                    if matches!(event, Event::Resize(_, _)) {
-                        crate::tui::repaint_after_resize(terminal)?;
-                    }
-                    match self.handle_event(event) {
-                        AttachInput::Leave | AttachInput::Quit => break,
-                        outcome => outcome.redraws(),
-                    }
-                }
-                _ = refresh.tick() => {
-                    let changed = self.refresh()?;
-                    self.report_herdr(herdr, &mut reported_state).await;
-                    let elapsed_advanced =
-                        self.live_elapsed_secs() != self.last_drawn_elapsed_secs;
-                    // Keep redrawing while the auto-hide scrollbar is visible, and
-                    // when a live run's whole-second elapsed label advances without I/O.
-                    changed
-                        || self.scroll.should_render(Instant::now())
-                        || elapsed_advanced
-                },
-            };
-            if redraw {
-                terminal.draw(|frame| self.draw(frame, AttachChrome::Standalone))?;
-                self.note_drawn();
-            }
-        }
-        Ok(())
-    }
-
-    async fn report_herdr(&self, herdr: &HerdrReporter, reported_state: &mut Option<RunState>) {
-        let Some(status) = &self.status else {
-            return;
-        };
-        if *reported_state == Some(status.state) {
-            return;
-        }
-        let (state, message) = herdr_status(&self.id, status);
-        let _ = herdr
-            .report_state(
-                state,
-                Some(&message),
-                Some(&HerdrSession::without_resume(&self.id)),
-            )
-            .await;
-        *reported_state = Some(status.state);
     }
 
     pub(crate) fn refresh(&mut self) -> anyhow::Result<bool> {
@@ -615,19 +468,19 @@ impl AttachmentApp {
                 KeyCode::Char('q') | KeyCode::Esc => AttachInput::Leave,
                 KeyCode::Up => {
                     self.scroll_lines(now, -1);
-                    AttachInput::Handled
+                    AttachInput::Stay
                 }
                 KeyCode::Down => {
                     self.scroll_lines(now, 1);
-                    AttachInput::Handled
+                    AttachInput::Stay
                 }
                 KeyCode::PageUp => {
                     self.scroll_lines(now, -(self.viewport_height.max(1) as isize));
-                    AttachInput::Handled
+                    AttachInput::Stay
                 }
                 KeyCode::PageDown => {
                     self.scroll_lines(now, self.viewport_height.max(1) as isize);
-                    AttachInput::Handled
+                    AttachInput::Stay
                 }
                 KeyCode::Home => {
                     self.scroll
@@ -635,23 +488,23 @@ impl AttachmentApp {
                     if !matches!(self.scroll.scroll(), HistoryScroll::Bottom) {
                         self.scroll.reveal(now, HISTORY_SCROLLBAR_REVEAL_DURATION);
                     }
-                    AttachInput::Handled
+                    AttachInput::Stay
                 }
                 KeyCode::End => {
                     self.scroll.scroll_to_bottom();
-                    AttachInput::Handled
+                    AttachInput::Stay
                 }
                 KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     self.toggle_latest_tool();
-                    AttachInput::Handled
+                    AttachInput::Stay
                 }
-                _ => AttachInput::Ignored,
+                _ => AttachInput::Stay,
             },
             Event::Mouse(mouse) => {
                 if matches!(mouse.kind, MouseEventKind::Moved)
                     && self.last_mouse_position == Some((mouse.column, mouse.row))
                 {
-                    return AttachInput::Ignored;
+                    return AttachInput::Stay;
                 }
                 if matches!(mouse.kind, MouseEventKind::Moved) {
                     self.last_mouse_position = Some((mouse.column, mouse.row));
@@ -696,28 +549,28 @@ impl AttachmentApp {
                                 press.and_then(|key| self.target_for_tool_key(&key))
                             {
                                 self.toggle_tool_at(target);
-                                return AttachInput::Handled;
+                                return AttachInput::Stay;
                             }
                         }
                     }
                     _ => {}
                 }
-                AttachInput::Handled
+                AttachInput::Stay
             }
             Event::FocusGained => {
                 self.clear_press();
                 mouse_capture::reassert();
-                AttachInput::Ignored
+                AttachInput::Stay
             }
             Event::FocusLost => {
                 self.clear_press();
-                AttachInput::Ignored
+                AttachInput::Stay
             }
             Event::Resize(_, _) => {
                 self.clear_press();
-                AttachInput::Handled
+                AttachInput::Stay
             }
-            _ => AttachInput::Ignored,
+            _ => AttachInput::Stay,
         }
     }
 
@@ -746,7 +599,7 @@ impl AttachmentApp {
         self.scroll.clamp(self.content_len, self.viewport_height);
     }
 
-    pub(crate) fn draw(&mut self, frame: &mut Frame<'_>, chrome: AttachChrome) {
+    pub(crate) fn draw(&mut self, frame: &mut Frame<'_>, parent_notice: Option<ParentNotice>) {
         let area = frame.area();
         let chunks = Layout::vertical([
             Constraint::Length(4),
@@ -821,7 +674,7 @@ impl AttachmentApp {
 
         let footer = vec![
             Line::styled("─".repeat(width.max(1)), Theme::dim()),
-            footer_line(chrome, width),
+            footer_line(parent_notice, width),
         ];
         frame.render_widget(Paragraph::new(footer).style(Style::default()), chunks[2]);
     }

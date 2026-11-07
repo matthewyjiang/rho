@@ -78,8 +78,7 @@ fn list_indexed_runs_in_root(
 /// Indexed runs started in `cwd`, including finished transcripts.
 ///
 /// Membership comes from the workspace key written at reservation. Rows with a
-/// missing key (pre-migration) stay out of the picker; `rho attach <id>` still
-/// finds them from any directory.
+/// missing key (pre-migration) stay out of the picker.
 pub(crate) fn list_workspace_runs(cwd: &Path) -> anyhow::Result<Vec<RunningRun>> {
     list_workspace_runs_in_root(&crate::paths::rho_dir()?, cwd)
 }
@@ -225,8 +224,8 @@ impl Drop for ParentRunCleanupGuard<'_> {
 
 /// Workspace key used for attach-picker membership.
 ///
-/// Canonicalize first so a reserved run and a later `rho attach` from the same
-/// directory share a key even when one caller passed `Workspace::root()` and
+/// Canonicalize first so a reserved run and a later `/attach` listing from the
+/// same directory share a key even when one caller passed `Workspace::root()` and
 /// the other passed `current_dir()`. Empty paths have no key.
 fn run_workspace_key(cwd: &Path) -> Option<String> {
     if cwd.as_os_str().is_empty() {

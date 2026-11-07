@@ -27,15 +27,10 @@ Finished rows show a verdict until their result reaches the transcript. The row 
 
 ## Watch a subagent
 
-`/attach`, a rail click, or `rho attach` opens a read-only view of a delegated run. The parent session keeps running. The view shows the delegated prompt, reasoning, assistant output, tool activity, usage, and final state. It has no message box and cannot submit prompts or change the subagent environment.
+`/attach` or a rail click opens a read-only view of a delegated run in place. The parent session keeps running. The view shows the delegated prompt, reasoning, assistant output, tool activity, usage, and final state. It has no message box and cannot submit prompts or change the subagent environment.
 
-```bash
-rho attach
-rho attach abc123
-```
-
-`rho attach` with no id opens a picker of subagents from the current directory. It starts on running runs. Ctrl-R includes finished transcripts. `/attach` does the same inside the TUI. Each run's badge is coloured by outcome (running, done, error, stopped). The side pane shows a run card: model and reasoning, elapsed time, tokens and cost when reported, the delegated task, and the newest output, final result, or error.
+`/attach` opens a picker of subagents from the current directory. It starts on running runs. Ctrl-R includes finished transcripts. Each run's badge is coloured by outcome (running, done, error, stopped). The side pane shows a run card: model and reasoning, elapsed time, tokens and cost when reported, the delegated task, and the newest output, final result, or error.
 
 In the in-place view, Up, Down, Page Up, Page Down, Home, and End scroll. Tab, Shift-Tab, Left, and Right cycle other running subagents. Click a truncated tool card, or press Ctrl+O, to expand or collapse it. `q` or Escape returns to the composer. Ctrl-C quits Rho. If the parent hits an approval, questionnaire, or turn completion while you are attached, the footer notes it. The view does not yank you back.
 
-`rho attach` and `rho attach <id>` open that same view in a separate process, for another terminal. For external runtime runs, attach also shows `runtime_session_id` when present; for `claude-cli` runs you can open the Claude transcript with `claude-agent-acp --cli --resume <session-id>`. Storage and lifecycle: [Attachment and artifacts](/subagents/attachment-and-artifacts).
+For external runtime runs, attach also shows `runtime_session_id` when present; for `claude-cli` runs you can open the Claude transcript with `claude-agent-acp --cli --resume <session-id>`. Storage and lifecycle: [Attachment and artifacts](/subagents/attachment-and-artifacts).

@@ -247,7 +247,7 @@ impl Snapshot<'_> {
     fn has_status_metrics(&self) -> bool {
         self.remaining
             .iter()
-            .any(|line| line.starts_with("elapsed: ") || line.starts_with("attach: "))
+            .any(|line| line.starts_with("elapsed: "))
     }
 }
 
@@ -340,6 +340,8 @@ fn snapshot_sections(
     let mut status_continuation = false;
 
     for (index, line) in remaining.iter().copied().enumerate() {
+        // Status output saved before 3.0 carries an `attach: rho attach <id>`
+        // line naming a command that no longer exists.
         if Some(index) == metrics_index || line.starts_with("attach: ") {
             status_continuation = false;
             continue;

@@ -217,7 +217,7 @@ run has no generated title yet, its first nonempty prompt line identifies the ta
 This keeps different tasks using the same agent role distinguishable.
 
 The excerpt uses your `display.max_tool_output_lines` setting. Press `Ctrl+O` or click
-the card to see the complete message, full task title, run ID, and attach command.
+the card to see the complete message, full task title, and run ID.
 Surrounding whitespace is trimmed to match the text accepted for delivery. The
 durable receipt remains plain text for ACP clients and exported transcripts.
 Short messages can also expand to show those details. Queued means the message was
@@ -256,8 +256,8 @@ Full guide: [Google Antigravity as a delegated runtime](/subagents/antigravity).
 
 ## Attachment and artifacts
 
-Watch a delegated run with `rho attach` or `rho attach <id>`. The picker lists
-runs from the current directory. Detaching does not cancel the run. Artifacts
+Watch a delegated run with `/attach` or a click on its activity-rail row. The
+picker lists runs from the current directory. Detaching does not cancel the run. Artifacts
 live under the parent session folder when available, otherwise under
 `~/.rho/subagents/<id>/`. The title model names each run so the activity rail
 and attach picker can show role and title instead of a run id.

@@ -63,7 +63,7 @@ pub(crate) enum AttachmentEvent {
     Failed(String),
 }
 
-/// Generic attachment journal mechanics for `rho attach`.
+/// Generic attachment journal mechanics for the attach view.
 ///
 /// Owns private file creation, durable event appends, and replaceable previews.
 /// Runtime-specific translation (SDK events, ACP session updates) stays

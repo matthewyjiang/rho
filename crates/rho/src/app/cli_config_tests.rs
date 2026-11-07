@@ -167,7 +167,6 @@ fn validate_cli_rejects_no_save_with_subcommands() {
         vec!["run", "ship it"],
         vec!["doctor"],
         vec!["acp"],
-        vec!["attach", "abc123"],
         vec!["sessions", "list"],
         vec!["update"],
     ] {

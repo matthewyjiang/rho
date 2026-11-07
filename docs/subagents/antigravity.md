@@ -11,7 +11,7 @@ flowchart LR
     parent[Rho parent session] --> agentTool[agent tool]
     agentTool --> agy[agy acp child]
     agy --> sub[agy Google sign-in]
-    agy --> attach[rho attach / completion]
+    agy --> attach["/attach view / completion"]
 ```
 
 ## When this is useful
@@ -72,7 +72,7 @@ flowchart TD
 
 4. **Delegate from a Rho root session** through the `agent` tool. The call returns a run ID immediately, followed by an automatic completion notification.
 
-5. **Watch and cancel** with `rho attach <run-id>`. `agents` action `message` queues plain text for a running child; Rho sends it as the next `session/prompt` once the current turn ends.
+5. **Watch and cancel** with `/attach` in the TUI or a click on the run's activity-rail row. `agents` action `message` queues plain text for a running child; Rho sends it as the next `session/prompt` once the current turn ends.
 
 ## Permission modes
 
@@ -101,7 +101,7 @@ agy's `default` mode also honors your agy `toolPermission` setting, which can ap
 | Permission mode | Plan or Bypass only |
 | Launch | Rho parent `agent` tool, delegated only |
 | Messaging | `agents` action `message`; delivered as the next turn |
-| Inspect | `rho attach <id>` |
+| Inspect | `/attach` |
 
 ## Execution details
 

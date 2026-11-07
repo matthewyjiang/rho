@@ -310,7 +310,7 @@ fn write_status_locked(path: &Path, status: &RunStatus, force: bool) -> std::io:
     // only poll the newest one, so they do not earn an `fsync`: paying one per
     // update caps the status writer at a few hundred writes per second and
     // starves the attachment journal behind it. Run boundaries and terminal
-    // states are the states a later `rho attach` must still find after a crash.
+    // states are the states a later attach view must still find after a crash.
     let durability = if force || status.state.is_terminal() {
         crate::config_writer::WriteDurability::Durable
     } else {
@@ -327,7 +327,7 @@ pub fn read_status(path: &Path) -> Option<RunStatus> {
 /// Validate a 6-char hex run id and return its canonical lowercase form.
 ///
 /// Creation always uses lowercase paths. Accepting mixed case and normalizing
-/// keeps `rho attach` portable across case-insensitive (macOS default) and
+/// keeps run-id lookup portable across case-insensitive (macOS default) and
 /// case-sensitive (typical Linux) filesystems.
 pub fn normalize_id(id: &str) -> anyhow::Result<String> {
     if id.len() != 6 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {

@@ -387,7 +387,7 @@ fn failed_cleanup_releases_parent_lock() {
     assert_eq!(directory, subagents_dir.join("abcdef"));
 }
 
-// Covers: rho attach picker must not list subagents from another directory.
+// Covers: the `/attach` picker must not list subagents from another directory.
 // Owner: delegated-run index listing
 #[test]
 fn list_running_runs_keeps_only_the_current_workspace() {

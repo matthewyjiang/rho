@@ -11,7 +11,7 @@ flowchart LR
     parent[Rho parent session] --> agentTool[agent tool]
     agentTool --> claude[claude-agent-acp child]
     claude --> sub[Claude subscription credential]
-    claude --> attach[rho attach / completion]
+    claude --> attach["/attach view / completion"]
 ```
 
 ## Subscription workaround
@@ -98,11 +98,7 @@ flowchart TD
 
    Ask the parent to call the `agent` tool with `agent_id: claude-planner` and a clear prompt. The call returns a run ID immediately, followed by an automatic completion notification.
 
-6. **Watch, cancel, and resume**:
-
-   ```bash
-   rho attach <run-id>
-   ```
+6. **Watch, cancel, and resume**: open the run with `/attach` in the TUI, or click its row in the activity rail.
 
    Attach paints Claude tools with Rho's generic ACP tool cards: the tool kind and title the adapter reports, plus paths and diffs when it sends them.
 
@@ -123,7 +119,7 @@ flowchart TD
 | Define | `runtime: claude-cli` + Claude `tools:` / `model:` |
 | Permission mode | Plan or Bypass. Auto / Allow edits only with proven no-prompt `tools:` for that Rho class and `inherit_claude_config: false`. Unknown names fail closed |
 | Launch | Rho parent `agent` tool, delegated only |
-| Inspect | `rho attach <id>`, `/agents`, `/limits` |
+| Inspect | `/attach`, `/agents`, `/limits` |
 | Messaging | `agents` action `message`; steered into the running turn |
 | Full Claude transcript | `claude-agent-acp --cli --resume <session-id>` |
 

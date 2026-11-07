@@ -6,9 +6,8 @@
 mod app;
 mod chrome;
 pub(crate) mod sdk_writer;
-mod select;
 mod tool_toggle;
 
-pub(crate) use app::{run, AttachInput, AttachmentApp, AttachmentDisplaySettings};
-pub(crate) use chrome::{AttachChrome, ParentNotice};
+pub(crate) use app::{AttachInput, AttachmentApp, AttachmentDisplaySettings};
+pub(crate) use chrome::ParentNotice;
 pub(crate) use sdk_writer::translate_run_event;

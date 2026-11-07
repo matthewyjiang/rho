@@ -571,3 +571,25 @@ fn mcp_escaped_exported_name_renders_decoded_server_and_tool() {
         }])
     );
 }
+
+// Covers: an `agents status` result saved before 3.0 still carries an
+// `attach: rho attach <id>` line; its card hides that dead command and
+// otherwise matches the card of the same status today.
+// Owner: interactive presenter agent cards (saved transcript replay).
+#[test]
+fn saved_agent_status_hides_the_removed_attach_command() {
+    let view = ToolView {
+        kind: ToolKind::Agents,
+        name: "agents".into(),
+        arguments: serde_json::json!({"action": "status", "id": "abc123"}),
+        metadata: Default::default(),
+    };
+    let current = "agent abc123 (explorer): running\n\
+                   elapsed: 5s · turns: 1 · tokens: 12 in / 3 out\n\
+                   activity: reading files";
+    let saved = format!("{current}\nattach: rho attach abc123");
+    assert_eq!(
+        agent_format::agents_finished_card(&view, &saved, /*ok*/ true),
+        agent_format::agents_finished_card(&view, current, /*ok*/ true),
+    );
+}

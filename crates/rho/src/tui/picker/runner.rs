@@ -1,4 +1,4 @@
-//! Picker rendering and navigation on a caller-owned terminal and event stream.
+//! Picker rendering and navigation on a caller-owned terminal.
 //!
 //! Callers that want pointer input hold mouse capture for the terminal. The
 //! wheel scrolls the pane under the pointer, a click selects a nav row, a
@@ -24,26 +24,14 @@ use crate::{
     tui::{click_sequence::ClickSequence, terminal_events::TerminalEvents, Theme},
 };
 
-pub(in crate::tui) enum EmptySubmit {
-    Stay,
-    Cancel,
-}
-
-pub(in crate::tui) enum EventHandling {
-    Handled,
-    Continue,
-}
-
-/// The feature handler runs before navigation and owns special keys and paste.
-/// Reuse the caller's stream when continuing into another terminal UI.
-pub(in crate::tui) async fn run(
+/// Runs the picker until a row is submitted or it is cancelled. Paste goes to
+/// the filter; submitting with no selected row keeps the picker open.
+pub(super) async fn run(
     terminal: &mut DefaultTerminal,
-    events: &mut TerminalEvents,
     mut picker: UiPicker,
     keybindings: &Keybindings,
-    empty_submit: EmptySubmit,
-    mut handle_event: impl FnMut(&mut UiPicker, &Event) -> EventHandling,
 ) -> anyhow::Result<Option<String>> {
+    let mut events = TerminalEvents::new();
     let mut clicks = ClickSequence::default();
     loop {
         terminal.draw(|frame| {
@@ -69,7 +57,10 @@ pub(in crate::tui) async fn run(
                 return Ok(None);
             }
         }
-        if matches!(handle_event(&mut picker, &event), EventHandling::Handled) {
+        if let Event::Paste(text) = &event {
+            for ch in text.chars().filter(|ch| !ch.is_control()) {
+                picker.push_filter_char(ch);
+            }
             continue;
         }
         if let Event::Mouse(mouse) = &event {
@@ -98,10 +89,6 @@ pub(in crate::tui) async fn run(
                 PickerKeyEffect::Submit => {
                     if let Some(item) = picker.selected_item() {
                         return Ok(Some(item.value.clone()));
-                    }
-                    match empty_submit {
-                        EmptySubmit::Stay => {}
-                        EmptySubmit::Cancel => return Ok(None),
                     }
                 }
                 PickerKeyEffect::Escape => return Ok(None),

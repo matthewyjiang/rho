@@ -66,7 +66,7 @@ impl From<RunningRun> for AttachCandidate {
     }
 }
 
-pub(super) fn is_running_filter_toggle(key: KeyEvent) -> bool {
+fn is_running_filter_toggle(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL)
         && !key.modifiers.contains(KeyModifiers::ALT)
         && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R'))
@@ -84,7 +84,7 @@ pub(super) fn visible_candidates(
         .collect()
 }
 
-pub(super) fn workspace_candidates(cwd: &Path) -> anyhow::Result<Vec<AttachCandidate>> {
+fn workspace_candidates(cwd: &Path) -> anyhow::Result<Vec<AttachCandidate>> {
     Ok(subagent::list_workspace_runs(cwd)?
         .into_iter()
         .map(AttachCandidate::from)
@@ -161,7 +161,7 @@ pub(super) fn candidate_agent_id<'a>(
         .filter(|agent_id| !agent_id.is_empty())
 }
 
-pub(super) fn picker(candidates: &[AttachCandidate], filter: WorkspaceRunFilter) -> UiPicker {
+fn picker(candidates: &[AttachCandidate], filter: WorkspaceRunFilter) -> UiPicker {
     let items = visible_candidates(candidates, filter)
         .into_iter()
         .map(candidate_item)

@@ -1,8 +1,13 @@
 //! Real delegated tool-argument streaming, live attach, and finished replay.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use rho_tui_pty::{IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan, WaitTimeout};
+
+use super::attach_view;
 
 fn find_journal(root: &Path) -> Option<PathBuf> {
     for entry in std::fs::read_dir(root).ok()?.flatten() {
@@ -32,7 +37,6 @@ fn delegated_argument_previews_live_and_replay() {
             cols: 110,
         },
     );
-    // Reuse the standalone attach startup failure bound.
     let wait = WaitTimeout::secs(10, "delegated argument stream");
     let mut parent = PtyHarness::spawn_named(&plan, "preview_parent").unwrap();
     parent.wait_for_text("gpt-5.5", wait).unwrap();
@@ -40,10 +44,7 @@ fn delegated_argument_previews_live_and_replay() {
     parent
         .wait_for_text("delegated write dispatched", wait)
         .unwrap();
-    parent.submit_text("/attach").unwrap();
-    parent.wait_for_text("attach subagent", wait).unwrap();
-    parent.inject_key(&Key::Enter).unwrap();
-    parent.wait_for_text("q back", wait).unwrap();
+    attach_view::open(&mut parent, wait);
     parent.inject_key(&Key::Ctrl('o')).unwrap();
     parent.wait_for_text("FIRST_WRITE_FRAGMENT", wait).unwrap();
     let journal = find_journal(&home.home.join(".rho")).expect("delegated journal");
@@ -59,22 +60,15 @@ fn delegated_argument_previews_live_and_replay() {
         .workspace
         .join(".rho-tui-fixture-streamed-write.txt")
         .exists());
-    let run_id = journal
-        .parent()
-        .unwrap()
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap();
-    let attach_plan = plan.with_arg("attach").with_arg(run_id);
-    let mut external = PtyHarness::spawn_named(&attach_plan, "preview_live_external").unwrap();
-    external
+    // Reopen the view so a fresh reader joins mid-run and still sees the
+    // replaceable preview.
+    attach_view::leave(&mut parent, wait);
+    attach_view::open(&mut parent, wait);
+    parent
         .wait_for_text(".rho-tui-fixture-streamed-write.txt", wait)
         .unwrap();
-    external.inject_key(&Key::Ctrl('o')).unwrap();
-    external
-        .wait_for_text("SECOND_WRITE_FRAGMENT", wait)
-        .unwrap();
+    parent.inject_key(&Key::Ctrl('o')).unwrap();
+    parent.wait_for_text("SECOND_WRITE_FRAGMENT", wait).unwrap();
     std::fs::write(
         home.workspace.join(".rho-fixture-release-write-complete"),
         "",
@@ -88,22 +82,17 @@ fn delegated_argument_previews_live_and_replay() {
             .unwrap(),
         "FIRST_WRITE_FRAGMENT\nSECOND_WRITE_FRAGMENT\n",
     );
-    external
+    attach_view::leave(&mut parent, wait);
+
+    // Replay the finished run from its durable journal.
+    super::acp_e2e::wait_for_terminal_result(journal.parent().unwrap(), Duration::from_secs(10));
+    attach_view::open(&mut parent, wait);
+    parent
         .wait_for_text("streamed write completed successfully", wait)
         .unwrap();
-    external.inject_key(&Key::Char('q')).unwrap();
-    assert_eq!(external.wait_for_exit(wait).unwrap(), 0);
-    parent.inject_key(&Key::Esc).unwrap();
-    parent.wait_for_text_gone("q back", wait).unwrap();
+    parent.inject_key(&Key::Ctrl('o')).unwrap();
+    parent.wait_for_text("SECOND_WRITE_FRAGMENT", wait).unwrap();
+    attach_view::leave(&mut parent, wait);
     parent.submit_text("/exit").unwrap();
     assert_eq!(parent.wait_for_exit(wait).unwrap(), 0);
-
-    let mut replay = PtyHarness::spawn_named(&attach_plan, "preview_replay").unwrap();
-    replay
-        .wait_for_text("streamed write completed successfully", wait)
-        .unwrap();
-    replay.inject_key(&Key::Ctrl('o')).unwrap();
-    replay.wait_for_text("SECOND_WRITE_FRAGMENT", wait).unwrap();
-    replay.inject_key(&Key::Char('q')).unwrap();
-    assert_eq!(replay.wait_for_exit(wait).unwrap(), 0);
 }
