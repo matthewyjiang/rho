@@ -159,7 +159,6 @@ fn an_attach_reports_the_job_state_its_replay_ends_in() {
     assert_eq!(feed.attach(None).job, wire::JobState::Idle);
     feed.publish([wire::SessionEvent::State {
         state: wire::JobState::Running,
-        error: None,
     }]);
     feed.publish(notices(&["a reply"]));
     assert_eq!(feed.attach(None).job, wire::JobState::Running);

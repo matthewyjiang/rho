@@ -187,6 +187,24 @@ enum Release {
     Drop,
 }
 
+/// An outcome clients could be told for a turn that ended as `end`; this
+/// test checks only what the job records.
+fn outcome_of(end: &TurnEnd) -> rho_protocol::TurnOutcome {
+    match end {
+        TurnEnd::Completed => rho_protocol::TurnOutcome::StepLimit {
+            text: String::new(),
+        },
+        TurnEnd::Cancelled => rho_protocol::TurnOutcome::Cancelled,
+        TurnEnd::Interrupted => rho_protocol::TurnOutcome::Interrupted,
+        TurnEnd::Failed(message) => rho_protocol::TurnOutcome::Failed {
+            error: rho_protocol::TurnError {
+                kind: rho_protocol::TurnErrorKind::Other,
+                message: message.clone(),
+            },
+        },
+    }
+}
+
 impl Release {
     /// The end the job records once the view is let go.
     fn recorded_end(&self) -> TurnEnd {
@@ -269,7 +287,7 @@ async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
         let expected_end = case.release.recorded_end();
 
         match case.release {
-            Release::End(end) => view.end(end),
+            Release::End(end) => view.end((outcome_of(&end), end)),
             Release::Drop => drop(view),
         }
 

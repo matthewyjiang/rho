@@ -31,6 +31,7 @@ use crate::{
 };
 
 mod live;
+pub(crate) mod outcome;
 mod replay;
 #[cfg(test)]
 mod test_support;

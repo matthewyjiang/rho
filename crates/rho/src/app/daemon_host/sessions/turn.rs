@@ -9,6 +9,7 @@
 
 use std::{future::Future, sync::Arc, time::SystemTime};
 
+use rho_protocol as wire;
 use rho_sdk::{CancellationToken, UserInput};
 use tokio::sync::{mpsc, oneshot};
 
@@ -21,8 +22,12 @@ use super::{
     LoadedSession,
 };
 use crate::{
-    app::session_runtime::{
-        PlanReport, SessionEvent, SessionRuntime, Turn, TurnControl, TurnIo, TurnOutcome, TurnView,
+    app::{
+        session_events::outcome,
+        session_runtime::{
+            PlanReport, SessionEvent, SessionRuntime, Turn, TurnControl, TurnIo, TurnOutcome,
+            TurnView,
+        },
     },
     config::Config,
 };
@@ -102,11 +107,19 @@ impl TurnTask {
         if let Some(runtime) = &*runtime {
             save_transcript(&session, runtime);
         }
+        let config = &session.config;
         view.end(match ended {
-            Ok(TurnOutcome::Completed(_)) => TurnEnd::Completed,
-            Ok(TurnOutcome::Cancelled) if stopping.is_cancelled() => TurnEnd::Interrupted,
-            Ok(TurnOutcome::Cancelled) => TurnEnd::Cancelled,
-            Err(error) => TurnEnd::Failed(format!("{error:#}")),
+            Ok(TurnOutcome::Completed(run)) => (outcome::finished(&run), TurnEnd::Completed),
+            Ok(TurnOutcome::Cancelled) if stopping.is_cancelled() => {
+                (wire::TurnOutcome::Interrupted, TurnEnd::Interrupted)
+            }
+            Ok(TurnOutcome::Cancelled) => (wire::TurnOutcome::Cancelled, TurnEnd::Cancelled),
+            Err(error) => {
+                // Logged whole: the outcome hides an authentication
+                // failure's text, which may echo credentials, from clients.
+                tracing::warn!(job = %session.job, error = format!("{error:#}"), "a turn failed");
+                failed(outcome::turn_error(&error, &config.provider, &config.auth))
+            }
         });
     }
 }
@@ -162,6 +175,13 @@ async fn run_turn(
     Box::pin(runtime.run_prompt_turn(view, &scope, turn, config)).await
 }
 
+/// The outcome of a turn that failed with `error`, and the end its job
+/// records: failed, with the error's message.
+fn failed(error: wire::TurnError) -> (wire::TurnOutcome, TurnEnd) {
+    let end = TurnEnd::Failed(error.message.clone());
+    (wire::TurnOutcome::Failed { error }, end)
+}
+
 /// The message a turn records, and a prompt still waiting for it gets,
 /// when its task stops without ending it.
 const UNEXPECTED_STOP: &str = "the turn stopped unexpectedly; see the daemon log";
@@ -191,17 +211,21 @@ impl DaemonView {
         }
     }
 
-    /// Records that the turn ended with `end`.
-    fn end(mut self, end: TurnEnd) {
-        self.finish(end);
+    /// Records that the turn ended with `outcome`, which its job records
+    /// as `end`.
+    fn end(mut self, (outcome, end): (wire::TurnOutcome, TurnEnd)) {
+        self.finish(outcome, end);
     }
 
-    /// Records that the turn ended with `end`, and tells a request still
-    /// waiting for the turn to begin.
-    fn finish(&mut self, end: TurnEnd) {
+    /// Tells clients the turn ended with `outcome`, records it as `end`,
+    /// and tells a request still waiting for the turn to begin.
+    fn finish(&mut self, outcome: wire::TurnOutcome, end: TurnEnd) {
         let start = PromptStart::ended(&end);
         // A turn that ended waits for nothing.
         self.session.change_inputs(Inputs::withdraw_all);
+        self.session
+            .feed
+            .publish([wire::SessionEvent::TurnEnded { outcome }]);
         self.session.record(JobEvent::TurnEnded(end));
         self.ended = true;
         if let (Some(started), Some(start)) = (self.started.take(), start) {
@@ -239,7 +263,11 @@ impl DaemonView {
 impl Drop for DaemonView {
     fn drop(&mut self) {
         if !self.ended {
-            self.finish(TurnEnd::Failed(UNEXPECTED_STOP.to_owned()));
+            let (outcome, end) = failed(wire::TurnError {
+                kind: wire::TurnErrorKind::Other,
+                message: UNEXPECTED_STOP.to_owned(),
+            });
+            self.finish(outcome, end);
         }
     }
 }
