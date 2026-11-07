@@ -6,7 +6,7 @@ The rho daemon is one long-lived background process per user and rho home (`~/.r
 
 | Command | What it does |
 | --- | --- |
-| `rho daemon` | Run the daemon in the foreground until it is stopped. Same as `rho daemon run`. |
+| `rho daemon` | Run the daemon in the foreground until it is stopped. Same as `rho daemon run`. `rho daemon run --unload-idle-after <DURATION>` sets how long a session sits idle before it is [unloaded](#unloading-idle-sessions) (`60s` by default). |
 | `rho daemon status` | Show the running daemon's pid, version, protocol, uptime, jobs, and socket. Add `--json` for one JSON document. |
 | `rho daemon stop` | Ask the daemon to shut down and wait for it to exit. |
 | `rho attach <ID>` | Follow a session's turn until it ends, and exit as it ended; answer its requests, steer it, or cancel it from the terminal; Ctrl+C detaches. See [Attaching to a daemon session](/automation-cli#attaching-to-a-daemon-session). |
@@ -67,7 +67,11 @@ A reopen is refused when:
 - it is a subagent's or workflow node's session, which only the session that started it continues: `SessionOpenFailed` (-32008);
 - nothing is saved under the id: `SessionNotFound` (-32003).
 
-A reopened session stays loaded until the daemon stops, and until then other processes cannot open it. Its job state is the daemon's last record of it: a session continued in the TUI since then still reports how the daemon's last turn ended, until the TUI runs through the daemon ([#1667](https://github.com/matthewyjiang/rho/issues/1667)).
+While the daemon has a session loaded, other processes cannot open it; see [Unloading idle sessions](#unloading-idle-sessions). A reopened session's job state is the daemon's last record of it: a session continued in the TUI since then still reports how the daemon's last turn ended, until the TUI runs through the daemon ([#1667](https://github.com/matthewyjiang/rho/issues/1667)).
+
+### Unloading idle sessions
+
+A session sits idle while no turn is under way, no subagent or workflow node writes it, and no client follows it. Once a session has been idle for 60 seconds, the daemon unloads it: it closes the session's MCP servers and lets go of the session's file, so the TUI or another rho process can open it. The session's job and saved conversation stay, and the next prompt or attach reopens it, which takes a few tens of milliseconds plus the startup of its MCP servers. The daemon checks once per idle period, so a session unloads between one and two idle periods after it went idle, and the daemon log records each unload with how long the session was idle. `rho daemon run --unload-idle-after <DURATION>`, such as `--unload-idle-after 10m`, changes the idle period; a daemon that a frontend started automatically uses the default.
 
 Tools in a session run with the daemon's own environment, minus provider credentials, as tools in every rho session do. A daemon that a frontend started automatically has that frontend's environment. Clients will send their own environment later ([#1659](https://github.com/matthewyjiang/rho/issues/1659)).
 

@@ -12,7 +12,7 @@ use crate::cli::{Command, DaemonCommand};
 use {
     super::{
         config_repository::ConfigRepository,
-        daemon_host::{DaemonHost, JobRecords},
+        daemon_host::{DaemonHost, JobRecords, UNLOAD_IDLE_AFTER},
     },
     crate::daemon::{self, cli_client_info, DaemonPaths},
     crate::logging::{self, LogSink},
@@ -34,8 +34,13 @@ pub(super) async fn run(_command: Option<DaemonCommand>) -> anyhow::Result<()> {
 #[cfg(unix)]
 pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
     let paths = paths()?;
-    match command.unwrap_or(DaemonCommand::Run) {
-        DaemonCommand::Run => run_foreground(&paths).await,
+    let run = DaemonCommand::Run {
+        unload_idle_after: None,
+    };
+    match command.unwrap_or(run) {
+        DaemonCommand::Run { unload_idle_after } => {
+            run_foreground(&paths, unload_idle_after.unwrap_or(UNLOAD_IDLE_AFTER)).await
+        }
         DaemonCommand::Status { json } => status(&paths, json).await,
         DaemonCommand::Stop => stop(&paths).await,
     }
@@ -58,7 +63,7 @@ pub(super) fn runs_daemon(command: Option<&Command>) -> bool {
     matches!(
         command,
         Some(Command::Daemon {
-            command: None | Some(DaemonCommand::Run)
+            command: None | Some(DaemonCommand::Run { .. })
         })
     )
 }
@@ -75,8 +80,10 @@ pub(super) fn runs_daemon(command: Option<&Command>) -> bool {
 #[cfg(unix)]
 const DAEMON_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Runs the daemon until it stops, unloading each session once it sat idle
+/// for `unload_idle_after`.
 #[cfg(unix)]
-async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
+async fn run_foreground(paths: &DaemonPaths, unload_idle_after: Duration) -> anyhow::Result<()> {
     paths.prepare_runtime_dir()?;
     // Read once: changing the filter or the sink needs a daemon restart.
     let filter = std::env::var("RHO_LOG")
@@ -132,6 +139,10 @@ async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
         bound.started_at(),
         shutdown.clone(),
     ));
+    let unloads = {
+        let host = Arc::clone(&host);
+        tokio::spawn(async move { host.unload_idle_sessions(unload_idle_after).await })
+    };
     let on_signal = Arc::clone(&host);
     // The first signal asks for a graceful shutdown. Shutdown waits for every
     // request already read and for the turns under way to save, so a signal
@@ -174,7 +185,9 @@ async fn run_foreground(paths: &DaemonPaths) -> anyhow::Result<()> {
     );
     // Still holding the lock, so no other daemon starts, and `rho daemon
     // stop` keeps waiting, until the turns are saved and recorded.
+    // Also waits for a session the idle unload is tearing down.
     host.stop_sessions(stop_requested).await;
+    unloads.abort();
     signal_task.abort();
     Ok(served.release()?)
 }

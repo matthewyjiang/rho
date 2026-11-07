@@ -429,7 +429,7 @@ async fn the_daemon_times_a_turn_out_at_its_limit() {
             stopping: rho_sdk::CancellationToken::new(),
             // The session's own, as a prompt passes it, which the limit's
             // cancel trips.
-            cancel: session.turn_cancel().clone(),
+            cancel: session.turn().cancel.clone(),
             limit: Some(TurnLimit::starting_now(case.timeout_ms)),
         }
         .spawn("hello".into());

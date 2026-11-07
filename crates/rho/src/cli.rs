@@ -13,6 +13,15 @@ fn parse_permission_mode(value: &str) -> Result<PermissionMode, PermissionModePa
     value.parse()
 }
 
+fn parse_nonzero_duration(value: &str) -> Result<Duration, String> {
+    match parse_duration(value)? {
+        Duration::ZERO => Err(format!(
+            "invalid duration '{value}': must be greater than zero"
+        )),
+        duration => Ok(duration),
+    }
+}
+
 fn parse_credential_store_backend(value: &str) -> Result<CredentialStoreBackend, String> {
     CredentialStoreBackend::parse(value).map_err(|error| error.to_string())
 }
@@ -578,7 +587,14 @@ pub enum WorkflowCommand {
 #[derive(Subcommand, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DaemonCommand {
     /// Run the daemon in the foreground until stopped. The default.
-    Run,
+    Run {
+        /// Unload a session once it has sat idle this long: no turn under
+        /// way and no client attached. Unloading closes its MCP servers and
+        /// lets other rho processes open it; the next prompt or attach
+        /// reopens it. Defaults to 60s.
+        #[arg(long, value_name = "DURATION", value_parser = parse_nonzero_duration)]
+        unload_idle_after: Option<Duration>,
+    },
     /// Show the running daemon's pid, version, uptime, and socket.
     ///
     /// Never starts a daemon. Exits with status 1 when none is running.

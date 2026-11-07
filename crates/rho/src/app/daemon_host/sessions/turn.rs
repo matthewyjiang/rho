@@ -314,8 +314,10 @@ impl DaemonView {
         self.session.change_inputs(Inputs::withdraw_all);
         {
             // See `prompt`: the next turn's `running` cannot come before this.
-            let _turn_cancel = self.session.turn_cancel();
+            let mut turn = self.session.turn();
             self.session.end_turn(outcome, end);
+            // The idle unload counts from the turn's end.
+            turn.residency.mark_in_use();
         }
         self.ended = true;
         if let (Some(started), Some(start)) = (self.started.take(), start) {

@@ -11,7 +11,7 @@ use std::{
     io,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use rho_protocol::{
@@ -32,6 +32,7 @@ mod wire;
 
 use jobs::{JobRegistry, JobStore};
 use sessions::Sessions;
+pub(super) use sessions::UNLOAD_IDLE_AFTER;
 
 /// The daemon's job records, opened before the daemon binds its socket, so
 /// a daemon that cannot keep records stops before any client reaches it.
@@ -90,6 +91,12 @@ impl DaemonHost {
     /// Whether the daemon's stop has begun.
     pub(super) fn stopping(&self) -> bool {
         self.shutdown.is_cancelled()
+    }
+
+    /// Unloads each session once it sat idle for `grace`, until the daemon
+    /// starts stopping (#1661).
+    pub(super) async fn unload_idle_sessions(&self, grace: Duration) {
+        self.sessions.unload_idle(grace).await;
     }
 
     /// Stops the turns under way, waits for them to save, and records
