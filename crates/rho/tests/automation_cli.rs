@@ -371,15 +371,7 @@ fn jsonl_reports_a_failed_turn_and_hides_authentication_text() {
 
         assert_eq!(output.status.code(), Some(1), "{mode}");
         let events = jsonl_events(&output);
-        let ended: Vec<&Value> = events
-            .iter()
-            .filter(|event| event["type"] == "run_ended")
-            .collect();
-        assert_eq!(
-            ended,
-            [events.last().unwrap()],
-            "{mode}: one run_ended, last"
-        );
+        assert_eq!(run_ended(&events), (reason, 1), "{mode}");
         assert_eq!(
             &events[events.len() - 2..],
             [
@@ -408,6 +400,14 @@ fn jsonl_reports_a_failed_turn_and_hides_authentication_text() {
         assert!(
             !stdout(&output).contains("fixture provider diagnostic"),
             "{mode}"
+        );
+        // Diagnostics are for the person at the terminal, never an
+        // authentication failure's, which may echo credentials.
+        assert_eq!(
+            stderr(&output).contains("provider diagnostic: fixture provider diagnostic"),
+            mode == "fail",
+            "{mode}: {}",
+            stderr(&output)
         );
     }
 }
@@ -482,7 +482,7 @@ fn timeout_stops_with_status_124() {
 }
 
 #[test]
-fn startup_failure_emits_a_terminal_json_object() {
+fn startup_failure_writes_only_run_ended() {
     let root = TempDir::new().unwrap();
     std::fs::write(root.path().join("config.toml"), "not valid toml = [").unwrap();
     let output = run(&root, "fixed", &["run", "--output", "jsonl", "hello"], None);
@@ -775,14 +775,18 @@ fn resolves_slash_commands_and_rejects_the_ones_it_cannot_run() {
         assert_eq!(rejected.status.code(), Some(2), "{prompt}");
         let events = jsonl_events(&rejected);
         assert_eq!(run_ended(&events), ("configuration_error", 2), "{prompt}");
-        // No turn began, so the stream holds no session event.
-        assert_eq!(session_events(&events), Vec::<&Value>::new(), "{prompt}");
+        // The prompt ends as the daemon's would, with no model call.
+        let turn_ended = json!({
+            "type": "turn_ended",
+            "outcome": {"type": "failed", "error": {"kind": "configuration", "message": "could not run /compact: not available in rho run"}}
+        });
+        assert_eq!(session_events(&events), [&turn_ended], "{prompt}");
     }
 }
 
 #[cfg(unix)]
 #[test]
-fn jsonl_sigterm_emits_stopped_event_after_cleanup() {
+fn jsonl_sigterm_ends_the_run_interrupted_after_cleanup() {
     use std::io::{BufRead, Read};
 
     let root = TempDir::new().unwrap();
@@ -792,7 +796,8 @@ fn jsonl_sigterm_emits_stopped_event_after_cleanup() {
     let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
     let mut stream = String::new();
     stdout.read_line(&mut stream).unwrap();
-    assert!(stream.contains("\"type\":\"run_started\""));
+    let started: Value = serde_json::from_str(&stream).unwrap();
+    assert_eq!(started["type"], "run_started");
 
     let signal_status = Command::new("kill")
         .args(["-TERM", &child.id().to_string()])
@@ -868,10 +873,14 @@ fn session_events(events: &[Value]) -> Vec<&Value> {
         .collect()
 }
 
-/// The reason and exit code of the stream's last line, its `run_ended`.
+/// The reason and exit code of the stream's one `run_ended`, its last line.
 fn run_ended(events: &[Value]) -> (&str, u64) {
-    let last = events.last().expect("the stream has lines");
-    assert_eq!(last["type"], "run_ended", "{events:#?}");
+    let ended: Vec<&Value> = events
+        .iter()
+        .filter(|line| line["type"] == "run_ended")
+        .collect();
+    assert_eq!(ended, [events.last().unwrap()], "{events:#?}");
+    let last = events.last().unwrap();
     (
         last["reason"].as_str().unwrap(),
         last["exit_code"].as_u64().unwrap(),

@@ -61,9 +61,9 @@ session. Session lists leave runs out, so a script's runs never crowd the
 sessions you had yourself: `rho sessions list`, the `/resume` picker and
 `/sessions` manager, `-c`, ACP session lists, and the `sessions` tool's
 search scopes skip them. A run opens by its id, which the JSONL stream's
-`run_started` reports as `session`: `rho sessions export <ID>` writes its transcript and
-`rho --resume <ID>` continues it in the TUI. A run does not ask a model to
-title its session; `rho sessions rename` names it.
+`run_started` reports as `session`: `rho sessions export <ID>` writes its
+transcript and `rho --resume <ID>` continues it in the TUI. A run does not ask
+a model to title its session; `rho sessions rename` names it.
 
 Pass `rho run --no-save` to skip saving. The run's session stays in memory:
 no session folder or index row is written, so nothing is left to export or
@@ -131,17 +131,22 @@ starting at 1, and a `type`:
 | --- | --- | --- |
 | `run_started` | The run's session opened. | `session`, its id; `workspace`, the working directory. |
 | `event` | Each of the session's events. | `event`: a [daemon protocol session event](/protocol#following-a-session), the same events a client attached to a daemon session receives. |
-| `run_ended` | Always, as the last line. | `reason`, `exit_code` (the process's [exit status](#exit-status)), and a `message` unless the run completed. |
+| `run_ended` | Last, unless writing to stdout failed. | `reason`, `exit_code` (the process's [exit status](#exit-status)), and a `message` unless the run completed. |
 
-Once the run's turn began, its last event is `turn_ended`, whose `outcome`
-says how the turn ended ([outcomes](/protocol#how-a-turn-ends)): `answered`
-carries the model's whole answer as `text`, which is the final answer to use
-rather than the `agent_message_chunk` text, since a provider retry restarts the
-reply (the stream then holds a `notice` saying so). A timeout or a signal
-cancels the turn, so its outcome is `cancelled` and `run_ended` names the cause.
-A run that fails before its turn begins, such as on invalid configuration or a
-slash command `rho run` cannot run, writes no `turn_ended`; a run that fails
-before its session opens writes only `run_ended`.
+Once the session opened, its last event is `turn_ended`, whose `outcome` says
+how the prompt ended ([outcomes](/protocol#how-a-turn-ends)), as a daemon
+session's would:
+
+- `answered` carries the model's whole answer as `text`. Use it as the final
+  answer rather than the `agent_message_chunk` text: a provider retry restarts
+  the reply, and the stream holds a `notice` saying so.
+- A timeout or a signal cancels the turn, so its outcome is `cancelled`, and
+  `run_ended` names the cause.
+- A slash command `rho run` cannot run fails the prompt before any model call,
+  as a `configuration` failure.
+
+A run that fails before its session opens, such as on invalid configuration,
+writes only `run_ended`.
 
 Tool calls carry their input and content, as protocol clients see them.
 Provider and fatal errors use Rho's existing sanitization: an authentication

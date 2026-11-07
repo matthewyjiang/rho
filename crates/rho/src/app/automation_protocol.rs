@@ -35,6 +35,27 @@ pub(crate) enum TerminalReason {
     OtherError,
 }
 
+/// How a run ended: the stream's `run_ended` record and the process's exit.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct RunEnd {
+    pub(crate) reason: TerminalReason,
+    pub(crate) exit_code: u8,
+    /// What went wrong; `None` for a run that completed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) message: Option<String>,
+}
+
+impl RunEnd {
+    /// A run that completed: exit code 0, nothing to say.
+    pub(crate) fn completed() -> Self {
+        Self {
+            reason: TerminalReason::Completed,
+            exit_code: 0,
+            message: None,
+        }
+    }
+}
+
 /// One line of the stream.
 #[derive(Serialize)]
 struct Line<'a> {
@@ -55,69 +76,56 @@ enum Record<'a> {
     /// One of the session's events.
     Event { event: &'a SessionEvent },
     /// The run ended: the stream's last line.
-    RunEnded {
-        reason: TerminalReason,
-        exit_code: u8,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        message: Option<&'a str>,
-    },
+    RunEnded(&'a RunEnd),
 }
 
-/// One run's stream on stdout. Numbers its lines from 1 and flushes each.
-/// Once a write fails it writes nothing more: the first failure is the one
-/// reported, and the run ends with it.
-#[derive(Default)]
-pub(crate) struct JsonlStream {
+/// One run's stream on `out` (stdout unless a test lends another). Numbers
+/// its lines from 1 and flushes each. The first write that fails is the
+/// stream's [`Self::failure`], which fails the run; nothing is written
+/// after it.
+pub(crate) struct JsonlStream<W = io::Stdout> {
+    out: W,
     seq: u64,
-    /// Whether `run_started` went out.
-    opened: bool,
-    /// Whether the run's turn began, so the stream owes its `turn_ended`.
-    turn: bool,
-    broken: bool,
+    failure: Option<String>,
 }
 
 impl JsonlStream {
-    /// Writes `run_started` for the session `session` in `workspace`, once:
-    /// a session that rebinds its agent stays the run's.
-    pub(crate) fn open(&mut self, session: &str, workspace: &Path) -> io::Result<()> {
-        if std::mem::replace(&mut self.opened, true) {
-            return Ok(());
+    pub(crate) fn stdout() -> Self {
+        Self::new(io::stdout())
+    }
+}
+
+impl<W: Write> JsonlStream<W> {
+    pub(crate) fn new(out: W) -> Self {
+        Self {
+            out,
+            seq: 0,
+            failure: None,
         }
-        self.write(Record::RunStarted { session, workspace })
     }
 
-    /// Notes that the run's turn began.
-    pub(crate) fn begin_turn(&mut self) {
-        self.turn = true;
+    /// Writes `run_started` for the session `session` in `workspace`.
+    pub(crate) fn run_started(&mut self, session: &str, workspace: &Path) {
+        self.write(Record::RunStarted { session, workspace });
     }
 
-    /// Whether the run's turn began, so its end is owed as `turn_ended`.
-    pub(crate) fn turn_began(&self) -> bool {
-        self.turn
+    pub(crate) fn event(&mut self, event: &SessionEvent) {
+        self.write(Record::Event { event });
     }
 
-    pub(crate) fn event(&mut self, event: &SessionEvent) -> io::Result<()> {
-        self.write(Record::Event { event })
+    /// Writes the last line: how the run ended.
+    pub(crate) fn end(&mut self, end: &RunEnd) {
+        self.write(Record::RunEnded(end));
     }
 
-    /// Writes the last line: why the run ended, its exit code, and a
-    /// message unless it completed.
-    pub(crate) fn end(
-        &mut self,
-        reason: TerminalReason,
-        exit_code: u8,
-        message: Option<&str>,
-    ) -> io::Result<()> {
-        self.write(Record::RunEnded {
-            reason,
-            exit_code,
-            message,
-        })
+    /// Why the stream stopped, once a write failed.
+    pub(crate) fn failure(&self) -> Option<&str> {
+        self.failure.as_deref()
     }
 
-    fn write(&mut self, record: Record<'_>) -> io::Result<()> {
-        if self.broken {
-            return Ok(());
+    fn write(&mut self, record: Record<'_>) {
+        if self.failure.is_some() {
+            return;
         }
         self.seq += 1;
         let line = Line {
@@ -125,14 +133,13 @@ impl JsonlStream {
             seq: self.seq,
             record,
         };
-        let written = (|| {
-            let mut stdout = io::stdout().lock();
-            serde_json::to_writer(&mut stdout, &line).map_err(io::Error::other)?;
-            stdout.write_all(b"\n")?;
-            stdout.flush()
-        })();
-        self.broken = written.is_err();
-        written
+        let written = serde_json::to_writer(&mut self.out, &line)
+            .map_err(io::Error::other)
+            .and_then(|()| self.out.write_all(b"\n"))
+            .and_then(|()| self.out.flush());
+        if let Err(error) = written {
+            self.failure = Some(format!("could not write JSONL output: {error}"));
+        }
     }
 }
 

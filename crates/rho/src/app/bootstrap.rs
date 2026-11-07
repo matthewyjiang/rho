@@ -52,23 +52,16 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     {
         return Err(error);
     }
-    if run_output == Some(OutputFormat::Jsonl) {
-        let message = error.to_string();
-        automation::emit_startup_failure(&message)?;
-        return Err(automation::AutomationExit::new(
-            2,
-            automation_protocol::TerminalReason::ConfigurationError,
-            message,
-        )
-        .into());
-    }
-    if run_output.is_some() {
-        return Err(automation::AutomationExit::new(
+    if let Some(output) = run_output {
+        let exit = automation::AutomationExit::new(
             2,
             automation_protocol::TerminalReason::ConfigurationError,
             error.to_string(),
-        )
-        .into());
+        );
+        if output == OutputFormat::Jsonl {
+            automation::emit_startup_failure(&exit);
+        }
+        return Err(exit.into());
     }
     Err(error)
 }

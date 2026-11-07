@@ -10,6 +10,7 @@
 use std::{collections::HashMap, future::Future, pin::Pin};
 
 use futures_util::{stream::FuturesUnordered, StreamExt};
+use rho_protocol::{SessionEvent as WireEvent, TurnOutcome};
 use rho_sdk::{
     CancellationToken, HostInputId, HostInputRefusal, HostInputRequest, HostInputResponse,
     SessionId, UserInput,
@@ -40,8 +41,6 @@ pub(crate) struct HeadlessView<'a> {
     jsonl: Option<JsonlView<'a>>,
     /// The parent that answers a delegated child's questions.
     parent: Option<ParentQuestions>,
-    /// Why the JSONL stream stopped, once a write to it failed.
-    output_failure: Option<String>,
 }
 
 impl<'a> HeadlessView<'a> {
@@ -51,7 +50,6 @@ impl<'a> HeadlessView<'a> {
             reporter: None,
             jsonl: None,
             parent: None,
-            output_failure: None,
         }
     }
 
@@ -63,7 +61,11 @@ impl<'a> HeadlessView<'a> {
 
     /// Also writes the session's events to `stream`.
     pub(crate) fn streaming_jsonl(mut self, stream: &'a mut JsonlStream) -> Self {
-        self.jsonl = Some(JsonlView { stream, live: None });
+        self.jsonl = Some(JsonlView {
+            stream,
+            live: None,
+            prompt: None,
+        });
         self
     }
 
@@ -79,13 +81,7 @@ impl<'a> HeadlessView<'a> {
     /// again.
     pub(crate) fn bind(&mut self, runtime: &SessionRuntime) {
         if let Some(jsonl) = &mut self.jsonl {
-            let workspace = runtime.workspace_root();
-            jsonl.live = Some(LiveEvents::new(workspace, runtime.tools()));
-            let session = runtime.session_id().to_string();
-            if let Err(error) = jsonl.stream.open(&session, workspace) {
-                self.output_failure
-                    .get_or_insert_with(|| output_failure(&error));
-            }
+            jsonl.bind(runtime);
         }
         if let Some(reporter) = self.reporter.as_deref_mut() {
             reporter.set_mcp_tools(runtime.tools().mcp_report().tool_names());
@@ -95,14 +91,29 @@ impl<'a> HeadlessView<'a> {
     /// Notes `input`, the display input of the turn about to begin, which
     /// the JSONL stream shows as the user message the turn saves.
     pub(crate) fn prompt(&mut self, input: &UserInput) {
-        if let Some(live) = self.jsonl.as_mut().and_then(|jsonl| jsonl.live.as_mut()) {
-            live.prompt(input);
+        if let Some(jsonl) = &mut self.jsonl {
+            jsonl.prompt = Some(input.clone());
         }
     }
 
-    /// The message of the JSONL write that failed, which failed the turn.
-    pub(crate) fn take_output_failure(&mut self) -> Option<String> {
-        self.output_failure.take()
+    /// Ends the JSONL stream's turn with `outcome`, as the daemon does: the
+    /// prompt of every session the stream opened ends with a `turn_ended`.
+    pub(crate) fn end_turn(&mut self, outcome: TurnOutcome) {
+        if let Some(JsonlView {
+            stream,
+            live: Some(_),
+            ..
+        }) = &mut self.jsonl
+        {
+            stream.event(&WireEvent::TurnEnded { outcome });
+        }
+    }
+
+    /// Why the JSONL stream stopped, once a write to it failed; that
+    /// failed the turn.
+    pub(crate) fn output_failure(&self) -> Option<String> {
+        let jsonl = self.jsonl.as_ref()?;
+        jsonl.stream.failure().map(str::to_owned)
     }
 
     /// Shows one turn's `events` until the turn drops its sender, answering
@@ -113,13 +124,7 @@ impl<'a> HeadlessView<'a> {
         control: UnboundedSender<TurnControl>,
     ) {
         if let Some(jsonl) = &mut self.jsonl {
-            jsonl.stream.begin_turn();
-        }
-        // The stream broke before the turn began; the turn fails at once.
-        if let Some(message) = &self.output_failure {
-            let _ = control.send(TurnControl::HostFailed {
-                message: message.clone(),
-            });
+            jsonl.open_turn(&control);
         }
         let mut heartbeat = tokio::time::interval(REPORT_HEARTBEAT);
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -157,7 +162,9 @@ impl<'a> HeadlessView<'a> {
         control: &UnboundedSender<TurnControl>,
         asked: &mut ParentAsks,
     ) {
-        self.stream_jsonl(&event, control);
+        if let Some(jsonl) = &mut self.jsonl {
+            jsonl.show(&event, control);
+        }
         match event {
             SessionEvent::Run(event) => {
                 if let Some(reporter) = self.reporter.as_deref_mut() {
@@ -200,44 +207,61 @@ impl<'a> HeadlessView<'a> {
             | SessionEvent::RunFinished { .. } => {}
         }
     }
-
-    /// Writes `event` to the JSONL stream as its wire events. A failed
-    /// write fails the turn and ends the stream.
-    fn stream_jsonl(&mut self, event: &SessionEvent, control: &UnboundedSender<TurnControl>) {
-        let Some(JsonlView {
-            stream,
-            live: Some(live),
-        }) = &mut self.jsonl
-        else {
-            return;
-        };
-        if self.output_failure.is_some() {
-            return;
-        }
-        for wire in live.map(event) {
-            if let Err(error) = stream.event(&wire) {
-                let message = output_failure(&error);
-                let _ = control.send(TurnControl::HostFailed {
-                    message: message.clone(),
-                });
-                self.output_failure = Some(message);
-                return;
-            }
-        }
-    }
-}
-
-/// The message of a failed JSONL write, which fails the run.
-fn output_failure(error: &std::io::Error) -> String {
-    format!("could not write JSONL output: {error}")
 }
 
 /// The JSONL stream a view writes, and the mapper that turns the session's
-/// events into the wire events it carries.
+/// events into the wire events it carries. A write that fails the stream
+/// fails the turn.
 struct JsonlView<'a> {
     stream: &'a mut JsonlStream,
-    /// The session's mapper, once [`HeadlessView::bind`] opened it.
+    /// The session's mapper, once [`Self::bind`] opened the stream.
     live: Option<LiveEvents>,
+    /// The display input of the turn about to begin.
+    prompt: Option<UserInput>,
+}
+
+impl JsonlView<'_> {
+    /// Opens the stream on `runtime`'s session the first time; a rebind,
+    /// whose agent has tools of its own, maps with them from then on.
+    fn bind(&mut self, runtime: &SessionRuntime) {
+        let workspace = runtime.workspace_root();
+        let live = LiveEvents::new(workspace, runtime.tools());
+        if self.live.replace(live).is_none() {
+            self.stream
+                .run_started(&runtime.session_id().to_string(), workspace);
+        }
+    }
+
+    /// Readies the mapper for the turn opening, which a stream that already
+    /// failed fails at once.
+    fn open_turn(&mut self, control: &UnboundedSender<TurnControl>) {
+        if let (Some(live), Some(input)) = (&mut self.live, self.prompt.take()) {
+            live.prompt(&input);
+        }
+        self.fail_turn_if_broken(control);
+    }
+
+    /// Writes `event` as its wire events.
+    fn show(&mut self, event: &SessionEvent, control: &UnboundedSender<TurnControl>) {
+        let Some(live) = &mut self.live else {
+            return;
+        };
+        if self.stream.failure().is_some() {
+            return;
+        }
+        for wire in live.map(event) {
+            self.stream.event(&wire);
+        }
+        self.fail_turn_if_broken(control);
+    }
+
+    fn fail_turn_if_broken(&self, control: &UnboundedSender<TurnControl>) {
+        if let Some(message) = self.stream.failure() {
+            let _ = control.send(TurnControl::HostFailed {
+                message: message.to_owned(),
+            });
+        }
+    }
 }
 
 impl<'a> TurnView for HeadlessView<'a> {

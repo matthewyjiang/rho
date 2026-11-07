@@ -159,38 +159,28 @@ credential_store = "file"
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    // Each agent call's model, from the call's input, and how the call ended.
-    let mut models = std::collections::HashMap::new();
-    let mut ends = std::collections::HashMap::new();
+    // How each agent call ended; a provider's call id is its first wire id.
     let stdout = String::from_utf8(output.stdout).unwrap();
-    for line in stdout.lines() {
-        let line = serde_json::from_str::<Value>(line).unwrap();
-        let call = &line["event"];
-        if line["type"] != "event" || call["type"] != "tool_call" {
-            continue;
-        }
-        let id = call["id"].as_str().unwrap().to_owned();
-        if let Some(input) = call.get("raw_input") {
-            let model = input["model"].as_str().unwrap_or("(parent)").to_owned();
-            models.insert(id.clone(), model);
-        }
-        if let Some(status) = call["status"].as_str() {
-            ends.insert(id, status.to_owned());
-        }
-    }
-    let mut receipts = ends
-        .into_iter()
-        .map(|(id, status)| (models[&id].clone(), status))
+    let mut receipts = stdout
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|line| line["type"] == "event" && line["event"]["type"] == "tool_call")
+        .filter_map(|line| {
+            let call = &line["event"];
+            let status = call["status"].as_str()?;
+            matches!(status, "completed" | "failed")
+                .then(|| (call["id"].as_str().unwrap().to_owned(), status.to_owned()))
+        })
         .collect::<Vec<_>>();
     receipts.sort_unstable();
     assert_eq!(
         receipts,
         [
-            ("".into(), "failed".into()),
-            ("(parent)".into(), "completed".into()),
-            ("@review".into(), "completed".into()),
-            ("child/vendor/review".into(), "completed".into()),
-            ("xai/grok-4.7".into(), "failed".into()),
+            ("review-0".into(), "completed".into()),
+            ("review-1".into(), "completed".into()),
+            ("review-2".into(), "completed".into()),
+            ("review-3".into(), "failed".into()),
+            ("review-4".into(), "failed".into()),
         ]
     );
     let requests = requests.lock().unwrap();
