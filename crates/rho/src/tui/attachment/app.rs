@@ -13,8 +13,8 @@ use ratatui::{
     widgets::Paragraph,
     Frame,
 };
+use rho_protocol::display::ToolCard;
 use rho_sdk::model::ContextUsage;
-use rho_tools::tool_card::ToolCard;
 
 use crate::{
     run_artifacts::{AttachmentEvent, AttachmentReader},
@@ -260,7 +260,7 @@ impl AttachmentApp {
                 // monotonic even when transcript indexes shift on reindexing.
                 self.insert_finished_presentation(
                     AttachmentEntryKey::Message(self.finished_tool_index.len()),
-                    crate::presentation::Presentation::Notification(message),
+                    rho_protocol::display::Presentation::Notification(message),
                     /*expanded*/ false,
                 );
             }
@@ -349,7 +349,7 @@ impl AttachmentApp {
     fn finish_pending_tool(
         &mut self,
         key: Option<String>,
-        presentation: crate::presentation::Presentation,
+        presentation: rho_protocol::display::Presentation,
     ) {
         let key = attachment_tool_key(key);
         let expanded = self
@@ -363,7 +363,7 @@ impl AttachmentApp {
     fn insert_finished_presentation(
         &mut self,
         key: AttachmentEntryKey,
-        presentation: crate::presentation::Presentation,
+        presentation: rho_protocol::display::Presentation,
         expanded: bool,
     ) {
         self.transcript.push(Entry::Tool(ToolEntry::new(

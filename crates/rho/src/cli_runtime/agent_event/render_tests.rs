@@ -3,7 +3,7 @@ use agent_client_protocol::schema::v1::{
     ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{ToolBody, ToolFact};
+use rho_protocol::display::{ToolBody, ToolFact};
 
 use super::*;
 
@@ -21,7 +21,7 @@ fn read_call() -> ToolCall {
         .locations(vec![ToolCallLocation::new("/workspace/config.toml")])
 }
 
-fn read_card(status: ToolStatus) -> ToolCard {
+fn read_card(status: ToolCardStatus) -> ToolCard {
     ToolCard::new(
         status,
         ToolFamily::FileCommand,
@@ -42,9 +42,9 @@ fn session_updates_render_as_artifacts() {
     }
     let running = AttachmentEvent::ToolStarted {
         key: Some("read-1".into()),
-        card: read_card(ToolStatus::Running),
+        card: read_card(ToolCardStatus::Running),
     };
-    let failed = read_card(ToolStatus::Error)
+    let failed = read_card(ToolCardStatus::Error)
         .with_facts(vec![ToolFact::Error {
             text: "denied".into(),
         }])
@@ -55,7 +55,7 @@ fn session_updates_render_as_artifacts() {
         PlanEntryStatus::InProgress,
     )]);
     let plan_card = ToolCard::new(
-        ToolStatus::Running,
+        ToolCardStatus::Running,
         ToolFamily::Form,
         ToolHeader::call("Plan", /*primary*/ None),
     )
@@ -155,7 +155,7 @@ fn session_updates_render_as_artifacts() {
                 first_step(AttachmentEvent::ToolUpdated {
                     key: Some("unknown".into()),
                     card: ToolCard::new(
-                        ToolStatus::Running,
+                        ToolCardStatus::Running,
                         ToolFamily::FileCommand,
                         ToolHeader::call("Read", Some("Inspect".into())),
                     ),
@@ -163,7 +163,7 @@ fn session_updates_render_as_artifacts() {
                 vec![attachment(AttachmentEvent::ToolFinished {
                     key: Some("unknown".into()),
                     presentation: ToolCard::new(
-                        ToolStatus::Ok,
+                        ToolCardStatus::Ok,
                         ToolFamily::FileCommand,
                         ToolHeader::call("Read", Some("Inspect".into())),
                     )
@@ -239,7 +239,7 @@ fn turn_end_restarts_the_presentation_step() {
     let mut renderer = EventRenderer::new("/workspace".into());
     let running = AttachmentEvent::ToolStarted {
         key: Some("read-1".into()),
-        card: read_card(ToolStatus::Running),
+        card: read_card(ToolCardStatus::Running),
     };
     let effects = [
         AgentEvent::from(SessionUpdate::ToolCall(read_call())),
@@ -282,7 +282,7 @@ fn saturated_state_remains_bounded_and_unknown_completion_renders() {
         (MAX_ACTIVE_TOOLS, vec![
             attachment(AttachmentEvent::ToolStarted {
                 key: Some("overflow".into()),
-                card: ToolCard::new(ToolStatus::Running, ToolFamily::Default, ToolHeader::call("Tool", /*primary*/ None)),
+                card: ToolCard::new(ToolCardStatus::Running, ToolFamily::Default, ToolHeader::call("Tool", /*primary*/ None)),
             }),
             attachment(AttachmentEvent::Notice(format!(
                 "acp: active tool budget {MAX_ACTIVE_TOOLS}, requested {}; card renders without retained update state",
@@ -301,7 +301,7 @@ fn saturated_state_remains_bounded_and_unknown_completion_renders() {
         vec![attachment(AttachmentEvent::ToolFinished {
             key: Some("overflow".into()),
             presentation: ToolCard::new(
-                ToolStatus::Ok,
+                ToolCardStatus::Ok,
                 ToolFamily::Default,
                 ToolHeader::call("Tool", /*primary*/ None)
             )

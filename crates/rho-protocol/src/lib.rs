@@ -28,7 +28,8 @@
 //! [`Seq`] in the session's [`StreamId`]. A client that reattaches with its
 //! [`Cursor`] resumes after the last event it saw, or is reset to the
 //! session's saved transcript when the daemon no longer buffers that point
-//! (#1657).
+//! (#1657). A tool call's events carry the card Rho's TUI draws for it, in
+//! the types of [`display`].
 //!
 //! A client signs the daemon in with a provider's interactive login through
 //! [`methods::AUTH_LOGIN`]: the login runs in the daemon, which relays its
@@ -56,6 +57,7 @@
 //! each release to these rules against the last one's.
 
 mod client;
+pub mod display;
 mod error;
 mod forward;
 mod jsonrpc;

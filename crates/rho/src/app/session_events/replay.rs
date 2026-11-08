@@ -3,7 +3,10 @@
 
 use std::{collections::HashMap, path::Path};
 
-use rho_protocol::{MessageId, SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolStatus};
+use rho_protocol::{
+    display::Presentation, MessageId, SessionEvent as WireEvent, ToolCallId, ToolCallUpdate,
+    ToolStatus,
+};
 use rho_sdk::model::{self, Message, SemanticMessage, ToolResult};
 
 use super::{
@@ -11,7 +14,7 @@ use super::{
     UNNAMED_TOOL_TITLE,
 };
 use crate::{
-    app::session_runtime::SessionTools,
+    app::{interactive_presenter::InteractiveToolPresenter, session_runtime::SessionTools},
     display_transcript::DisplayTranscript,
     session::tree::{DisplayRowOrigin, ProjectedMessage},
     tools::mcp::exported_name::McpToolNames,
@@ -27,6 +30,12 @@ use crate::{
 /// rows before `rows`; so the same rows replay with the same ids every time.
 /// A call the history left without a result, as a killed process does,
 /// closes `failed`, since history is not running work.
+///
+/// Calls carry the cards Rho's TUI draws for them
+/// (`ToolCallUpdate::display`): a call opens with the card live draws at its
+/// start, and a result brings the card the TUI restores from history. The
+/// call an aborted response was still writing gets none: the wire replays
+/// no partial calls.
 pub(super) fn replay(
     rows: &[ProjectedMessage],
     workspace: &Path,
@@ -38,6 +47,7 @@ pub(super) fn replay(
         workspace,
         tools,
         mcp_tools: &mcp_tools,
+        presenter: InteractiveToolPresenter::new(workspace.to_owned(), mcp_tools.clone()),
         calls: HashMap::new(),
         opened: 0,
         ids,
@@ -82,6 +92,8 @@ struct Replay<'a> {
     /// `tools`' MCP names, computed once: they identify MCP calls, whose
     /// capped names cannot be decoded.
     mcp_tools: &'a McpToolNames,
+    /// Draws calls as the TUI draws them, for `ToolCallUpdate::display`.
+    presenter: InteractiveToolPresenter,
     /// The latest call opened under each saved id, for its results.
     calls: HashMap<String, ReplayedCall>,
     /// How many calls replay opened.
@@ -95,6 +107,9 @@ struct Replay<'a> {
 /// A call replay opened, and what it shows so far.
 struct ReplayedCall {
     id: ToolCallId,
+    /// The saved call, or a stand-in for an orphan result's, which its
+    /// results' cards are drawn from.
+    call: model::ToolCall,
     status: ToolStatus,
     content: Vec<rho_protocol::ToolContent>,
     /// How many calls replay opened before it, for closing calls in order.
@@ -184,51 +199,75 @@ impl Replay<'_> {
             .map(|tool| tool.start_metadata(&call.arguments))
             .unwrap_or_default();
         let id = self.ids.open(&call.id);
-        let opened = opened_call(
-            id.clone(),
-            &call.name,
-            Some(call.arguments.clone()),
-            &metadata,
-            self.workspace,
-            self.mcp_tools,
-        );
-        self.open(&call.id, id, opened);
+        // Drawn as live draws the call's start; an empty saved id cannot
+        // start, so its proposal's card stands.
+        let proposed = self.presenter.proposed(call.clone()).card;
+        let card = rho_sdk::ToolCallId::from_string(call.id.as_str()).map_or(proposed, |call_id| {
+            self.presenter
+                .started(call_id, call.name.clone(), metadata.clone())
+                .card
+        });
+        let opened = ToolCallUpdate {
+            display: Some(Presentation::Card(card)),
+            ..opened_call(
+                id.clone(),
+                &call.name,
+                Some(call.arguments.clone()),
+                &metadata,
+                self.workspace,
+                self.mcp_tools,
+            )
+        };
+        self.open(&call.id, id, call.clone(), opened);
     }
 
     /// A result updates the latest call opened under its id; results replace
     /// a call's content as a whole, so it keeps earlier output. An orphan
     /// result still opens a complete card.
     fn result(&mut self, result: &ToolResult) {
-        let status = if result.is_failure() {
-            ToolStatus::Failed
-        } else {
+        let ok = !result.is_failure();
+        let status = if ok {
             ToolStatus::Completed
+        } else {
+            ToolStatus::Failed
         };
         let content = result_content(&result.content, &result.images);
         if let Some(call) = self.calls.get_mut(&result.id) {
             call.status = status;
             call.content.extend(content);
+            let shown = self.presenter.historical(&call.call, ok, &result.content);
             self.events.push(WireEvent::tool_call(ToolCallUpdate {
                 content: Some(call.content.clone()),
+                display: Some(shown.presentation),
                 ..status_update(call.id.clone(), Some(status))
             }));
             return;
         }
         let id = self.ids.open(&result.id);
+        // Drawn as the TUI draws a result whose call history lost.
+        let call = model::ToolCall::new(
+            result.id.clone(),
+            "tool".into(),
+            serde_json::Value::Object(Default::default()),
+        );
+        let shown = self.presenter.historical(&call, ok, &result.content);
         let orphan = ToolCallUpdate {
             title: Some(UNNAMED_TOOL_TITLE.to_owned()),
             kind: Some(rho_protocol::ToolKind::Other),
             content: Some(content),
+            display: Some(shown.presentation),
             ..status_update(id.clone(), Some(status))
         };
-        self.open(&result.id, id, orphan);
+        self.open(&result.id, id, call, orphan);
     }
 
-    /// Sends `opened`, the call `id` opened under `saved`, first closing a
-    /// call still open under the same saved id, which it supersedes.
-    fn open(&mut self, saved: &str, id: ToolCallId, opened: ToolCallUpdate) {
+    /// Sends `opened`, the card of `call` opened as `id` under `saved`,
+    /// first closing a call still open under the same saved id, which it
+    /// supersedes.
+    fn open(&mut self, saved: &str, id: ToolCallId, call: model::ToolCall, opened: ToolCallUpdate) {
         let call = ReplayedCall {
             id,
+            call,
             status: opened.status.unwrap_or(ToolStatus::InProgress),
             content: opened.content.clone().unwrap_or_default(),
             opened_at: self.opened,

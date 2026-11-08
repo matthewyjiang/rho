@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{ToolBody, ToolFact, ToolStatus};
+use rho_protocol::display::{ToolBody, ToolCardStatus, ToolFact};
 use serde_json::json;
 
 use super::{finished_card, parse_summary, Headline, Node, NodeProgress, Summary};
@@ -222,7 +222,7 @@ fn failures_promote_a_reason_without_losing_detail() {
     .join("\n");
     let arguments = json!({"action": "validate"});
     let card = finished_card(&arguments, &invalid, true, Path::new("."));
-    assert_eq!(card.status, ToolStatus::Error);
+    assert_eq!(card.status, ToolCardStatus::Error);
     assert_eq!(
         card.facts,
         vec![
@@ -246,7 +246,7 @@ fn failures_promote_a_reason_without_losing_detail() {
     for action in ["validate", "plan", "run", "status", "cancel", "resume"] {
         let error = "permission denied\nworkflow was not started";
         let card = finished_card(&json!({"action": action}), error, false, Path::new("."));
-        assert_eq!(card.status, ToolStatus::Error);
+        assert_eq!(card.status, ToolCardStatus::Error);
         assert_eq!(
             card.facts.first(),
             Some(&ToolFact::Error {

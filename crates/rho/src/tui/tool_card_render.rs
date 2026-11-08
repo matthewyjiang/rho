@@ -6,8 +6,8 @@ use ratatui::{
     style::Style,
     text::{Line, Span},
 };
-use rho_tools::tool_card::{
-    CodeWindow, DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolHeader, ToolStatus,
+use rho_protocol::display::{
+    CodeWindow, DiffRow, DiffRowKind, ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolHeader,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -110,15 +110,17 @@ pub(super) fn tool_entry_lines(
 /// Render paths fold this into the painted fact instead of cloning the card
 /// with a rewritten clock, so a running shell costs no per-frame body copy.
 pub(super) fn live_shell_elapsed(tool: &ToolEntry) -> Option<Duration> {
-    let crate::presentation::Presentation::Card(card) = &tool.presentation else {
+    let rho_protocol::display::Presentation::Card(card) = &tool.presentation else {
         return None;
     };
     if !matches!(card.header, ToolHeader::Shell { .. }) {
         return None;
     }
     match card.status {
-        ToolStatus::Running => tool.started_at.map(|started_at| started_at.elapsed()),
-        ToolStatus::Interrupted | ToolStatus::Ok | ToolStatus::Error => None,
+        ToolCardStatus::Running => tool.started_at.map(|started_at| started_at.elapsed()),
+        ToolCardStatus::Interrupted | ToolCardStatus::Ok | ToolCardStatus::Error => None,
+        // `Unknown`, or a status a newer protocol adds.
+        _ => None,
     }
 }
 
@@ -142,7 +144,7 @@ pub(super) fn paint_entry_sections(
     max_tool_output_lines: usize,
 ) -> CardRender {
     match &tool.presentation {
-        crate::presentation::Presentation::Notification(message) => CardRender {
+        rho_protocol::display::Presentation::Notification(message) => CardRender {
             sections: super::notification_card_render::notification_card_sections(
                 message,
                 width,
@@ -151,14 +153,14 @@ pub(super) fn paint_entry_sections(
             ),
             toggleable: true,
         },
-        crate::presentation::Presentation::Card(card) => paint_card_sections(
+        rho_protocol::display::Presentation::Card(card) => paint_card_sections(
             card,
             width,
             max_tool_output_lines.max(1),
             tool.expanded,
             live_shell_elapsed(tool),
         ),
-        crate::presentation::Presentation::SummaryCard(card) => {
+        rho_protocol::display::Presentation::SummaryCard(card) => {
             let mut rendered = paint_card_sections(
                 card,
                 width,
@@ -781,9 +783,9 @@ fn fact_spans(fact: &ToolFact, live_elapsed: Option<Duration>) -> Vec<Span<'stat
         } => diff_stat_spans(*added, *removed, path.as_deref()),
         ToolFact::Exit { code, duration_ms } => {
             let status = if *code == 0 {
-                ToolStatus::Ok
+                ToolCardStatus::Ok
             } else {
-                ToolStatus::Error
+                ToolCardStatus::Error
             };
             let mut spans = vec![Span::styled(
                 format!("exit {code}"),
@@ -827,6 +829,8 @@ fn fact_spans(fact: &ToolFact, live_elapsed: Option<Duration>) -> Vec<Span<'stat
             vec![Span::styled(text, Theme::tool_meta())]
         }
         ToolFact::Text { text } => vec![Span::styled(text.clone(), Theme::text())],
+        // `Unknown`, or a fact a newer protocol adds: an empty row.
+        _ => Vec::new(),
     }
 }
 
@@ -846,12 +850,6 @@ fn push_diff_row(
             let _ = syntax.paint_row(row);
             push_body_line(lines, &row.plain_text(), width, Theme::tool_path());
         }
-        // Op locators and other annotations are not content lines; drop the
-        // sign column so they read as headers rather than gap markers.
-        DiffRowKind::Meta => {
-            let _ = syntax.paint_row(row);
-            push_body_line(lines, &row.text, width, Theme::text());
-        }
         DiffRowKind::Context | DiffRowKind::Added | DiffRowKind::Removed | DiffRowKind::Skip => {
             tool_diff::push_diff_content_row(
                 lines,
@@ -863,6 +861,13 @@ fn push_diff_row(
                 },
                 syntax,
             );
+        }
+        // `Meta`: op locators and other annotations are not content lines;
+        // drop the sign column so they read as headers rather than gap
+        // markers. `Unknown`, or a kind a newer protocol adds, reads as one.
+        _ => {
+            let _ = syntax.paint_row(row);
+            push_body_line(lines, &row.text, width, Theme::text());
         }
     }
 }

@@ -6,7 +6,7 @@
 //! provenance fact, and a best-guess primary argument instead of a raw JSON
 //! blob.
 
-use rho_tools::tool_card::{ToolFact, ToolHeader};
+use rho_protocol::display::{ToolFact, ToolHeader};
 use serde_json::Value;
 
 use super::exported_name::McpToolIdentity;

@@ -14,10 +14,7 @@ use crate::cli_runtime::{
     status_sink::StatusSink,
     stream_effect::{StatusPatch, StreamEffect},
 };
-use crate::{
-    presentation::{parent_message_card, NotificationDelivery},
-    run_artifacts::AttachmentEvent,
-};
+use crate::{presentation::parent_message_card, run_artifacts::AttachmentEvent};
 use agent_client_protocol::util::MatchDispatch;
 use agent_client_protocol::{
     schema::v1::{
@@ -28,6 +25,7 @@ use agent_client_protocol::{
     ActiveSession, Agent, Client, ConnectTo, Dispatch, Error, Handled, Responder, SessionMessage,
     UntypedMessage,
 };
+use rho_protocol::display::NotificationDelivery;
 use rho_tools::cancellation::RunCancellation;
 use serde_json::Value;
 use std::{

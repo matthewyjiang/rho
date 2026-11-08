@@ -4834,6 +4834,7 @@ dependencies = [
  "pretty_assertions",
  "quick-xml 0.42.0",
  "regex",
+ "rho-protocol",
  "rho-sdk",
  "same-file",
  "schemars 1.2.3",

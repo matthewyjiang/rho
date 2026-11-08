@@ -9,16 +9,16 @@
 use crate::{
     app::subagent_messaging::{NoticeDelivery, SubagentNotice},
     display_transcript::{DisplayRow, DisplayTranscript},
-    presentation::{
-        NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
-        NotificationVisibility,
-    },
     subagent::RunState,
     tools::{
         agent::{SubagentManager, SubagentNotification},
         process::ProcessNotification,
         workflow_tracker::WorkflowNotification,
     },
+};
+use rho_protocol::display::{
+    NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
+    NotificationVisibility,
 };
 
 /// Finished background work drained for one boundary.

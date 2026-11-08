@@ -1,6 +1,6 @@
 //! Best-effort projection of a streamed patch into display-ready diff rows.
 
-use crate::tool_card::{DiffRow, DiffRowKind};
+use rho_protocol::display::{DiffRow, DiffRowKind};
 
 use super::parser::{
     ADD_FILE_MARKER, BEGIN_PATCH_MARKER, DELETE_FILE_MARKER, END_PATCH_MARKER, EOF_MARKER,
@@ -304,6 +304,8 @@ impl ProposedDiffFile {
                 self.removed_lines = self.removed_lines.map(|count| count + 1);
             }
             DiffRowKind::Context | DiffRowKind::File | DiffRowKind::Skip | DiffRowKind::Meta => {}
+            // `Unknown`, or a kind a newer protocol adds: neither count.
+            _ => {}
         }
         // Retain up to the full card budget of body rows; finalize may shrink
         // further once multi-file headings claim part of the budget.

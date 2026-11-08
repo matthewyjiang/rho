@@ -6,7 +6,7 @@
 //! when no RGB wash exists. Syntax roles replace fg and keep the wash.
 
 use ratatui::{style::Style, text::Span};
-use rho_tools::tool_card::DiffRowKind;
+use rho_protocol::display::DiffRowKind;
 
 use super::{
     is_light_background, scheme_ansi, AnsiColor, BlockColor, ColorScheme, Palette, Rgb,
@@ -87,6 +87,8 @@ impl Theme {
             DiffRowKind::Context | DiffRowKind::File | DiffRowKind::Skip | DiffRowKind::Meta => {
                 (None, None)
             }
+            // `Unknown`, or a kind a newer protocol adds.
+            _ => (None, None),
         };
         let wash = wash_fill.map(|block| Style::default().bg(block.color));
         let sign_base = sign_fg.map_or(Self::text(), |fg| Style::default().fg(fg));

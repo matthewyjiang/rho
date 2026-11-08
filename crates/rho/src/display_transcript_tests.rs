@@ -6,7 +6,7 @@ use super::*;
 // Owner: on-disk display compatibility, independent of the current encoder.
 #[test]
 fn saved_v1_card_decodes_without_losing_metadata() {
-    use crate::presentation::{
+    use rho_protocol::display::{
         NotificationDelivery, NotificationPreview, NotificationTone, NotificationVisibility,
     };
     let expected = DisplayTranscript(vec![DisplayRow::Notification(Box::new(NotificationCard {

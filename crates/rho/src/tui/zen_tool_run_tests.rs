@@ -5,10 +5,10 @@ use crate::tui::{ReasoningEntry, ToolEntry};
 
 fn tool() -> Entry {
     Entry::Tool(ToolEntry::new(
-        rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Ok,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("read_file(a.rs)", None),
+        rho_protocol::display::ToolCard::new(
+            rho_protocol::display::ToolCardStatus::Ok,
+            rho_protocol::display::ToolFamily::Default,
+            rho_protocol::display::ToolHeader::call("read_file(a.rs)", None),
         ),
         false,
         None,

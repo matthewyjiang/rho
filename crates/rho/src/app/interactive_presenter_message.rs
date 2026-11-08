@@ -1,12 +1,10 @@
 //! Delegation policy for the generic host message card.
 
 use super::{ToolKind, ToolView};
-use crate::{
-    presentation::{
-        NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
-        NotificationVisibility,
-    },
-    tools::agent::message_receipt::MessageReceipt,
+use crate::tools::agent::message_receipt::MessageReceipt;
+use rho_protocol::display::{
+    NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
+    NotificationVisibility,
 };
 
 pub(super) fn finished_message(

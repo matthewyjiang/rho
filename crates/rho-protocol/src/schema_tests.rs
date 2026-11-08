@@ -6,6 +6,10 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 use super::OTHER;
+use crate::display::{
+    CodeWindow, DiffRowKind, NotificationDelivery, NotificationPreview, NotificationTone,
+    NotificationVisibility, ToolCardStatus, ToolFact, ToolFamily, ToolHeader,
+};
 use crate::methods::{
     AnswerStop, ApprovalSource, Ask, AuthKind, AuthStatus, Budget, CardTone, CommandKind,
     CompactionStatus, ContentBlock, DefaultStyle, DetachReason, JobKind, JobState, LoginOutcome,
@@ -50,7 +54,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 29] = [
+    let cases: [(&str, bool); 39] = [
         ("JobKind", reads_as(unseen(), JobKind::Unknown)),
         ("JobState", reads_as(unseen(), JobState::Unknown)),
         ("Budget", reads_as(unseen(), Budget::Unknown)),
@@ -103,6 +107,31 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
         (
             "LoginOutcome",
             reads_as(unseen_tag(), LoginOutcome::Unknown),
+        ),
+        ("ToolFamily", reads_as(unseen(), ToolFamily::Unknown)),
+        (
+            "ToolCardStatus",
+            reads_as(unseen(), ToolCardStatus::Unknown),
+        ),
+        ("ToolHeader", reads_as(unseen_kind(), ToolHeader::Unknown)),
+        ("ToolFact", reads_as(unseen_kind(), ToolFact::Unknown)),
+        ("DiffRowKind", reads_as(unseen(), DiffRowKind::Unknown)),
+        ("CodeWindow", reads_as(unseen(), CodeWindow::Unknown)),
+        (
+            "NotificationDelivery",
+            reads_as(unseen(), NotificationDelivery::Unknown),
+        ),
+        (
+            "NotificationTone",
+            reads_as(unseen(), NotificationTone::Unknown),
+        ),
+        (
+            "NotificationPreview",
+            reads_as(unseen(), NotificationPreview::Unknown),
+        ),
+        (
+            "NotificationVisibility",
+            reads_as(unseen(), NotificationVisibility::Unknown),
         ),
     ];
 

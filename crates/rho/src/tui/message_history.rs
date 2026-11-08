@@ -1,17 +1,16 @@
 use std::collections::BTreeMap;
 
-use {
-    crate::app::interactive_presenter::InteractiveToolPresenter,
-    rho_providers::model::{image_summary, ContentBlock, ImageContent, Message, ToolCall},
-    rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus},
-};
+use crate::app::interactive_presenter::InteractiveToolPresenter;
+use rho_protocol::display::{ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
+use rho_providers::model::{image_summary, ContentBlock, ImageContent, Message, ToolCall};
 
 use super::{feed_image::FeedImage, ChatMedia, Entry, ToolEntry};
 
 pub(super) fn transcript_entries(
     transcript: crate::display_transcript::DisplayTranscript,
 ) -> Vec<Entry> {
-    use crate::{display_transcript::DisplayRow, presentation::Presentation};
+    use crate::display_transcript::DisplayRow;
+    use rho_protocol::display::Presentation;
     transcript
         .0
         .into_iter()
@@ -55,7 +54,7 @@ pub(super) fn generated_image_entry(
     source: &ImageContent,
 ) -> Entry {
     let mut card = ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::Default,
         ToolHeader::call("image_generation", None),
     );
@@ -190,7 +189,7 @@ pub(super) fn transcript_entries_from_messages(
                 // human message.
                 if !result.images.is_empty() {
                     let mut card = ToolCard::new(
-                        ToolStatus::Ok,
+                        ToolCardStatus::Ok,
                         ToolFamily::Default,
                         ToolHeader::call(&call.name, None),
                     );

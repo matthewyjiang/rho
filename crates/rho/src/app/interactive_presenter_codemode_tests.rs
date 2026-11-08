@@ -1,12 +1,12 @@
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{
-    CodeWindow, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
+use rho_protocol::display::{
+    CodeWindow, ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader,
 };
 use serde_json::json;
 
 use super::finished_card;
 
-fn expected(status: ToolStatus, primary: Option<&str>, script: &[&str]) -> ToolCard {
+fn expected(status: ToolCardStatus, primary: Option<&str>, script: &[&str]) -> ToolCard {
     ToolCard::new(
         status,
         ToolFamily::Default,
@@ -36,7 +36,10 @@ fn running_card_ignores_call_rows() {
         Some((&view, std::path::Path::new("."))),
         &rows,
     );
-    assert_eq!(card, expected(ToolStatus::Running, None, &["result = 1"]));
+    assert_eq!(
+        card,
+        expected(ToolCardStatus::Running, None, &["result = 1"])
+    );
 }
 
 // Covers: finished cards are the script with the call count, live and replayed
@@ -61,11 +64,11 @@ fn finished_card_is_the_script() {
         ToolCompletion::Completed(output),
     );
     assert!(ok);
-    let want = expected(ToolStatus::Ok, Some("3 calls"), &script);
+    let want = expected(ToolCardStatus::Ok, Some("3 calls"), &script);
     assert_eq!(live.presentation, want.into());
 
     let replayed = presenter.historical(&call, /*ok*/ true, "printed line");
-    let want = expected(ToolStatus::Ok, None, &script);
+    let want = expected(ToolCardStatus::Ok, None, &script);
     assert_eq!(replayed.presentation, want.into());
 
     presenter.proposed(call.clone());
@@ -77,7 +80,7 @@ fn finished_card_is_the_script() {
         ToolCompletion::Completed(failed_output),
     );
     assert!(!ok);
-    let mut card = expected(ToolStatus::Error, Some("1 call"), &script);
+    let mut card = expected(ToolCardStatus::Error, Some("1 call"), &script);
     card.push_fact(ToolFact::Error {
         text: "script failed: x".into(),
     });
@@ -129,7 +132,7 @@ fn failed_cards_keep_full_diagnostics_without_mistaking_prints_for_errors() {
         ),
         ("empty output", "", None, None),
     ] {
-        let mut want = expected(ToolStatus::Error, None, &[r#"fail("x")"#]);
+        let mut want = expected(ToolCardStatus::Error, None, &[r#"fail("x")"#]);
         if let Some(reason) = reason {
             want.push_fact(ToolFact::Error {
                 text: reason.into(),

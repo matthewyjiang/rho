@@ -1,7 +1,7 @@
 //! Payload bounds, status patches, and tool-card body helpers for agent events.
 
+use rho_protocol::display::{ToolBody, ToolCard};
 use rho_sdk::{ceil_char_boundary, ELLIPSIS};
-use rho_tools::tool_card::{ToolBody, ToolCard};
 
 use crate::{run_artifacts::AttachmentEvent, subagent::RunStatus};
 

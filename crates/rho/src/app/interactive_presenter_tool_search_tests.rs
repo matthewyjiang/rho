@@ -1,10 +1,10 @@
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+use rho_protocol::display::{ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
 use serde_json::json;
 
 use super::finished_card;
 
-fn card(status: ToolStatus) -> ToolCard {
+fn card(status: ToolCardStatus) -> ToolCard {
     ToolCard::new(
         status,
         ToolFamily::Default,
@@ -40,7 +40,7 @@ fn finished_card_lists_hits_without_schemas() {
         {"name": "bare", "description": "", "parameters": {}, "returns": {}},
     ]))
     .unwrap();
-    let found = card(ToolStatus::Ok)
+    let found = card(ToolCardStatus::Ok)
         .with_facts(vec![ToolFact::Count {
             label: "tools".into(),
             value: 2,
@@ -51,9 +51,9 @@ fn finished_card_lists_hits_without_schemas() {
             "bare".into(),
         ]));
     let miss_text = "no tools matched \"github issue\"; call `list_tools()` to browse.";
-    let miss = card(ToolStatus::Ok).with_body(ToolBody::Lines(vec![miss_text.into()]));
-    let cut = card(ToolStatus::Ok).with_body(ToolBody::Lines(vec!["[".into(), "  {".into()]));
-    let failed = card(ToolStatus::Error).with_facts(vec![ToolFact::Error {
+    let miss = card(ToolCardStatus::Ok).with_body(ToolBody::Lines(vec![miss_text.into()]));
+    let cut = card(ToolCardStatus::Ok).with_body(ToolBody::Lines(vec!["[".into(), "  {".into()]));
+    let failed = card(ToolCardStatus::Error).with_facts(vec![ToolFact::Error {
         text: "invalid arguments".into(),
     }]);
     for (case, content, ok, want) in [

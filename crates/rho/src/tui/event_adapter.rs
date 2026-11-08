@@ -1,10 +1,8 @@
+use crate::app::interactive_presenter::InteractiveToolPresenter;
+use rho_protocol::display::{ToolCard, ToolCardStatus, ToolFamily, ToolHeader};
 use rho_sdk::{
     model::{ContextUsage, ModelUsage},
     HostInputRequest, ModelCallMetrics, ModelCallProfile, RunEvent,
-};
-use {
-    crate::app::interactive_presenter::InteractiveToolPresenter,
-    rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus},
 };
 
 use super::{
@@ -61,7 +59,7 @@ pub(super) enum ViewModelEvent {
     },
     ToolFinished {
         call_id: rho_sdk::ToolCallId,
-        presentation: crate::presentation::Presentation,
+        presentation: rho_protocol::display::Presentation,
         image_asset: Option<rho_sdk::tool::ToolAsset>,
     },
     ToolDetached {
@@ -447,16 +445,16 @@ fn provider_native_activity_finished(name: &str, detail: String, family: ToolFam
     // Hosted activity card: verb-only header, optional detail fact, then
     // "finished". Keeps operator-heavy queries out of `verb(primary)` parens
     // and gives every hosted lookup the same chrome (not search-only).
-    let mut card = ToolCard::new(ToolStatus::Ok, family, ToolHeader::call(name, None));
+    let mut card = ToolCard::new(ToolCardStatus::Ok, family, ToolHeader::call(name, None));
     let detail = detail.trim();
     if !detail.is_empty() {
-        card.push_fact(rho_tools::tool_card::ToolFact::Text {
+        card.push_fact(rho_protocol::display::ToolFact::Text {
             text: detail.to_owned(),
         });
     }
     // Hosted lookups have no client result body; keep a finished fact so the
     // card is not a bare header.
-    card.push_fact(rho_tools::tool_card::ToolFact::Meta {
+    card.push_fact(rho_protocol::display::ToolFact::Meta {
         text: "finished".into(),
     });
     ViewEvent::Update(ViewModelEvent::ToolFinished {

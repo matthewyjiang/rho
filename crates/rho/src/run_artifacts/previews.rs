@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, path::Path};
 
 use serde::{Deserialize, Serialize};
 
-use rho_tools::tool_card::ToolCard;
+use rho_protocol::display::ToolCard;
 
 use super::AttachmentEvent;
 use crate::config_writer;

@@ -301,8 +301,8 @@ fn scheme_diff_chrome_washes_row_with_fg_signs() {
     let del_wash = palette.diff_del_wash.expect("del wash").color;
     assert_ne!(add_wash, del_wash);
 
-    let add = Theme::tool_diff_chrome(rho_tools::tool_card::DiffRowKind::Added);
-    let del = Theme::tool_diff_chrome(rho_tools::tool_card::DiffRowKind::Removed);
+    let add = Theme::tool_diff_chrome(rho_protocol::display::DiffRowKind::Added);
+    let del = Theme::tool_diff_chrome(rho_protocol::display::DiffRowKind::Removed);
     // Signs: role foreground on the same soft wash as the row (not a solid gutter).
     assert_eq!(add.sign.fg, Some(palette.success));
     assert_eq!(del.sign.fg, Some(palette.error));
@@ -316,7 +316,7 @@ fn scheme_diff_chrome_washes_row_with_fg_signs() {
     assert_eq!(del.plain().bg, Some(del_wash));
     assert_eq!(del.washed(Theme::text()).bg, Some(del_wash));
     // Context has no wash or role sign; plain content stays body text.
-    let ctx = Theme::tool_diff_chrome(rho_tools::tool_card::DiffRowKind::Context);
+    let ctx = Theme::tool_diff_chrome(rho_protocol::display::DiffRowKind::Context);
     assert_eq!(ctx.sign, Theme::text());
     assert_eq!(ctx.plain(), Theme::text());
     assert_eq!(ctx.washed(Theme::text()).bg, None);

@@ -10,8 +10,8 @@ use crate::{
         AtomicCreateFaultInjector, AtomicInstallMethod, RewriteAttempt, RewriteFaultInjector,
     },
     tool::{ToolContext, ToolError},
-    tool_card::{DiffRow, DiffRowKind},
 };
+use rho_protocol::display::{DiffRow, DiffRowKind};
 
 fn test_context() -> (TempDir, ToolContext) {
     let dir = tempfile::tempdir().unwrap();

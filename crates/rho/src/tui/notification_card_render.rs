@@ -2,7 +2,7 @@
 
 use ratatui::text::{Line, Span};
 
-use crate::presentation::{
+use rho_protocol::display::{
     NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
 };
 
@@ -28,6 +28,8 @@ pub(super) fn notification_card_sections(
         NotificationTone::Success => Theme::success(),
         NotificationTone::Warning => Theme::warning(),
         NotificationTone::Error => Theme::error(),
+        // `Unknown`, or a tone a newer protocol adds.
+        _ => Theme::tool_primary(),
     };
     let mut lines = vec![Line::from(vec![
         Span::styled(if received { "↰ " } else { "↳ " }, tone),
@@ -40,6 +42,8 @@ pub(super) fn notification_card_sections(
         let delivery = match message.delivery {
             NotificationDelivery::Queued => "queued",
             NotificationDelivery::Received => "received",
+            // `Unknown`, or a delivery a newer protocol adds.
+            _ => "delivered",
         };
         let mut routing = format!("{} → {} · {delivery}", message.sender, message.recipient);
         if let Some(reference) = &message.reference {

@@ -3,8 +3,8 @@ use crate::process_tree::{ProcessTree, SupervisedTree};
 
 use std::{path::Path, process::Stdio};
 
+use rho_protocol::display::{ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
 use rho_sdk::TRUNCATION_MARKER;
-use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
     process::Command,
@@ -415,13 +415,13 @@ impl<'a> ShellCardParts<'a> {
             _ => "$",
         };
         let status = if self.exit_code == "running" {
-            ToolStatus::Running
+            ToolCardStatus::Running
         } else if self.ok {
-            ToolStatus::Ok
+            ToolCardStatus::Ok
         } else if self.exit_code == "cancelled" {
-            ToolStatus::Interrupted
+            ToolCardStatus::Interrupted
         } else {
-            ToolStatus::Error
+            ToolCardStatus::Error
         };
         let mut card = ToolCard::new(
             status,

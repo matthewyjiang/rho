@@ -5,8 +5,8 @@ use super::*;
 // Owner: interactive presenter argument-to-card mapping (not terminal layout).
 #[test]
 fn todo_cards_project_streaming_arguments_and_completion_outcomes() {
-    use crate::presentation::Presentation;
-    use rho_tools::tool_card::{ToolFact, ToolFamily, ToolHeader, ToolStatus};
+    use rho_protocol::display::Presentation;
+    use rho_protocol::display::{ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
 
     let call = ToolCall::new(
         "todo-1".into(),
@@ -18,7 +18,7 @@ fn todo_cards_project_streaming_arguments_and_completion_outcomes() {
         ]}),
     );
     let expected = ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::Form,
         ToolHeader::call("todo", None),
     )
@@ -34,7 +34,7 @@ fn todo_cards_project_streaming_arguments_and_completion_outcomes() {
         },
     ]);
     let mut expected_preview = expected.clone();
-    expected_preview.status = ToolStatus::Running;
+    expected_preview.status = ToolCardStatus::Running;
     for fragments in [
         // Content arrives before status; repaired JSON must not hide "inspect".
         vec![
@@ -74,7 +74,7 @@ fn todo_cards_project_streaming_arguments_and_completion_outcomes() {
     let summary = "3 todos: 1 completed, 1 in progress, 1 pending";
     let rejection = "todo rejected by hook";
     let rejected = ToolCard::new(
-        ToolStatus::Error,
+        ToolCardStatus::Error,
         ToolFamily::Form,
         ToolHeader::call("todo", None),
     )
@@ -146,7 +146,7 @@ fn started_keeps_str_replace_kind_from_tool_name() {
         ToolMetadata::default(),
     );
     match &presented.card.header {
-        rho_tools::tool_card::ToolHeader::Call { verb, primary } => {
+        rho_protocol::display::ToolHeader::Call { verb, primary } => {
             assert_eq!(verb, "str_replace");
             assert_eq!(primary.as_deref(), Some("a.rs"));
         }
@@ -185,7 +185,7 @@ fn edit_preview_stride_follows_generic_cadence_then_grows() {
 // Owner: interactive presenter
 #[test]
 fn advisor_cards_use_status_first_headers() {
-    use rho_tools::tool_card::{ToolBody, ToolHeader, ToolStatus};
+    use rho_protocol::display::{ToolBody, ToolCardStatus, ToolHeader};
 
     let dir = tempfile::TempDir::new().unwrap();
     let view = ToolView {
@@ -196,7 +196,7 @@ fn advisor_cards_use_status_first_headers() {
     };
 
     let start = start_card(&view, dir.path());
-    assert_eq!(start.status, ToolStatus::Running);
+    assert_eq!(start.status, ToolCardStatus::Running);
     assert_eq!(
         start.header,
         ToolHeader::status_first(
@@ -232,7 +232,7 @@ fn advisor_cards_use_status_first_headers() {
     );
 
     let interrupted = interrupted_card(&view, "", dir.path());
-    assert_eq!(interrupted.status, ToolStatus::Interrupted);
+    assert_eq!(interrupted.status, ToolCardStatus::Interrupted);
     assert_eq!(
         interrupted.header,
         ToolHeader::status_first("advisor", "interrupted")
@@ -245,7 +245,7 @@ fn advisor_cards_use_status_first_headers() {
         dir.path(),
         /*data*/ None,
     );
-    assert_eq!(finished.status, ToolStatus::Ok);
+    assert_eq!(finished.status, ToolCardStatus::Ok);
     assert_eq!(
         finished.header,
         ToolHeader::status_first("advisor", "completed")
@@ -262,7 +262,7 @@ fn advisor_cards_use_status_first_headers() {
         dir.path(),
         /*data*/ None,
     );
-    assert_eq!(failed.status, ToolStatus::Error);
+    assert_eq!(failed.status, ToolCardStatus::Error);
     assert_eq!(failed.header, ToolHeader::status_first("advisor", "failed"));
 }
 
@@ -272,11 +272,13 @@ fn advisor_cards_use_status_first_headers() {
 #[test]
 fn generic_tool_summary_metadata_fills_the_header() {
     use pretty_assertions::assert_eq;
+    use rho_protocol::display::{
+        ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader,
+    };
     use rho_sdk::{
         tool::{ToolMetadata, ToolOutput},
         ToolCompletion,
     };
-    use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 
     let header = || ToolHeader::call("desk", Some("click · x 4".into()));
     let metadata = ToolMetadata::new().command_summary("click · x 4");
@@ -297,7 +299,7 @@ fn generic_tool_summary_metadata_fills_the_header() {
 
     assert_eq!(
         start(&mut presenter, "ok").card,
-        ToolCard::new(ToolStatus::Running, ToolFamily::Default, header())
+        ToolCard::new(ToolCardStatus::Running, ToolFamily::Default, header())
     );
     let (_, finished) = presenter.finished(
         &ToolCallId::from_string("ok").unwrap(),
@@ -305,7 +307,7 @@ fn generic_tool_summary_metadata_fills_the_header() {
     );
     assert_eq!(
         finished.presentation,
-        ToolCard::new(ToolStatus::Ok, ToolFamily::Default, header())
+        ToolCard::new(ToolCardStatus::Ok, ToolFamily::Default, header())
             .with_body(ToolBody::Lines(vec!["clicked".into()]))
             .into()
     );
@@ -324,7 +326,7 @@ fn generic_tool_summary_metadata_fills_the_header() {
             std::path::Path::new("."),
             /*data*/ None
         ),
-        ToolCard::new(ToolStatus::Error, ToolFamily::Default, header()).with_facts(vec![
+        ToolCard::new(ToolCardStatus::Error, ToolFamily::Default, header()).with_facts(vec![
             ToolFact::Error {
                 text: "no target".into()
             }
@@ -338,7 +340,7 @@ fn generic_tool_summary_metadata_fills_the_header() {
 #[test]
 fn failed_skill_load_keeps_reason_visible() {
     use pretty_assertions::assert_eq;
-    use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+    use rho_protocol::display::{ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
 
     let presenter =
         InteractiveToolPresenter::new(std::path::PathBuf::from("."), Default::default());
@@ -350,9 +352,9 @@ fn failed_skill_load_keeps_reason_visible() {
     let finished = presenter.historical(&call, /*ok*/ false, "unknown skill: missing");
     assert_eq!(
         finished.presentation,
-        crate::presentation::Presentation::Card(
+        rho_protocol::display::Presentation::Card(
             ToolCard::new(
-                ToolStatus::Error,
+                ToolCardStatus::Error,
                 ToolFamily::Skill,
                 ToolHeader::call("skill", Some("missing".into())),
             )
@@ -367,7 +369,7 @@ fn failed_skill_load_keeps_reason_visible() {
 // Owner: interactive presenter
 #[test]
 fn shell_start_card_includes_timeout_fact() {
-    use rho_tools::tool_card::{ToolFact, ToolHeader, ToolStatus};
+    use rho_protocol::display::{ToolCardStatus, ToolFact, ToolHeader};
 
     let dir = tempfile::TempDir::new().unwrap();
     let with_timeout = ToolView {
@@ -380,7 +382,7 @@ fn shell_start_card_includes_timeout_fact() {
         metadata: Default::default(),
     };
     let card = start_card(&with_timeout, dir.path());
-    assert_eq!(card.status, ToolStatus::Running);
+    assert_eq!(card.status, ToolCardStatus::Running);
     assert_eq!(card.header, ToolHeader::shell("$", Some("sleep 1".into())));
     assert_eq!(card.facts, vec![ToolFact::Timeout { seconds: Some(30) }]);
 
@@ -401,7 +403,7 @@ fn shell_start_card_includes_timeout_fact() {
 #[test]
 fn mcp_proposed_and_started_cards_use_remote_verb_and_argument_facts() {
     use crate::tools::{mcp::exported_name::namespaced_tool_name, tool_name::is_capped_tool_name};
-    use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+    use rho_protocol::display::{ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
 
     let long_tool = "increase_grep_across_every_workspace_with_extended_context";
     let capped = namespaced_tool_name("olive_salmon", long_tool);
@@ -425,7 +427,7 @@ fn mcp_proposed_and_started_cards_use_remote_verb_and_argument_facts() {
             }),
         );
         let expected = ToolCard::new(
-            ToolStatus::Running,
+            ToolCardStatus::Running,
             ToolFamily::Default,
             ToolHeader::call(tool, Some("crates".into())),
         )
@@ -464,7 +466,9 @@ fn mcp_identity(server: &str, tool: &str) -> McpToolIdentity {
 // Owner: interactive presenter
 #[test]
 fn mcp_finished_ok_card_counts_lines_and_keeps_body() {
-    use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+    use rho_protocol::display::{
+        ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader,
+    };
 
     let dir = tempfile::TempDir::new().unwrap();
     let view = ToolView {
@@ -482,7 +486,7 @@ fn mcp_finished_ok_card_counts_lines_and_keeps_body() {
     assert_eq!(
         card,
         ToolCard::new(
-            ToolStatus::Ok,
+            ToolCardStatus::Ok,
             ToolFamily::Default,
             ToolHeader::call("increase_grep", Some("crates".into())),
         )
@@ -510,7 +514,7 @@ fn mcp_finished_ok_card_counts_lines_and_keeps_body() {
 // Owner: interactive presenter
 #[test]
 fn mcp_finished_error_card_keeps_server_fact_and_error_summary() {
-    use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+    use rho_protocol::display::{ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
 
     let dir = tempfile::TempDir::new().unwrap();
     let view = ToolView {
@@ -529,7 +533,7 @@ fn mcp_finished_error_card_keeps_server_fact_and_error_summary() {
     assert_eq!(
         card,
         ToolCard::new(
-            ToolStatus::Error,
+            ToolCardStatus::Error,
             ToolFamily::Default,
             ToolHeader::call("increase_grep", Some("crates".into())),
         )
@@ -548,7 +552,7 @@ fn mcp_finished_error_card_keeps_server_fact_and_error_summary() {
 // Owner: interactive presenter
 #[test]
 fn mcp_escaped_exported_name_renders_decoded_server_and_tool() {
-    use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+    use rho_protocol::display::{ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
 
     let dir = tempfile::TempDir::new().unwrap();
     let name = "mcp___rho_6769742d687562___rho_6973737565732f6c697374";
@@ -562,7 +566,7 @@ fn mcp_escaped_exported_name_renders_decoded_server_and_tool() {
     assert_eq!(
         card,
         ToolCard::new(
-            ToolStatus::Running,
+            ToolCardStatus::Running,
             ToolFamily::Default,
             ToolHeader::call("issues/list", Some("crates".into())),
         )

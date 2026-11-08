@@ -2,8 +2,8 @@
 
 use std::time::{Duration, Instant};
 
+use rho_protocol::display::ToolCard;
 use rho_sdk::ToolCallId;
-use rho_tools::tool_card::ToolCard;
 
 use crate::tui::{
     activity::{ActivityPhase, LoadingSpinner, ProviderRetryHint},

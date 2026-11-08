@@ -4,8 +4,8 @@
 //! the transcript jump, so the TUI ignores the bridge's progress rows (ACP and
 //! the automation protocol still forward them).
 
-use rho_tools::tool_card::{
-    CodeWindow, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
+use rho_protocol::display::{
+    CodeWindow, ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader,
 };
 use serde_json::Value;
 
@@ -18,7 +18,7 @@ const SCRIPT_LANGUAGE: &str = "python";
 /// Streaming, started, running, and interrupted cards pass no detail.
 pub(super) fn preview_card(
     arguments: &Value,
-    status: ToolStatus,
+    status: ToolCardStatus,
     primary: Option<String>,
 ) -> ToolCard {
     let lines = string_arg(arguments, "script")
@@ -30,13 +30,13 @@ pub(super) fn preview_card(
 /// The source decoder already assembled these rows; retain the full history.
 /// Collapsed, the card follows the newest generated rows.
 pub(super) fn streaming_card(lines: Vec<String>) -> ToolCard {
-    script_card(lines, CodeWindow::Tail, ToolStatus::Running, None)
+    script_card(lines, CodeWindow::Tail, ToolCardStatus::Running, None)
 }
 
 fn script_card(
     lines: Vec<String>,
     window: CodeWindow,
-    status: ToolStatus,
+    status: ToolCardStatus,
     primary: Option<String>,
 ) -> ToolCard {
     ToolCard::new(
@@ -68,7 +68,7 @@ pub(super) fn finished_card(
         Some(1) => Some("1 call".into()),
         Some(count) => Some(format!("{count} calls")),
     };
-    let mut card = preview_card(arguments, ToolStatus::from_finished(ok), primary);
+    let mut card = preview_card(arguments, ToolCardStatus::from_finished(ok), primary);
     if !ok {
         let reason = data
             .and_then(|data| data.get("error"))

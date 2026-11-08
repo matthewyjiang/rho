@@ -14,20 +14,23 @@ use rho_sdk::{
 use super::{CompactionEnd, LiveEvents};
 use crate::{
     app::{
+        interactive_presenter::InteractiveToolPresenter,
         session_events::test_support::{
             agent, canonical_messages, closed, opened, origin, shell_call, text, updated,
+            without_display,
         },
         session_runtime::{InsertedMessage, SessionEvent, SessionTools},
     },
     display_transcript::{DisplayRow, DisplayTranscript},
-    presentation::{
-        NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
-        NotificationVisibility,
-    },
     tools::{
+        mcp::exported_name::McpToolNames,
         sdk_registry::AppToolSet,
         todo::{TodoItem, TodoList, TodoStatus},
     },
+};
+use rho_protocol::display::{
+    NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
+    NotificationVisibility, Presentation,
 };
 
 fn live(tool_set: &AppToolSet) -> LiveEvents {
@@ -125,7 +128,7 @@ fn a_live_turn_streams_its_prompt_text_and_calls() {
         },
     ];
     assert_eq!(
-        canonical_messages(map_all(&mut live, &events)),
+        canonical_messages(without_display(map_all(&mut live, &events))),
         vec![
             WireEvent::UserMessage {
                 message: MessageId::new("m0"),
@@ -265,8 +268,77 @@ fn tool_results_open_complete_cards_and_never_reopen() {
     for (name, events, expected) in cases {
         let tool_set = AppToolSet::disabled();
         let mut live = live(&tool_set);
-        assert_eq!(map_all(&mut live, &events), expected, "{name}");
+        assert_eq!(
+            without_display(map_all(&mut live, &events)),
+            expected,
+            "{name}"
+        );
     }
+}
+
+// Covers: each start, progress update and result of a call carries the
+// card the TUI's presenter draws at that event, a call the run finished
+// without starting carries its result's, and a call the run cut off closes
+// without one, so a client rebuilds the TUI's cards and marks the cut-off
+// call interrupted.
+// Owner: session event live mapping
+#[test]
+fn tool_calls_carry_the_tui_cards() {
+    let ran = ToolCompletion::Completed(ToolOutput::text("a.rs"));
+    let progress = ToolProgress::new("running");
+    // The TUI's presenter, fed each call as the TUI's event adapter feeds it.
+    let mut tui = InteractiveToolPresenter::new(PathBuf::from("/work"), McpToolNames::default());
+    let mut start = |id: &str, command: &str| {
+        tui.proposed(shell_call(id, command));
+        Presentation::Card(
+            tui.started(call_id(id), "bash".into(), ToolMetadata::new())
+                .card,
+        )
+    };
+    let ran_started = start("call-1", "ls");
+    let cut_off_started = start("call-3", "sleep 9");
+    let ran_progress = Presentation::Card(tui.updated(&call_id("call-1"), &progress).card);
+    let ran_finished = tui.finished(&call_id("call-1"), ran.clone()).1.presentation;
+    tui.proposed(shell_call("call-2", "cat b.rs"));
+    let unstarted_finished = tui
+        .finished(&call_id("call-2"), ToolCompletion::Unavailable)
+        .1
+        .presentation;
+
+    let tool_set = AppToolSet::disabled();
+    let mut live = live(&tool_set);
+    let events = [
+        proposed("call-1", "ls"),
+        started("call-1", ToolMetadata::new()),
+        SessionEvent::Run(RunEvent::ToolUpdated {
+            call_id: call_id("call-1"),
+            progress,
+        }),
+        finished("call-1", ran),
+        proposed("call-2", "cat b.rs"),
+        finished("call-2", ToolCompletion::Unavailable),
+        proposed("call-3", "sleep 9"),
+        started("call-3", ToolMetadata::new()),
+        SessionEvent::RunClosed,
+    ];
+    let displays: Vec<_> = map_all(&mut live, &events)
+        .into_iter()
+        .filter_map(|event| match event {
+            WireEvent::ToolCall(update) => Some(update.display),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        displays,
+        vec![
+            Some(ran_started),
+            Some(ran_progress),
+            Some(ran_finished),
+            Some(unstarted_finished),
+            Some(cut_off_started),
+            None,
+        ]
+    );
 }
 
 /// A call update with `status` and `content`, and nothing else.
@@ -279,6 +351,7 @@ fn card(id: &str, status: ToolStatus, content: Vec<ToolContent>) -> ToolCallUpda
         raw_input: None,
         content: Some(content),
         locations: None,
+        display: None,
     }
 }
 
@@ -445,7 +518,7 @@ fn a_discarded_response_drops_what_it_proposed() {
         finished("call-1", ToolCompletion::Unavailable),
     ];
     assert_eq!(
-        map_all(&mut live, &events),
+        without_display(map_all(&mut live, &events)),
         vec![
             WireEvent::ResponseDiscarded,
             WireEvent::tool_call(ToolCallUpdate {

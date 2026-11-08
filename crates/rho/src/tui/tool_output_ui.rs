@@ -29,11 +29,11 @@ pub(super) fn tool_output_toggleable(
         return toggleable;
     }
     match &tool.presentation {
-        crate::presentation::Presentation::Notification(_) => true,
-        crate::presentation::Presentation::Card(card) => {
+        rho_protocol::display::Presentation::Notification(_) => true,
+        rho_protocol::display::Presentation::Card(card) => {
             card_is_toggleable(card, padded_content_width(width), max_tool_output_lines)
         }
-        crate::presentation::Presentation::SummaryCard(card) => !card.body.is_empty(),
+        rho_protocol::display::Presentation::SummaryCard(card) => !card.body.is_empty(),
     }
 }
 

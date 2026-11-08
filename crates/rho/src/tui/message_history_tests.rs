@@ -3,19 +3,17 @@ use serde_json::json;
 
 use super::transcript_entries_from_messages;
 use crate::tui::Entry;
+use rho_protocol::display::ToolHeader;
 use rho_providers::model::{ContentBlock, Message, ToolCall, ToolResult};
-use rho_tools::tool_card::ToolHeader;
 
 // Covers: display receipts restore cards, while the same encoded text from a
 // human stays human input. Owner: transcript role projection.
 #[test]
 fn notification_display_preserves_ownership() {
-    use crate::{
-        display_transcript::{DisplayRow, DisplayTranscript},
-        presentation::{
-            NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
-            NotificationVisibility, Presentation,
-        },
+    use crate::display_transcript::{DisplayRow, DisplayTranscript};
+    use rho_protocol::display::{
+        NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
+        NotificationVisibility, Presentation,
     };
     let card = NotificationCard {
         title: "Update · Inspect replayability".into(),
@@ -102,12 +100,13 @@ fn tool_names(entries: &[Entry]) -> Vec<String> {
         .iter()
         .filter_map(|entry| match entry {
             Entry::Tool(super::ToolEntry {
-                presentation: crate::presentation::Presentation::Card(card),
+                presentation: rho_protocol::display::Presentation::Card(card),
                 ..
             }) => match &card.header {
                 ToolHeader::Call { verb, .. } => Some(verb.clone()),
                 ToolHeader::StatusFirst { identity, .. } => Some(identity.clone()),
                 ToolHeader::Shell { command, .. } => command.clone(),
+                _ => None,
             },
             _ => None,
         })
@@ -157,12 +156,10 @@ fn transcript_pairs_tool_results_by_id() {
 // Owner: transcript replay, not live rendering.
 #[test]
 fn transcript_restores_message_receipts() {
-    use crate::{
-        presentation::{
-            NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
-            NotificationVisibility, Presentation,
-        },
-        tools::agent::message_receipt::MessageReceipt,
+    use crate::tools::agent::message_receipt::MessageReceipt;
+    use rho_protocol::display::{
+        NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
+        NotificationVisibility, Presentation,
     };
 
     let body = " \nCheck routing first.\nKeep the full message.\t\n ";

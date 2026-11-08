@@ -11,7 +11,7 @@ use ratatui::{
     style::Style,
     text::{Line, Span},
 };
-use rho_tools::tool_card::DiffRow;
+use rho_protocol::display::DiffRow;
 
 use super::{rows::picker_badge_style, PickerBadge};
 use crate::tui::{

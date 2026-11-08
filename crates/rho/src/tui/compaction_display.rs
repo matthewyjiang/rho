@@ -4,8 +4,8 @@
 //! both show this card. They differ only in who owns the session: idle work vs
 //! the live turn.
 
+use rho_protocol::display::{ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
 use rho_sdk::ToolCallId;
-use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 
 use super::usage_cost::{format_token_count, format_usd};
 
@@ -113,7 +113,7 @@ impl CompactionUiOutcome {
 /// Running compaction card.
 pub(super) fn running_card() -> ToolCard {
     ToolCard::new(
-        ToolStatus::Running,
+        ToolCardStatus::Running,
         ToolFamily::Default,
         ToolHeader::call("compact", None),
     )
@@ -125,7 +125,7 @@ pub(super) fn running_card() -> ToolCard {
 /// Finished compaction card driven only by available facts.
 pub(super) fn completed_card(facts: CompactionDisplayFacts) -> ToolCard {
     let mut card = ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::Default,
         ToolHeader::call("compact", None),
     );
@@ -160,7 +160,7 @@ pub(super) fn completed_card(facts: CompactionDisplayFacts) -> ToolCard {
 /// Failed compact card.
 pub(super) fn failed_card(detail: impl Into<String>) -> ToolCard {
     ToolCard::new(
-        ToolStatus::Error,
+        ToolCardStatus::Error,
         ToolFamily::Default,
         ToolHeader::call("compact", None),
     )
@@ -177,7 +177,7 @@ pub(super) fn failed_card(detail: impl Into<String>) -> ToolCard {
 /// Cancelled compact card.
 pub(super) fn cancelled_card() -> ToolCard {
     ToolCard::new(
-        ToolStatus::Interrupted,
+        ToolCardStatus::Interrupted,
         ToolFamily::Default,
         ToolHeader::call("compact", None),
     )
@@ -189,7 +189,7 @@ pub(super) fn cancelled_card() -> ToolCard {
 /// Unchanged / not-enough-history finished card.
 pub(super) fn unchanged_card(detail: impl Into<String>) -> ToolCard {
     ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::Default,
         ToolHeader::call("compact", None),
     )

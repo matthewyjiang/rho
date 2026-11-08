@@ -1,5 +1,5 @@
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus};
+use rho_protocol::display::{ToolCard, ToolCardStatus, ToolFamily, ToolHeader};
 
 use super::*;
 
@@ -7,7 +7,7 @@ fn preview(key: &str, detail: &str) -> AttachmentEvent {
     AttachmentEvent::ToolPreview {
         key: key.into(),
         card: ToolCard::new(
-            ToolStatus::Running,
+            ToolCardStatus::Running,
             ToolFamily::Default,
             ToolHeader::call("write", Some(detail.into())),
         ),

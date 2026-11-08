@@ -122,7 +122,7 @@ impl ToolEntry {
         max_image_height: u16,
         elapsed_label: Option<&str>,
     ) -> bool {
-        let crate::presentation::Presentation::Card(card) = &self.presentation else {
+        let rho_protocol::display::Presentation::Card(card) = &self.presentation else {
             return false;
         };
         let Some(cache) = self.render_cache.as_ref() else {

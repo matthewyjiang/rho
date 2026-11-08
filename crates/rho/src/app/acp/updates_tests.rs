@@ -38,6 +38,7 @@ fn tool_update(id: &str) -> wire::ToolCallUpdate {
         raw_input: None,
         content: None,
         locations: None,
+        display: None,
     }
 }
 
