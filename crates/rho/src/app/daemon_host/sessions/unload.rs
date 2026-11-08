@@ -1,20 +1,24 @@
 //! Unloading idle sessions (#1661). A loaded session holds its file's lease,
 //! which keeps every other rho process from opening it, and its MCP
 //! servers. Once it sits idle for the daemon's grace, the daemon tears it
-//! down; the next prompt or attach reopens it from its file.
+//! down; the next prompt or attach reopens it from its file. A session that
+//! has saved nothing yet has no file to reopen from, so it is discarded
+//! instead: torn down the same way, and its job forgotten, so the daemon
+//! lists it no more and a request for it finds nothing saved.
 //!
 //! A session is busy, never idle, while a turn or a subagent writes it, a
 //! settings change is queued on it or applying, a delete holds it, a client
-//! follows it, background work its prompts started runs on or holds a
-//! result, or it has saved nothing yet, so a reopen would not find it.
+//! follows it, or background work its prompts started runs on or holds a
+//! result.
 //!
 //! A sweep every grace marks each idle session idle from then, and unloads
-//! one a sweep already marked a grace ago, so a session unloads between one
-//! and two graces after it went idle. Sweeps mark a busy session in use, and
-//! so do a prompt and an attach. Each happens under the session's turn lock,
-//! which the unload decides under, so a request either uses the session
-//! before the unload sees it, keeping it, or finds it unloaded and reopens
-//! it.
+//! or discards one a sweep already marked a grace ago, so a session leaves
+//! between one and two graces after it went idle. Sweeps mark a busy
+//! session in use, and so do a prompt and an attach. Each happens under the
+//! session's turn lock, which the sweep decides under, so a request either
+//! uses the session before the sweep sees it, keeping it, or finds it gone
+//! and looks it up again: that reopens an unloaded session, and finds
+//! nothing saved for a discarded one.
 
 use std::{sync::Arc, time::Duration};
 
@@ -22,10 +26,10 @@ use rho_sdk::SessionId;
 use tokio::time::Instant;
 
 use super::{LoadedSession, Sessions};
-use crate::app::daemon_host::jobs::SessionJob;
+use crate::app::{daemon_host::jobs::SessionJob, session_runtime::SessionRuntime};
 
-/// How long a session sits idle before the daemon unloads it, unless
-/// `rho daemon run --unload-idle-after` says otherwise.
+/// How long a session sits idle before the daemon unloads or discards it,
+/// unless `rho daemon run --unload-idle-after` says otherwise.
 //
 // Reopening costs little, so this need only span a client's reconnect, such
 // as a TUI restart or a frontend switching back to a session. Measured on a
@@ -44,7 +48,8 @@ pub(super) enum Residency {
     InUse,
     /// Idle at every sweep since this one.
     IdleSince(Instant),
-    /// Unloaded: a request that found the session before then reopens it.
+    /// Unloaded or discarded: a request that found the session before then
+    /// looks it up again.
     Unloaded,
 }
 
@@ -63,8 +68,8 @@ impl Residency {
 }
 
 impl Sessions {
-    /// Sweeps the loaded sessions every `grace`, unloading those idle for
-    /// it, until the daemon starts stopping.
+    /// Sweeps the loaded sessions every `grace`, unloading or discarding
+    /// those idle for it, until the daemon starts stopping.
     pub(in crate::app::daemon_host) async fn unload_idle(&self, grace: Duration) {
         loop {
             tokio::select! {
@@ -75,8 +80,8 @@ impl Sessions {
         }
     }
 
-    /// Marks each loaded session idle, or unloads it once it was idle for
-    /// `grace`.
+    /// Marks each loaded session idle, or unloads or discards it once it was
+    /// idle for `grace`.
     async fn sweep(&self, grace: Duration) {
         let sessions: Vec<_> = self
             .loaded()
@@ -88,12 +93,14 @@ impl Sessions {
         }
     }
 
-    /// Unloads `session`, loaded as `id`, if a sweep marked it idle `grace`
-    /// ago and it is idle still; marks it idle or in use otherwise.
+    /// Unloads `session`, loaded as `id`, or discards it when it saved
+    /// nothing, if a sweep marked it idle `grace` ago and it is idle still;
+    /// marks it idle or in use otherwise.
     async fn unload_if_idle(&self, id: &SessionId, session: &Arc<LoadedSession>, grace: Duration) {
-        // Both held from the decision until the session is torn down. The
-        // stop waits for the first. A reopen waits for the second, since the
-        // old runtime holds the session's file until it is torn down.
+        // Both held from the decision until the session is torn down and a
+        // discarded one's job forgotten. The stop waits for the first. A
+        // reopen waits for the second, since the old runtime holds the
+        // session's file until it is torn down.
         let _unloading = self.unloading.read().await;
         let _reopening = self.reopening.lock(id).await;
         let idle_since = {
@@ -125,29 +132,44 @@ impl Sessions {
         };
         // Free: no turn runs, and none starts on an unloaded session.
         let runtime = session.runtime.lock().await.take();
+        // Evicted, so no turn can save it now. `None`: the stop took it.
+        let saved = runtime.as_ref().is_none_or(SessionRuntime::is_saved);
         if let Some(runtime) = runtime {
             runtime.shutdown().await;
         }
-        tracing::info!(
-            session = %id,
-            job = %session.job,
-            idle_for = ?idle_since.elapsed(),
-            unload_idle_after = ?grace,
-            "unloaded idle session"
-        );
+        let idle_for = idle_since.elapsed();
+        if saved {
+            tracing::info!(
+                session = %id,
+                job = %session.job,
+                ?idle_for,
+                unload_idle_after = ?grace,
+                "unloaded idle session"
+            );
+        } else {
+            // Nothing on disk could reopen a session that saved nothing, so
+            // its job goes with it.
+            self.jobs.remove(&session.job);
+            tracing::info!(
+                session = %id,
+                job = %session.job,
+                ?idle_for,
+                unload_idle_after = ?grace,
+                "discarded unsaved idle session"
+            );
+        }
     }
 }
 
 impl LoadedSession {
-    /// Whether the session's runtime keeps it loaded: it has saved nothing
-    /// yet, or background work its prompts started runs on or holds a
-    /// result, which a teardown would stop or drop. So does a runtime a turn
-    /// that just ended still holds.
+    /// Whether the session's runtime keeps it loaded: background work its
+    /// prompts started runs on or holds a result, which a teardown would
+    /// stop or drop. So does a runtime a turn that just ended still holds.
     fn runtime_keeps_loaded(&self) -> bool {
         match self.runtime.try_lock() {
             Ok(runtime) => runtime
                 .as_ref()
-                .is_some_and(|runtime| !runtime.is_saved() || runtime.has_background_work()),
+                .is_some_and(SessionRuntime::has_background_work),
             Err(_) => true,
         }
     }

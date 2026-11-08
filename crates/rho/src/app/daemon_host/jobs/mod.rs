@@ -10,7 +10,9 @@
 //! daemon that restarts lists the jobs its predecessor ran and marks the
 //! ones it left unfinished as interrupted.
 //!
-//! Records are never deleted yet: a retention policy is a follow-up.
+//! A record is deleted only with a session the daemon discards having saved
+//! nothing (see `sessions/unload.rs`): no request could reopen it. Others
+//! stay; a retention policy is a follow-up.
 
 use std::path::PathBuf;
 

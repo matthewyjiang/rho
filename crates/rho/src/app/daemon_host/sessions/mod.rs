@@ -16,8 +16,9 @@
 //! between turns, a change sent during a turn once it ends, and which the
 //! session keeps with its file; see [`configure`] and [`options`]. A
 //! session that sits idle, with no turn under way and no client attached,
-//! is unloaded until a request reopens it; see [`unload`]. Clients list,
-//! rename, and delete saved sessions, loaded or not; see [`catalog`].
+//! is unloaded until a request reopens it, or discarded when it has saved
+//! nothing yet; see [`unload`]. Clients list, rename, and delete saved
+//! sessions, loaded or not; see [`catalog`].
 //!
 //! Once the daemon starts stopping, it refuses new sessions and prompts and
 //! detaches every client; then it stops the turns under way, waits for them
@@ -383,8 +384,8 @@ impl LoadedSession {
     }
 
     /// The turn lock of a request that uses the session, marked in use, or
-    /// `None` once the idle unload took the session: the request reopens it
-    /// instead.
+    /// `None` once the idle unload took the session: the request looks it
+    /// up again instead, which reopens it if it was saved.
     fn enter(&self) -> Option<MutexGuard<'_, TurnSlot>> {
         let mut turn = self.turn();
         turn.residency.mark_in_use().then_some(turn)
@@ -751,8 +752,8 @@ impl Sessions {
     /// Takes `session`, loaded as `id`, out of `loaded` and marks it
     /// unloaded, unless the daemon is stopping or `id` now names another
     /// session; whether it did. `turn` is `session`'s turn lock, held, so a
-    /// request either used the session before this or finds it unloaded and
-    /// reopens it. Under the lock `begin_stop` takes, so a stop either
+    /// request either used the session before this or finds it gone and
+    /// looks it up again. Under the lock `begin_stop` takes, so a stop either
     /// drains the session first or finds it gone. Lock order: the turn
     /// lock, then `loaded`.
     fn evict(&self, id: &SessionId, session: &Arc<LoadedSession>, turn: &mut TurnSlot) -> bool {

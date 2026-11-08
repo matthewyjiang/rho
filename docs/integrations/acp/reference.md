@@ -127,7 +127,7 @@ The session keeps the mode, model, reasoning, and fast mode a client last chose 
 
 ### Close
 
-Hosts such as Zed and T3 Code send `session/close` when a thread closes. Rho cancels the prompt this host is running in the session, as `session/cancel` would, then detaches. The session stays in the daemon, with its MCP servers, background processes, and delegated agents, until the daemon [unloads it](/daemon#unloading-idle-sessions); `session/load` can open it again. Closing an ID with no session open on this connection succeeds and does nothing.
+Hosts such as Zed and T3 Code send `session/close` when a thread closes. Rho cancels the prompt this host is running in the session, as `session/cancel` would, then detaches. The session stays in the daemon, with its MCP servers, background processes, and delegated agents, until the daemon [unloads it](/daemon#unloading-idle-sessions); `session/load` can open it again, unless it closed before its first prompt saved it, which the daemon then discards. Closing an ID with no session open on this connection succeeds and does nothing.
 
 When the host closes its stdio, or the `rho acp` process gets `SIGINT`, `SIGTERM`, or `SIGHUP`, every session it has open is closed the same way; a second signal exits without waiting for the daemon. A process killed with `SIGKILL`, or one that crashes, closes nothing: a prompt it was running keeps its turn running in the daemon, where another client can cancel it.
 
