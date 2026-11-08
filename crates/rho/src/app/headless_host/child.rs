@@ -18,8 +18,9 @@ use crate::{
         agent_binding::BoundAgent,
         cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
         session_runtime::{
-            HostCapabilities, NodeSession, QuestionSupport, RunShape, SessionBuild, SessionLaunch,
-            SessionOpening, SessionRole, SessionRuntime, Turn, TurnStart, UnattendedApprovals,
+            HostCapabilities, LeftOut, NodeSession, QuestionSupport, RunShape, SessionBuild,
+            SessionLaunch, SessionOpening, SessionRole, SessionRuntime, Turn, TurnStart,
+            UnattendedApprovals,
         },
         shutdown_signal::ShutdownSignals,
         subagent_messaging::{NoticePoster, SteeringSlot, CHILD_COMMUNICATION_CONTRACT},
@@ -156,9 +157,10 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
     let build = SessionBuild {
         launch: SessionLaunch {
             config_path,
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: true,
+            left_out: LeftOut {
+                subagents: true,
+                ..LeftOut::default()
+            },
             diagnostics,
             agent: bound,
             prompt_suffix: Some(CHILD_COMMUNICATION_CONTRACT),

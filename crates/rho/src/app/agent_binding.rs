@@ -50,6 +50,18 @@ pub(crate) enum LaunchTools {
     None,
 }
 
+impl LaunchTools {
+    /// What a launch keeps when it leaves out every tool (`no_tools`) or
+    /// the subagent tools (`no_subagents`); leaving out every tool wins.
+    pub(crate) fn from_flags(no_tools: bool, no_subagents: bool) -> Self {
+        match (no_tools, no_subagents) {
+            (true, _) => Self::None,
+            (false, true) => Self::NoSubagents,
+            (false, false) => Self::All,
+        }
+    }
+}
+
 /// The built-in tools a root session on this platform starts from, before
 /// its host's own policy: those its launch keeps, but the other platform's
 /// shell, and no subagent tools when `config` disables them.

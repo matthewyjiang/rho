@@ -20,7 +20,7 @@ use {
 
 use super::{
     acp,
-    agent_binding::{root_host_tools, AgentBinder, AgentInvocation, AgentRole},
+    agent_binding::{root_host_tools, AgentBinder, AgentInvocation, AgentRole, LaunchTools},
     automation, classifier_eval, cli_config, compaction_eval,
     config_repository::ConfigRepository,
     daemon_cli, doctor_cli, interactive, login, mcp_cli, plugins_cli,
@@ -436,9 +436,7 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
             config: startup.config,
             config_path: absolute_config_path(startup.config_repository)?,
             cwd: startup.cwd,
-            no_system_prompt: startup.cli.no_system_prompt,
-            no_tools: startup.cli.no_tools,
-            no_subagents: startup.cli.no_subagents,
+            left_out: launch_left_out(startup.cli),
             agent: startup.bound_agent,
             output_file: startup.output_file,
             output: startup.output,
@@ -483,9 +481,7 @@ pub(super) async fn prepare_acp(
         config,
         config_path: absolute_config_path(&startup.config_repository)?,
         cwd: startup.cwd,
-        no_system_prompt: startup.cli.no_system_prompt,
-        no_tools: startup.cli.no_tools,
-        no_subagents: startup.cli.no_subagents,
+        left_out: launch_left_out(&startup.cli),
         agent: startup.bound_agent,
         diagnostics,
         herdr: HerdrReporter::from_env().with_source(crate::herdr::HerdrSource::Headless),
@@ -710,6 +706,15 @@ fn run_credential_store_command(
     }
 }
 
+/// The parts a `rho run` or `rho acp` launch leaves out of its sessions.
+fn launch_left_out(cli: &Cli) -> LeftOut {
+    LeftOut {
+        system_prompt: cli.no_system_prompt,
+        tools: cli.no_tools,
+        subagents: cli.no_subagents,
+    }
+}
+
 pub(super) fn host_capabilities(
     cli: &Cli,
     config: &crate::config::Config,
@@ -717,12 +722,10 @@ pub(super) fn host_capabilities(
 ) -> crate::agent::AgentCapabilities {
     use crate::agent::ToolCapability;
 
-    let launch = LeftOut {
-        system_prompt: cli.no_system_prompt,
-        tools: cli.no_tools,
-        subagents: cli.no_subagents,
+    let launch = LaunchTools::from_flags(cli.no_tools, cli.no_subagents);
+    if launch == LaunchTools::None {
+        return crate::agent::AgentCapabilities::default();
     }
-    .launch_tools();
     let mut tools = root_host_tools(config, launch);
     // ACP sessions decide per host: they offer it only when the host draws
     // forms (`elicitation.form`).
@@ -731,9 +734,7 @@ pub(super) fn host_capabilities(
         tools.remove(&ToolCapability::Questionnaire);
     }
     #[cfg(debug_assertions)]
-    if launch != super::agent_binding::LaunchTools::None
-        && std::env::var_os("RHO_TUI_TEST_MODE").as_deref() == Some(std::ffi::OsStr::new("matrix"))
-    {
+    if std::env::var_os("RHO_TUI_TEST_MODE").as_deref() == Some(std::ffi::OsStr::new("matrix")) {
         tools.insert(ToolCapability::Extension(
             crate::tools::tui_fixture::NAME.into(),
         ));

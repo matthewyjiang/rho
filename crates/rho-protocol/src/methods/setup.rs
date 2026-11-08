@@ -22,6 +22,12 @@ use serde::{Deserialize, Serialize};
 /// opening client owns its MCP servers and whether it shows questions: a
 /// reopened session has those its opening request names, and none when a
 /// prompt reopens it.
+///
+/// That holds across the daemon's reopens. A host that opens the session
+/// file in its own process does not keep it yet: `rho acp`'s
+/// `session/load` and `session/resume` save the session with that
+/// process's own flags and directories, and the terminal UI keeps what a
+/// session saved but does not save its own `--no-*` flags.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionSetup {
     /// Directories outside the workspace the session's tools may use, as

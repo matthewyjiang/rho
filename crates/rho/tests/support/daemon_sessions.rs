@@ -227,6 +227,23 @@ impl Sandbox {
         }
     }
 
+    /// Waits until the daemon's log records it unloading idle `session` for
+    /// the `times`th time since it started.
+    pub(super) async fn wait_unloaded(&self, session: &SessionId, times: usize) {
+        self.poll_until("the daemon to unload the idle session", async || {
+            let unloads = self
+                .isolated
+                .daemon_log()
+                .lines()
+                .filter(|line| {
+                    line.contains("unloaded idle session") && line.contains(session.as_str())
+                })
+                .count();
+            (unloads >= times).then_some(())
+        })
+        .await;
+    }
+
     /// Opens a new session in the workspace.
     pub(super) async fn new_session(&self, client: &Client) -> SessionId {
         self.new_session_with_environment(client, self.client_environment())

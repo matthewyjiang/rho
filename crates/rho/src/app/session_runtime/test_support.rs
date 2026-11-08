@@ -11,8 +11,8 @@ use rho_sdk::{
 
 use super::{
     credentials::SessionCredentials, ApprovalPolicy, BackgroundWait, ChildAgents, HostCapabilities,
-    OpenedSession, QuestionSupport, RunShape, SessionBuild, SessionLaunch, SessionPermission,
-    SessionRole, SessionRuntime, SessionStorage, UnattendedApprovals,
+    LeftOut, OpenedSession, QuestionSupport, RunShape, SessionBuild, SessionLaunch,
+    SessionPermission, SessionRole, SessionRuntime, SessionStorage, UnattendedApprovals,
 };
 use crate::{
     agent::{
@@ -189,9 +189,7 @@ pub(in crate::app) fn test_build(config: &Config, workspace_root: &Path) -> Sess
     SessionBuild {
         launch: SessionLaunch {
             config_path: workspace_root.join("rho-test-config.toml"),
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
+            left_out: LeftOut::default(),
             diagnostics: RuntimeDiagnostics::new(config),
             agent: root_agent(config),
             prompt_suffix: None,

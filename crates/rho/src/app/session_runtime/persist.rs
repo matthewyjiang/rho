@@ -199,13 +199,7 @@ impl SessionRuntime {
         let checkpoint = TurnCheckpoint(Arc::new(CheckpointStore {
             stored,
             rollback,
-            todo: self.built.tools.todo_state(),
-            code_mode: self.built.tools.code_mode().clone(),
-            prompt: self.built.prompt.clone(),
-            added_dirs: self.added_dirs.clone(),
-            left_out: LeftOut::of(&self.build.launch),
-            auth: self.auth.clone(),
-            settings: self.settings_record(),
+            state: self.durable_state(),
             handle: self.handle.clone(),
             display: Mutex::new(display),
         }));
@@ -345,18 +339,22 @@ impl SessionRuntime {
         self.handle.is_replaced()
     }
 
+    /// The session state a later load restores, as it stands now.
+    pub(super) fn durable_state(&self) -> DurableState {
+        DurableState {
+            prompt: self.built.prompt.clone(),
+            todo: self.built.tools.todo_state(),
+            code_mode: self.built.tools.code_mode().clone(),
+            added_dirs: self.added_dirs.clone(),
+            left_out: self.build.launch.left_out,
+            auth: self.auth.clone(),
+            settings: self.settings_record(),
+        }
+    }
+
     /// The live snapshot with the session state a later load restores.
     pub(super) fn durable_snapshot(&self) -> SessionSnapshot {
-        DurableState {
-            prompt: &self.built.prompt,
-            todo: &self.built.tools.todo_state(),
-            code_mode: self.built.tools.code_mode(),
-            added_dirs: &self.added_dirs,
-            left_out: LeftOut::of(&self.build.launch),
-            auth: &self.auth,
-            settings: &self.settings_record(),
-        }
-        .decorate(self.built.session.snapshot())
+        self.durable_state().decorate(self.built.session.snapshot())
     }
 
     /// Saves the session's state now, if it has a file, as a revision that
@@ -375,20 +373,21 @@ impl SessionRuntime {
 }
 
 /// The session state a load restores, which every durable save adds to the
-/// SDK's snapshot.
-pub(super) struct DurableState<'a> {
-    pub(super) prompt: &'a ActivePrompt,
+/// SDK's snapshot. [`SessionRuntime::durable_state`] takes it from a
+/// runtime.
+pub(super) struct DurableState {
+    pub(super) prompt: ActivePrompt,
+    pub(super) todo: TodoState,
     /// With the direct tool loadout.
-    pub(super) todo: &'a TodoState,
-    pub(super) code_mode: &'a crate::tools::code_mode::CodeModeSurface,
-    pub(super) added_dirs: &'a AddedDirs,
+    pub(super) code_mode: Arc<crate::tools::code_mode::CodeModeSurface>,
+    pub(super) added_dirs: AddedDirs,
     pub(super) left_out: LeftOut,
-    pub(super) auth: &'a str,
+    pub(super) auth: String,
     /// The session's settings, once a host kept them.
-    pub(super) settings: &'a SettingsRecord,
+    pub(super) settings: SettingsRecord,
 }
 
-impl DurableState<'_> {
+impl DurableState {
     /// `snapshot` with this state in its metadata.
     pub(super) fn decorate(&self, snapshot: SessionSnapshot) -> SessionSnapshot {
         let Self {
@@ -451,15 +450,9 @@ struct CheckpointStore {
     /// The session file, or `None` for an ephemeral session.
     stored: Option<StoredSession>,
     rollback: Rollback,
-    todo: TodoState,
-    code_mode: Arc<crate::tools::code_mode::CodeModeSurface>,
-    prompt: ActivePrompt,
-    added_dirs: AddedDirs,
-    left_out: LeftOut,
-    auth: String,
-    /// The settings as the turn began; only the host changes them, between
-    /// turns.
-    settings: SettingsRecord,
+    /// The session state as the turn began; only the host changes it, such
+    /// as its settings, between turns.
+    state: DurableState,
     /// Tells the store when a successor owns the file.
     handle: SessionHandle,
     display: Mutex<TurnDisplay>,
@@ -477,16 +470,7 @@ impl CheckpointStore {
         if self.handle.is_replaced() {
             return Ok(());
         }
-        let snapshot = DurableState {
-            prompt: &self.prompt,
-            todo: &self.todo,
-            code_mode: &self.code_mode,
-            added_dirs: &self.added_dirs,
-            left_out: self.left_out,
-            auth: &self.auth,
-            settings: &self.settings,
-        }
-        .decorate(snapshot);
+        let snapshot = self.state.decorate(snapshot);
         if let Some(stored) = &self.stored {
             let mut display = self.lock_display();
             let pending = display.pending_rows(snapshot.history(), SaveScope::Step);

@@ -74,7 +74,7 @@ fn stdio_server(
     if command.trim().is_empty() {
         anyhow::bail!("stdio command must not be empty");
     }
-    let env: BTreeMap<_, _> = env.clone().into_iter().collect();
+    let env = owned(env);
     let env_from_env = BTreeMap::new();
     validate_stdio_environment(&env, &env_from_env)?;
     Ok(host_server(McpTransport::Stdio {
@@ -91,7 +91,7 @@ fn http_server(url: &str, headers: &SecretMap) -> anyhow::Result<McpServerConfig
     // or plain HTTP only to loopback. Only the user's own config may opt
     // out.
     parse_remote_url(url)?;
-    let headers: BTreeMap<_, _> = headers.clone().into_iter().collect();
+    let headers = owned(headers);
     validate_literal_headers(&headers)?;
     Ok(host_server(McpTransport::StreamableHttp {
         url: url.to_owned(),
@@ -100,6 +100,14 @@ fn http_server(url: &str, headers: &SecretMap) -> anyhow::Result<McpServerConfig
         oauth: None,
         allow_insecure_http: false,
     }))
+}
+
+/// `values` as the config's map of them, by name.
+fn owned(values: &SecretMap) -> BTreeMap<String, String> {
+    values
+        .iter()
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .collect()
 }
 
 fn host_server(transport: McpTransport) -> McpServerConfig {

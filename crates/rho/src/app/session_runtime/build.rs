@@ -7,7 +7,7 @@ use std::{
 use rho_sdk::{hooks::HookHostLabels, provider::ModelProvider, SessionOptions};
 
 use super::{
-    ensure_auto_classifier_model, ApprovalPolicy, BackgroundWait, SessionPermission,
+    ensure_auto_classifier_model, ApprovalPolicy, BackgroundWait, LeftOut, SessionPermission,
     UnattendedApprovals,
 };
 use crate::{
@@ -49,9 +49,8 @@ pub(crate) struct SessionBuild {
 #[derive(Clone)]
 pub(crate) struct SessionLaunch {
     pub(crate) config_path: PathBuf,
-    pub(crate) no_system_prompt: bool,
-    pub(crate) no_tools: bool,
-    pub(crate) no_subagents: bool,
+    /// The parts the session leaves out, which its saves record.
+    pub(crate) left_out: LeftOut,
     pub(crate) diagnostics: RuntimeDiagnostics,
     /// The agent the host launched with. A delegated rebind stays within its
     /// tools.
@@ -265,9 +264,9 @@ pub(super) async fn build_session(
         config,
         config_path: build.launch.config_path.clone(),
         cwd: workspace,
-        no_system_prompt: build.launch.no_system_prompt,
-        no_tools: build.launch.no_tools,
-        no_subagents: build.launch.no_subagents,
+        no_system_prompt: build.launch.left_out.system_prompt,
+        no_tools: build.launch.left_out.tools,
+        no_subagents: build.launch.left_out.subagents,
         questionnaire_enabled: questions,
         mcp_elicitation: if questions {
             crate::tools::mcp::McpElicitationSupport::Available
@@ -330,7 +329,7 @@ pub(super) fn with_plan_exit(
     agent: &BoundAgent,
     config: &Config,
 ) -> AppToolSet {
-    if !build.launch.no_tools
+    if !build.launch.left_out.tools
         && agent.rho_capabilities().is_some()
         && build.host.approvals.offers_plan_exit()
     {

@@ -458,9 +458,7 @@ fn session_build(startup: &AcpStartup, io: &super::client_io::ClientIo) -> HostB
     let build = SessionBuild {
         launch: SessionLaunch {
             config_path: startup.config_path.clone(),
-            no_system_prompt: startup.no_system_prompt,
-            no_tools: startup.no_tools,
-            no_subagents: startup.no_subagents,
+            left_out: startup.left_out,
             diagnostics: startup.diagnostics.clone(),
             agent: startup.agent.clone(),
             prompt_suffix: None,

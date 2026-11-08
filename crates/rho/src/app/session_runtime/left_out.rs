@@ -7,21 +7,26 @@
 //! Like the added directories (`added_dirs.rs`), the record rides in
 //! snapshot metadata and every durable save rewrites it with what the
 //! runtime leaves out. A session nothing was ever left out of keeps no
-//! record, and one saved without the record, such as by the TUI or before
-//! it existed, reads as leaving nothing out.
+//! record, and one saved without the record, such as before it existed,
+//! reads as leaving nothing out.
+//!
+//! The guarantee is the daemon's: it holds across daemon reopens. Hosts
+//! that are not daemon clients yet do not keep it. An in-process `rho acp`
+//! `session/load` or `session/resume` saves the record its own `--no-*`
+//! flags make, and the TUI keeps an existing record but does not record its
+//! own flags. Both become daemon clients in #1670 and #1667.
 
 use rho_sdk::SessionSnapshot;
 use serde::{Deserialize, Serialize};
 
-use super::SessionLaunch;
-use crate::app::agent_binding::LaunchTools;
-
-/// The snapshot metadata key of a session's [`LeftOut`], a JSON array of
-/// part names.
+/// The snapshot metadata key of a session's [`LeftOut`], a JSON object with
+/// a flag per part.
 const METADATA_KEY: &str = "rho.without";
 
-/// The parts left out of a session.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The parts left out of a session. A record naming a part this build does
+/// not know fails to decode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub(crate) struct LeftOut {
     /// Rho's system prompt, as with `--no-system-prompt`.
     pub(crate) system_prompt: bool,
@@ -31,25 +36,7 @@ pub(crate) struct LeftOut {
     pub(crate) subagents: bool,
 }
 
-/// A part as the record names it: the daemon protocol's name for it.
-#[derive(Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum Part {
-    SystemPrompt,
-    Tools,
-    Subagents,
-}
-
 impl LeftOut {
-    /// What `launch` leaves out.
-    pub(super) fn of(launch: &SessionLaunch) -> Self {
-        Self {
-            system_prompt: launch.no_system_prompt,
-            tools: launch.no_tools,
-            subagents: launch.no_subagents,
-        }
-    }
-
     /// The parts `stored` was last saved without. A record this build
     /// cannot read fails, rather than reopen the session with parts it left
     /// out. Only the daemon, which is unix-only so far (#1665), reopens a
@@ -61,32 +48,8 @@ impl LeftOut {
         let Some(encoded) = stored.session_metadata(METADATA_KEY)? else {
             return Ok(Self::default());
         };
-        let parts: Vec<Part> = serde_json::from_str(&encoded)
-            .context("could not read the parts the session was saved without")?;
-        let mut left_out = Self::default();
-        for part in parts {
-            match part {
-                Part::SystemPrompt => left_out.system_prompt = true,
-                Part::Tools => left_out.tools = true,
-                Part::Subagents => left_out.subagents = true,
-            }
-        }
-        Ok(left_out)
-    }
-
-    /// The built-in tools a root session without these parts keeps.
-    pub(crate) fn launch_tools(self) -> LaunchTools {
-        match self {
-            Self { tools: true, .. } => LaunchTools::None,
-            Self {
-                subagents: true, ..
-            } => LaunchTools::NoSubagents,
-            Self {
-                system_prompt: _,
-                tools: false,
-                subagents: false,
-            } => LaunchTools::All,
-        }
+        serde_json::from_str(&encoded)
+            .context("could not read the parts the session was saved without")
     }
 
     /// The parts either leaves out.
@@ -107,23 +70,10 @@ impl LeftOut {
     /// `snapshot` with these parts in its metadata. One that leaves nothing
     /// out and had no record keeps none.
     pub(super) fn decorate(self, snapshot: SessionSnapshot) -> SessionSnapshot {
-        let Self {
-            system_prompt,
-            tools,
-            subagents,
-        } = self;
-        let parts: Vec<Part> = [
-            (Part::SystemPrompt, system_prompt),
-            (Part::Tools, tools),
-            (Part::Subagents, subagents),
-        ]
-        .into_iter()
-        .filter_map(|(part, left_out)| left_out.then_some(part))
-        .collect();
-        if parts.is_empty() && !snapshot.metadata().contains_key(METADATA_KEY) {
+        if self == Self::default() && !snapshot.metadata().contains_key(METADATA_KEY) {
             return snapshot;
         }
-        let encoded = serde_json::to_string(&parts).expect("part names encode as JSON");
+        let encoded = serde_json::to_string(&self).expect("part flags encode as JSON");
         snapshot.with_metadata(METADATA_KEY, encoded)
     }
 }

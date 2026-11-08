@@ -364,18 +364,7 @@ async fn a_change_outlasts_the_idle_unload() {
         })
         .await
         .unwrap();
-    sandbox
-        .poll_until("the daemon to unload the idle session", async || {
-            sandbox
-                .isolated
-                .daemon_log()
-                .lines()
-                .any(|line| {
-                    line.contains("unloaded idle session") && line.contains(session.as_str())
-                })
-                .then_some(())
-        })
-        .await;
+    sandbox.wait_unloaded(&session, /*times*/ 1).await;
 
     let (follower, mut notifications) = sandbox.connect_following().await;
     let reopened = follower.request::<SessionAttach>(&attach).await.unwrap();

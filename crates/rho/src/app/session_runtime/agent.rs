@@ -220,15 +220,15 @@ impl SessionRuntime {
         // replacement, before teardown or host notifications can suspend us.
         let initial_snapshot = task.model_override.as_ref().map(|_| {
             super::persist::DurableState {
-                prompt: &built.prompt,
-                todo: &built.tools.todo_state(),
-                code_mode: built.tools.code_mode(),
-                added_dirs: &self.added_dirs,
-                left_out: super::left_out::LeftOut::of(&self.build.launch),
-                auth: &config.auth,
+                prompt: built.prompt.clone(),
+                todo: built.tools.todo_state(),
+                code_mode: built.tools.code_mode().clone(),
+                added_dirs: self.added_dirs.clone(),
+                left_out: self.build.launch.left_out,
+                auth: config.auth.clone(),
                 // As before the rebind; the next save records the rebound
                 // session's.
-                settings: &self.settings_record(),
+                settings: self.settings_record(),
             }
             .decorate(built.session.snapshot())
         });

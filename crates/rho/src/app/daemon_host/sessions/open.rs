@@ -37,12 +37,14 @@ use super::{
 use crate::{
     agent::{AgentCapabilities, AgentCatalog, DEFAULT_AGENT_ID},
     app::{
-        agent_binding::{root_host_tools, AgentBinder, AgentInvocation, AgentRole, BoundAgent},
+        agent_binding::{
+            root_host_tools, AgentBinder, AgentInvocation, AgentRole, BoundAgent, LaunchTools,
+        },
         cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
         config_repository::ConfigRepository,
         session_runtime::{
-            ApprovalPolicy, BackgroundWait, ChildAgents, HostCapabilities, LeftOut, RunShape,
-            SessionBuild, SessionLaunch, SessionOpening, SessionRole, SessionRuntime,
+            ApprovalPolicy, BackgroundWait, ChildAgents, HostCapabilities, RunShape, SessionBuild,
+            SessionLaunch, SessionOpening, SessionRole, SessionRuntime,
         },
     },
     config::Config,
@@ -182,18 +184,16 @@ async fn open_runtime(
         host_mcp,
         adds_to_saved,
     } = setup;
-    let LeftOut {
-        system_prompt: no_system_prompt,
-        tools: no_tools,
-        subagents: no_subagents,
-    } = left_out;
     let repository = ConfigRepository::new(None);
     let config_path = repository.configured_path()?;
     let config = repository.load()?;
     // The last config read publishes its custom providers to the daemon,
     // as each rho process publishes its own at startup.
     config.providers.activate()?;
-    let available_tools = root_host_tools(&config, left_out.launch_tools());
+    let available_tools = root_host_tools(
+        &config,
+        LaunchTools::from_flags(left_out.tools, left_out.subagents),
+    );
     let agent = match &opening {
         Opening::New { agent, .. } => bind_agent(
             cwd,
@@ -219,9 +219,7 @@ async fn open_runtime(
     let build = SessionBuild {
         launch: SessionLaunch {
             config_path,
-            no_system_prompt,
-            no_tools,
-            no_subagents,
+            left_out,
             diagnostics,
             agent,
             prompt_suffix: None,

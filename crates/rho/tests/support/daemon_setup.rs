@@ -7,10 +7,11 @@ use std::{collections::BTreeSet, path::PathBuf};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{JobList, SessionAttach, SessionList, SessionNew},
+    methods::{JobList, SessionAttach, SessionDetach, SessionList, SessionNew},
     Ask, Client, ClientError, DaemonNotification, ErrorCode, JobListParams, JobState, McpServer,
-    Operation, PathScope, SessionAttachParams, SessionEvent, SessionEventParams, SessionId,
-    SessionListParams, SessionNewParams, SessionPart, SessionSetup, TurnOutcome,
+    Operation, PathScope, SessionAttachParams, SessionDetachParams, SessionEvent,
+    SessionEventParams, SessionId, SessionListParams, SessionNewParams, SessionPart, SessionSetup,
+    TurnOutcome,
 };
 use serde_json::Value;
 
@@ -88,7 +89,8 @@ pub(super) async fn asked_operation(
 }
 
 /// The model request of `session`'s turn of "hello", which the `inspect`
-/// fixture answers with.
+/// fixture answers with. It attaches first with no setup, so it reopens a
+/// session the daemon unloaded as a prompt would.
 async fn inspected_request(sandbox: &Sandbox, client: &Client, session: &SessionId) -> Value {
     let (follower, mut notifications) = sandbox.connect_following().await;
     follower
@@ -112,37 +114,6 @@ async fn inspected_request(sandbox: &Sandbox, client: &Client, session: &Session
             }
         }
     }
-}
-
-/// The model request the `inspect` fixture answered `session`'s last turn
-/// with, as a client attaching once the turn ended replays its answer.
-async fn replayed_request(sandbox: &Sandbox, session: &SessionId) -> Value {
-    let (follower, mut notifications) = sandbox.connect_following().await;
-    let attached = follower
-        .request::<SessionAttach>(&attach(sandbox, session))
-        .await
-        .unwrap();
-    let mut chunks = Vec::new();
-    for _ in 0..attached.replay_events {
-        let notification = tokio::time::timeout(DEADLINE, notifications.recv())
-            .await
-            .expect("the daemon replays the session's events")
-            .expect("the connection stays open");
-        if let DaemonNotification::SessionEvent(SessionEventParams {
-            event: SessionEvent::AgentMessageChunk { message, text },
-            ..
-        }) = notification
-        {
-            chunks.push((message, text));
-        }
-    }
-    let (last, _) = chunks.last().cloned().expect("the replay holds an answer");
-    let answer: String = chunks
-        .into_iter()
-        .filter(|(message, _)| *message == last)
-        .map(|(_, text)| text)
-        .collect();
-    serde_json::from_str(&answer).unwrap_or_else(|error| panic!("{error}: {answer}"))
 }
 
 /// What a model request offered the model.
@@ -284,13 +255,13 @@ async fn a_session_offers_the_model_only_the_parts_its_setup_keeps() {
     assert_eq!(offered, rows, "log:\n{}", sandbox.isolated.daemon_log());
 }
 
-// Covers: a session's setup survives the daemon unloading it: a plain
-// prompt that reopens it, bringing no setup, still offers the model no
-// tools, and its file still saves the additional directory, rather than the
-// reopen widening the session or saving it without the directory (#1661).
+// Covers: a session's setup survives the daemon unloading it: a reopen
+// that brings no setup still offers the model no tools, and its file still
+// saves the additional directory, rather than the reopen widening the
+// session or saving it without the directory (#1661).
 // Owner: daemon session setup.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_session_keeps_its_setup_when_a_prompt_reopens_it() {
+async fn a_session_keeps_its_setup_when_a_reopen_brings_none() {
     let sandbox = Sandbox::new();
     let extra = extra_dir(&sandbox);
     // The fixture answers with the request it got.
@@ -306,22 +277,9 @@ async fn a_session_keeps_its_setup_when_a_prompt_reopens_it() {
     // Saved, so the unload has a file to reopen.
     assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
     settled_job(&sandbox, &client, &session).await;
-    sandbox
-        .poll_until("the daemon to unload the idle session", async || {
-            sandbox
-                .isolated
-                .daemon_log()
-                .lines()
-                .any(|line| {
-                    line.contains("unloaded idle session") && line.contains(session.as_str())
-                })
-                .then_some(())
-        })
-        .await;
+    sandbox.wait_unloaded(&session, /*times*/ 1).await;
 
-    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
-    settled_job(&sandbox, &client, &session).await;
-    let reopened = Offered::by(&replayed_request(&sandbox, &session).await);
+    let reopened = Offered::by(&inspected_request(&sandbox, &client, &session).await);
     let saved_dirs = client
         .request::<SessionList>(&SessionListParams::default())
         .await
@@ -334,6 +292,55 @@ async fn a_session_keeps_its_setup_when_a_prompt_reopens_it() {
     assert_eq!(
         (reopened.tools, saved_dirs),
         (false, Some(vec![extra])),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a reopen whose setup leaves a part out narrows the session for
+// good: it saves the session at once, so after the daemon unloads it again
+// a reopen that brings no setup still offers the model no tools, rather
+// than the narrowing living only until the unload (#1661).
+// Owner: daemon session setup.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reopen_that_narrows_a_session_saves_it_narrowed() {
+    let sandbox = Sandbox::new();
+    // The fixture answers with the request it got.
+    let client = sandbox
+        .start_daemon_with("inspect", &["--unload-idle-after", "200ms"])
+        .await;
+    let session = new_session(&sandbox, &client, None, SessionSetup::default())
+        .await
+        .unwrap();
+    // Saved, so the unload has a file to reopen.
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
+    settled_job(&sandbox, &client, &session).await;
+    sandbox.wait_unloaded(&session, /*times*/ 1).await;
+    let narrowing = SessionAttachParams {
+        setup: SessionSetup {
+            without: BTreeSet::from([SessionPart::Tools]),
+            ..SessionSetup::default()
+        },
+        ..attach(&sandbox, &session)
+    };
+    let (follower, _notifications) = sandbox.connect_following().await;
+    follower.request::<SessionAttach>(&narrowing).await.unwrap();
+    follower
+        .request::<SessionDetach>(&SessionDetachParams {
+            session: session.clone(),
+        })
+        .await
+        .unwrap();
+    sandbox.wait_unloaded(&session, /*times*/ 2).await;
+
+    assert_eq!(
+        Offered::by(&inspected_request(&sandbox, &client, &session).await),
+        Offered {
+            system_prompt: true,
+            tools: false,
+            questionnaire: false,
+            agent: false,
+        },
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

@@ -6,6 +6,10 @@
 //! questions: its file keeps them, and a reopen adds the request's to the
 //! saved ones, so a later client can narrow a session further but never
 //! widen it, and a reopen never drops a saved directory that still exists.
+//! That holds across daemon reopens only: an in-process `rho acp`
+//! `session/load` or `session/resume` saves the session with its own flags
+//! and directories, and the TUI keeps an existing record but does not record
+//! its own `--no-*` flags, until both become daemon clients (#1670, #1667).
 //! The opening client owns its MCP servers, whose `env` and `headers` may
 //! hold secrets, and whether it shows questions: a reopen takes them from
 //! its own request alone, so a prompt, which brings no setup, reopens a
@@ -61,10 +65,17 @@ impl Setup {
             ))
         })?;
         let (saved_left_out, saved_dirs) = match saved {
-            Some(stored) => (
-                LeftOut::saved(stored).map_err(open_failed)?,
-                AddedDirs::from_storage(stored, &root).dirs,
-            ),
+            Some(stored) => {
+                let restored = AddedDirs::from_storage(stored, &root);
+                for dir in &restored.missing {
+                    tracing::warn!(
+                        session = stored.id(),
+                        dir = %dir.display(),
+                        "could not restore added directory: not found"
+                    );
+                }
+                (LeftOut::saved(stored).map_err(open_failed)?, restored.dirs)
+            }
             None => (LeftOut::default(), AddedDirs::default()),
         };
         let mut asked = LeftOut::default();
@@ -75,8 +86,9 @@ impl Setup {
                 SessionPart::SystemPrompt => asked.system_prompt = true,
                 SessionPart::Subagents => asked.subagents = true,
                 SessionPart::Questions => questions = QuestionSupport::Unavailable,
-                // A part of a later protocol minor fails to decode before
-                // it gets here; the arm keeps the match open to new variants.
+                // `SessionPart` is `#[non_exhaustive]`, so the arm is
+                // required: a part from a later protocol minor that this
+                // daemon does not know fails here as invalid params.
                 _ => return Err(invalid("unknown session part")),
             }
         }

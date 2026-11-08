@@ -329,18 +329,7 @@ async fn a_delete_removes_a_session_the_daemon_has_not_loaded() {
         .start_daemon_with("fixed", &["--unload-idle-after", "200ms"])
         .await;
     let session = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
-    sandbox
-        .poll_until("the daemon to unload the idle session", async || {
-            sandbox
-                .isolated
-                .daemon_log()
-                .lines()
-                .any(|line| {
-                    line.contains("unloaded idle session") && line.contains(session.as_str())
-                })
-                .then_some(())
-        })
-        .await;
+    sandbox.wait_unloaded(&session, /*times*/ 1).await;
     let delete = || {
         let params = SessionDeleteParams {
             session: session.clone(),
