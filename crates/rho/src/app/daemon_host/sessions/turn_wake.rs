@@ -71,17 +71,14 @@ pub(super) async fn prompt_started(session: &LoadedSession, input: &UserInput) -
     }
 }
 
-/// Call as `session`'s turn on `runtime` ended as `ended`, before its end
-/// is told: arms a watcher while background work runs on, unless the
+/// Call as `session`'s turn on `runtime` ended, before its end is told: arms a watcher while background work runs on, unless the
 /// daemon is `stopping`, which takes the session's work down with it. The
-/// daemon's stop, or a cancel sent meanwhile, interrupts the host calls. A
-/// cancelled turn usually gives way to the next prompt, whose end arms
-/// instead, so only other ends that were not interrupted tell clients that
-/// arming failed.
+/// daemon's stop, or a cancel sent meanwhile, interrupts the host calls.
+/// Clients hear when arming failed, a cancel's interruption included, so
+/// results never wait unannounced for the next message.
 pub(super) async fn prompt_ended(
     session: &LoadedSession,
     runtime: &SessionRuntime,
-    ended: &anyhow::Result<Ran>,
     stopping: &CancellationToken,
 ) {
     let Some(wake) = &session.wake else {
@@ -124,20 +121,18 @@ pub(super) async fn prompt_ended(
     let Err(error) = armed else {
         return;
     };
-    match (ended, interrupt.is_cancelled()) {
-        (Ok(Ran::Cancelled), _) | (_, true) => {
-            tracing::debug!(%error, "could not arm T3 wake watcher after a cancel or stop");
-        }
-        (Ok(Ran::Completed(_)) | Err(_), false) => {
-            tracing::warn!(%error, "could not arm T3 wake watcher");
-            session.feed.publish([wire::SessionEvent::Notice {
-                text: format!(
-                    "could not watch background work: {error}; its results arrive with your \
-                     next message"
-                ),
-            }]);
-        }
+    // The daemon's stop takes the background work down with it, so there
+    // is nothing left to tell.
+    if stopping.is_cancelled() {
+        tracing::debug!(%error, "could not arm T3 wake watcher while the daemon stops");
+        return;
     }
+    tracing::warn!(%error, "could not arm T3 wake watcher");
+    session.feed.publish([wire::SessionEvent::Notice {
+        text: format!(
+            "could not watch background work: {error}; its results arrive with your next message"
+        ),
+    }]);
 }
 
 /// Runs the watcher's wait for `signal` within `scope`, without a model

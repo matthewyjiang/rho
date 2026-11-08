@@ -178,7 +178,7 @@ impl TurnTask {
                 // The turn may have left new skills, prompts, or MCP prompts
                 // behind; clients see them before they see the turn end.
                 session.refresh_options(runtime, &available_auths().await);
-                wake::prompt_ended(&session, runtime, &ended, &stopping).await;
+                wake::prompt_ended(&session, runtime, &stopping).await;
                 (
                     ended.map_err(|error| failure(&session, runtime, &error)),
                     timed_out,
