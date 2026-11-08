@@ -142,7 +142,7 @@ A `rho login` or `/logout` in another rho process changes the same store, but pr
 
 ## Configuration changes
 
-The daemon reads [configuration](/configuration) when it opens a session, so edits apply to new sessions without a restart. Daemon-level settings, which are the `RHO_LOG` filter, the socket location (`XDG_RUNTIME_DIR`, `RHO_HOME`), and the credential store, are read once at startup. Restart the daemon with `rho daemon stop` to change them; a [sign-in or sign-out](#credentials) through the daemon that writes also moves it to the credential store the config selects then.
+The daemon reads [configuration](/configuration) when it opens a session, so edits apply to new sessions without a restart. Daemon-level settings, which are the `RHO_LOG` filter, the socket location (`XDG_RUNTIME_DIR`, `RHO_HOME`), and the credential store, are read once at startup. Restart the daemon with `rho daemon stop` to change them; a [sign-in or sign-out](#credentials) through the daemon also moves it to the credential store the config selects then. New sessions read that store, while running sessions keep the credentials they hold until a write moves them or their provider refuses them.
 
 ## Running as a service
 

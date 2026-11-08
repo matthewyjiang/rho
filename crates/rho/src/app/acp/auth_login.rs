@@ -38,7 +38,7 @@ use super::{
 use crate::{
     app::{
         config_repository::ConfigRepository,
-        credential_writes::{self, ApiKeyAuth},
+        credential_writes::{self, ApiKeyAuth, CredentialWriteError},
     },
     credential_store::AppCredentialStore,
 };
@@ -48,8 +48,7 @@ use crate::{
 /// with; `forms` is how the host draws the credential store question.
 ///
 /// An API-key profile is checked before anything is asked of the user, so
-/// a login that cannot finish neither asks where to store credentials nor
-/// switches the process to the store config selects.
+/// a login that cannot finish does not ask where to store credentials.
 pub(super) async fn authenticate(
     auth: &str,
     sign_in: SignIn,
@@ -65,32 +64,38 @@ pub(super) async fn authenticate(
     };
     let key_auth = match login {
         AgentLogin::OAuth => None,
-        AgentLogin::ApiKey => Some(ApiKeyAuth::resolve(auth).map_err(auth_key::profile_error)?),
+        AgentLogin::ApiKey => Some(ApiKeyAuth::resolve(auth)?),
     };
     super::auth_store::choose_if_unset(config.clone(), forms, &request_id, port).await?;
     let repository = ConfigRepository::new(config);
-    let loaded = credential_writes::load_config(&repository)
-        .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
-    loaded
-        .activate_store()
-        .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
+    let loaded = credential_writes::load_config_and_store(&repository)?;
     match key_auth {
         None => sign_in_with_oauth(auth, request_id, port).await?,
         Some(key_auth) => {
-            auth_key::serve_key_page(
-                key_auth,
-                loaded.config(),
-                &AppCredentialStore,
-                request_id,
-                port,
-            )
-            .await?;
-            key_auth
-                .record_login(&repository)
-                .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
+            auth_key::serve_key_page(key_auth, &loaded, &AppCredentialStore, request_id, port)
+                .await?;
+            key_auth.record_login(&repository)?;
         }
     }
     Ok(AuthenticateResponse::new())
+}
+
+/// The ACP error for a sign-in or sign-out, `authenticate`'s or `logout`'s.
+impl From<CredentialWriteError> for AcpError {
+    fn from(error: CredentialWriteError) -> Self {
+        let acp_error = match &error {
+            CredentialWriteError::UnknownAuth { .. }
+            | CredentialWriteError::NotAnApiKey { .. }
+            | CredentialWriteError::NoCredentials { .. }
+            | CredentialWriteError::BlankKey
+            | CredentialWriteError::KeyRefused { .. } => AcpError::invalid_params(),
+            CredentialWriteError::EnvironmentOverride { .. } => AcpError::invalid_request(),
+            CredentialWriteError::Config(_) | CredentialWriteError::Store(_) => {
+                AcpError::internal_error()
+            }
+        };
+        acp_error.data(error.to_string())
+    }
 }
 
 /// Runs OAuth login `auth`, showing its URL in the host.

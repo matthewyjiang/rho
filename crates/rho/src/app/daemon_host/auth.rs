@@ -17,12 +17,12 @@ use rho_protocol::{
     UncheckedKey, UncheckedReason,
 };
 
-use crate::app::{
-    config_repository::ConfigRepository,
-    credential_writes::{
-        self, EnvironmentOverride, KeyCheck, KeyError, KeySave, NamedSignOutError, OpenError,
-        ProfileError, SaveKeyError, SignOutError,
+use crate::{
+    app::{
+        config_repository::ConfigRepository,
+        credential_writes::{self, ApiKeyAuth, CredentialWriteError, KeyCheck},
     },
+    credential_store::AppCredentialStore,
 };
 
 /// The config the daemon reads, found as a session open finds it.
@@ -34,27 +34,42 @@ fn repository() -> ConfigRepository {
 /// check runs on the async workers.
 pub(super) async fn save_key(params: AuthKeyParams) -> Result<AuthKeyResponse, RpcError> {
     let AuthKeyParams { auth, key } = params;
-    let pending = off_workers(move || KeySave::prepare(&auth, &key, repository()))
-        .await?
-        .map_err(key_error)?;
-    let check = pending.check().await.map_err(key_error)?;
-    let auth = pending.auth();
-    off_workers(move || pending.save())
-        .await?
-        .map_err(key_error)?;
-    tracing::info!(%auth, "saved an API key");
-    Ok(AuthKeyResponse {
-        unchecked: unchecked(check),
+    let (config, login, key) = off_workers(move || -> Result<_, CredentialWriteError> {
+        let config = credential_writes::load_config_and_store(&repository())?;
+        let login = ApiKeyAuth::resolve(&auth)?;
+        let key = key.trim();
+        if key.is_empty() {
+            return Err(CredentialWriteError::BlankKey);
+        }
+        Ok((config, login, key.to_owned()))
     })
+    .await??;
+    let check = login.check(&key, &config).await?;
+    off_workers(move || {
+        login.save(&key, &AppCredentialStore)?;
+        login.record_login(&repository())
+    })
+    .await??;
+    tracing::info!(auth = %login.auth(), "saved an API key");
+    let unchecked = match check {
+        KeyCheck::Accepted => None,
+        KeyCheck::NoModelListing => Some(UncheckedKey {
+            reason: UncheckedReason::NoModelListing,
+            message: "rho lists no models for this provider, so it cannot ask about a key".into(),
+        }),
+        KeyCheck::Unreachable(message) => Some(UncheckedKey {
+            reason: UncheckedReason::Unreachable,
+            message,
+        }),
+    };
+    Ok(AuthKeyResponse { unchecked })
 }
 
 /// Deletes `params.auth`'s saved credentials.
 pub(super) async fn logout(params: AuthLogoutParams) -> Result<AuthLogoutResponse, RpcError> {
     let AuthLogoutParams { auth } = params;
     let signed_out = auth.clone();
-    off_workers(move || credential_writes::sign_out_named(&auth, &repository()))
-        .await?
-        .map_err(sign_out_error)?;
+    off_workers(move || credential_writes::sign_out_named(&auth, &repository())).await??;
     tracing::info!(auth = %signed_out, "signed out");
     Ok(AuthLogoutResponse {})
 }
@@ -74,90 +89,37 @@ async fn off_workers<T: Send + 'static>(
         })
 }
 
-/// Why the key went unchecked, as the wire says it.
-fn unchecked(check: KeyCheck) -> Option<UncheckedKey> {
-    match check {
-        KeyCheck::Accepted => None,
-        KeyCheck::NoModelListing => Some(UncheckedKey {
-            reason: UncheckedReason::NoModelListing,
-            message: "rho lists no models for this provider, so it cannot ask about a key".into(),
-        }),
-        KeyCheck::Unreachable(message) => Some(UncheckedKey {
-            reason: UncheckedReason::Unreachable,
-            message,
-        }),
+impl From<CredentialWriteError> for RpcError {
+    fn from(error: CredentialWriteError) -> Self {
+        let code = match &error {
+            CredentialWriteError::UnknownAuth { .. }
+            | CredentialWriteError::NotAnApiKey { .. }
+            | CredentialWriteError::NoCredentials { .. }
+            | CredentialWriteError::BlankKey => ErrorCode::InvalidParams,
+            // A credential in the daemon's own environment wins over a saved
+            // one; the client's environment does not matter, so the message
+            // says where to unset it.
+            CredentialWriteError::EnvironmentOverride {
+                auth,
+                variable,
+                write,
+            } => {
+                let data = serde_json::to_value(rho_protocol::EnvironmentOverride {
+                    variable: (*variable).to_owned(),
+                })
+                .expect("an environment override serializes");
+                return RpcError::new(
+                    ErrorCode::EnvironmentOverride,
+                    format!(
+                        "'{auth}' reads its credential from {variable} in the daemon's environment; unset it there and restart the daemon to {write}"
+                    ),
+                )
+                .with_data(data);
+            }
+            CredentialWriteError::KeyRefused { .. } => ErrorCode::KeyRefused,
+            CredentialWriteError::Config(_) => ErrorCode::InternalError,
+            CredentialWriteError::Store(_) => ErrorCode::CredentialStoreUnavailable,
+        };
+        RpcError::new(code, error.to_string())
     }
-}
-
-fn key_error(error: KeyError) -> RpcError {
-    match error {
-        KeyError::Profile(ProfileError::EnvironmentOverride(environment)) => {
-            environment_override(environment, Refused::SignIn)
-        }
-        KeyError::Profile(ProfileError::Unknown { .. } | ProfileError::NotAnApiKey { .. })
-        | KeyError::Blank => RpcError::new(ErrorCode::InvalidParams, error.to_string()),
-        KeyError::Save(SaveKeyError::Rejected { .. }) => {
-            RpcError::new(ErrorCode::KeyRefused, error.to_string())
-        }
-        KeyError::Save(SaveKeyError::Save { .. }) => {
-            RpcError::new(ErrorCode::CredentialStoreUnavailable, error.to_string())
-        }
-        KeyError::Open(error) => open_error(error),
-        KeyError::RecordLogin(_) => RpcError::new(ErrorCode::InternalError, error.to_string()),
-    }
-}
-
-fn sign_out_error(error: NamedSignOutError) -> RpcError {
-    match error {
-        NamedSignOutError::Unknown { .. } | NamedSignOutError::NoCredentials { .. } => {
-            RpcError::new(ErrorCode::InvalidParams, error.to_string())
-        }
-        NamedSignOutError::SignOut(SignOutError::EnvironmentOverride(environment)) => {
-            environment_override(environment, Refused::SignOut)
-        }
-        NamedSignOutError::SignOut(SignOutError::Open(error)) => open_error(error),
-        NamedSignOutError::SignOut(SignOutError::Delete { .. }) => {
-            RpcError::new(ErrorCode::CredentialStoreUnavailable, error.to_string())
-        }
-        NamedSignOutError::SignOut(SignOutError::ForgetLogin { .. }) => {
-            RpcError::new(ErrorCode::InternalError, error.to_string())
-        }
-    }
-}
-
-/// What an environment override refused.
-#[derive(Clone, Copy, Debug)]
-enum Refused {
-    SignIn,
-    SignOut,
-}
-
-/// A credential in the daemon's own environment wins over a saved one; the
-/// client's environment does not matter, so the message says where to unset
-/// it.
-fn environment_override(environment: EnvironmentOverride, refused: Refused) -> RpcError {
-    let EnvironmentOverride { auth, variable } = environment;
-    let to = match refused {
-        Refused::SignIn => "sign in with a saved key",
-        Refused::SignOut => "sign out",
-    };
-    let data = serde_json::to_value(rho_protocol::EnvironmentOverride {
-        variable: variable.to_owned(),
-    })
-    .expect("an environment override serializes");
-    RpcError::new(
-        ErrorCode::EnvironmentOverride,
-        format!(
-            "'{auth}' reads its credential from {variable} in the daemon's environment; unset it there and restart the daemon to {to}"
-        ),
-    )
-    .with_data(data)
-}
-
-fn open_error(error: OpenError) -> RpcError {
-    let code = match error {
-        OpenError::Config(_) => ErrorCode::InternalError,
-        OpenError::Store(_) => ErrorCode::CredentialStoreUnavailable,
-    };
-    RpcError::new(code, error.to_string())
 }

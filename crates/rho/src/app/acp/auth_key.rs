@@ -22,7 +22,7 @@ use super::{
     AcpClientPort,
 };
 use crate::{
-    app::credential_writes::{ApiKey, ApiKeyAuth, KeyCheck, ProfileError, SaveKeyError},
+    app::credential_writes::{ApiKeyAuth, CredentialWriteError, KeyCheck},
     config::Config,
 };
 
@@ -30,17 +30,6 @@ use crate::{
 /// the provider's dashboard, like approving a device code, so this matches
 /// Codex's device-code wait, the longest sign-in wait Rho has.
 const PAGE_LIFETIME: Duration = Duration::from_secs(15 * 60);
-
-/// The ACP error for an auth profile that cannot take a saved key, found
-/// before anything is asked of the user.
-pub(super) fn profile_error(error: ProfileError) -> AcpError {
-    match error {
-        ProfileError::Unknown { .. } | ProfileError::NotAnApiKey { .. } => {
-            AcpError::invalid_params().data(error.to_string())
-        }
-        ProfileError::EnvironmentOverride(_) => AcpError::invalid_request().data(error.to_string()),
-    }
-}
 
 /// Signs `login` in for the `authenticate` request `request_id` through the
 /// key page. [`crate::app::credential_writes`] checks each key against the
@@ -89,10 +78,12 @@ async fn check_on_page(
     store: &dyn CredentialStore,
 ) -> KeyVerdict {
     let provider = login.descriptor().display_name;
-    match login
-        .check_and_save(ApiKey::entered(&key), config, store)
-        .await
-    {
+    let saved = async {
+        let check = login.check(key.expose(), config).await?;
+        login.save(key.expose(), store)?;
+        Ok::<_, CredentialWriteError>(check)
+    };
+    match saved.await {
         Ok(KeyCheck::Accepted) => KeyVerdict::Accepted { notice: None },
         Ok(KeyCheck::NoModelListing) => KeyVerdict::Accepted {
             notice: Some(format!(
@@ -104,12 +95,19 @@ async fn check_on_page(
                 "Rho could not check the key with {provider} ({reason}), so it saved the key unchecked."
             )),
         },
-        Err(SaveKeyError::Rejected { .. }) => {
+        Err(CredentialWriteError::KeyRefused { .. }) => {
             KeyVerdict::Rejected(format!("{provider} refused this key."))
         }
-        Err(SaveKeyError::Save { detail }) => {
-            KeyVerdict::Rejected(format!("Could not save the key: {detail}"))
-        }
+        // A failed save; the rest cannot follow a resolved profile.
+        Err(
+            error @ (CredentialWriteError::Store(_)
+            | CredentialWriteError::UnknownAuth { .. }
+            | CredentialWriteError::NotAnApiKey { .. }
+            | CredentialWriteError::NoCredentials { .. }
+            | CredentialWriteError::EnvironmentOverride { .. }
+            | CredentialWriteError::BlankKey
+            | CredentialWriteError::Config(_)),
+        ) => KeyVerdict::Rejected(format!("Rho {error}.")),
     }
 }
 

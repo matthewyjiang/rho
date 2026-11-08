@@ -14,7 +14,7 @@ use super::{
 };
 use crate::app::{
     config_repository::ConfigRepository,
-    credential_writes::{self, SignOutError},
+    credential_writes,
     session_runtime::{Closing, SessionHandle},
 };
 use agent_client_protocol::schema::v1::{AgentAuthCapabilities, LogoutCapabilities};
@@ -508,17 +508,8 @@ impl RhoAcpAgent {
             &self.startup.config.provider,
             &self.startup.config.auth,
             &ConfigRepository::new(config),
-        )
-        .map_err(|error| match error {
-            SignOutError::EnvironmentOverride(_) => {
-                AcpError::invalid_request().data(error.to_string())
-            }
-            SignOutError::Open(_)
-            | SignOutError::Delete { .. }
-            | SignOutError::ForgetLogin { .. } => {
-                AcpError::internal_error().data(error.to_string())
-            }
-        })
+        )?;
+        Ok(())
     }
 
     pub(super) async fn shutdown_all(&self) {

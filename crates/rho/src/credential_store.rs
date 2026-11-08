@@ -99,11 +99,14 @@ impl StoreChoiceRequest {
 /// through [`UntrackedCredentialStore`] and leave it alone.
 ///
 /// It moves after every write through [`AppCredentialStore`] that may have
-/// changed something, when the process switches to another backend, and
-/// through [`AppCredentialStore::note_changed`] for login state kept outside
-/// the store. OAuth refreshes save rotated tokens through the store too, so
-/// a refresh in one session moves it and the others pick up the rotated
-/// tokens on their next prompt instead of presenting the replaced ones.
+/// changed something, and through [`AppCredentialStore::note_changed`] for
+/// login state kept outside the store. Switching to another backend does
+/// not move it: providers keep what they already hold, the write that
+/// follows a switch moves it, and a session whose credentials are refused
+/// rereads them anyway. OAuth refreshes save rotated tokens through the
+/// store too, so a refresh in one session moves it and the others pick up
+/// the rotated tokens on their next prompt instead of presenting the
+/// replaced ones.
 /// Writes by other processes do not move it;
 /// [`AppCredentialStore::reread_external_logins`] covers those once a
 /// provider refuses what it holds.
@@ -368,16 +371,7 @@ fn activate(backend: CredentialStoreBackend) -> CredentialResult<()> {
     let mut guard = process_state()
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    let switched = guard
-        .store
-        .replace(store)
-        .is_some_and(|previous| previous.backend != backend);
-    drop(guard);
-    // Providers built from the other backend hold its credentials. The
-    // first activation replaces nothing: reads activate a store first.
-    if switched {
-        AppCredentialStore::note_changed();
-    }
+    guard.store = Some(store);
     Ok(())
 }
 
@@ -393,8 +387,8 @@ fn selected_store() -> CredentialResult<Arc<dyn CredentialStore>> {
         let guard = process_state()
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        if let Some(store) = guard.store.clone() {
-            return Ok(store);
+        if let Some(store) = guard.store.as_ref() {
+            return Ok(Arc::clone(store));
         }
     }
     let backend = configured_backend()?;
@@ -402,16 +396,13 @@ fn selected_store() -> CredentialResult<Arc<dyn CredentialStore>> {
     let guard = process_state()
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    match guard.store.clone() {
-        Some(store) => Ok(store),
-        None => Err(CredentialError::StoreUnavailable(
-            "credential store failed to initialize".into(),
-        )),
-    }
+    guard.store.clone().ok_or_else(|| {
+        CredentialError::StoreUnavailable("credential store failed to initialize".into())
+    })
 }
 
 struct ProcessState {
-    store: Option<Arc<startup_notice::NotifyingCredentialStore>>,
+    store: Option<Arc<dyn CredentialStore>>,
     config_path: Option<PathBuf>,
 }
 
