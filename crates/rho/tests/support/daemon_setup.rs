@@ -429,7 +429,12 @@ async fn an_agent_command_runs_its_task_as_that_agent() {
     let sandbox = Sandbox::new();
     let archivist = sandbox.isolated.home.join(".agents/agents/archivist.md");
     std::fs::create_dir_all(archivist.parent().unwrap()).unwrap();
-    std::fs::write(&archivist, ARCHIVIST_AGENT).unwrap();
+    // Its own model, so the rebind changes the session's options.
+    std::fs::write(
+        &archivist,
+        "---\ndescription: Fixture agent with its own model\nmodel-policy: select\nprovider: xai\nmodel: grok-child\n---\n\nArchive.\n",
+    )
+    .unwrap();
     // The fixture answers with the request it got.
     let client = sandbox.start_daemon("inspect").await;
     let session = new_session(&sandbox, &client, None, SessionSetup::default())
