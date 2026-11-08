@@ -47,7 +47,7 @@ A prompt's `content`, and a `user_message` event's, is a list of blocks, each wi
 | Block | Fields | What the model sees |
 | --- | --- | --- |
 | `text` | `text` | The text. |
-| `image` | `mime_type`, `data` (standard base64) | The image: a PNG, JPEG, GIF, or WebP of at most 32 MiB, the limit pasted images have. |
+| `image` | `mime_type`, `data` (standard base64) | The image: a PNG, JPEG, GIF, or WebP. Each image may be at most 32 MiB, the limit pasted images have, but over the socket the whole request must fit in one 16 MiB line, which leaves about 12 MiB of image after base64; a longer line is an `InvalidRequest`. |
 | `resource` | `uri`, `text` | A text resource embedded whole, such as an attached file: `text` in a code fence labelled with `uri`. |
 | `resource_link` | `uri`, `name`, optional `description` | A resource named but not included: `description`, else `name`, in a code fence labelled with `uri`. |
 
