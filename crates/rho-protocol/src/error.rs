@@ -85,11 +85,11 @@ error_codes! {
         VersionMismatch = -32001 => crate::VersionMismatch,
         /// No saved session has that id, in any workspace.
         SessionNotFound = -32003,
-        /// The session already has a turn running or waiting for input, a
-        /// settings change applying, or a delete under way, or another job
-        /// of the daemon's writes it, so it cannot be reopened (#1661); a
-        /// delete also refuses while background work or a run the session
-        /// started is still going. Try again once that ends.
+        /// The session already has a turn running or waiting for input, or
+        /// a delete under way, or another job of the daemon's writes it, so
+        /// it cannot be reopened (#1661); a delete also refuses while a
+        /// settings change waits or applies, or background work or a run the
+        /// session started is still going. Try again once that ends.
         SessionBusy = -32004,
         /// No model request is taking input.
         NotSteerable = -32005,

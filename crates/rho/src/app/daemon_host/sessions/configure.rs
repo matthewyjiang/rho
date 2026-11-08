@@ -1,13 +1,16 @@
-//! `rho/session/configure`: one change to a session's settings between its
-//! turns, applied through the session runtime's settings cores, the same
+//! `rho/session/configure`: one change to a session's settings, applied
+//! between its turns through the session runtime's settings cores, the same
 //! ACP's `session/set_mode` and `session/set_config_option` and the TUI's
 //! controls use (#1670, #1667).
 //!
-//! The daemon refuses a change while a turn is under way, waiting for input
-//! included, rather than queue it behind the turn as ACP does: a daemon
-//! turn can wait on a question for as long as nobody answers, and a client
-//! should learn at once that its change did not apply. A prompt that
-//! arrives while a change applies is refused the same way.
+//! A change sent while a turn is under way, waiting for input included,
+//! waits for the turn to end, then applies and answers, as the TUI and ACP
+//! queue settings behind a turn (#1685). A change and a prompt's turn each
+//! join the queue on the session's runtime under the turn lock, so they
+//! take it in the order they started under that lock. The daemon's stop
+//! answers a change still queued `DaemonStopping`. A change applies even
+//! when its client disconnects meanwhile: the protocol server runs every
+//! request it read to completion.
 //!
 //! Only a loaded session takes a change: a client attaches first, which
 //! loads it. A change that applies is kept with the session's file, so a
@@ -19,7 +22,7 @@ use rho_protocol::{
 use rho_providers::model::catalog::ModelSelection;
 use rho_sdk::ReasoningLevel;
 
-use super::{being_deleted, options::available_auths, stopping, Held, Hold, Sessions};
+use super::{being_deleted, options::available_auths, queued::Queued, stopping, Held, Sessions};
 use crate::{
     app::{
         session_options::{reasoning_from_wire, resolve_model},
@@ -28,11 +31,6 @@ use crate::{
     config::Config,
     permission::PermissionMode,
 };
-
-const TURN_UNDER_WAY: &str =
-    "the session has a turn in progress; change its settings once the turn ends";
-const CHANGE_APPLYING: &str =
-    "another change to the session's settings is applying; send this one once it has";
 
 /// A change this daemon knows how to apply.
 enum Change {
@@ -43,7 +41,8 @@ enum Change {
 }
 
 impl Sessions {
-    /// Applies `params`' change to its loaded session and answers with the
+    /// Applies `params`' change to its loaded session, once the turn under
+    /// way and the changes queued before it are done, and answers with the
     /// session's options.
     pub(in crate::app::daemon_host) async fn configure(
         &self,
@@ -61,24 +60,24 @@ impl Sessions {
             .loaded_session(&params.session)
             .await?
             .ok_or_else(not_loaded)?;
-        let held = {
+        let (held, queued) = {
             // `None` once the idle unload took the session after the lookup.
             let mut turn = session.enter().ok_or_else(not_loaded)?;
-            // Under the turn lock a prompt starts its turn under, so this
-            // sees every turn started before it, and a prompt after it sees
-            // the change applying.
-            if self.jobs.turn_in_progress(&session.job) {
-                return Err(busy(TURN_UNDER_WAY));
-            }
-            Held::take(&session, &mut turn, Hold::Configuring).map_err(|hold| match hold {
-                Hold::Configuring => busy(CHANGE_APPLYING),
-                Hold::Deleting => being_deleted(),
-            })?
+            let held = Held::change(&session, &mut turn).ok_or_else(being_deleted)?;
+            // Queued on the runtime under the turn lock a prompt starts its
+            // turn under, as the change counts: a turn started before this
+            // runs first, even one not holding the runtime yet, and a prompt
+            // that sees the count starts a turn that queues behind it.
+            (held, Queued::join(&session.runtime))
         };
-        // With no turn under way and none starting, only a turn that just
-        // recorded its end or the daemon's stop holds the runtime, each
-        // briefly.
-        let mut runtime = session.runtime.lock().await;
+        // Behind the turn under way and the changes queued before this one.
+        // The stop first: a turn that outlives the stop's drain must not
+        // keep this request, and so the daemon, from exiting.
+        let mut runtime = tokio::select! {
+            biased;
+            () = self.stopping.cancelled() => return Err(stopping()),
+            runtime = queued.acquire() => runtime,
+        };
         // Only the daemon's stop takes the runtime of a session in use.
         let Some(runtime) = runtime.as_mut() else {
             return Err(stopping());
@@ -163,7 +162,11 @@ fn model_selection(
 fn setting_error(error: SettingChangeError) -> RpcError {
     match error {
         SettingChangeError::Unsupported(message) => invalid(message),
-        SettingChangeError::Busy => busy(TURN_UNDER_WAY),
+        // No turn runs while the change holds the runtime.
+        SettingChangeError::Busy => RpcError::new(
+            ErrorCode::InternalError,
+            "could not change the session's settings: a turn ran while the change held the session's runtime, a daemon bug",
+        ),
         SettingChangeError::Apply(error) => RpcError::new(
             ErrorCode::InternalError,
             format!("could not change the session's settings: {error:#}"),
@@ -175,6 +178,6 @@ fn invalid(message: impl Into<String>) -> RpcError {
     RpcError::new(ErrorCode::InvalidParams, message)
 }
 
-fn busy(message: &str) -> RpcError {
-    RpcError::new(ErrorCode::SessionBusy, message)
-}
+#[cfg(test)]
+#[path = "configure_tests.rs"]
+mod tests;

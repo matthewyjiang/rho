@@ -5,10 +5,10 @@
 //!
 //! A rename tells a loaded session's attached clients the new title. A
 //! delete must unload a loaded session first, since its runtime holds the
-//! file's lease: it refuses one whose turn, settings change, or background
-//! work is under way, or whose delete the store would refuse, holds it from
-//! prompts while it tears it down, and then detaches its clients as
-//! `deleted`.
+//! file's lease: it refuses one with a turn or background work under way,
+//! or a settings change queued or applying, or whose delete the store would
+//! refuse, holds it from prompts and changes while it tears it down, and
+//! then detaches its clients as `deleted`.
 
 use std::{num::NonZeroU32, num::NonZeroUsize, sync::Arc};
 
@@ -153,11 +153,11 @@ impl Sessions {
         Ok(SessionDeleteResponse {})
     }
 
-    /// Unloads `session`, loaded as `id`, for its delete, unless its turn, a
-    /// settings change, or its background work is under way, or the store
-    /// would refuse the delete. Held from prompts and settings changes
-    /// meanwhile; once this returns, the session is out of `loaded` and its
-    /// runtime, which held its file, torn down.
+    /// Unloads `session`, loaded as `id`, for its delete, unless a settings
+    /// change is queued or applying, its turn or background work is under
+    /// way, or the store would refuse the delete. Held from prompts and
+    /// settings changes meanwhile; once this returns, the session is out of
+    /// `loaded` and its runtime, which held its file, torn down.
     async fn unload_to_delete(
         &self,
         id: &SessionId,
@@ -168,17 +168,19 @@ impl Sessions {
             // sees every turn started before it, and a prompt after it sees
             // the delete.
             let mut turn = session.turn();
+            match turn.hold {
+                Some(Hold::Configuring(_)) => return Err(busy(CHANGE_QUEUED)),
+                // Deletes of one session wait on its reopen lock, so none
+                // finds another under way.
+                Some(Hold::Deleting) => return Err(being_deleted()),
+                None => {}
+            }
             match self.jobs.session_job(id) {
                 SessionJob::Busy(job) if job == session.job => return Err(busy(TURN_UNDER_WAY)),
                 SessionJob::Busy(job) => return Err(writing(&job, id)),
                 SessionJob::New | SessionJob::Last(_) => {}
             }
-            Held::take(session, &mut turn, Hold::Deleting).map_err(|hold| match hold {
-                Hold::Configuring => busy(CHANGE_APPLYING),
-                // Deletes of one session wait on its reopen lock, so none
-                // finds another under way.
-                Hold::Deleting => being_deleted(),
-            })?
+            Held::delete(session, &mut turn)
         };
         // Free once a turn that just recorded its end released it.
         let mut slot = session.runtime.lock().await;
@@ -217,8 +219,8 @@ impl Sessions {
 }
 
 const TURN_UNDER_WAY: &str = "the session has a turn in progress; delete it once the turn ends";
-const CHANGE_APPLYING: &str =
-    "a change to the session's settings is applying; delete it once the change has applied";
+const CHANGE_QUEUED: &str =
+    "a change to the session's settings is queued or applying; delete it once the change has applied";
 const BACKGROUND_WORK: &str =
     "background work the session started, such as a subagent, is still running; delete it once that ends";
 

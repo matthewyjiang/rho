@@ -162,6 +162,17 @@ impl Feed {
         self.state().options.clone()
     }
 
+    /// The live events the buffer holds, oldest first.
+    #[cfg(test)]
+    pub(super) fn buffered_for_tests(&self) -> Vec<wire::SessionEvent> {
+        let state = self.state();
+        state
+            .buffer
+            .iter()
+            .map(|buffered| buffered.event.clone())
+            .collect()
+    }
+
     /// Records that the turns since the last save saved as `saved`, their
     /// replay from the saved rows: it joins the transcript, and resets stop
     /// replaying those turns' live events.

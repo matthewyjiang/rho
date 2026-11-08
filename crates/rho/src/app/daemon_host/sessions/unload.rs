@@ -4,9 +4,9 @@
 //! down; the next prompt or attach reopens it from its file.
 //!
 //! A session is busy, never idle, while a turn or a subagent writes it, a
-//! configure or a delete holds it, a client follows it, background work its
-//! prompts started runs on or holds a result, or it has saved nothing yet,
-//! so a reopen would not find it.
+//! settings change is queued on it or applying, a delete holds it, a client
+//! follows it, background work its prompts started runs on or holds a
+//! result, or it has saved nothing yet, so a reopen would not find it.
 //!
 //! A sweep every grace marks each idle session idle from then, and unloads
 //! one a sweep already marked a grace ago, so a session unloads between one

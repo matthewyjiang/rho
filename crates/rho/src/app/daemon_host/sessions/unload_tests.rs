@@ -1,72 +1,17 @@
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use crate::{
-    app::{
-        daemon_host::{
-            jobs::{JobId, JobRecord, JobRegistry, JobStore},
-            sessions::{open::OpenedSession, LoadedSession, Sessions},
-        },
-        session_runtime::{
-            unattended_runtime_on, unsaved_unattended_runtime_on, HangUntilCancel, QuestionSupport,
-        },
+use crate::app::daemon_host::{
+    jobs::{JobRegistry, JobStore},
+    sessions::{
+        test_sessions::{load, Load},
+        Sessions,
     },
-    config::Config,
-    session_environment::SessionEnvironment,
 };
 
 const GRACE: Duration = Duration::from_secs(60);
-
-/// How a test session is loaded.
-#[derive(Clone, Copy)]
-enum Load {
-    /// Saved, with no turn under way.
-    Saved,
-    /// Saved, with its turn under way.
-    Busy,
-    /// Never saved, as a new session before its first prompt.
-    Unsaved,
-}
-
-/// A session loaded in `sessions` as `load` says, on a new job, with a
-/// provider that never answers.
-async fn load(sessions: &Sessions, root: &TempDir, load: Load) -> Arc<LoadedSession> {
-    let config = Config::default();
-    let provider: Arc<dyn rho_sdk::provider::ModelProvider> = Arc::new(HangUntilCancel);
-    let sdk = rho_sdk::Rho::builder()
-        .provider_shared(Arc::clone(&provider))
-        .build()
-        .unwrap();
-    let runtime = match load {
-        Load::Saved | Load::Busy => {
-            let questions = QuestionSupport::Unavailable;
-            unattended_runtime_on(root.path(), &config, questions, sdk, provider).await
-        }
-        Load::Unsaved => unsaved_unattended_runtime_on(root.path(), &config, sdk, provider).await,
-    };
-    let id = runtime.session_id().clone();
-    let record = JobRecord::new_session(JobId::generate(), PathBuf::from("/work"), id.clone());
-    let job = record.id.clone();
-    sessions.jobs.register(record).unwrap();
-    match load {
-        Load::Busy => sessions.jobs.start_turn(&job).unwrap(),
-        Load::Saved | Load::Unsaved => {}
-    }
-    let session = Arc::new(LoadedSession::new(
-        &sessions.jobs.get(&job).unwrap(),
-        Arc::clone(&sessions.jobs),
-        OpenedSession {
-            runtime,
-            config,
-            environment: SessionEnvironment::default(),
-        },
-        /*auths*/ &[],
-    ));
-    sessions.loaded().insert(id, Arc::clone(&session));
-    session
-}
 
 /// The jobs of the sessions loaded in `sessions`.
 fn loaded_jobs(sessions: &Sessions) -> BTreeSet<String> {

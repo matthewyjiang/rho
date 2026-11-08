@@ -10,8 +10,11 @@ use tempfile::TempDir;
 use tokio::sync::{mpsc, oneshot};
 
 use super::{DaemonView, PromptStart, TurnLimit, TurnTask, UNEXPECTED_STOP};
-use crate::app::daemon_host::sessions::test_events::{
-    approval, approval_withdrawn, plan, plan_withdrawn, question, question_withdrawn,
+use crate::app::daemon_host::sessions::{
+    queued::Queued,
+    test_events::{
+        approval, approval_withdrawn, plan, plan_withdrawn, question, question_withdrawn,
+    },
 };
 use crate::{
     app::{
@@ -335,6 +338,7 @@ async fn a_cancel_before_the_prompt_begins_saves_nothing() {
 
     let start = TurnTask {
         session: Arc::clone(&session),
+        runtime: Queued::join(&session.runtime),
         stopping: rho_sdk::CancellationToken::new(),
         cancel,
         limit: None,
@@ -433,6 +437,7 @@ async fn the_daemon_times_a_turn_out_at_its_limit() {
 
         let start = TurnTask {
             session: Arc::clone(&session),
+            runtime: Queued::join(&session.runtime),
             stopping: rho_sdk::CancellationToken::new(),
             // The session's own, as a prompt passes it, which the limit's
             // cancel trips.

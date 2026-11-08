@@ -2257,7 +2257,7 @@
       "type": "object"
     },
     "SessionConfigureResponse": {
-      "description": "Result of [`SESSION_CONFIGURE`]: the change applies from the next turn,\nand these are the session's options with it. Every attached client also\nreceives them as [`super::SessionEvent::OptionsChanged`] when they\nchanged. A session with a turn running or waiting for input refuses with\n[`crate::ErrorCode::SessionBusy`]; send the change again once it ends.",
+      "description": "Result of [`SESSION_CONFIGURE`], once the change applied, after the turn\nunder way, if any, ended: the change applies from the next turn, and\nthese are the session's options with it. Every attached client also\nreceives them as [`super::SessionEvent::OptionsChanged`] when they\nchanged.",
       "properties": {
         "options": {
           "$ref": "#/$defs/SessionOptions"
@@ -2281,7 +2281,7 @@
       "type": "object"
     },
     "SessionDeleteResponse": {
-      "description": "Result of [`SESSION_DELETE`]: the session's files are gone, with those\nof the sessions it started, such as its subagents', and the daemon has\nunloaded it, detaching its clients as\n[`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].\n\nA session whose turn is under way, a settings change applying,\nbackground work running, such as a subagent, or a run it started not yet\nfinished is refused as [`crate::ErrorCode::SessionBusy`]; one another\nprocess has open, or one a session it started is open in, as\n[`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded\nsession loaded. A session the daemon loaded but that has saved nothing\nyet is unloaded all the same. An id the daemon has not loaded and nothing\nis saved under is [`crate::ErrorCode::SessionNotFound`].",
+      "description": "Result of [`SESSION_DELETE`]: the session's files are gone, with those\nof the sessions it started, such as its subagents', and the daemon has\nunloaded it, detaching its clients as\n[`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].\n\nA session whose turn is under way, a settings change waiting or\napplying, background work running, such as a subagent, or a run it started not yet\nfinished is refused as [`crate::ErrorCode::SessionBusy`]; one another\nprocess has open, or one a session it started is open in, as\n[`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded\nsession loaded. A session the daemon loaded but that has saved nothing\nyet is unloaded all the same. An id the daemon has not loaded and nothing\nis saved under is [`crate::ErrorCode::SessionNotFound`].",
       "type": "object"
     },
     "SessionDetachParams": {

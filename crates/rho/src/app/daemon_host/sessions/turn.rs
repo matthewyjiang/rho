@@ -21,8 +21,8 @@ use tokio::{
 };
 
 use super::{
-    super::jobs::TurnEnd, cost, inputs::Inputs, options::available_auths, saved_replay,
-    LoadedSession,
+    super::jobs::TurnEnd, cost, inputs::Inputs, options::available_auths, queued::Queued,
+    saved_replay, LoadedSession,
 };
 use crate::{
     app::{
@@ -96,6 +96,9 @@ pub(super) const DAEMON_COMMANDS: CommandSet = CommandSet {
 /// One turn of a session whose job already recorded the turn's start.
 pub(super) struct TurnTask {
     pub(super) session: Arc<LoadedSession>,
+    /// The turn's place in the queue on the session's runtime, joined as
+    /// the turn started (see `Sessions::prompt`).
+    pub(super) runtime: Queued<Option<SessionRuntime>>,
     /// Cancelled once the daemon stops: a turn cancelled then was
     /// interrupted, not cancelled by a client.
     pub(super) stopping: CancellationToken,
@@ -119,6 +122,7 @@ impl TurnTask {
     async fn run(self, input: UserInput, started: oneshot::Sender<PromptStart>) {
         let Self {
             session,
+            runtime,
             stopping,
             cancel,
             limit,
@@ -126,8 +130,9 @@ impl TurnTask {
         // Locked for the whole turn and released only after the turn's end
         // is recorded, so the daemon's stop, which waits for the lock, finds
         // every turn it waited for recorded. Free once the session's last
-        // turn recorded its end, apart from the moment it takes to release.
-        let mut runtime = session.runtime.lock().await;
+        // turn recorded its end and the settings changes counted before
+        // this turn started applied (see `configure`).
+        let mut runtime = runtime.acquire().await;
         // Declared after the lock, so even a panic records the end (see
         // `DaemonView`'s drop) before the lock is released.
         let mut view = DaemonView::new(Arc::clone(&session), started);
@@ -135,6 +140,10 @@ impl TurnTask {
         // when a client's cancel came first and the turn was still winding
         // down at the deadline.
         let (ended, timed_out) = match &mut *runtime {
+            // The daemon began stopping while the turn waited for the
+            // runtime, behind changes or the last turn: it ends interrupted
+            // without beginning its prompt, as the turns the stop stops do.
+            Some(_) if stopping.is_cancelled() => (Ok(TurnOutcome::Cancelled), None),
             Some(runtime) => {
                 let (ended, timed_out) = {
                     let turn = run_turn(runtime, &mut view, input, &session.config, &cancel);

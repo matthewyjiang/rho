@@ -12,12 +12,12 @@
 //! attaches before it changes settings.
 //!
 //! Clients attach to a loaded session to follow its events (#1657); see
-//! [`feed`]. Between turns, a client may change the session's settings,
-//! which the session keeps with its file; see [`configure`] and
-//! [`options`]. A session that sits idle, with no turn under way and no
-//! client attached, is unloaded until a request reopens it; see
-//! [`unload`]. Clients list, rename, and delete saved sessions, loaded or
-//! not; see [`catalog`].
+//! [`feed`]. A client may change the session's settings, which apply
+//! between turns, a change sent during a turn once it ends, and which the
+//! session keeps with its file; see [`configure`] and [`options`]. A
+//! session that sits idle, with no turn under way and no client attached,
+//! is unloaded until a request reopens it; see [`unload`]. Clients list,
+//! rename, and delete saved sessions, loaded or not; see [`catalog`].
 //!
 //! Once the daemon starts stopping, it refuses new sessions and prompts and
 //! detaches every client; then it stops the turns under way, waits for them
@@ -25,6 +25,7 @@
 
 use std::{
     collections::HashMap,
+    num::NonZeroUsize,
     path::PathBuf,
     sync::{Arc, Mutex, MutexGuard, PoisonError, Weak},
     time::Duration,
@@ -62,16 +63,20 @@ mod feed;
 mod inputs;
 mod open;
 mod options;
+mod queued;
 mod reopen;
 mod store;
 #[cfg(test)]
 mod test_events;
+#[cfg(test)]
+mod test_sessions;
 mod turn;
 mod unload;
 
 use feed::{Attached, Feed};
 use inputs::Inputs;
 use open::{open_session, session_environment, OpenedSession, Opening, Workspace};
+use queued::Queued;
 use reopen::ReopenLocks;
 use turn::{PromptStart, TurnLimit, TurnTask};
 use unload::Residency;
@@ -115,8 +120,11 @@ struct LoadedSession {
     /// The job that records the session's turns, in `jobs`.
     job: JobId,
     jobs: Arc<JobRegistry>,
-    /// Held by the turn under way; taken when the daemon stops.
-    runtime: tokio::sync::Mutex<Option<SessionRuntime>>,
+    /// Held by the turn under way and by the change applying; taken when
+    /// the daemon stops. Fair, so turns and changes take it in the order
+    /// they joined its queue, which each does under the turn lock (see
+    /// [`Queued`]).
+    runtime: Arc<tokio::sync::Mutex<Option<SessionRuntime>>>,
     handle: SessionHandle,
     /// The config the session was opened with, which each turn reads.
     config: Config,
@@ -147,38 +155,51 @@ struct TurnSlot {
     /// Whether the session is in use, idle, or unloaded, as the idle unload
     /// tracks it.
     residency: Residency,
-    /// What holds the session between turns, if anything; no turn starts
-    /// while something does. Set and freed by [`Held`].
+    /// What holds the session, if anything: neither a delete nor the idle
+    /// unload takes a held session. Set and freed by [`Held`].
     hold: Option<Hold>,
 }
 
-/// What holds a session between its turns, so that no turn starts
-/// meanwhile. The turn lock is a std mutex no request holds across its
-/// awaits, so a request marks its hold in [`TurnSlot::hold`] instead of
+/// What holds a session: its queued settings changes or its delete, which
+/// exclude each other. The turn lock is a std mutex no request holds across
+/// its awaits, so a request marks its hold in [`TurnSlot::hold`] instead of
 /// holding the lock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Hold {
-    /// A configure is changing the session's settings.
-    Configuring,
-    /// A delete is unloading the session to delete its files.
+    /// This many changes to the session's settings are queued on its
+    /// runtime or applying (see [`configure`]). A prompt still starts a
+    /// turn, which queues on the runtime behind them.
+    Configuring(NonZeroUsize),
+    /// A delete is unloading the session to delete its files; no turn
+    /// starts and no change queues meanwhile.
     Deleting,
 }
 
-/// A session's [`Hold`], freed when dropped, whether the request that took
-/// it finished, failed, or was dropped.
+/// A request's part of a session's [`Hold`], freed when dropped, whether
+/// the request finished, failed, or was dropped.
 struct Held(Arc<LoadedSession>);
 
 impl Held {
-    /// Holds `session` as `hold`, or returns the hold already in place.
-    /// `turn` is `session`'s turn lock, held.
-    fn take(session: &Arc<LoadedSession>, turn: &mut TurnSlot, hold: Hold) -> Result<Self, Hold> {
-        match turn.hold {
-            Some(held) => Err(held),
-            None => {
-                turn.hold = Some(hold);
-                Ok(Self(Arc::clone(session)))
-            }
-        }
+    /// Counts one more change queued on `session`, or `None` while a delete
+    /// holds it. `turn` is `session`'s turn lock, held.
+    fn change(session: &Arc<LoadedSession>, turn: &mut TurnSlot) -> Option<Self> {
+        let queued = match turn.hold {
+            None => NonZeroUsize::MIN,
+            Some(Hold::Configuring(queued)) => queued
+                .checked_add(1)
+                .expect("each queued change is a request in flight"),
+            Some(Hold::Deleting) => return None,
+        };
+        turn.hold = Some(Hold::Configuring(queued));
+        Some(Self(Arc::clone(session)))
+    }
+
+    /// Holds `session` for its delete. `turn` is `session`'s turn lock,
+    /// held, with nothing holding the session.
+    fn delete(session: &Arc<LoadedSession>, turn: &mut TurnSlot) -> Self {
+        debug_assert_eq!(turn.hold, None, "a delete holds only a free session");
+        turn.hold = Some(Hold::Deleting);
+        Self(Arc::clone(session))
     }
 }
 
@@ -186,7 +207,15 @@ impl Drop for Held {
     /// Takes the session's turn lock, a std mutex: never drop a `Held`
     /// while holding that lock's guard, which would deadlock.
     fn drop(&mut self) {
-        self.0.turn().hold = None;
+        let mut turn = self.0.turn();
+        // Changes and a delete exclude each other, so the hold in place is
+        // the kind this one is part of.
+        turn.hold = match turn.hold {
+            Some(Hold::Configuring(queued)) => {
+                NonZeroUsize::new(queued.get() - 1).map(Hold::Configuring)
+            }
+            Some(Hold::Deleting) | None => None,
+        };
     }
 }
 
@@ -267,7 +296,7 @@ impl LoadedSession {
             feed,
             job,
             jobs,
-            runtime: tokio::sync::Mutex::new(Some(runtime)),
+            runtime: Arc::new(tokio::sync::Mutex::new(Some(runtime))),
             inputs: Mutex::new(Inputs::new(
                 config
                     .questionnaire
@@ -464,7 +493,10 @@ impl Sessions {
                 Err(error) => error,
             }
         };
-        if let Some(runtime) = entry.runtime.into_inner() {
+        // Never added, so nothing else holds the runtime or queues on it.
+        if let Some(runtime) =
+            Arc::into_inner(entry.runtime).and_then(tokio::sync::Mutex::into_inner)
+        {
             runtime.shutdown().await;
         }
         Err(refused)
@@ -485,17 +517,13 @@ impl Sessions {
             )
         })?;
         let environment = session_environment(&params.environment)?;
-        let (session, cancel) = self
+        let (session, (cancel, runtime)) = self
             .enter_session(&params.session, &environment, |session, turn| {
                 match turn.hold {
-                    Some(Hold::Configuring) => {
-                        return Err(RpcError::new(
-                            ErrorCode::SessionBusy,
-                            "the session's settings are changing; prompt again once they apply",
-                        ))
-                    }
+                    // The turn queues on the runtime behind the changes, so
+                    // they apply first, the prompt waiting for them.
+                    Some(Hold::Configuring(_)) | None => {}
                     Some(Hold::Deleting) => return Err(being_deleted()),
-                    None => {}
                 }
                 match self.jobs.start_turn(&session.job) {
                     // Told under the turn lock, which the last turn's
@@ -520,7 +548,11 @@ impl Sessions {
                 // another prompt, start in the prompting client's environment.
                 session.environment.replace(environment.clone());
                 turn.cancel = CancellationToken::new();
-                Ok(turn.cancel.clone())
+                // Queued on the runtime under the turn lock the turn starts
+                // under, as a change queues under it (see `configure`): a
+                // change counted before this applies before the turn, and
+                // one sent once the job said `running` waits for its end.
+                Ok((turn.cancel.clone(), Queued::join(&session.runtime)))
             })
             .await?;
         // Spawned before anything awaits, so the turn runs and records its
@@ -528,6 +560,7 @@ impl Sessions {
         // read, but this one stops waiting once the daemon stops.
         let start = TurnTask {
             session,
+            runtime,
             stopping: self.stopping.clone(),
             cancel,
             limit: params.timeout_ms.map(TurnLimit::starting_now),
