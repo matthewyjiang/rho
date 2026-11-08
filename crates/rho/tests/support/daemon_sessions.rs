@@ -1195,7 +1195,7 @@ fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
 async fn clients_that_leave_and_come_back_see_the_same_turn() {
     let sandbox = Sandbox::new();
     // The fixture holds the turn until it is cancelled.
-    let client = sandbox.start_daemon("delay").await;
+    let (mut daemon, client) = sandbox.spawn_daemon(sandbox.rho("delay"), &[]).await;
     let session = sandbox.new_session(&client).await;
     let (mut watcher, watched) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
     let (mut leaver, ..) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
@@ -1276,6 +1276,7 @@ async fn clients_that_leave_and_come_back_see_the_same_turn() {
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );
+    daemon.wait().unwrap();
 }
 
 /// Answers `request` of `session` with `answer` on `client`.

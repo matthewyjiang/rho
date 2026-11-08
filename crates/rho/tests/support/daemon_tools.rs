@@ -79,7 +79,7 @@ impl Drop for Sleepers {
 async fn the_daemons_stop_ends_the_processes_its_sessions_started() {
     let sandbox = Sandbox::new();
     sandbox.set_permission_mode("bypass");
-    let client = sandbox.start_daemon("tool-call").await;
+    let (mut daemon, client) = sandbox.spawn_daemon(sandbox.rho("tool-call"), &[]).await;
     let running_turn = sandbox.new_session(&client).await;
     let bash = json!({
         "id": "foreground",
@@ -124,6 +124,7 @@ async fn the_daemons_stop_ends_the_processes_its_sessions_started() {
         .status()
         .unwrap();
     assert!(stop.success(), "log:\n{}", sandbox.isolated.daemon_log());
+    daemon.wait().unwrap();
     sandbox
         .poll_until("the processes to end", async || {
             (!pids.into_iter().any(running)).then_some(())

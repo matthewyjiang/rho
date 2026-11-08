@@ -104,8 +104,9 @@ enum Holder {
 /// Stops the daemon running from `home`, if any: SIGTERM, then SIGKILL if
 /// it holds its lock past [`DAEMON_TEARDOWN_TIMEOUT`]. SIGTERM comes first
 /// because the daemon's graceful stop also ends the tool processes its
-/// sessions started, which SIGKILL would orphan. A daemon this process
-/// spawned is reaped, so it is gone, not a zombie, when this returns.
+/// sessions started, which SIGKILL would orphan. A running daemon this
+/// process spawned is reaped, so it is gone, not a zombie, when this
+/// returns; one a test already stopped, it must wait for itself.
 ///
 /// Panics, unless the thread is already panicking, if the daemon outlives
 /// both signals or never names itself.
