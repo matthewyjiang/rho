@@ -160,6 +160,7 @@ async fn run_foreground(paths: &DaemonPaths, unload_idle_after: Duration) -> any
     let shutdown = CancellationToken::new();
     let host = Arc::new(DaemonHost::new(
         jobs,
+        &paths.home,
         paths.socket.clone(),
         bound.started_at(),
         shutdown.clone(),

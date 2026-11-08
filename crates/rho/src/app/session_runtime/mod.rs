@@ -80,6 +80,7 @@ pub(crate) use build::{
 };
 pub(crate) use credentials::CredentialFailure;
 use credentials::SessionCredentials;
+pub(crate) use delegation::BackgroundWait;
 use delegation::HeldNotices;
 pub(crate) use events::{
     cancelled_approval, ApprovalId, InsertedMessage, PlanApprovalId, PlanApprovalRequest,
@@ -273,6 +274,13 @@ impl SessionRuntime {
     /// with its first prompt.
     pub(crate) fn is_saved(&self) -> bool {
         self.storage.file().is_some()
+    }
+
+    /// Whether running background work holds a prompt open, or the host
+    /// wakes the idle session once it finishes, as the session's children
+    /// say (see [`BackgroundWait::of`]).
+    pub(crate) fn background_wait(&self) -> BackgroundWait {
+        BackgroundWait::of(self.build.host.children)
     }
 
     /// Whether background work the session's prompts started still runs or

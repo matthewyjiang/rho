@@ -149,6 +149,7 @@ impl SessionRuntime {
         let mut delegation = Delegation::attach(
             &self.built.session,
             BackgroundSources::of(&self.built.tools),
+            self.background_wait(),
             stored.as_ref(),
             self.storage.persistence(),
             &mut self.held_notices,

@@ -38,6 +38,7 @@ use crate::{
     },
     config::Config,
 };
+use wake::WakePrompt;
 
 /// How a prompt's turn began, as the request that sent the prompt learns
 /// it. A turn that completed `Began`. A turn the daemon's stop interrupted
@@ -177,6 +178,7 @@ impl TurnTask {
                 // The turn may have left new skills, prompts, or MCP prompts
                 // behind; clients see them before they see the turn end.
                 session.refresh_options(runtime, &available_auths().await);
+                wake::prompt_ended(&session, runtime, &stopping).await;
                 (
                     ended.map_err(|error| failure(&session, runtime, &error)),
                     timed_out,
@@ -256,10 +258,10 @@ async fn report_title(session: Weak<LoadedSession>, title: TitleJob) {
     }
 }
 
-/// Begins a prompt of `input` on `runtime` and runs it: its slash command
-/// when it starts with one the daemon runs, else a model turn on it. A
-/// command the daemon cannot run fails the turn as a configuration error
-/// before the prompt is saved.
+/// Begins a prompt of `input` on `runtime` and runs it: the T3 wake
+/// watcher's wait when it is one, its slash command when it starts with one
+/// the daemon runs, else a model turn on it. A command the daemon cannot run
+/// fails the turn as a configuration error before the prompt is saved.
 async fn run_turn(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,
@@ -267,6 +269,7 @@ async fn run_turn(
     config: &Config,
     cancel: &CancellationToken,
 ) -> anyhow::Result<Ran> {
+    let wake_prompt = wake::prompt_started(&view.session, &input).await;
     let scope = match runtime.begin_prompt(config).await {
         Ok(scope) => scope,
         // A daemon session loads again only once the daemon unloads it.
@@ -280,6 +283,10 @@ async fn run_turn(
     if cancel.is_cancelled() {
         return Ok(Ran::Cancelled);
     }
+    let origin = match wake_prompt {
+        WakePrompt::Prompt(origin) => origin,
+        WakePrompt::Watch(signal) => return wake::watch(view, &scope, &input, signal?).await,
+    };
     let home = crate::paths::home_dir();
     let command = {
         let commands = CommandScope::of(runtime, home.as_deref(), config);
@@ -296,7 +303,7 @@ async fn run_turn(
             calls,
         } => Turn {
             display: input,
-            model,
+            model: wake::model_input(&origin, model),
             calls,
         },
         PromptCommand::RunAsAgent(task) => {
@@ -576,6 +583,9 @@ impl TurnView for DaemonView {
         }
     }
 }
+
+#[path = "turn_wake.rs"]
+mod wake;
 
 #[cfg(test)]
 #[path = "turn_tests.rs"]

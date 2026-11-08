@@ -7,7 +7,7 @@ use rho_sdk::{
     BoundaryInputRequest, InputBoundary, Rho, RunEvent, SessionOptions, UserInput,
 };
 
-use super::{BackgroundSources, Delegation};
+use super::{BackgroundSources, BackgroundWait, Delegation};
 use crate::{
     app::{agent_executor::AgentRunHandle, SubagentManager},
     subagent::{RunState, RunStatus},
@@ -49,14 +49,21 @@ impl Fixture {
     async fn new() -> Self {
         Self::build(
             Child::Running,
+            BackgroundWait::HoldPrompt,
             ProcessManager::new(ProcessLimits::default()),
             WorkflowRunTracker::new(),
         )
         .await
     }
 
-    /// `processes` and `workflows` may already hold work from an earlier prompt.
-    async fn build(child: Child, processes: ProcessManager, workflows: WorkflowRunTracker) -> Self {
+    /// `processes` and `workflows` may already hold work from an earlier
+    /// prompt; running work holds the prompt as `wait` says.
+    async fn build(
+        child: Child,
+        wait: BackgroundWait,
+        processes: ProcessManager,
+        workflows: WorkflowRunTracker,
+    ) -> Self {
         let root = tempfile::tempdir().unwrap();
         let manager = SubagentManager::new(
             crate::config::Config::default(),
@@ -86,6 +93,7 @@ impl Fixture {
                 processes: Some(&processes),
                 workflows: &workflows,
             },
+            wait,
             None,
             crate::session::SessionPersistence::Saved,
             /*held*/ &mut None,
@@ -198,32 +206,43 @@ enum Work {
 // Covers: a child, a workflow, or a process started during the prompt holds
 // natural completion, and its result continues the original run exactly once
 // with display rows the host can claim; a process or workflow left from an
-// earlier prompt, such as a `/workflow:<name>` start, does not hold it.
+// earlier prompt, such as a `/workflow:<name>` start, does not hold it,
+// and neither does one under a host that wakes the idle session (T3 Code).
 // The SDK channel tests do not own this wait.
 // Owner: shared CLI/daemon background delivery lifecycle.
 #[tokio::test]
-async fn background_work_holds_natural_completion_and_continues_parent_once() {
+async fn background_work_holds_or_releases_natural_completion() {
+    use BackgroundWait::{HoldPrompt, HostWakes};
     let held = ("result incorporated", 1, (0, 0, 0));
     let cases = [
-        ("child", Work::Child, held),
+        ("child", Work::Child, HoldPrompt, held),
         (
             "process started during the prompt",
             Work::ProcessDuringPrompt,
+            HoldPrompt,
             held,
         ),
-        ("workflow", Work::Workflow, held),
+        ("workflow", Work::Workflow, HoldPrompt, held),
         (
             "process from an earlier prompt",
             Work::ProcessFromEarlierPrompt,
+            HoldPrompt,
             ("initial answer", 0, (0, 0, 1)),
         ),
         (
             "workflow from an earlier prompt",
             Work::WorkflowFromEarlierPrompt,
+            HoldPrompt,
             ("initial answer", 0, (0, 1, 0)),
         ),
+        (
+            "process started during the prompt when the host wakes the idle session",
+            Work::ProcessDuringPrompt,
+            HostWakes,
+            ("initial answer", 0, (0, 0, 1)),
+        ),
     ];
-    for (label, work, (text, applied, undelivered)) in cases {
+    for (label, work, wait, (text, applied, undelivered)) in cases {
         let processes = ProcessManager::new(ProcessLimits::default());
         let workflows = WorkflowRunTracker::new();
         let earlier = match work {
@@ -254,7 +273,7 @@ async fn background_work_holds_natural_completion_and_continues_parent_once() {
             | Work::ProcessFromEarlierPrompt
             | Work::WorkflowFromEarlierPrompt => Child::Absent,
         };
-        let mut fixture = Fixture::build(child, processes, workflows).await;
+        let mut fixture = Fixture::build(child, wait, processes, workflows).await;
         let mut displays = fixture.host.offered_displays();
         let request = fixture.final_boundary().await;
         let during = match work {
@@ -533,6 +552,7 @@ async fn failed_attach_keeps_held_notices() {
             processes: Some(&processes),
             workflows: &workflows,
         },
+        BackgroundWait::HoldPrompt,
         None,
         crate::session::SessionPersistence::Saved,
         &mut held,

@@ -60,6 +60,7 @@ pub(super) async fn load(sessions: &Sessions, root: &TempDir, load: Load) -> Arc
             environment: SessionEnvironment::default(),
         },
         /*auths*/ &[],
+        &sessions.wakes,
     ));
     sessions.loaded().insert(id, Arc::clone(&session));
     session

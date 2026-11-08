@@ -73,11 +73,11 @@ async fn host_operations_require_the_complete_named_host_contract() {
 }
 
 // Covers: T3 children must rebind to their definition, and a pinned model is
-// never forwarded to the host, which rejects models Rho does not advertise.
-// Long task instructions must not be copied into T3's bounded title field.
+// never forwarded to the host, which rejects models Rho does not advertise;
+// only an explicit per-call override reaches the child, through its rebind.
 // Owner: host launch policy.
 #[test]
-fn delegation_arguments_route_through_the_child_rebind() {
+fn child_task_routes_through_the_child_rebind() {
     let definition = AgentDefinition {
         id: AgentId::new("host-worker").unwrap(),
         description: "Implementation".into(),
@@ -93,26 +93,31 @@ fn delegation_arguments_route_through_the_child_rebind() {
             reasoning: None,
         },
     };
-    // One unit beyond T3's 512-unit explicit-title budget, but valid task text.
-    let long_prompt = "x".repeat(513);
-    for prompt in [
-        "\n  \nImplement the parser\nKeep public APIs stable",
-        long_prompt.as_str(),
-    ] {
+    let cases = [
+        (
+            "multi-line prompt",
+            "\n  \nImplement the parser",
+            /*model_override*/ None,
+            "/agent:host-worker \n  \nImplement the parser",
+        ),
+        (
+            "prompt that looks like a flag",
+            "--model is literal task text",
+            None,
+            "/agent:host-worker -- --model is literal task text",
+        ),
+        (
+            "per-call model override",
+            "Implement the parser",
+            Some("openai/gpt-5"),
+            "/agent:host-worker --model openai/gpt-5 -- Implement the parser",
+        ),
+    ];
+    for (label, prompt, model_override, expected) in cases {
         assert_eq!(
-            delegate_arguments(&definition, prompt, /*model_override*/ None),
-            json!({
-                "task": format!("/agent:host-worker {prompt}"),
-                "mode": "async",
-            })
+            child_task(&definition, prompt, model_override),
+            expected,
+            "{label}"
         );
     }
-    assert_eq!(
-        delegate_arguments(
-            &definition,
-            "--model is literal task text",
-            /*model_override*/ None
-        ),
-        json!({"task": "/agent:host-worker -- --model is literal task text", "mode": "async"}),
-    );
 }
