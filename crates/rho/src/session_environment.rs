@@ -1,9 +1,11 @@
 //! The environment a session's children see (#1659): this process's own, or
 //! the variables of the daemon client that last opened or prompted the
 //! session. One [`SessionEnvironment`] reaches a session's tools, MCP
-//! servers, hooks, OpenAPI sources, CLI agents (Claude Code, Cursor,
-//! Antigravity), and the workflow runs it starts, and each takes the
-//! environment current when it starts a child or reads a variable.
+//! servers, hooks, OpenAPI sources, and CLI agents (Claude Code, Cursor,
+//! Antigravity), and each takes the environment current when it starts a
+//! child or reads a variable. A workflow run the session starts or resumes
+//! instead gets its own handle of the environment current then, which no
+//! later prompt replaces.
 
 use std::{
     collections::BTreeMap,

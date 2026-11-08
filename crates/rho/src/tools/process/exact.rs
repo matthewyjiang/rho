@@ -182,21 +182,6 @@ fn authorization_execution(
     )
 }
 
-/// The `PATH` a command's `#!/usr/bin/env` interpreter is checked against:
-/// that of the environment the command runs with, such as a daemon
-/// session's client's (#1659).
-fn interpreter_search_path(
-    environment: &rho_sdk::ProcessEnvironment,
-) -> Option<std::ffi::OsString> {
-    match environment {
-        rho_sdk::ProcessEnvironment::Explicit { variables } => {
-            variables.get("PATH").map(std::ffi::OsString::from)
-        }
-        // The other policies start from this process's environment.
-        _ => std::env::var_os("PATH"),
-    }
-}
-
 async fn run_exact_process(
     execution: ProcessExecution,
     executable_identity: &crate::workflow::ExecutableIdentity,
@@ -205,9 +190,11 @@ async fn run_exact_process(
 ) -> Result<ExactProcessOutput, ToolError> {
     ensure_handle_based_launch_supported()?;
     // This check runs after ToolHost authorization and directly before spawn.
+    // A `#!/usr/bin/env` interpreter is checked on the `PATH` the command
+    // runs with, such as a daemon session's client's (#1659).
     let verified_executable = crate::workflow::verify_executable_identity(
         executable_identity,
-        interpreter_search_path(execution.environment()).as_deref(),
+        rho_tools::parent_path_for(execution.environment()).as_deref(),
     )
     .map_err(|error| execution_error(error.to_string()))?;
     let verified_cwd = crate::workflow::verify_directory_identity(cwd_identity)

@@ -7,29 +7,39 @@ use std::{
 /// Finds a bare executable name on this process's `PATH` without spawning
 /// it; see [`find_on`].
 pub(crate) fn find_on_path(program: &str) -> Option<PathBuf> {
-    find_on(program, &env::var_os("PATH")?)
+    find_on(program, env::var_os("PATH").as_deref())
 }
 
 /// Finds a bare executable name on `path`, a `PATH`-style list such as a
-/// daemon session's client's (#1659), without spawning it.
+/// daemon session's client's (#1659), without spawning it: the first of
+/// [`candidates_on`] that is an executable file. No `path` finds nothing.
+pub(crate) fn find_on(program: &str, path: Option<&OsStr>) -> Option<PathBuf> {
+    candidates_on(program, path).find(|candidate| is_executable_file(candidate))
+}
+
+/// Where a bare executable name may be on `path`, in search order, whether
+/// or not the files exist. Anything but a bare name has no candidates, and
+/// neither does a missing `path`.
+///
+/// Relative entries, such as the empty or `.` entries a client's `PATH`
+/// may carry, are skipped: they would resolve against this process's
+/// working directory, which for a daemon is not the client's (#1659).
 ///
 /// On Windows, a bare name may omit only the `.exe` extension, matching
 /// `std::process::Command`. Shell-only `PATHEXT` entries such as `.cmd` and
 /// `.bat` must be named explicitly.
-pub(crate) fn find_on(program: &str, path: &OsStr) -> Option<PathBuf> {
+pub(crate) fn candidates_on<'a>(
+    program: &'a str,
+    path: Option<&'a OsStr>,
+) -> impl Iterator<Item = PathBuf> + 'a {
     let mut components = Path::new(program).components();
-    if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
-        return None;
-    }
-
-    find_in(program, env::split_paths(path))
-}
-
-fn find_in(program: &str, directories: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
-    directories
+    let bare_name =
+        matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none();
+    path.filter(|_| bare_name)
         .into_iter()
-        .map(|directory| executable_path(&directory, program))
-        .find(|candidate| is_executable_file(candidate))
+        .flat_map(env::split_paths)
+        .filter(|directory| directory.is_absolute())
+        .map(move |directory| executable_path(&directory, program))
 }
 
 #[cfg(windows)]

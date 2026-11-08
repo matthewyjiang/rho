@@ -29,7 +29,7 @@ use crate::{
     config::Config,
     permission::{remember_allowed_workspace_writes, PermissionMode, SessionWriteLog},
     permission_classifier_handler::ClassifierApprovalHandler,
-    session_environment::SessionEnvironment,
+    session_environment::{Ambient, SessionEnvironment},
     tools::{host_io::HostIo, workflow_tracker::WorkflowRunTracker},
     workflow::{ResolvedNode, StoredRun, WorkflowOutcome},
 };
@@ -263,7 +263,7 @@ pub(crate) async fn execute_run(
         SubagentPool::Own,
         // A run driven from the terminal, `rho workflow run` or `resume`,
         // runs in this process's environment (#1659).
-        SessionEnvironment::default(),
+        Ambient::ThisProcess,
     )?;
     let custom_providers = runtime.custom_providers.clone();
     rho_providers::provider::scope_custom_openai_compatible_providers(
@@ -314,11 +314,12 @@ pub(crate) struct BackgroundRun {
     pub(crate) pool: SubagentPool,
     /// Delivers the run's completion to the starting session.
     pub(crate) tracker: WorkflowRunTracker,
-    /// The starting session's environment (#1659), which the run's hooks,
-    /// agent nodes, and commands follow as its prompts replace it: each
-    /// node takes it as it is when the node starts. It is never saved, so a
-    /// run resumed later takes the environment of whatever resumes it.
-    pub(crate) environment: SessionEnvironment,
+    /// The environment the run's hooks, agent nodes, and commands run in
+    /// (#1659): the starting session's when it started or resumed the run,
+    /// the snapshot planning or the resume recheck used. Later prompts do
+    /// not change it. It is never saved, so a run resumed later takes the
+    /// environment of whatever resumes it.
+    pub(crate) environment: Ambient,
 }
 
 /// Starts a workflow run on a detached task and returns immediately.
@@ -441,7 +442,7 @@ struct WorkflowRuntime {
 
 impl WorkflowRuntime {
     /// The runtime that drives `run`, planned in `cwd`, its agent nodes
-    /// taking capacity from `nodes` and its children their environment from
+    /// taking capacity from `nodes` and all its children running in
     /// `environment`.
     fn build(
         run: &StoredRun,
@@ -449,8 +450,14 @@ impl WorkflowRuntime {
         config_path: Option<std::path::PathBuf>,
         approval_mode: WorkflowApprovalMode,
         nodes: SubagentPool,
-        environment: SessionEnvironment,
+        environment: Ambient,
     ) -> anyhow::Result<Self> {
+        // The run's own handle, which nothing replaces: its command
+        // executables, their `#!/usr/bin/env` interpreters, and CLI agent
+        // binaries were frozen on one `PATH`, and must verify on that `PATH`
+        // when each node starts, not on whichever client prompted the
+        // session since (#1659).
+        let environment = SessionEnvironment::new(environment);
         let cwd = cwd.canonicalize()?;
         let repository = ConfigRepository::new(config_path);
         let config_path = absolute_config_path(&repository)?;
@@ -512,8 +519,8 @@ impl WorkflowRuntime {
                 crate::app::subagent_messaging::SubagentNoticeBridge::new(),
             )
             .with_approvals(agent_approvals)
-            // Agent nodes follow the environment as in-process subagents
-            // do; the run's files stay local.
+            // Agent nodes run in the run's environment; the run's files
+            // stay local.
             .with_host_io(HostIo {
                 environment: environment.clone(),
                 ..HostIo::default()

@@ -34,8 +34,11 @@ pub(crate) struct CursorConfigPaths {
 }
 
 impl CursorConfigPaths {
-    /// The only environment-reading seam: the variables of `environment`,
-    /// the one Cursor runs in (#1659); the caller supplies resolved home.
+    /// The only environment-reading seam. `CURSOR_CONFIG_DIR` and
+    /// `XDG_CONFIG_HOME` come from `environment`, the one Cursor runs in,
+    /// such as a daemon client's (#1659). `home` is resolved by the caller
+    /// from this process, not read from `environment`: a daemon serves only
+    /// its own user, so the home directory is the same either way.
     pub(crate) fn from_env(
         environment: &crate::session_environment::Ambient,
         home: PathBuf,

@@ -13,7 +13,6 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
     cli::{Cli, WorkflowCommand, WorkflowDocumentFormat, WorkflowRunFormat},
-    // `rho workflow` runs in the terminal's environment, this process's (#1659).
     session_environment::Ambient,
     workflow::{
         CollectedSources, Diagnostic, InputName, PlanInventory, PlanInventoryItem,
@@ -376,6 +375,8 @@ async fn prepare_plan(
     let available_tools =
         host_capabilities(cli, &config, super::agent_binding::AgentRole::Workflow);
     let limits = planning_limits()?;
+    // `rho workflow` plans, and later runs, in the terminal's environment,
+    // this process's (#1659).
     let ops = WorkflowOps::open(workspace, cli.config.clone(), &Ambient::ThisProcess)?;
     ops.prepare_local(file, supplied_inputs, &config, &available_tools, &limits)
         .await

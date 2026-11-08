@@ -2,7 +2,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    ffi::{OsStr, OsString},
+    ffi::OsStr,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -39,17 +39,17 @@ pub(crate) struct DiscoveringPlanHost<'a> {
     available_tools: &'a crate::agent::AgentCapabilities,
     /// The `PATH` bare executables and `#!/usr/bin/env` interpreters are
     /// found on: that of the environment the run will start in (#1659).
-    executable_path: Option<OsString>,
+    search_path: Option<&'a OsStr>,
 }
 
 impl<'a> DiscoveringPlanHost<'a> {
-    /// A host finding bare executables on `executable_path`.
+    /// A host finding bare executables on `search_path`.
     pub(crate) fn new(
         workspace: &'a Path,
         config: &'a crate::config::Config,
         available_tools: &'a crate::agent::AgentCapabilities,
         workflow_entry: &Path,
-        executable_path: Option<OsString>,
+        search_path: Option<&'a OsStr>,
     ) -> anyhow::Result<Self> {
         let home = crate::paths::home_dir();
         let trust = crate::workspace::ProjectTrust::from_agents_env();
@@ -65,7 +65,7 @@ impl<'a> DiscoveringPlanHost<'a> {
                 &plugins,
             )?,
             available_tools,
-            executable_path,
+            search_path,
         })
     }
 }
@@ -91,9 +91,8 @@ impl PlanHost for DiscoveringPlanHost<'_> {
         &self,
         executable: &str,
     ) -> anyhow::Result<(PathBuf, ExecutableIdentity)> {
-        let path =
-            resolve_executable_path(executable, self.workspace, self.executable_path.as_deref())?;
-        let identity = freeze_executable_identity(&path, self.executable_path.as_deref())?;
+        let path = resolve_executable_path(executable, self.workspace, self.search_path)?;
+        let identity = freeze_executable_identity(&path, self.search_path)?;
         Ok((path, identity))
     }
 }
@@ -394,8 +393,7 @@ fn resolve_executable_path(
     // the identity's canonical path, and PATH entries are often symlinks
     // (`~/.local/bin/cursor-agent -> versions/<v>/cursor-agent`).
     let resolved = if path.components().count() == 1 {
-        search_path
-            .and_then(|search_path| crate::executable::find_on(executable, search_path))
+        crate::executable::find_on(executable, search_path)
             .ok_or_else(|| anyhow::anyhow!("executable '{executable}' was not found on PATH"))?
             .canonicalize()?
     } else if path.is_absolute() {

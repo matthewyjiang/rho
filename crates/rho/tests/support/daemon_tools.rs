@@ -331,9 +331,11 @@ async fn a_sessions_cli_agents_and_workflow_commands_see_its_clients_environment
     // Only clients have this directory on their `PATH`.
     let bin = root.join("client-bin-1659");
     std::fs::create_dir_all(&bin).unwrap();
-    let install = |name: &str, script: String| {
+    // Installs an executable script with these whole contents, `#!` line
+    // included.
+    let install = |name: &str, contents: String| {
         let path = bin.join(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+        std::fs::write(&path, contents).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     };
     let record = |file: &str| {
@@ -347,23 +349,17 @@ async fn a_sessions_cli_agents_and_workflow_commands_see_its_clients_environment
     install(
         "claude-agent-acp",
         format!(
-            "if [ \"${{1-}}\" = \"--cli\" ]; then printf '%s\\n' '{{\"loggedIn\":true}}'; exit 0; fi\n{}\nexit 1",
+            "#!/bin/sh\nif [ \"${{1-}}\" = \"--cli\" ]; then printf '%s\\n' '{{\"loggedIn\":true}}'; exit 0; fi\n{}\nexit 1\n",
             record("cli.txt")
         ),
     );
     // The command runs through an interpreter only clients have, as a
     // `#!/usr/bin/env node` script does with mise's `node`.
     std::fs::copy("/bin/sh", bin.join("sh-1659")).unwrap();
-    std::fs::write(
-        bin.join("probe-1659"),
+    install(
+        "probe-1659",
         format!("#!/usr/bin/env sh-1659\n{}\n", record("command.txt")),
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        bin.join("probe-1659"),
-        std::fs::Permissions::from_mode(0o755),
-    )
-    .unwrap();
+    );
     // A user agent, in the sandbox's `HOME`.
     std::fs::create_dir_all(root.join(".rho/agents")).unwrap();
     std::fs::write(

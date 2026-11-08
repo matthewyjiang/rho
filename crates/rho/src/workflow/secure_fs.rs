@@ -7,7 +7,9 @@ use std::{
 
 use sha2::{Digest as _, Sha256};
 
-use super::secure_fs_shebang::{raw_shebang, shebang_interpreter};
+use super::secure_fs_shebang::{
+    interpreter_request, raw_shebang, shebang_interpreter, ExecutableInterpreterRequest,
+};
 use super::{
     Digest, ExecutableIdentity, FrozenPathIdentity, FrozenPathKind, WorkflowError, WorkflowResult,
 };
@@ -106,44 +108,11 @@ pub(crate) fn open_executable_candidate(path: &Path) -> WorkflowResult<Option<Op
 }
 
 fn opened_executable(executable: VerifiedPath) -> WorkflowResult<OpenedExecutable> {
-    let Some(spec) = raw_shebang(&executable.file)? else {
-        return Ok(OpenedExecutable {
-            executable,
-            interpreter_request: None,
-            interpreter_arguments: Vec::new(),
-        });
-    };
-    let (interpreter_request, interpreter_arguments) =
-        if spec.path.file_name().is_some_and(|name| name == "env") {
-            let target = spec.arguments.first().ok_or_else(|| {
-                identity_drift(Path::new("<script>"), "env shebang has no interpreter")
-            })?;
-            if target.starts_with('-') {
-                return Err(identity_drift(
-                    &spec.path,
-                    "env shebang options are not supported for frozen execution",
-                ));
-            }
-            (
-                ExecutableInterpreterRequest::Search(target.clone()),
-                spec.arguments[1..].to_vec(),
-            )
-        } else {
-            if !spec.path.is_absolute() {
-                return Err(identity_drift(
-                    &spec.path,
-                    "shebang must name an absolute interpreter",
-                ));
-            }
-            (
-                ExecutableInterpreterRequest::Absolute(spec.path),
-                spec.arguments,
-            )
-        };
+    let (request, arguments) = interpreter_request(&executable.file)?.unzip();
     Ok(OpenedExecutable {
         executable,
-        interpreter_request: Some(interpreter_request),
-        interpreter_arguments,
+        interpreter_request: request,
+        interpreter_arguments: arguments.unwrap_or_default(),
     })
 }
 
@@ -439,12 +408,6 @@ pub(crate) fn freeze_executable_identity(
         interpreter: interpreter_identity,
         interpreter_arguments: interpreter.map_or_else(Vec::new, |spec| spec.arguments),
     })
-}
-
-/// One interpreter path fact needed before a script identity can be frozen.
-pub(crate) enum ExecutableInterpreterRequest {
-    Absolute(std::path::PathBuf),
-    Search(String),
 }
 
 /// Checks that the executable and interpreter `expected` froze are still the

@@ -24,7 +24,9 @@ fn resolve_in_searches_only_the_given_path() {
     let with_agent = std::env::join_paths([empty.path(), populated.path()]).unwrap();
     let without_agent = empty.path().as_os_str().to_owned();
 
-    let cases: [(&str, Option<&OsStr>, Option<PathBuf>); 4] = [
+    // `sh` is on this process's `PATH`, so finding it here would mean the
+    // lookup fell back to this process's `PATH`.
+    let cases: [(&str, Option<&OsStr>, Option<PathBuf>); 6] = [
         (
             "rho-fake-cli-agent",
             Some(with_agent.as_os_str()),
@@ -32,6 +34,8 @@ fn resolve_in_searches_only_the_given_path() {
         ),
         ("rho-fake-cli-agent", Some(without_agent.as_os_str()), None),
         ("rho-fake-cli-agent", /*path*/ None, None),
+        ("sh", Some(without_agent.as_os_str()), None),
+        ("sh", /*path*/ None, None),
         (
             "/tmp/rho-missing-cli-binary-xyz",
             Some(with_agent.as_os_str()),

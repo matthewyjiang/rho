@@ -17,17 +17,26 @@ pub(super) struct Shebang {
     pub(super) arguments: Vec<String>,
 }
 
-/// The interpreter `file`'s shebang names, an `env` target found on
-/// `search_path`.
-pub(super) fn shebang_interpreter(
+/// One interpreter path fact needed before a script identity can be frozen.
+pub(crate) enum ExecutableInterpreterRequest {
+    /// `#!<absolute path>`.
+    Absolute(PathBuf),
+    /// `#!/usr/bin/env <program>`: `program`, to be found on a `PATH`.
+    Search(String),
+}
+
+/// The interpreter `file`'s shebang asks for and the arguments after it,
+/// if `file` has one. `#!/usr/bin/env` takes exactly a program name, no
+/// options; any other interpreter must be absolute.
+pub(super) fn interpreter_request(
     file: &File,
-    search_path: Option<&OsStr>,
-) -> WorkflowResult<Option<Shebang>> {
-    let Some(mut spec) = raw_shebang(file)? else {
+) -> WorkflowResult<Option<(ExecutableInterpreterRequest, Vec<String>)>> {
+    let Some(spec) = raw_shebang(file)? else {
         return Ok(None);
     };
     if spec.path.file_name().is_some_and(|name| name == "env") {
-        let target = spec.arguments.first().ok_or_else(|| {
+        let mut arguments = spec.arguments.into_iter();
+        let target = arguments.next().ok_or_else(|| {
             identity_drift(Path::new("<script>"), "env shebang has no interpreter")
         })?;
         if target.starts_with('-') {
@@ -36,15 +45,10 @@ pub(super) fn shebang_interpreter(
                 "env shebang options are not supported for frozen execution",
             ));
         }
-        spec.path = search_path
-            .and_then(|search_path| crate::executable::find_on(target, search_path))
-            .ok_or_else(|| {
-                identity_drift(
-                    Path::new(target),
-                    "env shebang interpreter was not found on PATH",
-                )
-            })?;
-        spec.arguments.remove(0);
+        return Ok(Some((
+            ExecutableInterpreterRequest::Search(target),
+            arguments.collect(),
+        )));
     }
     if !spec.path.is_absolute() {
         return Err(identity_drift(
@@ -52,7 +56,35 @@ pub(super) fn shebang_interpreter(
             "shebang must name an absolute interpreter",
         ));
     }
-    Ok(Some(spec))
+    Ok(Some((
+        ExecutableInterpreterRequest::Absolute(spec.path),
+        spec.arguments,
+    )))
+}
+
+/// The interpreter `file`'s shebang names, an `env` target found on
+/// `search_path`.
+pub(super) fn shebang_interpreter(
+    file: &File,
+    search_path: Option<&OsStr>,
+) -> WorkflowResult<Option<Shebang>> {
+    let Some((request, arguments)) = interpreter_request(file)? else {
+        return Ok(None);
+    };
+    let path = match request {
+        ExecutableInterpreterRequest::Absolute(path) => path,
+        // `find_on` yields only absolute paths: it skips relative `PATH`
+        // entries.
+        ExecutableInterpreterRequest::Search(target) => {
+            crate::executable::find_on(&target, search_path).ok_or_else(|| {
+                identity_drift(
+                    Path::new(&target),
+                    "env shebang interpreter was not found on PATH",
+                )
+            })?
+        }
+    };
+    Ok(Some(Shebang { path, arguments }))
 }
 
 /// The shebang `file` starts with, if any, leaving its offset where it was.

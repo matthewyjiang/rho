@@ -514,7 +514,7 @@ async fn real_command_cancellation_loads_and_resumes_with_complete_result() {
     );
     let command_executor: Arc<dyn WorkflowNodeExecutor<CommandInvocation>> =
         Arc::new(WorkflowCommandExecutor::new(
-            rho_sdk::ProcessEnvironment::Empty,
+            rho_sdk::ProcessEnvironment::Empty.into(),
             Arc::new(AllowCommandHosts),
         ));
     let active_runner = Arc::new(WorkflowRunner::new(

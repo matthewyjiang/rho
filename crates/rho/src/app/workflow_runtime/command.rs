@@ -29,21 +29,18 @@ pub(crate) trait CommandHostFactory: Send + Sync {
 }
 
 pub(crate) struct WorkflowCommandExecutor {
-    /// The environment each command starts with, as it is when its node
-    /// starts: a daemon session's follows its prompts (#1659).
+    /// The environment each command starts with, read when its node
+    /// starts: a run's own handle, fixed for the run (#1659).
     environment: SharedProcessEnvironment,
     hosts: Arc<dyn CommandHostFactory>,
 }
 
 impl WorkflowCommandExecutor {
     pub(crate) fn new(
-        environment: impl Into<SharedProcessEnvironment>,
+        environment: SharedProcessEnvironment,
         hosts: Arc<dyn CommandHostFactory>,
     ) -> Self {
-        Self {
-            environment: environment.into(),
-            hosts,
-        }
+        Self { environment, hosts }
     }
 }
 

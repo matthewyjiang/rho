@@ -167,7 +167,8 @@ exec tail -f /dev/null
 // Covers: a CLI agent inherits this process's whole environment when its
 // session has no daemon client, and is found on and runs in the client's
 // whole environment, provider credentials included, in place of this
-// process's when it has one; the plan's overrides win either way (#1659).
+// process's when it has one: a variable only this process has, `HOME`, is
+// gone. The plan's overrides win either way (#1659).
 // Owner: `spawn_agent` environment composition.
 #[tokio::test]
 async fn an_agent_runs_in_its_sessions_whole_environment_under_the_plans_overrides() {
@@ -183,6 +184,7 @@ async fn an_agent_runs_in_its_sessions_whole_environment_under_the_plans_overrid
                 this_process("PATH"),
                 this_process("ANTHROPIC_API_KEY"),
                 "plan".into(),
+                this_process("HOME"),
             ],
         ),
         (
@@ -192,7 +194,7 @@ async fn an_agent_runs_in_its_sessions_whole_environment_under_the_plans_overrid
                 ("ANTHROPIC_API_KEY", "client-key"),
                 ("RHO_1659_OVERRIDE", "client"),
             ]),
-            ["client", "/usr/bin:/bin", "client-key", "plan"].map(String::from),
+            ["client", "/usr/bin:/bin", "client-key", "plan", "unset"].map(String::from),
         ),
     ];
     let dir = tempfile::tempdir().unwrap();
@@ -202,7 +204,7 @@ async fn an_agent_runs_in_its_sessions_whole_environment_under_the_plans_overrid
         let plan = super::AcpSpawnPlan {
             argv: vec![
                 "-c".into(),
-                r#"printf '%s\n' "${RHO_1659_CLIENT-unset}" "${PATH-unset}" "${ANTHROPIC_API_KEY-unset}" "${RHO_1659_OVERRIDE-unset}""#.into(),
+                r#"printf '%s\n' "${RHO_1659_CLIENT-unset}" "${PATH-unset}" "${ANTHROPIC_API_KEY-unset}" "${RHO_1659_OVERRIDE-unset}" "${HOME-unset}""#.into(),
             ],
             cwd: dir.path().into(),
             env: vec![("RHO_1659_OVERRIDE".into(), "plan".into())],

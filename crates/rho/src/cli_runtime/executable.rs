@@ -60,8 +60,6 @@ impl CliExecutable {
             let path = PathBuf::from(program);
             return path.is_file().then(|| Self::from_path(path));
         }
-        let path = path?;
-
         if let Some(found) = crate::executable::find_on(program, path) {
             return Some(Self::from_path(found));
         }

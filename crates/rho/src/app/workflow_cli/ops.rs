@@ -46,7 +46,7 @@ pub(crate) struct WorkflowOps {
     /// The `PATH` planning finds bare executables and `#!/usr/bin/env`
     /// interpreters on, and rechecks find interpreters on again: that of
     /// the environment runs start in (#1659).
-    executable_path: Option<OsString>,
+    search_path: Option<OsString>,
 }
 
 impl WorkflowOps {
@@ -62,7 +62,7 @@ impl WorkflowOps {
             service: WorkflowService::new(WorkflowStore::new(&crate::paths::rho_dir()?)?),
             workspace,
             config_path,
-            executable_path: environment.path(),
+            search_path: environment.path(),
         })
     }
 
@@ -102,7 +102,7 @@ impl WorkflowOps {
             config,
             available_tools,
             entry,
-            self.executable_path.clone(),
+            self.search_path.as_deref(),
         )?;
         self.prepare_from_sources(sources, inputs, &host, limits)
             .await
@@ -201,7 +201,7 @@ impl WorkflowOps {
         recheck_frozen_graph(
             &plan.graph,
             self.config_path.clone(),
-            self.executable_path.as_deref(),
+            self.search_path.as_deref(),
         )
     }
 
@@ -225,7 +225,7 @@ impl WorkflowOps {
         recheck_frozen_graph(
             &run.graph,
             self.config_path.clone(),
-            self.executable_path.as_deref(),
+            self.search_path.as_deref(),
         )
     }
 
@@ -357,7 +357,7 @@ pub(crate) fn workspace_identity(path: &Path) -> anyhow::Result<String> {
 fn recheck_frozen_graph(
     graph: &FrozenWorkflow,
     config_path: Option<PathBuf>,
-    executable_path: Option<&OsStr>,
+    search_path: Option<&OsStr>,
 ) -> anyhow::Result<()> {
     validate_workflow(graph)?;
     validate_runtime_budgets(graph, &planner_worker::planning_limits()?)?;
@@ -365,7 +365,7 @@ fn recheck_frozen_graph(
     for resolved in graph.resolved_nodes.values() {
         let agent = match resolved {
             ResolvedNode::Command(command) => {
-                verify_executable_identity(&command.executable_identity, executable_path)?;
+                verify_executable_identity(&command.executable_identity, search_path)?;
                 verify_directory_identity(&command.cwd_identity)?;
                 continue;
             }
@@ -373,7 +373,7 @@ fn recheck_frozen_graph(
         };
         match (&agent.executable, &agent.executable_identity) {
             (Some(_), Some(identity)) => {
-                verify_executable_identity(identity, executable_path)?;
+                verify_executable_identity(identity, search_path)?;
             }
             (Some(path), None) => anyhow::bail!(
                 "frozen agent '{}' records executable '{}' without a frozen identity",

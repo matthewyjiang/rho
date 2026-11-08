@@ -23,6 +23,7 @@ pub(crate) use model_override::ModelOverride;
 #[path = "agent_binding_cli_sessions.rs"]
 mod cli_sessions;
 pub(crate) use cli_sessions::CliRunInputs;
+pub(in crate::app) use cli_sessions::Launch;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AgentRole {
