@@ -204,13 +204,7 @@ pub(super) async fn open_session(
             ))
             .await?
         }
-        Opening::Saved(stored) => {
-            let mut runtime = Box::pin(SessionRuntime::open_saved(session, stored)).await?;
-            // The settings a client chose with `rho/session/configure`, so
-            // an idle unload and reopen does not revert them to the config's.
-            Box::pin(runtime.restore_settings(&config)).await;
-            runtime
-        }
+        Opening::Saved(stored) => Box::pin(SessionRuntime::open_saved(session, stored)).await?,
     };
     // Only a session that opened resizes every session's budget.
     subagents.set_limit(&config);

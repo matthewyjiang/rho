@@ -1,6 +1,6 @@
 //! The settings a host chose for a session (model, reasoning level, fast
-//! mode, permission mode), kept in its file so a host that reopens it can
-//! restore them: the daemon reopens a session it unloaded while idle, and
+//! mode, permission mode), kept in its file so every host that reopens it
+//! restores them: the daemon reopens a session it unloaded while idle, and
 //! without them the session would fall back to the config's.
 //!
 //! Like a delegated agent's model override (`agent.rs`), the record rides
@@ -15,7 +15,7 @@
 //! follows the config each time it opens.
 
 use rho_providers::model::catalog::ModelSelection;
-use rho_sdk::{ReasoningLevel, SessionSnapshot};
+use rho_sdk::{model::ServiceTier, ReasoningLevel, SessionSnapshot};
 use serde::{Deserialize, Serialize};
 
 use super::{CurrentModel, SessionRuntime, SettingChangeError};
@@ -168,7 +168,13 @@ impl SessionRuntime {
         warn_unrestored("model", model);
         let reasoning = self.set_reasoning_level(reasoning, process_config);
         warn_unrestored("reasoning level", reasoning);
-        warn_unrestored("fast mode", self.set_fast_mode(fast_mode));
+        // The preference itself, which a model switch keeps even on a model
+        // without fast mode, so a switch back to one shows it again.
+        let tier = self
+            .built
+            .session
+            .set_service_tier(fast_mode.then_some(ServiceTier::Priority));
+        warn_unrestored("fast mode", tier.map_err(Into::into));
         let mode = match PermissionMode::ALL
             .into_iter()
             .find(|mode| mode.as_str() == permission_mode)
@@ -202,3 +208,7 @@ fn warn_unrestored(setting: &str, restored: Result<(), SettingChangeError>) {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "saved_settings_tests.rs"]
+mod tests;
