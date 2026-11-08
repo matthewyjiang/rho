@@ -32,8 +32,9 @@ fn ids(records: Vec<JobRecord>) -> BTreeSet<String> {
 // Covers: sweeps less than a grace apart only mark an idle session idle;
 // one a grace after the first unloads a saved one, tearing its runtime down
 // and turning away requests that found it before, and discards one that
-// has saved nothing the same way, its job gone. A session with a turn under way, one a client follows, saved
-// or not, and one a request used since the first sweep stay loaded (#1661).
+// has saved nothing the same way, its job gone. A session with a turn
+// under way, one a client follows, saved or not, and one a request used
+// since the first sweep stay loaded (#1661).
 // Owner: daemon idle session unload (unit).
 #[tokio::test]
 async fn a_session_idle_for_the_grace_leaves_and_no_other() {

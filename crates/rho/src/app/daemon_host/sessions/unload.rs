@@ -137,19 +137,27 @@ impl Sessions {
         if let Some(runtime) = runtime {
             runtime.shutdown().await;
         }
-        // Nothing on disk could reopen a session that saved nothing, so its
-        // job goes with it.
-        if !saved {
+        let idle_for = idle_since.elapsed();
+        if saved {
+            tracing::info!(
+                session = %id,
+                job = %session.job,
+                ?idle_for,
+                unload_idle_after = ?grace,
+                "unloaded idle session"
+            );
+        } else {
+            // Nothing on disk could reopen a session that saved nothing, so
+            // its job goes with it.
             self.jobs.remove(&session.job);
+            tracing::info!(
+                session = %id,
+                job = %session.job,
+                ?idle_for,
+                unload_idle_after = ?grace,
+                "discarded unsaved idle session"
+            );
         }
-        tracing::info!(
-            session = %id,
-            job = %session.job,
-            idle_for = ?idle_since.elapsed(),
-            unload_idle_after = ?grace,
-            "{}",
-            if saved { "unloaded idle session" } else { "discarded unsaved idle session" }
-        );
     }
 }
 
