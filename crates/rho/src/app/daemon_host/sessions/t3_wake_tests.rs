@@ -32,9 +32,15 @@ type Calls = Arc<Mutex<Vec<(String, Value)>>>;
 #[derive(Clone)]
 enum Reply {
     /// At once, with this.
-    Now(Result<ToolOutput, ToolError>),
+    Now(Box<Result<ToolOutput, ToolError>>),
     /// Never, as a host that hangs.
     Never,
+}
+
+impl Reply {
+    fn now(result: Result<ToolOutput, ToolError>) -> Self {
+        Self::Now(Box::new(result))
+    }
 }
 
 /// A `t3-code` task tool that records its calls and answers as `reply`.
@@ -61,7 +67,7 @@ impl Tool for T3Tool {
         let reply = self.reply.clone();
         Box::pin(async move {
             match reply {
-                Reply::Now(result) => result,
+                Reply::Now(result) => *result,
                 Reply::Never => std::future::pending().await,
             }
         })
@@ -79,7 +85,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        Self::with_delegate(Reply::Now(Ok(
+        Self::with_delegate(Reply::now(Ok(
             ToolOutput::text("delegated").with_structured_content(json!({"taskId": "task-1"}))
         )))
     }
@@ -91,10 +97,10 @@ impl Fixture {
         tools.add_bundle(StaticToolBundle::new(
             [
                 ("delegate_task", delegate),
-                ("task_status", Reply::Now(Ok(ToolOutput::text("running")))),
+                ("task_status", Reply::now(Ok(ToolOutput::text("running")))),
                 (
                     "task_cancel",
-                    Reply::Now(Ok(ToolOutput::text("cancel requested"))),
+                    Reply::now(Ok(ToolOutput::text("cancel requested"))),
                 ),
             ]
             .into_iter()
