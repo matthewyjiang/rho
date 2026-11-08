@@ -325,10 +325,8 @@ pub(super) fn paint_card_sections(
             | ToolBody::Lines(_)
             | ToolBody::Search { .. }
             | ToolBody::Diff(_)
-            | ToolBody::Code {
-                window: CodeWindow::Head,
-                ..
-            } => (format!("... {hidden_rows} more lines"), false),
+            // Head windows, and window kinds this build does not know.
+            | ToolBody::Code { .. } => (format!("... {hidden_rows} more lines"), false),
         };
         let mut notice = Vec::new();
         push_wrapped_text(
