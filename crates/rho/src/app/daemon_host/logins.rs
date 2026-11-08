@@ -232,6 +232,9 @@ async fn run(
         |prompt| relay.prompt(prompt_to_wire(prompt)),
     );
     let ended = tokio::select! {
+        // An approval that is ready wins, so a login the provider approved
+        // is saved even when a cancel or a disconnect lands on the same poll.
+        biased;
         approved = approved => Ended::Approved(approved),
         () = cancel.cancelled() => Ended::Cancelled,
         () = relay.closed() => Ended::ClientLeft,
