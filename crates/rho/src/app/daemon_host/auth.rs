@@ -1,24 +1,32 @@
-//! `rho/auth/key` and `rho/auth/logout`: the daemon writes the credential
-//! store its sessions read (#1662).
+//! `rho/auth/list`, `rho/auth/key`, and `rho/auth/logout`: the auth
+//! profiles a client can sign in to, and the daemon writing the credential
+//! store its sessions read (#1662). Interactive logins are `logins.rs`'s.
 //!
 //! [`crate::app::credential_writes`] does the work, as it does for ACP, so
 //! both hosts check and save keys and sign out the same way, against the
 //! store the daemon's config selects when the request runs. Every write
 //! moves the process's credential generation, so each running session uses
-//! a new key, or drops a deleted one, from its next prompt, and the host
-//! refreshes the options of each session not in a turn, whose models to
-//! switch to follow the store. Config and the OS keyring block, so those
-//! steps run off the async workers.
+//! a new key, or drops a deleted one, from its next prompt, and
+//! [`credentials_changed`] refreshes the options of each session not in a
+//! turn, whose models to switch to follow the store. Config and the OS
+//! keyring block, so those steps run off the async workers.
 //!
 //! A key reaches the daemon only over its private socket. Nothing here logs
 //! a request's params, and errors that could quote a key have it removed
 //! before they leave [`crate::app::credential_writes`].
 
 use rho_protocol::{
-    AuthKeyParams, AuthKeyResponse, AuthLogoutParams, AuthLogoutResponse, ErrorCode, RpcError,
-    UncheckedKey, UncheckedReason,
+    AuthKeyParams, AuthKeyResponse, AuthKind, AuthListResponse, AuthLogoutParams,
+    AuthLogoutResponse, AuthStatus, AuthSummary, ErrorCode, RpcError, UncheckedKey,
+    UncheckedReason,
+};
+use rho_providers::{
+    auth::login_dispatch::{AuthenticationMethod, ProviderAuthentication},
+    credentials::available_auth_modes,
+    model::catalog::{self, LoginTarget},
 };
 
+use super::sessions::Sessions;
 use crate::{
     app::{
         config_repository::ConfigRepository,
@@ -28,8 +36,64 @@ use crate::{
 };
 
 /// The config the daemon reads, found as a session open finds it.
-fn repository() -> ConfigRepository {
+pub(super) fn repository() -> ConfigRepository {
     ConfigRepository::new(None)
+}
+
+/// The auth profiles a client can sign in to: the login targets the TUI's
+/// `/login` picker offers, which are ACP's auth methods too, with the
+/// custom providers of the daemon's config.
+pub(super) async fn list() -> Result<AuthListResponse, RpcError> {
+    let auths = off_workers(|| -> Result<_, CredentialWriteError> {
+        credential_writes::load_config_and_store(&repository())?;
+        // The TUI and ACP still sign in in their own processes until they
+        // become daemon clients (#1667, #1670), so their logins are new to
+        // the OS store's cache.
+        AppCredentialStore::reread_external_logins();
+        let signed_in = available_auth_modes(&AppCredentialStore);
+        Ok(catalog::login_targets()
+            .into_iter()
+            .filter_map(|target| summary(target, &signed_in))
+            .collect::<Vec<_>>())
+    })
+    .await??;
+    Ok(AuthListResponse { auths })
+}
+
+/// `target` as `rho/auth/list` reports it, given the auths `signed_in`;
+/// `None` for one that takes no credential.
+fn summary(target: LoginTarget, signed_in: &[String]) -> Option<AuthSummary> {
+    let kind = match ProviderAuthentication::method(&target.auth).ok()? {
+        AuthenticationMethod::None => return None,
+        AuthenticationMethod::ApiKey { .. } => AuthKind::ApiKey,
+        AuthenticationMethod::Interactive { .. } => AuthKind::Login,
+    };
+    let status = if signed_in.contains(&target.auth) {
+        AuthStatus::SignedIn
+    } else {
+        AuthStatus::SignedOut
+    };
+    let LoginTarget {
+        provider,
+        auth,
+        label,
+    } = target;
+    Some(AuthSummary {
+        auth,
+        provider,
+        label,
+        kind,
+        status,
+    })
+}
+
+/// What every credential write is followed by: forget the OS store's
+/// cached reads, so the refresh sees this write and any login another
+/// process saved since (the TUI's or ACP's, until #1667 and #1670), then
+/// refresh every loaded session's options, whose models follow the store.
+pub(super) async fn credentials_changed(sessions: &Sessions) {
+    AppCredentialStore::reread_external_logins();
+    sessions.refresh_all_options().await;
 }
 
 /// Checks `params.key` with its provider and saves it. Only the provider's
@@ -78,7 +142,7 @@ pub(super) async fn logout(params: AuthLogoutParams) -> Result<AuthLogoutRespons
 
 /// Runs `operation`, which blocks on config or the credential store, on
 /// tokio's blocking pool.
-async fn off_workers<T: Send + 'static>(
+pub(super) async fn off_workers<T: Send + 'static>(
     operation: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, RpcError> {
     tokio::task::spawn_blocking(operation)

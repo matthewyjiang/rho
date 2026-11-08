@@ -233,6 +233,10 @@ impl ProviderAuthentication {
         availability: BrowserAvailability,
     ) -> Result<InteractiveLogin, AuthenticationError> {
         let profile = resolve_login_profile(provider_or_auth)?;
+        #[cfg(debug_assertions)]
+        if let Some(started) = fixture::start(profile.auth.id).await {
+            return Ok(interactive_login(started?, availability));
+        }
         let started = match profile.auth_kind() {
             ProviderAuthKind::None | ProviderAuthKind::ApiKey { .. } => {
                 return Err(AuthenticationError::NotInteractive(provider_or_auth.into()));
@@ -613,6 +617,10 @@ fn interactive_login(started: StartedLogin, availability: BrowserAvailability) -
 fn flow_error(error: impl std::fmt::Display) -> AuthenticationError {
     AuthenticationError::Flow(error.to_string())
 }
+
+#[cfg(debug_assertions)]
+#[path = "login_fixture.rs"]
+mod fixture;
 
 #[cfg(test)]
 #[path = "login_dispatch_tests.rs"]

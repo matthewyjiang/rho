@@ -932,3 +932,31 @@ fn validate_cli_refuses_session_flags_with_a_detached_run() {
         .collect();
     assert_eq!(found, expected);
 }
+
+// Covers: on unix `rho login --config` is refused, since the daemon saves
+// under its own config and would ignore the file; plain `rho login` and
+// `rho acp --login` with `--config` still run.
+// Owner: cli config validation
+#[cfg(unix)]
+#[test]
+fn validate_cli_refuses_config_with_a_daemon_login() {
+    let refused = |args: &[&str]| {
+        let cli = Cli::try_parse_from(args).unwrap();
+        validate(&cli).err().map(|error| error.to_string())
+    };
+    pretty_assertions::assert_eq!(
+        [
+            refused(&["rho", "--config", "c.toml", "login", "openai-codex"]),
+            refused(&["rho", "login", "openai-codex"]),
+            refused(&["rho", "--config", "c.toml", "acp", "--login", "openai-codex"]),
+        ],
+        [
+            Some(
+                "rho login does not take --config: the rho daemon saves the credential under its own config"
+                    .to_owned()
+            ),
+            None,
+            None,
+        ]
+    );
+}

@@ -140,7 +140,11 @@ impl Sandbox {
     }
 
     /// Runs `command daemon run args`, and connects once the daemon answers.
-    async fn spawn_daemon(&self, mut command: Command, args: &[&str]) -> (DaemonProcess, Client) {
+    pub(super) async fn spawn_daemon(
+        &self,
+        mut command: Command,
+        args: &[&str],
+    ) -> (DaemonProcess, Client) {
         // Outside every session's workspace, as a service manager starts it,
         // so nothing a session runs can lean on the daemon's own directory.
         let daemon = DaemonProcess(

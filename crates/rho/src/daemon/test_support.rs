@@ -3,14 +3,15 @@
 use std::sync::Arc;
 
 use rho_protocol::{
-    AuthKeyParams, AuthKeyResponse, AuthLogoutParams, AuthLogoutResponse, DaemonStatus, ErrorCode,
-    JobListResponse, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
-    SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
-    SessionConfigureParams, SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse,
-    SessionHoldParams, SessionHoldResponse, SessionListParams, SessionListResponse,
-    SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
-    SessionRenameParams, SessionRenameResponse, SessionSteerParams, SessionSteerResponse,
-    Subscription, PROTOCOL_VERSION,
+    AuthKeyParams, AuthKeyResponse, AuthListResponse, AuthLoginCancelParams,
+    AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse, AuthLogoutParams,
+    AuthLogoutResponse, DaemonStatus, ErrorCode, JobListResponse, LoginStream, RpcError, Service,
+    SessionAnswerParams, SessionAnswerResponse, SessionAttachParams, SessionAttachResponse,
+    SessionCancelParams, SessionCancelResponse, SessionConfigureParams, SessionConfigureResponse,
+    SessionDeleteParams, SessionDeleteResponse, SessionHoldParams, SessionHoldResponse,
+    SessionListParams, SessionListResponse, SessionNewParams, SessionNewResponse,
+    SessionPromptParams, SessionPromptResponse, SessionRenameParams, SessionRenameResponse,
+    SessionSteerParams, SessionSteerResponse, Subscription, PROTOCOL_VERSION,
 };
 use rho_sdk::CancellationToken;
 
@@ -128,6 +129,24 @@ impl Service for StubHost {
     }
 
     async fn logout_auth(&self, _: AuthLogoutParams) -> Result<AuthLogoutResponse, RpcError> {
+        Err(no_credential_store())
+    }
+
+    async fn list_auths(&self) -> Result<AuthListResponse, RpcError> {
+        Err(no_credential_store())
+    }
+
+    async fn login(
+        &self,
+        _: AuthLoginParams,
+    ) -> Result<(AuthLoginResponse, LoginStream), RpcError> {
+        Err(no_credential_store())
+    }
+
+    async fn cancel_login(
+        &self,
+        _: AuthLoginCancelParams,
+    ) -> Result<AuthLoginCancelResponse, RpcError> {
         Err(no_credential_store())
     }
 }

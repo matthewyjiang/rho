@@ -18,8 +18,10 @@ use tokio::{
 use crate::{
     jsonrpc,
     methods::{
-        Hello, Method, Notification, SessionDetachedNotification, SessionDetachedParams,
-        SessionEventNotification, SessionEventParams, SESSION_DETACHED, SESSION_EVENT,
+        AuthLoginFinishedNotification, AuthLoginFinishedParams, AuthLoginPromptNotification,
+        AuthLoginPromptParams, Hello, Method, Notification, SessionDetachedNotification,
+        SessionDetachedParams, SessionEventNotification, SessionEventParams, AUTH_LOGIN_FINISHED,
+        AUTH_LOGIN_PROMPT, SESSION_DETACHED, SESSION_EVENT,
     },
     ClientInfo, ErrorCode, FrameError, HelloParams, HelloResponse, Message, MessageReader,
     MessageWriter, ParseError, Request, RequestId, Response, RpcError, VersionMismatch,
@@ -55,6 +57,8 @@ pub struct Notifications {
 pub enum DaemonNotification {
     SessionEvent(SessionEventParams),
     SessionDetached(SessionDetachedParams),
+    LoginPrompt(AuthLoginPromptParams),
+    LoginFinished(AuthLoginFinishedParams),
     /// A notification a newer daemon sends that this crate does not know.
     Unknown {
         method: String,
@@ -374,6 +378,11 @@ fn decode(notification: jsonrpc::Notification) -> Result<DaemonNotification, Par
     } else if method == SESSION_DETACHED {
         decode_params::<SessionDetachedNotification>(params)
             .map(DaemonNotification::SessionDetached)
+    } else if method == AUTH_LOGIN_PROMPT {
+        decode_params::<AuthLoginPromptNotification>(params).map(DaemonNotification::LoginPrompt)
+    } else if method == AUTH_LOGIN_FINISHED {
+        decode_params::<AuthLoginFinishedNotification>(params)
+            .map(DaemonNotification::LoginFinished)
     } else {
         Ok(DaemonNotification::Unknown { method })
     }

@@ -4,7 +4,9 @@
 //! deleting them in [`catalog`],
 //! `rho attach` following them in [`attach`], and `rho run --detach`
 //! starting them in [`detach`]; the tool processes the daemon's stop ends
-//! are in [`tools`], and signing it in and out over its socket in [`auth`].
+//! are in [`tools`], signing it in and out over its socket in [`auth`],
+//! and the interactive logins it relays to clients, `rho login` among
+//! them, in [`login`].
 #![cfg(unix)]
 
 use std::{
@@ -38,6 +40,9 @@ mod tools;
 
 #[path = "support/daemon_auth.rs"]
 mod auth;
+
+#[path = "support/daemon_login.rs"]
+mod login;
 
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;

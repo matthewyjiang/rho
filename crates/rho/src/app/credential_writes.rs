@@ -1,6 +1,7 @@
 //! Signing in with an API key and signing out, for hosts that act for a
 //! client rather than a person at a terminal: ACP (`authenticate`, `logout`)
-//! and the daemon (`rho/auth/key`, `rho/auth/logout`) (#1662).
+//! and the daemon (`rho/auth/key`, `rho/auth/logout`, and the environment
+//! check of `rho/auth/login`) (#1662).
 //!
 //! Each host keeps how it reaches its user (ACP's local key page, the
 //! daemon's socket); this module owns what a sign-in or sign-out does, so
@@ -76,6 +77,8 @@ pub(crate) enum CredentialWriteError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CredentialWrite {
     SignIn,
+    /// An interactive login, whose credential is not a key.
+    Login,
     SignOut,
 }
 
@@ -84,6 +87,7 @@ impl fmt::Display for CredentialWrite {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::SignIn => "sign in with a saved key",
+            Self::Login => "sign in with a login",
             Self::SignOut => "sign out",
         })
     }
@@ -113,7 +117,7 @@ pub(crate) fn load_config_and_store(
 
 /// Refuses `auth`, whose mode is `mode`, when the environment overrides its
 /// saved credential.
-fn refuse_environment_override(
+pub(crate) fn refuse_environment_override(
     auth: &str,
     mode: &AuthMode,
     write: CredentialWrite,

@@ -54,6 +54,14 @@ pub(super) fn validate(cli: &Cli) -> anyhow::Result<()> {
             anyhow::bail!("--prompt requires non-empty prompt text");
         }
     }
+    // `rho login` saves through the daemon, under the daemon's config
+    // (#1662); off unix it still signs in in this process (#1665).
+    #[cfg(unix)]
+    if let (Some(Command::Login { .. }), Some(_)) = (&cli.command, &cli.config) {
+        anyhow::bail!(
+            "rho login does not take --config: the rho daemon saves the credential under its own config"
+        );
+    }
     if let Some(Command::Run { detach: true, .. }) = &cli.command {
         if let Some(flags) = refused_by_detach(cli) {
             anyhow::bail!(

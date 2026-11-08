@@ -34,6 +34,9 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/job/list` | | `jobs`: every job the daemon knows, including those earlier daemons ran, oldest first. Each has its `id`, `kind` (`session`, `subagent`, or `workflow`), `state`, `workspace`, and timestamps; the `session` it writes, absent for a workflow and for a subagent on another runtime; the `parent` job that started it, for a subagent or workflow; the `workflow_run` it drives, for a workflow; the `error` when it failed; and, usually while it is `queued`, its `queue` place: the `budget` it waits on, that budget's `limit`, and its `position`, 1 for the next to start. |
 | `rho/auth/key` | `auth`, `key` | Checks the API key with the provider of auth profile `auth`, such as `openai-api-key`, and saves it ([below](#signing-in-and-out)). Returns `{}`, or, when the provider could not be asked, `unchecked` with its `reason` and a `message`. |
 | `rho/auth/logout` | `auth` | Deletes auth profile `auth`'s saved credentials ([below](#signing-in-and-out)) and returns `{}`. |
+| `rho/auth/list` | | `auths`: every auth profile a client can sign in to, the TUI's `/login` picker's and ACP's auth methods, each with its `auth` id, `provider`, a `label` for a picker, its `kind` (`api_key` or `login`), and its `status` (`signed_in` or `signed_out`). |
+| `rho/auth/login` | `auth`, `flow`? | Starts auth profile `auth`'s interactive login in the daemon and returns its `login` id; its prompt and its end follow as notifications ([below](#logging-in)). `flow` is `browser`, the default, or `device_code`. |
+| `rho/auth/login_cancel` | `login` | Cancels the login, which then ends `cancelled`, and returns `{}`. |
 
 A prompt whose turn ends before it saves the prompt returns an error instead of a result:
 
@@ -137,7 +140,7 @@ Once the user starts on the request, on their first key, paste, or click in it, 
 
 ## Changing a session's settings
 
-A session's `options` are what a frontend shows as its settings and command menu: ACP's config options and available commands, and the TUI's model picker, reasoning, fast mode, and permission controls. `rho/session/new` and `rho/session/attach` return them, and every attached client receives `options_changed` when they change: after `rho/session/configure`, at a turn's end, which may leave new skills, prompt templates, or MCP prompts behind, after a plan approval switches the permission mode, and after `rho/auth/key` or `rho/auth/logout` changes the models a session may switch to. A session in a turn when a credential write lands refreshes at the turn's end.
+A session's `options` are what a frontend shows as its settings and command menu: ACP's config options and available commands, and the TUI's model picker, reasoning, fast mode, and permission controls. `rho/session/new` and `rho/session/attach` return them, and every attached client receives `options_changed` when they change: after `rho/session/configure`, at a turn's end, which may leave new skills, prompt templates, or MCP prompts behind, after a plan approval switches the permission mode, and after `rho/auth/key`, `rho/auth/logout`, or a finished `rho/auth/login` changes the models a session may switch to. A session in a turn when a credential write lands refreshes at the turn's end.
 
 | Field | What it carries |
 | --- | --- |
@@ -185,11 +188,26 @@ Sessions come newest first. A page holds `limit` sessions, 100 by default and at
 
 `rho/auth/key` and `rho/auth/logout` change the credential store the daemon's sessions read, as `/login` and `/logout` do in the TUI. The daemon moves to the store its config selects when the request arrives and writes that one; a request it refuses writes nothing. Moving stores alone changes no running session's credentials. A change applies to every session the daemon runs, whichever client opened it: a running session uses a new key, or drops a deleted one, from its next prompt, and new sessions use it at once. After a logout, a session's next prompt fails with `TurnEnded`, whose outcome is a `failed` turn of kind `authentication`, until a key is saved again.
 
-`rho/auth/key` first asks the provider's models endpoint about the key and refuses one the provider rejects with `KeyRefused`, keeping the key saved before. A key the provider cannot be asked about is saved anyway, as `rho login` saves it, and the result's `unchecked` says why: its `reason` is `no_model_listing` when rho lists no models for the provider, or `unreachable` when its endpoint could not be reached or failed with another status, and its `message` says so in words, such as `HTTP 404`. A client reads a `reason` it does not know as another reason the key went unchecked. Surrounding whitespace is ignored, and `auth` must take an API key; OAuth and other sign-ins stay with `rho login`. `rho/auth/logout` also forgets an Ollama login.
+`rho/auth/key` first asks the provider's models endpoint about the key and refuses one the provider rejects with `KeyRefused`, keeping the key saved before. A key the provider cannot be asked about is saved anyway, and the result's `unchecked` says why: its `reason` is `no_model_listing` when rho lists no models for the provider, or `unreachable` when its endpoint could not be reached or failed with another status, and its `message` says so in words, such as `HTTP 404`. A client reads a `reason` it does not know as another reason the key went unchecked. Surrounding whitespace is ignored, and `auth` must take an API key; OAuth and other sign-ins use `rho/auth/login` ([below](#logging-in)). `rho/auth/logout` also forgets an Ollama login.
 
-A credential set in the daemon's own environment, such as `OPENAI_API_KEY`, wins over a saved one, so both methods refuse its auth profile with `EnvironmentOverride` before writing anything; its `data.variable` names the variable to unset where the daemon starts. The client's environment plays no part.
+A credential set in the daemon's own environment, such as `OPENAI_API_KEY`, wins over a saved one, so these methods, and `rho/auth/login`, refuse its auth profile with `EnvironmentOverride` before writing anything; its `data.variable` names the variable to unset where the daemon starts. The client's environment plays no part.
 
 The key travels only over the daemon's socket, which only its user can open, and the daemon never logs it, nor the params of any request.
+
+`rho/auth/list` reports what the store the daemon's config selects holds now, logins the TUI or ACP saved in their own processes included.
+
+### Logging in
+
+`rho/auth/login` runs an auth profile's interactive login, such as `openai-codex`'s or `github-copilot`'s, in the daemon, which relays it to the client that started it; `rho login` is such a client. The response, `{login}`, comes before anything else of the login, which then arrives on the same connection:
+
+| Notification | Params | When |
+| --- | --- | --- |
+| `rho/auth/login_prompt` | `login`, `prompt` | The provider's login is ready. `prompt` holds the `url` to open, and for a device-code login the `user_code` to enter there and, when the provider has one, the `url_with_code` that fills it in, with an `instruction` for the user. The daemon opens no browser: the client opens the URL, or shows it. |
+| `rho/auth/login_finished` | `login`, `auth`, `outcome` | The login ended. The `outcome`'s `type` is `succeeded`, once the credential is saved; `unconfirmed`, when the provider sends no confirmation (Ollama Cloud's device key) and the daemon saved the login at once, with the `instruction` the user must still follow; `failed`, with a `message`; or `cancelled`. A client reads a `type` it does not know as a login that did not succeed. |
+
+A browser login waits on a callback port on the daemon's machine, so a client on another machine should ask for `device_code`; a provider with no device flow, such as OpenRouter, runs its browser login either way. The credential is saved as `rho/auth/key` saves a key, and every session the daemon runs uses it from its next prompt.
+
+One login per auth profile runs at a time, whichever client started it: another gets `LoginBusy` until it ends. A login ends when the provider approves or refuses it, when `rho/auth/login_cancel` cancels it, or when the connection that started it closes; the last sends no `rho/auth/login_finished`, since nobody is left to read it. Once the provider approved, the daemon saves the credential even if the client leaves. `rho/auth/login_cancel` for a login that already ended gets `LoginNotFound`. An `auth` that takes an API key, or none, gets `InvalidParams`.
 
 ## The client's environment
 
@@ -221,6 +239,8 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 | -32014 | `KeyRefused` | The provider rejected the API key, and nothing was saved. |
 | -32015 | `CredentialStoreUnavailable` | The credential store could not be opened, read, or written, as when the OS keyring is locked. |
 | -32016 | `SessionNotLoaded` | The daemon has not loaded the session, which a settings change needs; attach to it first. |
+| -32017 | `LoginBusy` | A login to the auth profile is already under way; wait for it to end or cancel it. |
+| -32018 | `LoginNotFound` | No login under way has the id: it ended, or never started. |
 
 ## Versions and compatibility
 

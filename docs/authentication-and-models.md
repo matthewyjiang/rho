@@ -103,7 +103,9 @@ Successful login normally stores credentials only. It does not switch the active
 
 `/logout` opens a provider picker containing providers with stored credentials that can be deleted, plus Ollama whenever `[providers.ollama]` records its login, with or without a key. If an environment override is still present, the provider remains available after deleting the stored credential. When Claude Code is signed in, `/logout` also offers `claude-code` as a separate runtime target.
 
-`rho login <provider-or-auth-profile>` also accepts API-key providers. It asks for the key in an interactive terminal without echoing it; Enter saves, while Esc or Ctrl+C cancels. Login stores credentials without changing the configured model. ACP hosts can run this same flow in a terminal, or, when they can open links, take the key on a one-time local page Rho serves; see [Sign in](/integrations/acp#sign-in).
+`rho login <provider-or-auth-profile>` also accepts API-key providers. It asks for the key in an interactive terminal without echoing it; Enter saves, while Esc or Ctrl+C cancels. Login stores credentials without changing the configured model.
+
+On Linux and macOS, `rho login` signs in through the [daemon](/daemon#credentials), starting it when none runs, as `rho run --detach` does ([#1662](https://github.com/matthewyjiang/rho/issues/1662)). The daemon checks an API key with the provider before saving it, refusing one the provider rejects, and runs an interactive login itself, while `rho login` opens the browser and prints the URL and code. The credential lands in the store the daemon's config selects, and the daemon's running sessions use it from their next prompt, with no restart. Interrupting `rho login` cancels its login. Since the daemon saves under its own config, `rho login` does not take `--config`. On Windows, where the daemon is not supported yet, and for `rho acp --login`, the login still runs in that process. ACP hosts can run this same flow in a terminal, or, when they can open links, take the key on a one-time local page Rho serves; see [Sign in](/integrations/acp#sign-in).
 
 ### Claude Code runtime sign-in
 

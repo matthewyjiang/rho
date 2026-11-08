@@ -6,7 +6,8 @@
 //! the job registry (`jobs/`), whose records outlive the daemon, and the
 //! sessions it has loaded (`sessions/`), which own the budget their
 //! subagents share (`subagents.rs`). It also writes the credential store
-//! those sessions read (`auth.rs`).
+//! those sessions read (`auth.rs`), and runs the interactive logins clients
+//! start, relaying each to its client (`logins.rs`).
 
 use std::{
     io,
@@ -16,14 +17,15 @@ use std::{
 };
 
 use rho_protocol::{
-    AuthKeyParams, AuthKeyResponse, AuthLogoutParams, AuthLogoutResponse, DaemonStatus,
-    JobListResponse, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
-    SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
-    SessionConfigureParams, SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse,
-    SessionHoldParams, SessionHoldResponse, SessionListParams, SessionListResponse,
-    SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
-    SessionRenameParams, SessionRenameResponse, SessionSteerParams, SessionSteerResponse,
-    Subscription, PROTOCOL_VERSION,
+    AuthKeyParams, AuthKeyResponse, AuthListResponse, AuthLoginCancelParams,
+    AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse, AuthLogoutParams,
+    AuthLogoutResponse, DaemonStatus, JobListResponse, LoginStream, RpcError, Service,
+    SessionAnswerParams, SessionAnswerResponse, SessionAttachParams, SessionAttachResponse,
+    SessionCancelParams, SessionCancelResponse, SessionConfigureParams, SessionConfigureResponse,
+    SessionDeleteParams, SessionDeleteResponse, SessionHoldParams, SessionHoldResponse,
+    SessionListParams, SessionListResponse, SessionNewParams, SessionNewResponse,
+    SessionPromptParams, SessionPromptResponse, SessionRenameParams, SessionRenameResponse,
+    SessionSteerParams, SessionSteerResponse, Subscription, PROTOCOL_VERSION,
 };
 use rho_sdk::CancellationToken;
 
@@ -31,11 +33,13 @@ use crate::daemon::DaemonLock;
 
 mod auth;
 mod jobs;
+mod logins;
 mod sessions;
 mod subagents;
 mod wire;
 
 use jobs::{JobRegistry, JobStore};
+use logins::Logins;
 use sessions::Sessions;
 pub(super) use sessions::UNLOAD_IDLE_AFTER;
 
@@ -60,7 +64,10 @@ pub(super) struct DaemonHost {
     started: Instant,
     shutdown: CancellationToken,
     jobs: Arc<JobRegistry>,
-    sessions: Sessions,
+    /// Shared with the logins, which refresh the sessions' options once
+    /// they saved a credential.
+    sessions: Arc<Sessions>,
+    logins: Arc<Logins>,
 }
 
 impl DaemonHost {
@@ -78,7 +85,8 @@ impl DaemonHost {
             socket,
             started_at,
             started: Instant::now(),
-            sessions: Sessions::new(Arc::clone(&jobs)),
+            sessions: Arc::new(Sessions::new(Arc::clone(&jobs))),
+            logins: Arc::new(Logins::new()),
             shutdown,
             jobs,
         }
@@ -221,13 +229,31 @@ impl Service for DaemonHost {
     // A credential write changes the models every session may switch to.
     async fn save_auth_key(&self, params: AuthKeyParams) -> Result<AuthKeyResponse, RpcError> {
         let saved = auth::save_key(params).await?;
-        self.sessions.refresh_all_options().await;
+        auth::credentials_changed(&self.sessions).await;
         Ok(saved)
     }
 
     async fn logout_auth(&self, params: AuthLogoutParams) -> Result<AuthLogoutResponse, RpcError> {
         let logged_out = auth::logout(params).await?;
-        self.sessions.refresh_all_options().await;
+        auth::credentials_changed(&self.sessions).await;
         Ok(logged_out)
+    }
+
+    async fn list_auths(&self) -> Result<AuthListResponse, RpcError> {
+        auth::list().await
+    }
+
+    async fn login(
+        &self,
+        params: AuthLoginParams,
+    ) -> Result<(AuthLoginResponse, LoginStream), RpcError> {
+        self.logins.start(params, Arc::clone(&self.sessions)).await
+    }
+
+    async fn cancel_login(
+        &self,
+        params: AuthLoginCancelParams,
+    ) -> Result<AuthLoginCancelResponse, RpcError> {
+        self.logins.cancel(params)
     }
 }

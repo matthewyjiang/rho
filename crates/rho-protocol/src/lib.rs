@@ -30,6 +30,11 @@
 //! session's saved transcript when the daemon no longer buffers that point
 //! (#1657).
 //!
+//! A client signs the daemon in with a provider's interactive login through
+//! [`methods::AUTH_LOGIN`]: the login runs in the daemon, which relays its
+//! prompt and end to that client as notifications on the connection that
+//! started it, and cancels it when that connection closes (#1662).
+//!
 //! [`Client`] implements the frontend side, with daemon notifications on its
 //! [`Notifications`]; [`serve_connection`] implements the daemon side around a
 //! [`Service`], which publishes events through [`subscription()`].
@@ -54,6 +59,7 @@ mod client;
 mod error;
 mod forward;
 mod jsonrpc;
+mod login_relay;
 pub mod methods;
 pub mod schema;
 mod server;
@@ -66,6 +72,7 @@ pub use jsonrpc::{
     FrameError, Message, MessageReader, MessageWriter, Notification, ParseError, Request,
     RequestId, Response, RpcError, MAX_LINE_BYTES,
 };
+pub use login_relay::{login_relay, LoginRelay, LoginStream, RelayGone};
 pub use methods::{
     AnswerStop, ApprovalAsk, ApprovalSource, Ask, AuthKeyParams, AuthKeyResponse, AuthLogoutParams,
     AuthLogoutResponse, Budget, CardTone, Choice, ClientEnvironment, ClientInfo, CompactionId,
@@ -82,6 +89,11 @@ pub use methods::{
     StopResponse, StreamId, ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
     TurnError, TurnErrorKind, TurnOutcome, UncheckedKey, UncheckedReason, SESSION_ANSWER,
     SESSION_HOLD,
+};
+pub use methods::{
+    AuthKind, AuthListParams, AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse,
+    AuthLoginFinishedParams, AuthLoginParams, AuthLoginPromptParams, AuthLoginResponse, AuthStatus,
+    AuthSummary, LoginFlow, LoginId, LoginOutcome, LoginPrompt,
 };
 pub use methods::{
     CommandKind, FastModeOptions, ModelChoice, ModelOptions, ModelRef, PermissionModeOptions,
