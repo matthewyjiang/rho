@@ -21,9 +21,10 @@ pub(crate) mod conversation_switch;
 #[cfg(unix)]
 mod credential_writes;
 mod daemon_cli;
-// The rho daemon is unix-only (#1665).
+// The rho daemon is unix-only (#1665). The TUI follows daemon sessions
+// through it too (`tui::daemon_session`, #1667).
 #[cfg(unix)]
-mod daemon_client;
+pub(crate) mod daemon_client;
 #[cfg(unix)]
 mod daemon_host;
 mod detach;

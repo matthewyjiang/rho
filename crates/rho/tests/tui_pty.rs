@@ -1121,3 +1121,11 @@ fn boundary_notices_arrive_without_breaking_the_turn() {
 fn pending_input_stays_below_the_activity_rail() {
     assert_pass("pending_input_below_activity");
 }
+
+// Covers: with RHO_TUI_DAEMON=1, resuming a saved session follows it in the
+// daemon and shows its prompt, tool card, and answer as the in-process TUI did.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_resume_shows_the_saved_conversation() {
+    assert_pass("daemon_resume");
+}

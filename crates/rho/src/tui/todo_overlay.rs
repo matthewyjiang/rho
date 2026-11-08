@@ -117,7 +117,12 @@ impl App {
 
     /// Refresh in idle and running loops. Leave the reader's scroll position alone.
     pub(super) fn refresh_todo_list(&mut self, agent: &InteractiveRuntime) -> bool {
-        let list = agent.todo_list();
+        self.set_todo_list(agent.todo_list())
+    }
+
+    /// Shows `list` as the session's checklist, in an open `/todo` overlay
+    /// too. Returns whether the overlay changed.
+    pub(super) fn set_todo_list(&mut self, list: Option<TodoList>) -> bool {
         if self.todo_list == list {
             return false;
         }
