@@ -83,14 +83,13 @@ pub(in crate::app) fn outcome_exit(outcome: &TurnOutcome) -> Result<(), Automati
 /// The exit of a turn that failed as `turn` says.
 fn failed(turn: TurnError) -> AutomationExit {
     let TurnError { kind, message } = turn;
-    let (reason, code) = match kind {
-        TurnErrorKind::Authentication => (TerminalReason::Authentication, 1),
-        TurnErrorKind::Provider => (TerminalReason::ProviderError, 1),
-        TurnErrorKind::ToolHost => (TerminalReason::ToolHostError, 1),
-        TurnErrorKind::Configuration => (TerminalReason::ConfigurationError, 2),
+    match kind {
+        TurnErrorKind::Authentication => AutomationExit::authentication(message),
+        TurnErrorKind::Provider => AutomationExit::new(1, TerminalReason::ProviderError, message),
+        TurnErrorKind::ToolHost => AutomationExit::new(1, TerminalReason::ToolHostError, message),
+        TurnErrorKind::Configuration => AutomationExit::configuration(message),
         // `TurnErrorKind` is non-exhaustive; a kind a newer protocol adds is
         // another error.
-        _ => (TerminalReason::OtherError, 1),
-    };
-    AutomationExit::new(code, reason, message)
+        _ => AutomationExit::other(message),
+    }
 }

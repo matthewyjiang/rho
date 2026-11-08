@@ -1,10 +1,9 @@
 //! The UI-free session runtime: one per thread, owning a built session, its
 //! file, and the state between prompts.
 //!
-//! A host opens it with [`SessionRuntime::open_new`],
-//! [`SessionRuntime::reopen`], or [`SessionRuntime::open_saved`] (see
-//! `open.rs`), drives it, and shows what it reports, holding it exclusively
-//! for each prompt or setting change.
+//! A host opens it with [`SessionRuntime::open_new`] or
+//! [`SessionRuntime::open_saved`] (see `open.rs`), drives it, and shows what
+//! it reports, holding it exclusively for each prompt or setting change.
 //! Nothing here knows a wire protocol or a client: hosts parse their own
 //! requests and map the runtime's results, events, and errors back to
 //! theirs.
@@ -28,7 +27,7 @@
 //!
 //! A prompt's cancel and steering go through the runtime's
 //! [`SessionHandle`], which the host shares with whoever cancels or steers
-//! prompts or retires the session, so a cancel that arrives while a prompt
+//! prompts or closes the session, so a cancel that arrives while a prompt
 //! is still starting cancels its run once it exists.
 
 use std::path::Path;
@@ -70,32 +69,27 @@ mod turn;
 mod workflow;
 
 pub(crate) use agent::AgentTask;
-#[cfg(test)]
-pub(in crate::app) use agent::{bind_delegated_agent, loaded_agent_with, MODEL_OVERRIDE_METADATA};
 pub(crate) use approval_policy::{
     ensure_auto_classifier_model, ApprovalPolicy, UnattendedApprovals,
 };
 #[cfg(test)]
 pub(in crate::app) use build::session_config;
 pub(crate) use build::{
-    ChildAgents, HostCapabilities, QuestionSupport, RunShape, SessionBuild, SessionLaunch,
-    SessionRole,
+    HostCapabilities, QuestionSupport, RunShape, SessionBuild, SessionLaunch, SessionRole,
 };
 pub(crate) use credentials::CredentialFailure;
 use credentials::SessionCredentials;
-pub(crate) use delegation::BackgroundWait;
 use delegation::HeldNotices;
 pub(crate) use events::{
-    cancelled_approval, ApprovalId, InsertedMessage, PlanApprovalId, PlanApprovalRequest, RunEnd,
+    cancelled_approval, ApprovalId, InsertedMessage, PlanApprovalId, PlanApprovalRequest,
     SessionEvent, TurnControl,
 };
 pub(crate) use handle::{SessionHandle, SteerError};
 pub(crate) use left_out::LeftOut;
 pub(crate) use mode::SessionPermission;
-pub(crate) use open::{NodeSession, SavedHistory, SessionOpening};
+pub(crate) use open::{NodeSession, SessionOpening};
 pub(crate) use persist::SessionStorage;
 pub(crate) use prompt::PromptScope;
-pub(crate) use prompt_gate::Closing;
 pub(crate) use prompt_turn::{PlanReport, TurnView};
 use saved_settings::SettingsPolicy;
 pub(crate) use session_tools::SessionTools;
@@ -172,8 +166,7 @@ pub(crate) struct SessionRuntime {
     permission: SessionPermission,
     auth: String,
     credentials: SessionCredentials,
-    /// Cancels this runtime's prompts and marks it replaced; see
-    /// [`Self::handle`].
+    /// Cancels this runtime's prompts; see [`Self::handle`].
     handle: SessionHandle,
     completed_runs: u64,
     /// How far this runtime got asking to name the session.
@@ -237,16 +230,6 @@ impl SessionRuntime {
         SessionTools::of(&self.built.tools)
     }
 
-    /// Reads the session's context fill against its current model's
-    /// window, including while a turn runs. Take a new gauge after a model
-    /// switch.
-    pub(crate) fn context_gauge(&self) -> ContextGauge {
-        ContextGauge {
-            session: self.built.session.clone(),
-            configured_window: self.configured_context_window(),
-        }
-    }
-
     /// The context window the session's current model is configured with,
     /// when its catalog entry knows one.
     pub(crate) fn configured_context_window(&self) -> Option<u64> {
@@ -269,9 +252,8 @@ impl SessionRuntime {
         self.permission.mode
     }
 
-    /// The handle that cancels this runtime's prompts, retires it, and
-    /// hands its file to a successor. Hosts that publish a session share it,
-    /// so they can tell this runtime from a successor.
+    /// The handle that cancels or steers this runtime's prompts and closes
+    /// it. Hosts that publish a session share it.
     pub(crate) fn handle(&self) -> SessionHandle {
         self.handle.clone()
     }
@@ -325,45 +307,6 @@ impl SessionRuntime {
             rho_sdk::hooks::HookSessionFailureKind::RunFailed,
             message,
         );
-    }
-}
-
-/// Reads one session's context fill and the window it fills, and nothing
-/// that changes the session. A host keeps it while a turn runs, when the
-/// runtime itself is busy.
-#[derive(Clone)]
-pub(crate) struct ContextGauge {
-    session: rho_sdk::Session,
-    /// The configured window of the session's model when the gauge was
-    /// taken.
-    configured_window: Option<u64>,
-}
-
-impl ContextGauge {
-    /// A gauge on `session` whose model is configured with
-    /// `configured_window`, for host tests that have no runtime.
-    #[cfg(test)]
-    pub(in crate::app) fn of_session_for_tests(
-        session: rho_sdk::Session,
-        configured_window: Option<u64>,
-    ) -> Self {
-        Self {
-            session,
-            configured_window,
-        }
-    }
-
-    pub(crate) fn estimate(&self) -> rho_sdk::ContextEstimate {
-        self.session.context_estimate()
-    }
-
-    /// The context window `estimate` fills; see [`context_window`].
-    pub(crate) fn window_for(&self, estimate: rho_sdk::ContextEstimate) -> Option<u64> {
-        context_window(self.configured_window, estimate)
-    }
-
-    pub(crate) fn session_id(&self) -> &rho_sdk::SessionId {
-        self.session.id()
     }
 }
 

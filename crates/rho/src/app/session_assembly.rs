@@ -56,8 +56,8 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub hook_host_labels: rho_sdk::hooks::HookHostLabels,
     /// Directories added to the workspace scope beyond `cwd`.
     pub added_dirs: &'a crate::added_dirs::AddedDirs,
-    /// What the host does in place of local disk, such as serving files.
-    pub host_io: crate::tools::host_io::HostIo,
+    /// The environment the session's children see.
+    pub environment: crate::session_environment::SessionEnvironment,
     /// Where delegated agents take capacity, and who else hears of them.
     pub subagent_pool: crate::app::subagent_pool::SubagentPool,
     /// Adds caller-owned tools after shared assembly.
@@ -160,16 +160,13 @@ where
         usage_parent_session_id,
         hook_host_labels,
         added_dirs,
-        host_io,
+        environment,
         subagent_pool,
         extend_tools,
         system_prompt_suffix,
         approval,
         session_options,
     } = options;
-    // One environment for the session's tools, MCP servers, OpenAPI sources,
-    // and hooks (#1659).
-    let environment = host_io.environment.clone();
     // from_config already scopes custom-provider resolution. Do not hold a
     // thread-local overlay across the catalog await: Tokio may resume on
     // another worker and Drop would pop the wrong stack.
@@ -212,7 +209,7 @@ where
         added_dirs,
         // Automation, ACP, side chats, and subagents run no cache warmer.
         process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
-        host_io,
+        environment: environment.clone(),
         subagent_pool,
     })
     .await?;

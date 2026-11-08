@@ -555,17 +555,23 @@ impl TurnView for DaemonView {
         )
     }
 
-    /// The handoff reaches clients with the turn's events, in #1657. An
-    /// approval that switched the permission mode changes the session's
-    /// options, which clients see before the implementation turn.
+    /// A plan the session kept its mode for reaches clients as a notice
+    /// saying why. An approval that switched the permission mode changes
+    /// the session's options, which clients see before the implementation
+    /// turn.
     fn report_plan(
         &mut self,
         runtime: &SessionRuntime,
         _process_config: &Config,
-        _report: PlanReport,
+        report: PlanReport,
     ) -> impl Future<Output = ()> + Send {
         let session = Arc::clone(&self.session);
+        let notice = match report {
+            PlanReport::Kept { notice } => Some(wire::SessionEvent::Notice { text: notice }),
+            PlanReport::Switched => None,
+        };
         async move {
+            session.feed.publish(notice);
             session.refresh_options(runtime, &available_auths().await);
         }
     }

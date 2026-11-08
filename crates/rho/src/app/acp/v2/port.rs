@@ -1,5 +1,5 @@
-//! The [`AcpClientPort`] of an ACP v2 connection: Rho's session hosts speak
-//! v1, and this port rewrites what they send into v2.
+//! The [`AcpClientPort`] of an ACP v2 connection: Rho's adapter speaks v1,
+//! and this port rewrites what it sends into v2.
 
 use std::{collections::HashSet, future::Future, pin::Pin, sync::Mutex};
 
@@ -111,7 +111,4 @@ impl AcpClientPort for V2Port {
             self.cx.send_notification(notification)
         })
     }
-
-    // `fs/*` and `terminal/*` keep the port's defaults: v2 removed them, and
-    // `requests::initialize_request` never negotiates them.
 }

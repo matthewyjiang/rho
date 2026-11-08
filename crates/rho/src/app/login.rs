@@ -2,28 +2,31 @@
 //!
 //! On unix `rho login` is a client of the rho daemon, which saves the
 //! credential and runs interactive logins for it (#1662), starting the
-//! daemon when none runs (`daemon_client.rs`). `rho acp --login` still signs
-//! in in this process until the ACP adapter becomes a daemon client
-//! (#1670), as does `rho login` where the daemon is unsupported (Windows,
-//! #1665) (`in_process.rs`).
+//! daemon when none runs (`daemon_client.rs`). `rho acp --login`, which an
+//! ACP host runs in a terminal, signs in the same way. Where the daemon is
+//! unsupported (Windows, #1665) `rho login` signs in in this process
+//! (`in_process.rs`), and `rho acp` is unavailable.
 
 #[cfg(unix)]
 mod daemon_client;
 pub(super) mod drive;
+#[cfg(not(unix))]
 mod in_process;
 #[cfg(unix)]
 pub(super) mod relay_wire;
 mod secret;
 
+#[cfg(unix)]
+use rho_providers::provider::{resolve_auth_mode, ProviderAuthKind};
 use rho_providers::{
     auth::login_dispatch::{AuthenticationError, AuthenticationMethod, ProviderAuthentication},
     model::catalog,
-    provider::{provider_descriptor, ProviderDescriptor},
+    provider::provider_descriptor,
 };
 
-use self::drive::Saved;
-use super::config_repository::ConfigRepository;
-use crate::{cli::Command, config::Config};
+use crate::cli::Command;
+#[cfg(not(unix))]
+use {super::config_repository::ConfigRepository, crate::config::Config};
 
 /// A sign-in someone asked for from a terminal.
 #[derive(Clone, Copy, Debug)]
@@ -34,7 +37,10 @@ pub(super) enum LoginCommand<'a> {
         device_auth: bool,
     },
     /// `rho acp --login <auth>`, which an ACP host runs in a terminal and
-    /// whose zero exit status promises a finished sign-in.
+    /// whose zero exit status the host takes as signed in: an API key the
+    /// daemon checked and saved, or a login the provider confirmed. A login
+    /// whose approval nothing reports is refused (see
+    /// [`confirms_sign_in`]).
     AcpTerminal { auth: &'a str },
 }
 
@@ -56,9 +62,31 @@ pub(super) fn command(command: &Option<Command>) -> Option<LoginCommand<'_>> {
     }
 }
 
-/// Signs `command` in. `config`, loaded from `repository` at `config_path`
-/// with its credential store chosen, is what an in-process login saves
-/// under; a daemon login uses the daemon's.
+/// Signs `command` in through the daemon, which saves the credential under
+/// its own config.
+#[cfg(unix)]
+pub(super) async fn run(command: LoginCommand<'_>) -> anyhow::Result<()> {
+    match command {
+        LoginCommand::Cli {
+            provider,
+            device_auth,
+        } => daemon_client::run(target(provider)?, device_auth).await,
+        LoginCommand::AcpTerminal { auth } => {
+            let target = target(auth)?;
+            if !confirms_sign_in(&target.auth) {
+                anyhow::bail!(
+                    "'{auth}' signs in without reporting when the sign-in is approved, so an ACP host cannot run it; run `rho login {auth}` in a terminal instead"
+                );
+            }
+            daemon_client::run(target, /*device_auth*/ false).await
+        }
+    }
+}
+
+/// Signs `command` in in this process. `config`, loaded from `repository`
+/// at `config_path` with its credential store chosen, is what the login
+/// saves under.
+#[cfg(not(unix))]
 pub(super) async fn run(
     command: LoginCommand<'_>,
     repository: &ConfigRepository,
@@ -66,53 +94,44 @@ pub(super) async fn run(
     config_path: &std::path::Path,
 ) -> anyhow::Result<()> {
     match command {
-        #[cfg(unix)]
         LoginCommand::Cli {
             provider,
             device_auth,
-        } => daemon_client::run(target(provider)?, device_auth).await,
-        // A person reads the provider's instructions, so a login it cannot
-        // confirm counts.
-        #[cfg(not(unix))]
-        LoginCommand::Cli {
-            provider,
-            device_auth,
-        } => match in_process::run(
-            target(provider)?,
-            device_auth,
-            repository,
-            config,
-            config_path,
-        )
-        .await?
-        {
-            Saved::Confirmed | Saved::Unconfirmed { .. } => Ok(()),
-        },
-        // The exit status promises a finished sign-in, which a login the
-        // provider cannot confirm is not.
-        LoginCommand::AcpTerminal { auth } => match in_process::run(
-            target(auth)?,
-            /*device_auth*/ false,
-            repository,
-            config,
-            config_path,
-        )
-        .await?
-        {
-            Saved::Confirmed => Ok(()),
-            Saved::Unconfirmed { .. } => anyhow::bail!(
-                "login could not be confirmed; complete the provider's instructions and reconnect"
-            ),
-        },
+        } => {
+            in_process::run(
+                target(provider)?,
+                device_auth,
+                repository,
+                config,
+                config_path,
+            )
+            .await
+        }
+        LoginCommand::AcpTerminal { .. } => anyhow::bail!(super::daemon_cli::UNSUPPORTED),
     }
+}
+
+/// Whether the daemon's sign-in to auth profile `auth` finishes only once
+/// the provider approved it, or a key it checked is saved. An Ollama Cloud
+/// device key is saved as soon as the user is asked to approve it at
+/// ollama.com, and nothing reports the approval, so an ACP host, which
+/// takes a finished sign-in as signed in, does not offer it.
+#[cfg(unix)]
+pub(super) fn confirms_sign_in(auth: &str) -> bool {
+    !matches!(
+        resolve_auth_mode(auth).map(|(_, mode)| mode.auth_kind),
+        Some(ProviderAuthKind::OllamaDeviceKey { .. })
+    )
 }
 
 /// An auth profile that takes a credential.
 struct Target {
     /// The auth profile's id, such as `openai-codex`.
     auth: String,
-    /// The provider it signs in to.
-    descriptor: &'static ProviderDescriptor,
+    /// The provider it signs in to, whose login an in-process sign-in
+    /// records; the daemon looks it up itself.
+    #[cfg(not(unix))]
+    descriptor: &'static rho_providers::provider::ProviderDescriptor,
     sign_in: SignIn,
 }
 
@@ -152,11 +171,13 @@ fn target(provider: &str) -> anyhow::Result<Target> {
             SignIn::Interactive { provider_label }
         }
     };
+    #[cfg(not(unix))]
     let Some(descriptor) = provider_descriptor(&target.provider) else {
         anyhow::bail!("unknown provider '{}'", target.provider);
     };
     Ok(Target {
         auth: target.auth,
+        #[cfg(not(unix))]
         descriptor,
         sign_in,
     })

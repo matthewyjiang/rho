@@ -43,14 +43,14 @@ use crate::{
         cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
         config_repository::ConfigRepository,
         session_runtime::{
-            ApprovalPolicy, BackgroundWait, ChildAgents, HostCapabilities, RunShape, SessionBuild,
-            SessionLaunch, SessionOpening, SessionRole, SessionRuntime,
+            ApprovalPolicy, HostCapabilities, RunShape, SessionBuild, SessionLaunch,
+            SessionOpening, SessionRole, SessionRuntime,
         },
     },
     config::Config,
     session::{Session as StoredSession, SessionPersistence},
     session_environment::{Ambient, SessionEnvironment},
-    tools::{host_io::HostIo, mcp::McpAuthorizationMode},
+    tools::mcp::McpAuthorizationMode,
 };
 
 /// The directory a session works in: an existing directory, canonicalized.
@@ -226,14 +226,8 @@ async fn open_runtime(
         },
         host: HostCapabilities {
             questions,
-            children: ChildAgents::InProcess(subagents.pool_for(job.clone())),
-            // Nothing wakes an idle session yet, so background work holds the
-            // turn open, as it does for `rho run`.
-            background_wait: BackgroundWait::HoldPrompt,
-            host_io: HostIo {
-                environment: environment.clone(),
-                ..HostIo::default()
-            },
+            subagent_pool: subagents.pool_for(job.clone()),
+            environment: environment.clone(),
             mcp_authorization: McpAuthorizationMode::NonInteractive,
             approvals: ApprovalPolicy::Host,
             parent_notices: None,

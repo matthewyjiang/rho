@@ -10,11 +10,9 @@
 //! record, and one saved without the record, such as before it existed,
 //! reads as leaving nothing out.
 //!
-//! The guarantee is the daemon's: it holds across daemon reopens. Hosts
-//! that are not daemon clients yet do not keep it. An in-process `rho acp`
-//! `session/load` or `session/resume` saves the record its own `--no-*`
-//! flags make, and the TUI keeps an existing record but does not record its
-//! own flags. Both become daemon clients in #1670 and #1667.
+//! The guarantee is the daemon's: it holds across daemon reopens. The TUI,
+//! not a daemon client yet, keeps an existing record but does not record
+//! its own flags, until it becomes one (#1667).
 
 use rho_sdk::SessionSnapshot;
 use serde::{Deserialize, Serialize};

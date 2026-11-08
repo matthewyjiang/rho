@@ -135,7 +135,7 @@ provider = "disabled"
     )
     .unwrap();
     let mut command = home.command(env!("CARGO_BIN_EXE_rho"));
-    command.args(["--provider", "mock", "acp"]);
+    command.arg("acp");
     let mut server = AcpServer::from_command(&mut command);
     server
         .request("initialize", json!({"protocolVersion": 1}))

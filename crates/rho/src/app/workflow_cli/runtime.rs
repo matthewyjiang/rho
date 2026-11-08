@@ -30,7 +30,7 @@ use crate::{
     permission::{remember_allowed_workspace_writes, PermissionMode, SessionWriteLog},
     permission_classifier_handler::ClassifierApprovalHandler,
     session_environment::{Ambient, SessionEnvironment},
-    tools::{host_io::HostIo, workflow_tracker::WorkflowRunTracker},
+    tools::workflow_tracker::WorkflowRunTracker,
     workflow::{ResolvedNode, StoredRun, WorkflowOutcome},
 };
 
@@ -519,12 +519,8 @@ impl WorkflowRuntime {
                 crate::app::subagent_messaging::SubagentNoticeBridge::new(),
             )
             .with_approvals(agent_approvals)
-            // Agent nodes run in the run's environment; the run's files
-            // stay local.
-            .with_host_io(HostIo {
-                environment: environment.clone(),
-                ..HostIo::default()
-            }),
+            // Agent nodes run in the run's environment.
+            .with_environment(environment.clone()),
         );
         let agent_executor: Arc<
             dyn WorkflowNodeExecutor<crate::app::workflow_runtime::AgentInvocation>,

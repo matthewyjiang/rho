@@ -6,7 +6,9 @@
 //! it is still the session's current forwarder, checked under the same lock
 //! that answers attaches and detaches. So every event a forwarder queued
 //! precedes the response that replaced or stopped it, and none follows it;
-//! an attach's response precedes its first event.
+//! an attach's response precedes its first event. A call about a session
+//! flushes its forwarder before answering (see [`Forwarders::flush`]), so
+//! the events the session published before the answer precede it too.
 //!
 //! A detach or a new attach stops a forwarder at once. The connection's end
 //! instead lets each forwarder flush: it sends what its publisher has
@@ -25,7 +27,7 @@ use std::{
 };
 
 use tokio::{
-    sync::{watch, Semaphore},
+    sync::{mpsc, oneshot, watch, Semaphore},
     task::{AbortHandle, JoinSet},
 };
 
@@ -34,8 +36,9 @@ use crate::{
     login_relay::{LoginEvent, LoginStream},
     methods::{
         AuthLoginFinishedNotification, AuthLoginFinishedParams, AuthLoginPromptNotification,
-        AuthLoginPromptParams, LoginId, Notification, SessionDetachedNotification,
-        SessionDetachedParams, SessionEventNotification, SessionEventParams, SessionId,
+        AuthLoginPromptParams, LoginId, Notification, Seq, SessionDetachedNotification,
+        SessionDetachedParams, SessionEvent, SessionEventNotification, SessionEventParams,
+        SessionId,
     },
     server::{Outbox, Outgoing},
     subscription::{Next, Subscription},
@@ -76,6 +79,9 @@ struct Table {
 struct Current {
     id: u64,
     task: AbortHandle,
+    /// Flush requests, each answered once the forwarder queued every event
+    /// published before it.
+    flushes: mpsc::UnboundedSender<oneshot::Sender<()>>,
 }
 
 impl Forwarders {
@@ -114,15 +120,17 @@ impl Forwarders {
         while table.tasks.try_join_next().is_some() {}
         let id = table.next_id;
         table.next_id += 1;
+        let (flushes, flush_requests) = mpsc::unbounded_channel();
         let task = table.tasks.spawn(forward(
             Arc::clone(self),
             outbox,
             session.clone(),
             id,
             subscription,
+            flush_requests,
             self.ending.subscribe(),
         ));
-        if let Some(replaced) = table.current.insert(session, Current { id, task }) {
+        if let Some(replaced) = table.current.insert(session, Current { id, task, flushes }) {
             replaced.task.abort();
         }
     }
@@ -154,6 +162,21 @@ impl Forwarders {
             stream,
             self.ending.subscribe(),
         ));
+    }
+
+    /// Returns once the session's forwarder, if it has one, queued every
+    /// event its publisher published before the call: a response queued
+    /// after this follows them. A forwarder that stops first lets it return.
+    pub(crate) async fn flush(&self, session: &SessionId) {
+        let (done, flushed) = oneshot::channel();
+        let sent = self
+            .lock()
+            .current
+            .get(session)
+            .is_some_and(|current| current.flushes.send(done).is_ok());
+        if sent {
+            let _ = flushed.await;
+        }
     }
 
     /// Stops the session's forwarder, if it has one. Nothing it has not
@@ -231,16 +254,24 @@ impl Table {
 }
 
 /// Forwards one subscription's events, then its detach reason, while it is
-/// the session's current forwarder. Once `ending` is set, it forwards only
-/// what is already published, then finishes.
+/// the session's current forwarder, answering each of `flush_requests` once
+/// it queued what was published before it. Once `ending` is set, it
+/// forwards only what is already published, then finishes.
 async fn forward(
     forwarders: Arc<Forwarders>,
     outbox: Outbox,
     session: SessionId,
     id: u64,
     mut subscription: Subscription,
+    mut flush_requests: mpsc::UnboundedReceiver<oneshot::Sender<()>>,
     mut ending: watch::Receiver<bool>,
 ) {
+    /// What woke the forwarder.
+    enum Wake {
+        Next(Option<(Seq, SessionEvent)>),
+        Flush(oneshot::Sender<()>),
+        Ending,
+    }
     let send_event = async |seq, event| {
         let params = SessionEventParams {
             session: session.clone(),
@@ -254,16 +285,29 @@ async fn forward(
         forwarders.send(&session, id, message, &outbox).await
     };
     let published_all = loop {
-        let next = tokio::select! {
-            next = subscription.next() => next,
+        let wake = tokio::select! {
+            next = subscription.next() => Wake::Next(next),
+            Some(done) = flush_requests.recv() => Wake::Flush(done),
             // Never fails: the sender lives as long as `forwarders`.
-            _ = ending.wait_for(|ending| *ending) => break false,
+            _ = ending.wait_for(|ending| *ending) => Wake::Ending,
         };
-        let Some((seq, event)) = next else {
-            break true;
-        };
-        if !send_event(seq, event).await {
-            return;
+        match wake {
+            Wake::Next(Some((seq, event))) => {
+                if !send_event(seq, event).await {
+                    return;
+                }
+            }
+            Wake::Next(None) => break true,
+            Wake::Flush(done) => {
+                // Whatever was published before the request is taken now.
+                while let Next::Event(seq, event) = subscription.try_next() {
+                    if !send_event(seq, event).await {
+                        return;
+                    }
+                }
+                let _ = done.send(());
+            }
+            Wake::Ending => break false,
         }
     };
     if !published_all {

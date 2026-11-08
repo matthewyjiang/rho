@@ -298,9 +298,9 @@ To work across every directory, use `/sessions` inside the TUI. It opens a full-
 
 ### One process per session
 
-Only one Rho process writes a session at a time. While a TUI, `rho acp`, `rho run`, or a workflow has a session open, another Rho process cannot resume, continue, load, or delete it: `rho --resume`, `rho -c`, `/resume`, and ACP `session/load` and `session/resume` fail with `session '<id>' is open in another Rho process; close it there first`. Close the session there, or exit that process, then try again. `-c` picks the latest session even when another process has it open, so it fails the same way rather than start a new one.
+Only one Rho process writes a session at a time. While a TUI, `rho run`, a workflow, or the [daemon](/daemon) has a session open, another Rho process cannot resume, continue, load, or delete it: `rho --resume`, `rho -c`, `/resume`, and ACP `session/load` and `session/resume` fail with `session '<id>' is open in another Rho process; close it there first`. `rho acp` sessions run in the daemon, so any number of `rho acp` processes and other daemon clients can follow the same session, and the daemon lets go of it once it has been idle for a while ([unloading](/daemon#unloading-idle-sessions)). Close the session there, or exit that process, then try again. `-c` picks the latest session even when another process has it open, so it fails the same way rather than start a new one.
 
-Within one process, opening a session it already has open shares it: a `/resume` of the current session, or an ACP `session/load` of a session live on the same connection, which replaces the live one. Commands that do not open a session work from any process: `rho sessions list`, `export`, `rename`, and session search.
+Within one process, opening a session it already has open shares it: a `/resume` of the current session, or an ACP `session/load` of a session already open on the same connection, which attaches it again. Commands that do not open a session work from any process: `rho sessions list`, `export`, `rename`, and session search.
 
 Rho records an open session with an OS lock on `.<session-id>.active.lock` in its workspace's session directory. The OS releases the lock when the process exits, including after a crash, so a leftover lock file never keeps a session locked.
 

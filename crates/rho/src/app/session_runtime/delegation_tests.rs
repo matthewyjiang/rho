@@ -7,7 +7,7 @@ use rho_sdk::{
     BoundaryInputRequest, InputBoundary, Rho, RunEvent, SessionOptions, UserInput,
 };
 
-use super::{BackgroundSources, BackgroundWait, Delegation};
+use super::{BackgroundSources, Delegation};
 use crate::{
     app::{agent_executor::AgentRunHandle, SubagentManager},
     subagent::{RunState, RunStatus},
@@ -193,18 +193,14 @@ enum Work {
     Workflow,
     ProcessFromEarlierPrompt,
     WorkflowFromEarlierPrompt,
-    /// A process started during the prompt of a host that wakes the idle
-    /// session itself.
-    ProcessWhenHostWakes,
 }
 
 // Covers: a child, a workflow, or a process started during the prompt holds
 // natural completion, and its result continues the original run exactly once
 // with display rows the host can claim; a process or workflow left from an
-// earlier prompt, such as an ACP `/workflow:<name>` start, does not hold it,
-// and neither does one under a host that wakes the idle session (T3 Code).
+// earlier prompt, such as a `/workflow:<name>` start, does not hold it.
 // The SDK channel tests do not own this wait.
-// Owner: shared CLI/ACP background delivery lifecycle.
+// Owner: shared CLI/daemon background delivery lifecycle.
 #[tokio::test]
 async fn background_work_holds_natural_completion_and_continues_parent_once() {
     let held = ("result incorporated", 1, (0, 0, 0));
@@ -225,11 +221,6 @@ async fn background_work_holds_natural_completion_and_continues_parent_once() {
             "workflow from an earlier prompt",
             Work::WorkflowFromEarlierPrompt,
             ("initial answer", 0, (0, 1, 0)),
-        ),
-        (
-            "process when the host wakes the idle session",
-            Work::ProcessWhenHostWakes,
-            ("initial answer", 0, (0, 0, 1)),
         ),
     ];
     for (label, work, (text, applied, undelivered)) in cases {
@@ -254,29 +245,20 @@ async fn background_work_holds_natural_completion_and_continues_parent_once() {
                 ));
                 None
             }
-            Work::Child
-            | Work::ProcessDuringPrompt
-            | Work::Workflow
-            | Work::ProcessWhenHostWakes => None,
+            Work::Child | Work::ProcessDuringPrompt | Work::Workflow => None,
         };
         let child = match work {
             Work::Child => Child::Running,
             Work::ProcessDuringPrompt
             | Work::Workflow
             | Work::ProcessFromEarlierPrompt
-            | Work::WorkflowFromEarlierPrompt
-            | Work::ProcessWhenHostWakes => Child::Absent,
+            | Work::WorkflowFromEarlierPrompt => Child::Absent,
         };
         let mut fixture = Fixture::build(child, processes, workflows).await;
-        if matches!(work, Work::ProcessWhenHostWakes) {
-            fixture.host.set_background_wait(BackgroundWait::HostWakes);
-        }
         let mut displays = fixture.host.offered_displays();
         let request = fixture.final_boundary().await;
         let during = match work {
-            Work::ProcessDuringPrompt | Work::ProcessWhenHostWakes => {
-                Some(fixture.start_process().await)
-            }
+            Work::ProcessDuringPrompt => Some(fixture.start_process().await),
             Work::Workflow => {
                 assert!(fixture
                     .workflows
@@ -300,7 +282,7 @@ async fn background_work_holds_natural_completion_and_continues_parent_once() {
                     });
                     fixture.completion.send_replace(true);
                 }
-                Work::ProcessDuringPrompt | Work::ProcessWhenHostWakes => {
+                Work::ProcessDuringPrompt => {
                     Fixture::stop_process(&fixture.processes, during.as_deref().unwrap()).await;
                 }
                 Work::Workflow | Work::WorkflowFromEarlierPrompt => {
@@ -341,7 +323,7 @@ async fn background_work_holds_natural_completion_and_continues_parent_once() {
 
 // Covers: an offer the runtime rejected must never be shown, even when a
 // later applied input is claimed after it.
-// Owner: shared CLI/ACP delivery display matching.
+// Owner: shared CLI/daemon delivery display matching.
 #[test]
 fn applied_input_claims_only_its_own_display() {
     use crate::display_transcript::{DisplayRow, DisplayTranscript};
@@ -365,7 +347,7 @@ fn applied_input_claims_only_its_own_display() {
 
 // Covers: cancellation while natural completion is held does not wait for a
 // child result or issue another provider request; teardown cancels the child.
-// Owner: shared CLI/ACP delegation lifecycle.
+// Owner: shared CLI/daemon delegation lifecycle.
 #[tokio::test]
 async fn cancellation_interrupts_child_wait_and_shutdown_stops_child() {
     let mut fixture = Fixture::new().await;
@@ -397,7 +379,7 @@ async fn cancellation_interrupts_child_wait_and_shutdown_stops_child() {
 
 // Covers: a cancelled SDK boundary must restore every result it did not
 // accept, whichever source it came from.
-// Owner: shared CLI/ACP delivery receipts.
+// Owner: shared CLI/daemon delivery receipts.
 #[tokio::test]
 async fn rejected_boundary_restores_terminal_results() {
     let mut fixture = Fixture::new().await;
@@ -454,7 +436,7 @@ async fn rejected_boundary_restores_terminal_results() {
 
 // Covers: ending the event pump immediately after input commits must still
 // reap its receipt, or the next prompt would receive the same result again.
-// Owner: shared CLI/ACP delivery receipts.
+// Owner: shared CLI/daemon delivery receipts.
 #[tokio::test]
 async fn accepted_boundary_is_reaped_when_event_pump_returns() {
     let mut fixture = Fixture::new().await;
@@ -485,7 +467,7 @@ async fn accepted_boundary_is_reaped_when_event_pump_returns() {
 
 // Covers: routine notices cannot wake an idle parent, while an action request
 // releases the held boundary even though the requesting child is still alive.
-// Owner: shared CLI/ACP notice scheduling.
+// Owner: shared CLI/daemon notice scheduling.
 #[tokio::test]
 async fn action_request_wakes_parent_and_includes_earlier_notices() {
     use crate::app::subagent_messaging::{NoticeDelivery, SubagentNotice};
@@ -528,8 +510,8 @@ async fn action_request_wakes_parent_and_includes_earlier_notices() {
 }
 
 // Covers: a failed attach must leave the held notice binding with the caller,
-// or the ACP host would drop child notices it promised to deliver later.
-// Owner: shared CLI/ACP notice binding handoff.
+// or the session would drop child notices it promised to deliver later.
+// Owner: shared CLI/daemon notice binding handoff.
 #[tokio::test]
 async fn failed_attach_keeps_held_notices() {
     let Fixture {

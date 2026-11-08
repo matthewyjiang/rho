@@ -1,10 +1,6 @@
-//! Delegated agent tools backed by native SDK runtimes or an ACP host.
+//! Delegated agent tools backed by native SDK runtimes.
 
-mod host_orchestrator;
-mod host_tools;
 pub(crate) mod message_receipt;
-
-pub(crate) use host_tools::install_host_delegation;
 
 use std::{
     future::Future,
@@ -501,8 +497,8 @@ pub(super) struct DelegationBundleOptions {
     pub config_path: PathBuf,
     /// Catalog already discovered for `cwd`; rediscovered when absent.
     pub catalog: Option<Arc<AgentCatalog>>,
-    /// The parent's host I/O, which delegated Rho agents share.
-    pub host_io: crate::tools::host_io::HostIo,
+    /// The parent's environment, which delegated Rho agents share.
+    pub environment: crate::session_environment::SessionEnvironment,
     /// Where the agents take capacity, and who else hears of them.
     pub pool: crate::app::subagent_pool::SubagentPool,
 }
@@ -545,7 +541,7 @@ pub(super) fn sdk_bundle(
         options.cwd.clone(),
         options.pool,
     )
-    .with_host_io(options.host_io);
+    .with_environment(options.environment);
     let mut tools = Vec::<Arc<dyn rho_sdk::tool::Tool>>::new();
     let mut advertised = None;
     if options.tools.launches() {

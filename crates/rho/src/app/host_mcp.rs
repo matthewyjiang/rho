@@ -1,7 +1,7 @@
 //! Converts the MCP servers a client provides for a session into
 //! session-scoped MCP config: a daemon client's
 //! `SessionSetup::mcp_servers`, and an ACP host's `mcpServers`, which
-//! `rho acp` maps onto the same servers first (`acp::host_mcp`).
+//! `rho acp` maps onto the same servers first (`acp::requests`).
 //!
 //! A client provides servers for features of its own, such as an editor's
 //! browser preview. Rho connects them alongside the servers from its own

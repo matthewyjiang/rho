@@ -63,6 +63,12 @@ impl AutomationExit {
         Self::new(2, TerminalReason::ConfigurationError, message)
     }
 
+    /// A failure signing in can fix, such as missing or refused
+    /// credentials: exit 1.
+    pub(super) fn authentication(message: impl Into<String>) -> Self {
+        Self::new(1, TerminalReason::Authentication, message)
+    }
+
     /// Any other failure, such as not reaching the daemon: exit 1.
     pub(super) fn other(message: impl Into<String>) -> Self {
         Self::new(1, TerminalReason::OtherError, message)

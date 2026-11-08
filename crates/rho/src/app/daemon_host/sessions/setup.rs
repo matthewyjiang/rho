@@ -6,10 +6,9 @@
 //! questions: its file keeps them, and a reopen adds the request's to the
 //! saved ones, so a later client can narrow a session further but never
 //! widen it, and a reopen never drops a saved directory that still exists.
-//! That holds across daemon reopens only: an in-process `rho acp`
-//! `session/load` or `session/resume` saves the session with its own flags
-//! and directories, and the TUI keeps an existing record but does not record
-//! its own `--no-*` flags, until both become daemon clients (#1670, #1667).
+//! That holds across daemon reopens only: the TUI keeps an existing record
+//! but does not record its own `--no-*` flags, until it becomes a daemon
+//! client (#1667).
 //! The opening client owns its MCP servers, whose `env` and `headers` may
 //! hold secrets, and whether it shows questions: a reopen takes them from
 //! its own request alone, so a prompt, which brings no setup, reopens a

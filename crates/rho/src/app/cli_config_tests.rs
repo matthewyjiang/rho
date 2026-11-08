@@ -938,9 +938,9 @@ fn validate_cli_refuses_session_flags_with_a_detached_run() {
     assert_eq!(found, expected);
 }
 
-// Covers: on unix `rho login --config` is refused, since the daemon saves
-// under its own config and would ignore the file; plain `rho login` and
-// `rho acp --login` with `--config` still run.
+// Covers: on unix `rho login --config` and `rho acp --login --config` are
+// refused, since the daemon saves under its own config and would ignore the
+// file; plain `rho login` still runs.
 // Owner: cli config validation
 #[cfg(unix)]
 #[test]
@@ -961,7 +961,10 @@ fn validate_cli_refuses_config_with_a_daemon_login() {
                     .to_owned()
             ),
             None,
-            None,
+            Some(
+                "rho acp does not take --config: its sessions run in the rho daemon, under its own config; choose the model and mode in the ACP host"
+                    .to_owned()
+            ),
         ]
     );
 }

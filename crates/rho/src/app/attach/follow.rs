@@ -9,8 +9,10 @@
 //! events the client has not seen, so they end the turn as live ones do.
 
 use rho_protocol::{
-    Cursor, JobState, Replay, Seq, SessionAttachResponse, SessionEvent, StreamId, TurnOutcome,
+    Cursor, JobState, Replay, Seq, SessionAttachResponse, SessionEvent, TurnOutcome,
 };
+
+use crate::app::stream_position::{Part, StreamPosition};
 
 /// How the turn an attachment followed ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,97 +28,83 @@ pub(super) enum Ending {
 
 /// One attachment's place in its session's events.
 pub(super) struct Follow {
-    stream: StreamId,
-    /// The kind of the last replay.
-    replay: Replay,
-    /// Events of the last replay still to come.
-    replaying: u64,
+    position: StreamPosition,
     /// The job state the replay ends in.
     state: JobState,
     /// How the last turn the replay holds ended.
     replayed: Option<TurnOutcome>,
-    /// The highest seq seen, which a reattach resumes after.
-    cursor: Option<Cursor>,
 }
 
 impl Follow {
     /// Starts following from the first attach's response. Returns how the
     /// turn ended when the response alone says it.
     pub(super) fn attached(response: &SessionAttachResponse) -> (Self, Option<Ending>) {
-        let mut follow = Self {
-            stream: response.stream.clone(),
-            replay: response.replay,
-            replaying: 0,
-            state: JobState::Idle,
+        let follow = Self {
+            position: StreamPosition::attached(response),
+            state: response.state,
             replayed: None,
-            cursor: None,
         };
-        let ending = follow.reattached(response);
+        let ending = follow.settled_by(response);
         (follow, ending)
     }
 
     /// Starts over from a reattach's response, keeping the cursor unless it
     /// resets. Returns how the turn ended when the response alone says it.
     pub(super) fn reattached(&mut self, response: &SessionAttachResponse) -> Option<Ending> {
-        self.stream = response.stream.clone();
+        self.position.reattached(response);
         self.state = response.state;
         self.replayed = None;
-        self.replay = response.replay;
-        self.replaying = response.replay_events;
-        match response.replay {
-            Replay::Reset => {
-                // A reset starts the client over, cursor included.
-                self.cursor = None;
-                if self.replaying == 0 {
-                    self.settled()
-                } else {
-                    None
-                }
-            }
-            Replay::Tail => None,
+        self.settled_by(response)
+    }
+
+    /// How the turn ended when `response` alone says it: a reset with
+    /// nothing to replay.
+    fn settled_by(&self, response: &SessionAttachResponse) -> Option<Ending> {
+        match (response.replay, response.replay_events) {
+            (Replay::Reset, 0) => self.settled(),
+            _ => None,
         }
     }
 
     /// Observes the session's next event, numbered `seq`. Returns how the
     /// turn ended once it has.
     pub(super) fn observe(&mut self, seq: Seq, event: &SessionEvent) -> Option<Ending> {
-        // A reset's saved conversation carries seq 0, which is no position
-        // to resume after.
-        if seq > Seq(0) {
-            self.cursor = Some(Cursor {
-                stream: self.stream.clone(),
-                seq,
-            });
-        }
-        let replayed = self.replaying > 0;
-        self.replaying = self.replaying.saturating_sub(1);
-        if replayed && self.replay == Replay::Reset {
-            if let SessionEvent::TurnEnded { outcome } = event {
-                self.replayed = Some(outcome.clone());
+        match self.position.observe(seq) {
+            Part::Replayed {
+                replay: Replay::Reset,
+                left,
+            } => {
+                if let SessionEvent::TurnEnded { outcome } = event {
+                    self.replayed = Some(outcome.clone());
+                }
+                if left == 0 {
+                    self.settled()
+                } else {
+                    None
+                }
             }
-            return if self.replaying == 0 {
-                self.settled()
-            } else {
-                None
-            };
-        }
-        match event {
-            SessionEvent::TurnEnded { outcome } => Some(Ending::Turn(outcome.clone())),
-            SessionEvent::State {
-                state: JobState::Interrupted,
-            } => Some(Ending::Interrupted),
-            _ => None,
+            Part::Replayed {
+                replay: Replay::Tail,
+                ..
+            }
+            | Part::Live => match event {
+                SessionEvent::TurnEnded { outcome } => Some(Ending::Turn(outcome.clone())),
+                SessionEvent::State {
+                    state: JobState::Interrupted,
+                } => Some(Ending::Interrupted),
+                _ => None,
+            },
         }
     }
 
     /// Whether the next event is one a replay holds, rather than news.
     pub(super) fn replaying(&self) -> bool {
-        self.replaying > 0
+        self.position.replaying()
     }
 
     /// Where a reattach resumes from.
     pub(super) fn cursor(&self) -> Option<&Cursor> {
-        self.cursor.as_ref()
+        self.position.cursor()
     }
 
     /// How the job's last turn ended, once a reset's replay is over, if the

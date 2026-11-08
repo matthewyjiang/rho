@@ -13,8 +13,8 @@
 //! [`outcome`] says how a turn ended, for the daemon's clients and
 //! `rho run` alike.
 //!
-//! Ported from the ACP `EventMapper`; the ACP adapter maps these wire events
-//! instead, and drops its own mapper, in #1670.
+//! The ACP adapter maps these wire events to ACP updates
+//! (`acp/updates.rs`).
 
 use std::{collections::HashMap, path::Path};
 

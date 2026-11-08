@@ -115,7 +115,8 @@ pub struct SessionSummary {
 pub(crate) enum SessionOrigin {
     /// The interactive TUI.
     Interactive,
-    /// An ACP client, such as Zed or T3 Code.
+    /// An ACP client, such as Zed or T3 Code, before `rho acp` became a
+    /// daemon client (#1670); its sessions now record [`Self::Daemon`].
     Acp,
     /// A session a daemon client started. Whether frontends pass their own
     /// origin once the TUI (#1667) and ACP (#1670) run through the daemon is

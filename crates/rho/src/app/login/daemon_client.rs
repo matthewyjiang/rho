@@ -15,7 +15,7 @@
 //! interactive login whose client left, unless the provider already
 //! approved it. A key the daemon already received is saved.
 
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use rho_protocol::{
     methods::{AuthKey, AuthLogin},
     AuthKeyParams, AuthLoginParams, ClientError, DaemonNotification, ErrorCode, LoginOutcome,
@@ -29,12 +29,9 @@ use super::{
 };
 use crate::{
     app::{credential_writes, daemon_cli},
-    daemon::{self, cli_client_info, Connection, ProcessSpawner},
+    daemon::Connection,
     login_prompt_print::eprint_login_prompt,
 };
-
-/// Where `rho login` points a person whose daemon it could not use.
-const DAEMON_DOCS: &str = "https://matthewyjiang.github.io/rho/daemon";
 
 /// Signs `target` in through the daemon, with a device-code login when
 /// `device_auth` asks for one.
@@ -67,7 +64,7 @@ fn refuse_shell_override(
 /// up the prompt.
 async fn save_key(auth: String, entry_label: &str) -> anyhow::Result<()> {
     let key = secret::read(entry_label).await?;
-    let Connection { client, .. } = connect().await?;
+    let Connection { client, .. } = daemon_cli::connect().await?;
     let saved = client
         .request::<AuthKey>(&AuthKeyParams {
             auth: auth.clone(),
@@ -93,7 +90,7 @@ async fn log_in(auth: String, provider_label: &str, device_auth: bool) -> anyhow
         client,
         mut notifications,
         ..
-    } = connect().await?;
+    } = daemon_cli::connect().await?;
     let login = client
         .request::<AuthLogin>(&AuthLoginParams {
             auth: auth.clone(),
@@ -153,18 +150,6 @@ fn refused(error: ClientError, doing: String) -> anyhow::Error {
         ),
         _ => anyhow::Error::new(error).context(doing),
     }
-}
-
-/// Connects to the daemon, starting it when none runs. The error names what
-/// failed: a socket path over the platform's limit, a daemon that could not
-/// be started or did not accept connections in time (with its log file),
-/// or a daemon whose protocol major differs (with which side to update).
-async fn connect() -> anyhow::Result<Connection> {
-    let paths = daemon_cli::paths()?;
-    let spawner = ProcessSpawner::current_exe().context("could not find the rho executable")?;
-    daemon::connect_or_spawn(&paths, cli_client_info(), &spawner)
-        .await
-        .map_err(|error| anyhow!("could not reach the rho daemon: {error}; see {DAEMON_DOCS}"))
 }
 
 #[cfg(test)]

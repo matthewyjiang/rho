@@ -1,25 +1,18 @@
 //! The handle a host shares with whoever acts on a session without holding
-//! its runtime: cancelling or steering its prompt, retiring it, or handing
-//! its file to a successor.
+//! its runtime: cancelling or steering its prompt, or closing it.
 
-use std::{
-    future::Future,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-};
+use std::{future::Future, sync::Arc};
 
 use rho_sdk::{SteeringId, UserInput};
 
-use super::prompt_gate::{Closing, PromptGate};
+use super::prompt_gate::PromptGate;
 
 /// Why [`SessionHandle::steer`] staged nothing.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SteerError {
     /// No model run takes input: no prompt runs, it is still starting or
-    /// was cancelled, its run already ended, it runs a command such as
-    /// `/compact`, or another runtime replaced this one.
+    /// was cancelled, its run already ended, or it runs a command such as
+    /// `/compact`.
     #[error("session has no running model turn to steer")]
     NotRunning,
     /// The running model turn refused the input, as when its command queue
@@ -29,27 +22,16 @@ pub(crate) enum SteerError {
 }
 
 /// A cloneable handle on one runtime. A host keeps it beside the runtime,
-/// as ACP does in its session slot, so a cancel, steer, close, or reload
+/// as the daemon does for each loaded session, so a cancel, steer, or close
 /// acts at once instead of waiting for the running prompt to give the
 /// runtime back.
-/// Clones are the same handle; [`Self::same_runtime`] tells one runtime's
-/// handle from a successor's.
+/// Clones are the same handle.
 #[derive(Clone)]
-pub(crate) struct SessionHandle(Arc<Shared>);
-
-struct Shared {
-    gate: PromptGate,
-    /// Set once another runtime owns the session file, so this one no
-    /// longer writes it.
-    replaced: AtomicBool,
-}
+pub(crate) struct SessionHandle(Arc<PromptGate>);
 
 impl SessionHandle {
     pub(super) fn new() -> Self {
-        Self(Arc::new(Shared {
-            gate: PromptGate::new(),
-            replaced: AtomicBool::new(false),
-        }))
+        Self(Arc::new(PromptGate::new()))
     }
 
     /// A handle on no runtime, for host tests that publish an empty slot.
@@ -58,20 +40,13 @@ impl SessionHandle {
         Self::new()
     }
 
-    /// Starts a prompt as the runtime does, for host tests that hold a slot
-    /// with no runtime behind it. The prompt lasts until the scope drops.
-    #[cfg(test)]
-    pub(in crate::app) fn begin_prompt_scope_for_tests(&self) -> super::PromptScope {
-        super::PromptScope::begin(self)
-    }
-
     pub(super) fn gate(&self) -> &PromptGate {
-        &self.0.gate
+        &self.0
     }
 
     /// Cancels the running prompt; a no-op while none runs.
     pub(crate) fn cancel(&self) {
-        self.0.gate.cancel();
+        self.0.cancel();
     }
 
     /// Stages `input` for the running prompt's next provider turn, as a
@@ -84,11 +59,7 @@ impl SessionHandle {
         input: UserInput,
     ) -> Result<impl Future<Output = Result<SteeringId, rho_sdk::Error>> + Send + 'static, SteerError>
     {
-        if self.is_replaced() {
-            return Err(SteerError::NotRunning);
-        }
         self.0
-            .gate
             .steer(input)
             .ok_or(SteerError::NotRunning)?
             .map_err(|error| match error {
@@ -97,50 +68,10 @@ impl SessionHandle {
             })
     }
 
-    /// Cancels the running prompt because another host takes the session
-    /// over, as an ACP `session/load` of a live session does. The prompt
-    /// keeps what a later prompt resumes.
-    pub(crate) fn suspend(&self) {
-        self.0.gate.suspend();
-    }
-
     /// Cancels the running prompt and every later one, for a session that
     /// is being torn down.
-    pub(crate) fn close(&self, closing: Closing) {
-        self.0.gate.close(closing);
-    }
-
-    pub(crate) fn is_closed(&self) -> bool {
-        self.0.gate.is_closed()
-    }
-
-    /// Whether a new prompt may wait for the runtime instead of being
-    /// refused: the current prompt was cancelled, none is running, or the
-    /// session is closing, which ends the waiting prompt cancelled.
-    pub(crate) fn admits_queued_prompt(&self) -> bool {
-        self.0.gate.admits_queued_prompt()
-    }
-
-    /// Hands the session file to another runtime, so this one no longer
-    /// writes it.
-    pub(crate) fn mark_replaced(&self) {
-        self.0.replaced.store(true, Ordering::Release);
-    }
-
-    /// Takes the session file back after the runtime that was to replace
-    /// this one failed to open, so this one saves again.
-    pub(crate) fn reclaim(&self) {
-        self.0.replaced.store(false, Ordering::Release);
-    }
-
-    /// Whether another runtime owns the session file.
-    pub(crate) fn is_replaced(&self) -> bool {
-        self.0.replaced.load(Ordering::Acquire)
-    }
-
-    /// Whether `other` is a handle on the same runtime.
-    pub(crate) fn same_runtime(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+    pub(crate) fn close(&self) {
+        self.0.close();
     }
 }
 

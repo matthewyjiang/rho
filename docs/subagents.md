@@ -128,17 +128,13 @@ the account has access; provider-side auth/access errors still fail the child.
 Per-call overrides require `runtime: rho`. Claude CLI, Cursor, and Antigravity use
 different model namespaces and reject this field; their existing definition-based
 selection is unchanged. CLI, TUI, and ACP native delegation use the same binder.
-Under `rho acp --t3code`, the override travels with the child's `/agent:` rebind
-command rather than T3's model picker, so it reaches the actual Rho child.
 
 Native `agent` receipts and `agents` structured status include the bound `provider`
 and `model`; completion/status text and run artifacts also report that selection.
-T3 owns host-managed task receipts and completion metadata; Rho does not label a
-requested model as confirmed before the child's rebind succeeds.
 
-Completions reach the parent automatically at safe provider boundaries. The parent can continue independent work or end its turn to wait for required results, without polling. Interactive sessions wake an idle parent. CLI and ACP runs wait for outstanding children before natural completion and deliver their results back into the same run, preserving its step limit and cancellation handling. They wait the same way for workflows and for background processes started during the run, except under `rho acp --t3code`, where those [wake the idle thread](/integrations/acp/t3-code#wake-on-background-results) instead. Side chats still disable delegation.
+Completions reach the parent automatically at safe provider boundaries. The parent can continue independent work or end its turn to wait for required results, without polling. Interactive sessions wake an idle parent. CLI and ACP runs wait for outstanding children before natural completion and deliver their results back into the same run, preserving its step limit and cancellation handling. They wait the same way for workflows and for background processes started during the run. Side chats still disable delegation.
 
-Cancellation, errors, and step limits end CLI and ACP runs without waiting for more child results. A CLI run then stops its remaining children; their saved status and artifacts remain available for inspection. An ACP session keeps them running, as the TUI does across cancelled turns, because hosts such as T3 Code cancel the open prompt to send each mid-turn message. The next prompt waits for the children Rho runs and delivers their results. Children that run as T3 threads under `rho acp --t3code` report to the parent through T3 instead and never hold a prompt open. Stop children with the `agents` tool, or by closing or reloading the session.
+Cancellation, errors, and step limits end CLI and ACP runs without waiting for more child results. A CLI run then stops its remaining children; their saved status and artifacts remain available for inspection. An ACP session keeps them running, as the TUI does across cancelled turns, because hosts such as T3 Code cancel the open prompt to send each mid-turn message. The next prompt waits for the children and delivers their results. ACP sessions run in the [daemon](/daemon#subagents), so closing or reloading the session in the host does not stop its children either. Stop children with the `agents` tool. Under `rho acp --t3code`, children run in the daemon too: T3 Code child threads are not yet available with the daemon ([#1670](https://github.com/matthewyjiang/rho/issues/1670)).
 
 Rho-runtime agents stay in-process. `runtime: claude-cli` agents spawn the external `claude-agent-acp` adapter and still report through the same status and attachment files. The `agents` tool lists, inspects, cancels, or messages handles tracked by `SubagentManager`. Parent shutdown cancels active handles and waits for bounded cleanup. Delegated agents run without their own TUI. Questionnaires raised by delegated Rho agents surface in an interactive parent session; approvals still cannot.
 

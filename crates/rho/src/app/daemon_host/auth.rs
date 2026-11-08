@@ -2,9 +2,9 @@
 //! profiles a client can sign in to, and the daemon writing the credential
 //! store its sessions read (#1662). Interactive logins are `logins.rs`'s.
 //!
-//! [`crate::app::credential_writes`] does the work, as it does for ACP, so
-//! both hosts check and save keys and sign out the same way, against the
-//! store the daemon's config selects when the request runs. Every write
+//! [`crate::app::credential_writes`] does the work, checking and saving
+//! keys and signing out against the store the daemon's config selects
+//! when the request runs. Every write
 //! moves the process's credential generation, so each running session uses
 //! a new key, or drops a deleted one, from its next prompt, and
 //! [`credentials_changed`] refreshes the options of each session not in a

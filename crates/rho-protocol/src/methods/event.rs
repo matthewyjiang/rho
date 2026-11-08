@@ -244,12 +244,16 @@ pub enum ToolContent {
         /// Base64.
         data: String,
     },
-    /// A file change; `old_text` is absent for a new file.
+    /// A file change; `old_text` is absent for a new file. A deleted file
+    /// has `deleted` set and an empty `new_text`, which an emptied file
+    /// also has.
     Diff {
         path: PathBuf,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         old_text: Option<String>,
         new_text: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        deleted: bool,
     },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.

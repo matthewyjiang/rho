@@ -25,14 +25,14 @@ use crate::{
         SessionCancel, SessionCancelParams, SessionCancelResponse, SessionConfigure,
         SessionConfigureParams, SessionConfigureResponse, SessionDelete, SessionDeleteParams,
         SessionDeleteResponse, SessionDetach, SessionDetachParams, SessionDetachResponse,
-        SessionHold, SessionHoldParams, SessionHoldResponse, SessionList, SessionListParams,
-        SessionListResponse, SessionNew, SessionNewParams, SessionNewResponse, SessionPrompt,
-        SessionPromptParams, SessionPromptResponse, SessionRename, SessionRenameParams,
-        SessionRenameResponse, SessionSteer, SessionSteerParams, SessionSteerResponse, Status,
-        Stop, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, DAEMON_STATUS,
-        DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL,
-        SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD, SESSION_LIST, SESSION_NEW,
-        SESSION_PROMPT, SESSION_RENAME, SESSION_STEER,
+        SessionHold, SessionHoldParams, SessionHoldResponse, SessionId, SessionList,
+        SessionListParams, SessionListResponse, SessionNew, SessionNewParams, SessionNewResponse,
+        SessionPrompt, SessionPromptParams, SessionPromptResponse, SessionRename,
+        SessionRenameParams, SessionRenameResponse, SessionSteer, SessionSteerParams,
+        SessionSteerResponse, Status, Stop, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL,
+        AUTH_LOGOUT, DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH,
+        SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD,
+        SESSION_LIST, SESSION_NEW, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -375,7 +375,17 @@ where
                     Ok(Route::Call(call)) => {
                         let responder = Responder::new(id, &outbox);
                         let service = Arc::clone(&service);
-                        calls.spawn(async move { responder.send(call.run(&*service).await) });
+                        let forwarders = Arc::clone(forwarders);
+                        calls.spawn(async move {
+                            let session = call.session().cloned();
+                            let answer = call.run(&*service).await;
+                            // What the session published before answering,
+                            // such as a refused turn's end, comes first.
+                            if let Some(session) = session {
+                                forwarders.flush(&session).await;
+                            }
+                            responder.send(answer);
+                        });
                         // A finished call stays in the set until joined.
                         while calls.try_join_next().is_some() {}
                         continue;
@@ -573,6 +583,30 @@ impl ServiceCall {
                 ErrorCode::MethodNotFound,
                 format!("unknown method {method}"),
             )),
+        }
+    }
+
+    /// The session the call is about, whose events published before its
+    /// answer the connection sends first.
+    fn session(&self) -> Option<&SessionId> {
+        match self {
+            Self::PromptSession(SessionPromptParams { session, .. })
+            | Self::CancelSession(SessionCancelParams { session, .. })
+            | Self::SteerSession(SessionSteerParams { session, .. })
+            | Self::AnswerSession(SessionAnswerParams { session, .. })
+            | Self::HoldSession(SessionHoldParams { session, .. })
+            | Self::ConfigureSession(SessionConfigureParams { session, .. })
+            | Self::RenameSession(SessionRenameParams { session, .. }) => Some(session),
+            Self::Status
+            | Self::Stop
+            | Self::NewSession(_)
+            | Self::ListSessions(_)
+            | Self::DeleteSession(_)
+            | Self::ListJobs
+            | Self::SaveAuthKey(_)
+            | Self::LogoutAuth(_)
+            | Self::ListAuths
+            | Self::CancelLogin(_) => None,
         }
     }
 

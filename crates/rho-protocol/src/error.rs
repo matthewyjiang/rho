@@ -141,6 +141,11 @@ error_codes! {
         /// No login under way has that id: it already ended, or never
         /// existed (#1662).
         LoginNotFound = -32018,
+        /// The daemon could not open the session because its model's auth
+        /// profile has no usable credentials: none are saved or set, the
+        /// store could not read them, or the provider refused them. Sign in
+        /// (`rho/auth/login` or `rho/auth/key`), then try again.
+        SignInRequired = -32019,
     }
 }
 

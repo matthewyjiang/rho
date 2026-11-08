@@ -3,7 +3,6 @@ pub mod agent;
 mod agent_output;
 pub(crate) mod code_mode;
 mod coding;
-pub(crate) mod host_io;
 pub(crate) mod mcp;
 mod notification_format;
 #[cfg(test)]

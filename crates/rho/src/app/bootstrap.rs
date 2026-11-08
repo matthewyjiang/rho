@@ -18,8 +18,9 @@ use {
     rho_providers::model::ModelError,
 };
 
+#[cfg(unix)]
+use super::acp;
 use super::{
-    acp,
     agent_binding::{root_host_tools, AgentBinder, AgentInvocation, AgentRole, LaunchTools},
     automation, classifier_eval, cli_config, compaction_eval,
     config_repository::ConfigRepository,
@@ -75,7 +76,15 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
         return result;
     }
     if matches!(cli.command, Some(Command::Acp(_))) {
-        return acp::run(cli).await;
+        // `rho acp` is a client of the rho daemon, which runs its sessions.
+        #[cfg(unix)]
+        {
+            return acp::run(cli).await;
+        }
+        #[cfg(not(unix))]
+        {
+            anyhow::bail!(daemon_cli::UNSUPPORTED);
+        }
     }
 
     let keyring_notice = crate::credential_store::StartupKeyringNotice::begin(
@@ -264,9 +273,11 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
         config.providers.activate()?;
         let config_path = absolute_config_path(&config_repository)?;
         ensure_cli_credential_store_choice(&mut config, Some(config_path.clone()))?;
-        return Ok(EarlyDispatch::Handled(
-            login::run(command, &config_repository, &mut config, &config_path).await,
-        ));
+        #[cfg(unix)]
+        let signed_in = login::run(command).await;
+        #[cfg(not(unix))]
+        let signed_in = login::run(command, &config_repository, &mut config, &config_path).await;
+        return Ok(EarlyDispatch::Handled(signed_in));
     }
     Ok(EarlyDispatch::Continue)
 }
@@ -324,9 +335,9 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     // The walk is reused for the delegation tool set so startup discovers once.
     let catalog = crate::agent::DiscoveredAgentCatalog::new(cwd.clone(), catalog);
 
-    // Only automation, ACP, and interactive sessions reach here; every other
-    // command dispatches early.
-    let role = if automation_prompt.is_some() || matches!(cli.command, Some(Command::Acp(_))) {
+    // Only automation and interactive sessions reach here; every other
+    // command dispatches early, and `rho acp` runs in the daemon.
+    let role = if automation_prompt.is_some() {
         AgentRole::AutomationRoot
     } else {
         AgentRole::InteractiveRoot
@@ -449,46 +460,6 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
         },
     )
     .await
-}
-
-/// Model discovery and agent binding are deferred until the host needs a session,
-/// so an unauthenticated provider cannot block initialize's login advertisement.
-/// `host_features` are the optional features the host advertised, and
-/// `client` the connection that `initialize` arrived on.
-pub(super) async fn prepare_acp(
-    cli: Cli,
-    host_features: acp::HostFeatures,
-    client: Option<std::sync::Arc<dyn acp::AcpClientPort>>,
-) -> anyhow::Result<acp::AcpStartup> {
-    let Some(Command::Acp(args)) = &cli.command else {
-        anyhow::bail!("ACP startup requires the acp command");
-    };
-    let host = acp::AcpHost::from_args(args);
-    let startup = prepare_startup(cli).await?;
-    validate_terminal_mode(&startup.cli)?;
-    let cli_config::SettledConfig {
-        config,
-        diagnostics,
-    } = cli_config::settle_bound_config(
-        startup.config,
-        &startup.bound_agent,
-        &startup.provider_refresh,
-        startup.bound_reasoning_source,
-    )
-    .await?;
-    Ok(acp::AcpStartup {
-        host,
-        config,
-        config_path: absolute_config_path(&startup.config_repository)?,
-        cwd: startup.cwd,
-        left_out: launch_left_out(&startup.cli),
-        agent: startup.bound_agent,
-        diagnostics,
-        herdr: HerdrReporter::from_env().with_source(crate::herdr::HerdrSource::Headless),
-        added_dirs: startup.added_dirs,
-        host_features,
-        client,
-    })
 }
 
 struct InteractiveStartup<'a> {
@@ -727,10 +698,7 @@ pub(super) fn host_capabilities(
         return crate::agent::AgentCapabilities::default();
     }
     let mut tools = root_host_tools(config, launch);
-    // ACP sessions decide per host: they offer it only when the host draws
-    // forms (`elicitation.form`).
-    let acp = matches!(cli.command, Some(Command::Acp(_)));
-    if role != AgentRole::InteractiveRoot && !acp {
+    if role != AgentRole::InteractiveRoot {
         tools.remove(&ToolCapability::Questionnaire);
     }
     #[cfg(debug_assertions)]

@@ -1,11 +1,8 @@
-//! Signing in with an API key and signing out, for hosts that act for a
-//! client rather than a person at a terminal: ACP (`authenticate`, `logout`)
-//! and the daemon (`rho/auth/key`, `rho/auth/logout`, and the environment
-//! check of `rho/auth/login`) (#1662).
-//!
-//! Each host keeps how it reaches its user (ACP's local key page, the
-//! daemon's socket); this module owns what a sign-in or sign-out does, so
-//! both behave the same:
+//! Signing in with an API key and signing out, for the daemon, which acts
+//! for a client rather than a person at a terminal (`rho/auth/key`,
+//! `rho/auth/logout`, and the environment check of `rho/auth/login`), and
+//! the shell check of `rho login` (#1662). Unix-only, as the daemon is
+//! (#1665):
 //!
 //! - A request starts with [`load_config_and_store`], so it writes the store
 //!   config selects when it runs, not the one the process opened at start:
@@ -149,20 +146,6 @@ pub(crate) fn refuse_environment_override(
     }
 }
 
-/// Signs out of auth profile `auth` on `provider`, the ones a host's config
-/// selects, as ACP `logout` signs out. The keyless profile is shared by
-/// every keyless provider, so only `provider` says which endpoint login to
-/// forget. `repository` is the config the host reads.
-pub(crate) fn sign_out_selected(
-    provider: &str,
-    auth: &str,
-    repository: &ConfigRepository,
-) -> Result<(), CredentialWriteError> {
-    load_config_and_store(repository)?;
-    refuse_environment_override(auth, CredentialWrite::SignOut)?;
-    write_sign_out(auth, provider::provider_descriptor(provider), repository)
-}
-
 /// Signs out of auth profile `auth`, which a client named, on the provider
 /// it signs in to, as `rho/auth/logout` signs out.
 pub(crate) fn sign_out_named(
@@ -223,7 +206,6 @@ pub(crate) enum KeyCheck {
 pub(crate) struct ApiKeyAuth {
     auth: &'static str,
     descriptor: &'static ProviderDescriptor,
-    entry_label: &'static str,
 }
 
 impl ApiKeyAuth {
@@ -233,7 +215,7 @@ impl ApiKeyAuth {
         let Some((descriptor, mode)) = provider::resolve_auth_mode(auth) else {
             return Err(CredentialWriteError::UnknownAuth { auth: auth.into() });
         };
-        let ProviderAuthKind::ApiKey { entry_label, .. } = mode.auth_kind else {
+        let ProviderAuthKind::ApiKey { .. } = mode.auth_kind else {
             return Err(CredentialWriteError::NotAnApiKey { auth: auth.into() });
         };
         // The variable wins over a saved key, so saving one would change
@@ -242,21 +224,11 @@ impl ApiKeyAuth {
         Ok(Self {
             auth: mode.id,
             descriptor,
-            entry_label,
         })
     }
 
     pub(crate) fn auth(&self) -> &'static str {
         self.auth
-    }
-
-    pub(crate) fn descriptor(&self) -> &'static ProviderDescriptor {
-        self.descriptor
-    }
-
-    /// What the provider calls the key, such as "OpenAI API key".
-    pub(crate) fn entry_label(&self) -> &'static str {
-        self.entry_label
     }
 
     /// Asks the models endpoint `config` resolves for the provider about

@@ -51,7 +51,7 @@ use crate::{
     app::{
         prompt_content,
         session_events::LiveEvents,
-        session_runtime::{Closing, SessionHandle, SessionRuntime, SteerError},
+        session_runtime::{CredentialFailure, SessionHandle, SessionRuntime, SteerError},
     },
     config::Config,
 };
@@ -712,7 +712,7 @@ impl Sessions {
         for session in &sessions {
             // The turn stops as one its client lost, so the session keeps
             // what a later daemon resumes (#1661).
-            session.handle.close(Closing::Disconnected);
+            session.handle.close();
         }
         let teardowns = sessions.iter().map(|session| async {
             // Free once the session's turn saved and recorded its end.
@@ -823,11 +823,23 @@ fn writing(job: &JobId, session: &SessionId) -> RpcError {
     )
 }
 
+/// The error for a session the daemon could not open: `SignInRequired`
+/// when signing in can fix it, in Rho's words with the full cause only in
+/// the daemon's log, else `SessionOpenFailed`.
 fn open_failed(error: anyhow::Error) -> RpcError {
-    RpcError::new(
-        ErrorCode::SessionOpenFailed,
-        format!("could not open session: {error:#}"),
-    )
+    match CredentialFailure::find(&error) {
+        Some(failure) => {
+            tracing::warn!(error = format!("{error:#}"), "session needs a sign-in");
+            RpcError::new(
+                ErrorCode::SignInRequired,
+                format!("could not open session: {}", failure.message()),
+            )
+        }
+        None => RpcError::new(
+            ErrorCode::SessionOpenFailed,
+            format!("could not open session: {error:#}"),
+        ),
+    }
 }
 
 /// The error a request that needs the session answers while a delete
@@ -855,3 +867,7 @@ fn ended_early(outcome: &TurnOutcome) -> RpcError {
     let data = serde_json::to_value(outcome).expect("a turn outcome serializes");
     RpcError::new(ErrorCode::TurnEnded, message).with_data(data)
 }
+
+#[cfg(test)]
+#[path = "open_failed_tests.rs"]
+mod open_failed_tests;

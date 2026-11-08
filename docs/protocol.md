@@ -78,7 +78,7 @@ A prompt with no blocks gets `InvalidParams`, as does one with an image whose `d
 
 The session keeps its directories and the parts it leaves out, other than `questions`, in its file, so they outlast the daemon unloading it. A prompt or attach that reopens a saved session opens it with the directories it saved that still exist and the parts it saved as left out, plus those its own `setup` names: a later client can narrow a session further, never widen it. MCP servers and `questions` belong to the client, since a server's `env` and `headers` may hold secrets: the daemon never saves them, so a reopened session has only those of the attach that reopens it, and none when a prompt reopens it, since a prompt carries no setup. A saved directory that no longer exists is dropped, and the daemon logs a warning naming it. A session `rho run` or `rho acp` saved keeps what their `--no-*` flags left out the same way; one the TUI started leaves nothing out.
 
-That guarantee holds across the daemon's reopens. Hosts that open a session file in their own process do not keep it yet: `rho acp`'s `session/load` and `session/resume` save the session with that process's own `--no-*` flags and directories, and the TUI keeps what a session saved but does not save its own `--no-*` flags. Both become daemon clients in [#1670](https://github.com/matthewyjiang/rho/issues/1670) and [#1667](https://github.com/matthewyjiang/rho/issues/1667).
+That guarantee holds across the daemon's reopens, so it covers `rho acp` sessions, which run in the daemon. The TUI, which opens a session file in its own process, keeps what a session saved but does not save its own `--no-*` flags; it becomes a daemon client in [#1667](https://github.com/matthewyjiang/rho/issues/1667).
 
 ## Following a session
 
@@ -261,6 +261,7 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 | -32016 | `SessionNotLoaded` | The daemon has not loaded the session, which a settings change needs; attach to it first. |
 | -32017 | `LoginBusy` | The daemon is already signing in to the auth profile; wait for that login to finish. |
 | -32018 | `LoginNotFound` | No login under way has the id: it ended, or never started. |
+| -32019 | `SignInRequired` | The daemon could not open the session because its model's auth profile has no usable credentials: none are saved or set, they could not be read, or the provider refused them. Sign in, then try again. |
 
 ## Versions and compatibility
 

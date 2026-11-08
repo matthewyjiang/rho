@@ -56,7 +56,7 @@ impl SessionRuntime {
 
         // One snapshot for planning and the run: the run must verify its
         // frozen executables on the `PATH` planning found them on (#1659).
-        let environment = self.build.host.host_io.environment.current();
+        let environment = self.build.host.environment.current();
         let ops = WorkflowOps::open(
             self.storage.cwd().to_path_buf(),
             Some(self.build.launch.config_path.clone()),
@@ -101,7 +101,7 @@ impl SessionRuntime {
             workflow_cli::BackgroundRun {
                 cwd: self.storage.cwd().to_path_buf(),
                 config_path: Some(self.build.launch.config_path.clone()),
-                pool: self.build.host.children.pool(),
+                pool: self.build.host.subagent_pool.clone(),
                 tracker,
                 environment,
             },
@@ -123,8 +123,8 @@ impl SessionRuntime {
     /// Adds the run id to model context and saves the prompt with `notice` as
     /// its reply, returning the prompt's user message and the reply as
     /// saved. A failed save rolls the context back so the live session never
-    /// holds history its file lacks. No SDK run happens here, so no turn checkpoint is
-    /// involved; a replaced runtime leaves the file to its successor.
+    /// holds history its file lacks. No SDK run happens here, so no turn
+    /// checkpoint is involved.
     fn record_started(
         &mut self,
         display: &UserInput,

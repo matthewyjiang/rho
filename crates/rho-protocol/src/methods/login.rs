@@ -158,8 +158,9 @@ pub struct AuthLoginFinishedParams {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum LoginOutcome {
-    /// The provider approved the login, and the daemon saved the
-    /// credential.
+    /// The daemon saved the credential: once the provider approved the
+    /// login, or, for a provider that sends no confirmation, the credential
+    /// its prompt asked the user to approve.
     Succeeded,
     /// The login failed; `message` says why, for a person.
     Failed { message: String },

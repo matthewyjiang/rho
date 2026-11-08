@@ -1325,7 +1325,7 @@
     "LoginOutcome": {
       "anyOf": [
         {
-          "description": "The provider approved the login, and the daemon saved the\ncredential.",
+          "description": "The daemon saved the credential: once the provider approved the\nlogin, or, for a provider that sends no confirmation, the credential\nits prompt asked the user to approve.",
           "properties": {
             "type": {
               "const": "succeeded",
@@ -3247,8 +3247,11 @@
           "type": "object"
         },
         {
-          "description": "A file change; `old_text` is absent for a new file.",
+          "description": "A file change; `old_text` is absent for a new file. A deleted file\nhas `deleted` set and an empty `new_text`, which an emptied file\nalso has.",
           "properties": {
+            "deleted": {
+              "type": "boolean"
+            },
             "new_text": {
               "type": "string"
             },
@@ -3630,6 +3633,9 @@
     },
     "-32018": {
       "name": "LoginNotFound"
+    },
+    "-32019": {
+      "name": "SignInRequired"
     },
     "-32600": {
       "name": "InvalidRequest"

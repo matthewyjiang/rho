@@ -56,11 +56,6 @@ impl SessionRuntime {
             Err(error) if error.is_cancelled() => return Ok(None),
             Err(error) => return Err(anyhow::anyhow!("could not compact context: {error}")),
         };
-        if self.is_replaced() {
-            // Load and shutdown cancel this prompt after snapshotting the
-            // file. The rewrite was not saved, so do not report it as done.
-            return Ok(None);
-        }
         let snapshot = self.durable_snapshot();
         // An ephemeral session has nothing to save.
         let saved = self.stored().and_then(|stored| {

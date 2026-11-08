@@ -10,9 +10,9 @@ use rho_sdk::{
 };
 
 use super::{
-    credentials::SessionCredentials, ApprovalPolicy, BackgroundWait, ChildAgents, HostCapabilities,
-    LeftOut, OpenedSession, QuestionSupport, RunShape, SessionBuild, SessionLaunch,
-    SessionPermission, SessionRole, SessionRuntime, SessionStorage, UnattendedApprovals,
+    credentials::SessionCredentials, ApprovalPolicy, HostCapabilities, LeftOut, OpenedSession,
+    QuestionSupport, RunShape, SessionBuild, SessionLaunch, SessionPermission, SessionRole,
+    SessionRuntime, SessionStorage, UnattendedApprovals,
 };
 use crate::{
     agent::{
@@ -196,15 +196,14 @@ pub(in crate::app) fn test_build(config: &Config, workspace_root: &Path) -> Sess
         },
         host: HostCapabilities {
             questions: QuestionSupport::Unavailable,
-            children: ChildAgents::InProcess(crate::app::subagent_pool::SubagentPool::Own),
-            background_wait: BackgroundWait::HoldPrompt,
-            host_io: Default::default(),
+            subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
+            environment: Default::default(),
             mcp_authorization: McpAuthorizationMode::NonInteractive,
             approvals: ApprovalPolicy::Host,
             parent_notices: None,
         },
         run: RunShape {
-            role: SessionRole::Acp,
+            role: SessionRole::Daemon,
             max_steps: None,
             hook_labels: Default::default(),
         },
@@ -266,23 +265,6 @@ impl SessionRuntime {
             reopen_notice: None,
             credentials: SessionCredentials::Scripted,
         })
-    }
-
-    /// The session's workspace and file, for host tests that read what the
-    /// runtime saved.
-    pub(in crate::app) fn storage(&self) -> &SessionStorage {
-        &self.storage
-    }
-
-    /// The agent the session runs as.
-    pub(in crate::app) fn agent(&self) -> &BoundAgent {
-        &self.agent
-    }
-
-    /// The session's whole tool set, for host tests that check what a
-    /// rebuild registered.
-    pub(in crate::app) fn tool_set_for_tests(&self) -> &AppToolSet {
-        &self.built.tools
     }
 
     /// The session's live history, for host tests that compare it with what

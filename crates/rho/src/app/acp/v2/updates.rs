@@ -209,7 +209,7 @@ fn tool_call_content(content: v1::ToolCallContent) -> Result<v2::ToolCallContent
             v2::Content::new(bridge::<_, v2::ContentBlock>(&content.content)?).meta(content.meta),
         )),
         v1::ToolCallContent::Diff(diff) => v2::ToolCallContent::Diff(file_diff(&diff)),
-        // Client terminals are v1 only: a v2 host is never offered them.
+        // Rho sends no terminal content; mapped for completeness.
         v1::ToolCallContent::Terminal(terminal) => {
             v2::ToolCallContent::Terminal(bridge(&terminal)?)
         }
@@ -226,7 +226,7 @@ fn file_diff(diff: &v1::Diff) -> v2::Diff {
     let mut meta = diff.meta.clone();
     let deleted = meta
         .as_mut()
-        .and_then(|meta| meta.remove(crate::app::acp::events::DELETED_FILE_META_KEY))
+        .and_then(|meta| meta.remove(crate::app::acp::updates::DELETED_FILE_META_KEY))
         .is_some_and(|marker| marker == true);
     let meta = meta.filter(|meta| !meta.is_empty());
     let (change, contents) = match (&diff.old_text, deleted) {

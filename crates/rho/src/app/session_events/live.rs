@@ -246,7 +246,7 @@ impl LiveEvents {
             SessionEvent::Run(event) => self.run_event(event),
             SessionEvent::BoundaryApplied { transcript } => cards(transcript).collect(),
             SessionEvent::Notice { text } => vec![WireEvent::Notice { text: text.clone() }],
-            SessionEvent::RunClosed { .. } => self.close_unfinished(),
+            SessionEvent::RunClosed => self.close_unfinished(),
             // The committed turn is the settled context; in-run updates
             // were estimates.
             SessionEvent::RunFinished { context } => vec![self.usage(*context)],
@@ -611,6 +611,7 @@ fn output_content(output: &ToolOutput, cwd: &Path) -> Vec<ToolContent> {
                     path: cwd.join(change.path()),
                     old_text: change.old_text().map(str::to_owned),
                     new_text: change.new_text().to_owned(),
+                    deleted: change.is_deleted(),
                 }),
         );
     }

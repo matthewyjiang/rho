@@ -12,7 +12,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use super::{
     delegation::{BackgroundSources, Delegation, OfferedDisplays},
-    events::{RunEnd, SessionEvent, TurnControl},
+    events::{SessionEvent, TurnControl},
     persist::TurnCheckpoint,
     prompt_gate::ActiveWork,
     pump::{pump, AppliedDisplays, ApprovalSource, EventSource, PumpSources},
@@ -153,13 +153,12 @@ impl SessionRuntime {
             self.storage.persistence(),
             &mut self.held_notices,
         )?;
-        delegation.set_background_wait(self.build.host.background_wait);
         let displays = delegation.offered_displays();
         // Children outlive a cancelled, failed, or step-limited prompt, as they
         // do across TUI turns: T3 Code cancels the open prompt to send each
         // mid-turn message. The next prompt waits for and delivers them and
-        // their undelivered notices; only closing or replacing the session
-        // stops them.
+        // their undelivered notices; only tearing the session down stops
+        // them.
         let result = Delegation::drive(
             &mut delegation,
             self.drive_prompt(prompt, start, displays, &mut io),
@@ -265,9 +264,7 @@ impl SessionRuntime {
         if let Err(error) = pumped {
             run.cancel();
             let _ = run.outcome().await;
-            io.emit(SessionEvent::RunClosed {
-                ending: RunEnd::Failed(error.to_string()),
-            });
+            io.emit(SessionEvent::RunClosed);
             self.persist_failed_turn(checkpoint);
             self.dispatch_failed(&error.to_string());
             return Err(error);
