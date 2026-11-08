@@ -166,6 +166,39 @@ fn every_session_event_round_trips_through_its_wire_form() {
             }),
         ),
         (
+            // A case-sensitive search leaves the flag to its default.
+            SessionEvent::tool_call(ToolCallUpdate {
+                display: Some(Presentation::Card(
+                    ToolCard::new(
+                        ToolCardStatus::Ok,
+                        ToolFamily::FileCommand,
+                        ToolHeader::shell("$", Some("rg needle".into())),
+                    )
+                    .with_body(ToolBody::Search {
+                        pattern: "needle".into(),
+                        literal: false,
+                        case_sensitive: true,
+                        lines: vec!["a.rs:1:needle".into()],
+                    }),
+                )),
+                ..status_only(ToolStatus::Completed)
+            }),
+            json!({
+                "type": "tool_call",
+                "id": "t1",
+                "status": "completed",
+                "display": {"card": {
+                    "status": "ok",
+                    "family": "file_command",
+                    "header": {"kind": "shell", "prompt": "$", "command": "rg needle"},
+                    "body": {"kind": "search", "lines": {
+                        "pattern": "needle",
+                        "lines": ["a.rs:1:needle"],
+                    }},
+                }},
+            }),
+        ),
+        (
             SessionEvent::tool_call(ToolCallUpdate {
                 display: Some(Presentation::Notification(Box::new(NotificationCard {
                     title: "Agent result".into(),

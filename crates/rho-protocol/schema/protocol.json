@@ -3497,7 +3497,8 @@
                   "type": "array"
                 },
                 "window": {
-                  "$ref": "#/$defs/CodeWindow"
+                  "$ref": "#/$defs/CodeWindow",
+                  "description": "Absent means [`CodeWindow::Head`]."
                 }
               },
               "required": [
@@ -3523,6 +3524,8 @@
             "lines": {
               "properties": {
                 "case_sensitive": {
+                  "default": true,
+                  "description": "Absent means `true`.",
                   "type": "boolean"
                 },
                 "lines": {

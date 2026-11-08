@@ -334,6 +334,7 @@ pub enum ToolBody {
     /// extension such as `python` or `rs`.
     Code {
         language: String,
+        /// Absent means [`CodeWindow::Head`].
         #[serde(default, skip_serializing_if = "CodeWindow::is_head")]
         window: CodeWindow,
         lines: Vec<String>,
@@ -345,7 +346,11 @@ pub enum ToolBody {
         /// The pattern is a literal substring rather than a regex.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         literal: bool,
+        /// Absent means `true`.
+        // schemars leaves out a default the field skips writing, so the
+        // schema states it here.
         #[serde(default = "default_true", skip_serializing_if = "is_true")]
+        #[schemars(extend("default" = true))]
         case_sensitive: bool,
         lines: Vec<String>,
     },
