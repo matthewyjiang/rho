@@ -37,6 +37,35 @@ impl SessionAgentRole {
     }
 }
 
+/// An agent definition a session header names: its id and the fingerprint
+/// of the definition the session was created or rebound under.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SavedAgent {
+    pub(crate) id: String,
+    pub(crate) fingerprint: String,
+}
+
+impl SavedAgent {
+    /// Refuses to resume as `definition` unless it is this agent with a
+    /// fingerprint it accepts: the current one or an exact legacy v1 one.
+    pub(crate) fn validate(
+        &self,
+        definition: &crate::agent::AgentDefinition,
+    ) -> anyhow::Result<()> {
+        let selected_id = definition.id.as_str();
+        anyhow::ensure!(
+            self.id == selected_id,
+            "cannot resume session created by agent '{}' as selected agent '{selected_id}'",
+            self.id
+        );
+        anyhow::ensure!(
+            definition.accepts_stored_fingerprint(&self.fingerprint),
+            "cannot resume agent '{selected_id}': its definition changed since the session was created"
+        );
+        Ok(())
+    }
+}
+
 fn read_header(path: &Path) -> anyhow::Result<SessionEntry> {
     let file = fs::File::open(path)?;
     let line = BufReader::new(file)
@@ -59,17 +88,26 @@ pub(super) fn read_agent_identity(path: &Path) -> anyhow::Result<Option<(String,
     }
 }
 
-/// The root agent a delegated session was rebound from, by id and
-/// fingerprint; `None` for a root session, or a delegated one written
-/// before launch identities were recorded.
-pub(super) fn read_launch_agent_identity(path: &Path) -> anyhow::Result<Option<(String, String)>> {
+/// The root agent the session reopens under: its own agent, or the root a
+/// session `/agent:` rebound was rebound from. `None` for a delegated
+/// session written before launch identities were saved; an error for a root
+/// session whose header names no agent.
+pub(super) fn read_root_agent(path: &Path) -> anyhow::Result<Option<SavedAgent>> {
     match read_header(path)? {
         SessionEntry::Session {
-            launch_agent_id: Some(id),
-            launch_agent_fingerprint: Some(fingerprint),
+            agent_role: SessionAgentRole::Delegated,
+            launch_agent,
             ..
-        } => Ok(Some((id, fingerprint))),
-        SessionEntry::Session { .. } => Ok(None),
+        } => Ok(launch_agent),
+        SessionEntry::Session {
+            agent_role: SessionAgentRole::Root,
+            agent_id: Some(id),
+            agent_fingerprint: Some(fingerprint),
+            ..
+        } => Ok(Some(SavedAgent { id, fingerprint })),
+        SessionEntry::Session { .. } => {
+            anyhow::bail!("the session has no saved agent to reopen it as")
+        }
         _ => anyhow::bail!("session file does not start with session metadata"),
     }
 }
@@ -138,8 +176,7 @@ impl Session {
             agent_id: stored_id,
             agent_fingerprint,
             agent_role,
-            launch_agent_id,
-            launch_agent_fingerprint,
+            launch_agent,
             ..
         } = &mut entry
         else {
@@ -149,8 +186,10 @@ impl Session {
         // again and cap the child at its tools. A header already delegated
         // keeps the launch identity it has.
         if agent_role.is_root() {
-            *launch_agent_id = stored_id.take();
-            *launch_agent_fingerprint = agent_fingerprint.take();
+            *launch_agent = stored_id
+                .take()
+                .zip(agent_fingerprint.take())
+                .map(|(id, fingerprint)| SavedAgent { id, fingerprint });
         }
         *stored_id = Some(agent_id.to_owned());
         *agent_fingerprint = Some(fingerprint.to_owned());

@@ -16,6 +16,7 @@ use rho_sdk::SessionSnapshot;
 use rho_sdk::{CompactionState, Revision, SessionId};
 
 mod agent_identity;
+mod append_cursor;
 pub(crate) mod catalog;
 mod delete;
 mod display_rows;
@@ -50,16 +51,18 @@ mod version_tests;
 pub(crate) mod workspace_checkpoint;
 mod workspace_scope;
 
+use append_cursor::AppendCursor;
 #[cfg(test)]
 use layout::encode_cwd;
 use persistence::{
-    parse_timestamp, session_root, session_web_dir, unix_timestamp_secs, AppendCursor, SessionStore,
+    parse_timestamp, session_root, session_web_dir, unix_timestamp_secs, SessionStore,
 };
 #[cfg(test)]
 use persistence::{
     read_entries, session_dir_in_root, summarize_session_file, SessionEntry, SESSION_VERSION,
 };
 
+pub(crate) use agent_identity::SavedAgent;
 pub use delete::{is_cross_project, DeleteOptions, DeleteOutcome};
 pub(crate) use delete::{CleanupOutcome, ExactDelete, RunNotFinished, WorkspaceDeleteOutcome};
 pub(crate) use id_match::SavedInManyWorkspaces;
@@ -430,11 +433,12 @@ impl Session {
         agent_identity::read_agent_identity(&self.path)
     }
 
-    /// The root agent, by id and fingerprint, that `/agent:` rebound this
-    /// session from; `None` for a root session, or a delegated one written
-    /// before launch identities were recorded.
-    pub(crate) fn launch_agent_identity(&self) -> anyhow::Result<Option<(String, String)>> {
-        agent_identity::read_launch_agent_identity(&self.path)
+    /// The root agent the session reopens under: its own agent, or the
+    /// root `/agent:` rebound it from. `None` for a delegated session
+    /// written before launch identities were saved; an error for a root
+    /// session whose header names no agent.
+    pub(crate) fn root_agent(&self) -> anyhow::Result<Option<SavedAgent>> {
+        agent_identity::read_root_agent(&self.path)
     }
 
     /// Rebinds the session to a delegated child agent, only before any
@@ -475,17 +479,13 @@ impl Session {
         &self,
         definition: &crate::agent::AgentDefinition,
     ) -> anyhow::Result<()> {
-        validate_agent_identity_with(self.stored_agent_identity()?, definition)
-    }
-
-    /// The same check against the root a delegated session was rebound
-    /// from (see [`Self::launch_agent_identity`]), so a reload binds that
-    /// root again only while its definition is unchanged.
-    pub(crate) fn validate_launch_agent_definition_identity(
-        &self,
-        definition: &crate::agent::AgentDefinition,
-    ) -> anyhow::Result<()> {
-        validate_agent_identity_with(self.launch_agent_identity()?, definition)
+        let selected_id = definition.id.as_str();
+        let Some((id, fingerprint)) = self.stored_agent_identity()? else {
+            anyhow::bail!(
+                "cannot resume this session as agent '{selected_id}': the session has no stored agent definition identity"
+            );
+        };
+        SavedAgent { id, fingerprint }.validate(definition)
     }
 
     /// Lists `listing`'s sessions in workspace `cwd`, newest first.
@@ -901,30 +901,4 @@ impl Session {
     pub(crate) fn cwd(&self) -> &Path {
         &self.cwd
     }
-}
-
-/// Refuses to resume as `definition` unless `stored`, a saved agent
-/// identity, names it with a fingerprint it accepts: the current one or an
-/// exact legacy v1 one.
-fn validate_agent_identity_with(
-    stored: Option<(String, String)>,
-    definition: &crate::agent::AgentDefinition,
-) -> anyhow::Result<()> {
-    let selected_id = definition.id.as_str();
-    let Some((stored_id, stored_fingerprint)) = stored else {
-        anyhow::bail!(
-            "cannot resume this session as agent '{selected_id}': the session has no stored agent definition identity"
-        );
-    };
-    if stored_id != selected_id {
-        anyhow::bail!(
-            "cannot resume session created by agent '{stored_id}' as selected agent '{selected_id}'"
-        );
-    }
-    if !definition.accepts_stored_fingerprint(&stored_fingerprint) {
-        anyhow::bail!(
-            "cannot resume agent '{selected_id}': its definition changed since the session was created"
-        );
-    }
-    Ok(())
 }

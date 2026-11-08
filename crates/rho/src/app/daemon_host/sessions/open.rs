@@ -297,24 +297,14 @@ fn bind_saved_agent(
     stored: &StoredSession,
     available_tools: AgentCapabilities,
 ) -> anyhow::Result<BoundAgent> {
-    if stored.delegated_agent_id()?.is_some() {
-        let Some((launch_id, _fingerprint)) = stored.launch_agent_identity()? else {
-            // Written before launch identities were saved, as an in-process
-            // ACP child was: nothing names its root, so it runs under the
-            // default agent, as it did then.
-            return bind_agent(cwd, config, DEFAULT_AGENT_ID, available_tools);
-        };
-        let agent = bind_agent(cwd, config, &launch_id, available_tools)?;
-        stored.validate_launch_agent_definition_identity(agent.definition())?;
-        return Ok(agent);
-    }
-    let Some((id, _fingerprint)) = stored.stored_agent_identity()? else {
-        anyhow::bail!(
-            "the session has no saved agent, so the daemon cannot tell which agent to reopen it as"
-        );
+    let Some(root) = stored.root_agent()? else {
+        // A delegated session written before launch identities were saved:
+        // nothing names its root, so it runs under the default agent, as it
+        // did then.
+        return bind_agent(cwd, config, DEFAULT_AGENT_ID, available_tools);
     };
-    let agent = bind_agent(cwd, config, &id, available_tools)?;
-    stored.validate_agent_definition_identity(agent.definition())?;
+    let agent = bind_agent(cwd, config, &root.id, available_tools)?;
+    root.validate(agent.definition())?;
     Ok(agent)
 }
 

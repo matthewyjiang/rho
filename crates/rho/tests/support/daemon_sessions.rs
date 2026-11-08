@@ -608,9 +608,10 @@ async fn compact_reports_its_compaction_and_answers_with_the_result() {
         } => Some((text.clone(), *stop)),
         _ => None,
     });
-    let one_id = compaction_ids.first().map(|id| vec![id.clone(); 2]);
+    // Both compaction events update one card.
+    let one_id = matches!(compaction_ids.as_slice(), [first, second] if first == second);
     assert_eq!(
-        (shown, Some(compaction_ids), answer),
+        (shown, one_id, answer),
         (
             vec![
                 "user_message",
@@ -620,7 +621,7 @@ async fn compact_reports_its_compaction_and_answers_with_the_result() {
                 "agent_message_chunk",
                 "turn_ended",
             ],
-            one_id,
+            true,
             reply.map(|text| (text, AnswerStop::EndTurn)),
         ),
         "{compact_turn:#?}\nlog:\n{}",

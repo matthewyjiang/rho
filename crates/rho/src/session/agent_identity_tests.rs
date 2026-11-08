@@ -47,9 +47,12 @@ fn fresh_agent_identity_rewrite_preserves_append_and_resume() {
             .unwrap();
         let expected_identity = Some(("restricted-child".into(), "new-fingerprint".into()));
         // The root moves aside, so a reload can cap the child at its tools.
-        let expected_launch = Some(("root".into(), "old".into()));
+        let expected_root = Some(super::SavedAgent {
+            id: "root".into(),
+            fingerprint: "old".into(),
+        });
         assert_eq!(session.stored_agent_identity().unwrap(), expected_identity);
-        assert_eq!(session.launch_agent_identity().unwrap(), expected_launch);
+        assert_eq!(session.root_agent().unwrap(), expected_root);
         assert_eq!(
             session.delegated_agent_id().unwrap(),
             Some("restricted-child".into())
@@ -63,7 +66,7 @@ fn fresh_agent_identity_rewrite_preserves_append_and_resume() {
             Session::open_by_id_with_histories_in_root(root.path(), cwd.path(), session.id())
                 .unwrap();
         assert_eq!(reopened.stored_agent_identity().unwrap(), expected_identity);
-        assert_eq!(reopened.launch_agent_identity().unwrap(), expected_launch);
+        assert_eq!(reopened.root_agent().unwrap(), expected_root);
         assert_eq!(
             reopened.session_metadata("test-selection").unwrap(),
             Some("selected".into())

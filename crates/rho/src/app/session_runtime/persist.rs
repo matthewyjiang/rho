@@ -219,32 +219,42 @@ impl SessionRuntime {
         let Some(user) = display.unsaved_user.clone() else {
             return Ok(InsertedMessage::Unreplayed);
         };
-        let inserted = self.save_prompt_rows(user, &[])?;
+        let (inserted, []) = self.save_prompt_rows(user, [])?;
         display.mark_user_written();
         Ok(inserted)
     }
 
     /// Saves the prompt's `user` message with the display rows `following`
-    /// it, and returns the row a reload replays that message as: the first
-    /// row of the node the save adds. A replaced or ephemeral runtime saves
-    /// nothing, so its message is unreplayed.
-    pub(crate) fn save_prompt_rows(
+    /// it as one node, and returns the rows a reload replays each message
+    /// as, in order. A replaced or ephemeral runtime saves nothing, so its
+    /// messages are unreplayed.
+    pub(crate) fn save_prompt_rows<const N: usize>(
         &mut self,
         user: Message,
-        following: &[Message],
-    ) -> anyhow::Result<InsertedMessage> {
+        following: [Message; N],
+    ) -> anyhow::Result<(InsertedMessage, [InsertedMessage; N])> {
+        let unreplayed = || {
+            (
+                InsertedMessage::Unreplayed,
+                [(); N].map(|()| InsertedMessage::Unreplayed),
+            )
+        };
         if self.is_replaced() {
-            return Ok(InsertedMessage::Unreplayed);
+            return Ok(unreplayed());
         }
-        let rows: Vec<Message> = std::iter::once(user)
-            .chain(following.iter().cloned())
-            .collect();
+        let rows: Vec<Message> = std::iter::once(user).chain(following).collect();
         let snapshot = self.durable_snapshot();
         let Some(stored) = self.stored()? else {
-            return Ok(InsertedMessage::Unreplayed);
+            return Ok(unreplayed());
         };
         let node = stored.save_snapshot_node(&snapshot, &rows)?;
-        Ok(InsertedMessage::Saved(DisplayRowOrigin { node, row: 0 }))
+        let row = |row| {
+            InsertedMessage::Saved(DisplayRowOrigin {
+                node: node.clone(),
+                row,
+            })
+        };
+        Ok((row(0), std::array::from_fn(|index| row(index + 1))))
     }
 
     /// Saves the settled turn with the display rows its step checkpoints

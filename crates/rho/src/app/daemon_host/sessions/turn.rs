@@ -32,7 +32,7 @@ use crate::{
         session_events::{outcome, CompactionEnd},
         session_runtime::{
             InsertedMessage, PlanReport, PromptScope, SessionEvent, SessionRuntime, TitleJob, Turn,
-            TurnControl, TurnIo, TurnOutcome, TurnView, WorkflowStart,
+            TurnControl, TurnIo, TurnOutcome, TurnView, UnsavedCompaction, WorkflowStart,
         },
         workflow_cli::discover::StartCommand,
     },
@@ -267,10 +267,12 @@ async fn run_turn(
     config: &Config,
     cancel: &CancellationToken,
 ) -> anyhow::Result<Ran> {
-    // The runtime's own refusal says to load the session again, which a
-    // daemon session is only once the daemon unloads it.
-    anyhow::ensure!(!runtime.has_unsaved_compaction(), UNSAVED_COMPACTION);
-    let scope = runtime.begin_prompt(config).await?;
+    let scope = match runtime.begin_prompt(config).await {
+        Ok(scope) => scope,
+        // A daemon session loads again only once the daemon unloads it.
+        Err(error) if error.is::<UnsavedCompaction>() => anyhow::bail!(UNSAVED_COMPACTION),
+        Err(error) => return Err(error),
+    };
     // A cancel sent before the prompt began only tripped `cancel`: the turn
     // ends here, before it saves the prompt or calls the model, and dropping
     // `scope` ends the prompt. A cancel from here on reaches the prompt

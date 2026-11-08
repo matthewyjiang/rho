@@ -116,6 +116,13 @@ pub(crate) use workflow::WorkflowStart;
 #[error("{0}")]
 pub(crate) struct CommandRejected(pub(crate) String);
 
+/// [`SessionRuntime::begin_prompt`]'s refusal after a compaction rewrote
+/// live state it could not save. Hosts that reload sessions differently
+/// say how in their own words.
+#[derive(Debug, thiserror::Error)]
+#[error("could not continue session: its compacted context was not saved; load the session again")]
+pub(crate) struct UnsavedCompaction;
+
 /// The model and auth profile a session runs on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CurrentModel {
@@ -283,12 +290,6 @@ impl SessionRuntime {
     /// with its first prompt.
     pub(crate) fn is_saved(&self) -> bool {
         self.storage.file().is_some()
-    }
-
-    /// Whether a compaction rewrote live state it could not save, so
-    /// [`Self::begin_prompt`] refuses every prompt until a reload.
-    pub(crate) fn has_unsaved_compaction(&self) -> bool {
-        self.unsaved_compaction
     }
 
     /// Whether background work the session's prompts started still runs or

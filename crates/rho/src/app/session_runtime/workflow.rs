@@ -17,7 +17,6 @@ use crate::{
         workflow_runtime::RecoveryDecision,
     },
     config::Config,
-    session::tree::DisplayRowOrigin,
     tools::workflow_tracker::start_context_prompts,
 };
 
@@ -137,7 +136,7 @@ impl SessionRuntime {
         session.append_message(Message::user_text(model))?;
         let saved = self.save_prompt_rows(
             Message::User(display.blocks().to_vec()),
-            &[Message::assistant_text(notice)],
+            [Message::assistant_text(notice)],
         );
         if let Err(error) = &saved {
             session.replace_history(before)?;
@@ -145,17 +144,7 @@ impl SessionRuntime {
             // cause inline.
             anyhow::bail!("workflow started, but could not save its run id: {error:#}");
         }
-        let inserted = saved?;
-        // The notice is the row right after the prompt's.
-        let reply = match &inserted {
-            InsertedMessage::Saved(DisplayRowOrigin { node, row }) => {
-                InsertedMessage::Saved(DisplayRowOrigin {
-                    node: node.clone(),
-                    row: row + 1,
-                })
-            }
-            InsertedMessage::Unreplayed => InsertedMessage::Unreplayed,
-        };
+        let (inserted, [reply]) = saved?;
         Ok((inserted, reply))
     }
 }

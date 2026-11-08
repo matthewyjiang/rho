@@ -92,20 +92,11 @@ pub(super) async fn asked_operation(
 /// fixture answers with. It attaches first with no setup, so it reopens a
 /// session the daemon unloaded as a prompt would.
 async fn inspected_request(sandbox: &Sandbox, client: &Client, session: &SessionId) -> Value {
-    inspected_request_of(sandbox, client, session, "hello").await
+    inspected_turn(sandbox, client, session, "hello").await.0
 }
 
-/// [`inspected_request`] of a turn of `text`.
-async fn inspected_request_of(
-    sandbox: &Sandbox,
-    client: &Client,
-    session: &SessionId,
-    text: &str,
-) -> Value {
-    inspected_turn(sandbox, client, session, text).await.0
-}
-
-/// [`inspected_request_of`], with the events the turn sent before it ended.
+/// The model request of `session`'s turn of `text`, as [`inspected_request`]
+/// gets it, with the events the turn sent before it ended.
 async fn inspected_turn(
     sandbox: &Sandbox,
     client: &Client,
@@ -503,7 +494,7 @@ async fn a_rebound_session_keeps_its_root_agents_tools_after_a_reopen() {
         .await
         .unwrap();
     let command = "/agent:worker summarize the notes";
-    let rebound = offered_tools(&inspected_request_of(&sandbox, &client, &session, command).await);
+    let rebound = offered_tools(&inspected_turn(&sandbox, &client, &session, command).await.0);
     settled_job(&sandbox, &client, &session).await;
     sandbox.wait_unloaded(&session, /*times*/ 1).await;
 

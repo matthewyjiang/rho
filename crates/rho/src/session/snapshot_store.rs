@@ -1,10 +1,10 @@
 use rho_providers::model::{Message, ModelIdentity};
 use rho_sdk::{SessionId, SessionSnapshot};
 
+use super::append_cursor::AppendCursor;
 use super::display_rows::StoredDisplayRow;
 use super::persistence::{
-    insert_interrupted_tool_placeholders, timestamp, AppendCursor, PersistedSessionState,
-    SessionEntry,
+    insert_interrupted_tool_placeholders, timestamp, PersistedSessionState, SessionEntry,
 };
 use super::snapshot_delta::StoredSnapshotDelta;
 #[cfg(test)]

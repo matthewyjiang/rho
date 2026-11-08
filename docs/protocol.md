@@ -41,7 +41,7 @@ When the client stops sending, the daemon answers every request it has already r
 A prompt whose turn ends before it began returns an error instead of a result:
 
 - `TurnEnded`, whose `data` is the turn's [outcome](#how-a-turn-ends): `cancelled` when a cancel arrived before the turn began, `timed_out` when its `timeout_ms` passed first, or `failed` with the reason, such as unreadable provider credentials or a slash command the daemon does not run. Nothing is saved and the model is not called, except that a cancel or timeout that arrives while `/agent:<name>` rebinds the session waits for the rebind: the session stays rebound to the agent, and only the prompt is not saved. A turn that stopped unexpectedly fails with `the turn stopped unexpectedly; see the daemon log`.
-- `DaemonStopping` when the daemon starts stopping while the prompt waits for its turn to save it.
+- `DaemonStopping` when the daemon starts stopping while the prompt waits for its turn to begin.
 
 A prompt that starts with a slash command resolves as it does in [`rho run`](/automation-cli#sessions-commands-and-questions): prompt templates, MCP prompts, `/init`, `/agent:<name>`, and `$skill` mentions work, and so do `/compact` and `/workflow:<name>`, which run no model turn:
 
@@ -252,7 +252,7 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 | -32006 | `SteerRefused` | The running turn refused the steering input. |
 | -32007 | `DaemonStopping` | The daemon is stopping and starts nothing new. |
 | -32008 | `SessionOpenFailed` | The daemon could not open the session: for example, the config is invalid, the workspace does not define the agent a new session asks for, the agent a saved session was saved as, or the one `/agent:<name>` rebound it from, changed or is gone, or the session is a subagent's or workflow node's, which only its parent continues. |
-| -32009 | `TurnEnded` | The turn ended before it saved the prompt; `data` is its outcome. |
+| -32009 | `TurnEnded` | The turn ended before it began; `data` is its outcome. |
 | -32011 | `InputNotOpen` | The input request is not open: another client answered it first, it timed out, or the turn withdrew it. |
 | -32012 | `SessionInUse` | Another process, such as a TUI or a foreground `rho run`, has the session open, or, for a delete, a session it started, so the daemon cannot reopen or delete it. |
 | -32013 | `EnvironmentOverride` | A variable in the daemon's environment holds the auth profile's credential, so saving or deleting one would change nothing; `data.variable` names it. |
