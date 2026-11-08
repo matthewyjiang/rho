@@ -9,7 +9,7 @@
 
 use std::{
     future::Future,
-    sync::Arc,
+    sync::{Arc, Weak},
     time::{Duration, SystemTime},
 };
 
@@ -20,14 +20,14 @@ use tokio::{
     time::Instant,
 };
 
-use super::{super::jobs::TurnEnd, inputs::Inputs, saved_replay, LoadedSession};
+use super::{super::jobs::TurnEnd, cost, inputs::Inputs, saved_replay, LoadedSession};
 use crate::{
     app::{
         session_commands::{self, BuiltInCommand, CommandScope, CommandSet, PromptCommand},
         session_events::outcome,
         session_runtime::{
-            CommandRejected, PlanReport, SessionEvent, SessionRuntime, Turn, TurnControl, TurnIo,
-            TurnOutcome, TurnView,
+            CommandRejected, PlanReport, SessionEvent, SessionRuntime, TitleJob, Turn, TurnControl,
+            TurnIo, TurnOutcome, TurnView,
         },
     },
     config::Config,
@@ -99,16 +99,16 @@ pub(super) struct TurnTask {
 }
 
 impl TurnTask {
-    /// Runs the turn of `text` in a daemon task. The receiver learns how
+    /// Runs the turn of `input` in a daemon task. The receiver learns how
     /// the turn began; it closes without an answer only once the daemon
     /// stops (see [`PromptStart`]).
-    pub(super) fn spawn(self, text: String) -> oneshot::Receiver<PromptStart> {
+    pub(super) fn spawn(self, input: UserInput) -> oneshot::Receiver<PromptStart> {
         let (started, start) = oneshot::channel();
-        tokio::spawn(self.run(text, started));
+        tokio::spawn(self.run(input, started));
         start
     }
 
-    async fn run(self, text: String, started: oneshot::Sender<PromptStart>) {
+    async fn run(self, input: UserInput, started: oneshot::Sender<PromptStart>) {
         let Self {
             session,
             stopping,
@@ -128,7 +128,7 @@ impl TurnTask {
         // down at the deadline.
         let (ended, timed_out) = match &mut *runtime {
             Some(runtime) => {
-                let turn = run_turn(runtime, &mut view, text, &session.config, &cancel);
+                let turn = run_turn(runtime, &mut view, input, &session.config, &cancel);
                 tokio::pin!(turn);
                 // The deadline first, so a limit already past cancels the
                 // turn before it saves its prompt.
@@ -151,6 +151,7 @@ impl TurnTask {
         if let Some(runtime) = &*runtime {
             save_transcript(&session, runtime);
         }
+        let title = runtime.as_mut().and_then(SessionRuntime::take_title);
         let (outcome, end) = match (ended, timed_out) {
             (Ok(TurnOutcome::Completed(run)), _) => {
                 (Some(outcome::finished(&run)), TurnEnd::Completed)
@@ -179,6 +180,10 @@ impl TurnTask {
             }
         };
         view.end(outcome, end);
+        // After the end, so the title follows the turn's events.
+        if let Some(title) = title {
+            tokio::spawn(report_title(Arc::downgrade(&session), title));
+        }
     }
 }
 
@@ -192,14 +197,30 @@ fn save_transcript(session: &LoadedSession, runtime: &SessionRuntime) {
     }
 }
 
-/// Begins a prompt of `text` on `runtime` and runs it: its slash command
+/// Generates the title the session's first answered turn asked for, which
+/// saves it, and tells the session's clients (#1670). It lands seconds
+/// after the turn; a session the daemon unloaded by then is titled all the
+/// same, with no clients to tell. Holds the session weakly, so a pending
+/// title never keeps an unloaded session's feed alive; a session reloaded
+/// once the title saved starts its feed with it, and reports it on attach.
+async fn report_title(session: Weak<LoadedSession>, title: TitleJob) {
+    if let Some(title) = title.generate().await {
+        if let Some(session) = session.upgrade() {
+            session
+                .feed
+                .publish([wire::SessionEvent::TitleChanged { title }]);
+        }
+    }
+}
+
+/// Begins a prompt of `input` on `runtime` and runs it: its slash command
 /// when it starts with one the daemon runs, else a model turn on it. A
 /// command the daemon cannot run fails the turn as a configuration error
 /// before the prompt is saved.
 async fn run_turn(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,
-    text: String,
+    input: UserInput,
     config: &Config,
     cancel: &CancellationToken,
 ) -> anyhow::Result<TurnOutcome> {
@@ -211,7 +232,6 @@ async fn run_turn(
     if cancel.is_cancelled() {
         return Ok(TurnOutcome::Cancelled);
     }
-    let input = UserInput::text(text);
     let home = crate::paths::home_dir();
     let command = {
         let commands = CommandScope::of(runtime, home.as_deref(), config);
@@ -334,6 +354,7 @@ impl DaemonView {
     ) {
         while let Some(event) = events.recv().await {
             let wire = self.session.live().map(&event);
+            let wire = cost::priced(wire, &self.session.id).await;
             self.session.feed.publish(wire);
             if matches!(event, SessionEvent::MessageInserted(_)) {
                 if let Some(started) = self.started.take() {

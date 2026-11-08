@@ -103,7 +103,7 @@ struct ReplayedCall {
 
 impl ReplayedCall {
     fn closed(self) -> WireEvent {
-        WireEvent::ToolCall(status_update(self.id, Some(ToolStatus::Failed)))
+        WireEvent::tool_call(status_update(self.id, Some(ToolStatus::Failed)))
     }
 }
 
@@ -208,7 +208,7 @@ impl Replay<'_> {
         if let Some(call) = self.calls.get_mut(&result.id) {
             call.status = status;
             call.content.extend(content);
-            self.events.push(WireEvent::ToolCall(ToolCallUpdate {
+            self.events.push(WireEvent::tool_call(ToolCallUpdate {
                 content: Some(call.content.clone()),
                 ..status_update(call.id.clone(), Some(status))
             }));
@@ -239,7 +239,7 @@ impl Replay<'_> {
                 self.events.push(superseded.closed());
             }
         }
-        self.events.push(WireEvent::ToolCall(opened));
+        self.events.push(WireEvent::tool_call(opened));
     }
 }
 

@@ -226,11 +226,17 @@ impl SessionRuntime {
     /// window, including while a turn runs. Take a new gauge after a model
     /// switch.
     pub(crate) fn context_gauge(&self) -> ContextGauge {
-        let current = self.current_model();
         ContextGauge {
             session: self.built.session.clone(),
-            configured_window: model_context_window(&current.provider, &current.model),
+            configured_window: self.configured_context_window(),
         }
+    }
+
+    /// The context window the session's current model is configured with,
+    /// when its catalog entry knows one.
+    pub(crate) fn configured_context_window(&self) -> Option<u64> {
+        let current = self.current_model();
+        model_context_window(&current.provider, &current.model)
     }
 
     /// The session's workspace directory.
@@ -336,17 +342,25 @@ impl ContextGauge {
         self.session.context_estimate()
     }
 
-    /// The context window `estimate` fills: the configured window of the
-    /// session's model, else the one the provider reported with `estimate`,
-    /// as the TUI context meter measures it. `None` when neither knows.
+    /// The context window `estimate` fills; see [`context_window`].
     pub(crate) fn window_for(&self, estimate: rho_sdk::ContextEstimate) -> Option<u64> {
-        self.configured_window
-            .or(estimate.reported_context_window())
+        context_window(self.configured_window, estimate)
     }
 
     pub(crate) fn session_id(&self) -> &rho_sdk::SessionId {
         self.session.id()
     }
+}
+
+/// The context window `estimate` fills: `configured`, the window the
+/// session's model is configured with, else the one the provider reported
+/// with `estimate`, as the TUI context meter measures it. `None` when
+/// neither knows.
+pub(crate) fn context_window(
+    configured: Option<u64>,
+    estimate: rho_sdk::ContextEstimate,
+) -> Option<u64> {
+    configured.or(estimate.reported_context_window())
 }
 
 /// `process_config` with the session's current model and auth.

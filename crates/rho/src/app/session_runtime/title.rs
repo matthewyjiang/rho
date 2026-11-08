@@ -7,10 +7,12 @@
 //! first message.
 //!
 //! The runtime only asks, from the turn: the host takes the request once the
-//! prompt returns, runs it, and shows the title it saves if the runtime that
-//! asked still owns the session (ACP, as a `session_info_update`). Nothing
-//! else runs the job: headless hosts (`rho run`, subagents, workflow nodes)
-//! leave it untaken rather than spend a model call on every run.
+//! prompt returns, runs it, and shows the title it saves if the session is
+//! still its own (ACP, as a `session_info_update`; the daemon, as a
+//! `title_changed` event, #1670). The daemon titles every session it runs,
+//! `rho run --detach` runs included: they are listed and followed like any
+//! other. In-process headless hosts (`rho run`, subagents, workflow nodes)
+//! leave the job untaken rather than spend a model call on every run.
 
 use std::path::PathBuf;
 
@@ -122,6 +124,16 @@ impl SessionRuntime {
         };
         self.title = state;
         job
+    }
+
+    /// The title the session's file has saved, if any: none for a session
+    /// not saved yet, or one whose title could not be read.
+    pub(crate) fn stored_title(&self) -> Option<String> {
+        let stored = self.storage.file()?;
+        StoredSession::title(self.storage.cwd(), stored.id()).unwrap_or_else(|error| {
+            tracing::debug!(%error, "could not read the session's title");
+            None
+        })
     }
 }
 

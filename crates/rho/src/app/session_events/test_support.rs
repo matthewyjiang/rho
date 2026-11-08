@@ -26,7 +26,7 @@ pub(super) fn shell_call(id: &str, command: &str) -> model::ToolCall {
 
 /// The card [`shell_call`] opens with.
 pub(super) fn opened(id: &str, command: &str) -> WireEvent {
-    WireEvent::ToolCall(ToolCallUpdate {
+    WireEvent::tool_call(ToolCallUpdate {
         id: ToolCallId::new(id),
         title: Some(command.to_owned()),
         kind: Some(ToolKind::Other),
@@ -39,7 +39,7 @@ pub(super) fn opened(id: &str, command: &str) -> WireEvent {
 
 /// Call `id` moving to `status`, showing `content`.
 pub(super) fn updated(id: &str, status: ToolStatus, content: Vec<ToolContent>) -> WireEvent {
-    WireEvent::ToolCall(ToolCallUpdate {
+    WireEvent::tool_call(ToolCallUpdate {
         status: Some(status),
         content: Some(content),
         ..closed_update(id)
@@ -48,7 +48,7 @@ pub(super) fn updated(id: &str, status: ToolStatus, content: Vec<ToolContent>) -
 
 /// Call `id` closed `failed` without a result.
 pub(super) fn closed(id: &str) -> WireEvent {
-    WireEvent::ToolCall(closed_update(id))
+    WireEvent::tool_call(closed_update(id))
 }
 
 fn closed_update(id: &str) -> ToolCallUpdate {

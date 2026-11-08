@@ -16,12 +16,13 @@ use rho_protocol::{
         SessionNew, SessionPrompt,
     },
     AnswerStop, ApprovalAsk, ApprovalSource, Ask, Client, ClientEnvironment, ClientError,
-    ClientInfo, Cursor, DaemonNotification, DetachReason, ErrorCode, InputAnswer, InputRequest,
-    InputRequestId, JobId, JobKind, JobListParams, JobState, JobSummary, Notifications, Operation,
-    PathScope, Replay, Resolution, Seq, SessionAnswerParams, SessionAttachParams,
-    SessionAttachResponse, SessionCancelParams, SessionDetachParams, SessionDetachedParams,
-    SessionEvent, SessionHoldParams, SessionId, SessionNewParams, SessionPromptParams, StreamId,
-    ToolCallId, ToolContent, ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
+    ClientInfo, ContentBlock, Cursor, DaemonNotification, DetachReason, ErrorCode, InputAnswer,
+    InputRequest, InputRequestId, JobId, JobKind, JobListParams, JobState, JobSummary,
+    Notifications, Operation, PathScope, Replay, Resolution, Seq, SessionAnswerParams,
+    SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionDetachParams,
+    SessionDetachedParams, SessionEvent, SessionHoldParams, SessionId, SessionNewParams,
+    SessionPromptParams, StreamId, ToolCallId, ToolContent, ToolStatus, TurnError, TurnErrorKind,
+    TurnOutcome,
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -122,10 +123,24 @@ impl Sandbox {
     /// Starts `rho daemon run` with `args` and the fixture in `mode`, and
     /// connects to it once it answers.
     async fn start_daemon_with(&self, mode: &str, args: &[&str]) -> (DaemonProcess, Client) {
+        self.spawn_daemon(self.rho(mode), args).await
+    }
+
+    /// [`Self::start_daemon`], with the TUI fixture answering the title
+    /// agent, whose one-shot provider skips the automation fixture: it
+    /// names a session "Fixture session title".
+    async fn start_titling_daemon(&self, mode: &str) -> (DaemonProcess, Client) {
+        let mut command = self.rho(mode);
+        command.env("RHO_TUI_TEST_MODE", "matrix");
+        self.spawn_daemon(command, &[]).await
+    }
+
+    /// Runs `command daemon run args`, and connects once the daemon answers.
+    async fn spawn_daemon(&self, mut command: Command, args: &[&str]) -> (DaemonProcess, Client) {
         // Outside every session's workspace, as a service manager starts it,
         // so nothing a session runs can lean on the daemon's own directory.
         let daemon = DaemonProcess(
-            self.rho(mode)
+            command
                 .current_dir(self.daemon.home())
                 .args(["daemon", "run"])
                 .args(args)
@@ -231,7 +246,9 @@ impl Sandbox {
         client
             .request::<SessionPrompt>(&SessionPromptParams {
                 session: session.clone(),
-                text: "hello".into(),
+                content: vec![ContentBlock::Text {
+                    text: "hello".into(),
+                }],
                 timeout_ms: None,
                 environment: self.daemon.client_environment(),
             })
@@ -268,7 +285,9 @@ impl Sandbox {
         client
             .request::<SessionPrompt>(&SessionPromptParams {
                 session: session.clone(),
-                text: call.to_string(),
+                content: vec![ContentBlock::Text {
+                    text: call.to_string(),
+                }],
                 timeout_ms: None,
                 environment,
             })
@@ -483,6 +502,166 @@ async fn a_turn_tells_clients_how_it_ended() {
         let job = settled_job(&sandbox, &client, &session).await;
         assert_eq!((job.state, job.error), (state, listed), "{mode}: job list");
     }
+}
+
+// Covers: a prompt's image and resource blocks reach the model, the image
+// as an image and the resource as its text fenced under its URI, and the
+// prompt's user message shows clients what was saved; a prompt with no
+// blocks, or an image that is not what it declares, is refused as invalid
+// params before a turn starts (#1670).
+// Owner: daemon session prompt content.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_prompts_image_and_resource_reach_the_model() {
+    // A 1x1 PNG.
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    let sandbox = Sandbox::new();
+    // The fixture answers with the request it got.
+    let (_daemon, client) = sandbox.start_daemon("inspect").await;
+    let session = sandbox.new_session(&client).await;
+    let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let refused = [
+        Vec::new(),
+        vec![ContentBlock::Image {
+            mime_type: "image/jpeg".into(),
+            data: PNG.into(),
+        }],
+    ];
+    for content in refused {
+        let refusal = client
+            .request::<SessionPrompt>(&SessionPromptParams {
+                session: session.clone(),
+                content: content.clone(),
+                timeout_ms: None,
+                environment: sandbox.client_environment(),
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| match error {
+                ClientError::Rpc { error, .. } => error.error_code(),
+                error => panic!("prompt failed outside the protocol: {error}"),
+            });
+        assert_eq!(refusal, Err(Some(ErrorCode::InvalidParams)), "{content:?}");
+    }
+    client
+        .request::<SessionPrompt>(&SessionPromptParams {
+            session: session.clone(),
+            content: vec![
+                ContentBlock::Text {
+                    text: "describe these".into(),
+                },
+                ContentBlock::Image {
+                    mime_type: "image/png".into(),
+                    data: PNG.into(),
+                },
+                ContentBlock::Resource {
+                    uri: "file:///notes.md".into(),
+                    text: "remember the milk".into(),
+                },
+            ],
+            timeout_ms: None,
+            environment: sandbox.client_environment(),
+        })
+        .await
+        .unwrap();
+    watcher.read_until(is_state(JobState::Completed)).await;
+
+    let fenced = "```resource file:///notes.md\nremember the milk\n```";
+    let shown = watcher.events.iter().find_map(|(_, event)| match event {
+        SessionEvent::UserMessage { content, .. } => Some(content.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        shown,
+        Some(vec![
+            ContentBlock::Text {
+                text: "describe these".into(),
+            },
+            ContentBlock::Image {
+                mime_type: "image/png".into(),
+                data: PNG.into(),
+            },
+            ContentBlock::Text {
+                text: fenced.into(),
+            },
+        ]),
+        "log:\n{}",
+        sandbox.daemon_log()
+    );
+    let answer = watcher.events.iter().find_map(|(_, event)| match event {
+        SessionEvent::TurnEnded {
+            outcome: TurnOutcome::Answered { text, .. },
+        } => Some(text.clone()),
+        _ => None,
+    });
+    let request: serde_json::Value =
+        serde_json::from_str(&answer.expect("the turn answered")).unwrap();
+    let prompt = request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|message| message.get("User").is_some())
+        .cloned();
+    assert_eq!(
+        prompt,
+        Some(serde_json::json!({"User": [
+            {"Text": "describe these"},
+            {"Image": {"data": PNG, "mime_type": "image/png"}},
+            {"Text": fenced},
+        ]}))
+    );
+}
+
+// Covers: after a session's first answered turn, the daemon titles it in
+// the background, saves the title where session lists read it, and tells
+// attached clients with `title_changed`; a client that attaches later,
+// whose replay need not hold that event, gets it in the attach response
+// (#1670).
+// Owner: daemon session titles.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_answered_session_is_titled_for_its_clients() {
+    let sandbox = Sandbox::new();
+    let (_daemon, client) = sandbox.start_titling_daemon("fixed").await;
+    let session = sandbox.new_session(&client).await;
+    let (mut watcher, before) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
+    watcher
+        .read_until(|event| matches!(event, SessionEvent::TitleChanged { .. }))
+        .await;
+    let (_, after) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+
+    let listed = sandbox
+        .rho("fixed")
+        .args(["sessions", "list", "--json"])
+        .stdout(Stdio::piped())
+        .output()
+        .unwrap();
+    let listing: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let saved = listing["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|listed| listed["id"] == session.to_string())
+        .map(|listed| listed["title"].clone());
+    let title = "Fixture session title";
+    assert_eq!(
+        (
+            before.title,
+            watcher.events.last().map(|(_, event)| event.clone()),
+            after.title,
+            saved,
+        ),
+        (
+            None,
+            Some(SessionEvent::TitleChanged {
+                title: title.into()
+            }),
+            Some(title.into()),
+            Some(serde_json::Value::from(title)),
+        ),
+        "log:\n{}",
+        sandbox.daemon_log()
+    );
 }
 
 /// How a test ends a turn the fixture holds open.
@@ -960,8 +1139,9 @@ fn is_state(state: JobState) -> impl Fn(&SessionEvent) -> bool {
     move |event| matches!(event, SessionEvent::State { state: got, .. } if *got == state)
 }
 
-/// What a conversation shows: its events without job states and context
-/// usage, which describe the session as it was when they were sent.
+/// What a conversation shows: its events without job states, context
+/// usage, and titles, which describe the session as it was when they were
+/// sent.
 fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
     events
         .iter()
@@ -969,7 +1149,9 @@ fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
         .filter(|event| {
             !matches!(
                 event,
-                SessionEvent::State { .. } | SessionEvent::Usage { .. }
+                SessionEvent::State { .. }
+                    | SessionEvent::Usage { .. }
+                    | SessionEvent::TitleChanged { .. }
             )
         })
         .collect()

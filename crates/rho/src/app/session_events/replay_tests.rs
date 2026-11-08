@@ -2,8 +2,8 @@ use std::path::Path;
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    ContentBlock, MessageId, PlanEntry, PlanStatus, SessionEvent as WireEvent, ToolCallId,
-    ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
+    CardTone, ContentBlock, MessageId, PlanEntry, PlanStatus, SessionEvent as WireEvent,
+    ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
 };
 use rho_sdk::{
     model::{self, AbortedAssistant, AssistantMessage, Message, ToolResult},
@@ -128,6 +128,8 @@ fn a_saved_conversation_replays_messages_calls_and_cards() {
             WireEvent::Card {
                 title: "Background done".into(),
                 markdown: "all good".into(),
+                plain: "all good".into(),
+                tone: CardTone::Neutral,
             },
             saved_agent(saved_id(4, 0), "Found a.rs."),
         ]
@@ -145,6 +147,7 @@ fn live_and_replayed_turns_agree() {
     let mut live = LiveEvents::new(
         Path::new("/work"),
         SessionTools::of_tool_set_for_tests(&tool_set),
+        /*configured_window*/ None,
     );
     live.prompt(&UserInput::text("list files"));
     let step = || {
@@ -302,7 +305,7 @@ fn replay_closes_incomplete_calls_and_opens_orphan_results() {
     ] {
         assert_eq!(
             replay_messages(&[Message::ToolResult(result)]),
-            vec![WireEvent::ToolCall(ToolCallUpdate {
+            vec![WireEvent::tool_call(ToolCallUpdate {
                 id: ToolCallId::new("orphan"),
                 title: Some("tool".into()),
                 kind: Some(ToolKind::Other),
@@ -338,7 +341,7 @@ fn replay_gives_reused_provider_ids_their_own_calls() {
             updated(
                 "reused#2",
                 ToolStatus::Failed,
-                vec![text("second output"), image_content()],
+                vec![text("second output"), image_content()]
             ),
             opened("reused#3", "ls"),
             closed("reused#3"),
@@ -416,9 +419,7 @@ fn replayed_calls_take_their_kind_from_the_session_tools() {
     let kinds: Vec<_> = replay_with(&tool_set, &messages)
         .into_iter()
         .filter_map(|event| match event {
-            WireEvent::ToolCall(ToolCallUpdate {
-                kind: Some(kind), ..
-            }) => Some(kind),
+            WireEvent::ToolCall(update) => update.kind,
             _ => None,
         })
         .collect();
@@ -468,7 +469,7 @@ fn a_replay_with_no_new_rows_reports_nothing_saved() {
     let tool_set = AppToolSet::disabled();
     let tools = || SessionTools::of_tool_set_for_tests(&tool_set);
     let rows = saved_rows(&[Message::Assistant(vec![call_block("call")])]);
-    let mut live = LiveEvents::new(Path::new("/work"), tools());
+    let mut live = LiveEvents::new(Path::new("/work"), tools(), /*configured_window*/ None);
     assert!(live.replay(&rows, Path::new("/work"), tools()).is_some());
     assert_eq!(live.replay(&rows, Path::new("/work"), tools()), None);
 }
@@ -486,7 +487,7 @@ fn live_calls_continue_the_numbering_of_the_saved_transcript() {
         Message::Assistant(vec![call_block("reused")]),
         Message::ToolResult(ToolResult::succeeded("reused", "a.rs")),
     ];
-    let mut live = LiveEvents::new(Path::new("/work"), tools());
+    let mut live = LiveEvents::new(Path::new("/work"), tools(), /*configured_window*/ None);
     live.replay(&saved_rows(&saved), Path::new("/work"), tools());
     live.prompt(&UserInput::text("again"));
     let call_id = rho_sdk::ToolCallId::from_string("reused").unwrap();

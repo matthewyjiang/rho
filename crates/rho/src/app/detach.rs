@@ -31,7 +31,7 @@ pub(super) async fn run(
 
     use rho_protocol::{
         methods::{SessionNew, SessionPrompt},
-        ClientEnvironment, ErrorCode, SessionNewParams, SessionPromptParams,
+        ClientEnvironment, ContentBlock, ErrorCode, SessionNewParams, SessionPromptParams,
     };
 
     use super::{
@@ -85,7 +85,7 @@ pub(super) async fn run(
     client
         .request::<SessionPrompt>(&SessionPromptParams {
             session: session.clone(),
-            text,
+            content: vec![ContentBlock::Text { text }],
             timeout_ms,
             environment,
         })

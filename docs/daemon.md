@@ -25,7 +25,7 @@ A session is a conversation: its saved transcript and, while the daemon has it l
 
 Clients open, prompt, cancel, steer, and follow sessions with the `rho/session/*` methods, and list jobs with `rho/job/list`; the [protocol reference](/protocol) describes every method, its errors, and the events a client following a session receives.
 
-A session opens with the configuration, agents, and instructions that `rho` launched in its workspace would use, read when the session is opened. It runs as the default agent with the configured permission mode. `text` reaches the model as written: slash commands are not expanded yet. The session's file is written with its first prompt, so `rho sessions` lists it from then on.
+A session opens with the configuration, agents, and instructions that `rho` launched in its workspace would use, read when the session is opened. It runs as the default agent with the configured permission mode. A prompt's `content` reaches the model as the [protocol reference](/protocol#content-blocks) describes. The session's file is written with its first prompt, so `rho sessions` lists it from then on. After its first answered turn, the daemon names the session as the TUI would, and attached clients get the title as a `title_changed` event; clients that attach later find it in the attach response.
 
 A session's job state is the state of its current or last turn:
 

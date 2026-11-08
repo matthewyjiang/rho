@@ -75,7 +75,7 @@ fn every_session_event_round_trips_through_its_wire_form() {
             json!({"type": "thought_chunk", "message": "m1", "text": "hm"}),
         ),
         (
-            SessionEvent::ToolCall(ToolCallUpdate {
+            SessionEvent::tool_call(ToolCallUpdate {
                 id: ToolCallId::new("t1"),
                 title: Some("Edit a.rs".into()),
                 kind: Some(ToolKind::SwitchMode),
@@ -114,7 +114,7 @@ fn every_session_event_round_trips_through_its_wire_form() {
             }),
         ),
         (
-            SessionEvent::ToolCall(ToolCallUpdate {
+            SessionEvent::tool_call(ToolCallUpdate {
                 id: ToolCallId::new("t1"),
                 title: None,
                 kind: None,
@@ -138,15 +138,81 @@ fn every_session_event_round_trips_through_its_wire_form() {
             SessionEvent::Usage {
                 used_tokens: 10,
                 window_tokens: Some(200),
+                cost_usd_micros: Some(1_250_000),
             },
-            json!({"type": "usage", "used_tokens": 10, "window_tokens": 200}),
+            json!({
+                "type": "usage",
+                "used_tokens": 10,
+                "window_tokens": 200,
+                "cost_usd_micros": 1_250_000,
+            }),
+        ),
+        (
+            SessionEvent::Usage {
+                used_tokens: 10,
+                window_tokens: None,
+                cost_usd_micros: None,
+            },
+            json!({"type": "usage", "used_tokens": 10}),
+        ),
+        (
+            SessionEvent::TitleChanged {
+                title: "Fix the parser".into(),
+            },
+            json!({"type": "title_changed", "title": "Fix the parser"}),
+        ),
+        (
+            SessionEvent::Compaction {
+                id: CompactionId::new("c1"),
+                status: CompactionStatus::Started,
+            },
+            json!({"type": "compaction", "id": "c1", "status": {"type": "started"}}),
+        ),
+        (
+            SessionEvent::Compaction {
+                id: CompactionId::new("c1"),
+                status: CompactionStatus::Completed,
+            },
+            json!({"type": "compaction", "id": "c1", "status": {"type": "completed"}}),
+        ),
+        (
+            SessionEvent::Compaction {
+                id: CompactionId::new("c1"),
+                status: CompactionStatus::Cancelled,
+            },
+            json!({"type": "compaction", "id": "c1", "status": {"type": "cancelled"}}),
+        ),
+        (
+            SessionEvent::Compaction {
+                id: CompactionId::new("c1"),
+                status: CompactionStatus::Failed {
+                    error: "provider down".into(),
+                },
+            },
+            json!({
+                "type": "compaction",
+                "id": "c1",
+                "status": {"type": "failed", "error": "provider down"},
+            }),
+        ),
+        (
+            SessionEvent::ResponseDiscarded,
+            json!({"type": "response_discarded"}),
         ),
         (
             SessionEvent::Card {
                 title: "Job done".into(),
                 markdown: "**ok**".into(),
+                plain: "ok".into(),
+                tone: CardTone::Error,
             },
-            json!({"type": "card", "title": "Job done", "markdown": "**ok**"}),
+            json!({
+                "type": "card",
+                "title": "Job done",
+                "markdown": "**ok**",
+                "plain": "ok",
+                "tone": "error",
+            }),
         ),
         (
             SessionEvent::Notice {
@@ -179,7 +245,7 @@ fn unknown_event_values_read_as_unknown() {
                 "status": "paused",
                 "content": [{"type": "terminal", "id": "x"}],
             }),
-            SessionEvent::ToolCall(ToolCallUpdate {
+            SessionEvent::tool_call(ToolCallUpdate {
                 id: ToolCallId::new("t1"),
                 title: None,
                 kind: Some(ToolKind::Unknown),

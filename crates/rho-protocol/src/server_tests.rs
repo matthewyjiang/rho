@@ -320,7 +320,7 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
                     SESSION_PROMPT,
                     serde_json::json!({
                         "session": "s",
-                        "text": "hi",
+                        "content": [{"type": "text", "text": "hi"}],
                         "environment": {},
                         "later_field": 1,
                     }),
@@ -475,6 +475,7 @@ impl Service for AttachService {
             replay_events: 0,
             state: JobState::Idle,
             inputs: Vec::new(),
+            title: None,
         };
         Ok((response, subscription))
     }

@@ -10,7 +10,7 @@ use std::{collections::BTreeMap, fmt, path::PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{Cursor, InputRequest, JobState, Seq, SessionEvent, StreamId};
+use super::{ContentBlock, Cursor, InputRequest, JobState, Seq, SessionEvent, StreamId};
 
 /// Open a new session in a workspace, before its first prompt.
 pub const SESSION_NEW: &str = "rho/session/new";
@@ -130,10 +130,16 @@ pub struct SessionNewResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionPromptParams {
     pub session: SessionId,
-    /// The user message. A leading slash command the session runs, such as
+    /// The user message: at least one block, or the prompt is refused as
+    /// [`crate::ErrorCode::InvalidParams`], as is one with an image whose
+    /// data is not a base64 PNG, JPEG, GIF, or WebP of the declared type
+    /// within the daemon's image limit. Text and images reach the model as
+    /// written. A resource reaches it as its text, and a resource link as
+    /// its description, else its name, each fenced under its URI (#1670). A
+    /// slash command the message starts with that the session runs, such as
     /// `/init`, a prompt template, or an MCP prompt, is expanded first, as
-    /// `rho run` expands it; other text reaches the model as written.
-    pub text: String,
+    /// `rho run` expands it.
+    pub content: Vec<ContentBlock>,
     /// How long the turn may run, in milliseconds from when the daemon
     /// takes the prompt. A turn still running then is cancelled and ends
     /// [`crate::TurnOutcome::TimedOut`]. `None` sets no limit.
@@ -226,6 +232,11 @@ pub struct SessionAttachResponse {
     /// events that opened them (#1660). The replay may repeat some; an
     /// input request's id names it.
     pub inputs: Vec<InputRequest>,
+    /// The session's title when the attachment began; absent until it has
+    /// one. Saved transcripts hold no [`super::SessionEvent::TitleChanged`],
+    /// so a reset may not replay the one that set it (#1670).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 /// What the events after a [`SessionAttachResponse`] start with.
@@ -289,3 +300,7 @@ pub enum DetachReason {
     #[schemars(extend("x-rho-other" = true))]
     Unknown,
 }
+
+#[cfg(test)]
+#[path = "session_tests.rs"]
+mod tests;

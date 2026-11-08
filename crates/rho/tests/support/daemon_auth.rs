@@ -11,8 +11,8 @@ use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{AuthKey, AuthLogout, JobList, SessionNew, SessionPrompt},
     AuthKeyParams, AuthKeyResponse, AuthLogoutParams, AuthLogoutResponse, Client, ClientError,
-    ClientInfo, EnvironmentOverride, ErrorCode, JobListParams, JobState, RpcError, SessionId,
-    SessionNewParams, SessionPromptParams, TurnError, TurnErrorKind, TurnOutcome,
+    ClientInfo, ContentBlock, EnvironmentOverride, ErrorCode, JobListParams, JobState, RpcError,
+    SessionId, SessionNewParams, SessionPromptParams, TurnError, TurnErrorKind, TurnOutcome,
 };
 use rho_providers::credentials::{CredentialStore, FileCredentialStore};
 use serde_json::Value;
@@ -128,7 +128,9 @@ provider = "disabled"
         client
             .request::<SessionPrompt>(&SessionPromptParams {
                 session: session.clone(),
-                text: "hello".into(),
+                content: vec![ContentBlock::Text {
+                    text: "hello".into(),
+                }],
                 timeout_ms: None,
                 environment: self.sandbox.client_environment(),
             })

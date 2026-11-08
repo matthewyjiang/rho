@@ -5,6 +5,7 @@ use std::{
 };
 
 use pretty_assertions::assert_eq;
+use rho_sdk::UserInput;
 use tempfile::TempDir;
 use tokio::sync::{mpsc, oneshot};
 
@@ -337,7 +338,7 @@ async fn a_cancel_before_the_prompt_begins_saves_nothing() {
         cancel,
         limit: None,
     }
-    .spawn("hello".into());
+    .spawn(UserInput::text("hello"));
     let start = tokio::time::timeout(TEST_BUDGET, start)
         .await
         .expect("the cancelled turn answers")
@@ -437,7 +438,7 @@ async fn the_daemon_times_a_turn_out_at_its_limit() {
             cancel: session.turn().cancel.clone(),
             limit: Some(TurnLimit::starting_now(case.timeout_ms)),
         }
-        .spawn("hello".into());
+        .spawn(UserInput::text("hello"));
         if case.cancelled_first {
             session.cancel_turn();
         }

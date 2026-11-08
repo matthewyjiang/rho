@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock as AcpContentBlock, EmbeddedResource, EmbeddedResourceResource, ImageContent,
-    ResourceLink, SessionConfigKind, SessionConfigOption, TextResourceContents,
+    AudioContent, BlobResourceContents, ContentBlock as AcpContentBlock, EmbeddedResource,
+    EmbeddedResourceResource, SessionConfigKind, SessionConfigOption,
 };
 use pretty_assertions::assert_eq;
-use rho_sdk::model::{ContentBlock, ImageContent as SdkImage};
+use rho_sdk::model::ContentBlock;
 
 use super::{
     advertised_config_options,
@@ -51,66 +51,43 @@ fn load_workspace_prefers_request_cwd_then_process_cwd() {
     assert_eq!(workspace_cwd(requested, process), requested);
 }
 
-// Covers: prompt blocks must reach the model as typed text/image or fenced context
+// Covers: ACP blocks the daemon wire has no kind for reach the model as
+// fenced text: audio under its mime type, and a binary resource under its
+// URI and mime type, if any. Shared blocks convert in `prompt_content`.
 // Owner: acp session host
 #[test]
-fn prompt_content_maps_text_image_and_embedded_context() {
-    let prompt = vec![
-        AcpContentBlock::from("hello"),
-        AcpContentBlock::Image(ImageContent::new("abc", "image/png")),
-        AcpContentBlock::Resource(EmbeddedResource::new(
-            EmbeddedResourceResource::TextResourceContents(TextResourceContents::new(
-                "fn main() {}",
-                "file:///workspace/main.rs",
-            )),
-        )),
-        AcpContentBlock::ResourceLink(ResourceLink::new("notes", "file:///workspace/notes.md")),
-    ];
-
-    let input = user_input_from_prompt(&prompt).unwrap();
-    assert_eq!(
-        input.blocks(),
-        [
-            ContentBlock::Text("hello".into()),
-            ContentBlock::Image(SdkImage {
-                data: "abc".into(),
-                mime_type: "image/png".into(),
-            }),
-            ContentBlock::Text("```resource file:///workspace/main.rs\nfn main() {}\n```".into()),
-            ContentBlock::Text("```resource file:///workspace/notes.md\nnotes\n```".into()),
-        ]
-    );
-    assert!(
-        user_input_from_prompt(&[]).is_err(),
-        "an empty prompt must not start a run"
-    );
-}
-
-// Covers: a resource body or URI that contains its own fence must not close
-// the generated fence early
-// Owner: acp session host
-#[test]
-fn fenced_context_outgrows_backticks_in_the_body_and_header() {
-    for (block, expected) in [
+fn acp_only_prompt_blocks_reach_the_model_as_fenced_text() {
+    let blob = || BlobResourceContents::new("AAEC", "file:///workspace/a.bin");
+    let cases = [
         (
+            "audio",
+            AcpContentBlock::Audio(AudioContent::new("UklG", "audio/wav")),
+            "```audio audio/wav\nUklG\n```",
+        ),
+        (
+            "a binary resource",
             AcpContentBlock::Resource(EmbeddedResource::new(
-                EmbeddedResourceResource::TextResourceContents(TextResourceContents::new(
-                    "```rust\nfn main() {}\n```",
-                    "file:///workspace/readme.md",
-                )),
+                EmbeddedResourceResource::BlobResourceContents(
+                    blob().mime_type("application/octet-stream"),
+                ),
             )),
-            "````resource file:///workspace/readme.md\n```rust\nfn main() {}\n```\n````",
+            "```resource file:///workspace/a.bin application/octet-stream\nAAEC\n```",
         ),
         (
-            AcpContentBlock::ResourceLink(ResourceLink::new(
-                "notes",
-                "file:///workspace/notes.md\n```\ninjected",
+            "a binary resource without a mime type",
+            AcpContentBlock::Resource(EmbeddedResource::new(
+                EmbeddedResourceResource::BlobResourceContents(blob()),
             )),
-            "````resource file:///workspace/notes.md\n```\ninjected\nnotes\n````",
+            "```resource file:///workspace/a.bin\nAAEC\n```",
         ),
-    ] {
+    ];
+    for (name, block, expected) in cases {
         let input = user_input_from_prompt(&[block]).unwrap();
-        assert_eq!(input.blocks(), [ContentBlock::Text(expected.into())]);
+        assert_eq!(
+            input.blocks(),
+            [ContentBlock::Text(expected.into())],
+            "{name}"
+        );
     }
 }
 

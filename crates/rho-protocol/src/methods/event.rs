@@ -51,6 +51,12 @@ string_id! {
 }
 
 string_id! {
+    /// Identifies one context compaction; every [`SessionEvent::Compaction`]
+    /// with the same id reports on it.
+    CompactionId
+}
+
+string_id! {
     /// One loaded session's event stream. A new daemon, or a reload, starts
     /// a new stream.
     StreamId
@@ -90,19 +96,47 @@ pub enum SessionEvent {
     AgentMessageChunk { message: MessageId, text: String },
     /// More of the agent's reasoning.
     ThoughtChunk { message: MessageId, text: String },
-    /// Opens or updates a tool call; absent fields are unchanged.
-    ToolCall(ToolCallUpdate),
+    /// Opens or updates a tool call; absent fields are unchanged. Boxed:
+    /// it is the largest event by far.
+    ToolCall(Box<ToolCallUpdate>),
     /// The agent's plan, replacing any earlier one.
     Plan { entries: Vec<PlanEntry> },
-    /// How full the model's context is.
+    /// How full the model's context is, and what the session has cost.
     Usage {
         used_tokens: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         window_tokens: Option<u64>,
+        /// The session's whole spend so far in millionths of a US dollar,
+        /// so it stays exact, turns before a daemon restart included.
+        /// Absent while no request has a price, as when every request ran
+        /// on a local model (#1670).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_usd_micros: Option<u64>,
     },
+    /// The session has a new title, as when the daemon named it after its
+    /// first turn (#1670).
+    TitleChanged { title: String },
+    /// A context compaction began or ended. Each one starts
+    /// [`CompactionStatus::Started`] and ends with exactly one other
+    /// status, under the same `id` (#1670).
+    Compaction {
+        id: CompactionId,
+        status: CompactionStatus,
+    },
+    /// The provider discarded the response it was streaming, and the run
+    /// asks for it again. What was sent of it cannot be taken back; the
+    /// retried response starts new messages (#1670).
+    ResponseDiscarded,
     /// A titled card the session shows outside the conversation, such as a
     /// background result.
-    Card { title: String, markdown: String },
+    Card {
+        title: String,
+        /// The body, for clients that render markdown.
+        markdown: String,
+        /// The same body as plain text, for clients that show text as is.
+        plain: String,
+        tone: CardTone,
+    },
     /// Something to tell the user that is not part of the conversation.
     Notice { text: String },
     /// The turn waits for a person to answer `request` with
@@ -124,6 +158,13 @@ pub enum SessionEvent {
     #[serde(other)]
     #[schemars(extend("x-rho-other" = true))]
     Unknown,
+}
+
+impl SessionEvent {
+    /// A [`Self::ToolCall`] carrying `update`.
+    pub fn tool_call(update: ToolCallUpdate) -> Self {
+        Self::ToolCall(Box::new(update))
+    }
 }
 
 /// Opens a tool call, or updates the one with the same `id`. Absent fields
@@ -213,7 +254,7 @@ pub enum ToolContent {
     Unknown,
 }
 
-/// One piece of a user message.
+/// One piece of a prompt or a user message.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -226,6 +267,56 @@ pub enum ContentBlock {
         /// Base64.
         data: String,
     },
+    /// A text resource embedded whole, such as a file the user attached.
+    Resource {
+        uri: String,
+        text: String,
+    },
+    /// A resource the user points at without its contents.
+    ResourceLink {
+        uri: String,
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
+    /// A block a newer peer sends that this crate does not know; nothing
+    /// sends it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+/// Where a compaction is. Every status but `started` ends it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CompactionStatus {
+    Started,
+    Completed,
+    /// The turn was cancelled before the compaction finished.
+    Cancelled,
+    /// It failed, or the run ended before it reported a result.
+    Failed {
+        error: String,
+    },
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+/// How a [`SessionEvent::Card`] reads, so a client can color it or show a
+/// card that reports an error as failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CardTone {
+    Neutral,
+    Accent,
+    Success,
+    Warning,
+    Error,
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]

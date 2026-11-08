@@ -6,7 +6,9 @@ use std::{
     io::{self, Write},
 };
 
-use rho_protocol::{ContentBlock, SessionEvent, ToolCallId, ToolCallUpdate, ToolStatus};
+use rho_protocol::{
+    CompactionStatus, ContentBlock, SessionEvent, ToolCallId, ToolCallUpdate, ToolStatus,
+};
 
 use crate::control_chars::{escape_controls, LineBreaks};
 
@@ -45,6 +47,7 @@ impl<O: Write, E: Write> TextView<O, E> {
                     .map(|block| match block {
                         ContentBlock::Text { text } => text.as_str(),
                         ContentBlock::Image { .. } => "[image]",
+                        // A saved user message holds only text and images;
                         // `ContentBlock` is non-exhaustive.
                         _ => "[content]",
                     })
@@ -54,16 +57,22 @@ impl<O: Write, E: Write> TextView<O, E> {
             }
             SessionEvent::AgentMessageChunk { text, .. } => self.write(text)?,
             SessionEvent::ToolCall(update) => self.tool_call(update)?,
-            SessionEvent::Card { title, markdown } => {
-                self.block(&format!("{title}\n{}\n", markdown.trim_end_matches('\n')))?;
+            // A terminal shows text as is, so the card's plain form.
+            SessionEvent::Card { title, plain, .. } => {
+                self.block(&format!("{title}\n{}\n", plain.trim_end_matches('\n')))?;
             }
+            SessionEvent::Compaction { status, .. } => self.compaction(status)?,
             SessionEvent::Notice { text } => {
                 writeln!(self.err, "rho: {}", escape_controls(text, LineBreaks::Keep))?
+            }
+            SessionEvent::ResponseDiscarded => {
+                writeln!(self.err, "rho: provider response discarded; retrying")?
             }
             SessionEvent::TurnEnded { .. } => self.end_line()?,
             SessionEvent::ThoughtChunk { .. }
             | SessionEvent::Plan { .. }
             | SessionEvent::Usage { .. }
+            | SessionEvent::TitleChanged { .. }
             | SessionEvent::State { .. }
             | SessionEvent::InputRequested { .. }
             | SessionEvent::InputResolved { .. }
@@ -104,6 +113,18 @@ impl<O: Write, E: Write> TextView<O, E> {
             return Ok(());
         }
         self.block(&lines)
+    }
+
+    /// Shows a compaction once it starts, and again if it fails; a cancel
+    /// shows as the turn's end.
+    fn compaction(&mut self, status: &CompactionStatus) -> io::Result<()> {
+        match status {
+            CompactionStatus::Started => self.block("• compact context\n"),
+            CompactionStatus::Failed { .. } => self.block("• compact context failed\n"),
+            CompactionStatus::Completed | CompactionStatus::Cancelled => Ok(()),
+            // `CompactionStatus` is non-exhaustive.
+            _ => Ok(()),
+        }
     }
 
     /// Writes `text` on lines of its own.

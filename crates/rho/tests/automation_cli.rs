@@ -296,8 +296,9 @@ fn jsonl_streams_the_sessions_events_between_start_and_end() {
     );
 }
 
-// Covers: a provider retry shows as a notice, and the turn's answer holds
-// only the retried response's text; the provider's error stays out.
+// Covers: a provider retry shows as a discarded response, and the turn's
+// answer holds only the retried response's text; the provider's error stays
+// out.
 // Owner: rho run JSONL contract (process contract)
 #[test]
 fn jsonl_tracks_provider_retries_without_exposing_diagnostics() {
@@ -311,8 +312,9 @@ fn jsonl_tracks_provider_retries_without_exposing_diagnostics() {
     assert_success(&output);
     let lines = jsonl_events(&output);
     let events = session_events(&lines);
-    assert!(events.iter().any(|event| event["type"] == "notice"
-        && event["text"] == "provider response discarded; retrying"));
+    assert!(events
+        .iter()
+        .any(|event| event["type"] == "response_discarded"));
     assert_eq!(
         events.last().unwrap()["outcome"]["text"],
         "recovered",

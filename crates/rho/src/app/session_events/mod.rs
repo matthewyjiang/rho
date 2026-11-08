@@ -6,7 +6,9 @@
 //! a reset receives first. Both open a tool call with the same card (title,
 //! kind, raw input, locations) and close calls left unfinished as `failed`,
 //! so a conversation reads the same whether a client watched it live or
-//! received it replayed, apart from how its text was chunked.
+//! received it replayed, apart from how its text was chunked. Only live
+//! turns report usage, compactions, and discarded responses; saved rows
+//! hold none, and the daemon tells titles itself.
 //!
 //! [`outcome`] says how a turn ended, for the daemon's clients and
 //! `rho run` alike.
@@ -17,7 +19,7 @@
 use std::{collections::HashMap, path::Path};
 
 use rho_protocol::{
-    ContentBlock, Location, PlanEntry, PlanStatus, SessionEvent as WireEvent, ToolCallId,
+    CardTone, ContentBlock, Location, PlanEntry, PlanStatus, SessionEvent as WireEvent, ToolCallId,
     ToolCallUpdate, ToolContent, ToolStatus,
 };
 use rho_sdk::{model, tool::ToolMetadata};
@@ -26,7 +28,8 @@ use serde_json::Value;
 
 use crate::{
     app::interactive_presenter::call_header,
-    display_transcript::DisplayTranscript,
+    display_transcript::{DisplayRow, DisplayTranscript},
+    presentation::NotificationTone,
     tools::{
         mcp::exported_name::McpToolNames,
         todo::{TodoState, TodoStatus},
@@ -217,8 +220,24 @@ fn cards(transcript: &DisplayTranscript) -> impl Iterator<Item = WireEvent> + '_
         WireEvent::Card {
             title: text.title.to_owned(),
             markdown: text.markdown,
+            plain: text.plain,
+            tone: card_tone(row),
         }
     })
+}
+
+/// How a row's card reads: a notification card's tone; a notice is neutral.
+fn card_tone(row: &DisplayRow) -> CardTone {
+    match row {
+        DisplayRow::Notification(card) => match card.tone {
+            NotificationTone::Neutral => CardTone::Neutral,
+            NotificationTone::Accent => CardTone::Accent,
+            NotificationTone::Success => CardTone::Success,
+            NotificationTone::Warning => CardTone::Warning,
+            NotificationTone::Error => CardTone::Error,
+        },
+        DisplayRow::Notice(_) => CardTone::Neutral,
+    }
 }
 
 /// The session's todo checklist as a plan; empty while there is none.

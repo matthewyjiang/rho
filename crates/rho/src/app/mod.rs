@@ -40,6 +40,7 @@ mod parent_bridge;
 mod parent_steering;
 mod plugins_cli;
 mod policy;
+mod prompt_content;
 mod provider_controller;
 mod runtime_builder;
 pub(crate) mod sdk_config;
