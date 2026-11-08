@@ -21,7 +21,7 @@ use std::{sync::Arc, time::Duration};
 use rho_sdk::SessionId;
 use tokio::time::Instant;
 
-use super::{Hold, LoadedSession, Sessions};
+use super::{LoadedSession, Sessions};
 use crate::app::daemon_host::jobs::SessionJob;
 
 /// How long a session sits idle before the daemon unloads it, unless
@@ -99,7 +99,7 @@ impl Sessions {
         let idle_since = {
             let mut turn = session.turn();
             let busy = matches!(self.jobs.session_job(id), SessionJob::Busy(_))
-                || turn.hold != Hold::Free
+                || turn.hold.is_some()
                 || session.feed.followed()
                 || session.runtime_keeps_loaded();
             let now = Instant::now();
@@ -116,18 +116,11 @@ impl Sessions {
                 Residency::IdleSince(since) if now.duration_since(since) < grace => return,
                 Residency::IdleSince(since) => since,
             };
-            // Under the lock `begin_stop` takes, so a session the stop did
-            // not drain is torn down before the stop's wait on `unloading`.
-            // Lock order: the turn lock, then `loaded`.
-            let mut loaded = self.loaded();
-            let current = loaded
-                .get(id)
-                .is_some_and(|loaded| Arc::ptr_eq(loaded, session));
-            if self.stopping.is_cancelled() || !current {
+            // A session the stop did not drain is torn down before the
+            // stop's wait on `unloading`.
+            if !self.evict(id, session, &mut turn) {
                 return;
             }
-            loaded.remove(id);
-            turn.residency = Residency::Unloaded;
             idle_since
         };
         // Free: no turn runs, and none starts on an unloaded session.

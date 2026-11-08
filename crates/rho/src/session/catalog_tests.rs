@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use pretty_assertions::assert_eq;
 use rho_sdk::model::Message;
 
-use super::{page, Cursor, UnknownCursor, DEFAULT_PAGE_SIZE};
-use crate::session::{Session as StoredSession, SessionListing, SessionSummary};
+use super::{list_in_root, page, Cursor, DEFAULT_PAGE_SIZE};
+use crate::session::{layout::session_dir_in_root, Session as StoredSession, SessionSummary};
 
 fn summary(id: &str, cwd: &Path, updated_at: u64, message_count: u64) -> SessionSummary {
     SessionSummary {
@@ -22,13 +22,22 @@ fn summary(id: &str, cwd: &Path, updated_at: u64, message_count: u64) -> Session
     }
 }
 
+/// A session saved in `cwd` under `root` with one user message, so it is
+/// listed; its id.
+fn saved_session(root: &Path, cwd: &Path) -> String {
+    let saved = StoredSession::create_in_root(root, cwd).unwrap();
+    saved
+        .append_message(&Message::user_text("list me"))
+        .unwrap();
+    saved.id().to_owned()
+}
+
 // Covers: a client that follows next_cursor, as Zed's thread import does
 // through ACP's session/list, or any daemon client through
-// rho/session/list, must see every
-// resumable session exactly once, newest first, even when a page boundary
-// splits sessions saved in the same second, or one id saved in two
-// workspaces; empty sessions and sessions in deleted workspaces must not be
-// offered.
+// rho/session/list, must see every resumable session exactly once, newest
+// first, even when a page boundary splits sessions saved in the same
+// second, or one id saved in two workspaces; empty sessions and sessions in
+// deleted workspaces must not be offered.
 // Owner: session catalog paging
 #[test]
 fn following_cursors_lists_each_resumable_session_once() {
@@ -83,11 +92,7 @@ fn following_cursors_lists_each_resumable_session_once() {
 #[test]
 fn a_foreign_cursor_is_unknown() {
     for cursor in ["", "page-2", "later/0001", "[1, \"0001\"]"] {
-        assert_eq!(
-            Cursor::parse(cursor),
-            Err(UnknownCursor(cursor.to_owned())),
-            "{cursor}"
-        );
+        assert_eq!(Cursor::parse(cursor), None, "{cursor}");
     }
 }
 
@@ -99,18 +104,12 @@ fn listed_store_sessions_open_by_their_listed_id() {
     let root = tempfile::tempdir().unwrap();
     let workspace = tempfile::tempdir().unwrap();
     let cwd = workspace.path().canonicalize().unwrap();
-    let saved = StoredSession::create_in_root(root.path(), &cwd).unwrap();
-    saved
-        .append_message(&Message::user_text("list me"))
-        .unwrap();
-    let saved_id = saved.id().to_owned();
-    drop(saved);
+    let saved_id = saved_session(root.path(), &cwd);
     drop(StoredSession::create_in_root(root.path(), &cwd).unwrap());
 
-    let store =
-        StoredSession::list_in_root_for_test(root.path(), &cwd, SessionListing::PersonFacing)
-            .unwrap();
-    let listed = page(store, None, DEFAULT_PAGE_SIZE).sessions;
+    let listed = list_in_root(root.path(), Some(&cwd), None, DEFAULT_PAGE_SIZE)
+        .unwrap()
+        .sessions;
 
     assert_eq!(
         listed
@@ -128,5 +127,41 @@ fn listed_store_sessions_open_by_their_listed_id() {
     assert_eq!(
         (opened.id(), histories.display),
         (saved_id.as_str(), vec![Message::user_text("list me")])
+    );
+}
+
+// Covers: a workspace named through a symlink lists the sessions saved in
+// the directory it resolves to, as `rho/session/new` canonicalizes the
+// workspace it saves under; a path that resolves nowhere lists none and
+// leaves no session directory behind.
+// Owner: session catalog against the session store
+#[cfg(unix)]
+#[test]
+fn a_workspace_lists_by_its_canonical_path() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let cwd = workspace.path().canonicalize().unwrap();
+    let saved_id = saved_session(root.path(), &cwd);
+    let links = tempfile::tempdir().unwrap();
+    let link = links.path().join("workspace-link");
+    std::os::unix::fs::symlink(&cwd, &link).unwrap();
+    let missing = links.path().join("missing");
+
+    let through_link = list_in_root(root.path(), Some(&link), None, DEFAULT_PAGE_SIZE)
+        .unwrap()
+        .sessions
+        .into_iter()
+        .map(|summary| (summary.id, summary.cwd))
+        .collect::<Vec<_>>();
+    let nowhere = list_in_root(root.path(), Some(&missing), None, DEFAULT_PAGE_SIZE).unwrap();
+
+    assert_eq!(
+        (
+            through_link,
+            nowhere.sessions,
+            nowhere.next_cursor,
+            session_dir_in_root(root.path(), &missing).exists()
+        ),
+        (vec![(saved_id, cwd)], Vec::new(), None, false)
     );
 }

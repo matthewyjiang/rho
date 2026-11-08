@@ -180,7 +180,7 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
                         // Resumes after the last event seen, or starts over
                         // when the daemon no longer buffers it, as it no
                         // longer does for a session it unloaded.
-                        DetachReason::Lagged | DetachReason::Unloaded => {
+                        DetachReason::Lagged => {
                             let response =
                                 attach_session(&client, &session, follow.cursor()).await?;
                             if response.replay == Replay::Reset {

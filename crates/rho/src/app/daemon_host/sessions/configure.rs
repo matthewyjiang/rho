@@ -13,8 +13,6 @@
 //! loads it. A change that applies is kept with the session's file, so a
 //! session the daemon unloads while idle reopens with it.
 
-use std::sync::Arc;
-
 use rho_protocol::{
     self as wire, ErrorCode, RpcError, SessionConfigureParams, SessionConfigureResponse,
 };
@@ -72,12 +70,10 @@ impl Sessions {
             if self.jobs.turn_in_progress(&session.job) {
                 return Err(busy(TURN_UNDER_WAY));
             }
-            match turn.hold {
-                Hold::Configuring => return Err(busy(CHANGE_APPLYING)),
-                Hold::Deleting => return Err(being_deleted()),
-                Hold::Free => turn.hold = Hold::Configuring,
-            }
-            Held(Arc::clone(&session))
+            Held::take(&session, &mut turn, Hold::Configuring).map_err(|hold| match hold {
+                Hold::Configuring => busy(CHANGE_APPLYING),
+                Hold::Deleting => being_deleted(),
+            })?
         };
         // With no turn under way and none starting, only a turn that just
         // recorded its end or the daemon's stop holds the runtime, each

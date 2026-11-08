@@ -9,7 +9,7 @@ use std::{num::NonZeroU32, path::PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{JobState, SessionId};
+use super::SessionId;
 
 /// List the sessions a person can resume, newest first, a page at a time.
 pub const SESSION_LIST: &str = "rho/session/list";
@@ -21,9 +21,10 @@ pub const SESSION_DELETE: &str = "rho/session/delete";
 /// Params of [`SESSION_LIST`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionListParams {
-    /// Only the sessions saved in this workspace, an absolute path; absent
-    /// lists every workspace's. A workspace that is not a directory lists
-    /// none.
+    /// Only the sessions saved in this workspace, an absolute path,
+    /// resolved through symlinks as [`super::SESSION_NEW`] resolves its
+    /// `cwd`; absent lists every workspace's. A path that does not resolve
+    /// to a directory lists none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<PathBuf>,
     /// The [`SessionListResponse::next_cursor`] of the page before; absent
@@ -37,8 +38,10 @@ pub struct SessionListParams {
     pub limit: Option<NonZeroU32>,
 }
 
-/// Result of [`SESSION_LIST`]. Following `next_cursor` lists each session
-/// once, even while sessions are saved or deleted between pages.
+/// Result of [`SESSION_LIST`]. Following `next_cursor` never lists a session
+/// twice, nor skips one when others are deleted between pages; a session
+/// saved during the walk moves ahead of the cursor and is missed, so list
+/// again from the first page for a fresh view.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionListResponse {
     pub sessions: Vec<SessionSummary>,
@@ -71,18 +74,16 @@ pub struct SessionSummary {
     pub last_user_message: Option<String>,
     /// Unix time, in seconds, of the session's last save.
     pub updated_at: u64,
-    /// The session's job state while the daemon has it loaded; absent for
-    /// a session it has not.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub state: Option<JobState>,
 }
 
 /// Params of [`SESSION_RENAME`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionRenameParams {
     pub session: SessionId,
-    /// The new title, surrounding whitespace trimmed; one with nothing else
-    /// is refused as [`crate::ErrorCode::InvalidParams`].
+    /// The new title, surrounding whitespace trimmed. One that is empty,
+    /// holds a control character such as a newline, or runs over the
+    /// daemon's 500 characters is refused as
+    /// [`crate::ErrorCode::InvalidParams`], naming why.
     pub title: String,
 }
 
@@ -103,10 +104,14 @@ pub struct SessionDeleteParams {
 /// unloaded it, detaching its clients as
 /// [`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].
 ///
-/// A session whose turn is under way, a settings change applying, or
-/// background work running, such as a subagent, is refused as
-/// [`crate::ErrorCode::SessionBusy`]; one another process has open, as
-/// [`crate::ErrorCode::SessionInUse`].
+/// A session whose turn is under way, a settings change applying,
+/// background work running, such as a subagent, or a run it started not yet
+/// finished is refused as [`crate::ErrorCode::SessionBusy`]; one another
+/// process has open, or one a session it started is open in, as
+/// [`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded
+/// session loaded. A session the daemon loaded but that has saved nothing
+/// yet is unloaded all the same. An id the daemon has not loaded and nothing
+/// is saved under is [`crate::ErrorCode::SessionNotFound`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionDeleteResponse {}
 

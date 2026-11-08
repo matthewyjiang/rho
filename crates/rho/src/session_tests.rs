@@ -928,17 +928,47 @@ fn list_all_includes_other_workspaces() {
     assert!(all.iter().any(|summary| summary.cwd == *cwd_b));
 }
 
-// Covers: empty titles must fail instead of clearing stored names
+// Covers: every rename refuses a title that would clear the stored name,
+// break the one line a list shows it on or drive a terminal, or run past
+// its budget, and keeps the stored title (#1667).
 // Owner: session persistence
 #[test]
-fn set_title_rejects_empty_titles() {
+fn set_title_refuses_titles_a_list_cannot_show() {
     let root = temp_session_root();
     let cwd = temp_cwd();
     let session = Session::create_in_root(&root, &cwd).unwrap();
     let id = session.id().to_string();
+    Session::set_title_in_root_for_test(&root, &cwd, &id, "kept").unwrap();
+    let too_long = "t".repeat(super::title::MAX_TITLE_CHARS + 1);
+    let cases = [
+        ("   ", TitleRejected::Empty),
+        (
+            "two\nlines",
+            TitleRejected::ControlCharacter { found: '\n' },
+        ),
+        (
+            "\u{1b}[31mred",
+            TitleRejected::ControlCharacter { found: '\u{1b}' },
+        ),
+        (
+            too_long.as_str(),
+            TitleRejected::TooLong {
+                chars: super::title::MAX_TITLE_CHARS + 1,
+            },
+        ),
+    ];
 
-    let error = Session::set_title_in_root_for_test(&root, &cwd, &id, "   ").unwrap_err();
-    assert!(error.to_string().contains("empty"), "{error}");
+    for (title, expected) in cases {
+        let refused = Session::set_title_in_root_for_test(&root, &cwd, &id, title)
+            .unwrap_err()
+            .downcast::<TitleRejected>()
+            .unwrap();
+        assert_eq!(
+            (refused, Session::title_in_root(&root, &cwd, &id).unwrap()),
+            (expected, Some("kept".to_owned())),
+            "{title:?}"
+        );
+    }
 }
 
 // Covers: rename by id prefix trims the title, follows the session's own

@@ -1,9 +1,10 @@
 //! The session catalog over the daemon's socket (`rho/session/list`,
 //! `rho/session/rename`, `rho/session/delete`), through the real binary: a
-//! list pages every workspace's sessions or one workspace's, a rename
+//! list holds every workspace's sessions or one workspace's, a rename
 //! reaches attached clients and the list, and a delete detaches a loaded
-//! session's clients and removes it, but never under a running turn
-//! (#1670, #1667).
+//! session's clients and removes it, removes one the daemon has not loaded,
+//! but never runs under a running turn (#1670, #1667). Paging itself is the
+//! session catalog's, covered in its unit tests.
 
 use std::{
     num::NonZeroU32,
@@ -15,10 +16,10 @@ use rho_protocol::{
     methods::{
         Method, SessionAttach, SessionCancel, SessionDelete, SessionList, SessionNew, SessionRename,
     },
-    Client, ClientError, DaemonNotification, DetachReason, ErrorCode, JobState, Notifications,
-    RpcError, SessionAttachParams, SessionCancelParams, SessionDeleteParams, SessionDetachedParams,
+    Client, ClientError, DaemonNotification, DetachReason, ErrorCode, Notifications, RpcError,
+    SessionAttachParams, SessionCancelParams, SessionDeleteParams, SessionDetachedParams,
     SessionEvent, SessionId, SessionListParams, SessionListResponse, SessionNewParams,
-    SessionRenameParams, SessionSummary,
+    SessionRenameParams, SessionRenameResponse, SessionSummary,
 };
 
 use super::sessions::{settled_job, Sandbox, DEADLINE};
@@ -68,9 +69,9 @@ async fn saved_session(sandbox: &Sandbox, client: &Client, cwd: PathBuf) -> Sess
 }
 
 /// What the list reports of a session the `fixed` fixture answered once,
-/// saved in `cwd`, with its job `state` when the daemon has it loaded. The
-/// save time is the daemon's to report; [`without_time`] clears it.
-fn prompted_once(session: &SessionId, cwd: &Path, state: Option<JobState>) -> SessionSummary {
+/// saved in `cwd`. The save time is the daemon's to report;
+/// [`without_time`] clears it.
+fn prompted_once(session: &SessionId, cwd: &Path) -> SessionSummary {
     SessionSummary {
         session: session.clone(),
         cwd: cwd.to_path_buf(),
@@ -79,7 +80,6 @@ fn prompted_once(session: &SessionId, cwd: &Path, state: Option<JobState>) -> Se
         first_user_message: Some("hello".into()),
         last_user_message: Some("hello".into()),
         updated_at: 0,
-        state,
     }
 }
 
@@ -130,78 +130,43 @@ async fn next_notification<T>(
 }
 
 // Covers: the list holds every workspace's saved sessions, or one
-// workspace's when it names one; following next_cursor with a limit walks
-// the same list page by page; a session the daemon has loaded carries its
-// job state and one it unloaded none; a page over the daemon's limit is
-// refused naming that limit (#1670, #1667).
+// workspace's when it names one; a `limit` cuts the page and its
+// `next_cursor` says more follow; a page over the daemon's limit is refused
+// naming that limit (#1670, #1667).
 // Owner: daemon session catalog.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_list_pages_every_workspace_or_one() {
+async fn the_list_holds_every_workspace_or_one() {
     let sandbox = Sandbox::new();
     let other = sandbox.workspace.with_file_name("other-workspace");
     std::fs::create_dir_all(&other).unwrap();
     let other = other.canonicalize().unwrap();
-    let (_daemon, client) = sandbox
-        .start_daemon_with("fixed", &["--unload-idle-after", "200ms"])
-        .await;
-    let unloaded = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
+    let (_daemon, client) = sandbox.start_daemon("fixed").await;
+    let first = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
     let elsewhere = saved_session(&sandbox, &client, other.clone()).await;
-    // Followed before its first prompt, while it has saved nothing and so
-    // cannot unload, so the daemon keeps it loaded while it unloads the
-    // others.
-    let kept = open_session(&sandbox, &client, sandbox.workspace.clone()).await;
-    let _follower = follow(&sandbox, &kept).await;
-    answer(&sandbox, &client, &kept).await;
-    for session in [&unloaded, &elsewhere] {
-        sandbox
-            .poll_until("the daemon to unload the idle session", async || {
-                sandbox
-                    .daemon_log()
-                    .lines()
-                    .any(|line| {
-                        line.contains("unloaded idle session") && line.contains(session.as_str())
-                    })
-                    .then_some(())
-            })
-            .await;
-    }
+    let last = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
 
     let all = list(&client, SessionListParams::default()).await;
     let mut listed = without_time(&all.sessions);
     listed.sort_by(|left, right| left.session.cmp(&right.session));
     let mut expected = vec![
-        prompted_once(&unloaded, &sandbox.workspace, None),
-        prompted_once(&elsewhere, &other, None),
-        prompted_once(&kept, &sandbox.workspace, Some(JobState::Completed)),
+        prompted_once(&first, &sandbox.workspace),
+        prompted_once(&elsewhere, &other),
+        prompted_once(&last, &sandbox.workspace),
     ];
     expected.sort_by(|left, right| left.session.cmp(&right.session));
-    assert_eq!((listed, all.next_cursor), (expected, None));
+    assert_eq!((listed, all.next_cursor.clone()), (expected, None));
 
-    let two = NonZeroU32::new(2);
-    let first = list(
+    let page = list(
         &client,
         SessionListParams {
-            limit: two,
-            ..SessionListParams::default()
-        },
-    )
-    .await;
-    let second = list(
-        &client,
-        SessionListParams {
-            cursor: first.next_cursor.clone(),
-            limit: two,
+            limit: NonZeroU32::new(2),
             ..SessionListParams::default()
         },
     )
     .await;
     assert_eq!(
-        (
-            [first.sessions, second.sessions].concat(),
-            first.next_cursor.is_some(),
-            second.next_cursor
-        ),
-        (all.sessions.clone(), true, None)
+        (page.sessions, page.next_cursor.is_some()),
+        (all.sessions[..2].to_vec(), true)
     );
 
     let one_workspace = list(
@@ -217,7 +182,7 @@ async fn the_list_pages_every_workspace_or_one() {
             without_time(&one_workspace.sessions),
             one_workspace.next_cursor
         ),
-        (vec![prompted_once(&elsewhere, &other, None)], None)
+        (vec![prompted_once(&elsewhere, &other)], None)
     );
 
     let too_many = call::<SessionList>(
@@ -238,8 +203,9 @@ async fn the_list_pages_every_workspace_or_one() {
 }
 
 // Covers: a rename saves the trimmed title, which an attached client
-// receives as `title_changed` and the list reports; a blank title is
-// refused (#1667).
+// receives as `title_changed` and the list reports; a blank title, one
+// with a control character, and one over the store's budget are refused,
+// naming why (#1667).
 // Owner: daemon session catalog.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_rename_reaches_attached_clients_and_the_list() {
@@ -247,24 +213,21 @@ async fn a_rename_reaches_attached_clients_and_the_list() {
     let (_daemon, client) = sandbox.start_daemon("fixed").await;
     let session = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
     let (_watcher, mut notifications) = follow(&sandbox, &session).await;
+    let rename = |title: String| {
+        let params = SessionRenameParams {
+            session: session.clone(),
+            title,
+        };
+        let client = &client;
+        async move { call::<SessionRename>(client, &params).await }
+    };
 
-    let blank = call::<SessionRename>(
-        &client,
-        &SessionRenameParams {
-            session: session.clone(),
-            title: " \n ".into(),
-        },
-    )
-    .await;
-    call::<SessionRename>(
-        &client,
-        &SessionRenameParams {
-            session: session.clone(),
-            title: "  Release notes \n".into(),
-        },
-    )
-    .await
-    .unwrap();
+    let refused = vec![
+        rename(" \n ".into()).await,
+        rename("Release\u{1b}[2J notes".into()).await,
+        rename("t".repeat(501)).await,
+    ];
+    rename("  Release notes \n".into()).await.unwrap();
 
     let told = next_notification(&mut notifications, |notification| match notification {
         DaemonNotification::SessionEvent(params) => match params.event {
@@ -275,17 +238,23 @@ async fn a_rename_reaches_attached_clients_and_the_list() {
     })
     .await;
     let listed = list(&client, SessionListParams::default()).await;
+    let invalid = |message: &str| -> Result<SessionRenameResponse, RpcError> {
+        Err(RpcError::new(ErrorCode::InvalidParams, message))
+    };
     assert_eq!(
-        (blank, told, without_time(&listed.sessions)),
+        (refused, told, without_time(&listed.sessions)),
         (
-            Err(RpcError::new(
-                ErrorCode::InvalidParams,
-                "a session's title must not be empty",
-            )),
+            vec![
+                invalid("title must not be empty"),
+                invalid("title must not contain control characters, but has '\\u{1b}'"),
+                invalid(
+                    "title is 501 characters, over the session title budget (MAX_TITLE_CHARS = 500)"
+                ),
+            ],
             (session.clone(), "Release notes".to_owned()),
             vec![SessionSummary {
                 title: Some("Release notes".into()),
-                ..prompted_once(&session, &sandbox.workspace, Some(JobState::Completed))
+                ..prompted_once(&session, &sandbox.workspace)
             }],
         )
     );
@@ -336,14 +305,57 @@ async fn a_delete_detaches_a_loaded_sessions_clients_and_removes_it() {
                 session: deleted.clone(),
                 reason: DetachReason::Deleted,
             },
-            vec![prompted_once(
-                &kept,
-                &sandbox.workspace,
-                Some(JobState::Completed)
-            )],
+            vec![prompted_once(&kept, &sandbox.workspace)],
             Err(RpcError::new(
                 ErrorCode::SessionNotFound,
                 format!("no session is saved under {deleted}"),
+            )),
+        )
+    );
+}
+
+// Covers: a session the daemon has not loaded, here one it unloaded while
+// idle, is deleted from its saved files and leaves the list; deleting it
+// again finds nothing saved (#1670, #1667).
+// Owner: daemon session catalog.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_delete_removes_a_session_the_daemon_has_not_loaded() {
+    let sandbox = Sandbox::new();
+    let (_daemon, client) = sandbox
+        .start_daemon_with("fixed", &["--unload-idle-after", "200ms"])
+        .await;
+    let session = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
+    sandbox
+        .poll_until("the daemon to unload the idle session", async || {
+            sandbox
+                .daemon_log()
+                .lines()
+                .any(|line| {
+                    line.contains("unloaded idle session") && line.contains(session.as_str())
+                })
+                .then_some(())
+        })
+        .await;
+    let delete = || {
+        let params = SessionDeleteParams {
+            session: session.clone(),
+        };
+        let client = &client;
+        async move { call::<SessionDelete>(client, &params).await }
+    };
+
+    let deleted = delete().await.map(|_| ());
+    let listed = list(&client, SessionListParams::default()).await;
+    let again = delete().await.map(|_| ());
+
+    assert_eq!(
+        (deleted, listed.sessions, again),
+        (
+            Ok(()),
+            Vec::new(),
+            Err(RpcError::new(
+                ErrorCode::SessionNotFound,
+                format!("no session is saved under {session}"),
             )),
         )
     );

@@ -88,8 +88,8 @@ error_codes! {
         /// The session already has a turn running or waiting for input, a
         /// settings change applying, or a delete under way, or another job
         /// of the daemon's writes it, so it cannot be reopened (#1661); a
-        /// delete also waits out background work the session started. Try
-        /// again once that ends.
+        /// delete also refuses while background work or a run the session
+        /// started is still going. Try again once that ends.
         SessionBusy = -32004,
         /// No model request is taking input.
         NotSteerable = -32005,
@@ -114,9 +114,9 @@ error_codes! {
         /// client answered it first, or the turn withdrew it, as when the
         /// turn was cancelled (#1660).
         InputNotOpen = -32011,
-        /// Another rho process, such as the TUI, has the session open, so
-        /// the daemon cannot reopen or delete it (#1661). Close it there
-        /// first.
+        /// Another rho process, such as the TUI, has the session open, or,
+        /// for a delete, a session it started, so the daemon cannot reopen
+        /// or delete it (#1661). Close it there first.
         SessionInUse = -32012,
         /// A variable in the daemon's environment holds the auth profile's
         /// credential, and it wins over a saved one, so saving or deleting

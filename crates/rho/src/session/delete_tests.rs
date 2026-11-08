@@ -2,8 +2,16 @@ use std::path::Path;
 
 use pretty_assertions::assert_eq;
 
-use super::{delete_target_in_roots, delete_targets_in_roots, ChildSessionNotDeleted};
-use crate::session::{DeleteOptions, Session, SessionOrigin, SessionProvenance, SessionTarget};
+use super::{
+    check_target_in_roots, delete_target_in_roots, delete_targets_in_roots,
+    write_linked_run_for_tests, ChildSessionNotDeleted, RunNotFinished,
+};
+use crate::{
+    session::{
+        DeleteOptions, Session, SessionInUse, SessionOrigin, SessionProvenance, SessionTarget,
+    },
+    subagent::RunState,
+};
 
 fn create_session(root: &Path, cwd: &Path, id: &str) -> Session {
     Session::create_with_id_in_root(root, cwd, id, None, SessionOrigin::Interactive.into()).unwrap()
@@ -203,6 +211,95 @@ fn refused_child_session_keeps_its_parent() {
             vec!["child-b".to_string(), "child-c".into(), "parent".into()],
         )
     );
+}
+
+// Covers: the check a host runs before it lets an open session go to
+// delete it refuses as the delete would, for a child session something
+// holds or a child's unfinished run, but deletes nothing, not even the
+// children before the refused one that the delete itself would take; it
+// skips the session's own lease, which that host holds (#1670).
+// Owner: session deletion
+#[test]
+fn delete_check_refuses_as_the_delete_would_and_deletes_nothing() {
+    /// What refused the check: the child it names and what that child's
+    /// error is.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Refusal {
+        ChildInUse(String),
+        ChildRunNotFinished(String),
+    }
+    // (label, child session held open, child whose run is unfinished, expected)
+    let cases = [
+        ("clear", None, None, Ok(())),
+        (
+            "child held",
+            Some("child-b"),
+            None,
+            Err(Refusal::ChildInUse("child-b".into())),
+        ),
+        (
+            "child's run unfinished",
+            None,
+            Some("child-b"),
+            Err(Refusal::ChildRunNotFinished("child-b".into())),
+        ),
+    ];
+    for (label, held_child, running_child, expected) in cases {
+        let sessions = tempfile::tempdir().unwrap();
+        let subagents = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let parent = SessionTarget::new("parent", workspace.path());
+        let ids = ["parent", "child-a", "child-b"];
+        let paths = ids.map(|id| {
+            let provenance = match id {
+                "parent" => SessionOrigin::Interactive.into(),
+                _ => SessionProvenance {
+                    origin: SessionOrigin::Subagent,
+                    parent: Some(parent.clone()),
+                },
+            };
+            Session::create_with_id_in_root(sessions.path(), workspace.path(), id, None, provenance)
+                .unwrap()
+                .path()
+                .to_path_buf()
+        });
+        // The host's own hold on the session it deletes.
+        let _host =
+            Session::open_by_id_in_root(sessions.path(), workspace.path(), "parent").unwrap();
+        let _held = held_child
+            .map(|id| Session::open_by_id_in_root(sessions.path(), workspace.path(), id).unwrap());
+        if let Some(id) = running_child {
+            write_linked_run_for_tests(subagents.path(), "ee33ff", id, RunState::Running);
+        }
+
+        let checked = check_target_in_roots(
+            sessions.path(),
+            subagents.path(),
+            &parent,
+            &DeleteOptions::default(),
+        )
+        .map_err(|error| {
+            let child = error
+                .downcast_ref::<ChildSessionNotDeleted>()
+                .map(|refused| refused.child.id.clone())
+                .unwrap_or_default();
+            if error.chain().any(|cause| cause.is::<SessionInUse>()) {
+                Refusal::ChildInUse(child)
+            } else if error.chain().any(|cause| cause.is::<RunNotFinished>()) {
+                Refusal::ChildRunNotFinished(child)
+            } else {
+                panic!("{label}: unexpected refusal: {error:#}")
+            }
+        });
+
+        let remaining = ids
+            .iter()
+            .zip(&paths)
+            .filter(|(_, path)| path.exists())
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
+        assert_eq!((checked, remaining), (expected, ids.to_vec()), "{label}");
+    }
 }
 
 // Covers: an exact workspace target cannot fall back to a same-id session in

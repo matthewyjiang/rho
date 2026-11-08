@@ -63,6 +63,7 @@ mod inputs;
 mod open;
 mod options;
 mod reopen;
+mod store;
 #[cfg(test)]
 mod test_events;
 mod turn;
@@ -93,14 +94,16 @@ pub(super) struct Sessions {
     /// Lock order: a session's turn lock, then this; never the reverse.
     loaded: Mutex<HashMap<SessionId, Arc<LoadedSession>>>,
     /// The saved sessions being reopened, one at a time each, and those the
-    /// idle unload is tearing down, which a reopen waits for.
+    /// idle unload or a delete is tearing down, which a reopen waits for. A
+    /// delete holds a session's until its files are gone, so a reopen then
+    /// finds nothing saved.
     reopening: ReopenLocks,
     /// The daemon-wide budget the sessions' subagents share, and their jobs.
     subagents: Subagents,
     /// Cancelled once the daemon starts stopping ([`Self::begin_stop`]).
     stopping: CancellationToken,
-    /// Read-held from each idle unload decision through its teardown; the
-    /// stop write-locks it to wait for that teardown.
+    /// Read-held from each idle unload decision through its teardown, and
+    /// through each delete; the stop write-locks it to wait for them.
     unloading: tokio::sync::RwLock<()>,
 }
 
@@ -144,30 +147,46 @@ struct TurnSlot {
     /// Whether the session is in use, idle, or unloaded, as the idle unload
     /// tracks it.
     residency: Residency,
-    /// What holds the session between turns, which no turn starts during.
-    hold: Hold,
+    /// What holds the session between turns, if anything; no turn starts
+    /// while something does. Set and freed by [`Held`].
+    hold: Option<Hold>,
 }
 
 /// What holds a session between its turns, so that no turn starts
 /// meanwhile. The turn lock is a std mutex no request holds across its
-/// awaits, so a request marks its hold here instead of holding the lock, and
-/// [`Held`] frees it.
+/// awaits, so a request marks its hold in [`TurnSlot::hold`] instead of
+/// holding the lock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Hold {
-    Free,
     /// A configure is changing the session's settings.
     Configuring,
     /// A delete is unloading the session to delete its files.
     Deleting,
 }
 
-/// Frees its session's [`Hold`] when dropped, whether the request that took
+/// A session's [`Hold`], freed when dropped, whether the request that took
 /// it finished, failed, or was dropped.
 struct Held(Arc<LoadedSession>);
 
+impl Held {
+    /// Holds `session` as `hold`, or returns the hold already in place.
+    /// `turn` is `session`'s turn lock, held.
+    fn take(session: &Arc<LoadedSession>, turn: &mut TurnSlot, hold: Hold) -> Result<Self, Hold> {
+        match turn.hold {
+            Some(held) => Err(held),
+            None => {
+                turn.hold = Some(hold);
+                Ok(Self(Arc::clone(session)))
+            }
+        }
+    }
+}
+
 impl Drop for Held {
+    /// Takes the session's turn lock, a std mutex: never drop a `Held`
+    /// while holding that lock's guard, which would deadlock.
     fn drop(&mut self) {
-        self.0.turn().hold = Hold::Free;
+        self.0.turn().hold = None;
     }
 }
 
@@ -260,7 +279,7 @@ impl LoadedSession {
             turn: Mutex::new(TurnSlot {
                 cancel: CancellationToken::new(),
                 residency: Residency::InUse,
-                hold: Hold::Free,
+                hold: None,
             }),
         }
     }
@@ -469,14 +488,14 @@ impl Sessions {
         let (session, cancel) = self
             .enter_session(&params.session, &environment, |session, turn| {
                 match turn.hold {
-                    Hold::Configuring => {
+                    Some(Hold::Configuring) => {
                         return Err(RpcError::new(
                             ErrorCode::SessionBusy,
                             "the session's settings are changing; prompt again once they apply",
                         ))
                     }
-                    Hold::Deleting => return Err(being_deleted()),
-                    Hold::Free => {}
+                    Some(Hold::Deleting) => return Err(being_deleted()),
+                    None => {}
                 }
                 match self.jobs.start_turn(&session.job) {
                     // Told under the turn lock, which the last turn's
@@ -675,6 +694,26 @@ impl Sessions {
         } else {
             Ok(())
         }
+    }
+
+    /// Takes `session`, loaded as `id`, out of `loaded` and marks it
+    /// unloaded, unless the daemon is stopping or `id` now names another
+    /// session; whether it did. `turn` is `session`'s turn lock, held, so a
+    /// request either used the session before this or finds it unloaded and
+    /// reopens it. Under the lock `begin_stop` takes, so a stop either
+    /// drains the session first or finds it gone. Lock order: the turn
+    /// lock, then `loaded`.
+    fn evict(&self, id: &SessionId, session: &Arc<LoadedSession>, turn: &mut TurnSlot) -> bool {
+        let mut loaded = self.loaded();
+        let current = loaded
+            .get(id)
+            .is_some_and(|loaded| Arc::ptr_eq(loaded, session));
+        if self.stopping.is_cancelled() || !current {
+            return false;
+        }
+        loaded.remove(id);
+        turn.residency = Residency::Unloaded;
+        true
     }
 
     fn loaded(&self) -> MutexGuard<'_, HashMap<SessionId, Arc<LoadedSession>>> {

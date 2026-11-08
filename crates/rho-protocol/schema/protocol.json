@@ -639,7 +639,7 @@
       "anyOf": [
         {
           "const": "lagged",
-          "description": "The client fell too far behind; reattach with its cursor.",
+          "description": "The client fell too far behind, or the daemon unloaded the session,\nas a delete that failed after it unloaded the session does; attach\nagain with the client's cursor.",
           "type": "string"
         },
         {
@@ -650,11 +650,6 @@
         {
           "const": "deleted",
           "description": "The session was deleted ([`super::SESSION_DELETE`]).",
-          "type": "string"
-        },
-        {
-          "const": "unloaded",
-          "description": "The daemon unloaded the session without deleting it, as a delete\nthat failed once it had unloaded the session does; attach again to\nreopen it.",
           "type": "string"
         },
         {
@@ -1999,7 +1994,7 @@
       "type": "object"
     },
     "SessionDeleteResponse": {
-      "description": "Result of [`SESSION_DELETE`]: the session's files are gone, with those\nof the sessions it started, such as its subagents', and the daemon has\nunloaded it, detaching its clients as\n[`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].\n\nA session whose turn is under way, a settings change applying, or\nbackground work running, such as a subagent, is refused as\n[`crate::ErrorCode::SessionBusy`]; one another process has open, as\n[`crate::ErrorCode::SessionInUse`].",
+      "description": "Result of [`SESSION_DELETE`]: the session's files are gone, with those\nof the sessions it started, such as its subagents', and the daemon has\nunloaded it, detaching its clients as\n[`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].\n\nA session whose turn is under way, a settings change applying,\nbackground work running, such as a subagent, or a run it started not yet\nfinished is refused as [`crate::ErrorCode::SessionBusy`]; one another\nprocess has open, or one a session it started is open in, as\n[`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded\nsession loaded. A session the daemon loaded but that has saved nothing\nyet is unloaded all the same. An id the daemon has not loaded and nothing\nis saved under is [`crate::ErrorCode::SessionNotFound`].",
       "type": "object"
     },
     "SessionDetachParams": {
@@ -2449,7 +2444,7 @@
           ]
         },
         "cwd": {
-          "description": "Only the sessions saved in this workspace, an absolute path; absent\nlists every workspace's. A workspace that is not a directory lists\nnone.",
+          "description": "Only the sessions saved in this workspace, an absolute path,\nresolved through symlinks as [`super::SESSION_NEW`] resolves its\n`cwd`; absent lists every workspace's. A path that does not resolve\nto a directory lists none.",
           "type": [
             "string",
             "null"
@@ -2468,7 +2463,7 @@
       "type": "object"
     },
     "SessionListResponse": {
-      "description": "Result of [`SESSION_LIST`]. Following `next_cursor` lists each session\nonce, even while sessions are saved or deleted between pages.",
+      "description": "Result of [`SESSION_LIST`]. Following `next_cursor` never lists a session\ntwice, nor skips one when others are deleted between pages; a session\nsaved during the walk moves ahead of the cursor and is missed, so list\nagain from the first page for a fresh view.",
       "properties": {
         "next_cursor": {
           "description": "The cursor of the next page; absent on the last.",
@@ -2615,7 +2610,7 @@
           "$ref": "#/$defs/SessionId"
         },
         "title": {
-          "description": "The new title, surrounding whitespace trimmed; one with nothing else\nis refused as [`crate::ErrorCode::InvalidParams`].",
+          "description": "The new title, surrounding whitespace trimmed. One that is empty,\nholds a control character such as a newline, or runs over the\ndaemon's 500 characters is refused as\n[`crate::ErrorCode::InvalidParams`], naming why.",
           "type": "string"
         }
       },
@@ -2680,17 +2675,6 @@
         },
         "session": {
           "$ref": "#/$defs/SessionId"
-        },
-        "state": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/JobState"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The session's job state while the daemon has it loaded; absent for\na session it has not."
         },
         "title": {
           "description": "The session's title; absent until it has one.",

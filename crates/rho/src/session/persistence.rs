@@ -26,7 +26,7 @@ use super::{
 };
 
 pub(crate) use super::id_match::NoSessionFound;
-use super::id_match::{matching_session_files, session_id, single_match};
+use super::id_match::{matching_session_files, session_id, single_match, single_workspace};
 
 // Layout helpers live in `layout`; re-export the historical `persistence::` surface.
 pub(super) use super::layout::{
@@ -119,7 +119,7 @@ impl SessionStore {
                 .into_iter()
                 .filter(|(path, _)| session_id_from_path(path).as_deref() == Some(id))
                 .collect();
-            Ok(single_match(&exact, id)?.map(|(_, cwd)| cwd.clone()))
+            Ok(single_workspace(&exact, id)?.map(|(_, cwd)| cwd.clone()))
         };
         if let Some(cwd) = find()? {
             return Ok(Some(cwd));

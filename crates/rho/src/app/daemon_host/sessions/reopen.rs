@@ -21,7 +21,9 @@ use tokio::sync::OwnedMutexGuard;
 
 use super::{
     open::{open_session, Opening},
-    open_failed, writing, LoadedSession, SessionJobRecord, Sessions, TurnSlot,
+    open_failed,
+    store::{store_blocking, store_failed},
+    writing, LoadedSession, SessionJobRecord, Sessions, TurnSlot,
 };
 use crate::{
     app::daemon_host::{
@@ -183,17 +185,12 @@ impl Drop for ReopenGuard<'_> {
 
 /// The workspace of the session saved under `id`; `SessionNotFound` when
 /// nothing is.
-pub(super) async fn saved_workspace(id: &SessionId) -> Result<PathBuf, RpcError> {
+async fn saved_workspace(id: &SessionId) -> Result<PathBuf, RpcError> {
     let lookup = {
         let id = id.clone();
-        tokio::task::spawn_blocking(move || StoredSession::workspace_of(id.as_str())).await
+        store_blocking(LOOK_UP, move || StoredSession::workspace_of(id.as_str())).await?
     };
-    match lookup {
-        Ok(Ok(Some(cwd))) => Ok(cwd),
-        Ok(Ok(None)) => Err(not_found(id)),
-        Ok(Err(error)) => Err(lookup_failed(&error)),
-        Err(error) => Err(lookup_failed(&error.into())),
-    }
+    lookup.ok_or_else(|| not_found(id))
 }
 
 /// The session saved under `id`, opened in its own workspace.
@@ -202,8 +199,11 @@ async fn saved_session(id: &SessionId) -> Result<StoredSession, RpcError> {
     let id = id.clone();
     tokio::task::spawn_blocking(move || open_saved(&cwd, &id))
         .await
-        .map_err(|error| lookup_failed(&error.into()))?
+        .map_err(|error| store_failed(LOOK_UP, &error.into()))?
 }
+
+/// What a failed lookup of a saved session could not do.
+const LOOK_UP: &str = "look the session up";
 
 /// Opens the session saved under `id` in `cwd`'s workspace, unless another
 /// process has it open or it is a child session, which only its parent
@@ -248,13 +248,6 @@ pub(super) fn not_found(id: &SessionId) -> RpcError {
     RpcError::new(
         ErrorCode::SessionNotFound,
         format!("no session is saved under {id}"),
-    )
-}
-
-fn lookup_failed(error: &anyhow::Error) -> RpcError {
-    RpcError::new(
-        ErrorCode::InternalError,
-        format!("could not look the session up: {error:#}"),
     )
 }
 

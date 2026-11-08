@@ -3,13 +3,12 @@
 //! catalog, titles, and delete, which ACP's `session/list` and
 //! `session/delete` and `rho sessions` use too.
 //!
-//! A list adds, to what the store saved, the job state of each session the
-//! daemon has loaded. A rename tells a loaded session's attached clients
-//! the new title. A delete must unload a loaded session first, since its
-//! runtime holds the file's lease: it refuses one whose turn, settings
-//! change, or background work is under way, holds it from prompts while it
-//! tears it down, and then detaches its clients as `deleted`, or as
-//! `unloaded` when the store refused the delete after all.
+//! A rename tells a loaded session's attached clients the new title. A
+//! delete must unload a loaded session first, since its runtime holds the
+//! file's lease: it refuses one whose turn, settings change, or background
+//! work is under way, or whose delete the store would refuse, holds it from
+//! prompts while it tears it down, and then detaches its clients as
+//! `deleted`.
 
 use std::{num::NonZeroU32, num::NonZeroUsize, sync::Arc};
 
@@ -21,16 +20,16 @@ use rho_sdk::SessionId;
 
 use super::{
     being_deleted,
-    reopen::{not_found, parse_session, saved_workspace},
+    reopen::{not_found, parse_session},
     stopping,
-    unload::Residency,
+    store::{store_blocking, store_failed},
     writing, Held, Hold, LoadedSession, Sessions,
 };
 use crate::{
     app::daemon_host::jobs::SessionJob,
     session::{
-        catalog::{self, CatalogScope, Cursor},
-        DeleteOptions, Session as StoredSession, SessionInUse, SessionSummary, SessionTarget,
+        catalog::{self, CatalogError},
+        ExactDelete, NoSessionFound, Session as StoredSession, SessionSummary,
     },
 };
 
@@ -44,49 +43,25 @@ use crate::{
 const MAX_PAGE_SIZE: usize = 1000;
 
 impl Sessions {
-    /// One page of the saved sessions a person can resume, newest first,
-    /// each with its job state when the daemon has it loaded.
+    /// One page of the saved sessions a person can resume, newest first.
     pub(in crate::app::daemon_host) async fn list(
         &self,
         params: SessionListParams,
     ) -> Result<SessionListResponse, RpcError> {
         let SessionListParams { cwd, cursor, limit } = params;
         let limit = page_size(limit)?;
-        if cwd.as_ref().is_some_and(|cwd| !cwd.is_absolute()) {
-            return Err(invalid("cwd must be an absolute path"));
-        }
-        let after = cursor
-            .as_deref()
-            .map(Cursor::parse)
-            .transpose()
-            .map_err(|error| invalid(error.to_string()))?;
-        let listed = tokio::task::spawn_blocking(move || {
-            let scope = cwd
-                .as_deref()
-                .map_or(CatalogScope::Everywhere, CatalogScope::Workspace);
-            catalog::resumable(scope)
-                .map(|summaries| catalog::page(summaries, after.as_ref(), limit))
+        let page = store_blocking("list the sessions", move || {
+            Ok(catalog::list(cwd.as_deref(), cursor.as_deref(), limit))
         })
-        .await;
-        let page = match listed {
-            Ok(Ok(page)) => page,
-            Ok(Err(error)) => return Err(store_failed("list the sessions", &error)),
-            Err(error) => return Err(store_failed("list the sessions", &error.into())),
-        };
-        let loaded = self.loaded().clone();
-        let sessions = page
-            .sessions
-            .into_iter()
-            .map(|summary| {
-                let state = SessionId::from_string(summary.id.as_str())
-                    .ok()
-                    .and_then(|id| loaded.get(&id))
-                    .map(|session| session.feed.job_state());
-                summary_to_wire(summary, state)
-            })
-            .collect();
+        .await?
+        .map_err(|error| match error {
+            CatalogError::RelativeCwd | CatalogError::UnknownCursor(_) => {
+                invalid(error.to_string())
+            }
+            CatalogError::Store(error) => store_failed("list the sessions", &error),
+        })?;
         Ok(SessionListResponse {
-            sessions,
+            sessions: page.sessions.into_iter().map(summary_to_wire).collect(),
             next_cursor: page.next_cursor,
         })
     }
@@ -98,21 +73,22 @@ impl Sessions {
         params: SessionRenameParams,
     ) -> Result<SessionRenameResponse, RpcError> {
         let id = parse_session(&params.session)?;
-        let title = params.title.trim().to_owned();
-        if title.is_empty() {
-            return Err(invalid("a session's title must not be empty"));
-        }
-        let cwd = saved_workspace(&id).await?;
         let renamed = {
             let id = id.clone();
-            tokio::task::spawn_blocking(move || StoredSession::set_title(&cwd, id.as_str(), &title))
-                .await
+            store_blocking("rename the session", move || {
+                let Some(cwd) = StoredSession::workspace_of(id.as_str())? else {
+                    return Ok(None);
+                };
+                match StoredSession::set_title(&cwd, id.as_str(), &params.title) {
+                    Ok(update) => Ok(Some(update.title)),
+                    // Deleted since the lookup.
+                    Err(error) if error.is::<NoSessionFound>() => Ok(None),
+                    Err(error) => Err(error),
+                }
+            })
+            .await?
         };
-        let title = match renamed {
-            Ok(Ok(update)) => update.title,
-            Ok(Err(error)) => return Err(store_failed("rename the session", &error)),
-            Err(error) => return Err(store_failed("rename the session", &error.into())),
-        };
+        let title = renamed.ok_or_else(|| not_found(&id))?;
         let loaded = self.loaded().get(&id).cloned();
         if let Some(session) = loaded {
             session
@@ -144,25 +120,44 @@ impl Sessions {
                 }
             }
         }
-        match (loaded, delete_saved(&id).await) {
-            (Some(session), Ok(_)) => session.feed.close(DetachReason::Deleted),
+        let deleted = {
+            let id = id.clone();
+            store_blocking("delete the session", move || {
+                StoredSession::delete_exact(id.as_str())
+            })
+            .await
+        };
+        let child_sessions = match (loaded, deleted) {
+            (Some(session), Ok(ExactDelete::Deleted(outcome))) => {
+                session.feed.close(DetachReason::Deleted);
+                outcome.deleted_child_session_count
+            }
+            // A session loaded before it saved anything has no files: it is
+            // gone once unloaded.
+            (Some(session), Ok(ExactDelete::NothingSaved)) => {
+                session.feed.close(DetachReason::Deleted);
+                0
+            }
+            // The store refused after its check passed, as on an I/O error,
+            // with the session unloaded: its clients attach again to reopen
+            // it.
             (Some(session), Err(error)) => {
-                session.feed.close(DetachReason::Unloaded);
+                session.feed.close(DetachReason::Lagged);
                 return Err(error);
             }
-            (None, Ok(Saved::Deleted)) => {}
-            (None, Ok(Saved::Nothing)) => return Err(not_found(&id)),
+            (None, Ok(ExactDelete::Deleted(outcome))) => outcome.deleted_child_session_count,
+            (None, Ok(ExactDelete::NothingSaved)) => return Err(not_found(&id)),
             (None, Err(error)) => return Err(error),
-        }
-        tracing::info!(session = %id, "deleted session");
+        };
+        tracing::info!(session = %id, child_sessions, "deleted session");
         Ok(SessionDeleteResponse {})
     }
 
     /// Unloads `session`, loaded as `id`, for its delete, unless its turn, a
-    /// settings change, or its background work is under way. Held from
-    /// prompts and settings changes meanwhile; once this returns, the
-    /// session is out of `loaded` and its runtime, which held its file, torn
-    /// down.
+    /// settings change, or its background work is under way, or the store
+    /// would refuse the delete. Held from prompts and settings changes
+    /// meanwhile; once this returns, the session is out of `loaded` and its
+    /// runtime, which held its file, torn down.
     async fn unload_to_delete(
         &self,
         id: &SessionId,
@@ -178,14 +173,12 @@ impl Sessions {
                 SessionJob::Busy(job) => return Err(writing(&job, id)),
                 SessionJob::New | SessionJob::Last(_) => {}
             }
-            match turn.hold {
-                Hold::Configuring => return Err(busy(CHANGE_APPLYING)),
+            Held::take(session, &mut turn, Hold::Deleting).map_err(|hold| match hold {
+                Hold::Configuring => busy(CHANGE_APPLYING),
                 // Deletes of one session wait on its reopen lock, so none
                 // finds another under way.
-                Hold::Deleting => return Err(being_deleted()),
-                Hold::Free => turn.hold = Hold::Deleting,
-            }
-            Held(Arc::clone(session))
+                Hold::Deleting => being_deleted(),
+            })?
         };
         // Free once a turn that just recorded its end released it.
         let mut slot = session.runtime.lock().await;
@@ -197,23 +190,24 @@ impl Sessions {
             *slot = Some(runtime);
             return Err(busy(BACKGROUND_WORK));
         }
-        {
-            // Lock order: the turn lock, then `loaded`. Under the lock
-            // `begin_stop` takes, so a stop either drains the session first,
-            // and gets its runtime back, or finds it gone.
-            let mut turn = session.turn();
-            let mut loaded = self.loaded();
-            if self.stopping.is_cancelled() {
-                *slot = Some(runtime);
-                return Err(stopping());
-            }
-            if loaded
-                .get(id)
-                .is_some_and(|current| Arc::ptr_eq(current, session))
-            {
-                loaded.remove(id);
-            }
-            turn.residency = Residency::Unloaded;
+        // The store's refusals, checked while the session is still loaded:
+        // a delete it refuses leaves the session as it was.
+        let checked = {
+            let id = id.clone();
+            store_blocking("check the session's delete", move || {
+                StoredSession::check_delete_exact(id.as_str())
+            })
+            .await
+        };
+        if let Err(error) = checked {
+            *slot = Some(runtime);
+            return Err(error);
+        }
+        // Only the stop takes a session out of `loaded` while its reopen
+        // lock is held, as it is here.
+        if !self.evict(id, session, &mut session.turn()) {
+            *slot = Some(runtime);
+            return Err(stopping());
         }
         drop(slot);
         runtime.shutdown().await;
@@ -227,35 +221,6 @@ const CHANGE_APPLYING: &str =
     "a change to the session's settings is applying; delete it once the change has applied";
 const BACKGROUND_WORK: &str =
     "background work the session started, such as a subagent, is still running; delete it once that ends";
-
-/// What a delete found saved under a session's id.
-enum Saved {
-    Deleted,
-    Nothing,
-}
-
-/// Deletes the files of the session saved under `id`, with the sessions it
-/// started, as `rho sessions rm` does.
-async fn delete_saved(id: &SessionId) -> Result<Saved, RpcError> {
-    let id = id.clone();
-    let deleted = tokio::task::spawn_blocking(move || -> anyhow::Result<Saved> {
-        let Some(cwd) = StoredSession::workspace_of(id.as_str())? else {
-            return Ok(Saved::Nothing);
-        };
-        let target = SessionTarget::new(id.as_str(), cwd);
-        StoredSession::delete_target(&target, DeleteOptions::default())?;
-        Ok(Saved::Deleted)
-    })
-    .await;
-    match deleted {
-        Ok(Ok(saved)) => Ok(saved),
-        Ok(Err(error)) if error.is::<SessionInUse>() => {
-            Err(RpcError::new(ErrorCode::SessionInUse, format!("{error:#}")))
-        }
-        Ok(Err(error)) => Err(store_failed("delete the session", &error)),
-        Err(error) => Err(store_failed("delete the session", &error.into())),
-    }
-}
 
 /// `limit` as a page size: [`catalog::DEFAULT_PAGE_SIZE`] when absent, and
 /// refused over [`MAX_PAGE_SIZE`].
@@ -273,9 +238,8 @@ fn page_size(limit: Option<NonZeroU32>) -> Result<NonZeroUsize, RpcError> {
         })
 }
 
-/// `summary` as `rho/session/list` sends it, with the job `state` of a
-/// loaded session.
-fn summary_to_wire(summary: SessionSummary, state: Option<wire::JobState>) -> wire::SessionSummary {
+/// `summary` as `rho/session/list` sends it.
+fn summary_to_wire(summary: SessionSummary) -> wire::SessionSummary {
     let SessionSummary {
         id,
         path: _,
@@ -292,21 +256,12 @@ fn summary_to_wire(summary: SessionSummary, state: Option<wire::JobState>) -> wi
     wire::SessionSummary {
         session: wire::SessionId::new(id),
         cwd,
-        // An attach restores them; a client shows only those still there.
-        added_dirs: added_dirs.into_iter().filter(|dir| dir.is_dir()).collect(),
+        added_dirs,
         title,
         first_user_message: first_user_message.as_deref().and_then(catalog::preview),
         last_user_message: last_user_message.as_deref().and_then(catalog::preview),
         updated_at,
-        state,
     }
-}
-
-fn store_failed(what: &str, error: &anyhow::Error) -> RpcError {
-    RpcError::new(
-        ErrorCode::InternalError,
-        format!("could not {what}: {error:#}"),
-    )
 }
 
 fn invalid(message: impl Into<String>) -> RpcError {
