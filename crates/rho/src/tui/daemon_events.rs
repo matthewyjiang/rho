@@ -73,9 +73,13 @@ pub(super) enum DaemonView {
 pub(super) struct DaemonEvents {
     /// The message the last text chunk extended, and its kind.
     open_message: Option<(StreamKind, MessageId)>,
-    /// What the agent said so far since the last call or user message,
-    /// which the turn's answer completes when chunks went missing.
+    /// What the turn's last agent message said so far, which its answer
+    /// completes when chunks went missing.
     reply: String,
+    /// Whether the step that streamed `reply` went on to call tools. A
+    /// turn's answer is its last agent message, so after calls an answer
+    /// other than `reply` is a later step's whose chunks all went missing.
+    called_since_reply: bool,
     /// Each open call's last running card.
     running: HashMap<WireCallId, ToolCard>,
 }
@@ -158,6 +162,7 @@ impl DaemonEvents {
         if kind == StreamKind::Assistant {
             if opens {
                 self.reply.clear();
+                self.called_since_reply = false;
             }
             self.reply.push_str(&text);
         }
@@ -169,12 +174,13 @@ impl DaemonEvents {
     fn end_messages(&mut self) {
         self.open_message = None;
         self.reply.clear();
+        self.called_since_reply = false;
     }
 
     fn tool_call(&mut self, update: ToolCallUpdate) -> Option<DaemonView> {
-        // The step's text ends at its calls, so an answer completes only
-        // the reply of the step after them.
-        self.end_messages();
+        // The step's text ends at its calls; the next text starts a row.
+        self.open_message = None;
+        self.called_since_reply = true;
         let ToolCallUpdate {
             id,
             status,
@@ -223,6 +229,13 @@ impl DaemonEvents {
     fn turn_ended(&mut self, outcome: TurnOutcome) -> Vec<DaemonView> {
         match outcome {
             TurnOutcome::Answered { text, .. } | TurnOutcome::MaxSteps { text } => {
+                if self.called_since_reply && text != self.reply {
+                    return vec![DaemonView::Text {
+                        kind: StreamKind::Assistant,
+                        text,
+                        opens: true,
+                    }];
+                }
                 match final_answer_delta(&self.reply, &text) {
                     FinalAnswerDelta::None => Vec::new(),
                     // The answer finishes a reply whose last chunks went

@@ -171,6 +171,28 @@ fn session_events_map_to_transcript_views() {
             ],
         ),
         (
+            "an answer that is the text before the last call shows once",
+            vec![
+                reply("m1", "Reading it."),
+                tool(
+                    ToolStatus::Completed,
+                    Some(Presentation::Card(read_card(ToolCardStatus::Ok))),
+                ),
+                Step::Event(SessionEvent::TurnEnded {
+                    outcome: TurnOutcome::MaxSteps {
+                        text: "Reading it.".into(),
+                    },
+                }),
+            ],
+            vec![
+                text(StreamKind::Assistant, "Reading it.", true),
+                DaemonView::ToolFinished {
+                    call: call(),
+                    presentation: Presentation::Card(read_card(ToolCardStatus::Ok)),
+                },
+            ],
+        ),
+        (
             "a reset replay forgets the open message and running cards",
             vec![
                 reply("m1", "old"),
