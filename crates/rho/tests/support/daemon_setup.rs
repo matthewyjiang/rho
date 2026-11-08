@@ -93,21 +93,27 @@ pub(super) async fn asked_operation(
 /// session the daemon unloaded as a prompt would.
 async fn inspected_request(sandbox: &Sandbox, client: &Client, session: &SessionId) -> Value {
     let (follower, mut notifications) = sandbox.connect_following().await;
-    follower
+    let attached = follower
         .request::<SessionAttach>(&attach(sandbox, session))
         .await
         .unwrap();
     assert_eq!(sandbox.prompt(client, session).await, Ok(()));
+    // A reset replays the last turn's end first; this prompt's comes after.
+    let mut replayed = attached.replay_events;
     loop {
         let notification = tokio::time::timeout(DEADLINE, notifications.recv())
             .await
             .expect("the daemon sends the session's next event")
             .expect("the connection stays open");
-        if let DaemonNotification::SessionEvent(SessionEventParams {
-            event: SessionEvent::TurnEnded { outcome },
-            ..
-        }) = notification
-        {
+        let DaemonNotification::SessionEvent(SessionEventParams { event, .. }) = notification
+        else {
+            continue;
+        };
+        if replayed > 0 {
+            replayed -= 1;
+            continue;
+        }
+        if let SessionEvent::TurnEnded { outcome } = event {
             match outcome {
                 TurnOutcome::Answered { text, .. } => return serde_json::from_str(&text).unwrap(),
                 outcome => panic!("the turn answers: {outcome:?}"),
