@@ -134,9 +134,15 @@ When the daemon runs under systemd with stderr connected to the journal (`JOURNA
 
 `RHO_LOG` sets the log filter with the same syntax as for other rho commands, for example `rho=debug`. The daemon defaults to `info`.
 
+## Credentials
+
+The daemon's sessions read provider credentials from the [credential store](/authentication-and-models#where-credentials-live) the daemon opened, and a variable in the daemon's own environment, such as `OPENAI_API_KEY`, wins over a saved credential. A frontend signs the daemon in with an API key, or out, through [`rho/auth/key` and `rho/auth/logout`](/protocol#signing-in-and-out) ([#1662](https://github.com/matthewyjiang/rho/issues/1662)). Either one writes the store the config selects when it runs and applies to every session the daemon runs from that session's next prompt, whichever client opened it; a refresh of a provider's OAuth tokens does too. Any such change rebuilds every running session's provider at its next prompt, never during a turn, whichever auth profile it uses. MCP servers' OAuth tokens and web-search keys feed no provider, so saving them rebuilds nothing. A key set in the daemon's environment cannot be replaced or removed this way: unset it where the daemon starts and restart the daemon.
+
+A `rho login` or `/logout` in another rho process changes the same store, but providers keep the credentials they were built with, so the daemon's running sessions do not notice at once. New sessions read the change. A running session rereads the store once the provider refuses its credentials, so a new login fixes it at the next prompt, while a session signed out elsewhere keeps working until the provider refuses its key.
+
 ## Configuration changes
 
-The daemon reads [configuration](/configuration) when it opens a session, so edits apply to new sessions without a restart. Daemon-level settings, which are the `RHO_LOG` filter, the socket location (`XDG_RUNTIME_DIR`, `RHO_HOME`), and the credential store, are read once at startup. Restart the daemon with `rho daemon stop` to change them.
+The daemon reads [configuration](/configuration) when it opens a session, so edits apply to new sessions without a restart. Daemon-level settings, which are the `RHO_LOG` filter, the socket location (`XDG_RUNTIME_DIR`, `RHO_HOME`), and the credential store, are read once at startup. Restart the daemon with `rho daemon stop` to change them; a [sign-in or sign-out](#credentials) through the daemon also moves it to the credential store the config selects then. New sessions read that store, while running sessions keep the credentials they hold until a write moves them or their provider refuses them.
 
 ## Running as a service
 

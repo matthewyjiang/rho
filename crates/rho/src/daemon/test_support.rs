@@ -3,11 +3,12 @@
 use std::sync::Arc;
 
 use rho_protocol::{
-    DaemonStatus, ErrorCode, JobListResponse, RpcError, Service, SessionAnswerParams,
-    SessionAnswerResponse, SessionAttachParams, SessionAttachResponse, SessionCancelParams,
-    SessionCancelResponse, SessionHoldParams, SessionHoldResponse, SessionNewParams,
-    SessionNewResponse, SessionPromptParams, SessionPromptResponse, SessionSteerParams,
-    SessionSteerResponse, Subscription, PROTOCOL_VERSION,
+    AuthKeyParams, AuthKeyResponse, AuthLogoutParams, AuthLogoutResponse, DaemonStatus, ErrorCode,
+    JobListResponse, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
+    SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
+    SessionHoldParams, SessionHoldResponse, SessionNewParams, SessionNewResponse,
+    SessionPromptParams, SessionPromptResponse, SessionSteerParams, SessionSteerResponse,
+    Subscription, PROTOCOL_VERSION,
 };
 use rho_sdk::CancellationToken;
 
@@ -91,11 +92,26 @@ impl Service for StubHost {
     async fn list_jobs(&self) -> JobListResponse {
         JobListResponse { jobs: Vec::new() }
     }
+
+    async fn save_auth_key(&self, _: AuthKeyParams) -> Result<AuthKeyResponse, RpcError> {
+        Err(no_credential_store())
+    }
+
+    async fn logout_auth(&self, _: AuthLogoutParams) -> Result<AuthLogoutResponse, RpcError> {
+        Err(no_credential_store())
+    }
 }
 
 fn no_sessions() -> RpcError {
     RpcError::new(
         ErrorCode::SessionNotFound,
         "the stub host hosts no sessions",
+    )
+}
+
+fn no_credential_store() -> RpcError {
+    RpcError::new(
+        ErrorCode::CredentialStoreUnavailable,
+        "the stub host has no credential store",
     )
 }

@@ -1,4 +1,8 @@
-use std::{future::Future, pin::Pin, sync::Mutex};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use agent_client_protocol::schema::v1::{
     CompleteElicitationNotification, CreateElicitationRequest, CreateElicitationResponse,
@@ -6,18 +10,26 @@ use agent_client_protocol::schema::v1::{
     RequestPermissionResponse, SessionNotification,
 };
 use pretty_assertions::assert_eq;
-use rho_providers::credentials::{CredentialResult, MemoryCredentialStore};
+use rho_providers::{
+    credentials::{CredentialResult, MemoryCredentialStore},
+    provider::scope_custom_openai_compatible_providers,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     task::JoinHandle,
 };
+use url::Url;
 
 use super::*;
 
-const AUTH: &str = "moonshot-api-key";
-const GOOD_KEY: &str = "sk-moon-good";
-const BAD_KEY: &str = "sk-moon-bad";
+/// A custom provider, so each test's config can point its models endpoint
+/// at a local host.
+const PROVIDER: &str = "acp-key-page";
+const AUTH: &str = "acp-key-page-api-key";
+const ACCOUNT: &str = "provider:acp-key-page:api-key";
+const GOOD_KEY: &str = "sk-page-good";
+const BAD_KEY: &str = "sk-page-bad";
 
 /// Serves `GET /v1/models`: models for [`GOOD_KEY`], and `other` (a status
 /// line) with the key quoted back for anything else.
@@ -43,6 +55,23 @@ async fn models_endpoint(other: &'static str) -> (Url, JoinHandle<()>) {
         }
     });
     (base, server)
+}
+
+/// Serves the key page for `host`, saving to `store`, with [`PROVIDER`]'s
+/// models endpoint at `endpoint`. Only this sign-in's task sees the
+/// provider, so tests running beside it keep theirs.
+async fn sign_in(endpoint: &Url, store: &RecordingStore, host: &Host) -> Result<(), AcpError> {
+    let mut config = Config::default();
+    config
+        .providers
+        .set_endpoint(PROVIDER, endpoint.as_str())
+        .unwrap();
+    let names: Arc<[String]> = config.providers.intern_names().unwrap();
+    scope_custom_openai_compatible_providers(names, async {
+        let login = ApiKeyAuth::resolve(AUTH).unwrap();
+        serve_key_page(login, &config, store, RequestId::Number(7), host).await
+    })
+    .await
 }
 
 /// A credential store that records every save.
@@ -211,27 +240,15 @@ async fn a_key_is_checked_on_the_page_and_saved_only_when_accepted() {
     let (endpoint, server) = models_endpoint("401 Unauthorized").await;
     let host = Host::new(User::EntersKeys);
     let store = RecordingStore::default();
-    let result = tokio::time::timeout(
-        Duration::from_secs(30),
-        KeyLogin::prepare(AUTH).unwrap().sign_in(
-            Some(&endpoint),
-            &store,
-            RequestId::Number(7),
-            &host,
-        ),
-    )
-    .await
-    .expect("sign-in ends once the good key is saved");
+    let result = tokio::time::timeout(Duration::from_secs(30), sign_in(&endpoint, &store, &host))
+        .await
+        .expect("sign-in ends once the good key is saved");
     server.abort();
     assert_eq!(result, Ok(()));
 
-    let account = match provider::resolve_auth_mode(AUTH).unwrap().1.auth_kind {
-        ProviderAuthKind::ApiKey { account, .. } => account,
-        kind => panic!("{AUTH} takes an API key: {kind:?}"),
-    };
     assert_eq!(
         *store.saved.lock().unwrap(),
-        vec![(account.to_owned(), GOOD_KEY.to_owned())],
+        vec![(ACCOUNT.to_owned(), GOOD_KEY.to_owned())],
         "only the accepted key is saved"
     );
 
@@ -240,7 +257,9 @@ async fn a_key_is_checked_on_the_page_and_saved_only_when_accepted() {
     let statuses = pages.iter().map(|(status, _)| *status).collect::<Vec<_>>();
     assert_eq!(statuses, vec![200, 200, 200]);
     assert!(
-        pages[1].1.contains("Moonshot AI refused this key."),
+        pages[1]
+            .1
+            .contains(&format!("{PROVIDER} refused this key.")),
         "the refusal is on the page: {}",
         pages[1].1
     );
@@ -280,13 +299,12 @@ async fn a_key_is_checked_on_the_page_and_saved_only_when_accepted() {
 // Owner: ACP API-key authenticate cancellation.
 #[tokio::test]
 async fn leaving_the_key_page_frees_its_port() {
+    // Nobody enters a key, so nothing asks the endpoint.
+    let endpoint = Url::parse("http://127.0.0.1:9/v1").unwrap();
     for user in [User::Declines, User::Dismisses, User::Leaves] {
         let host = Host::new(user);
         let store = RecordingStore::default();
-        let signing_in =
-            KeyLogin::prepare(AUTH)
-                .unwrap()
-                .sign_in(None, &store, RequestId::Number(7), &host);
+        let signing_in = sign_in(&endpoint, &store, &host);
         let result = tokio::time::timeout(Duration::from_secs(10), async {
             match user {
                 // `$/cancel_request` drops the request's future.
@@ -322,26 +340,14 @@ async fn a_key_that_cannot_be_checked_is_saved_unchecked() {
     let (endpoint, server) = models_endpoint("404 Not Found").await;
     let host = Host::new(User::EntersKeys);
     let store = RecordingStore::default();
-    let result = tokio::time::timeout(
-        Duration::from_secs(30),
-        KeyLogin::prepare(AUTH).unwrap().sign_in(
-            Some(&endpoint),
-            &store,
-            RequestId::Number(7),
-            &host,
-        ),
-    )
-    .await
-    .expect("sign-in ends once the key is saved");
+    let result = tokio::time::timeout(Duration::from_secs(30), sign_in(&endpoint, &store, &host))
+        .await
+        .expect("sign-in ends once the key is saved");
     server.abort();
     assert_eq!(result, Ok(()));
-    let account = match provider::resolve_auth_mode(AUTH).unwrap().1.auth_kind {
-        ProviderAuthKind::ApiKey { account, .. } => account,
-        kind => panic!("{AUTH} takes an API key: {kind:?}"),
-    };
     assert_eq!(
         *store.saved.lock().unwrap(),
-        vec![(account.to_owned(), BAD_KEY.to_owned())]
+        vec![(ACCOUNT.to_owned(), BAD_KEY.to_owned())]
     );
     let browser = host.browser.lock().unwrap().take().unwrap();
     let pages = browser.await.unwrap();

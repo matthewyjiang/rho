@@ -47,7 +47,8 @@ fn no_such_session() -> RpcError {
     RpcError::new(ErrorCode::SessionNotFound, "no such session")
 }
 
-/// The session and job methods of a test service that hosts no sessions.
+/// The session, job, and credential methods of a test service that hosts no
+/// sessions.
 macro_rules! hosts_no_sessions {
     () => {
         async fn new_session(&self, _: SessionNewParams) -> Result<SessionNewResponse, RpcError> {
@@ -92,7 +93,20 @@ macro_rules! hosts_no_sessions {
         async fn list_jobs(&self) -> JobListResponse {
             JobListResponse { jobs: Vec::new() }
         }
+
+        async fn save_auth_key(&self, _: AuthKeyParams) -> Result<AuthKeyResponse, RpcError> {
+            Err(no_credential_store())
+        }
+
+        async fn logout_auth(&self, _: AuthLogoutParams) -> Result<AuthLogoutResponse, RpcError> {
+            Err(no_credential_store())
+        }
     };
+}
+
+/// The error every test service answers credential requests with.
+fn no_credential_store() -> RpcError {
+    RpcError::new(ErrorCode::CredentialStoreUnavailable, "no credential store")
 }
 
 /// The attach method of a test service that hosts no sessions.

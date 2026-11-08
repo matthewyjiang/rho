@@ -44,7 +44,7 @@ use super::{
 use crate::{
     app::{
         session_events::LiveEvents,
-        session_runtime::{Closing, Logouts, SessionHandle, SessionRuntime, SteerError},
+        session_runtime::{Closing, SessionHandle, SessionRuntime, SteerError},
     },
     config::Config,
 };
@@ -87,8 +87,6 @@ pub(super) struct Sessions {
     reopening: ReopenLocks,
     /// The daemon-wide budget the sessions' subagents share, and their jobs.
     subagents: Subagents,
-    /// The daemon's logouts, which every session's credentials follow.
-    logouts: Logouts,
     /// Cancelled once the daemon starts stopping ([`Self::begin_stop`]).
     stopping: CancellationToken,
     /// Read-held from each idle unload decision through its teardown; the
@@ -310,7 +308,6 @@ impl Sessions {
             jobs,
             loaded: Mutex::default(),
             reopening: ReopenLocks::default(),
-            logouts: Logouts::default(),
             stopping,
             unloading: tokio::sync::RwLock::new(()),
         }
@@ -347,7 +344,6 @@ impl Sessions {
         let opened = open_session(
             Opening::New(workspace),
             session_environment(&params.environment)?,
-            &self.logouts,
             &self.subagents,
             &job,
         )

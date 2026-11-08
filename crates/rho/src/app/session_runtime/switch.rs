@@ -8,7 +8,7 @@ use rho_providers::{
     provider::model_reference,
 };
 
-use super::{credentials::LogoutCount, model_context_window, SessionRuntime, SettingChangeError};
+use super::{model_context_window, SessionRuntime, SettingChangeError};
 use crate::{
     app::conversation_switch::{
         apply_conversation_switch, resolve_model_switch_reasoning, ConversationSwitch,
@@ -16,7 +16,9 @@ use crate::{
     },
     compaction::CompactionConfig,
     config::Config,
-    credential_store::{build_provider_from_config_ensuring_catalog, AppCredentialStore},
+    credential_store::{
+        build_provider_from_config_ensuring_catalog, AppCredentialStore, CredentialGeneration,
+    },
 };
 
 impl SessionRuntime {
@@ -44,7 +46,7 @@ impl SessionRuntime {
             config.reasoning = reasoning;
             self.validate_model_override_switch(&config)
                 .map_err(SettingChangeError::Apply)?;
-            let read = self.credentials.before_read();
+            let read = AppCredentialStore::generation();
             // A keyless login lives in config, which `logout` edits on disk.
             let login_config = crate::app::endpoint_login::with_disk_login(
                 &config,
@@ -70,13 +72,13 @@ impl SessionRuntime {
     /// Installs an already-resolved provider on the idle session, for a
     /// model switch or renewed credentials. Kept separate from credential
     /// discovery so the session transaction can be exercised with a scripted
-    /// provider. `read` is [`super::SessionCredentials::before_read`] from
-    /// before `provider` was built.
+    /// provider. `read` is [`AppCredentialStore::generation`] from before
+    /// `provider` was built.
     pub(super) fn switch_provider(
         &mut self,
         provider: Arc<dyn rho_sdk::provider::ModelProvider>,
         config: &Config,
-        read: LogoutCount,
+        read: CredentialGeneration,
     ) -> anyhow::Result<()> {
         let current = self.current_model();
         let previous_context_window = model_context_window(&current.provider, &current.model);

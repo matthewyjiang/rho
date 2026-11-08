@@ -67,8 +67,9 @@ pub use jsonrpc::{
     RequestId, Response, RpcError, MAX_LINE_BYTES,
 };
 pub use methods::{
-    AnswerStop, ApprovalAsk, ApprovalSource, Ask, Budget, Choice, ClientEnvironment, ClientInfo,
-    ContentBlock, Cursor, DaemonInfo, DaemonStatus, DefaultAnswer, DefaultStyle, DetachReason,
+    AnswerStop, ApprovalAsk, ApprovalSource, Ask, AuthKeyParams, AuthKeyResponse, AuthLogoutParams,
+    AuthLogoutResponse, Budget, Choice, ClientEnvironment, ClientInfo, ContentBlock, Cursor,
+    DaemonInfo, DaemonStatus, DefaultAnswer, DefaultStyle, DetachReason, EnvironmentOverride,
     HelloParams, HelloResponse, InputAnswer, InputRequest, InputRequestId, InputTimeout, JobId,
     JobKind, JobListParams, JobListResponse, JobState, JobSummary, Location, MessageId, Operation,
     PathScope, PermissionMode, PlanApprovalAsk, PlanEntry, PlanStatus, Question, QuestionAsk,
@@ -79,7 +80,7 @@ pub use methods::{
     SessionNewResponse, SessionPromptParams, SessionPromptResponse, SessionSteerParams,
     SessionSteerResponse, StatusParams, StopParams, StopResponse, StreamId, ToolCallId,
     ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
-    SESSION_ANSWER, SESSION_HOLD,
+    UncheckedKey, UncheckedReason, SESSION_ANSWER, SESSION_HOLD,
 };
 pub use server::{serve_connection, ServerInfo, Service, CLOSE_GRACE};
 pub use subscription::{subscription, Published, Publisher, Subscription};

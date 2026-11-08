@@ -18,6 +18,8 @@
 //! | [`SESSION_ATTACH`] | [`SessionAttachParams`] | [`SessionAttachResponse`] |
 //! | [`SESSION_DETACH`] | [`SessionDetachParams`] | [`SessionDetachResponse`] |
 //! | [`JOB_LIST`] | [`JobListParams`] | [`JobListResponse`] |
+//! | [`AUTH_KEY`] | [`AuthKeyParams`] | [`AuthKeyResponse`] |
+//! | [`AUTH_LOGOUT`] | [`AuthLogoutParams`] | [`AuthLogoutResponse`] |
 //!
 //! The daemon sends these notifications; clients send none.
 //!
@@ -36,6 +38,7 @@
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Serialize};
 
+mod auth;
 mod daemon;
 mod event;
 mod input;
@@ -43,6 +46,10 @@ mod job;
 mod outcome;
 mod session;
 
+pub use auth::{
+    AuthKeyParams, AuthKeyResponse, AuthLogoutParams, AuthLogoutResponse, EnvironmentOverride,
+    UncheckedKey, UncheckedReason, AUTH_KEY, AUTH_LOGOUT,
+};
 pub use daemon::{
     ClientInfo, DaemonInfo, DaemonStatus, HelloParams, HelloResponse, StatusParams, StopParams,
     StopResponse, DAEMON_STATUS, DAEMON_STOP, HELLO,
@@ -153,6 +160,8 @@ protocol! {
         SessionAttach = SESSION_ATTACH: SessionAttachParams => SessionAttachResponse,
         SessionDetach = SESSION_DETACH: SessionDetachParams => SessionDetachResponse,
         JobList = JOB_LIST: JobListParams => JobListResponse,
+        AuthKey = AUTH_KEY: AuthKeyParams => AuthKeyResponse,
+        AuthLogout = AUTH_LOGOUT: AuthLogoutParams => AuthLogoutResponse,
     }
     notifications {
         SessionEventNotification = SESSION_EVENT: SessionEventParams,

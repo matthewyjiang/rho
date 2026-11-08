@@ -1,6 +1,9 @@
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, OnceLock,
+    },
 };
 
 use rho_providers::credentials::{
@@ -80,6 +83,40 @@ impl StoreChoiceRequest {
     }
 }
 
+/// How many times this process changed the credentials providers build
+/// with (#1662). Providers capture their key or tokens when built, so a
+/// session compares the [`CredentialGeneration`] its provider read at with
+/// the current one before each prompt, and rebuilds the provider once it
+/// moved: a key saved or a logout made by any client of the process (another
+/// ACP request, a daemon client) applies to every running session from its
+/// next prompt.
+///
+/// One generation covers every provider auth profile, so any provider
+/// credential save, logout, or OAuth refresh makes every session in the
+/// process rebuild its provider at its next prompt, never mid-turn. A
+/// rebuild drops provider state such as a Codex continuation, so secrets no
+/// provider reads, such as MCP servers' OAuth tokens and web-search keys, go
+/// through [`UntrackedCredentialStore`] and leave it alone.
+///
+/// It moves after every write through [`AppCredentialStore`] that may have
+/// changed something, and through [`AppCredentialStore::note_changed`] for
+/// login state kept outside the store. Switching to another backend does
+/// not move it: providers keep what they already hold, the write that
+/// follows a switch moves it, and a session whose credentials are refused
+/// rereads them anyway. OAuth refreshes save rotated tokens through the
+/// store too, so a refresh in one session moves it and the others pick up
+/// the rotated tokens on their next prompt instead of presenting the
+/// replaced ones.
+/// Writes by other processes do not move it;
+/// [`AppCredentialStore::reread_external_logins`] covers those once a
+/// provider refuses what it holds.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// A reading of the process's credential generation (see [`GENERATION`]),
+/// taken before a provider reads credentials.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CredentialGeneration(u64);
+
 impl AppCredentialStore {
     /// Makes the next reads see logins saved by another process, such as a
     /// terminal login an editor ran. The OS store caches reads, including
@@ -87,9 +124,55 @@ impl AppCredentialStore {
     pub(crate) fn reread_external_logins() {
         OsCredentialStore::forget_cached_secrets();
     }
+
+    /// The current credential generation. Take it before the build reads
+    /// credentials, so a change that lands during the build still reads as
+    /// after it.
+    pub(crate) fn generation() -> CredentialGeneration {
+        CredentialGeneration(GENERATION.load(Ordering::Acquire))
+    }
+
+    /// Records a change to what providers build with that is kept outside
+    /// the credential store, such as an endpoint login recorded in config
+    /// (see `app::endpoint_login`). Call once the change is written.
+    pub(crate) fn note_changed() {
+        GENERATION.fetch_add(1, Ordering::Release);
+    }
 }
 
 impl CredentialStore for AppCredentialStore {
+    fn get_secret(&self, account: &str) -> CredentialResult<Option<String>> {
+        selected_store()?.get_secret(account)
+    }
+
+    fn set_secret(&self, account: &str, secret: &str) -> CredentialResult<()> {
+        let saved = selected_store()?.set_secret(account, secret);
+        // A failed write may still have changed the store, as an OS store
+        // that wrote part of an entry does, so every attempt counts.
+        Self::note_changed();
+        saved
+    }
+
+    fn delete_secret(&self, account: &str) -> CredentialResult<bool> {
+        let deleted = selected_store()?.delete_secret(account);
+        // Deleting nothing changed nothing a provider could have read; a
+        // failed delete may have removed part of an entry.
+        if !matches!(deleted, Ok(false)) {
+            Self::note_changed();
+        }
+        deleted
+    }
+}
+
+/// The credential store [`AppCredentialStore`] reads and writes, for secrets
+/// no model provider reads, such as MCP servers' OAuth tokens and web-search
+/// keys. Its writes leave the credential generation (see [`GENERATION`])
+/// alone, so they rebuild no session's provider. The caller decides that
+/// what it writes feeds no provider.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct UntrackedCredentialStore;
+
+impl CredentialStore for UntrackedCredentialStore {
     fn get_secret(&self, account: &str) -> CredentialResult<Option<String>> {
         selected_store()?.get_secret(account)
     }
@@ -166,8 +249,9 @@ pub(crate) fn initialize_from_config(
     let mut dirty = absorb_legacy_policy(config)?;
     let backend = resolve_backend(config.credential_store)?;
     activate(backend)?;
+    // Web-search keys feed no provider, so moving them rebuilds nothing.
     if matches!(
-        config.migrate_legacy_web_search_credentials(&AppCredentialStore),
+        config.migrate_legacy_web_search_credentials(&UntrackedCredentialStore),
         Ok(true)
     ) {
         dirty = true;
@@ -181,9 +265,10 @@ pub(crate) fn initialize_from_config(
     Ok(())
 }
 
-/// Opens the configured backend for a login inside a running process, such as
-/// ACP `authenticate`. Unlike [`initialize_from_config`] it runs no migrations
-/// and writes nothing, so it is safe beside startup or a live session.
+/// Opens the configured backend for a sign-in or sign-out inside a running
+/// process (see `app::credential_writes`). Unlike [`initialize_from_config`]
+/// it runs no migrations and writes nothing, so it is safe beside startup or
+/// a live session.
 pub(crate) fn activate_for_login(config: &Config, config_path: &Path) -> anyhow::Result<()> {
     remember_config_path(config_path);
     activate(resolve_backend(config.credential_store)?)?;

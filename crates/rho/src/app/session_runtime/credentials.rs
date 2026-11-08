@@ -1,51 +1,29 @@
-//! Picks up a new login after the provider refused a session's credentials,
-//! and drops credentials a host logout deleted.
+//! Picks up credential changes in a running session: a key saved or a
+//! logout made by any client of the process, and a new login after the
+//! provider refused the session's credentials.
 //!
-//! Providers capture their key or OAuth tokens when built, so a prompt that
-//! fails on its credentials leaves the session holding the refused ones, and
-//! a logout leaves it holding deleted ones. The next prompt rebuilds the
-//! provider from the credential store, so a host's sign-in (or a
-//! `rho --login` elsewhere) applies without reloading, and a logout fails it
-//! with the typed provider error, as missing credentials do.
+//! Providers capture their key or OAuth tokens when built, so a session
+//! would otherwise keep presenting what it read at build time: a replaced
+//! key the provider now refuses, or a deleted one it still accepts. Before
+//! each prompt the session compares the process's credential generation
+//! (see [`AppCredentialStore::generation`]) with the one its provider read
+//! at, and rebuilds the provider from the store once it moved or a prompt
+//! failed on its credentials (#1662). A save or logout from another client
+//! of the same process (ACP, the daemon) thus applies from the next prompt,
+//! a refusal picks up a `rho login` run elsewhere, and a logout fails the
+//! prompt with the typed provider error, as missing credentials do.
 
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 
 use rho_providers::model::ModelError;
 
 use super::{model_scoped_config, SessionRuntime};
 use crate::{
     config::Config,
-    credential_store::{build_provider_from_config_ensuring_catalog, AppCredentialStore},
+    credential_store::{
+        build_provider_from_config_ensuring_catalog, AppCredentialStore, CredentialGeneration,
+    },
 };
-
-/// How many logouts the host has completed. The host records each one; the
-/// runtimes of its sessions compare against it.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct Logouts(Arc<AtomicU64>);
-
-/// A [`Logouts`] reading, taken before a provider reads credentials.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LogoutCount(u64);
-
-impl Logouts {
-    pub(crate) fn count(&self) -> LogoutCount {
-        LogoutCount(self.0.load(Ordering::Acquire))
-    }
-
-    /// Call once the credentials are deleted, so a provider that read them
-    /// first holds an older count.
-    pub(crate) fn record(&self) {
-        self.0.fetch_add(1, Ordering::Release);
-    }
-
-    /// Whether a logout finished after `read` was taken.
-    pub(crate) fn since(&self, read: LogoutCount) -> bool {
-        self.count() != read
-    }
-}
 
 /// A failure that signing in can fix. This follows the provider layer, which
 /// files each of these under `ProviderErrorKind::Authentication` when it
@@ -108,47 +86,29 @@ impl CredentialFailure {
 }
 
 /// Whether the session's provider still holds credentials the store has.
-#[derive(Clone, Debug)]
-pub(crate) struct SessionCredentials {
-    logouts: Logouts,
-    state: CredentialState,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CredentialState {
-    /// Read from the store when [`Logouts`] stood at this count; stale once
-    /// a later logout finishes.
-    Read(LogoutCount),
+pub(crate) enum SessionCredentials {
+    /// Read from the store at this generation, taken with
+    /// [`AppCredentialStore::generation`]; stale once it moves.
+    Read(CredentialGeneration),
     /// A prompt failed on a credential failure; reacquire before the next.
     Refused,
+    /// A test's scripted provider, which reads no credentials and cannot be
+    /// rebuilt from config, so another test moving the process-wide
+    /// generation must not make it stale.
+    #[cfg(test)]
+    Scripted,
 }
 
 impl SessionCredentials {
-    /// For a provider that has just read credentials. Session builds hold
-    /// the host's install gate, which a logout waits out, so none reads
-    /// credentials before a logout and counts after it.
-    pub(super) fn just_read(logouts: &Logouts) -> Self {
-        Self {
-            state: CredentialState::Read(logouts.count()),
-            logouts: logouts.clone(),
-        }
-    }
-
-    /// Take before building a provider and pass to
-    /// [`SessionRuntime::switch_provider`], so a logout during the build
-    /// still counts as after it.
-    pub(crate) fn before_read(&self) -> LogoutCount {
-        self.logouts.count()
-    }
-
-    pub(super) fn mark_read(&mut self, read: LogoutCount) {
-        self.state = CredentialState::Read(read);
-    }
-
-    fn stale(&self) -> bool {
-        match self.state {
-            CredentialState::Read(read) => self.logouts.since(read),
-            CredentialState::Refused => true,
+    /// Records that the provider was rebuilt after `read` was taken. A
+    /// scripted provider stays scripted: a test that switches it swaps one
+    /// scripted provider for another.
+    pub(super) fn mark_read(&mut self, read: CredentialGeneration) {
+        match *self {
+            Self::Read(_) | Self::Refused => *self = Self::Read(read),
+            #[cfg(test)]
+            Self::Scripted => {}
         }
     }
 }
@@ -161,15 +121,22 @@ impl SessionRuntime {
         &mut self,
         process_config: &Config,
     ) -> anyhow::Result<()> {
-        if !self.credentials.stale() {
-            return Ok(());
+        match self.credentials {
+            SessionCredentials::Read(read) if read == AppCredentialStore::generation() => {
+                return Ok(());
+            }
+            // This process's writes keep the OS store's cache current, so
+            // a moved generation needs no reread.
+            SessionCredentials::Read(_) => {}
+            // The login that fixes a refusal may have run in another
+            // process, such as the editor's terminal login.
+            SessionCredentials::Refused => AppCredentialStore::reread_external_logins(),
+            #[cfg(test)]
+            SessionCredentials::Scripted => return Ok(()),
         }
-        let read = self.credentials.before_read();
+        let read = AppCredentialStore::generation();
         let mut config = model_scoped_config(&self.current_model(), process_config);
         config.reasoning = self.built.session.reasoning_level();
-        // The login that fixes it ran in another process, such as the
-        // editor's terminal login.
-        AppCredentialStore::reread_external_logins();
         // A keyless login lives in config, which `logout` edits on disk.
         let login_config =
             crate::app::endpoint_login::with_disk_login(&config, &self.build.launch.config_path)?;
@@ -192,7 +159,7 @@ impl SessionRuntime {
             .as_ref()
             .is_err_and(|error| CredentialFailure::find(error).is_some())
         {
-            self.credentials.state = CredentialState::Refused;
+            self.credentials = SessionCredentials::Refused;
         }
     }
 }

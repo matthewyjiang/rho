@@ -191,7 +191,9 @@ pub(super) async fn prepare_http_client(
         oauth,
         headers,
         mode,
-        Arc::new(crate::credential_store::AppCredentialStore),
+        // MCP tokens feed no model provider, so saving or refreshing them
+        // must not rebuild every session's provider (#1662).
+        Arc::new(crate::credential_store::UntrackedCredentialStore),
         AuthorizationPrompt::DesktopBrowser,
     )
     .await

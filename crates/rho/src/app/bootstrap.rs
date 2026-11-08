@@ -510,7 +510,6 @@ pub(super) async fn prepare_acp(
         herdr: HerdrReporter::from_env().with_source(crate::herdr::HerdrSource::Headless),
         added_dirs: startup.added_dirs,
         host_features,
-        logouts: Default::default(),
         client,
     })
 }

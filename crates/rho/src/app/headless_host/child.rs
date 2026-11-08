@@ -18,9 +18,8 @@ use crate::{
         agent_binding::BoundAgent,
         cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
         session_runtime::{
-            HostCapabilities, Logouts, NodeSession, QuestionSupport, RunShape, SessionBuild,
-            SessionLaunch, SessionOpening, SessionRole, SessionRuntime, Turn, TurnStart,
-            UnattendedApprovals,
+            HostCapabilities, NodeSession, QuestionSupport, RunShape, SessionBuild, SessionLaunch,
+            SessionOpening, SessionRole, SessionRuntime, Turn, TurnStart, UnattendedApprovals,
         },
         shutdown_signal::ShutdownSignals,
         subagent_messaging::{NoticePoster, SteeringSlot, CHILD_COMMUNICATION_CONTRACT},
@@ -179,14 +178,12 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
             hook_labels: hook_host_labels,
         },
     };
-    let logouts = Logouts::default();
     let opening = SessionOpening {
         build,
         process_config: &config,
         host_mcp: Default::default(),
         cwd: &cwd,
         added_dirs,
-        logouts: &logouts,
     };
     let open = async {
         // `NodeSession::find` held a saved session to the agent the child is

@@ -173,6 +173,58 @@
       ],
       "description": "What an input request asks."
     },
+    "AuthKeyParams": {
+      "description": "Params of [`AUTH_KEY`].\n\nThe key travels only over the daemon's socket, which is private to the\ndaemon's user (mode 0600) and refuses peers of another user, and the\ndaemon never logs it. `Debug` shows `[redacted]` in its place, so a\nclient that logs its requests does not log the key either.",
+      "properties": {
+        "auth": {
+          "description": "The auth profile the key signs in to, such as `openai-api-key` or a\ncustom provider's `<name>-api-key`. It must take an API key.",
+          "type": "string"
+        },
+        "key": {
+          "description": "The API key. Surrounding whitespace is ignored.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "auth",
+        "key"
+      ],
+      "type": "object"
+    },
+    "AuthKeyResponse": {
+      "description": "Result of [`AUTH_KEY`]: the key is saved to the credential store the\ndaemon's config selects. Running sessions on the auth profile use it from\ntheir next prompt; new sessions use it at once.\n\nThe daemon first asks the provider's models endpoint about the key and\nrefuses one the provider refuses with\n[`crate::ErrorCode::KeyRefused`], saving nothing. A key the provider\ncannot be asked about, because rho lists no models for it or the endpoint\ndid not answer, is saved unchecked, as `rho login` saves it.",
+      "properties": {
+        "unchecked": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UncheckedKey"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why the key was saved without the provider checking it. Absent when\nthe provider accepted it."
+        }
+      },
+      "type": "object"
+    },
+    "AuthLogoutParams": {
+      "description": "Params of [`AUTH_LOGOUT`].",
+      "properties": {
+        "auth": {
+          "description": "The auth profile to sign out of. Its provider's endpoint login, as\nOllama records one, is forgotten too.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "auth"
+      ],
+      "type": "object"
+    },
+    "AuthLogoutResponse": {
+      "description": "Result of [`AUTH_LOGOUT`]: the auth profile's saved credentials are\ndeleted, if it had any. Running sessions on the profile drop them from\ntheir next prompt, which then fails with\n[`crate::TurnErrorKind::Authentication`] until a key is saved again.",
+      "type": "object"
+    },
     "Budget": {
       "anyOf": [
         {
@@ -438,6 +490,19 @@
         }
       ],
       "description": "Why the daemon dropped an attachment."
+    },
+    "EnvironmentOverride": {
+      "description": "The `data` of a [`crate::ErrorCode::EnvironmentOverride`] error.",
+      "properties": {
+        "variable": {
+          "description": "The variable in the daemon's environment that holds the auth\nprofile's credential, such as `OPENAI_API_KEY`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable"
+      ],
+      "type": "object"
     },
     "HelloParams": {
       "description": "Params of [`HELLO`].",
@@ -2278,6 +2343,44 @@
       ],
       "description": "How a turn ended."
     },
+    "UncheckedKey": {
+      "description": "Why [`AUTH_KEY`] saved a key the provider did not check.",
+      "properties": {
+        "message": {
+          "description": "The reason in words, for a person: what went wrong when the provider\ncould not be reached, such as `HTTP 404`. It never contains the key.",
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/UncheckedReason",
+          "description": "Why, for a program to branch on."
+        }
+      },
+      "required": [
+        "reason",
+        "message"
+      ],
+      "type": "object"
+    },
+    "UncheckedReason": {
+      "anyOf": [
+        {
+          "const": "no_model_listing",
+          "description": "Rho lists no models for the provider, so it cannot ask about a key.",
+          "type": "string"
+        },
+        {
+          "const": "unreachable",
+          "description": "The provider's models endpoint did not answer the question: it could\nnot be reached, or it failed with a status other than a refusal, as a\ngateway without `/models` does.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Why a key went unchecked. Protocol minors may add reasons."
+    },
     "VersionFix": {
       "description": "Which side of an incompatible pair has to change.",
       "oneOf": [
@@ -2355,6 +2458,18 @@
     "-32012": {
       "name": "SessionInUse"
     },
+    "-32013": {
+      "data": {
+        "$ref": "#/$defs/EnvironmentOverride"
+      },
+      "name": "EnvironmentOverride"
+    },
+    "-32014": {
+      "name": "KeyRefused"
+    },
+    "-32015": {
+      "name": "CredentialStoreUnavailable"
+    },
     "-32600": {
       "name": "InvalidRequest"
     },
@@ -2372,6 +2487,22 @@
     }
   },
   "methods": {
+    "rho/auth/key": {
+      "params": {
+        "$ref": "#/$defs/AuthKeyParams"
+      },
+      "result": {
+        "$ref": "#/$defs/AuthKeyResponse"
+      }
+    },
+    "rho/auth/logout": {
+      "params": {
+        "$ref": "#/$defs/AuthLogoutParams"
+      },
+      "result": {
+        "$ref": "#/$defs/AuthLogoutResponse"
+      }
+    },
     "rho/daemon/status": {
       "params": {
         "$ref": "#/$defs/StatusParams"

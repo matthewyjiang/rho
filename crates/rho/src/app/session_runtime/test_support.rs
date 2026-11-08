@@ -10,9 +10,9 @@ use rho_sdk::{
 };
 
 use super::{
-    ApprovalPolicy, BackgroundWait, ChildAgents, HostCapabilities, Logouts, OpenedSession,
-    QuestionSupport, RunShape, SessionBuild, SessionLaunch, SessionPermission, SessionRole,
-    SessionRuntime, SessionStorage, UnattendedApprovals,
+    credentials::SessionCredentials, ApprovalPolicy, BackgroundWait, ChildAgents, HostCapabilities,
+    OpenedSession, QuestionSupport, RunShape, SessionBuild, SessionLaunch, SessionPermission,
+    SessionRole, SessionRuntime, SessionStorage, UnattendedApprovals,
 };
 use crate::{
     agent::{
@@ -241,7 +241,6 @@ impl SessionRuntime {
                 workspace_root,
             },
             config.auth.clone(),
-            &Logouts::default(),
         )
     }
 
@@ -255,23 +254,20 @@ impl SessionRuntime {
         storage: SessionStorage,
         permission: SessionPermission,
         auth: String,
-        logouts: &Logouts,
     ) -> Self {
         let agent = build.launch.agent.clone();
-        Self::new(
-            OpenedSession {
-                build,
-                built,
-                storage,
-                agent,
-                auth,
-                host_mcp: Default::default(),
-                added_dirs: Default::default(),
-                permission,
-                reopen_notice: None,
-            },
-            logouts,
-        )
+        Self::new(OpenedSession {
+            build,
+            built,
+            storage,
+            agent,
+            auth,
+            host_mcp: Default::default(),
+            added_dirs: Default::default(),
+            permission,
+            reopen_notice: None,
+            credentials: SessionCredentials::Scripted,
+        })
     }
 
     /// The session's workspace and file, for host tests that read what the

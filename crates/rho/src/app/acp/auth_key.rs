@@ -13,22 +13,17 @@ use std::time::Duration;
 use agent_client_protocol::{schema::v1::RequestId, Error as AcpError};
 use futures_util::FutureExt;
 use rho_providers::{
-    auth::{
-        key_entry::{EnteredKey, KeyEntryLabels, KeyEntryPage, KeyVerdict},
-        login_dispatch::ProviderAuthentication,
-    },
+    auth::key_entry::{EnteredKey, KeyEntryLabels, KeyEntryPage, KeyVerdict},
     credentials::CredentialStore,
-    model::{
-        provider_models::{check_api_key, ProviderModelEndpoint},
-        ModelError,
-    },
-    provider::{self, ProviderAuthKind, ProviderDescriptor},
 };
-use url::Url;
 
 use super::{
     auth_login::{show_until_signed_in, ShownLogin},
     AcpClientPort,
+};
+use crate::{
+    app::credential_writes::{ApiKeyAuth, CredentialWriteError, KeyCheck},
+    config::Config,
 };
 
 /// How long the key page waits for a key. Getting one may take a trip to
@@ -36,167 +31,84 @@ use super::{
 /// Codex's device-code wait, the longest sign-in wait Rho has.
 const PAGE_LIFETIME: Duration = Duration::from_secs(15 * 60);
 
-/// An API-key login that can finish: `auth` takes a key, and no environment
-/// variable overrides a saved one.
-pub(super) struct KeyLogin<'a> {
-    auth: &'a str,
-    descriptor: &'static ProviderDescriptor,
-    entry_label: &'static str,
-}
-
-impl<'a> KeyLogin<'a> {
-    /// Checks `auth` before anything is asked of the user, so a login that
-    /// cannot finish does not first ask where to store credentials.
-    pub(super) fn prepare(auth: &'a str) -> Result<Self, AcpError> {
-        let Some((descriptor, mode)) = provider::resolve_auth_mode(auth) else {
-            return Err(AcpError::invalid_params().data(format!("unknown auth profile '{auth}'")));
-        };
-        let ProviderAuthKind::ApiKey {
-            env_var,
-            entry_label,
-            ..
-        } = mode.auth_kind
-        else {
-            return Err(
-                AcpError::invalid_params().data(format!("'{auth}' does not take an API key"))
-            );
-        };
-        // The variable wins over a saved key, so saving one would change
-        // nothing and the check would test the variable's key instead.
-        if ProviderAuthentication::has_environment_override(auth) {
-            return Err(AcpError::invalid_request().data(format!(
-                "'{auth}' reads its key from {env_var}; unset it to sign in with a saved key"
-            )));
-        }
-        Ok(Self {
-            auth,
-            descriptor,
-            entry_label,
+/// Signs `login` in for the `authenticate` request `request_id` through the
+/// key page. [`crate::app::credential_writes`] checks each key against the
+/// models endpoint `config` resolves and saves it to `store`, as it does for
+/// the daemon's `rho/auth/key`; this serves the page.
+pub(super) async fn serve_key_page(
+    login: ApiKeyAuth,
+    config: &Config,
+    store: &dyn CredentialStore,
+    request_id: RequestId,
+    port: &dyn AcpClientPort,
+) -> Result<(), AcpError> {
+    let label = login.descriptor().display_name;
+    let entry_label = login.entry_label();
+    let page = KeyEntryPage::bind(KeyEntryLabels::new(label, entry_label))
+        .await
+        .map_err(|error| {
+            AcpError::internal_error().data(format!("could not open the {label} key page: {error}"))
+        })?;
+    let url = page.url().to_owned();
+    let entered = page
+        .serve(PAGE_LIFETIME, move |key| {
+            check_on_page(login, key, config, store)
         })
-    }
-
-    /// Signs in for the `authenticate` request `request_id`, saving the key
-    /// to `store`. `endpoint` is the API base config resolves for an
-    /// OpenAI-compatible provider, where its models endpoint lives.
-    pub(super) async fn sign_in(
-        self,
-        endpoint: Option<&Url>,
-        store: &dyn CredentialStore,
-        request_id: RequestId,
-        port: &dyn AcpClientPort,
-    ) -> Result<(), AcpError> {
-        let Self {
-            auth,
-            descriptor,
-            entry_label,
-        } = self;
-        let label = descriptor.display_name;
-        let page = KeyEntryPage::bind(KeyEntryLabels::new(label, entry_label))
-            .await
-            .map_err(|error| {
-                AcpError::internal_error()
-                    .data(format!("could not open the {label} key page: {error}"))
-            })?;
-        let url = page.url().to_owned();
-        let endpoint = endpoint.map_or(
-            ProviderModelEndpoint::ProviderOwned,
-            ProviderModelEndpoint::OpenAiCompatible,
-        );
-        let entered = page
-            .serve(PAGE_LIFETIME, move |key| {
-                check_and_save(auth, descriptor, key, endpoint, store)
+        .map(|served| {
+            served.map_err(|error| {
+                AcpError::internal_error().data(format!("could not sign in to {label}: {error}"))
             })
-            .map(|served| {
-                served.map_err(|error| {
-                    AcpError::internal_error()
-                        .data(format!("could not sign in to {label}: {error}"))
-                })
-            });
-        let shown = ShownLogin {
-            auth,
-            provider_label: label,
-            url: &url,
-            message: format!("Enter your {entry_label} on the page that opens."),
-        };
-        show_until_signed_in(port, request_id, shown, entered).await
-    }
+        });
+    let shown = ShownLogin {
+        auth: login.auth(),
+        provider_label: label,
+        url: &url,
+        message: format!("Enter your {entry_label} on the page that opens."),
+    };
+    show_until_signed_in(port, request_id, shown, entered).await
 }
 
-/// Saves `key` unless the provider refuses it. A key the provider cannot be
-/// asked about (no model listing in Rho, an outage, a gateway without `/models`)
-/// is saved as the terminal login saves it, and the page says it went
-/// unchecked, so such a provider can still be signed in to.
-async fn check_and_save(
-    auth: &str,
-    descriptor: &ProviderDescriptor,
+/// Checks and saves a key entered on the page, telling the page what
+/// happened: a refusal or a failed save lets the user try again, and a key
+/// saved unchecked says so.
+async fn check_on_page(
+    login: ApiKeyAuth,
     key: EnteredKey,
-    endpoint: ProviderModelEndpoint<'_>,
+    config: &Config,
     store: &dyn CredentialStore,
 ) -> KeyVerdict {
-    let key = key.expose();
-    let provider = descriptor.display_name;
-    let notice = if descriptor.supports_model_refresh() {
-        match check_api_key(auth, key, endpoint).await {
-            Ok(()) => None,
-            Err(error) => match unchecked_reason(&error) {
-                None => return KeyVerdict::Rejected(format!("{provider} refused this key.")),
-                Some(reason) => Some(redacted(
-                    format!(
-                        "Rho could not check the key with {provider} ({reason}), so it saved the key unchecked."
-                    ),
-                    key,
-                )),
-            },
-        }
-    } else {
-        Some(format!(
-            "Rho could not check the key with {provider}, so it saved the key unchecked."
-        ))
+    let provider = login.descriptor().display_name;
+    let saved = async {
+        let check = login.check(key.expose(), config).await?;
+        login.save(key.expose(), store)?;
+        Ok::<_, CredentialWriteError>(check)
     };
-    match ProviderAuthentication::save_api_key(store, auth, key) {
-        Ok(()) => KeyVerdict::Accepted { notice },
-        Err(error) => {
-            KeyVerdict::Rejected(redacted(format!("Could not save the key: {error}"), key))
-        }
-    }
-}
-
-/// Why checking a key failed without the provider refusing it, or `None`
-/// when it refused. A plain `GET /models` that carries only the key fails
-/// 400, 401, or 403 only for the key itself; Google answers a malformed key
-/// with 400. Response bodies may quote the request, so only statuses show.
-fn unchecked_reason(error: &ModelError) -> Option<String> {
-    let status = match error {
-        ModelError::MissingCredentials(_) => return None,
-        ModelError::HttpStatus { status, .. } => Some(*status),
-        ModelError::Request(error) => match error.status() {
-            Some(status) => Some(status),
-            None if error.is_connect() || error.is_timeout() => {
-                return Some("could not reach it".into());
-            }
-            None => return Some(error.to_string()),
+    match saved.await {
+        Ok(KeyCheck::Accepted) => KeyVerdict::Accepted { notice: None },
+        Ok(KeyCheck::NoModelListing) => KeyVerdict::Accepted {
+            notice: Some(format!(
+                "Rho could not check the key with {provider}, so it saved the key unchecked."
+            )),
         },
-        ModelError::Credentials(_)
-        | ModelError::Io(_)
-        | ModelError::Interrupted
-        | ModelError::StreamIdleTimeout { .. }
-        | ModelError::StreamFailedAfterOutput { .. }
-        | ModelError::InvalidResponse(_)
-        | ModelError::RetryableInvalidResponse { .. }
-        | ModelError::ProviderReported { .. }
-        | ModelError::UnsupportedReasoning { .. }
-        | ModelError::UnsupportedProvider(_) => None,
-    };
-    match status {
-        Some(status) if matches!(status.as_u16(), 400 | 401 | 403) => None,
-        Some(status) => Some(format!("HTTP {status}")),
-        None => Some(error.to_string()),
+        Ok(KeyCheck::Unreachable(reason)) => KeyVerdict::Accepted {
+            notice: Some(format!(
+                "Rho could not check the key with {provider} ({reason}), so it saved the key unchecked."
+            )),
+        },
+        Err(CredentialWriteError::KeyRefused { .. }) => {
+            KeyVerdict::Rejected(format!("{provider} refused this key."))
+        }
+        // A failed save; the rest cannot follow a resolved profile.
+        Err(
+            error @ (CredentialWriteError::Store(_)
+            | CredentialWriteError::UnknownAuth { .. }
+            | CredentialWriteError::NotAnApiKey { .. }
+            | CredentialWriteError::NoCredentials { .. }
+            | CredentialWriteError::EnvironmentOverride { .. }
+            | CredentialWriteError::BlankKey
+            | CredentialWriteError::Config(_)),
+        ) => KeyVerdict::Rejected(format!("Rho {error}.")),
     }
-}
-
-/// `message` with any copy of `key` removed, in case an error quoted it.
-fn redacted(message: String, key: &str) -> String {
-    message.replace(key, "[key]")
 }
 
 #[cfg(test)]

@@ -2,14 +2,16 @@
 //!
 //! `[providers.<name>]` records that login, with or without a key. Every
 //! login path records it and every logout path forgets it, so this module is
-//! the one place the TUI, `rho login`, and ACP change it.
+//! the one place the TUI, `rho login`, ACP, and the daemon change it. Each
+//! change moves the credential generation (#1662), since providers build
+//! from the record as they do from a stored key.
 
 use std::{borrow::Cow, path::Path};
 
 use rho_providers::provider::ProviderDescriptor;
 
 use super::config_repository::ConfigRepository;
-use crate::config::Config;
+use crate::{config::Config, credential_store::AppCredentialStore};
 
 /// `config` with the login record of its provider taken from the config
 /// file at `config_path`, for building that provider. Refuses, as a missing
@@ -51,9 +53,10 @@ pub(crate) fn record(
     {
         return Ok(());
     }
-    repository
-        .update(|config| config.providers.record_login(descriptor))?
-        .map(drop)
+    if repository.update(|config| config.providers.record_login(descriptor))?? {
+        AppCredentialStore::note_changed();
+    }
+    Ok(())
 }
 
 /// Forgets a login to a host logged in through its endpoint and drops its
@@ -74,6 +77,7 @@ pub(crate) fn forget(
         return Ok(false);
     }
     repository.update(|config| config.providers.forget_login(descriptor))?;
+    AppCredentialStore::note_changed();
     if let Err(error) =
         rho_providers::model::provider_models::forget_provider_models(descriptor.name)
     {

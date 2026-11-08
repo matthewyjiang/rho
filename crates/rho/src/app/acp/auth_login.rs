@@ -22,31 +22,33 @@ use agent_client_protocol::{
     },
     Error as AcpError,
 };
-use rho_providers::{
-    auth::{
-        browser::BrowserAvailability,
-        login_dispatch::{InteractiveLoginCompletion, ProviderAuthentication},
-        login_prompt::LoginPrompt,
-    },
-    provider,
+use rho_providers::auth::{
+    browser::BrowserAvailability,
+    login_dispatch::{InteractiveLoginCompletion, ProviderAuthentication},
+    login_prompt::LoginPrompt,
 };
 use tokio::sync::watch;
 
 use super::{
     auth::{AgentLogin, SignIn},
-    auth_key::KeyLogin,
+    auth_key,
     host_features::Forms,
     AcpClientPort,
 };
 use crate::{
-    app::{bootstrap, config_repository::ConfigRepository},
-    config::Config,
-    credential_store::{self, AppCredentialStore},
+    app::{
+        config_repository::ConfigRepository,
+        credential_writes::{self, ApiKeyAuth, CredentialWriteError},
+    },
+    credential_store::AppCredentialStore,
 };
 
 /// Signs in to auth profile `auth` for the `authenticate` request
 /// `request_id`. `config` is the `--config` override the process started
 /// with; `forms` is how the host draws the credential store question.
+///
+/// An API-key profile is checked before anything is asked of the user, so
+/// a login that cannot finish does not ask where to store credentials.
 pub(super) async fn authenticate(
     auth: &str,
     sign_in: SignIn,
@@ -60,33 +62,40 @@ pub(super) async fn authenticate(
             "'{auth}' is not an authenticate method this connection advertised"
         )));
     };
-    let key_login = match login {
+    let key_auth = match login {
         AgentLogin::OAuth => None,
-        AgentLogin::ApiKey => Some(KeyLogin::prepare(auth)?),
+        AgentLogin::ApiKey => Some(ApiKeyAuth::resolve(auth)?),
     };
     super::auth_store::choose_if_unset(config.clone(), forms, &request_id, port).await?;
-    let repository = ConfigRepository::new(config.clone());
-    let config = open_credential_store(config)
-        .map_err(|error| AcpError::internal_error().data(format!("{error:#}")))?;
-    match key_login {
+    let repository = ConfigRepository::new(config);
+    let loaded = credential_writes::load_config_and_store(&repository)?;
+    match key_auth {
         None => sign_in_with_oauth(auth, request_id, port).await?,
-        Some(key_login) => {
-            let descriptor = provider::resolve_auth_mode(auth).map(|(descriptor, _)| descriptor);
-            let endpoint = descriptor
-                .and_then(|descriptor| config.resolved_provider_endpoint(descriptor.name));
-            key_login
-                .sign_in(endpoint.as_ref(), &AppCredentialStore, request_id, port)
+        Some(key_auth) => {
+            auth_key::serve_key_page(key_auth, &loaded, &AppCredentialStore, request_id, port)
                 .await?;
-            if let Some(descriptor) = descriptor {
-                crate::app::endpoint_login::record(&repository, *descriptor).map_err(|error| {
-                    AcpError::internal_error().data(format!(
-                        "saved the key, but could not record the login: {error:#}"
-                    ))
-                })?;
-            }
+            key_auth.record_login(&repository)?;
         }
     }
     Ok(AuthenticateResponse::new())
+}
+
+/// The ACP error for a sign-in or sign-out, `authenticate`'s or `logout`'s.
+impl From<CredentialWriteError> for AcpError {
+    fn from(error: CredentialWriteError) -> Self {
+        let acp_error = match &error {
+            CredentialWriteError::UnknownAuth { .. }
+            | CredentialWriteError::NotAnApiKey { .. }
+            | CredentialWriteError::NoCredentials { .. }
+            | CredentialWriteError::BlankKey
+            | CredentialWriteError::KeyRefused { .. } => AcpError::invalid_params(),
+            CredentialWriteError::EnvironmentOverride { .. } => AcpError::invalid_request(),
+            CredentialWriteError::Config(_) | CredentialWriteError::Store(_) => {
+                AcpError::internal_error()
+            }
+        };
+        acp_error.data(error.to_string())
+    }
 }
 
 /// Runs OAuth login `auth`, showing its URL in the host.
@@ -181,17 +190,6 @@ impl LoginFlight {
         drop(running);
         result
     }
-}
-
-/// Activates the credential store as configured now, from the `--config`
-/// override `config`, and returns that config, so the store a login chose
-/// after launch is the one used. With no store chosen that is the OS store,
-/// which sessions read by default.
-pub(super) fn open_credential_store(config: Option<PathBuf>) -> anyhow::Result<Config> {
-    let repository = ConfigRepository::new(config);
-    let config = repository.load()?;
-    credential_store::activate_for_login(&config, &bootstrap::absolute_config_path(&repository)?)?;
-    Ok(config)
 }
 
 /// A started login as the host shows it.

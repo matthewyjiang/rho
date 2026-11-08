@@ -89,7 +89,7 @@ Model discovery and agent binding wait until the host requests a session, so a c
 
 Credential failures are the exception. When the selected provider has no credentials, the credential store cannot read them, or the provider refuses them, the request fails with ACP `auth_required` (`-32000`) instead of an internal error. A refusal covers a revoked API key and an OAuth session whose refresh token expired or was revoked. This applies to `session/new` and `session/load`, and to a `session/prompt` turn or `/compact` that the provider rejects mid-session. The error message comes from Rho, such as the provider's missing-credential hint; it never contains the credential or the provider's raw response.
 
-After a successful login, no reconnect is needed, whichever credential store holds it. The next session request runs startup again, and the next prompt in a session whose credentials were refused reloads them for turns and compaction.
+After a successful login, no reconnect is needed, whichever credential store holds it. The next session request runs startup again, and the next prompt in a session whose credentials were refused reloads them for turns and compaction. A sign-in through `authenticate` reaches every live session of the agent, refused or not: each one's next prompt uses the saved credentials.
 
 ### Logout
 

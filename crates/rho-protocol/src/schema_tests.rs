@@ -9,7 +9,7 @@ use super::OTHER;
 use crate::methods::{
     AnswerStop, ApprovalSource, Ask, Budget, ContentBlock, DefaultStyle, DetachReason, JobKind,
     JobState, Operation, PathScope, PermissionMode, PlanStatus, Resolution, Selection,
-    SessionEvent, ToolContent, ToolKind, ToolStatus, TurnErrorKind, TurnOutcome,
+    SessionEvent, ToolContent, ToolKind, ToolStatus, TurnErrorKind, TurnOutcome, UncheckedReason,
 };
 
 // Covers: the committed schema/protocol.json is what the wire types
@@ -49,7 +49,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 21] = [
+    let cases: [(&str, bool); 22] = [
         ("JobKind", reads_as(unseen(), JobKind::Unknown)),
         ("JobState", reads_as(unseen(), JobState::Unknown)),
         ("Budget", reads_as(unseen(), Budget::Unknown)),
@@ -82,6 +82,10 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
         (
             "ContentBlock",
             reads_as(unseen_tag(), ContentBlock::Unknown),
+        ),
+        (
+            "UncheckedReason",
+            reads_as(unseen(), UncheckedReason::Unknown),
         ),
     ];
 
