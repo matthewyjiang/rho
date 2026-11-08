@@ -16,12 +16,15 @@ use serde::{Deserialize, Serialize};
 
 use super::{PermissionMode, SessionId};
 
-/// Change one setting of a loaded session between its turns. The session
-/// keeps the change with its file, so it outlasts the daemon unloading the
-/// session. A session the daemon has not loaded is
-/// [`crate::ErrorCode::SessionNotLoaded`]; one with a turn under way, or
-/// another change applying, is [`crate::ErrorCode::SessionBusy`]. A change
-/// that fails as it applies is [`crate::ErrorCode::InternalError`].
+/// Change one setting of a loaded session between its turns: a change sent
+/// during a turn, waiting for input included, waits for the turn to end,
+/// then applies (#1685). Changes apply in the order the daemon took them,
+/// each before any turn a later prompt starts. The session keeps the change
+/// with its file, so it outlasts the daemon unloading the session. A
+/// session the daemon has not loaded is
+/// [`crate::ErrorCode::SessionNotLoaded`]; one being deleted is
+/// [`crate::ErrorCode::SessionBusy`]. A change that fails as it applies is
+/// [`crate::ErrorCode::InternalError`].
 pub const SESSION_CONFIGURE: &str = "rho/session/configure";
 
 /// Params of [`SESSION_CONFIGURE`].
@@ -50,11 +53,11 @@ pub enum SessionChange {
     PermissionMode { mode: PermissionMode },
 }
 
-/// Result of [`SESSION_CONFIGURE`]: the change applies from the next turn,
-/// and these are the session's options with it. Every attached client also
+/// Result of [`SESSION_CONFIGURE`], once the change applied, after the turn
+/// under way, if any, ended: the change applies from the next turn, and
+/// these are the session's options with it. Every attached client also
 /// receives them as [`super::SessionEvent::OptionsChanged`] when they
-/// changed. A session with a turn running or waiting for input refuses with
-/// [`crate::ErrorCode::SessionBusy`]; send the change again once it ends.
+/// changed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionConfigureResponse {
     pub options: SessionOptions,

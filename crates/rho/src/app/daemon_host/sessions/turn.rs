@@ -126,7 +126,8 @@ impl TurnTask {
         // Locked for the whole turn and released only after the turn's end
         // is recorded, so the daemon's stop, which waits for the lock, finds
         // every turn it waited for recorded. Free once the session's last
-        // turn recorded its end, apart from the moment it takes to release.
+        // turn recorded its end and the settings changes queued before this
+        // prompt started its turn applied (see `configure`).
         let mut runtime = session.runtime.lock().await;
         // Declared after the lock, so even a panic records the end (see
         // `DaemonView`'s drop) before the lock is released.

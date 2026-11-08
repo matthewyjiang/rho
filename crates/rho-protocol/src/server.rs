@@ -116,7 +116,8 @@ pub trait Service: Send + Sync {
     ) -> impl Future<Output = Result<SessionHoldResponse, RpcError>> + Send;
 
     /// Handles `rho/session/configure`: apply one change to the session's
-    /// settings between its turns, and answer with its options then.
+    /// settings between its turns, once the turn under way ends, and answer
+    /// with its options then.
     fn configure_session(
         &self,
         params: SessionConfigureParams,

@@ -1,16 +1,18 @@
 //! Changing a daemon session's settings between its turns
 //! (`rho/session/configure`), through the real binary and its socket: the
 //! change answers with the session's options, reaches every attached client,
-//! the next turn runs with it, and it outlasts the daemon unloading the
-//! session.
+//! the next turn runs with it, one sent during a turn applies once the turn
+//! ends, and it outlasts the daemon unloading the session.
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{SessionAttach, SessionCancel, SessionConfigure, SessionDetach, SessionNew},
+    methods::{
+        SessionAttach, SessionCancel, SessionConfigure, SessionDelete, SessionDetach, SessionNew,
+    },
     Client, ClientError, CommandKind, DaemonNotification, ErrorCode, Notifications, PermissionMode,
     ReasoningLevel, ReasoningOptions, RpcError, SessionAttachParams, SessionCancelParams,
-    SessionChange, SessionConfigureParams, SessionDetachParams, SessionEvent, SessionId,
-    SessionNewParams, SessionOptions,
+    SessionChange, SessionConfigureParams, SessionDeleteParams, SessionDetachParams, SessionEvent,
+    SessionId, SessionNewParams, SessionOptions, TurnOutcome,
 };
 use serde_json::Value;
 
@@ -208,33 +210,116 @@ async fn a_change_reaches_attached_clients_and_the_next_turn() {
     );
 }
 
-// Covers: a session whose turn is under way refuses a change, so a client
-// learns at once that it did not apply, rather than the change waiting on
-// a turn that may wait for input indefinitely.
+// Covers: a change sent while a turn runs waits for the turn's end, then
+// applies and answers, rather than being refused; a delete meanwhile sees
+// the queued change; and a prompt that races the turn's end starts its turn
+// only once the change applied, so that turn runs with it (#1685).
 // Owner: daemon session settings.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_session_refuses_a_change_while_its_turn_runs() {
+async fn a_change_sent_during_a_turn_applies_at_its_end_before_the_next_turn() {
+    #[derive(Debug, PartialEq)]
+    enum Seen {
+        Prompt,
+        Ended(TurnOutcome),
+        Options(SessionOptions),
+    }
     let sandbox = Sandbox::new();
-    // The fixture holds the turn until it is cancelled.
+    // The fixture holds each turn until it is cancelled.
     let (_daemon, client) = sandbox.start_daemon("delay").await;
     let session = sandbox.new_session(&client).await;
+    let (watcher, mut notifications) = sandbox.connect_following().await;
+    let before = watcher
+        .request::<SessionAttach>(&SessionAttachParams {
+            session: session.clone(),
+            after: None,
+            environment: sandbox.client_environment(),
+        })
+        .await
+        .unwrap()
+        .options;
     sandbox.prompt(&client, &session).await.unwrap();
 
-    let refused = configure(
+    let change = configure(
         &client,
         &session,
         SessionChange::PermissionMode {
             mode: PermissionMode::Plan,
         },
-    )
-    .await;
+    );
+    let delete = SessionDeleteParams {
+        session: session.clone(),
+    };
+    let turn_runs = RpcError::new(
+        ErrorCode::SessionBusy,
+        "the session has a turn in progress; delete it once the turn ends",
+    );
+    let change_queued = RpcError::new(
+        ErrorCode::SessionBusy,
+        "a change to the session's settings is queued or applying; delete it once the change has applied",
+    );
+    let race = async {
+        // The delete is refused for the turn until the change queues behind
+        // it, then for the change: the turn cannot end before the cancel.
+        sandbox
+            .poll_until("the change to queue behind the turn", async || {
+                let error = match client.request::<SessionDelete>(&delete).await {
+                    Err(ClientError::Rpc { error, .. }) => error,
+                    other => panic!("the delete was not refused: {other:?}"),
+                };
+                if error == turn_runs {
+                    None
+                } else {
+                    assert_eq!(error, change_queued);
+                    Some(())
+                }
+            })
+            .await;
+        client
+            .request::<SessionCancel>(&SessionCancelParams {
+                session: session.clone(),
+            })
+            .await
+            .unwrap();
+        // Prompted as soon as the cancelled turn lets it, racing the change.
+        sandbox
+            .poll_until("the next turn to start", async || {
+                match sandbox.prompt(&client, &session).await {
+                    Ok(()) => Some(()),
+                    Err(Some(ErrorCode::SessionBusy)) => None,
+                    Err(code) => panic!("the prompt failed with {code:?}"),
+                }
+            })
+            .await;
+    };
+    let (changed, ()) = tokio::join!(change, race);
 
+    let mut expected = before;
+    expected.permission_mode.current = PermissionMode::Plan;
+    assert_eq!(changed, Ok(expected.clone()));
+    let mut seen = Vec::new();
+    next_event(&mut notifications, &session, |event| {
+        seen.push(match event {
+            SessionEvent::UserMessage { .. } => Seen::Prompt,
+            SessionEvent::TurnEnded { outcome } => Seen::Ended(outcome),
+            SessionEvent::OptionsChanged { options } => Seen::Options(options),
+            _ => return None,
+        });
+        (seen
+            .iter()
+            .filter(|seen| matches!(seen, Seen::Prompt))
+            .count()
+            == 2)
+            .then_some(())
+    })
+    .await;
     assert_eq!(
-        refused,
-        Err(RpcError::new(
-            ErrorCode::SessionBusy,
-            "the session has a turn in progress; change its settings once the turn ends",
-        ))
+        seen,
+        [
+            Seen::Prompt,
+            Seen::Ended(TurnOutcome::Cancelled),
+            Seen::Options(expected),
+            Seen::Prompt,
+        ]
     );
     client
         .request::<SessionCancel>(&SessionCancelParams { session })

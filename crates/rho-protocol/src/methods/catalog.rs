@@ -104,8 +104,8 @@ pub struct SessionDeleteParams {
 /// unloaded it, detaching its clients as
 /// [`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].
 ///
-/// A session whose turn is under way, a settings change applying,
-/// background work running, such as a subagent, or a run it started not yet
+/// A session whose turn is under way, a settings change waiting or
+/// applying, background work running, such as a subagent, or a run it started not yet
 /// finished is refused as [`crate::ErrorCode::SessionBusy`]; one another
 /// process has open, or one a session it started is open in, as
 /// [`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded
