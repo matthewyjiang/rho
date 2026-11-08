@@ -358,15 +358,15 @@ fn steers_show_as_user_messages_once_applied() {
     enum Step {
         Steered,
         Withdrawn,
-        Runtime(SessionEvent),
+        Runtime(Box<SessionEvent>),
     }
     let id = rho_sdk::SteeringId::new();
     let applied = || {
-        Step::Runtime(SessionEvent::Run(RunEvent::SteeringApplied {
+        Step::Runtime(Box::new(SessionEvent::Run(RunEvent::SteeringApplied {
             ids: vec![id.clone()],
-        }))
+        })))
     };
-    let run_closed = || Step::Runtime(SessionEvent::RunClosed);
+    let run_closed = || Step::Runtime(Box::new(SessionEvent::RunClosed));
     let steer_message = vec![WireEvent::UserMessage {
         message: MessageId::new("m0"),
         content: vec![ContentBlock::Text {
@@ -396,9 +396,9 @@ fn steers_show_as_user_messages_once_applied() {
             vec![
                 (Step::Steered, vec![]),
                 (
-                    Step::Runtime(SessionEvent::Run(RunEvent::SteeringDelivered {
+                    Step::Runtime(Box::new(SessionEvent::Run(RunEvent::SteeringDelivered {
                         id: id.clone(),
-                    })),
+                    }))),
                     vec![WireEvent::SteeringDelivered {
                         id: steer_to_wire(&id),
                     }],

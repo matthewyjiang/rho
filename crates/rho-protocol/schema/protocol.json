@@ -2722,6 +2722,17 @@
             "message": {
               "$ref": "#/$defs/MessageId"
             },
+            "steer": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SteerId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Present when the message is a steer that just applied: it crossed\ninto the conversation for the turn's next model request, under\nthe id [`super::SESSION_STEER`] answered with. Replayed history\ncarries none."
+            },
             "type": {
               "const": "user_message",
               "type": "string"
@@ -3031,6 +3042,23 @@
           "required": [
             "type",
             "options"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The provider already took steer `id` mid-request: it can no longer\nbe withdrawn ([`super::SESSION_UNSTEER`]), and still applies, as a\n[`Self::UserMessage`] carrying `id`, at the turn's next model request.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/SteerId"
+            },
+            "type": {
+              "const": "steering_delivered",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id"
           ],
           "type": "object"
         },
@@ -3372,7 +3400,15 @@
       "type": "object"
     },
     "SessionSteerResponse": {
-      "description": "Result of [`SESSION_STEER`]: the input is queued for the running turn,\nwhich applies it at its next model request. A turn that ends first drops\nit.",
+      "description": "Result of [`SESSION_STEER`]: the running turn accepted the input, which\napplies at the turn's next model request as a\n[`SessionEvent::UserMessage`] carrying `id`. A turn that ends first drops\nit: a client that never saw it apply can offer it again.\n\nNo model request taking input is [`crate::ErrorCode::NotSteerable`], as\nis a turn that ended before it accepted the input.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/SteerId"
+        }
+      },
+      "required": [
+        "id"
+      ],
       "type": "object"
     },
     "SessionSummary": {
@@ -3428,9 +3464,42 @@
       ],
       "type": "object"
     },
+    "SessionUnsteerParams": {
+      "description": "Params of [`SESSION_UNSTEER`].",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/SteerId",
+          "description": "The steer to withdraw, as [`SESSION_STEER`] answered it."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session",
+        "id"
+      ],
+      "type": "object"
+    },
+    "SessionUnsteerResponse": {
+      "description": "Result of [`SESSION_UNSTEER`]. With no model request taking input, it\nanswers [`crate::ErrorCode::NotSteerable`] instead.",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/UnsteerOutcome"
+        }
+      },
+      "required": [
+        "outcome"
+      ],
+      "type": "object"
+    },
     "StatusParams": {
       "description": "Params of [`DAEMON_STATUS`].",
       "type": "object"
+    },
+    "SteerId": {
+      "description": "Identifies one accepted steer ([`super::SESSION_STEER`]): the\n[`SessionEvent::UserMessage`] it applies as and its\n[`SessionEvent::SteeringDelivered`] carry it, and\n[`super::SESSION_UNSTEER`] withdraws the steer by it.",
+      "type": "string"
     },
     "StopParams": {
       "description": "Params of [`DAEMON_STOP`].",
@@ -4333,6 +4402,36 @@
       ],
       "description": "Why a key went unchecked. Protocol minors may add reasons."
     },
+    "UnsteerOutcome": {
+      "anyOf": [
+        {
+          "const": "withdrawn",
+          "description": "Removed before it reached the conversation: it never applies.",
+          "type": "string"
+        },
+        {
+          "const": "delivered",
+          "description": "The provider already took it ([`SessionEvent::SteeringDelivered`]):\nit still applies.",
+          "type": "string"
+        },
+        {
+          "const": "applied",
+          "description": "Already in the conversation.",
+          "type": "string"
+        },
+        {
+          "const": "not_found",
+          "description": "The running turn never accepted that id: another turn's, or one a\nturn dropped when it ended.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What [`SESSION_UNSTEER`] did with the steer."
+    },
     "VersionFix": {
       "description": "Which side of an incompatible pair has to change.",
       "oneOf": [
@@ -4617,6 +4716,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionSteerResponse"
+      }
+    },
+    "rho/session/unsteer": {
+      "params": {
+        "$ref": "#/$defs/SessionUnsteerParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionUnsteerResponse"
       }
     }
   },
