@@ -639,12 +639,17 @@
       "anyOf": [
         {
           "const": "lagged",
-          "description": "The client fell too far behind; reattach with its cursor.",
+          "description": "The client fell too far behind, or the daemon unloaded the session,\nas a delete that failed after it unloaded the session does; attach\nagain with the client's cursor.",
           "type": "string"
         },
         {
           "const": "daemon_stopping",
           "description": "The daemon is stopping.",
+          "type": "string"
+        },
+        {
+          "const": "deleted",
+          "description": "The session was deleted ([`super::SESSION_DELETE`]).",
           "type": "string"
         },
         {
@@ -1976,6 +1981,22 @@
       ],
       "type": "object"
     },
+    "SessionDeleteParams": {
+      "description": "Params of [`SESSION_DELETE`].",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
+    "SessionDeleteResponse": {
+      "description": "Result of [`SESSION_DELETE`]: the session's files are gone, with those\nof the sessions it started, such as its subagents', and the daemon has\nunloaded it, detaching its clients as\n[`super::DetachReason::Deleted`]. Its job stays in [`super::JOB_LIST`].\n\nA session whose turn is under way, a settings change applying,\nbackground work running, such as a subagent, or a run it started not yet\nfinished is refused as [`crate::ErrorCode::SessionBusy`]; one another\nprocess has open, or one a session it started is open in, as\n[`crate::ErrorCode::SessionInUse`]. Either refusal leaves a loaded\nsession loaded. A session the daemon loaded but that has saved nothing\nyet is unloaded all the same. An id the daemon has not loaded and nothing\nis saved under is [`crate::ErrorCode::SessionNotFound`].",
+      "type": "object"
+    },
     "SessionDetachParams": {
       "description": "Params of [`SESSION_DETACH`].",
       "properties": {
@@ -2164,7 +2185,7 @@
           "type": "object"
         },
         {
-          "description": "The session has a new title, as when the daemon named it after its\nfirst turn (#1670).",
+          "description": "The session has a new title, as when the daemon named it after its\nfirst turn (#1670) or a client renamed it\n([`super::SESSION_RENAME`]).",
           "properties": {
             "title": {
               "type": "string"
@@ -2412,6 +2433,57 @@
       "description": "A session's id, the one `rho sessions` and `/resume` show. Opaque to\nclients: send back the string the daemon gave.",
       "type": "string"
     },
+    "SessionListParams": {
+      "description": "Params of [`SESSION_LIST`].",
+      "properties": {
+        "cursor": {
+          "description": "The [`SessionListResponse::next_cursor`] of the page before; absent\nfor the first page. A cursor the daemon did not issue is refused as\n[`crate::ErrorCode::InvalidParams`].",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cwd": {
+          "description": "Only the sessions saved in this workspace, an absolute path,\nresolved through symlinks as [`super::SESSION_NEW`] resolves its\n`cwd`; absent lists every workspace's. A path that does not resolve\nto a directory lists none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "The most sessions the page holds: 100 when absent, and at most the\ndaemon's limit, 1000, which the error refusing a larger one names.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SessionListResponse": {
+      "description": "Result of [`SESSION_LIST`]. Following `next_cursor` never lists a session\ntwice, nor skips one when others are deleted between pages; a session\nsaved during the walk moves ahead of the cursor and is missed, so list\nagain from the first page for a fresh view.",
+      "properties": {
+        "next_cursor": {
+          "description": "The cursor of the next page; absent on the last.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessions": {
+          "items": {
+            "$ref": "#/$defs/SessionSummary"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "sessions"
+      ],
+      "type": "object"
+    },
     "SessionNewParams": {
       "description": "Params of [`SESSION_NEW`].",
       "properties": {
@@ -2531,6 +2603,27 @@
       "description": "Result of [`SESSION_PROMPT`]: the prompt is saved and its turn is\nrunning. The turn runs on in the daemon; [`super::JOB_LIST`] reports how\nit ends.\n\nA turn that ends before its prompt is saved answers with an error\ninstead: [`crate::ErrorCode::TurnEnded`], whose `data` is the turn's\n[`crate::TurnOutcome`], or [`crate::ErrorCode::DaemonStopping`] when the\ndaemon stopped it.",
       "type": "object"
     },
+    "SessionRenameParams": {
+      "description": "Params of [`SESSION_RENAME`].",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "title": {
+          "description": "The new title, surrounding whitespace trimmed. One that is empty,\nholds a control character such as a newline, or runs over the\ndaemon's 500 characters is refused as\n[`crate::ErrorCode::InvalidParams`], naming why.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "title"
+      ],
+      "type": "object"
+    },
+    "SessionRenameResponse": {
+      "description": "Result of [`SESSION_RENAME`]: the title is saved, and clients attached\nto the session receive it as [`super::SessionEvent::TitleChanged`]. A\ngenerated title never replaces it.",
+      "type": "object"
+    },
     "SessionSteerParams": {
       "description": "Params of [`SESSION_STEER`].",
       "properties": {
@@ -2550,6 +2643,59 @@
     },
     "SessionSteerResponse": {
       "description": "Result of [`SESSION_STEER`]: the input is queued for the running turn,\nwhich applies it at its next model request. A turn that ends first drops\nit.",
+      "type": "object"
+    },
+    "SessionSummary": {
+      "description": "One session, as [`SESSION_LIST`] reports it. Only sessions with a saved\nprompt whose workspace still exists are listed, and not those a program\nran: `rho run`'s, subagents', and workflow nodes'.",
+      "properties": {
+        "added_dirs": {
+          "description": "The directories the session added beside its workspace, as last\nsaved, those since removed left out.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cwd": {
+          "description": "The workspace the session was saved in, which an attach reopens it\nin.",
+          "type": "string"
+        },
+        "first_user_message": {
+          "description": "The session's first user message on one line, cut to 80 characters,\nwhich an untitled session is labelled with.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_user_message": {
+          "description": "The session's last user message, cut like `first_user_message`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "title": {
+          "description": "The session's title; absent until it has one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at": {
+          "description": "Unix time, in seconds, of the session's last save.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session",
+        "cwd",
+        "added_dirs",
+        "updated_at"
+      ],
       "type": "object"
     },
     "StatusParams": {
@@ -3143,6 +3289,14 @@
         "$ref": "#/$defs/SessionConfigureResponse"
       }
     },
+    "rho/session/delete": {
+      "params": {
+        "$ref": "#/$defs/SessionDeleteParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionDeleteResponse"
+      }
+    },
     "rho/session/detach": {
       "params": {
         "$ref": "#/$defs/SessionDetachParams"
@@ -3159,6 +3313,14 @@
         "$ref": "#/$defs/SessionHoldResponse"
       }
     },
+    "rho/session/list": {
+      "params": {
+        "$ref": "#/$defs/SessionListParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionListResponse"
+      }
+    },
     "rho/session/new": {
       "params": {
         "$ref": "#/$defs/SessionNewParams"
@@ -3173,6 +3335,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionPromptResponse"
+      }
+    },
+    "rho/session/rename": {
+      "params": {
+        "$ref": "#/$defs/SessionRenameParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionRenameResponse"
       }
     },
     "rho/session/steer": {

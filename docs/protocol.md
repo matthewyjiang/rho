@@ -28,6 +28,9 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/session/answer` | `session`, `request`, `answer` | Answers one of the turn's open input requests ([below](#answering-a-turn-s-requests)) and returns `{}` once the daemon has handed the answer to the turn. |
 | `rho/session/configure` | `session`, `change` | Changes one of a loaded session's settings for its later turns and returns its `options` ([below](#changing-a-session-s-settings)). |
 | `rho/session/hold` | `session`, `request` | Stops an open input request's timeout, so it waits for an answer ([below](#timeouts)), and returns `{}`. |
+| `rho/session/list` | `cwd`?, `cursor`?, `limit`? | One page of the saved sessions, newest first: `sessions` and, when more follow, `next_cursor` ([below](#listing-renaming-and-deleting-sessions)). |
+| `rho/session/rename` | `session`, `title` | Saves the session's title and returns `{}`; clients attached to it receive `title_changed`. |
+| `rho/session/delete` | `session` | Deletes the saved session and the sessions it started, unloading it first, and returns `{}` ([below](#listing-renaming-and-deleting-sessions)). |
 | `rho/job/list` | | `jobs`: every job the daemon knows, including those earlier daemons ran, oldest first. Each has its `id`, `kind` (`session`, `subagent`, or `workflow`), `state`, `workspace`, and timestamps; the `session` it writes, absent for a workflow and for a subagent on another runtime; the `parent` job that started it, for a subagent or workflow; the `workflow_run` it drives, for a workflow; the `error` when it failed; and, usually while it is `queued`, its `queue` place: the `budget` it waits on, that budget's `limit`, and its `position`, 1 for the next to start. |
 | `rho/auth/key` | `auth`, `key` | Checks the API key with the provider of auth profile `auth`, such as `openai-api-key`, and saves it ([below](#signing-in-and-out)). Returns `{}`, or, when the provider could not be asked, `unchecked` with its `reason` and a `message`. |
 | `rho/auth/logout` | `auth` | Deletes auth profile `auth`'s saved credentials ([below](#signing-in-and-out)) and returns `{}`. |
@@ -66,7 +69,7 @@ After `rho/session/attach`, the daemon sends the session's events as `rho/sessio
 | `tool_call` | Opens a tool call, or updates the call with the same `id`: its title, kind, status, input (`raw_input`), content, and locations. Once it finishes, its content starts with the text the model got from it, if any. Absent fields are unchanged. |
 | `plan` | The agent's plan, replacing any earlier one. |
 | `usage` | How full the model's context is: `used_tokens`, and `window_tokens` when the model's window is known. Once a request in the session had a price, `cost_usd_micros` holds what the session has cost so far, across daemon restarts, in millionths of a US dollar. A finished compaction reports one too. |
-| `title_changed` | The session's generated `title`. It arrives a few seconds after the first answered turn, `rho run --detach` runs included. |
+| `title_changed` | The session's new `title`: the generated one, a few seconds after the first answered turn, `rho run --detach` runs included, or one `rho/session/rename` saved. |
 | `compaction` | A context compaction began or ended, under its `id`. Its `status` has a `type`: `started`, then exactly one of `completed`, `cancelled`, or `failed` with an `error`. |
 | `response_discarded` | The provider's response broke off and is retried. What it streamed cannot be taken back: keep it, or mark it superseded; the retried response starts new messages. |
 | `card` | A titled card shown outside the conversation, such as a background result: its body as `markdown`, as `plain` text for hosts that show text as is, and its `tone`: `neutral`, `accent`, `success`, `warning`, or `error`. |
@@ -90,8 +93,9 @@ The daemon buffers up to 16 MiB of a session's recent events for clients that re
 
 The daemon detaches a client with `rho/session/detached`, after which no event of that session arrives:
 
-- `lagged`: the client fell 4096 events behind. A turn never waits for a client; attach again with the cursor to catch up.
+- `lagged`: the client fell 4096 events behind, or the daemon unloaded the session, as a delete that fails after it unloaded the session does. A turn never waits for a client; attach again with the cursor to catch up.
 - `daemon_stopping`: the daemon is stopping.
+- `deleted`: `rho/session/delete` deleted the session.
 
 Attaching a session the connection already follows replaces the earlier attachment.
 
@@ -156,6 +160,27 @@ A change the session cannot take, such as a model no saved credential serves or 
 
 Settings persist with the session: from its first change on, the session keeps its model, reasoning level, fast mode, and permission mode with its file, as they stand at each save, a plan approval's mode switch included. A session the daemon [unloads](/daemon#unloading-idle-sessions) and reopens, or one a later daemon reopens, runs with them, and its `options` say so. A setting it can no longer take, such as a model whose credentials are gone, falls back to the config's.
 
+## Listing, renaming, and deleting sessions
+
+These methods let a frontend show and manage saved sessions without reading session files ([#1670](https://github.com/matthewyjiang/rho/issues/1670), [#1667](https://github.com/matthewyjiang/rho/issues/1667)). They work on any saved session, loaded or not, and reach the same session store as `rho sessions`, `/resume`, and ACP's `session/list`.
+
+`rho/session/list` lists the sessions a person can resume: those with a saved message whose workspace still exists, leaving out `rho run`'s, subagents', and workflow nodes' sessions, as `/resume` does. With `cwd`, an absolute path, it lists only that workspace's sessions, resolving symlinks as `rho/session/new` does, and none when the path does not resolve to a directory; without it, every workspace's. Each entry has:
+
+| Field | Meaning |
+| --- | --- |
+| `session` | The session id, which `rho/session/attach` reopens. |
+| `cwd` | The session's workspace. |
+| `added_dirs` | The extra directories the session can reach that still exist; empty when none. |
+| `title`? | The session's title, once it has one. |
+| `first_user_message`?, `last_user_message`? | The first and last user messages on one line, cut to 80 characters, as `/resume` previews them. |
+| `updated_at` | When the session was last saved, in Unix seconds. |
+
+Sessions come newest first. A page holds `limit` sessions, 100 by default and at most 1000, and a larger `limit` gets `InvalidParams` naming the limit. When more sessions follow, `next_cursor` is an opaque string to send back as `cursor` for the next page. The walk never repeats a session, nor skips one when others are deleted between pages; a session saved during the walk moves ahead of the cursor and is missed, so list again from the first page for a fresh view. A `cursor` that is not one a list returned, such as a malformed one, gets `InvalidParams`.
+
+`rho/session/rename` saves `title`, trimmed, as the session's title, as `rho sessions rename` does. A title that is empty, holds a control character such as a newline or an escape, or runs over 500 characters gets `InvalidParams` naming why. A title it saves is never replaced by a generated one. An id nothing is saved under gets `SessionNotFound`. Ids are chosen by clients, so one id can be saved in two workspaces; a rename or delete of such an id gets `InvalidParams`.
+
+`rho/session/delete` deletes the session's files, with those of the subagent and workflow sessions it started, as `rho sessions rm` does. The daemon unloads a loaded session first, and detaches its clients with `deleted`; a session it loaded that has saved nothing yet has no files, so it is unloaded, its clients detached with `deleted`, and the delete returns `{}`. It refuses with `SessionBusy` while the session's turn is under way, waiting for input included, while a settings change applies, while a subagent, workflow run, or background process it started is still running or holding a result, while a run it started has not finished, or while another job writes it. Another process, such as the TUI, holding the session or a session it started gets `SessionInUse`. A loaded session is checked against all of these before the daemon unloads it, so a refused delete leaves it loaded; should the delete still fail after the unload, as on a disk error, its clients are detached with `lagged` and attaching again reopens it. While the delete runs, a request for the session may get `SessionBusy`, or, once the session is unloaded, `SessionNotFound` or `SessionNotLoaded`. An id the daemon has not loaded and nothing is saved under gets `SessionNotFound`. The session's job record stays, as every job record does.
+
 ## Signing in and out
 
 `rho/auth/key` and `rho/auth/logout` change the credential store the daemon's sessions read, as `/login` and `/logout` do in the TUI. The daemon moves to the store its config selects when the request arrives and writes that one; a request it refuses writes nothing. Moving stores alone changes no running session's credentials. A change applies to every session the daemon runs, whichever client opened it: a running session uses a new key, or drops a deleted one, from its next prompt, and new sessions use it at once. After a logout, a session's next prompt fails with `TurnEnded`, whose outcome is a `failed` turn of kind `authentication`, until a key is saved again.
@@ -184,14 +209,14 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 | -32000 | `HandshakeRequired` | A request other than `rho/hello` came before the handshake. |
 | -32001 | `VersionMismatch` | The protocol majors differ; `data` says which side to change. |
 | -32003 | `SessionNotFound` | No session is saved under the id. |
-| -32004 | `SessionBusy` | The session already has a turn under way (for a prompt or a settings change) or a settings change applying, or another job, such as a subagent run, writes the saved session a prompt or an attach would reopen. |
+| -32004 | `SessionBusy` | The session already has a turn under way (for a prompt, a settings change, or a delete), a settings change applying, a delete under way, or, for a delete, background work running or a run it started unfinished; or another job, such as a subagent run, writes the saved session a prompt, an attach, or a delete would touch. |
 | -32005 | `NotSteerable` | No model request is taking input. |
 | -32006 | `SteerRefused` | The running turn refused the steering input. |
 | -32007 | `DaemonStopping` | The daemon is stopping and starts nothing new. |
 | -32008 | `SessionOpenFailed` | The daemon could not open the session: for example, the config is invalid, the agent a saved session was saved as changed or is gone, or the session is a subagent's or workflow node's, which only its parent continues. |
 | -32009 | `TurnEnded` | The turn ended before it saved the prompt; `data` is its outcome. |
 | -32011 | `InputNotOpen` | The input request is not open: another client answered it first, it timed out, or the turn withdrew it. |
-| -32012 | `SessionInUse` | Another process, such as a TUI or a foreground `rho run`, has the session open, so the daemon cannot reopen it. |
+| -32012 | `SessionInUse` | Another process, such as a TUI or a foreground `rho run`, has the session open, or, for a delete, a session it started, so the daemon cannot reopen or delete it. |
 | -32013 | `EnvironmentOverride` | A variable in the daemon's environment holds the auth profile's credential, so saving or deleting one would change nothing; `data.variable` names it. |
 | -32014 | `KeyRefused` | The provider rejected the API key, and nothing was saved. |
 | -32015 | `CredentialStoreUnavailable` | The credential store could not be opened, read, or written, as when the OS keyring is locked. |

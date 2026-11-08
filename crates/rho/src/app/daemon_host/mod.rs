@@ -19,9 +19,11 @@ use rho_protocol::{
     AuthKeyParams, AuthKeyResponse, AuthLogoutParams, AuthLogoutResponse, DaemonStatus,
     JobListResponse, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
-    SessionConfigureParams, SessionConfigureResponse, SessionHoldParams, SessionHoldResponse,
+    SessionConfigureParams, SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse,
+    SessionHoldParams, SessionHoldResponse, SessionListParams, SessionListResponse,
     SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
-    SessionSteerParams, SessionSteerResponse, Subscription, PROTOCOL_VERSION,
+    SessionRenameParams, SessionRenameResponse, SessionSteerParams, SessionSteerResponse,
+    Subscription, PROTOCOL_VERSION,
 };
 use rho_sdk::CancellationToken;
 
@@ -179,6 +181,27 @@ impl Service for DaemonHost {
         params: SessionAttachParams,
     ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
         self.sessions.attach(params).await
+    }
+
+    async fn list_sessions(
+        &self,
+        params: SessionListParams,
+    ) -> Result<SessionListResponse, RpcError> {
+        self.sessions.list(params).await
+    }
+
+    async fn rename_session(
+        &self,
+        params: SessionRenameParams,
+    ) -> Result<SessionRenameResponse, RpcError> {
+        self.sessions.rename(params).await
+    }
+
+    async fn delete_session(
+        &self,
+        params: SessionDeleteParams,
+    ) -> Result<SessionDeleteResponse, RpcError> {
+        self.sessions.delete(params).await
     }
 
     async fn list_jobs(&self) -> JobListResponse {

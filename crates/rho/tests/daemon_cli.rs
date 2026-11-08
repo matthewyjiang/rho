@@ -1,6 +1,7 @@
 //! `rho daemon` through the real binary: its lifecycle (status, single
-//! instance, and stop) here, the sessions it hosts in [`sessions`] and
-//! changing their settings in [`configure`],
+//! instance, and stop) here, the sessions it hosts in [`sessions`],
+//! changing their settings in [`configure`], and listing, renaming, and
+//! deleting them in [`catalog`],
 //! `rho attach` following them in [`attach`], and `rho run --detach`
 //! starting them in [`detach`]; the tool processes the daemon's stop ends
 //! are in [`tools`], and signing it in and out over its socket in [`auth`].
@@ -22,6 +23,9 @@ mod sessions;
 
 #[path = "support/daemon_configure.rs"]
 mod configure;
+
+#[path = "support/daemon_catalog.rs"]
+mod catalog;
 
 #[path = "support/daemon_attach.rs"]
 mod attach;

@@ -22,7 +22,11 @@ use rho_sdk::{
 };
 
 use super::{model_scoped_config, SessionRuntime};
-use crate::{config::Config, session::Session as StoredSession, title::TitleModel};
+use crate::{
+    config::Config,
+    session::{NoSessionFound, Session as StoredSession},
+    title::TitleModel,
+};
 
 /// What the title agent needs to name one session.
 pub(crate) struct TitleJob {
@@ -47,7 +51,9 @@ pub(super) enum TitleState {
 
 impl TitleJob {
     /// Generates and saves the title. Yields it only when this request
-    /// saved it: a title someone else set first wins and is not resent.
+    /// saved it: a title someone else set first wins and is not resent, and
+    /// a session deleted since its turn gets none, so no model call names
+    /// it.
     pub(crate) async fn generate(self) -> Option<String> {
         let Self {
             model,
@@ -56,8 +62,12 @@ impl TitleJob {
             stored_id,
             cwd,
         } = self;
-        if StoredSession::title_is_set(&cwd, &stored_id).unwrap_or(false) {
-            return None;
+        match StoredSession::title_is_set(&cwd, &stored_id) {
+            Ok(true) => return None,
+            Err(error) if error.is::<NoSessionFound>() => return None,
+            // A title that could not be read is generated all the same; the
+            // save keeps one set meanwhile.
+            Ok(false) | Err(_) => {}
         }
         let usage_recording = crate::usage::default_recording().await;
         let title = crate::title::generate_title(

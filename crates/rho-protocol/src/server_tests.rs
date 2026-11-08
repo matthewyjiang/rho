@@ -98,6 +98,30 @@ macro_rules! hosts_no_sessions {
             Err(no_such_session())
         }
 
+        async fn list_sessions(
+            &self,
+            _: SessionListParams,
+        ) -> Result<SessionListResponse, RpcError> {
+            Ok(SessionListResponse {
+                sessions: Vec::new(),
+                next_cursor: None,
+            })
+        }
+
+        async fn rename_session(
+            &self,
+            _: SessionRenameParams,
+        ) -> Result<SessionRenameResponse, RpcError> {
+            Err(no_such_session())
+        }
+
+        async fn delete_session(
+            &self,
+            _: SessionDeleteParams,
+        ) -> Result<SessionDeleteResponse, RpcError> {
+            Err(no_such_session())
+        }
+
         async fn list_jobs(&self) -> JobListResponse {
             JobListResponse { jobs: Vec::new() }
         }

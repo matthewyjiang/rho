@@ -19,6 +19,14 @@ pub(crate) struct NoSessionFound {
     pub(super) id_prefix: String,
 }
 
+/// More than one workspace saved a session under exactly the id a lookup
+/// names, so it names none of them.
+#[derive(Debug, thiserror::Error)]
+#[error("session '{id}' is saved in more than one workspace")]
+pub(crate) struct SavedInManyWorkspaces {
+    id: String,
+}
+
 /// Narrows id-prefix matches to the sessions whose whole id is `id_prefix`
 /// when there are any. Every id-prefix lookup goes through this, so a full
 /// id is never ambiguous: ids are any string a client chose, and one can
@@ -51,6 +59,16 @@ pub(super) fn single_match<'a, T>(
         [] => Ok(None),
         [only] => Ok(Some(only)),
         _ => anyhow::bail!("multiple sessions match '{id_prefix}'; use a longer UUID prefix"),
+    }
+}
+
+/// The one session among `matches`, exact-id matches from every workspace,
+/// refused as [`SavedInManyWorkspaces`] when there are more.
+pub(super) fn single_workspace<'a, T>(matches: &'a [T], id: &str) -> anyhow::Result<Option<&'a T>> {
+    match matches {
+        [] => Ok(None),
+        [only] => Ok(Some(only)),
+        _ => Err(SavedInManyWorkspaces { id: id.to_owned() }.into()),
     }
 }
 

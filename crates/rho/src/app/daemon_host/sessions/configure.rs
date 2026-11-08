@@ -13,15 +13,13 @@
 //! loads it. A change that applies is kept with the session's file, so a
 //! session the daemon unloads while idle reopens with it.
 
-use std::sync::Arc;
-
 use rho_protocol::{
     self as wire, ErrorCode, RpcError, SessionConfigureParams, SessionConfigureResponse,
 };
 use rho_providers::model::catalog::ModelSelection;
 use rho_sdk::ReasoningLevel;
 
-use super::{options::available_auths, stopping, LoadedSession, Sessions, Settings};
+use super::{being_deleted, options::available_auths, stopping, Held, Hold, Sessions};
 use crate::{
     app::{
         session_options::{reasoning_from_wire, resolve_model},
@@ -63,7 +61,7 @@ impl Sessions {
             .loaded_session(&params.session)
             .await?
             .ok_or_else(not_loaded)?;
-        let changing = {
+        let held = {
             // `None` once the idle unload took the session after the lookup.
             let mut turn = session.enter().ok_or_else(not_loaded)?;
             // Under the turn lock a prompt starts its turn under, so this
@@ -72,11 +70,10 @@ impl Sessions {
             if self.jobs.turn_in_progress(&session.job) {
                 return Err(busy(TURN_UNDER_WAY));
             }
-            match turn.settings {
-                Settings::Changing => return Err(busy(CHANGE_APPLYING)),
-                Settings::Settled => turn.settings = Settings::Changing,
-            }
-            Changing(Arc::clone(&session))
+            Held::take(&session, &mut turn, Hold::Configuring).map_err(|hold| match hold {
+                Hold::Configuring => busy(CHANGE_APPLYING),
+                Hold::Deleting => being_deleted(),
+            })?
         };
         // With no turn under way and none starting, only a turn that just
         // recorded its end or the daemon's stop holds the runtime, each
@@ -105,18 +102,8 @@ impl Sessions {
         // Even after a failure: a model switch can fail partway, after it
         // changed what the session reports.
         let options = session.refresh_options(runtime, &auths);
-        drop(changing);
+        drop(held);
         applied.map(|()| SessionConfigureResponse { options })
-    }
-}
-
-/// Marks a session's settings settled again when dropped, so a prompt can
-/// start, whether the change applied, failed, or its request was dropped.
-struct Changing(Arc<LoadedSession>);
-
-impl Drop for Changing {
-    fn drop(&mut self) {
-        self.0.turn().settings = Settings::Settled;
     }
 }
 

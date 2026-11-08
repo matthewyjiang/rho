@@ -16,6 +16,7 @@ use rho_sdk::SessionSnapshot;
 use rho_sdk::{CompactionState, Revision, SessionId};
 
 mod agent_identity;
+pub(crate) mod catalog;
 mod delete;
 mod display_rows;
 mod id_match;
@@ -38,6 +39,7 @@ mod summary_tests;
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
+mod title;
 pub(crate) mod tree;
 #[cfg(test)]
 #[path = "session_tree_tests.rs"]
@@ -59,10 +61,12 @@ use persistence::{
 };
 
 pub use delete::{is_cross_project, DeleteOptions, DeleteOutcome};
-pub(crate) use delete::{CleanupOutcome, WorkspaceDeleteOutcome};
+pub(crate) use delete::{CleanupOutcome, ExactDelete, RunNotFinished, WorkspaceDeleteOutcome};
+pub(crate) use id_match::SavedInManyWorkspaces;
 pub(crate) use lease::SessionInUse;
 use lease::{LeasePurpose, SessionLease};
 pub(crate) use persistence::NoSessionFound;
+pub(crate) use title::TitleRejected;
 pub(crate) use workspace_scope::Workspace;
 
 #[derive(Clone, Debug)]
@@ -535,7 +539,9 @@ impl Session {
         Self::find_by_id_prefix_in_root(&session_root()?, cwd, id_prefix)
     }
 
-    /// Sets a session title after local-then-global id resolution.
+    /// Sets a session title after local-then-global id resolution. A title
+    /// that is empty once trimmed, holds a control character, or runs over
+    /// its budget is refused as [`TitleRejected`].
     ///
     /// Returns the resolved session identity and the stored title so callers
     /// (CLI rename, notices) do not need a second lookup.
@@ -596,10 +602,7 @@ impl Session {
         id_prefix: &str,
         title: &str,
     ) -> anyhow::Result<TitleUpdate> {
-        let title = title.trim();
-        if title.is_empty() {
-            anyhow::bail!("title must not be empty");
-        }
+        let title = title::checked(title)?;
         // Resolve local-first, then any workspace, so CLI rename matches rm/resume.
         let resolved = SessionStore::new(session_root, cwd).resolve(id_prefix)?;
         SessionStore::new(session_root, &resolved.cwd).set_title(&resolved.id, title)?;

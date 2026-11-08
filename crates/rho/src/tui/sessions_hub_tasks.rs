@@ -297,7 +297,7 @@ impl App {
                     }
                     Err(error) => {
                         self.insert_entry(&Entry::Error(format!(
-                            "could not delete session: {error}"
+                            "could not delete session: {error:#}"
                         )));
                         "delete failed".into()
                     }

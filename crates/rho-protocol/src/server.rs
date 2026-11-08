@@ -20,13 +20,15 @@ use crate::{
         Hello, JobList, JobListParams, JobListResponse, Method, SessionAnswer, SessionAnswerParams,
         SessionAnswerResponse, SessionAttach, SessionAttachParams, SessionAttachResponse,
         SessionCancel, SessionCancelParams, SessionCancelResponse, SessionConfigure,
-        SessionConfigureParams, SessionConfigureResponse, SessionDetach, SessionDetachParams,
-        SessionDetachResponse, SessionHold, SessionHoldParams, SessionHoldResponse, SessionNew,
-        SessionNewParams, SessionNewResponse, SessionPrompt, SessionPromptParams,
-        SessionPromptResponse, SessionSteer, SessionSteerParams, SessionSteerResponse, Status,
+        SessionConfigureParams, SessionConfigureResponse, SessionDelete, SessionDeleteParams,
+        SessionDeleteResponse, SessionDetach, SessionDetachParams, SessionDetachResponse,
+        SessionHold, SessionHoldParams, SessionHoldResponse, SessionList, SessionListParams,
+        SessionListResponse, SessionNew, SessionNewParams, SessionNewResponse, SessionPrompt,
+        SessionPromptParams, SessionPromptResponse, SessionRename, SessionRenameParams,
+        SessionRenameResponse, SessionSteer, SessionSteerParams, SessionSteerResponse, Status,
         Stop, AUTH_KEY, AUTH_LOGOUT, DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER,
-        SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DETACH, SESSION_HOLD,
-        SESSION_NEW, SESSION_PROMPT, SESSION_STEER,
+        SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH,
+        SESSION_HOLD, SESSION_LIST, SESSION_NEW, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -126,6 +128,27 @@ pub trait Service: Send + Sync {
         &self,
         params: SessionAttachParams,
     ) -> impl Future<Output = Result<(SessionAttachResponse, Subscription), RpcError>> + Send;
+
+    /// Answers `rho/session/list`: a page of the saved sessions a person
+    /// can resume.
+    fn list_sessions(
+        &self,
+        params: SessionListParams,
+    ) -> impl Future<Output = Result<SessionListResponse, RpcError>> + Send;
+
+    /// Handles `rho/session/rename`: save a session's title and tell the
+    /// clients attached to it.
+    fn rename_session(
+        &self,
+        params: SessionRenameParams,
+    ) -> impl Future<Output = Result<SessionRenameResponse, RpcError>> + Send;
+
+    /// Handles `rho/session/delete`: unload the session, if loaded, and
+    /// delete its files.
+    fn delete_session(
+        &self,
+        params: SessionDeleteParams,
+    ) -> impl Future<Output = Result<SessionDeleteResponse, RpcError>> + Send;
 
     /// Answers `rho/job/list`.
     fn list_jobs(&self) -> impl Future<Output = JobListResponse> + Send;
@@ -421,6 +444,9 @@ enum ServiceCall {
     AnswerSession(SessionAnswerParams),
     HoldSession(SessionHoldParams),
     ConfigureSession(SessionConfigureParams),
+    ListSessions(SessionListParams),
+    RenameSession(SessionRenameParams),
+    DeleteSession(SessionDeleteParams),
     ListJobs,
     SaveAuthKey(AuthKeyParams),
     LogoutAuth(AuthLogoutParams),
@@ -487,6 +513,9 @@ impl ServiceCall {
             SESSION_CONFIGURE => {
                 decode_params::<SessionConfigure>(params).map(Self::ConfigureSession)
             }
+            SESSION_LIST => decode_params::<SessionList>(params).map(Self::ListSessions),
+            SESSION_RENAME => decode_params::<SessionRename>(params).map(Self::RenameSession),
+            SESSION_DELETE => decode_params::<SessionDelete>(params).map(Self::DeleteSession),
             JOB_LIST => decode_params::<JobList>(params).map(|JobListParams {}| Self::ListJobs),
             AUTH_KEY => decode_params::<AuthKey>(params).map(Self::SaveAuthKey),
             AUTH_LOGOUT => decode_params::<AuthLogout>(params).map(Self::LogoutAuth),
@@ -525,6 +554,15 @@ impl ServiceCall {
             }
             Self::ConfigureSession(params) => {
                 encode_result::<SessionConfigure>(&service.configure_session(params).await?)
+            }
+            Self::ListSessions(params) => {
+                encode_result::<SessionList>(&service.list_sessions(params).await?)
+            }
+            Self::RenameSession(params) => {
+                encode_result::<SessionRename>(&service.rename_session(params).await?)
+            }
+            Self::DeleteSession(params) => {
+                encode_result::<SessionDelete>(&service.delete_session(params).await?)
             }
             Self::ListJobs => encode_result::<JobList>(&service.list_jobs().await),
             Self::SaveAuthKey(params) => {
