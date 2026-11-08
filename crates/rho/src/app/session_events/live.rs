@@ -6,14 +6,15 @@ use std::{
 };
 
 use rho_protocol::{
-    ContentBlock, MessageId, PlanEntry, SessionEvent as WireEvent, ToolCallId, ToolCallUpdate,
-    ToolContent, ToolKind, ToolStatus,
+    CompactionId, CompactionStatus, ContentBlock, Location, MessageId, PlanEntry,
+    SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
 };
 use rho_sdk::{
     model,
     tool::{ToolMetadata, ToolOutput},
-    RunEvent, ToolCompletion, UserInput,
+    ContextEstimate, RunEvent, ToolCompletion, UserInput,
 };
+use serde_json::Value;
 
 use super::{
     cards, named_call, opened_call, plan_entries,
@@ -26,12 +27,7 @@ use crate::{
     tools::{mcp::exported_name::McpToolNames, todo::TodoState},
 };
 
-/// Told when the provider discarded a response it had begun streaming and
-/// the run retries it: clients cannot retract the text they were sent.
-const STREAM_RESET_NOTICE: &str = "provider response discarded; retrying";
-/// The title of the call that shows a compaction.
-const COMPACTION_TITLE: &str = "compact context";
-/// A compaction the run ended before it reported a result.
+/// Why a compaction failed when the run ended before it reported a result.
 const UNFINISHED_COMPACTION: &str = "compaction ended without a result";
 
 /// Turns one session's live runtime events into wire events. One per loaded
@@ -42,15 +38,18 @@ const UNFINISHED_COMPACTION: &str = "compaction ended without a result";
 /// call opens with a full card, even one the run finishes without starting,
 /// such as a call to a tool that does not exist. When the run's events end
 /// ([`SessionEvent::RunClosed`]), calls still open close `failed`: the SDK
-/// does not finish calls a cancel interrupts. A compaction shows as a call
-/// of its own and closes the same way.
+/// does not finish calls a cancel interrupts. A compaction reports as
+/// events of its own and always ends: `cancelled` with a cancelled run,
+/// else `failed` when the run ends first (#1670).
 ///
 /// Agent message and thought chunks carry a message id. Consecutive chunks
 /// of one kind share it; a chunk of the other kind, a new model step, or any
 /// other event in between, such as a tool call, starts a new message.
 ///
 /// The session's checklist goes out as a plan whenever a finished tool
-/// changed it, and each model step reports its context fill as usage.
+/// changed it. Each model step reports its context fill as usage, and the
+/// run's end its settled fill; the daemon adds the session's cost
+/// (`session_events::priced`).
 ///
 /// It also replays the session's saved rows ([`Self::replay`]), so a call
 /// id a provider reuses is numbered the same way live and replayed, and the
@@ -60,6 +59,9 @@ pub(crate) struct LiveEvents {
     workspace: PathBuf,
     /// Identifies MCP calls, whose capped names cannot be decoded.
     mcp_tools: McpToolNames,
+    /// The context window of the session's model as configured, which
+    /// usage reports ahead of the one the provider reports.
+    configured_window: Option<u64>,
     /// The session's checklist, shared with its `todo` tool.
     todo: TodoState,
     /// The plan clients last got.
@@ -76,8 +78,8 @@ pub(crate) struct LiveEvents {
     /// How many of the session's saved display rows [`Self::replay`] has
     /// replayed.
     replayed_rows: usize,
-    /// The compaction call still open.
-    compaction: Option<ToolCallId>,
+    /// The compaction under way.
+    compaction: Option<CompactionId>,
     /// The message the latest chunk belongs to, while later chunks of its
     /// kind still continue it.
     message: Option<OpenMessage>,
@@ -118,6 +120,7 @@ impl LiveEvents {
         Self {
             workspace: workspace.to_owned(),
             mcp_tools: tools.mcp_report().tool_names(),
+            configured_window: None,
             sent_plan: plan_entries(&todo),
             todo,
             prompt: None,
@@ -129,6 +132,14 @@ impl LiveEvents {
             compaction: None,
             message: None,
         }
+    }
+
+    /// Reports usage against `window`, the context window the session's
+    /// model is configured with, when it has one, rather than the one the
+    /// provider reports, as the TUI context meter measures it.
+    pub(crate) fn with_configured_window(mut self, window: Option<u64>) -> Self {
+        self.configured_window = window;
+        self
     }
 
     /// Notes `input`, the display input of the turn about to start
@@ -182,9 +193,12 @@ impl LiveEvents {
             SessionEvent::BoundaryApplied { transcript } => cards(transcript).collect(),
             SessionEvent::Notice { text } => vec![WireEvent::Notice { text: text.clone() }],
             SessionEvent::RunClosed { ending } => self.close_unfinished(ending),
+            // The committed turn is the settled context; in-run updates
+            // were estimates.
+            SessionEvent::RunFinished { context } => vec![self.usage(*context)],
             // The daemon reports the job's state itself: a turn's start, its
             // waits for input, and its end.
-            SessionEvent::RunStarted | SessionEvent::RunFinished { .. } => Vec::new(),
+            SessionEvent::RunStarted => Vec::new(),
             // The host opens these as input requests with ids of its own
             // (the daemon's `sessions::inputs`, #1660).
             SessionEvent::ApprovalRequested { .. }
@@ -226,10 +240,7 @@ impl LiveEvents {
                 context_estimate, ..
             } => {
                 self.message = None;
-                vec![WireEvent::Usage {
-                    used_tokens: context_estimate.tokens(),
-                    window_tokens: context_estimate.reported_context_window(),
-                }]
+                vec![self.usage(*context_estimate)]
             }
             RunEvent::ToolProposed { call } => {
                 if !call.id.is_empty() {
@@ -258,26 +269,23 @@ impl LiveEvents {
                 );
                 superseded
                     .into_iter()
-                    .chain([WireEvent::ToolCall(opened)])
+                    .chain([WireEvent::tool_call(opened)])
                     .collect()
             }
-            RunEvent::ToolUpdated { call_id, progress } => self
-                .tool_update(
-                    call_id,
-                    CallState::Open,
-                    ToolStatus::InProgress,
-                    vec![text_content(progress.message())],
-                    /*locations*/ None,
-                )
-                .into_iter()
-                .collect(),
+            RunEvent::ToolUpdated { call_id, progress } => {
+                let shown = CallUpdate {
+                    status: ToolStatus::InProgress,
+                    content: vec![text_content(progress.message())],
+                    locations: None,
+                    raw_output: None,
+                };
+                self.tool_update(call_id, CallState::Open, shown)
+                    .into_iter()
+                    .collect()
+            }
             RunEvent::ToolFinished { call_id, result } => {
-                let (status, content) = finished_content(result, &self.workspace);
-                let locations = result
-                    .output()
-                    .and_then(|output| tools::finished_locations(output, &self.workspace));
-                let finished =
-                    self.tool_update(call_id, CallState::Finished, status, content, locations);
+                let finished = finished_update(result, &self.workspace);
+                let finished = self.tool_update(call_id, CallState::Finished, finished);
                 // The call may have replaced the checklist, whether it ran
                 // directly or inside code mode.
                 finished.into_iter().chain(self.plan_change()).collect()
@@ -285,29 +293,30 @@ impl LiveEvents {
             RunEvent::ProviderStreamReset { .. } => {
                 // The retried response proposes its calls again.
                 self.proposed.clear();
-                vec![WireEvent::Notice {
-                    text: STREAM_RESET_NOTICE.to_owned(),
-                }]
+                vec![WireEvent::ResponseDiscarded]
             }
             RunEvent::CompactionStarted { .. } => {
                 let id = fresh_compaction_id();
                 self.compaction = Some(id.clone());
-                vec![compaction_call(
-                    id,
-                    ToolStatus::InProgress,
-                    /*content*/ None,
-                )]
+                vec![compaction(id, CompactionStatus::Started)]
             }
-            RunEvent::CompactionCompleted { outcome, .. } => {
+            RunEvent::CompactionCompleted { .. } => {
+                // A completion whose start was not seen still gets an id.
                 let id = self.compaction.take().unwrap_or_else(fresh_compaction_id);
-                let summary = text_content(compaction_summary(outcome));
-                vec![compaction_call(id, ToolStatus::Completed, Some(summary))]
+                vec![compaction(id, CompactionStatus::Completed)]
             }
+            // A cancel ends the compaction under way as cancelled; the
+            // calls it interrupted close when the run's events end.
+            RunEvent::Cancelled { .. } => self
+                .compaction
+                .take()
+                .map(|id| compaction(id, CompactionStatus::Cancelled))
+                .into_iter()
+                .collect(),
             // [`SessionEvent::RunClosed`] closes what the run left open.
-            RunEvent::Started { .. }
-            | RunEvent::Completed { .. }
-            | RunEvent::Cancelled { .. }
-            | RunEvent::Failed { .. } => Vec::new(),
+            RunEvent::Started { .. } | RunEvent::Completed { .. } | RunEvent::Failed { .. } => {
+                Vec::new()
+            }
             // [`SessionEvent::BoundaryApplied`] carried the rows it shows.
             RunEvent::BoundaryInputApplied { .. } => Vec::new(),
             // Questions arrive as [`SessionEvent::QuestionAsked`].
@@ -331,6 +340,18 @@ impl LiveEvents {
             // RunEvent is non_exhaustive; a newer SDK's events wait for the
             // wire to carry them.
             _ => Vec::new(),
+        }
+    }
+
+    /// Context fill from `estimate`, against the configured window, else
+    /// the one the provider reported with it. The daemon prices it.
+    fn usage(&self, estimate: ContextEstimate) -> WireEvent {
+        WireEvent::Usage {
+            used_tokens: estimate.tokens(),
+            window_tokens: self
+                .configured_window
+                .or(estimate.reported_context_window()),
+            cost: None,
         }
     }
 
@@ -361,37 +382,35 @@ impl LiveEvents {
     fn close_unfinished(&mut self, ending: &RunEnd) -> Vec<WireEvent> {
         self.proposed.clear();
         let compaction = self.compaction.take().map(|id| {
-            let reason = match ending {
-                RunEnd::Failed(message) => message.as_str(),
-                RunEnd::Ended => UNFINISHED_COMPACTION,
+            let error = match ending {
+                RunEnd::Failed(message) => message.clone(),
+                RunEnd::Ended => UNFINISHED_COMPACTION.to_owned(),
             };
-            compaction_call(id, ToolStatus::Failed, Some(text_content(reason)))
+            compaction(id, CompactionStatus::Failed { error })
         });
         let announced = std::mem::take(&mut self.announced);
         let calls = announced
             .into_values()
             .filter(|call| call.state == CallState::Open)
-            .map(|call| WireEvent::ToolCall(status_update(call.id, Some(ToolStatus::Failed))));
+            .map(|call| WireEvent::tool_call(status_update(call.id, Some(ToolStatus::Failed))));
         compaction.into_iter().chain(calls).collect()
     }
 
     /// A progress or result update for a call, sent as a full card when
     /// clients have not seen the call yet. Progress that arrives after a
-    /// call finished is dropped, so it cannot reopen the call. `locations`
-    /// replace the call's earlier ones when given.
+    /// call finished is dropped, so it cannot reopen the call.
     fn tool_update(
         &mut self,
         call_id: &rho_sdk::ToolCallId,
         next: CallState,
-        status: ToolStatus,
-        content: Vec<ToolContent>,
-        locations: Option<Vec<rho_protocol::Location>>,
+        shown: CallUpdate,
     ) -> Option<WireEvent> {
         let id = call_id.as_str();
         let update = move |call: ToolCallUpdate| ToolCallUpdate {
-            status: Some(status),
-            content: Some(content),
-            locations,
+            status: Some(shown.status),
+            content: Some(shown.content),
+            locations: shown.locations,
+            raw_output: shown.raw_output,
             ..call
         };
         if let Some(call) = self.announced.get_mut(id) {
@@ -399,7 +418,7 @@ impl LiveEvents {
                 return None;
             }
             call.state = next;
-            return Some(WireEvent::ToolCall(update(status_update(
+            return Some(WireEvent::tool_call(update(status_update(
                 call.id.clone(),
                 /*status*/ None,
             ))));
@@ -421,7 +440,7 @@ impl LiveEvents {
                 ..status_update(wire_id, /*status*/ None)
             },
         };
-        Some(WireEvent::ToolCall(update(card)))
+        Some(WireEvent::tool_call(update(card)))
     }
 
     /// Opens a call under provider id `provider`: its wire id, and the
@@ -437,7 +456,7 @@ impl LiveEvents {
             .announced
             .insert(provider.to_owned(), call)
             .filter(|call| call.state == CallState::Open)
-            .map(|call| WireEvent::ToolCall(status_update(call.id, Some(ToolStatus::Failed))));
+            .map(|call| WireEvent::tool_call(status_update(call.id, Some(ToolStatus::Failed))));
         (id, superseded)
     }
 
@@ -452,24 +471,51 @@ impl LiveEvents {
     }
 }
 
-/// A finished call's status and content.
-fn finished_content(result: &ToolCompletion, cwd: &Path) -> (ToolStatus, Vec<ToolContent>) {
+/// What a progress or result update shows of a call.
+struct CallUpdate {
+    status: ToolStatus,
+    content: Vec<ToolContent>,
+    /// Replace the call's earlier locations when given.
+    locations: Option<Vec<Location>>,
+    raw_output: Option<Value>,
+}
+
+/// A finished call's status and content, the files its output points at,
+/// and, as its raw output, the text the model got, as replay sends a saved
+/// result's. A call to a tool that does not exist has none: the SDK writes
+/// the model's text for it.
+fn finished_update(result: &ToolCompletion, cwd: &Path) -> CallUpdate {
+    let finished = |status, content, raw_output: Option<&str>| CallUpdate {
+        status,
+        content,
+        locations: result
+            .output()
+            .and_then(|output| tools::finished_locations(output, cwd)),
+        raw_output: raw_output.map(|text| Value::String(text.to_owned())),
+    };
     match result {
-        ToolCompletion::Completed(output) if output.is_failure() => {
-            (ToolStatus::Failed, output_content(output, cwd))
+        ToolCompletion::Completed(output) => {
+            let status = if output.is_failure() {
+                ToolStatus::Failed
+            } else {
+                ToolStatus::Completed
+            };
+            finished(status, output_content(output, cwd), Some(output.content()))
         }
-        ToolCompletion::Completed(output) => (ToolStatus::Completed, output_content(output, cwd)),
-        ToolCompletion::Failure(failure) => {
-            (ToolStatus::Failed, vec![text_content(failure.message())])
-        }
+        ToolCompletion::Failure(failure) => finished(
+            ToolStatus::Failed,
+            vec![text_content(failure.message())],
+            Some(failure.message()),
+        ),
         // The model called a tool that does not exist; say so on the card.
-        ToolCompletion::Unavailable => (
+        ToolCompletion::Unavailable => finished(
             ToolStatus::Failed,
             vec![text_content("tool is unavailable")],
+            None,
         ),
         // ToolCompletion is non_exhaustive; unknown results cannot be shown
         // as success.
-        _ => (ToolStatus::Failed, Vec::new()),
+        _ => finished(ToolStatus::Failed, Vec::new(), None),
     }
 }
 
@@ -496,30 +542,8 @@ fn output_content(output: &ToolOutput, cwd: &Path) -> Vec<ToolContent> {
     content
 }
 
-/// The call that shows a compaction, with its title each time, so a first
-/// update with a terminal status still opens a complete card.
-fn compaction_call(id: ToolCallId, status: ToolStatus, content: Option<ToolContent>) -> WireEvent {
-    WireEvent::ToolCall(ToolCallUpdate {
-        title: Some(COMPACTION_TITLE.to_owned()),
-        kind: Some(ToolKind::Other),
-        content: content.map(|content| vec![content]),
-        ..status_update(id, Some(status))
-    })
-}
-
-/// What a finished compaction did, in the words `/compact` replies with.
-fn compaction_summary(outcome: &rho_sdk::CompactionOutcome) -> String {
-    if crate::compaction::outcome_reduced_context(outcome) {
-        format!(
-            "context compacted: {} → {} messages, {} → {} tokens",
-            outcome.previous_messages(),
-            outcome.current_messages(),
-            outcome.previous_tokens(),
-            outcome.current_tokens(),
-        )
-    } else {
-        "context not compacted: compaction ran but did not reduce context".into()
-    }
+fn compaction(id: CompactionId, status: CompactionStatus) -> WireEvent {
+    WireEvent::Compaction { id, status }
 }
 
 /// A live message's id. Replayed messages derive theirs from saved rows.
@@ -530,8 +554,8 @@ fn fresh_message_id() -> MessageId {
 /// Each compaction gets a fresh random id: clients may keep a session's
 /// events across daemon restarts, and an id that restarts per process
 /// would update an earlier card.
-fn fresh_compaction_id() -> ToolCallId {
-    ToolCallId::new(format!("compaction-{}", uuid::Uuid::new_v4()))
+fn fresh_compaction_id() -> CompactionId {
+    CompactionId::new(format!("compaction-{}", uuid::Uuid::new_v4()))
 }
 
 #[cfg(test)]

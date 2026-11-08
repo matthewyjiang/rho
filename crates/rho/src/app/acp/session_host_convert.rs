@@ -3,12 +3,13 @@ use std::path::{Path, PathBuf};
 use agent_client_protocol::schema::v1::{
     ContentBlock as AcpContentBlock, EmbeddedResourceResource,
 };
-use rho_sdk::{
-    model::{ContentBlock, ImageContent},
-    UserInput,
-};
+use rho_protocol::ContentBlock;
+use rho_sdk::UserInput;
 
-use crate::added_dirs::AddedDirs;
+use crate::{
+    added_dirs::AddedDirs,
+    app::prompt_content::{self, fence_context},
+};
 
 /// Why an ACP session cwd cannot be used as the workspace root.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,65 +104,51 @@ pub(super) fn session_added_dirs(
     Ok(launch.union(root, &host))
 }
 
-/// Maps ACP prompt blocks onto SDK user input.
+/// Maps ACP prompt blocks onto SDK user input, through the wire blocks the
+/// daemon's prompts carry, so both convert alike (#1670).
 ///
-/// Text and images stay typed. Resource, audio, and other blocks become fenced
-/// text so the model still sees them.
+/// Blocks the wire has no kind for (audio, a binary resource) become fenced
+/// text here, so the model still sees them.
 pub(super) fn user_input_from_prompt(prompt: &[AcpContentBlock]) -> anyhow::Result<UserInput> {
-    let blocks = prompt.iter().map(content_block_from_acp).collect();
-    Ok(UserInput::content(blocks)?)
+    let blocks: Vec<_> = prompt.iter().map(wire_block).collect();
+    prompt_content::user_input(&blocks)
 }
 
-fn content_block_from_acp(block: &AcpContentBlock) -> ContentBlock {
+fn wire_block(block: &AcpContentBlock) -> ContentBlock {
+    let fenced = |kind: &str, header: &str, body: &str| ContentBlock::Text {
+        text: fence_context(kind, header, body),
+    };
     match block {
-        AcpContentBlock::Text(text) => ContentBlock::Text(text.text.clone()),
-        AcpContentBlock::Image(image) => ContentBlock::Image(ImageContent {
-            data: image.data.clone(),
+        AcpContentBlock::Text(text) => ContentBlock::Text {
+            text: text.text.clone(),
+        },
+        AcpContentBlock::Image(image) => ContentBlock::Image {
             mime_type: image.mime_type.clone(),
-        }),
-        AcpContentBlock::Audio(audio) => {
-            ContentBlock::Text(fence_context("audio", &audio.mime_type, &audio.data))
-        }
-        AcpContentBlock::ResourceLink(link) => {
-            let body = link.description.as_deref().unwrap_or(link.name.as_str());
-            ContentBlock::Text(fence_context("resource", &link.uri, body))
-        }
+            data: image.data.clone(),
+        },
+        AcpContentBlock::Audio(audio) => fenced("audio", &audio.mime_type, &audio.data),
+        AcpContentBlock::ResourceLink(link) => ContentBlock::ResourceLink {
+            uri: link.uri.clone(),
+            name: link.name.clone(),
+            title: link.title.clone(),
+            description: link.description.clone(),
+            mime_type: link.mime_type.clone(),
+        },
         AcpContentBlock::Resource(embedded) => match &embedded.resource {
-            EmbeddedResourceResource::TextResourceContents(resource) => {
-                ContentBlock::Text(fence_context("resource", &resource.uri, &resource.text))
-            }
+            EmbeddedResourceResource::TextResourceContents(resource) => ContentBlock::Resource {
+                uri: resource.uri.clone(),
+                mime_type: resource.mime_type.clone(),
+                text: resource.text.clone(),
+            },
             EmbeddedResourceResource::BlobResourceContents(resource) => {
                 let header = match &resource.mime_type {
                     Some(mime_type) => format!("{} {mime_type}", resource.uri),
                     None => resource.uri.clone(),
                 };
-                ContentBlock::Text(fence_context("resource", &header, &resource.blob))
+                fenced("resource", &header, &resource.blob)
             }
-            _ => ContentBlock::Text(fence_context("resource", "embedded", "")),
+            _ => fenced("resource", "embedded", ""),
         },
-        _ => ContentBlock::Text(fence_context("context", "unsupported", "")),
+        _ => ContentBlock::Unknown,
     }
-}
-
-/// Wraps a body in a code fence long enough to survive backticks inside it.
-/// A body that already contains ``` would end the fence early, so the fence
-/// grows past the body's longest backtick run.
-fn fence_context(kind: &str, header: &str, body: &str) -> String {
-    let fence = "`".repeat(
-        longest_backtick_run(header)
-            .max(longest_backtick_run(body))
-            .max(2)
-            + 1,
-    );
-    format!("{fence}{kind} {header}\n{body}\n{fence}")
-}
-
-fn longest_backtick_run(body: &str) -> usize {
-    let mut longest = 0;
-    let mut run = 0;
-    for character in body.chars() {
-        run = if character == '`' { run + 1 } else { 0 };
-        longest = longest.max(run);
-    }
-    longest
 }

@@ -226,11 +226,17 @@ impl SessionRuntime {
     /// window, including while a turn runs. Take a new gauge after a model
     /// switch.
     pub(crate) fn context_gauge(&self) -> ContextGauge {
-        let current = self.current_model();
         ContextGauge {
             session: self.built.session.clone(),
-            configured_window: model_context_window(&current.provider, &current.model),
+            configured_window: self.configured_context_window(),
         }
+    }
+
+    /// The context window the session's current model is configured with,
+    /// when its catalog entry knows one.
+    pub(crate) fn configured_context_window(&self) -> Option<u64> {
+        let current = self.current_model();
+        model_context_window(&current.provider, &current.model)
     }
 
     /// The session's workspace directory.

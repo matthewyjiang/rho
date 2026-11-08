@@ -16,12 +16,13 @@ use rho_protocol::{
         SessionNew, SessionPrompt,
     },
     AnswerStop, ApprovalAsk, ApprovalSource, Ask, Client, ClientEnvironment, ClientError,
-    ClientInfo, Cursor, DaemonNotification, DetachReason, ErrorCode, InputAnswer, InputRequest,
-    InputRequestId, JobId, JobKind, JobListParams, JobState, JobSummary, Notifications, Operation,
-    PathScope, Replay, Resolution, Seq, SessionAnswerParams, SessionAttachParams,
-    SessionAttachResponse, SessionCancelParams, SessionDetachParams, SessionDetachedParams,
-    SessionEvent, SessionHoldParams, SessionId, SessionNewParams, SessionPromptParams, StreamId,
-    ToolCallId, ToolContent, ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
+    ClientInfo, ContentBlock, Cursor, DaemonNotification, DetachReason, ErrorCode, InputAnswer,
+    InputRequest, InputRequestId, JobId, JobKind, JobListParams, JobState, JobSummary,
+    Notifications, Operation, PathScope, Replay, Resolution, Seq, SessionAnswerParams,
+    SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionDetachParams,
+    SessionDetachedParams, SessionEvent, SessionHoldParams, SessionId, SessionNewParams,
+    SessionPromptParams, StreamId, ToolCallId, ToolContent, ToolStatus, TurnError, TurnErrorKind,
+    TurnOutcome,
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -231,7 +232,9 @@ impl Sandbox {
         client
             .request::<SessionPrompt>(&SessionPromptParams {
                 session: session.clone(),
-                text: "hello".into(),
+                content: vec![ContentBlock::Text {
+                    text: "hello".into(),
+                }],
                 timeout_ms: None,
                 environment: self.daemon.client_environment(),
             })
@@ -268,7 +271,9 @@ impl Sandbox {
         client
             .request::<SessionPrompt>(&SessionPromptParams {
                 session: session.clone(),
-                text: call.to_string(),
+                content: vec![ContentBlock::Text {
+                    text: call.to_string(),
+                }],
                 timeout_ms: None,
                 environment,
             })
@@ -483,6 +488,90 @@ async fn a_turn_tells_clients_how_it_ended() {
         let job = settled_job(&sandbox, &client, &session).await;
         assert_eq!((job.state, job.error), (state, listed), "{mode}: job list");
     }
+}
+
+// Covers: a prompt's image and resource blocks reach the model, the image
+// as an image and the resource as its text fenced under its URI, and the
+// prompt's user message shows clients what was saved (#1670).
+// Owner: daemon session prompt content.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_prompts_image_and_resource_reach_the_model() {
+    // A 1x1 PNG.
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    let sandbox = Sandbox::new();
+    // The fixture answers with the request it got.
+    let (_daemon, client) = sandbox.start_daemon("inspect").await;
+    let session = sandbox.new_session(&client).await;
+    let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    client
+        .request::<SessionPrompt>(&SessionPromptParams {
+            session: session.clone(),
+            content: vec![
+                ContentBlock::Text {
+                    text: "describe these".into(),
+                },
+                ContentBlock::Image {
+                    mime_type: "image/png".into(),
+                    data: PNG.into(),
+                },
+                ContentBlock::Resource {
+                    uri: "file:///notes.md".into(),
+                    mime_type: Some("text/markdown".into()),
+                    text: "remember the milk".into(),
+                },
+            ],
+            timeout_ms: None,
+            environment: sandbox.client_environment(),
+        })
+        .await
+        .unwrap();
+    watcher.read_until(is_state(JobState::Completed)).await;
+
+    let fenced = "```resource file:///notes.md\nremember the milk\n```";
+    let shown = watcher.events.iter().find_map(|(_, event)| match event {
+        SessionEvent::UserMessage { content, .. } => Some(content.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        shown,
+        Some(vec![
+            ContentBlock::Text {
+                text: "describe these".into(),
+            },
+            ContentBlock::Image {
+                mime_type: "image/png".into(),
+                data: PNG.into(),
+            },
+            ContentBlock::Text {
+                text: fenced.into(),
+            },
+        ]),
+        "log:\n{}",
+        sandbox.daemon_log()
+    );
+    let answer = watcher.events.iter().find_map(|(_, event)| match event {
+        SessionEvent::TurnEnded {
+            outcome: TurnOutcome::Answered { text, .. },
+        } => Some(text.clone()),
+        _ => None,
+    });
+    let request: serde_json::Value =
+        serde_json::from_str(&answer.expect("the turn answered")).unwrap();
+    let prompt = request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|message| message.get("User").is_some())
+        .cloned();
+    assert_eq!(
+        prompt,
+        Some(serde_json::json!({"User": [
+            {"Text": "describe these"},
+            {"Image": {"data": PNG, "mime_type": "image/png"}},
+            {"Text": fenced},
+        ]}))
+    );
 }
 
 /// How a test ends a turn the fixture holds open.
@@ -960,8 +1049,9 @@ fn is_state(state: JobState) -> impl Fn(&SessionEvent) -> bool {
     move |event| matches!(event, SessionEvent::State { state: got, .. } if *got == state)
 }
 
-/// What a conversation shows: its events without job states and context
-/// usage, which describe the session as it was when they were sent.
+/// What a conversation shows: its events without job states, context
+/// usage, and titles, which describe the session as it was when they were
+/// sent.
 fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
     events
         .iter()
@@ -969,7 +1059,9 @@ fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
         .filter(|event| {
             !matches!(
                 event,
-                SessionEvent::State { .. } | SessionEvent::Usage { .. }
+                SessionEvent::State { .. }
+                    | SessionEvent::Usage { .. }
+                    | SessionEvent::TitleChanged { .. }
             )
         })
         .collect()

@@ -133,7 +133,7 @@ starting at 1, and a `type`:
 | `type` | When | Fields |
 | --- | --- | --- |
 | `run_started` | The run's session opened. | `session`, its id; `workspace`, the working directory. |
-| `event` | Each of the session's events. | `event`: a [daemon protocol session event](/protocol#following-a-session) of the conversation, as a client attached to a daemon session receives it. A run has no job, and nobody answers its requests, so the stream holds no `state` or `input_*` events. |
+| `event` | Each of the session's events. | `event`: a [daemon protocol session event](/protocol#following-a-session) of the conversation, as a client attached to a daemon session receives it. A run has no job, and nobody answers its requests, so the stream holds no `state` or `input_*` events, and `usage` carries no `cost`. |
 | `run_ended` | Last, unless writing to stdout failed: then the stream stops, and the run exits 1 with the write error on stderr. | `reason`, `exit_code` (the process's [exit status](#exit-status)), and a `message` unless the run completed. |
 
 Once the session opened, its last event is `turn_ended`, whose `outcome` says
@@ -142,7 +142,7 @@ session's would:
 
 - `answered` carries the model's whole answer as `text`. Use it as the final
   answer rather than the `agent_message_chunk` text: a provider retry restarts
-  the reply, and the stream holds a `notice` saying so.
+  the reply, and the stream holds a `response_discarded` event saying so.
 - A timeout or a signal cancels the turn, so its outcome is `cancelled`, and
   `run_ended` names the cause.
 - A slash command `rho run` cannot run fails the prompt before any model call,

@@ -7,10 +7,11 @@
 //! first message.
 //!
 //! The runtime only asks, from the turn: the host takes the request once the
-//! prompt returns, runs it, and shows the title it saves if the runtime that
-//! asked still owns the session (ACP, as a `session_info_update`). Nothing
-//! else runs the job: headless hosts (`rho run`, subagents, workflow nodes)
-//! leave it untaken rather than spend a model call on every run.
+//! prompt returns, runs it, and shows the title it saves if the session is
+//! still its own (ACP, as a `session_info_update`; the daemon, as a
+//! `title_changed` event, #1670). Nothing else runs the job: headless hosts
+//! (`rho run`, subagents, workflow nodes) leave it untaken rather than spend
+//! a model call on every run.
 
 use std::path::PathBuf;
 

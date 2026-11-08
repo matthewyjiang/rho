@@ -320,7 +320,7 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
                     SESSION_PROMPT,
                     serde_json::json!({
                         "session": "s",
-                        "text": "hi",
+                        "content": [{"type": "text", "text": "hi"}],
                         "environment": {},
                         "later_field": 1,
                     }),

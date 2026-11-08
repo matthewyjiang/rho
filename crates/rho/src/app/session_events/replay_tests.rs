@@ -2,8 +2,8 @@ use std::path::Path;
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    ContentBlock, MessageId, PlanEntry, PlanStatus, SessionEvent as WireEvent, ToolCallId,
-    ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
+    CardTone, ContentBlock, MessageId, PlanEntry, PlanStatus, SessionEvent as WireEvent,
+    ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
 };
 use rho_sdk::{
     model::{self, AbortedAssistant, AssistantMessage, Message, ToolResult},
@@ -17,7 +17,9 @@ use crate::{
     agent::{AgentCapabilities, ToolCapability},
     app::{
         session_events::{
-            test_support::{canonical_messages, closed, opened, origin, shell_call, text, updated},
+            test_support::{
+                canonical_messages, closed, finished_call, opened, origin, shell_call, text,
+            },
             CallIds, LiveEvents,
         },
         session_runtime::{InsertedMessage, RunEnd, SessionEvent, SessionTools},
@@ -124,10 +126,12 @@ fn a_saved_conversation_replays_messages_calls_and_cards() {
             user(saved_id(0, 0), "list files"),
             saved_agent(saved_id(1, 0), "Let me look."),
             opened("call-1", "ls"),
-            updated("call-1", ToolStatus::Completed, vec![text("a.rs")]),
+            finished_call("call-1", ToolStatus::Completed, vec![text("a.rs")], "a.rs"),
             WireEvent::Card {
                 title: "Background done".into(),
                 markdown: "all good".into(),
+                plain: "all good".into(),
+                tone: CardTone::Neutral,
             },
             saved_agent(saved_id(4, 0), "Found a.rs."),
         ]
@@ -265,8 +269,8 @@ fn replay_pairs_out_of_order_results_with_their_images() {
                 opened("a", "ls"),
                 saved_agent(saved_id(1, 0), "between"),
                 opened("b", "ls"),
-                updated("b", status, vec![text("output"), image_content()]),
-                updated("a", ToolStatus::Completed, Vec::new()),
+                finished_call("b", status, vec![text("output"), image_content()], "output"),
+                finished_call("a", ToolStatus::Completed, Vec::new(), ""),
             ]
         );
     }
@@ -302,12 +306,13 @@ fn replay_closes_incomplete_calls_and_opens_orphan_results() {
     ] {
         assert_eq!(
             replay_messages(&[Message::ToolResult(result)]),
-            vec![WireEvent::ToolCall(ToolCallUpdate {
+            vec![WireEvent::tool_call(ToolCallUpdate {
                 id: ToolCallId::new("orphan"),
                 title: Some("tool".into()),
                 kind: Some(ToolKind::Other),
                 status: Some(status),
                 raw_input: None,
+                raw_output: Some(json!("output")),
                 content: Some(vec![text("output")]),
                 locations: None,
             })]
@@ -335,10 +340,11 @@ fn replay_gives_reused_provider_ids_their_own_calls() {
             opened("reused", "ls"),
             closed("reused"),
             opened("reused#2", "ls"),
-            updated(
+            finished_call(
                 "reused#2",
                 ToolStatus::Failed,
                 vec![text("second output"), image_content()],
+                "second output",
             ),
             opened("reused#3", "ls"),
             closed("reused#3"),
@@ -379,7 +385,7 @@ fn replayed_messages_split_where_live_ones_do() {
             saved_agent(saved_id(1, 1), "before"),
             opened("a", "ls"),
             saved_agent(saved_id(1, 2), "after more"),
-            updated("a", ToolStatus::Completed, Vec::new()),
+            finished_call("a", ToolStatus::Completed, Vec::new(), ""),
             user(saved_id(3, 0), "continue"),
         ]
     );
@@ -416,9 +422,7 @@ fn replayed_calls_take_their_kind_from_the_session_tools() {
     let kinds: Vec<_> = replay_with(&tool_set, &messages)
         .into_iter()
         .filter_map(|event| match event {
-            WireEvent::ToolCall(ToolCallUpdate {
-                kind: Some(kind), ..
-            }) => Some(kind),
+            WireEvent::ToolCall(update) => update.kind,
             _ => None,
         })
         .collect();
@@ -519,7 +523,12 @@ fn live_calls_continue_the_numbering_of_the_saved_transcript() {
         live_calls,
         vec![
             opened("reused#2", "ls"),
-            updated("reused#2", ToolStatus::Completed, vec![text("b.rs")]),
+            finished_call(
+                "reused#2",
+                ToolStatus::Completed,
+                vec![text("b.rs")],
+                "b.rs"
+            ),
         ]
     );
     assert_eq!(live_calls, replayed_tail);

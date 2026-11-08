@@ -225,7 +225,8 @@ impl JsonlView<'_> {
     /// whose agent has tools of its own, maps with them from then on.
     fn bind(&mut self, runtime: &SessionRuntime) {
         let workspace = runtime.workspace_root();
-        let live = LiveEvents::new(workspace, runtime.tools());
+        let live = LiveEvents::new(workspace, runtime.tools())
+            .with_configured_window(runtime.configured_context_window());
         if self.live.replace(live).is_none() {
             self.stream
                 .run_started(&runtime.session_id().to_string(), workspace);

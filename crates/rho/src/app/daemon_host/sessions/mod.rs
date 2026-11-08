@@ -43,6 +43,7 @@ use super::{
 };
 use crate::{
     app::{
+        prompt_content,
         session_events::LiveEvents,
         session_runtime::{Closing, SessionHandle, SessionRuntime, SteerError},
     },
@@ -96,6 +97,7 @@ pub(super) struct Sessions {
 
 /// A session this daemon loaded.
 struct LoadedSession {
+    id: SessionId,
     /// The job that records the session's turns, in `jobs`.
     job: JobId,
     jobs: Arc<JobRegistry>,
@@ -175,7 +177,8 @@ impl LoadedSession {
             config,
             environment,
         } = opened;
-        let mut live = LiveEvents::new(runtime.workspace_root(), runtime.tools());
+        let mut live = LiveEvents::new(runtime.workspace_root(), runtime.tools())
+            .with_configured_window(runtime.configured_context_window());
         let feed = Feed::new((&job.state).into());
         if let Some(saved) = saved_replay(&mut live, &runtime, &job.id) {
             feed.end_turn(saved);
@@ -188,6 +191,7 @@ impl LoadedSession {
         }
         let job = job.id.clone();
         Self {
+            id: runtime.session_id().clone(),
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),
             live: Mutex::new(live),
@@ -394,13 +398,20 @@ impl Sessions {
         Err(refused)
     }
 
-    /// Starts a turn of `text` on a session and returns once the turn saved
-    /// its prompt. The turn runs in a daemon task from then on.
+    /// Starts a turn of the prompt's content on a session and returns once
+    /// the turn saved its prompt. The turn runs in a daemon task from then
+    /// on.
     pub(super) async fn prompt(
         &self,
         params: SessionPromptParams,
     ) -> Result<SessionPromptResponse, RpcError> {
         self.refuse_when_stopping()?;
+        let input = prompt_content::user_input(&params.content).map_err(|error| {
+            RpcError::new(
+                ErrorCode::InvalidParams,
+                format!("could not read the prompt: {error}"),
+            )
+        })?;
         let environment = session_environment(&params.environment)?;
         let (session, cancel) = self
             .enter_session(&params.session, &environment, |session, turn| {
@@ -439,7 +450,7 @@ impl Sessions {
             cancel,
             limit: params.timeout_ms.map(TurnLimit::starting_now),
         }
-        .spawn(params.text);
+        .spawn(input);
         // An answer that is already in wins over the stop, so a prompt the
         // turn saved is not reported refused. Once the daemon stops, the
         // turn goes on until the stop drains it.

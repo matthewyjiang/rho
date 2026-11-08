@@ -217,12 +217,13 @@ fn events_json_cannot_hold_are_dropped_live_and_saved() {
     use std::{ffi::OsStr, os::unix::ffi::OsStrExt, path::PathBuf};
 
     let unencodable = || {
-        wire::SessionEvent::ToolCall(wire::ToolCallUpdate {
+        wire::SessionEvent::tool_call(wire::ToolCallUpdate {
             id: wire::ToolCallId::new("call"),
             title: None,
             kind: None,
             status: None,
             raw_input: None,
+            raw_output: None,
             content: None,
             locations: Some(vec![wire::Location {
                 path: PathBuf::from(OsStr::from_bytes(b"/work/\xff")),

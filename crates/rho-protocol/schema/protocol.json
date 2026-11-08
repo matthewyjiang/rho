@@ -245,6 +245,26 @@
       ],
       "description": "A concurrency budget jobs wait on, named for the setting that sizes it.\nProtocol minors may add budgets."
     },
+    "CardTone": {
+      "anyOf": [
+        {
+          "enum": [
+            "neutral",
+            "accent",
+            "success",
+            "warning",
+            "error"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How a [`SessionEvent::Card`] reads, so a client can color it or show a\ncard that reports an error as failed."
+    },
     "Choice": {
       "description": "One choice a question offers.",
       "properties": {
@@ -293,6 +313,82 @@
       ],
       "type": "object"
     },
+    "CompactionId": {
+      "description": "Identifies one context compaction; every [`SessionEvent::Compaction`]\nwith the same id reports on it.",
+      "type": "string"
+    },
+    "CompactionStatus": {
+      "anyOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "started",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "completed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The turn was cancelled before the compaction finished.",
+          "properties": {
+            "type": {
+              "const": "cancelled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "It failed, or the run ended before it reported a result.",
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "type": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "error"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Where a compaction is. Every status but `started` ends it."
+    },
     "ContentBlock": {
       "anyOf": [
         {
@@ -333,6 +429,72 @@
           "type": "object"
         },
         {
+          "description": "A text resource embedded whole, such as a file the user attached.",
+          "properties": {
+            "mime_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "resource",
+              "type": "string"
+            },
+            "uri": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "uri",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A resource the user points at without its contents.",
+          "properties": {
+            "description": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mime_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "resource_link",
+              "type": "string"
+            },
+            "uri": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "uri",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "properties": {
             "type": {
@@ -346,7 +508,26 @@
           "x-rho-other": true
         }
       ],
-      "description": "One piece of a user message."
+      "description": "One piece of a prompt or a user message."
+    },
+    "Cost": {
+      "description": "An amount of money, in millionths of `currency`'s unit, so it stays\nexact.",
+      "properties": {
+        "amount_micros": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "currency": {
+          "description": "An ISO 4217 code, such as `USD`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount_micros",
+        "currency"
+      ],
+      "type": "object"
     },
     "Cursor": {
       "description": "Where a client is in a session's stream; send it back to resume.",
@@ -1663,7 +1844,7 @@
         },
         {
           "$ref": "#/$defs/ToolCallUpdate",
-          "description": "Opens or updates a tool call; absent fields are unchanged.",
+          "description": "Opens or updates a tool call; absent fields are unchanged. Boxed:\nit is the largest event by far.",
           "properties": {
             "type": {
               "const": "tool_call",
@@ -1696,8 +1877,19 @@
           "type": "object"
         },
         {
-          "description": "How full the model's context is.",
+          "description": "How full the model's context is, and what the session has cost.",
           "properties": {
+            "cost": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Cost"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The session's whole spend so far, turns before a daemon restart\nincluded. Absent while no request has a price, as when every\nrequest ran on a local model (#1670)."
+            },
             "type": {
               "const": "usage",
               "type": "string"
@@ -1723,13 +1915,72 @@
           "type": "object"
         },
         {
+          "description": "The session has a new title, as when the daemon named it after its\nfirst turn (#1670).",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "type": {
+              "const": "title_changed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "title"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A context compaction began or ended. Each one starts\n[`CompactionStatus::Started`] and ends with exactly one other\nstatus, under the same `id` (#1670).",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/CompactionId"
+            },
+            "status": {
+              "$ref": "#/$defs/CompactionStatus"
+            },
+            "type": {
+              "const": "compaction",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The provider discarded the response it was streaming, and the run\nasks for it again. What was sent of it cannot be taken back; the\nretried response starts new messages (#1670).",
+          "properties": {
+            "type": {
+              "const": "response_discarded",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
           "description": "A titled card the session shows outside the conversation, such as a\nbackground result.",
           "properties": {
             "markdown": {
+              "description": "The body, for clients that render markdown.",
+              "type": "string"
+            },
+            "plain": {
+              "description": "The same body as plain text, for clients that show text as is.",
               "type": "string"
             },
             "title": {
               "type": "string"
+            },
+            "tone": {
+              "$ref": "#/$defs/CardTone"
             },
             "type": {
               "const": "card",
@@ -1739,7 +1990,9 @@
           "required": [
             "type",
             "title",
-            "markdown"
+            "markdown",
+            "plain",
+            "tone"
           ],
           "type": "object"
         },
@@ -1926,16 +2179,19 @@
     "SessionPromptParams": {
       "description": "Params of [`SESSION_PROMPT`].",
       "properties": {
+        "content": {
+          "description": "The user message: at least one block, or the prompt is refused as\n[`crate::ErrorCode::InvalidParams`]. Text and images reach the model\nas written. A resource reaches it as its text, and a resource link as\nits description, else its name, each fenced under its URI (#1670). A\nslash command the message starts with that the session runs, such as\n`/init`, a prompt template, or an MCP prompt, is expanded first, as\n`rho run` expands it.",
+          "items": {
+            "$ref": "#/$defs/ContentBlock"
+          },
+          "type": "array"
+        },
         "environment": {
           "$ref": "#/$defs/ClientEnvironment",
           "description": "The prompting client's environment, which the processes this turn\nstarts run with, and those of later turns until another prompt\nbrings another. Processes already running keep theirs."
         },
         "session": {
           "$ref": "#/$defs/SessionId"
-        },
-        "text": {
-          "description": "The user message. A leading slash command the session runs, such as\n`/init`, a prompt template, or an MCP prompt, is expanded first, as\n`rho run` expands it; other text reaches the model as written.",
-          "type": "string"
         },
         "timeout_ms": {
           "description": "How long the turn may run, in milliseconds from when the daemon\ntakes the prompt. A turn still running then is cancelled and ends\n[`crate::TurnOutcome::TimedOut`]. `None` sets no limit.",
@@ -1949,7 +2205,7 @@
       },
       "required": [
         "session",
-        "text",
+        "content",
         "environment"
       ],
       "type": "object"
@@ -2037,6 +2293,9 @@
         },
         "raw_input": {
           "description": "The tool's input, as the model wrote it."
+        },
+        "raw_output": {
+          "description": "The tool's result as the model got it, sent once the call finishes\n(#1670)."
         },
         "status": {
           "anyOf": [

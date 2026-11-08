@@ -20,7 +20,7 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/daemon/status` | | `pid`, `version`, `protocol`, `started_at`, `uptime_secs`, `jobs` (jobs queued, running, or waiting for input), `socket`. |
 | `rho/daemon/stop` | | `{}`; the daemon then shuts down as [described](/daemon#commands). |
 | `rho/session/new` | `cwd`, `environment` | Opens a new session whose workspace is `cwd`, an absolute path to an existing directory, and returns its `session` id. `environment` is the client's environment variables, an object of strings, which the session's commands run with ([below](#the-client-s-environment)). |
-| `rho/session/prompt` | `session`, `text`, optional `timeout_ms`, `environment` | Starts a turn, whose commands and those of later turns run with `environment`, and returns `{}` once the turn has saved the prompt. A session runs one turn at a time; a prompt while a turn is under way gets `SessionBusy`. With `timeout_ms`, the daemon cancels a turn still running that many milliseconds after it took the prompt, and the turn ends `timed_out`. |
+| `rho/session/prompt` | `session`, `content`, optional `timeout_ms`, `environment` | Starts a turn of `content`, a non-empty list of [content blocks](#content-blocks), whose commands and those of later turns run with `environment`, and returns `{}` once the turn has saved the prompt. A session runs one turn at a time; a prompt while a turn is under way gets `SessionBusy`. With `timeout_ms`, the daemon cancels a turn still running that many milliseconds after it took the prompt, and the turn ends `timed_out`. |
 | `rho/session/cancel` | `session` | Cancels the turn under way, if any. The turn ends `cancelled`, or `interrupted` when the daemon is stopping; one already past its `timeout_ms` ends `timed_out`. |
 | `rho/session/steer` | `session`, `text` | Adds `text` to the running turn's next model request. Gets `NotSteerable` when no model request is taking input. |
 | `rho/session/attach` | `session`, `after`?, `environment` | Follows the session's events, reopening an unloaded session with its commands in `environment` ([below](#following-a-session)). Returns its `stream`, its `workspace`, the `replay` that follows (`tail` or `reset`) and how many events it holds (`replay_events`), its job `state`, and the input requests open now (`inputs`). |
@@ -40,6 +40,19 @@ A prompt that starts with a slash command resolves as it does in [`rho run`](/au
 
 What a session runs, and what its job states mean, is described in [Sessions and jobs](/daemon#sessions-and-jobs).
 
+### Content blocks
+
+A prompt's `content`, and a `user_message` event's, is a list of blocks, each with a `type`:
+
+| Block | Fields | What the model sees |
+| --- | --- | --- |
+| `text` | `text` | The text. |
+| `image` | `mime_type`, `data` (base64) | The image. |
+| `resource` | `uri`, `text`, optional `mime_type` | A text resource embedded whole, such as an attached file: `text` in a code fence labelled with `uri`. |
+| `resource_link` | `uri`, `name`, optional `title`, `description`, `mime_type` | A resource named but not included: `description`, else `name`, in a code fence labelled with `uri`. |
+
+A prompt with no blocks gets `InvalidParams`. A block of a type the daemon does not know reaches the model as a fenced placeholder. A `user_message` holds the message as saved, so a resource the prompt carried appears as its fenced `text` block, live and on replay.
+
 ## Following a session
 
 After `rho/session/attach`, the daemon sends the session's events as `rho/session/event` notifications, each with the `session`, a `seq`, and the `event`. The attach response comes first. Each event's `type` is one of:
@@ -49,10 +62,13 @@ After `rho/session/attach`, the daemon sends the session's events as `rho/sessio
 | `state` | The job's new `state`. An ended turn's `turn_ended` comes first. |
 | `user_message` | A user message, whole: its `message` id and `content`. |
 | `agent_message_chunk`, `thought_chunk` | More `text` of the agent's reply or reasoning, under a `message` id. |
-| `tool_call` | Opens a tool call, or updates the call with the same `id`: its title, kind, status, input, content, and locations. Absent fields are unchanged. |
+| `tool_call` | Opens a tool call, or updates the call with the same `id`: its title, kind, status, input (`raw_input`), content, locations, and, once it finishes, `raw_output`, the text the model got from it. Absent fields are unchanged. |
 | `plan` | The agent's plan, replacing any earlier one. |
-| `usage` | How full the model's context is. |
-| `card` | A titled card shown outside the conversation, such as a background result. |
+| `usage` | How full the model's context is: `used_tokens`, and `window_tokens` when the model's window is known. Once a request in the session had a price, `cost` holds what the session has cost so far, across daemon restarts: `amount_micros`, in millionths of `currency` (`USD`). |
+| `title_changed` | The session's generated `title`. It arrives a few seconds after the first answered turn. |
+| `compaction` | A context compaction began or ended, under its `id`. Its `status` has a `type`: `started`, then exactly one of `completed`, `cancelled`, or `failed` with an `error`. |
+| `response_discarded` | The provider's response broke off and is retried; drop what the turn streamed since its last step began. |
+| `card` | A titled card shown outside the conversation, such as a background result: its body as `markdown`, as `plain` text for hosts that show text as is, and its `tone`: `neutral`, `accent`, `success`, `warning`, or `error`. |
 | `notice` | Something to tell the user that is not part of the conversation. |
 | `input_requested` | The turn waits for a person: the `request`, with its `id`, what it `ask`s ([below](#answering-a-turn-s-requests)), the `tool_call` that asks, if one does, and its `timeout`, if it has one ([below](#timeouts)). |
 | `input_resolved` | The request `id` closed, with its `resolution`: `answered`, `withdrawn`, or `timed_out`. |

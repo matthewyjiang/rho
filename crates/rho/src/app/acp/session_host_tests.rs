@@ -86,34 +86,6 @@ fn prompt_content_maps_text_image_and_embedded_context() {
     );
 }
 
-// Covers: a resource body or URI that contains its own fence must not close
-// the generated fence early
-// Owner: acp session host
-#[test]
-fn fenced_context_outgrows_backticks_in_the_body_and_header() {
-    for (block, expected) in [
-        (
-            AcpContentBlock::Resource(EmbeddedResource::new(
-                EmbeddedResourceResource::TextResourceContents(TextResourceContents::new(
-                    "```rust\nfn main() {}\n```",
-                    "file:///workspace/readme.md",
-                )),
-            )),
-            "````resource file:///workspace/readme.md\n```rust\nfn main() {}\n```\n````",
-        ),
-        (
-            AcpContentBlock::ResourceLink(ResourceLink::new(
-                "notes",
-                "file:///workspace/notes.md\n```\ninjected",
-            )),
-            "````resource file:///workspace/notes.md\n```\ninjected\nnotes\n````",
-        ),
-    ] {
-        let input = user_input_from_prompt(&[block]).unwrap();
-        assert_eq!(input.blocks(), [ContentBlock::Text(expected.into())]);
-    }
-}
-
 // Covers: session/new and set_config_option (including after a model switch)
 // must advertise the permission mode first (spec clients ignore legacy
 // `modes` once config options exist), then model, then thought_level only

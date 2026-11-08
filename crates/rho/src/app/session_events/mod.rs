@@ -6,10 +6,13 @@
 //! a reset receives first. Both open a tool call with the same card (title,
 //! kind, raw input, locations) and close calls left unfinished as `failed`,
 //! so a conversation reads the same whether a client watched it live or
-//! received it replayed, apart from how its text was chunked.
+//! received it replayed, apart from how its text was chunked. Only live
+//! turns report usage, compactions, and discarded responses; saved rows
+//! hold none.
 //!
 //! [`outcome`] says how a turn ended, for the daemon's clients and
-//! `rho run` alike.
+//! `rho run` alike, and the daemon's `priced` adds the session's cost to
+//! its usage.
 //!
 //! Ported from the ACP `EventMapper`; the ACP adapter maps these wire events
 //! instead, and drops its own mapper, in #1670.
@@ -17,7 +20,7 @@
 use std::{collections::HashMap, path::Path};
 
 use rho_protocol::{
-    ContentBlock, Location, PlanEntry, PlanStatus, SessionEvent as WireEvent, ToolCallId,
+    CardTone, ContentBlock, Location, PlanEntry, PlanStatus, SessionEvent as WireEvent, ToolCallId,
     ToolCallUpdate, ToolContent, ToolStatus,
 };
 use rho_sdk::{model, tool::ToolMetadata};
@@ -26,7 +29,8 @@ use serde_json::Value;
 
 use crate::{
     app::interactive_presenter::call_header,
-    display_transcript::DisplayTranscript,
+    display_transcript::{DisplayRow, DisplayTranscript},
+    presentation::NotificationTone,
     tools::{
         mcp::exported_name::McpToolNames,
         todo::{TodoState, TodoStatus},
@@ -39,8 +43,13 @@ mod replay;
 #[cfg(test)]
 mod test_support;
 mod tools;
+// Only the daemon prices its usage events.
+#[cfg(unix)]
+mod usage;
 
 pub(crate) use live::LiveEvents;
+#[cfg(unix)]
+pub(crate) use usage::priced;
 
 /// Hands out wire ids for tool calls. Providers may reuse a call id across
 /// turns, and a reused wire id would update the earlier card, so each call
@@ -129,6 +138,7 @@ fn status_update(id: ToolCallId, status: Option<ToolStatus>) -> ToolCallUpdate {
         kind: None,
         status,
         raw_input: None,
+        raw_output: None,
         content: None,
         locations: None,
     }
@@ -217,8 +227,24 @@ fn cards(transcript: &DisplayTranscript) -> impl Iterator<Item = WireEvent> + '_
         WireEvent::Card {
             title: text.title.to_owned(),
             markdown: text.markdown,
+            plain: text.plain,
+            tone: card_tone(row),
         }
     })
+}
+
+/// How a row's card reads: a notification card's tone; a notice is neutral.
+fn card_tone(row: &DisplayRow) -> CardTone {
+    match row {
+        DisplayRow::Notification(card) => match card.tone {
+            NotificationTone::Neutral => CardTone::Neutral,
+            NotificationTone::Accent => CardTone::Accent,
+            NotificationTone::Success => CardTone::Success,
+            NotificationTone::Warning => CardTone::Warning,
+            NotificationTone::Error => CardTone::Error,
+        },
+        DisplayRow::Notice(_) => CardTone::Neutral,
+    }
 }
 
 /// The session's todo checklist as a plan; empty while there is none.
