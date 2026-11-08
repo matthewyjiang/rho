@@ -204,12 +204,12 @@ fn started_call_titles_describe_the_call() {
             "cargo test",
         ),
         (
-            "computer",
+            "deploy",
             Some(json!({})),
             ToolMetadata::new()
                 .operation(OperationKind::Execute)
-                .command_summary("click · x 4"),
-            "computer(click · x 4)",
+                .command_summary("release · 4 hosts"),
+            "deploy(release · 4 hosts)",
         ),
         (
             "custom",

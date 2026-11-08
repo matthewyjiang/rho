@@ -17,10 +17,6 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     if name == calibrated_context::SCENARIO.id {
         return calibrated_context::run(runner);
     }
-    #[cfg(unix)]
-    if name == super::computer_preference::COMPUTER_PREFERENCE_SCENARIO.id {
-        return super::computer_preference::run(runner);
-    }
     if workflow::is_workflow_scenario(name) {
         return workflow::run(runner, name);
     }

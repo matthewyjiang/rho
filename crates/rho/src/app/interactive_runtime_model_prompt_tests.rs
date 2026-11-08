@@ -140,7 +140,7 @@ async fn durable_recovery_preserves_launch_owned_prompt_policy() {
 
         runtime.restore_durable_session(None).await.unwrap();
         assert_eq!(runtime.history(), saved_history);
-        runtime.reset().await.unwrap();
+        runtime.reset().unwrap();
         let expected = match system {
             SystemPrompt::None => Vec::new(),
             SystemPrompt::Custom(text) => vec![Message::System(text)],
@@ -178,7 +178,7 @@ async fn durable_recovery_preserves_launch_owned_prompt_policy() {
 #[tokio::test]
 async fn new_session_keeps_startup_prompt_hydration() {
     let (mut runtime, _home, _path, _stored) = configured_runtime().await;
-    runtime.reset().await.unwrap();
+    runtime.reset().unwrap();
     runtime
         .prompt_template
         .as_mut()
@@ -261,7 +261,7 @@ async fn invalid_model_prompt_leaves_switch_and_resume_untouched() {
         .replace_provider(next_provider(), rho_sdk::ReasoningLevel::Low, "test")
         .is_err());
     assert!(runtime.resume(stored).await.is_err());
-    assert!(runtime.reset().await.is_err());
+    assert!(runtime.reset().is_err());
     assert_eq!(runtime.sessions.snapshot(), before);
     assert_eq!(runtime.active_system_prompt(), prompt);
     assert_eq!(runtime.sessions.prompt.provenance, None);

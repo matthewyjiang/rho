@@ -39,20 +39,6 @@ impl InteractiveRuntime {
         if self.runs.state() != InteractiveState::Idle || self.is_compacting() {
             return Err(Error::SessionBusy);
         }
-        let computer_update =
-            self.reconcile_computer_use()
-                .await
-                .map_err(|error| Error::Persistence {
-                    message: error.to_string(),
-                    source: None,
-                })?;
-        match computer_update {
-            ComputerUseUpdate::Unchanged | ComputerUseUpdate::Connected => {}
-            ComputerUseUpdate::ConnectionFailed(error) => self
-                .sessions
-                .queue_notice(format!("could not connect computer use: {error}")),
-            ComputerUseUpdate::Revoked(notice) => self.sessions.queue_notice(notice),
-        }
         self.runs.reset_display_committed();
         if let Some(snapshot) = self.sessions.pending_replacement() {
             self.rebuild_session(
@@ -67,11 +53,6 @@ impl InteractiveRuntime {
                 source: None,
             })?;
         }
-        self.refresh_computer_context()
-            .map_err(|error| Error::Persistence {
-                message: error.to_string(),
-                source: None,
-            })?;
         self.sessions
             .session()
             .set_boundary_inputs(boundary_inputs)?;

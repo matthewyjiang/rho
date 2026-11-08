@@ -11,7 +11,7 @@ use super::{
 };
 use crate::tools::mcp::{
     catalog::McpCatalog, config::McpToolFilter, inflight::McpInFlightCalls,
-    progress::McpProgressRouter, report::McpLiveServerState, tool::McpTool, McpImageDelivery,
+    progress::McpProgressRouter, report::McpLiveServerState, tool::McpTool,
 };
 
 fn remote(schema: Value) -> RemoteTool {
@@ -221,7 +221,6 @@ async fn refreshed_output_schema_replaces_validator_atomically() {
         calls: McpInFlightCalls::new(),
         transport,
         max_output_bytes: rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
-        image_delivery: McpImageDelivery::PresentationOnly,
     };
     let host = ToolHost::builder()
         .tool_shared(Arc::new(tool))

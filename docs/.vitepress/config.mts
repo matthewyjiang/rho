@@ -133,7 +133,6 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
           { text: 'RTK', link: '/integrations/rtk' },
           { text: 'Model Context Protocol', link: '/integrations/mcp' },
           { text: 'OpenAPI', link: '/integrations/openapi' },
-          { text: 'Computer use', link: '/integrations/computer-use' },
           {
             text: 'Agent Client Protocol',
             collapsed: true,

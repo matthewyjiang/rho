@@ -227,7 +227,7 @@ Everything clickable reacts when you hover over it. In pickers, prompts, and pal
 - **Questionnaires, approvals, and confirmation prompts:** click a choice to focus it and double-click to confirm it. Clicks are ignored until the prompt has been drawn, so a stray click cannot move an approval off **Deny** before you see it.
 - **`/`, `$`, and `@` palettes:** click a row to select it, and scroll over the palette to move the selection. Double-click completes the row like `tab`; it never runs a command.
 - **Panels and side chat** (`/limits`, `/doctor`, `/hooks`, `/info`, `/spend`, `/side`, and similar): drag across text to copy it, drag the scrollbar to scroll, and click a copy target to copy it.
-- **Status line:** click the model, provider, or reasoning to open `/model`; context, cost, or rate to open `/info`; permission mode to open its picker; desktop access to open `/computer`; and a sign-in warning to open `/login`.
+- **Status line:** click the model, provider, or reasoning to open `/model`; context, cost, or rate to open `/info`; permission mode to open its picker; and a sign-in warning to open `/login`.
 - **Attachments:** click the `✕` after a queued attachment's label to remove it. Clicking the preview or label does nothing, and a double click removes only one attachment.
 
 ## Status line
@@ -246,7 +246,7 @@ A form with several questions shows one question at a time. Up and Down move amo
 
 You can also use the mouse. Click a question's tab to show it, and click a choice to select it; on a multi-select question, each click toggles the choice. Double-clicking a single-select choice confirms it like Enter.
 
-Confirmation prompts, such as deleting a session or granting desktop access, work the same way: click an option to focus it, and double-click it to confirm.
+Confirmation prompts, such as deleting a session, work the same way: click an option to focus it, and double-click it to confirm.
 
 ## Questionnaire fallbacks
 

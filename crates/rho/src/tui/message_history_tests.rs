@@ -49,12 +49,12 @@ fn notification_display_preserves_ownership() {
     );
 }
 
-// Covers: restored tool screenshots must not be presented as human messages.
+// Covers: restored tool images must not be presented as human messages.
 // Owner: pure history-to-transcript projection; the SDK owns image transport.
 #[test]
 fn tool_result_images_preserve_tool_ownership() {
     let messages = [
-        call("capture", "computer"),
+        call("capture", "read_file"),
         Message::ToolResult(ToolResult::succeeded("capture", "ok").with_images(vec![
             rho_sdk::model::ImageContent {
                 data: "image-data".into(),
@@ -70,7 +70,7 @@ fn tool_result_images_preserve_tool_ownership() {
     ));
     assert_eq!(
         tool_names(&entries).last().map(String::as_str),
-        Some("computer")
+        Some("read_file")
     );
 }
 

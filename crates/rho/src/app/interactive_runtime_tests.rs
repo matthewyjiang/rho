@@ -281,8 +281,6 @@ pub(crate) async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime
         checkpoint_paused_sessions: Default::default(),
         session_writes: Default::default(),
         live_context_warm: false,
-        computer_context: None,
-        computer_runtime_dirty: false,
         cached_tool_specs,
         tool_list_changed: false,
     }
@@ -469,7 +467,7 @@ async fn permission_mode_switch_rebuilds_runtime_and_updates_future_delegated_po
 async fn permission_mode_switch_preserves_a_pending_new_session() {
     let mut interactive = pending_compaction_runtime("done").await;
     let previous_id = interactive.session_id().clone();
-    interactive.reset().await.unwrap();
+    interactive.reset().unwrap();
     let pending_id = interactive.session_id().clone();
     assert_ne!(pending_id, previous_id);
 
@@ -534,7 +532,7 @@ async fn session_changes_are_rejected_while_compaction_is_in_flight() {
     );
     assert_eq!(interactive.permission_mode(), PermissionMode::Auto);
 
-    let reset_error = interactive.reset().await.unwrap_err();
+    let reset_error = interactive.reset().unwrap_err();
     assert!(
         reset_error
             .to_string()
@@ -587,7 +585,7 @@ async fn remembered_writes_do_not_cross_session_or_grantor_boundaries() {
         PolicyDecision::Allow
     );
 
-    interactive.reset().await.unwrap();
+    interactive.reset().unwrap();
     assert_eq!(
         interactive.workspace_policy().evaluate(&created_write),
         require_approval.clone()
@@ -693,7 +691,7 @@ async fn added_dirs_follow_their_session_across_new_and_resume() {
     );
     assert_eq!(scope(&interactive), granted);
 
-    interactive.reset().await.unwrap();
+    interactive.reset().unwrap();
     assert_eq!(
         interactive.added_dirs().as_slice(),
         [] as [std::path::PathBuf; 0]
@@ -710,7 +708,7 @@ async fn added_dirs_follow_their_session_across_new_and_resume() {
     );
     assert_eq!(scope(&interactive), granted);
 
-    interactive.reset().await.unwrap();
+    interactive.reset().unwrap();
     interactive
         .select_tree_node(storage.clone(), &root_id)
         .await
@@ -722,7 +720,7 @@ async fn added_dirs_follow_their_session_across_new_and_resume() {
     assert_eq!(scope(&interactive), granted);
 
     // The older node is now the active leaf; resume must still restore.
-    interactive.reset().await.unwrap();
+    interactive.reset().unwrap();
     interactive.resume(storage).await.unwrap();
     assert_eq!(interactive.added_dirs().as_slice(), [sibling_dir]);
     assert_eq!(scope(&interactive), granted);

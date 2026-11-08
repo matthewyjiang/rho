@@ -21,7 +21,7 @@ use {
 use super::{
     acp,
     agent_binding::{root_host_tools, AgentBinder, AgentInvocation, AgentRole, SubagentTools},
-    automation, classifier_eval, cli_config, compaction_eval, computer_cli,
+    automation, classifier_eval, cli_config, compaction_eval,
     config_repository::ConfigRepository,
     daemon_cli, doctor_cli, interactive, login, mcp_cli, plugins_cli,
     sdk_config::SdkBootstrapOptions,
@@ -182,9 +182,6 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
     }
     if let Some(Command::Mcp { command }) = &cli.command {
         return Ok(EarlyDispatch::Handled(mcp_cli::run(command, cli).await));
-    }
-    if let Some(Command::Computer { command }) = &cli.command {
-        return Ok(EarlyDispatch::Handled(computer_cli::run(command)));
     }
     if let Some(Command::Plugins { command }) = &cli.command {
         return Ok(EarlyDispatch::Handled(plugins_cli::run(command, cli)));

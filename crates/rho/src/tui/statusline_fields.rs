@@ -37,7 +37,6 @@ pub(super) fn click_action(key: FieldKey) -> Option<StatusClick> {
     match key {
         FieldKey::Context | FieldKey::Cost | FieldKey::Rate => Some(StatusClick::Command("/info")),
         FieldKey::Permission => Some(StatusClick::PermissionMode),
-        FieldKey::Computer => Some(StatusClick::Command("/computer")),
         FieldKey::Provider | FieldKey::Model | FieldKey::Reasoning => {
             Some(StatusClick::Command("/model"))
         }

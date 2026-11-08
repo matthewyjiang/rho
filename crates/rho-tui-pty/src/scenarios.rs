@@ -17,14 +17,6 @@ mod command_palette;
 mod compact;
 mod composer_unicode;
 mod composer_vim;
-#[cfg(unix)]
-mod computer;
-#[cfg(unix)]
-mod computer_preference;
-#[cfg(unix)]
-mod computer_setup;
-#[cfg(unix)]
-mod computer_update;
 mod config;
 mod context_overlay;
 mod continue_latest;
@@ -127,8 +119,6 @@ use command_palette::{
     TAB_COMPLETE_ENTER_BARE_COMMAND_SCENARIO,
 };
 use compact::{SUBMIT_DURING_COMPACT_STEPS, TYPE_DURING_COMPACT_STEPS};
-#[cfg(unix)]
-use computer::{COMPUTER_FAILURE_SCENARIO, COMPUTER_PLAN_SCENARIO, COMPUTER_USE_SCENARIO};
 use config::{
     setup_auto_without_classifier, AUTO_PERMISSION_MODE_CONFIG_STEPS,
     AUTO_PERMISSION_MODE_STARTUP_STEPS, OPEN_CONFIG_PICKER_SCENARIO,
@@ -641,22 +631,6 @@ const ALL_SCENARIOS: &[Scenario] = &[
     diff_viewer::DIFF_VIEWER_SCENARIO,
     copy_output::COPY_OUTPUT_SCENARIO,
     HOOKS_CONTRACT_SCENARIO,
-    #[cfg(unix)]
-    COMPUTER_USE_SCENARIO,
-    #[cfg(unix)]
-    computer_preference::COMPUTER_PREFERENCE_SCENARIO,
-    #[cfg(unix)]
-    computer_setup::COMPUTER_SETUP_SCENARIO,
-    #[cfg(unix)]
-    computer_setup::COMPUTER_SETUP_CANCEL_SCENARIO,
-    #[cfg(unix)]
-    computer_update::COMPUTER_UPDATE_SCENARIO,
-    #[cfg(unix)]
-    computer_update::COMPUTER_UPDATE_PLAN_SCENARIO,
-    #[cfg(unix)]
-    COMPUTER_FAILURE_SCENARIO,
-    #[cfg(unix)]
-    COMPUTER_PLAN_SCENARIO,
     MCP_INVENTORY_SCENARIO,
     MCP_CONNECTING_SCENARIO,
     MCP_CONNECT_RELEASE_SCENARIO,

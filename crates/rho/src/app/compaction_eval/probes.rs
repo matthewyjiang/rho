@@ -249,6 +249,7 @@ fn is_host_context(text: &str) -> bool {
         "[workflow notification]",
         "[workflow started]",
         "[runtime notifications ",
+        // Saved sessions may hold notices from the removed computer use.
         "[computer use context]",
         "[conversation model switched ",
         "[advisor model switched ",

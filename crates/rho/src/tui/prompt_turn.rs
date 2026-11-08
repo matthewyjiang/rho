@@ -262,8 +262,8 @@ impl App {
                 self.reset_input_history_navigation();
                 self.ensure_session(agent)?;
                 self.sync_herdr_session().await;
-                // Runtime capability notices can precede the first user prompt.
-                // They must not suppress titling the first assistant turn.
+                // `!cmd` shell context can add user messages before the first
+                // prompt; keep titling until the first assistant reply exists.
                 let generate_session_title_after_completion = !agent
                     .history()
                     .iter()

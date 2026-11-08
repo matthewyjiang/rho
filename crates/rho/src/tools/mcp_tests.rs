@@ -20,7 +20,6 @@ use super::{
     result::ResultExpectation,
     session::prepare_server_filesystem,
     tool::{call_remote_tool, CallBudget, McpCall, MCP_TOOL_CALL_BUDGET},
-    McpImageDelivery,
 };
 use crate::{
     config::CodemodeMode,
@@ -589,10 +588,9 @@ open(sys.argv[1], "w").close()
         remote_name: "echo/value".into(),
         arguments: serde_json::Map::new(),
         expectation: ResultExpectation::default(),
-        image_delivery: McpImageDelivery::PresentationOnly,
     };
     let cancellation = CancellationToken::new();
-    let rendered = call_remote_tool(echo_call(), &cancellation, None, 12_000, None)
+    let rendered = call_remote_tool(echo_call(), &cancellation, None, 12_000)
         .await
         .unwrap();
     assert_eq!(rendered.text(), "ok");
@@ -613,7 +611,7 @@ open(sys.argv[1], "w").close()
     );
 
     cancellation.cancel();
-    let error = call_remote_tool(echo_call(), &cancellation, None, 12_000, None)
+    let error = call_remote_tool(echo_call(), &cancellation, None, 12_000)
         .await
         .unwrap_err();
     assert_eq!(error.kind(), ToolErrorKind::Cancelled);

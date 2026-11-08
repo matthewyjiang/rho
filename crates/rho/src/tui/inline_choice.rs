@@ -81,12 +81,6 @@ pub(super) struct InlineChoiceModal {
 
 #[derive(Debug)]
 pub(super) enum InlineChoicePending {
-    ComputerAccess,
-    ComputerInstall,
-    ComputerUpdate {
-        from: String,
-        to: String,
-    },
     CredentialStore {
         next: super::login::StoreChoiceNext,
     },
@@ -123,11 +117,7 @@ impl InlineChoiceModal {
     pub(super) fn blocks_auto_continue(&self) -> bool {
         matches!(
             self.pending,
-            InlineChoicePending::ContextHandoff(_)
-                | InlineChoicePending::ConfirmSend(_)
-                | InlineChoicePending::ComputerAccess
-                | InlineChoicePending::ComputerInstall
-                | InlineChoicePending::ComputerUpdate { .. }
+            InlineChoicePending::ContextHandoff(_) | InlineChoicePending::ConfirmSend(_)
         )
     }
 }

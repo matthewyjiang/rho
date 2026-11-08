@@ -48,8 +48,6 @@ mod composer_history;
 mod composer_pointer;
 mod composer_undo;
 mod composer_vim;
-mod computer_command;
-mod computer_overlay;
 mod config_actions;
 mod config_editor;
 mod config_input;
@@ -663,7 +661,6 @@ struct App {
     mcp_report: crate::tools::mcp::McpSessionReport,
     /// Recovered history rendered before deferred MCP servers connected.
     provisional_history: Option<message_history::ProvisionalHistory>,
-    computer_use: Option<crate::tools::computer_use::ComputerUseControl>,
     /// Prompts and resources connected MCP servers offer, for palette matching.
     mcp_catalog: crate::tools::mcp::McpCatalog,
     /// Fetched argument suggestions for the MCP prompt being typed, so palette

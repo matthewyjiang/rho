@@ -245,10 +245,7 @@ impl InteractiveRuntime {
                 selection_error: None,
             });
         }
-        let selection_error = self
-            .commit_tree_selection(prepared.conversation)
-            .await
-            .err();
+        let selection_error = self.commit_tree_selection(prepared.conversation).err();
         Ok(WorkspaceRewindResult {
             audit,
             display: selection_error

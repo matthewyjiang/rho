@@ -146,7 +146,6 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
             | Command::CredentialStore { .. }
             | Command::Sessions { .. }
             | Command::Mcp { .. }
-            | Command::Computer { .. }
             | Command::ModelPrompt { .. }
             | Command::Plugins { .. }
             | Command::Workflow { .. }

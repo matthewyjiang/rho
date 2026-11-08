@@ -30,7 +30,6 @@ impl CommandContext {
             | CommandId::Init
             | CommandId::Help
             | CommandId::Compact
-            | CommandId::Computer
             | CommandId::Copy
             | CommandId::Goal
             | CommandId::Skills

@@ -14,9 +14,8 @@ use std::sync::{
 use rho_sdk::{
     model::ToolSpec,
     tool::{
-        PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind, ToolInvocation,
-        ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolProgressSender,
-        ToolSecurity,
+        PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation, ToolMetadata,
+        ToolPreparationContext, ToolPrepareFuture, ToolProgressSender, ToolSecurity,
     },
     CancellationToken,
 };
@@ -138,7 +137,7 @@ impl McpToolSlot {
     }
 }
 
-pub(crate) struct McpTool {
+pub(super) struct McpTool {
     pub(super) slot: Arc<McpToolSlot>,
     pub(super) identity: String,
     pub(super) remote_name: String,
@@ -149,7 +148,6 @@ pub(crate) struct McpTool {
     pub(super) calls: McpInFlightCalls,
     pub(super) transport: McpTransport,
     pub(super) max_output_bytes: usize,
-    pub(super) image_delivery: super::McpImageDelivery,
 }
 
 impl Tool for McpTool {
@@ -181,45 +179,6 @@ impl Tool for McpTool {
         &'a self,
         invocation: ToolInvocation,
         _context: ToolPreparationContext,
-    ) -> ToolPrepareFuture<'a> {
-        self.prepare_with_completion(invocation, None)
-    }
-}
-
-/// Whether the remote returned a tools/call result. Transport errors and
-/// cancellation do not establish completion, regardless of ToolErrorKind.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum McpCallCompletion {
-    #[default]
-    Unconfirmed,
-    Answered,
-}
-
-impl McpTool {
-    /// Keep provenance per invocation, separate from SDK errors and metadata.
-    /// Preparation, execution, rendering and assets use the normal MCP path.
-    pub(crate) async fn call_with_completion(
-        &self,
-        invocation: ToolInvocation,
-        context: ToolContext,
-    ) -> (McpCallCompletion, Result<ToolOutput, ToolError>) {
-        let call = ObservedCall {
-            tool: self,
-            completion: Mutex::new(McpCallCompletion::Unconfirmed),
-        };
-        let result = call.call(invocation, context).await;
-        (
-            call.completion
-                .into_inner()
-                .unwrap_or_else(|error| error.into_inner()),
-            result,
-        )
-    }
-
-    fn prepare_with_completion<'a>(
-        &'a self,
-        invocation: ToolInvocation,
-        completion: Option<&'a Mutex<McpCallCompletion>>,
     ) -> ToolPrepareFuture<'a> {
         let arguments = invocation.into_arguments();
         Box::pin(async move {
@@ -268,12 +227,10 @@ impl McpTool {
                                 remote_name: self.remote_name.clone(),
                                 arguments,
                                 expectation,
-                                image_delivery: self.image_delivery,
                             },
                             context.cancellation(),
                             Some(context.progress().clone()),
                             self.max_output_bytes,
-                            completion,
                         );
                         // The question service never finishes on its own, so
                         // the call is always what ends the select. Both are
@@ -290,36 +247,6 @@ impl McpTool {
                 },
             ))
         })
-    }
-}
-
-/// A single invocation uses the SDK preparation/authorization path while
-/// retaining transport provenance outside its public result contract.
-struct ObservedCall<'a> {
-    tool: &'a McpTool,
-    completion: Mutex<McpCallCompletion>,
-}
-
-impl Tool for ObservedCall<'_> {
-    fn spec(&self) -> ToolSpec {
-        self.tool.spec()
-    }
-
-    fn security(&self) -> ToolSecurity {
-        self.tool.security()
-    }
-
-    fn output_schema(&self) -> Option<serde_json::Value> {
-        self.tool.output_schema()
-    }
-
-    fn prepare<'a>(
-        &'a self,
-        invocation: ToolInvocation,
-        _context: ToolPreparationContext,
-    ) -> ToolPrepareFuture<'a> {
-        self.tool
-            .prepare_with_completion(invocation, Some(&self.completion))
     }
 }
 
@@ -358,7 +285,6 @@ pub(super) struct McpCall<'a> {
     pub(super) arguments: serde_json::Map<String, serde_json::Value>,
     /// What the tool's declaration says the result must contain.
     pub(super) expectation: super::result::ResultExpectation,
-    pub(super) image_delivery: super::McpImageDelivery,
 }
 
 /// Issue one `tools/call` and return its model and script views.
@@ -372,7 +298,6 @@ pub(super) async fn call_remote_tool(
     cancellation: &CancellationToken,
     progress_sender: Option<ToolProgressSender>,
     max_output_bytes: usize,
-    completion: Option<&Mutex<McpCallCompletion>>,
 ) -> Result<rho_tools::Rendered<serde_json::Value>, ToolError> {
     let McpCall {
         peer,
@@ -381,7 +306,6 @@ pub(super) async fn call_remote_tool(
         remote_name,
         arguments,
         expectation,
-        image_delivery,
     } = call;
     let params = CallToolRequestParams::new(remote_name).with_arguments(arguments);
     let mut handle = peer
@@ -422,11 +346,7 @@ pub(super) async fn call_remote_tool(
     };
     match response {
         Ok(Ok(ServerResult::CallToolResult(result))) => {
-            if let Some(completion) = completion {
-                *completion.lock().unwrap_or_else(|error| error.into_inner()) =
-                    McpCallCompletion::Answered;
-            }
-            result::render(result, &expectation, max_output_bytes, image_delivery)
+            result::render(result, &expectation, max_output_bytes)
         }
         Ok(Ok(_)) => Err(ToolError::new(
             ToolErrorKind::Execution,

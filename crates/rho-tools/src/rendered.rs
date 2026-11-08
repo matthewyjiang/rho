@@ -4,10 +4,7 @@
 #[path = "rendered_tests.rs"]
 mod tests;
 
-use rho_sdk::{
-    model::ImageContent,
-    tool::{ToolAsset, ToolError, ToolErrorKind, ToolMetadata, ToolOutput},
-};
+use rho_sdk::tool::{ToolAsset, ToolError, ToolErrorKind, ToolMetadata, ToolOutput};
 use schemars::{generate::SchemaSettings, JsonSchema};
 use serde::Serialize;
 use std::{
@@ -36,15 +33,14 @@ pub fn json_len<T: Serialize + ?Sized>(value: &T) -> Result<usize, serde_json::E
 
 /// A completed result. Missing data means the tool has no script-facing value.
 /// Structured data is bounded by its serialized JSON bytes via [`Self::limit_data`];
-/// oversized data is omitted with an explicit truncation notice. Images and
-/// assets are independent of the text and structured budgets.
+/// oversized data is omitted with an explicit truncation notice. Assets are
+/// independent of the text and structured budgets.
 #[derive(Debug, PartialEq)]
 pub struct Rendered<T> {
     text: String,
     data: Option<T>,
     failed: bool,
     assets: Vec<ToolAsset>,
-    images: Vec<ImageContent>,
 }
 
 impl<T> Rendered<T> {
@@ -54,7 +50,6 @@ impl<T> Rendered<T> {
             data: Some(data),
             failed: false,
             assets: Vec::new(),
-            images: Vec::new(),
         }
     }
 
@@ -64,7 +59,6 @@ impl<T> Rendered<T> {
             data: None,
             failed: false,
             assets: Vec::new(),
-            images: Vec::new(),
         }
     }
 
@@ -75,11 +69,6 @@ impl<T> Rendered<T> {
 
     pub fn with_assets(mut self, assets: Vec<ToolAsset>) -> Self {
         self.assets = assets;
-        self
-    }
-
-    pub fn with_images(mut self, images: Vec<ImageContent>) -> Self {
-        self.images = images;
         self
     }
 
@@ -99,9 +88,6 @@ impl<T> Rendered<T> {
     }
     pub fn assets(&self) -> &[ToolAsset] {
         &self.assets
-    }
-    pub fn images(&self) -> &[ImageContent] {
-        &self.images
     }
 
     /// Legacy model-only callers do not serialize the typed script view.
@@ -150,7 +136,6 @@ impl<T: Serialize> Rendered<T> {
             data,
             failed: self.failed,
             assets: self.assets,
-            images: self.images,
         }
         .into_json_output(metadata))
     }
@@ -163,9 +148,7 @@ impl Rendered<serde_json::Value> {
         for asset in self.assets {
             metadata = metadata.asset(asset);
         }
-        let mut output = ToolOutput::text(self.text)
-            .metadata(metadata)
-            .with_images(self.images);
+        let mut output = ToolOutput::text(self.text).metadata(metadata);
         if let Some(data) = self.data {
             output = output.with_structured_content(data);
         }
