@@ -207,17 +207,19 @@ impl App {
                 PendingInputCompletion::Retracted(result),
             ) => {
                 self.pending.set_retracting_steering(None);
-                self.finish_steering_retraction(action, result);
+                self.finish_steering_retraction(action, result.map_err(|error| error.to_string()));
                 None
             }
             _ => Some("pending-input request completed with the wrong response type".into()),
         }
     }
 
-    fn finish_steering_retraction(
+    /// Shows what withdrawing the steer `action` names did, in process or in
+    /// a daemon session.
+    pub(super) fn finish_steering_retraction(
         &mut self,
         action: PendingInputAction,
-        result: Result<rho_sdk::SteeringRetraction, rho_sdk::Error>,
+        result: Result<rho_sdk::SteeringRetraction, String>,
     ) {
         let (id, edit_prompt) = match action {
             PendingInputAction::EditAccepted { id, prompt } => (id, Some(prompt)),
@@ -279,7 +281,12 @@ impl App {
         }
     }
 
-    fn take_accepted_steering(&mut self, ids: &[rho_sdk::SteeringId]) -> Vec<QueuedPrompt> {
+    /// Drops the accepted steers `ids` from the pending panel and returns
+    /// them.
+    pub(super) fn take_accepted_steering(
+        &mut self,
+        ids: &[rho_sdk::SteeringId],
+    ) -> Vec<QueuedPrompt> {
         let selection = self.pending_selection_anchor();
         let mut prompts = Vec::new();
         self.pending.accepted_steering_mut().retain(|entry| {

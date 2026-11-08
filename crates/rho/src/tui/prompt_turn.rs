@@ -765,7 +765,7 @@ impl App {
         Ok(outcome)
     }
 
-    fn draw_running_frame(
+    pub(super) fn draw_running_frame(
         &mut self,
         terminal: &mut DefaultTerminal,
         frame_scheduler: &mut FrameScheduler,

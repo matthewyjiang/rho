@@ -174,6 +174,13 @@ impl App {
                     }
                 }
             }
+            // A daemon session's turn takes the terminal as an in-process
+            // turn does, until the session rests.
+            if self.daemon_turn_runs() {
+                self.follow_daemon_turn(terminal, agent).await?;
+                needs_redraw = true;
+                continue;
+            }
             let subagents_active = agent.subagents().is_some_and(|manager| {
                 manager.has_active_or_pending_notification(agent.session_id().as_str())
             }) || agent
@@ -237,7 +244,7 @@ impl App {
                     needs_redraw = true;
                 }
                 views = super::daemon_session::next_views(&mut self.info.session.daemon) => {
-                    self.show_daemon_views(views, terminal)?;
+                    self.show_daemon_views(views, terminal).await?;
                     needs_redraw = true;
                 }
                 () = async {

@@ -283,8 +283,18 @@ impl App {
             }
         }
 
-        if self.holds_prompt_for_daemon() {
-            return Ok(());
+        // A daemon session runs the turn: it loads the skills the prompt
+        // mentions and owns sign-in, tools, and compaction.
+        if self.info.session.daemon.is_some() {
+            let media = self
+                .input_ui
+                .take_ready_media()
+                .expect("pending attachments block submission");
+            let paste_segments = self.input_ui.paste_segments().to_vec();
+            self.clear_submitted_input();
+            return self
+                .submit_daemon_turn(turn, media, paste_segments, terminal)
+                .await;
         }
 
         self.load_mentioned_skills(&mut turn, agent);
@@ -316,7 +326,8 @@ impl App {
     }
 
     /// Submit a skill or command-backed model turn through the same tool-loading hold,
-    /// compaction, goal, and follow-up path as a regular composer prompt.
+    /// compaction, goal, and follow-up path as a regular composer prompt, or
+    /// to the daemon session, as a composer prompt goes.
     pub(super) async fn submit_interactive_turn(
         &mut self,
         turn: TurnPrompt,
@@ -325,8 +336,10 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if self.holds_prompt_for_daemon() {
-            return Ok(());
+        if self.info.session.daemon.is_some() {
+            return self
+                .submit_daemon_turn(turn, media, paste_segments, terminal)
+                .await;
         }
         if agent.tool_sources_pending() {
             self.hold_turn(turn, media, paste_segments);
@@ -455,6 +468,16 @@ impl App {
     ) -> anyhow::Result<bool> {
         if self.start_follow_ups.is_none() {
             return Ok(false);
+        }
+        // Queued prompts go to a daemon session; a send compaction held
+        // still runs in process.
+        if self.info.session.daemon.is_some()
+            && matches!(
+                self.start_follow_ups,
+                Some(super::compact_work::ReadyFollowUp::Queued { .. })
+            )
+        {
+            return self.start_next_daemon_follow_up(terminal).await;
         }
         if agent.is_compacting() || agent.tool_sources_pending() {
             return Ok(false);

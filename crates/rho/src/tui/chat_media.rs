@@ -71,6 +71,20 @@ impl ChatMedia {
             Self::TextDocument(document) => ContentBlock::Text(document.model_text()),
         }
     }
+
+    /// The block a daemon prompt carries, which reaches the model as
+    /// [`Self::model_block`] does in process.
+    pub(super) fn wire_block(self) -> rho_protocol::ContentBlock {
+        match self {
+            Self::Image(image) => rho_protocol::ContentBlock::Image {
+                mime_type: image.mime_type,
+                data: image.data,
+            },
+            Self::TextDocument(document) => rho_protocol::ContentBlock::Text {
+                text: document.model_text(),
+            },
+        }
+    }
 }
 
 impl ComposerAttachment {

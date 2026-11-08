@@ -1129,3 +1129,20 @@ fn pending_input_stays_below_the_activity_rail() {
 fn daemon_resume_shows_the_saved_conversation() {
     assert_pass("daemon_resume");
 }
+
+// Covers: with RHO_TUI_DAEMON=1, a prompt sent from the TUI runs in the
+// daemon: its user row shows once, its tool card and reply stream in, and the
+// composer is idle once the session rests.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_prompt_streams_the_turn_and_returns_to_idle() {
+    assert_pass("daemon_prompt");
+}
+
+// Covers: with RHO_TUI_DAEMON=1, Esc cancels the daemon's running turn, the
+// transcript says the model was interrupted, and the next prompt runs.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_cancel_interrupts_the_turn_and_returns_to_idle() {
+    assert_pass("daemon_cancel");
+}

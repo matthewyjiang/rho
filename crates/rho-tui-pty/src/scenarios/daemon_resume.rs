@@ -36,19 +36,7 @@ pub(super) fn run_daemon_resume(runner: &ScenarioRunner) -> Result<ScenarioOutco
     // Dropped after the harnesses, so the daemon the resume started stops
     // once nothing is attached to it.
     let home = IsolatedHome::new()?;
-    std::fs::write(
-        &home.config_path,
-        r#"provider = "openai"
-model = "gpt-5.5"
-auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
-permission_mode = "bypass"
-
-[behavior]
-credential_store = "file"
-"#,
-    )?;
+    write_daemon_config(&home)?;
     let plan = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
         .with_env("OPENAI_API_KEY", "sk-test-matrix");
     let spawn = |plan: &RhoLaunchPlan| -> Result<PtyHarness> {
@@ -108,6 +96,26 @@ credential_store = "file"
         timing: harness.timing().clone(),
         artifact_dir: runner.artifact_root.clone(),
     })
+}
+
+/// Config for a daemon-hosted fixture session. The daemon has no one to ask
+/// for approval until input requests reach the TUI (T1d), so tools run
+/// without asking.
+pub(super) fn write_daemon_config(home: &IsolatedHome) -> Result<()> {
+    std::fs::write(
+        &home.config_path,
+        r#"provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+check_for_updates = false
+web_search.mode = "off"
+permission_mode = "bypass"
+
+[behavior]
+credential_store = "file"
+"#,
+    )?;
+    Ok(())
 }
 
 /// The write card's header, through the file it names: the first row naming

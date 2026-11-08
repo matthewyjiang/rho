@@ -1,18 +1,31 @@
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     display::{Presentation, ToolCard, ToolCardStatus, ToolFamily, ToolHeader},
-    AnswerStop, ContentBlock, MessageId, SessionEvent, ToolCallId as WireCallId, ToolCallUpdate,
-    ToolStatus, TurnOutcome,
+    AnswerStop, ContentBlock, JobState, MessageId, SessionEvent, SteerId, ToolCallId as WireCallId,
+    ToolCallUpdate, ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
 };
-use rho_sdk::ToolCallId;
+use rho_sdk::{SteeringId, ToolCallId};
 
-use super::{DaemonEvents, DaemonView};
+use super::{DaemonEvents, DaemonView, Rest, TurnState};
 use crate::tui::StreamKind;
 
 /// What the session hands the mapper: an event, or a reset replay's start.
 enum Step {
     Event(SessionEvent),
     Reset,
+}
+
+/// The views one session's mapper makes of `steps`.
+fn map(steps: Vec<Step>) -> Vec<DaemonView> {
+    let mut events = DaemonEvents::default();
+    let mut views = Vec::new();
+    for step in steps {
+        match step {
+            Step::Event(event) => views.extend(events.map(event)),
+            Step::Reset => views.push(events.reset()),
+        }
+    }
+    views
 }
 
 fn user(text: &str) -> Step {
@@ -57,6 +70,31 @@ fn answered(text: &str) -> Step {
             stop: AnswerStop::EndTurn,
         },
     })
+}
+
+fn state(state: JobState) -> Step {
+    Step::Event(SessionEvent::State { state })
+}
+
+fn ended(outcome: TurnOutcome) -> Step {
+    Step::Event(SessionEvent::TurnEnded { outcome })
+}
+
+fn provider_failed(message: &str) -> TurnOutcome {
+    TurnOutcome::Failed {
+        error: TurnError {
+            kind: TurnErrorKind::Provider,
+            message: message.into(),
+        },
+    }
+}
+
+fn resting(rest: Rest) -> DaemonView {
+    DaemonView::Turn(TurnState::Resting(rest))
+}
+
+fn steer() -> SteeringId {
+    SteeringId::from_string("s1").unwrap()
 }
 
 fn read_card(status: ToolCardStatus) -> ToolCard {
@@ -240,14 +278,100 @@ fn session_events_map_to_transcript_views() {
     ];
 
     for (name, steps, expected) in cases {
-        let mut events = DaemonEvents::default();
-        let mut views = Vec::new();
-        for step in steps {
-            match step {
-                Step::Event(event) => views.extend(events.map(event)),
-                Step::Reset => views.push(events.reset()),
-            }
-        }
-        assert_eq!(views, expected, "{name}");
+        assert_eq!(map(steps), expected, "{name}");
+    }
+}
+
+// Covers: the job's state drives the TUI's busy state, a failed turn rests
+// with its own reason and never the last turn's, and a steer's delivery and
+// echo carry the id the pending panel keys it by, ahead of its user row.
+// Owner: tui daemon event mapping
+#[test]
+fn job_states_and_steers_map_to_turn_views() {
+    let cases = [
+        (
+            "a cancelled turn rests interrupted",
+            vec![
+                state(JobState::Running),
+                reply("m1", "partial"),
+                ended(TurnOutcome::Cancelled),
+                state(JobState::Cancelled),
+            ],
+            vec![
+                DaemonView::Turn(TurnState::Running),
+                text(StreamKind::Assistant, "partial", true),
+                DaemonView::Status("model interrupted".into()),
+                resting(Rest::Interrupted),
+            ],
+        ),
+        (
+            "a failed turn rests with its reason",
+            vec![
+                state(JobState::Running),
+                ended(provider_failed("provider refused the request")),
+                state(JobState::Failed),
+            ],
+            vec![
+                DaemonView::Turn(TurnState::Running),
+                DaemonView::Error("provider refused the request".into()),
+                resting(Rest::Failed {
+                    error: "provider refused the request".into(),
+                }),
+            ],
+        ),
+        (
+            "a failure's reason does not outlive its turn",
+            vec![
+                ended(provider_failed("provider refused the request")),
+                state(JobState::Queued),
+                state(JobState::Failed),
+            ],
+            vec![
+                DaemonView::Error("provider refused the request".into()),
+                DaemonView::Turn(TurnState::Running),
+                resting(Rest::Failed {
+                    error: "the turn failed".into(),
+                }),
+            ],
+        ),
+        (
+            "a turn waits for input, then completes",
+            vec![
+                state(JobState::WaitingForInput),
+                state(JobState::Running),
+                state(JobState::Completed),
+                state(JobState::Idle),
+            ],
+            vec![
+                DaemonView::Turn(TurnState::WaitingForInput),
+                DaemonView::Turn(TurnState::Running),
+                resting(Rest::Ready),
+                resting(Rest::Ready),
+            ],
+        ),
+        (
+            "a steer is delivered, then applies as a user row",
+            vec![
+                Step::Event(SessionEvent::SteeringDelivered {
+                    id: SteerId::new("s1"),
+                }),
+                Step::Event(SessionEvent::UserMessage {
+                    message: MessageId::new("u2"),
+                    content: vec![ContentBlock::Text {
+                        text: "check the tests too".into(),
+                    }],
+                    steer: Some(SteerId::new("s1")),
+                }),
+            ],
+            vec![
+                DaemonView::SteerDelivered(steer()),
+                DaemonView::SteerApplied(steer()),
+                DaemonView::User("check the tests too".into()),
+            ],
+        ),
+    ];
+
+    for (name, steps, expected) in cases {
+        assert_eq!(map(steps), expected, "{name}");
     }
 }
