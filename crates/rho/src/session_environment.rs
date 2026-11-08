@@ -1,8 +1,11 @@
 //! The environment a session's children see (#1659): this process's own, or
 //! the variables of the daemon client that last opened or prompted the
 //! session. One [`SessionEnvironment`] reaches a session's tools, MCP
-//! servers, hooks, and OpenAPI sources, and each takes the environment
-//! current when it starts a child or reads a variable.
+//! servers, hooks, OpenAPI sources, and CLI agents (Claude Code, Cursor,
+//! Antigravity), and each takes the environment current when it starts a
+//! child or reads a variable. A workflow run the session starts or resumes
+//! instead gets its own handle of the environment current then, which no
+//! later prompt replaces.
 
 use std::{
     collections::BTreeMap,
@@ -43,6 +46,21 @@ impl Ambient {
     /// [`crate::child_env`], read from this environment.
     pub(crate) fn apply_base(&self, command: &mut tokio::process::Command) {
         crate::child_env::apply_base(command, |name| self.read_os(name));
+    }
+
+    /// Gives `command` this whole environment, provider credentials
+    /// included, for CLI agents such as Claude Code that sign in and run
+    /// commands themselves: a local rho gives them its own environment, and
+    /// a daemon session gives them its client's (#1659). This process's is
+    /// inherited as is; a client's replaces it. Overrides set afterwards
+    /// still apply.
+    pub(crate) fn apply_full(&self, command: &mut tokio::process::Command) {
+        match self {
+            Self::ThisProcess => {}
+            Self::Client(variables) => {
+                command.env_clear().envs(variables.iter());
+            }
+        }
     }
 
     /// The `PATH` executables are looked up on.

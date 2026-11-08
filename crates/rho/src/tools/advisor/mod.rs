@@ -31,6 +31,7 @@ use crate::{
     },
     config::{Config, InternalAgentModelConfig, InternalAgentTarget},
     credential_store::build_provider,
+    session_environment::{Ambient, SessionEnvironment},
 };
 
 pub(crate) use transcript::{render_transcript, TranscriptBudget, DEFAULT_TRANSCRIPT_BUDGET};
@@ -78,13 +79,21 @@ pub(crate) fn advisor_available(config: &Config) -> bool {
     config.advisor_mode && advisor_model(config).is_some()
 }
 
-/// Builds the `advisor` tool.
+/// Builds the `advisor` tool, whose Claude Code advisor runs in the session's
+/// `environment`.
 ///
 /// It owns no resources beyond the store and needs no shutdown, so the tool set
 /// registers it directly instead of through a bundle. That also lets advisor
 /// mode register and remove it mid-session without rebuilding the tool set.
-pub(super) fn advisor_tool(store: AdvisorSessionStore) -> Arc<dyn SdkTool> {
-    Arc::new(AdvisorTool::new(store, DEFAULT_TRANSCRIPT_BUDGET))
+pub(super) fn advisor_tool(
+    store: AdvisorSessionStore,
+    environment: SessionEnvironment,
+) -> Arc<dyn SdkTool> {
+    Arc::new(AdvisorTool::new(
+        store,
+        DEFAULT_TRANSCRIPT_BUDGET,
+        environment,
+    ))
 }
 
 /// Live session state the `advisor` tool reads when the executor calls it.
@@ -222,11 +231,22 @@ struct AdvisorRequest {
 pub(crate) struct AdvisorTool {
     store: AdvisorSessionStore,
     budget: TranscriptBudget,
+    /// The session's environment, which a Claude Code advisor runs in as it
+    /// is when called (#1659).
+    environment: SessionEnvironment,
 }
 
 impl AdvisorTool {
-    pub(crate) fn new(store: AdvisorSessionStore, budget: TranscriptBudget) -> Self {
-        Self { store, budget }
+    pub(crate) fn new(
+        store: AdvisorSessionStore,
+        budget: TranscriptBudget,
+        environment: SessionEnvironment,
+    ) -> Self {
+        Self {
+            store,
+            budget,
+            environment,
+        }
     }
 }
 
@@ -267,6 +287,7 @@ impl SdkTool for AdvisorTool {
             let (advice, usage) = consult_advisor(
                 request,
                 workspace_path,
+                self.environment.current(),
                 context.cancellation().clone(),
                 context.progress().clone(),
             )
@@ -292,6 +313,7 @@ impl SdkTool for AdvisorTool {
 async fn consult_advisor(
     request: AdvisorRequest,
     workspace_path: PathBuf,
+    environment: Ambient,
     cancellation: CancellationToken,
     progress: ToolProgressSender,
 ) -> Result<(String, ModelUsage), ToolError> {
@@ -332,6 +354,7 @@ async fn consult_advisor(
                 model.clone(),
                 reasoning,
                 &workspace_path,
+                environment,
                 transcript,
                 cancellation,
                 progress,
@@ -350,6 +373,7 @@ async fn consult_advisor_with_claude_cli(
     model: Option<String>,
     reasoning: rho_providers::reasoning::ReasoningLevel,
     workspace_path: &Path,
+    environment: Ambient,
     transcript: String,
     cancellation: CancellationToken,
     progress: ToolProgressSender,
@@ -363,6 +387,7 @@ async fn consult_advisor_with_claude_cli(
             model,
             reasoning: Some(reasoning),
             cwd: workspace_path.to_path_buf(),
+            environment,
             cancellation,
         },
         Some(updates_tx),

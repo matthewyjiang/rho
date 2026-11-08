@@ -3,6 +3,7 @@
 //! This path never touches Rho's credential store. `cursor-agent login` owns
 //! the browser OAuth and stores credentials in `~/.cursor`.
 
+use crate::session_environment::Ambient;
 use crate::tui::DefaultTerminal;
 
 use crate::cursor_runtime::{
@@ -37,7 +38,7 @@ impl App {
 fn cursor_login_spec() -> ExternalLoginSpec<CursorAuthStatus, CursorAuthError> {
     ExternalLoginSpec {
         command_label: "cursor-agent login",
-        resolve: executable::resolve,
+        resolve: || executable::resolve(&Ambient::ThisProcess),
         login_args: auth::login_args(),
         query: || Box::pin(auth::query()),
         is_signed_in: |status| status.is_authenticated,

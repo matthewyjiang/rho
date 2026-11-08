@@ -2,6 +2,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ffi::OsStr,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -36,14 +37,19 @@ pub(crate) struct DiscoveringPlanHost<'a> {
     config: &'a crate::config::Config,
     catalog: crate::agent::AgentCatalog,
     available_tools: &'a crate::agent::AgentCapabilities,
+    /// The `PATH` bare executables and `#!/usr/bin/env` interpreters are
+    /// found on: that of the environment the run will start in (#1659).
+    search_path: Option<&'a OsStr>,
 }
 
 impl<'a> DiscoveringPlanHost<'a> {
+    /// A host finding bare executables on `search_path`.
     pub(crate) fn new(
         workspace: &'a Path,
         config: &'a crate::config::Config,
         available_tools: &'a crate::agent::AgentCapabilities,
         workflow_entry: &Path,
+        search_path: Option<&'a OsStr>,
     ) -> anyhow::Result<Self> {
         let home = crate::paths::home_dir();
         let trust = crate::workspace::ProjectTrust::from_agents_env();
@@ -59,6 +65,7 @@ impl<'a> DiscoveringPlanHost<'a> {
                 &plugins,
             )?,
             available_tools,
+            search_path,
         })
     }
 }
@@ -84,8 +91,8 @@ impl PlanHost for DiscoveringPlanHost<'_> {
         &self,
         executable: &str,
     ) -> anyhow::Result<(PathBuf, ExecutableIdentity)> {
-        let path = resolve_executable_path(executable, self.workspace)?;
-        let identity = freeze_executable_identity(&path)?;
+        let path = resolve_executable_path(executable, self.workspace, self.search_path)?;
+        let identity = freeze_executable_identity(&path, self.search_path)?;
         Ok((path, identity))
     }
 }
@@ -374,13 +381,19 @@ fn frozen_capabilities(capabilities: &crate::agent::AgentCapabilities) -> BTreeS
         .collect()
 }
 
-fn resolve_executable_path(executable: &str, workspace: &Path) -> anyhow::Result<PathBuf> {
+/// `executable` canonicalized: a bare name found on `search_path`, a
+/// relative path under `workspace`.
+fn resolve_executable_path(
+    executable: &str,
+    workspace: &Path,
+    search_path: Option<&OsStr>,
+) -> anyhow::Result<PathBuf> {
     let path = Path::new(executable);
     // Every branch canonicalizes: validation requires the frozen path to equal
     // the identity's canonical path, and PATH entries are often symlinks
     // (`~/.local/bin/cursor-agent -> versions/<v>/cursor-agent`).
     let resolved = if path.components().count() == 1 {
-        crate::executable::find_on_path(executable)
+        crate::executable::find_on(executable, search_path)
             .ok_or_else(|| anyhow::anyhow!("executable '{executable}' was not found on PATH"))?
             .canonicalize()?
     } else if path.is_absolute() {

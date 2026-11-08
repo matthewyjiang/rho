@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 
-use crate::cli_runtime::CliExecutable;
+use crate::{cli_runtime::CliExecutable, session_environment::Ambient};
 
 use super::agent_file::RunAgent;
 
@@ -24,8 +24,10 @@ pub(crate) enum AntigravityExecutableError {
     BinaryMissing,
 }
 
-pub(crate) fn resolve() -> Result<CliExecutable, AntigravityExecutableError> {
-    CliExecutable::resolve(AGY_PROGRAM).ok_or(AntigravityExecutableError::BinaryMissing)
+/// Locate `agy` on the `PATH` of `environment`, the one it will run in.
+pub(crate) fn resolve(environment: &Ambient) -> Result<CliExecutable, AntigravityExecutableError> {
+    CliExecutable::resolve_in(AGY_PROGRAM, environment.path().as_deref())
+        .ok_or(AntigravityExecutableError::BinaryMissing)
 }
 
 /// `agy acp` with Rho's settings directory; every run adds its agent.

@@ -299,7 +299,11 @@ async fn streams_progress_before_completion_with_plain_final_output() {
 #[test]
 fn the_description_never_names_the_reviewer_model() {
     let store = AdvisorSessionStore::new();
-    let tool = AdvisorTool::new(store.clone(), DEFAULT_TRANSCRIPT_BUDGET);
+    let tool = AdvisorTool::new(
+        store.clone(),
+        DEFAULT_TRANSCRIPT_BUDGET,
+        crate::session_environment::SessionEnvironment::default(),
+    );
     let baseline = tool.spec().description;
 
     store.set_model(Some(advisor_selection()));

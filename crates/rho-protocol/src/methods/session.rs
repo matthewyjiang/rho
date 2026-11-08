@@ -56,9 +56,10 @@ impl fmt::Display for SessionId {
 
 /// A client's environment variables, which a daemon session's children
 /// see in place of the daemon's own (#1659): its tools' commands and
-/// background processes (minus provider credentials), and its MCP servers,
-/// hooks, and OpenAPI sources. Values are secrets: the daemon never logs or
-/// saves them.
+/// background processes (minus provider credentials), its MCP servers,
+/// hooks, and OpenAPI sources, its CLI subagents and Claude Code advisor
+/// (credentials included), and the workflow runs it starts. Values are
+/// secrets: the daemon never logs or saves them.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct ClientEnvironment(BTreeMap<String, String>);

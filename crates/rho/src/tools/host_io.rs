@@ -7,9 +7,10 @@ use crate::session_environment::SessionEnvironment;
 
 /// What the embedding host does in place of local disk and local processes
 /// for one session, and the environment the session's children see: its
-/// tools' processes, MCP servers, hooks, and OpenAPI sources (#1659). Each
-/// I/O part is absent unless the host offers it. Delegated Rho agents share
-/// their parent's, so both see the same files and environment.
+/// tools' processes, MCP servers, hooks, OpenAPI sources, CLI agents, and
+/// workflow runs (#1659). Each I/O part is absent unless the host offers it.
+/// Delegated Rho agents share their parent's, so both see the same files and
+/// environment.
 #[derive(Clone, Default)]
 pub(crate) struct HostIo {
     /// Text files the host serves; see [`rho_tools::HostTextFiles`].

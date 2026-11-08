@@ -314,3 +314,118 @@ timeout = "10s"
         sandbox.daemon_log()
     );
 }
+
+// Covers: a daemon session's CLI agent (Claude Code here) is found on the
+// prompting client's `PATH` and runs with that client's whole environment,
+// credentials included, since it signs in itself; a workflow run the
+// session starts finds its command's executable and `#!/usr/bin/env`
+// interpreter on that `PATH` and runs it with the client's environment
+// minus credentials (#1659).
+// Owner: daemon session environment.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_sessions_cli_agents_and_workflow_commands_see_its_clients_environment() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sandbox = Sandbox::new();
+    let root = sandbox.workspace.parent().unwrap().to_path_buf();
+    // Only clients have this directory on their `PATH`.
+    let bin = root.join("client-bin-1659");
+    std::fs::create_dir_all(&bin).unwrap();
+    // Installs an executable script with these whole contents, `#!` line
+    // included.
+    let install = |name: &str, contents: String| {
+        let path = bin.join(name);
+        std::fs::write(&path, contents).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    let record = |file: &str| {
+        format!(
+            "printf '%s|%s|%s\\n' \"${{PATH%%:*}}\" \"${{PROBE-unset}}\" \"${{XAI_API_KEY-unset}}\" >> {}",
+            root.join(file).display()
+        )
+    };
+    // Answers the adapter's sign-in probe, records the agent's launch, then
+    // fails it: the run's outcome is not what this covers.
+    install(
+        "claude-agent-acp",
+        format!(
+            "#!/bin/sh\nif [ \"${{1-}}\" = \"--cli\" ]; then printf '%s\\n' '{{\"loggedIn\":true}}'; exit 0; fi\n{}\nexit 1\n",
+            record("cli.txt")
+        ),
+    );
+    // The command runs through an interpreter only clients have, as a
+    // `#!/usr/bin/env node` script does with mise's `node` (a symlink, as
+    // mise's is: a copy of macOS's `/bin/sh` trampoline does not run).
+    std::os::unix::fs::symlink("/bin/sh", bin.join("sh-1659")).unwrap();
+    install(
+        "probe-1659",
+        format!("#!/usr/bin/env sh-1659\n{}\n", record("command.txt")),
+    );
+    // A user agent, in the sandbox's `HOME`.
+    std::fs::create_dir_all(root.join(".rho/agents")).unwrap();
+    std::fs::write(
+        root.join(".rho/agents/claude-env.md"),
+        "---\nid: claude-env\ndescription: Claude Code agent for the environment test\nruntime: claude-cli\nprompt: replace\n---\nWork.\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(sandbox.workspace.join("wf")).unwrap();
+    std::fs::write(
+        sandbox.workspace.join("wf/main.star"),
+        r#"def build(inputs):
+    return workflow(name = "env-run", nodes = [
+        command(
+            name = "probe",
+            argv = ["probe-1659"],
+            cwd = ".",
+            timeout_seconds = 600,
+            max_output_bytes = 1000,
+        ),
+    ])
+
+WORKFLOW = define(inputs = {}, build = build)
+"#,
+    )
+    .unwrap();
+    // Claude Code runs only in modes whose permissions it can enforce.
+    sandbox.set_permission_mode("bypass");
+    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let session = sandbox.new_session(&client).await;
+    let mut calls = vec![(
+        "cli.txt",
+        "cli-1659",
+        json!({"id": "delegate", "name": "agent", "arguments": {"agent_id": "claude-env", "prompt": "Work."}}),
+        "key-1659",
+    )];
+    // Frozen workflow commands launch only where the OS adapter can start
+    // them from verified handles (`tools/process/exact.rs`).
+    if cfg!(any(target_os = "linux", target_os = "android")) {
+        calls.push((
+            "command.txt",
+            "workflow-1659",
+            json!({"id": "start", "name": "workflow", "arguments": {"action": "start", "file": "wf/main.star"}}),
+            "unset",
+        ));
+    }
+    let mut seen = Vec::new();
+    let mut expected = Vec::new();
+    for (file, probe, call, key) in calls {
+        let environment = client_environment_with_bin(
+            &sandbox,
+            &bin,
+            &[("PROBE", probe), ("XAI_API_KEY", "key-1659")],
+        );
+        sandbox
+            .prompt_tool_call_with_environment(&client, &session, &call, environment)
+            .await;
+        settled_job(&sandbox, &client, &session).await;
+        // A workflow run outlives the turn that started it.
+        seen.push(
+            sandbox
+                .poll_until(file, async || std::fs::read_to_string(root.join(file)).ok())
+                .await,
+        );
+        expected.push(format!("{}|{probe}|{key}\n", bin.display()));
+    }
+
+    assert_eq!(seen, expected, "log:\n{}", sandbox.daemon_log());
+}

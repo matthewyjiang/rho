@@ -18,8 +18,11 @@ fn identities(
     crate::workflow::FrozenPathIdentity,
 ) {
     (
-        crate::workflow::freeze_executable_identity(execution.invocation().executable_path())
-            .unwrap(),
+        crate::workflow::freeze_executable_identity(
+            execution.invocation().executable_path(),
+            /*search_path*/ None,
+        )
+        .unwrap(),
         crate::workflow::freeze_directory_identity(execution.working_directory()).unwrap(),
     )
 }
@@ -210,9 +213,11 @@ async fn launches_all_identity_paths_from_verified_handles() {
         rho_sdk::ProcessEnvironment::Empty,
         rho_sdk::ProcessOutputLimits::new(64, None),
     );
-    let identity = crate::workflow::freeze_executable_identity(&executable).unwrap();
+    let identity =
+        crate::workflow::freeze_executable_identity(&executable, /*search_path*/ None).unwrap();
     let cwd_identity = crate::workflow::freeze_directory_identity(&cwd).unwrap();
-    let verified_executable = crate::workflow::verify_executable_identity(&identity).unwrap();
+    let verified_executable =
+        crate::workflow::verify_executable_identity(&identity, /*search_path*/ None).unwrap();
     let verified_cwd = crate::workflow::verify_directory_identity(&cwd_identity).unwrap();
 
     std::fs::rename(&executable, directory.path().join("old-command")).unwrap();
@@ -258,7 +263,8 @@ async fn accepts_a_stable_symlinked_shebang_interpreter() {
     let script = directory.path().join("script");
     std::fs::write(&script, "#!/bin/sh\nprintf stable").unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let executable_identity = crate::workflow::freeze_executable_identity(&script).unwrap();
+    let executable_identity =
+        crate::workflow::freeze_executable_identity(&script, /*search_path*/ None).unwrap();
     let cwd_identity = crate::workflow::freeze_directory_identity(directory.path()).unwrap();
     let execution = ProcessExecution::new(
         directory.path(),

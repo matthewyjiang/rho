@@ -109,6 +109,8 @@ Rho runs `agy acp --cli_dir_name rho --add-dir <run>/agy --agent rho-run-<random
 
 Rho never calls ACP `authenticate` during a run. A signed-out agy fails `session/new` with `Authentication required`; run `/login antigravity`.
 
+In a [daemon](/daemon#environment) session, Rho finds `agy` on the `PATH` of the client you prompted from and runs it with that client's whole environment, credentials included.
+
 Cancel sends `session/cancel`. Rho always terminates `agy acp` after the last turn. The ACP session id is recorded but there is no resume command.
 
 Workflow plans freeze the resolved `agy` executable and the kept tools. Plans made for the earlier `agy_acp_server` runtime refuse to resume; plan them again.

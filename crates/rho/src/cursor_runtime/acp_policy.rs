@@ -72,8 +72,11 @@ impl AcpAgentPolicy for CursorAcpPolicy {
         CURSOR_LABEL
     }
 
-    fn resolve_executable(&self) -> Result<CliExecutable, String> {
-        executable::resolve().map_err(|error| error.to_string())
+    fn resolve_executable(
+        &self,
+        environment: &crate::session_environment::Ambient,
+    ) -> Result<CliExecutable, String> {
+        executable::resolve(environment).map_err(|error| error.to_string())
     }
 
     fn spawn_plan(&self, frozen: Option<Vec<String>>) -> Result<AcpSpawnPlan, String> {

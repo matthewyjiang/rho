@@ -51,23 +51,24 @@ pub(crate) enum CliExecutableError {
 
 impl CliExecutable {
     /// Locate `program` for spawning. Explicit paths must exist as files; bare
-    /// names are looked up on `PATH`, and on Windows the `.cmd` / `.ps1` shims
-    /// that Rust's bare-name lookup will not find are tried next.
-    pub(crate) fn resolve(program: &str) -> Option<Self> {
+    /// names are looked up on `path`, the `PATH` of the environment the
+    /// program will run in (a daemon session's client's, #1659; no `PATH`
+    /// finds nothing), and on Windows the `.cmd` / `.ps1` shims that Rust's
+    /// bare-name lookup will not find are tried next.
+    pub(crate) fn resolve_in(program: &str, path: Option<&OsStr>) -> Option<Self> {
         if program.contains('/') || program.contains('\\') {
             let path = PathBuf::from(program);
             return path.is_file().then(|| Self::from_path(path));
         }
-
-        if let Some(path) = crate::executable::find_on_path(program) {
-            return Some(Self::from_path(path));
+        if let Some(found) = crate::executable::find_on(program, path) {
+            return Some(Self::from_path(found));
         }
 
         #[cfg(windows)]
         {
             for candidate in [format!("{program}.cmd"), format!("{program}.ps1")] {
-                if let Some(path) = crate::executable::find_on_path(&candidate) {
-                    return Some(Self::from_path(path));
+                if let Some(found) = crate::executable::find_on(&candidate, path) {
+                    return Some(Self::from_path(found));
                 }
             }
         }

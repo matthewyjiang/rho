@@ -25,6 +25,8 @@ use super::usage_parse::{named_window_keys, parse_usage_screen};
 use super::window_kind::WindowKind;
 #[cfg(unix)]
 use super::{executable, rate_limit};
+#[cfg(unix)]
+use crate::session_environment::Ambient;
 use crate::usage_limits::UsageFailure;
 
 #[cfg(unix)]
@@ -222,7 +224,7 @@ fn persist_probe_state(state: RateLimitState) -> Result<UsageProbeOutcome, Usage
 
 #[cfg(unix)]
 fn probe_usage_blocking(abort: &AtomicBool) -> Result<RateLimitState, UsageProbeError> {
-    let executable = executable::resolve().map_err(|error| match error {
+    let executable = executable::resolve(&Ambient::ThisProcess).map_err(|error| match error {
         ClaudeAuthError::BinaryMissing => UsageProbeError::BinaryMissing,
         other => UsageProbeError::Auth(other),
     })?;

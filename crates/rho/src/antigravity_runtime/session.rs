@@ -37,6 +37,9 @@ pub(crate) struct AntigravitySessionRequest {
     /// Parent messages become the next `session/prompt` after a turn ends.
     pub(crate) parent_messages: Option<ParentMessageInbox>,
     pub(crate) overrides: CliSessionOverrides,
+    /// The environment the agent runs in: its session's when the run
+    /// launched (#1659).
+    pub(crate) environment: crate::session_environment::Ambient,
 }
 
 /// Run one Antigravity session to completion, writing the subagent contract.
@@ -54,6 +57,7 @@ pub(crate) async fn run_session(request: AntigravitySessionRequest) -> anyhow::R
         started_status,
         parent_messages,
         overrides,
+        environment,
     } = request;
     let policy =
         AntigravityAcpPolicy::new(identity.model.clone(), tools, permission_mode, cwd.clone());
@@ -68,6 +72,7 @@ pub(crate) async fn run_session(request: AntigravitySessionRequest) -> anyhow::R
         started_status,
         parent_messages,
         overrides,
+        environment,
     };
     acp_runtime::run_session(request, policy).await
 }

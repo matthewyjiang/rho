@@ -15,6 +15,7 @@ use rho_sdk::{
 use crate::{
     agent::AgentCapabilities,
     app::{subagent_pool::SubagentPool, workflow_runtime::RecoveryDecision},
+    session_environment::{Ambient, SessionEnvironment},
     tools::{
         workflow::{
             WorkflowArtifactSummary, WorkflowCancellationStateSummary, WorkflowDiagnosticSummary,
@@ -33,18 +34,21 @@ use super::{diagnostic_for_model_error, ops::WorkflowOps, plan_host::AuthorizedP
 mod capabilities;
 
 /// The `workflow` tool of a session in `cwd`, whose runs' agent nodes share
-/// the session's subagent `pool`.
+/// the session's subagent `pool` and whose runs take the session's
+/// `environment` as it is when they start or resume.
 pub(in crate::app) fn workflow_tool_service(
     cwd: PathBuf,
     config_path: Option<PathBuf>,
     tracker: WorkflowRunTracker,
     pool: SubagentPool,
+    environment: SessionEnvironment,
 ) -> Arc<dyn WorkflowToolService> {
     Arc::new(AppWorkflowToolService {
         cwd,
         config_path,
         tracker,
         pool,
+        environment,
     })
 }
 
@@ -53,6 +57,10 @@ struct AppWorkflowToolService {
     config_path: Option<PathBuf>,
     tracker: WorkflowRunTracker,
     pool: SubagentPool,
+    /// The session's environment (#1659). Each request takes one snapshot:
+    /// planning finds bare executables on its `PATH`, and the run the
+    /// request starts or resumes keeps it.
+    environment: SessionEnvironment,
 }
 
 impl WorkflowToolService for AppWorkflowToolService {
@@ -258,9 +266,16 @@ impl AppWorkflowToolService {
         request: WorkflowToolRequest,
         context: &ToolContext,
     ) -> Result<WorkflowToolResult, ToolError> {
+        // One snapshot across this request's awaits: a run verifies its
+        // frozen executables on the `PATH` they were frozen or rechecked on
+        // (#1659).
+        let environment = self.environment.current();
         match request {
             WorkflowToolRequest::Validate { file, inputs } => {
-                match self.prepare(Path::new(&file), inputs, context).await {
+                match self
+                    .prepare(Path::new(&file), inputs, &environment, context)
+                    .await
+                {
                     Ok(_) => Ok(WorkflowToolResult::Validate {
                         valid: true,
                         diagnostics: Vec::new(),
@@ -273,10 +288,10 @@ impl AppWorkflowToolService {
             }
             WorkflowToolRequest::Plan { file, inputs } => {
                 let prepared = self
-                    .prepare(Path::new(&file), inputs, context)
+                    .prepare(Path::new(&file), inputs, &environment, context)
                     .await
                     .map_err(model_workflow_tool_error)?;
-                let ops = self.ops().map_err(model_workflow_tool_error)?;
+                let ops = self.ops(&environment).map_err(model_workflow_tool_error)?;
                 let stored = ops
                     .store_plan(&prepared)
                     .map_err(model_workflow_tool_error)?;
@@ -288,7 +303,7 @@ impl AppWorkflowToolService {
                 })
             }
             WorkflowToolRequest::Run { plan_id } => {
-                let ops = self.ops().map_err(model_workflow_tool_error)?;
+                let ops = self.ops(&environment).map_err(model_workflow_tool_error)?;
                 let plan = ops
                     .prepare_run_id(plan_id)
                     .map_err(model_workflow_tool_error)?;
@@ -297,27 +312,29 @@ impl AppWorkflowToolService {
                 let run = ops
                     .create_confirmed_run(&plan)
                     .map_err(model_workflow_tool_error)?;
-                self.launch(run, RecoveryDecision::NormalResume).await
+                self.launch(run, RecoveryDecision::NormalResume, environment)
+                    .await
             }
             WorkflowToolRequest::Start { file, inputs } => {
                 let prepared = self
-                    .prepare(Path::new(&file), inputs, context)
+                    .prepare(Path::new(&file), inputs, &environment, context)
                     .await
                     .map_err(model_workflow_tool_error)?;
-                let ops = self.ops().map_err(model_workflow_tool_error)?;
+                let ops = self.ops(&environment).map_err(model_workflow_tool_error)?;
                 let run = ops
                     .create_launch_run(&prepared)
                     .map_err(model_workflow_tool_error)?;
-                self.launch(run, RecoveryDecision::NormalResume).await
+                self.launch(run, RecoveryDecision::NormalResume, environment)
+                    .await
             }
             WorkflowToolRequest::Status { run_id } => {
-                let ops = self.ops().map_err(model_workflow_tool_error)?;
+                let ops = self.ops(&environment).map_err(model_workflow_tool_error)?;
                 let run = ops.load_run_id(run_id).map_err(model_workflow_tool_error)?;
                 observe_if_terminal(&self.tracker, &run);
                 run_result(run)
             }
             WorkflowToolRequest::Cancel { run_id } => {
-                let ops = self.ops().map_err(model_workflow_tool_error)?;
+                let ops = self.ops(&environment).map_err(model_workflow_tool_error)?;
                 let run = ops.load_run_id(run_id).map_err(model_workflow_tool_error)?;
                 let outcome = ops
                     .cancel(run.manifest.run_id, run.state.state.lifecycle)
@@ -350,7 +367,7 @@ impl AppWorkflowToolService {
                 run_id,
                 recover_uncertain,
             } => {
-                let ops = self.ops().map_err(model_workflow_tool_error)?;
+                let ops = self.ops(&environment).map_err(model_workflow_tool_error)?;
                 let run = ops.load_run_id(run_id).map_err(model_workflow_tool_error)?;
                 let recovery = ops
                     .prepare_resume(&run, recover_uncertain)
@@ -364,16 +381,18 @@ impl AppWorkflowToolService {
                             model_workflow_tool_error(error)
                         }
                     })?;
-                self.launch(run, recovery).await
+                self.launch(run, recovery, environment).await
             }
         }
     }
 
-    /// Tracks `run` for completion delivery, then drives it in the background.
+    /// Tracks `run` for completion delivery, then drives it in the
+    /// background in `environment`.
     async fn launch(
         &self,
         run: StoredRun,
         recovery: RecoveryDecision,
+        environment: Ambient,
     ) -> Result<WorkflowToolResult, ToolError> {
         if !self.tracker.register_start(
             run.manifest.run_id.to_string(),
@@ -394,6 +413,7 @@ impl AppWorkflowToolService {
                 config_path: self.config_path.clone(),
                 pool: self.pool.clone(),
                 tracker: self.tracker.clone(),
+                environment,
             },
         )
         .await
@@ -401,14 +421,17 @@ impl AppWorkflowToolService {
         run_result(started)
     }
 
-    fn ops(&self) -> anyhow::Result<WorkflowOps> {
-        WorkflowOps::open(self.cwd.clone(), self.config_path.clone())
+    /// Workflow operations for runs that start or resume in `environment`.
+    fn ops(&self, environment: &Ambient) -> anyhow::Result<WorkflowOps> {
+        WorkflowOps::open(self.cwd.clone(), self.config_path.clone(), environment)
     }
 
+    /// Plans `file`, finding bare executables on `environment`'s `PATH`.
     async fn prepare(
         &self,
         file: &Path,
         inputs: BTreeMap<String, serde_json::Value>,
+        environment: &Ambient,
         context: &ToolContext,
     ) -> anyhow::Result<super::PreparedPlan> {
         let catalog = self.authorized_agent_catalog(context, file).await?;
@@ -425,7 +448,12 @@ impl AppWorkflowToolService {
             super::planner_worker::run_supervised_planner(&sources, supplied_inputs, &limits)
                 .await?;
         let executable_identities = self
-            .authorize_node_resolution_reads(&planned.program, &catalog, context)
+            .authorize_node_resolution_reads(
+                &planned.program,
+                &catalog,
+                environment.path().as_deref(),
+                context,
+            )
             .await?;
         let available_tools = AgentCapabilities::all_host_tools();
         let host = AuthorizedPlanHost::new(
@@ -515,31 +543,6 @@ fn path_scope(cwd: &Path, path: &Path) -> PathScope {
     } else {
         PathScope::UnrestrictedFilesystem
     }
-}
-
-fn executable_candidates(program: &str) -> Vec<PathBuf> {
-    std::env::var_os("PATH")
-        .map(|paths| executable_candidates_in(program, std::env::split_paths(&paths)))
-        .unwrap_or_default()
-}
-
-fn executable_candidates_in(
-    program: &str,
-    directories: impl IntoIterator<Item = PathBuf>,
-) -> Vec<PathBuf> {
-    directories
-        .into_iter()
-        .map(|directory| {
-            let path = directory.join(program);
-            #[cfg(windows)]
-            {
-                if !program.contains('.') {
-                    return path.with_extension("exe");
-                }
-            }
-            path
-        })
-        .collect()
 }
 
 fn durable_id_path(root: &Path, id: impl std::fmt::Display) -> PathBuf {

@@ -44,6 +44,9 @@ pub(crate) struct CursorSessionRequest {
     /// Where the user's Cursor config lives; the managed copy derives from it.
     pub(crate) config_paths: CursorConfigPaths,
     pub(crate) overrides: CliSessionOverrides,
+    /// The environment the agent runs in: its session's when the run
+    /// launched (#1659).
+    pub(crate) environment: crate::session_environment::Ambient,
 }
 
 /// Run one Cursor Agent session to completion, writing the subagent contract.
@@ -62,6 +65,7 @@ pub(crate) async fn run_session(request: CursorSessionRequest) -> anyhow::Result
         parent_messages,
         config_paths,
         overrides,
+        environment,
     } = request;
     let policy = CursorAcpPolicy::new(
         identity.model.clone(),
@@ -81,6 +85,7 @@ pub(crate) async fn run_session(request: CursorSessionRequest) -> anyhow::Result
         started_status,
         parent_messages,
         overrides,
+        environment,
     };
     acp_runtime::run_session(request, policy).await
 }

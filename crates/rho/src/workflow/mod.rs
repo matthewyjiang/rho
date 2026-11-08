@@ -19,6 +19,7 @@ mod secure_fs;
 mod secure_fs_control;
 mod secure_fs_directory;
 mod secure_fs_opened;
+mod secure_fs_shebang;
 mod secure_fs_spawn;
 #[cfg(windows)]
 mod secure_fs_windows;
@@ -59,12 +60,13 @@ pub(crate) use secure_fs::{
     ensure_directory_beneath, freeze_directory_identity, freeze_executable_identity,
     freeze_opened_executable, open_executable, open_executable_candidate,
     open_private_file_beneath, read_resolved_utf8, read_source_beneath, verify_directory_identity,
-    verify_executable_identity, write_file_beneath, ContentHash, ExecutableInterpreterRequest,
-    OpenedExecutable, VerifiedExecutable, VerifiedPath,
+    verify_executable_identity, write_file_beneath, ContentHash, OpenedExecutable,
+    VerifiedExecutable, VerifiedPath,
 };
 pub(crate) use secure_fs_directory::{
     open_verified_directory, open_verified_file_in_directory, opened_directory_names,
 };
+pub(crate) use secure_fs_shebang::ExecutableInterpreterRequest;
 pub(crate) use secure_fs_spawn::{configure_handle_inheritance, verified_handle_path};
 
 pub(crate) use service::WorkflowService;

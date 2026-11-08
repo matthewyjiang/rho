@@ -107,7 +107,9 @@ The rows appear only when `claude-agent-acp` is on `PATH`
 ([installation](/installation#claude-code-binary-optional)). Sign in first with
 `/login claude-code`; Rho never stores a Claude token. A signed-out Claude Code
 makes the advisor call fail with `Authentication required`, and the executor's
-turn survives it.
+turn survives it. In a [daemon](/daemon#environment) session, each call finds
+`claude-agent-acp` on the prompting client's `PATH` and runs it with that
+client's whole environment.
 
 The equivalent config is:
 

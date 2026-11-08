@@ -12,7 +12,7 @@ use {
 };
 
 use super::{
-    agent_binding::{AgentBinder, AgentInvocation, AgentRole},
+    agent_binding::{AgentBinder, AgentInvocation, AgentRole, Launch},
     agent_concurrency::{AgentConcurrency, QueueWatch},
     headless_host::{self, ChildRun, ChildSession, ParentQuestions},
     session_runtime::{SessionRole, UnattendedApprovals},
@@ -37,7 +37,9 @@ pub(crate) struct AgentExecutor {
     /// The parent session's added workspace directories, inherited by future
     /// Rho runtime launches.
     added_dirs: Arc<std::sync::RwLock<crate::added_dirs::AddedDirs>>,
-    /// The parent's host I/O, shared by Rho runtime launches.
+    /// The parent's host I/O, shared by Rho runtime launches. CLI runtime
+    /// launches take its environment as it is when they start (#1659); a
+    /// workflow run's handle is its own and never changes.
     host_io: crate::tools::host_io::HostIo,
 }
 
@@ -78,15 +80,6 @@ enum MessagingSupport {
     Queued {
         messages: crate::cli_runtime::parent_messages::ParentMessageHandle,
     },
-}
-
-/// Exhaustive launch target after bind. The session task matches this instead
-/// of probing Claude-then-Rho.
-enum Launch {
-    Rho(super::agent_binding::BoundAgent),
-    ClaudeCli(crate::claude_runtime::session::ClaudeSessionRequest),
-    Cursor(crate::cursor_runtime::session::CursorSessionRequest),
-    Antigravity(crate::antigravity_runtime::session::AntigravitySessionRequest),
 }
 
 /// Messaging ports created with the run handle, before the session task starts.
@@ -265,7 +258,8 @@ impl AgentExecutor {
         }
     }
 
-    /// Rho runtime launches use the parent's host I/O, such as its files.
+    /// Rho runtime launches use the parent's host I/O, such as its files,
+    /// and every launch its environment.
     pub(crate) fn with_host_io(mut self, host_io: crate::tools::host_io::HostIo) -> Self {
         self.host_io = host_io;
         self
@@ -443,7 +437,12 @@ impl AgentExecutor {
             crate::workflow::AgentRuntime::ClaudeCli
             | crate::workflow::AgentRuntime::Cursor
             | crate::workflow::AgentRuntime::Antigravity => (
-                Some(frozen_cli_launch(request.agent)?),
+                // Checked now to fail the node early; `apply_frozen` checks
+                // again just before spawn, on the launch's own `PATH`.
+                Some(frozen_cli_launch(
+                    request.agent,
+                    self.host_io.environment.current().path().as_deref(),
+                )?),
                 ChildSession::New(rho_sdk::SessionId::new()),
             ),
         };
@@ -559,22 +558,25 @@ impl AgentExecutor {
             );
 
             let started_status = task_status_tx.borrow().clone();
-            match into_launch(
-                bound,
-                prompt.clone(),
-                output_file.clone(),
-                cwd.clone(),
-                task_cancellation.clone(),
-                Some(task_status_tx.clone()),
-                Some(started_status),
-            ) {
+            match bound.into_launch(super::agent_binding::CliRunInputs {
+                prompt: prompt.clone(),
+                output_file: output_file.clone(),
+                cwd: cwd.clone(),
+                cancellation: task_cancellation.clone(),
+                status_tx: Some(task_status_tx.clone()),
+                started_status: Some(started_status),
+                // A CLI agent takes the parent's environment as it is
+                // now, at launch; a Rho child shares the live one
+                // through `host_io` (#1659).
+                environment: host_io.environment.current(),
+            }) {
                 Launch::ClaudeCli(mut session) => {
                     append_child_communication_contract(&mut session.system_prompt);
                     session.parent_messages = parent_rx;
                     session.persistence = persistence;
                     session.overrides.live_title = Some(std::sync::Arc::clone(&task_live_title));
                     if let Some(frozen) = frozen_cli {
-                        apply_frozen(&mut session.overrides, frozen);
+                        apply_frozen(&mut session.overrides, frozen, session.environment.path());
                     }
                     crate::claude_runtime::session::run_session(session).await
                 }
@@ -583,7 +585,7 @@ impl AgentExecutor {
                     session.parent_messages = parent_rx;
                     session.overrides.live_title = Some(std::sync::Arc::clone(&task_live_title));
                     if let Some(frozen) = frozen_cli {
-                        apply_frozen(&mut session.overrides, frozen);
+                        apply_frozen(&mut session.overrides, frozen, session.environment.path());
                     }
                     crate::cursor_runtime::session::run_session(session).await
                 }
@@ -592,7 +594,7 @@ impl AgentExecutor {
                     session.parent_messages = parent_rx;
                     session.overrides.live_title = Some(std::sync::Arc::clone(&task_live_title));
                     if let Some(frozen) = frozen_cli {
-                        apply_frozen(&mut session.overrides, frozen);
+                        apply_frozen(&mut session.overrides, frozen, session.environment.path());
                     }
                     crate::antigravity_runtime::session::run_session(session).await
                 }
@@ -711,12 +713,17 @@ struct FrozenCliLaunch {
     _verified_executable: crate::workflow::VerifiedExecutable,
 }
 
-fn frozen_cli_launch(agent: crate::workflow::ResolvedAgent) -> anyhow::Result<FrozenCliLaunch> {
+/// `agent`'s frozen executable, verified with interpreters found on
+/// `search_path`.
+fn frozen_cli_launch(
+    agent: crate::workflow::ResolvedAgent,
+    search_path: Option<&std::ffi::OsStr>,
+) -> anyhow::Result<FrozenCliLaunch> {
     let identity = agent
         .executable_identity
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("frozen CLI launch has no executable identity"))?;
-    let verified_executable = crate::workflow::verify_executable_identity(identity)?;
+    let verified_executable = crate::workflow::verify_executable_identity(identity, search_path)?;
     let script_path = crate::workflow::verified_handle_path(
         &verified_executable.executable.file,
         std::path::Path::new(&identity.file.canonical_path),
@@ -744,63 +751,20 @@ fn frozen_cli_launch(agent: crate::workflow::ResolvedAgent) -> anyhow::Result<Fr
     })
 }
 
-fn into_launch(
-    bound: super::agent_binding::BoundAgent,
-    prompt: String,
-    output_file: PathBuf,
-    cwd: PathBuf,
-    cancellation: RunCancellation,
-    status_tx: Option<tokio::sync::watch::Sender<RunStatus>>,
-    started_status: Option<RunStatus>,
-) -> Launch {
-    match bound.runtime() {
-        super::agent_binding::BoundRuntime::ClaudeCli { .. } => Launch::ClaudeCli(
-            bound
-                .into_claude_session(
-                    prompt,
-                    output_file,
-                    cwd,
-                    cancellation,
-                    status_tx,
-                    started_status,
-                )
-                .expect("Claude bound runtime builds a Claude session"),
-        ),
-        super::agent_binding::BoundRuntime::Cursor { .. } => Launch::Cursor(
-            bound
-                .into_cursor_session(
-                    prompt,
-                    output_file,
-                    cwd,
-                    cancellation,
-                    status_tx,
-                    started_status,
-                )
-                .expect("Cursor bound runtime builds a Cursor session"),
-        ),
-        super::agent_binding::BoundRuntime::Antigravity { .. } => Launch::Antigravity(
-            bound
-                .into_antigravity_session(
-                    prompt,
-                    output_file,
-                    cwd,
-                    cancellation,
-                    status_tx,
-                    started_status,
-                )
-                .expect("Antigravity bound runtime builds an Antigravity session"),
-        ),
-        super::agent_binding::BoundRuntime::Rho { .. } => Launch::Rho(bound),
-    }
-}
-
-fn apply_frozen(overrides: &mut crate::cli_runtime::CliSessionOverrides, frozen: FrozenCliLaunch) {
+/// Launches `frozen` in place of the runtime's own executable, verifying
+/// it just before spawn with any `#!/usr/bin/env` interpreter found on
+/// `search_path`, the `PATH` of the environment the agent runs in (#1659).
+fn apply_frozen(
+    overrides: &mut crate::cli_runtime::CliSessionOverrides,
+    frozen: FrozenCliLaunch,
+    search_path: Option<std::ffi::OsString>,
+) {
     let expected_identity = frozen.executable_identity;
     let verified_executable = frozen._verified_executable;
     overrides.executable = Some(frozen.executable);
     overrides.frozen_argv = Some(frozen.arguments);
     overrides.before_spawn = Some(Box::new(move |command| {
-        crate::workflow::verify_executable_identity(&expected_identity)
+        crate::workflow::verify_executable_identity(&expected_identity, search_path.as_deref())
             .map_err(std::io::Error::other)?;
         let mut files = vec![&verified_executable.executable.file];
         if let Some(interpreter) = &verified_executable.interpreter {

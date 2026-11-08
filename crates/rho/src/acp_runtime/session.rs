@@ -18,6 +18,7 @@ use crate::{
         BeforeSpawn, CliExecutable, CliSessionOverrides, OwnedChild,
     },
     run_artifacts::RunArtifactIdentity,
+    session_environment::Ambient,
     subagent::RunStatus,
 };
 use rho_tools::cancellation::RunCancellation;
@@ -39,6 +40,9 @@ pub(crate) struct AcpSessionRequest {
     pub(crate) started_status: Option<RunStatus>,
     pub(crate) parent_messages: Option<ParentMessageInbox>,
     pub(crate) overrides: CliSessionOverrides,
+    /// The environment the agent runs in and is found on: its session's when
+    /// the run launched (#1659).
+    pub(crate) environment: Ambient,
 }
 
 pub(super) fn open_sink<P: AcpAgentPolicy>(
@@ -102,7 +106,7 @@ pub(super) async fn run_child<P: AcpAgentPolicy>(
     let prompt = prepare(request, &mut policy, renderer, sink)?;
     let executable = match request.overrides.executable.take() {
         Some(executable) => executable,
-        None => policy.resolve_executable()?,
+        None => policy.resolve_executable(&request.environment)?,
     };
     let plan = policy.spawn_plan(request.overrides.frozen_argv.take())?;
     let log_path = policy.log_path(&request.output_file);
@@ -121,6 +125,7 @@ pub(super) async fn run_child<P: AcpAgentPolicy>(
         plan,
         log.into(),
         request.overrides.before_spawn.as_ref(),
+        &request.environment,
     )?;
     // Move policy into the connection after setup; callers keep no mutable
     // policy while the agent is running.
@@ -168,17 +173,21 @@ pub(super) async fn run_child<P: AcpAgentPolicy>(
 
 /// Spawn the agent from its plan with piped protocol stdio, returning the
 /// child and its taken stdin/stdout. `stderr` is where the agent's log goes.
+/// The agent gets all of `environment`, credentials included, since it signs
+/// in and runs commands itself, then the plan's overrides (#1659).
 pub(super) fn spawn_agent(
     program: &str,
     executable: &CliExecutable,
     plan: AcpSpawnPlan,
     stderr: Stdio,
     before_spawn: Option<&BeforeSpawn>,
+    environment: &Ambient,
 ) -> Result<(OwnedChild, ChildStdin, ChildStdout), String> {
     let AcpSpawnPlan { argv, cwd, env } = plan;
     let mut command = executable
         .try_command(&argv)
         .map_err(|source| format!("{program}: {source}"))?;
+    environment.apply_full(&mut command);
     command
         .current_dir(cwd)
         .envs(env)

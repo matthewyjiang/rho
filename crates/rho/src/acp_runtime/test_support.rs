@@ -62,7 +62,10 @@ impl AcpAgentPolicy for TestPolicy {
             cost_label: "acp cost",
         }
     }
-    fn resolve_executable(&self) -> Result<CliExecutable, String> {
+    fn resolve_executable(
+        &self,
+        _environment: &crate::session_environment::Ambient,
+    ) -> Result<CliExecutable, String> {
         Err("test must inject executable".into())
     }
     fn spawn_plan(&self, _frozen: Option<Vec<String>>) -> Result<AcpSpawnPlan, String> {
@@ -117,6 +120,7 @@ pub(super) fn request(dir: &Path, inbox: Option<ParentMessageInbox>) -> AcpSessi
         started_status: None,
         parent_messages: inbox,
         overrides: CliSessionOverrides::default(),
+        environment: crate::session_environment::Ambient::ThisProcess,
     }
 }
 

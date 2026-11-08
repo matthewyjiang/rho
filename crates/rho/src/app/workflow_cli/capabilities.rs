@@ -1,10 +1,8 @@
-use std::{collections::BTreeSet, path::Path};
+use std::{collections::BTreeSet, ffi::OsStr, path::Path};
 
 use rho_sdk::{tool::ToolContext, CapabilityRequest, CapabilitySource, PathScope};
 
-use super::{
-    executable_candidates, path_scope, project_agent_catalogs_trusted, AppWorkflowToolService,
-};
+use super::{path_scope, project_agent_catalogs_trusted, AppWorkflowToolService};
 
 impl AppWorkflowToolService {
     pub(super) async fn authorized_config(
@@ -175,10 +173,15 @@ impl AppWorkflowToolService {
         Ok(sources)
     }
 
+    /// Authorizes reading and freezes every executable `program`'s nodes
+    /// run, finding bare names and `#!/usr/bin/env` interpreters on
+    /// `search_path`, the `PATH` of the environment the run starts in
+    /// (#1659).
     pub(super) async fn authorize_node_resolution_reads(
         &self,
         program: &crate::workflow::WorkflowProgram,
         catalog: &crate::agent::AgentCatalog,
+        search_path: Option<&OsStr>,
         context: &ToolContext,
     ) -> anyhow::Result<std::collections::BTreeMap<String, crate::workflow::ExecutableIdentity>>
     {
@@ -227,14 +230,14 @@ impl AppWorkflowToolService {
         let mut identities = std::collections::BTreeMap::new();
         for executable in executables {
             let opened = self
-                .authorize_opened_executable_resolution(context, &executable)
+                .authorize_opened_executable_resolution(context, &executable, search_path)
                 .await?;
             let interpreter = match opened.interpreter_request.as_ref() {
                 Some(crate::workflow::ExecutableInterpreterRequest::Absolute(path)) => {
                     Some(self.authorize_opened_executable_path(context, path).await?)
                 }
                 Some(crate::workflow::ExecutableInterpreterRequest::Search(program)) => Some(
-                    self.authorize_opened_executable_resolution(context, program)
+                    self.authorize_opened_executable_resolution(context, program, search_path)
                         .await?,
                 ),
                 None => None,
@@ -250,14 +253,18 @@ impl AppWorkflowToolService {
         Ok(identities)
     }
 
+    /// Opens `executable`, a bare name found on `search_path` or a path
+    /// under the workspace, authorizing each read.
     async fn authorize_opened_executable_resolution(
         &self,
         context: &ToolContext,
         executable: &str,
+        search_path: Option<&OsStr>,
     ) -> anyhow::Result<crate::workflow::OpenedExecutable> {
         let path = Path::new(executable);
         if path.components().count() == 1 {
-            let candidates = executable_candidates(executable);
+            let candidates: Vec<_> =
+                crate::executable::candidates_on(executable, search_path).collect();
             for candidate in &candidates {
                 self.authorize_read(context, candidate, path_scope(&self.cwd, candidate))
                     .await?;

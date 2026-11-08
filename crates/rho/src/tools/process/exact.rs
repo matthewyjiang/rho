@@ -190,8 +190,13 @@ async fn run_exact_process(
 ) -> Result<ExactProcessOutput, ToolError> {
     ensure_handle_based_launch_supported()?;
     // This check runs after ToolHost authorization and directly before spawn.
-    let verified_executable = crate::workflow::verify_executable_identity(executable_identity)
-        .map_err(|error| execution_error(error.to_string()))?;
+    // A `#!/usr/bin/env` interpreter is checked on the `PATH` the command
+    // runs with, such as a daemon session's client's (#1659).
+    let verified_executable = crate::workflow::verify_executable_identity(
+        executable_identity,
+        rho_tools::parent_path_for(execution.environment()).as_deref(),
+    )
+    .map_err(|error| execution_error(error.to_string()))?;
     let verified_cwd = crate::workflow::verify_directory_identity(cwd_identity)
         .map_err(|error| execution_error(error.to_string()))?;
     let mut command = command_from_execution(&execution, &verified_executable)?;

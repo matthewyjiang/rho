@@ -138,7 +138,7 @@ Auto and Allow edits reproduce Claude's `dontAsk`: read-only tools and `allowedT
 
 ## Execution details
 
-Rho runs `claude-agent-acp` with no arguments in the project directory. Rho owns the parent tree node; Claude owns the child loop and credential. Each ACP setup step (`initialize`, `session/new`, `session/set_mode`) has a 10 s budget.
+Rho runs `claude-agent-acp` with no arguments in the project directory. Rho owns the parent tree node; Claude owns the child loop and credential. Each ACP setup step (`initialize`, `session/new`, `session/set_mode`) has a 10 s budget. In a [daemon](/daemon#environment) session, Rho finds `claude-agent-acp` on the `PATH` of the client you prompted from and runs it with that client's whole environment, credentials included.
 
 Everything Claude-specific travels in `session/new` `_meta`:
 
