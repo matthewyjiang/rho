@@ -168,23 +168,19 @@ impl Sessions {
             // sees every turn started before it, and a prompt after it sees
             // the delete.
             let mut turn = session.turn();
-            // A hold is named over a turn: a change queued behind the turn
-            // stays queued once it ends.
-            if turn.hold.is_none() {
-                match self.jobs.session_job(id) {
-                    SessionJob::Busy(job) if job == session.job => {
-                        return Err(busy(TURN_UNDER_WAY))
-                    }
-                    SessionJob::Busy(job) => return Err(writing(&job, id)),
-                    SessionJob::New | SessionJob::Last(_) => {}
-                }
-            }
-            Held::delete(session, &mut turn).map_err(|hold| match hold {
-                Hold::Configuring(_) => busy(CHANGE_QUEUED),
+            match turn.hold {
+                Some(Hold::Configuring(_)) => return Err(busy(CHANGE_QUEUED)),
                 // Deletes of one session wait on its reopen lock, so none
                 // finds another under way.
-                Hold::Deleting => being_deleted(),
-            })?
+                Some(Hold::Deleting) => return Err(being_deleted()),
+                None => {}
+            }
+            match self.jobs.session_job(id) {
+                SessionJob::Busy(job) if job == session.job => return Err(busy(TURN_UNDER_WAY)),
+                SessionJob::Busy(job) => return Err(writing(&job, id)),
+                SessionJob::New | SessionJob::Last(_) => {}
+            }
+            Held::delete(session, &mut turn)
         };
         // Free once a turn that just recorded its end released it.
         let mut slot = session.runtime.lock().await;

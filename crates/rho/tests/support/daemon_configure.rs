@@ -212,15 +212,15 @@ async fn a_change_reaches_attached_clients_and_the_next_turn() {
 
 // Covers: a change sent while a turn runs waits for the turn's end, then
 // applies and answers, rather than being refused; a delete meanwhile sees
-// the queued change; and a prompt that races the turn's end starts its turn
-// only once the change applied, so that turn runs with it (#1685).
+// the queued change; and a prompt sent once the turn ended starts a turn
+// that clients see after the change (#1685). The order of a prompt and a
+// change that both wait on the runtime is `configure_tests`'.
 // Owner: daemon session settings.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_change_sent_during_a_turn_applies_at_its_end_before_the_next_turn() {
     #[derive(Debug, PartialEq)]
     enum Seen {
         Prompt,
-        Ended(TurnOutcome),
         Options(SessionOptions),
     }
     let sandbox = Sandbox::new();
@@ -280,16 +280,15 @@ async fn a_change_sent_during_a_turn_applies_at_its_end_before_the_next_turn() {
             })
             .await
             .unwrap();
-        // Prompted as soon as the cancelled turn lets it, racing the change.
-        sandbox
-            .poll_until("the next turn to start", async || {
-                match sandbox.prompt(&client, &session).await {
-                    Ok(()) => Some(()),
-                    Err(Some(ErrorCode::SessionBusy)) => None,
-                    Err(code) => panic!("the prompt failed with {code:?}"),
-                }
-            })
-            .await;
+        // The turn's end is told under the lock a prompt starts its turn
+        // under, so the prompt after it finds no turn under way.
+        let ended = next_event(&mut notifications, &session, |event| match event {
+            SessionEvent::TurnEnded { outcome } => Some(outcome),
+            _ => None,
+        })
+        .await;
+        assert_eq!(ended, TurnOutcome::Cancelled);
+        sandbox.prompt(&client, &session).await.unwrap();
     };
     let (changed, ()) = tokio::join!(change, race);
 
@@ -300,27 +299,13 @@ async fn a_change_sent_during_a_turn_applies_at_its_end_before_the_next_turn() {
     next_event(&mut notifications, &session, |event| {
         seen.push(match event {
             SessionEvent::UserMessage { .. } => Seen::Prompt,
-            SessionEvent::TurnEnded { outcome } => Seen::Ended(outcome),
             SessionEvent::OptionsChanged { options } => Seen::Options(options),
             _ => return None,
         });
-        (seen
-            .iter()
-            .filter(|seen| matches!(seen, Seen::Prompt))
-            .count()
-            == 2)
-            .then_some(())
+        seen.contains(&Seen::Prompt).then_some(())
     })
     .await;
-    assert_eq!(
-        seen,
-        [
-            Seen::Prompt,
-            Seen::Ended(TurnOutcome::Cancelled),
-            Seen::Options(expected),
-            Seen::Prompt,
-        ]
-    );
+    assert_eq!(seen, [Seen::Options(expected), Seen::Prompt]);
     client
         .request::<SessionCancel>(&SessionCancelParams { session })
         .await
