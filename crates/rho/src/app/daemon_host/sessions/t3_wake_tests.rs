@@ -3,10 +3,11 @@ use std::{path::Path, sync::Mutex, time::Duration};
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::ToolSpec,
-    tool::{Tool, ToolError, ToolFuture, ToolOutput},
+    tool::{Tool, ToolFuture, ToolInvocation, ToolOutput},
 };
+use serde_json::{json, Value};
 
-use super::*;
+use super::{signal::PARENT_ENDED, *};
 use crate::tools::{
     mcp::exported_name::namespaced_tool_name,
     process::ProcessLimits,
@@ -27,11 +28,20 @@ const WATCHER_SESSION: &str = "5a7c9e1b-3d4f-4a6b-8c0d-2e4f6a8b0c1d";
 
 type Calls = Arc<Mutex<Vec<(String, Value)>>>;
 
-/// A `t3-code` task tool that records its calls and returns `result`.
+/// How a fixture task tool answers.
+#[derive(Clone)]
+enum Reply {
+    /// At once, with this.
+    Now(Result<ToolOutput, ToolError>),
+    /// Never, as a host that hangs.
+    Never,
+}
+
+/// A `t3-code` task tool that records its calls and answers as `reply`.
 struct T3Tool {
     name: &'static str,
     calls: Calls,
-    result: Result<ToolOutput, ToolError>,
+    reply: Reply,
 }
 
 impl Tool for T3Tool {
@@ -48,12 +58,19 @@ impl Tool for T3Tool {
             .lock()
             .unwrap()
             .push((self.name.to_owned(), invocation.into_arguments()));
-        Box::pin(std::future::ready(self.result.clone()))
+        let reply = self.reply.clone();
+        Box::pin(async move {
+            match reply {
+                Reply::Now(result) => result,
+                Reply::Never => std::future::pending().await,
+            }
+        })
     }
 }
 
 struct Fixture {
-    signals: tempfile::TempDir,
+    _home: tempfile::TempDir,
+    dir: WakeDir,
     tools: AppToolSet,
     calls: Calls,
     background: Background,
@@ -62,32 +79,40 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_delegate(Reply::Now(Ok(
+            ToolOutput::text("delegated").with_structured_content(json!({"taskId": "task-1"}))
+        )))
+    }
+
+    /// A fixture whose host answers `delegate_task` as `delegate` says.
+    fn with_delegate(delegate: Reply) -> Self {
         let calls = Calls::default();
         let mut tools = AppToolSet::disabled();
         tools.add_bundle(StaticToolBundle::new(
             [
+                ("delegate_task", delegate),
+                ("task_status", Reply::Now(Ok(ToolOutput::text("running")))),
                 (
-                    "delegate_task",
-                    Ok(ToolOutput::text("delegated")
-                        .with_structured_content(json!({"taskId": "task-1"}))),
+                    "task_cancel",
+                    Reply::Now(Ok(ToolOutput::text("cancel requested"))),
                 ),
-                ("task_status", Ok(ToolOutput::text("running"))),
-                ("task_cancel", Ok(ToolOutput::text("cancel requested"))),
             ]
             .into_iter()
-            .map(|(name, result)| {
+            .map(|(name, reply)| {
                 Arc::new(T3Tool {
                     name,
                     calls: calls.clone(),
-                    result,
+                    reply,
                 }) as Arc<dyn Tool>
             })
             .collect(),
         ));
-        let signals = tempfile::tempdir().unwrap();
-        let wake = T3Wake::new(signals.path().to_path_buf());
+        let home = tempfile::tempdir().unwrap();
+        let dir = WakeDir::in_home(home.path());
+        let wake = T3Wake::new(dir.clone());
         Self {
-            signals,
+            _home: home,
+            dir,
             tools,
             calls,
             background: Background {
@@ -118,13 +143,22 @@ impl Fixture {
     }
 
     async fn prompt_ended(&mut self) {
+        self.prompt_ended_interrupted_by(&CancellationToken::new())
+            .await
+            .unwrap();
+    }
+
+    async fn prompt_ended_interrupted_by(
+        &mut self,
+        interrupt: &CancellationToken,
+    ) -> anyhow::Result<()> {
         self.wake
             .prompt_ended(
                 SessionTools::of_tool_set_for_tests(&self.tools),
                 self.background.clone(),
+                interrupt,
             )
             .await
-            .unwrap();
     }
 
     /// Waits until the armed watcher's notifier has finished publishing.
@@ -191,7 +225,7 @@ async fn running_process_arms_one_watcher_that_wakes_on_exit() {
         fixture.wake.prompt_started(Some("still there?")),
         PromptOrigin::Other
     );
-    let signal = WakeSignal::parse_in(fixture.signals.path(), &token).unwrap();
+    let signal = WakeSignal::parse(&fixture.dir, &token).unwrap();
     let summary = tokio::time::timeout(
         TEST_WAIT,
         signal.wait(WATCHER_SESSION, &CancellationToken::new()),
@@ -227,7 +261,7 @@ async fn work_delivered_in_prompt_retires_the_watcher() {
     let process = fixture.start_process().await;
     fixture.prompt_ended().await;
     let token = Fixture::delegated_signal(&fixture.take_calls()[0].1["task"]);
-    let signal = WakeSignal::parse_in(fixture.signals.path(), &token).unwrap();
+    let signal = WakeSignal::parse(&fixture.dir, &token).unwrap();
 
     assert_eq!(fixture.wake.prompt_started(None), PromptOrigin::Other);
     fixture.stop_process(&process).await;
@@ -297,7 +331,7 @@ async fn watcher_that_ended_unsignalled_is_replaced_or_released() {
     let second = Fixture::delegated_signal(&fixture.take_calls()[0].1["task"]);
     assert_ne!(first, second, "a fresh watcher replaces the ended one");
 
-    let signal = WakeSignal::parse_in(fixture.signals.path(), &second).unwrap();
+    let signal = WakeSignal::parse(&fixture.dir, &second).unwrap();
     let Fixture { wake, .. } = fixture;
     drop(wake);
     let result = tokio::time::timeout(
@@ -309,87 +343,74 @@ async fn watcher_that_ended_unsignalled_is_replaced_or_released() {
     assert_eq!(result.as_deref(), Some(PARENT_ENDED));
 }
 
-// Covers: a watcher starting its wait prunes finished records past their
-// TTL and keeps waiting records, which a restarted watcher still resumes,
-// and fresh finished ones, which T3 may still ask to repeat. Pruning too
-// much brings back model turns in watchers; too little grows the directory
-// by a file per watcher forever. Owner: daemon T3 wake watcher.
+// Covers: a daemon stop or a cancel that interrupts a prompt's end gives up
+// on a host that never answers delegate_task, instead of holding the turn,
+// and leaves no signal or lock behind. A hung host call blocks the turn's
+// end, and so the session's next prompt and the daemon's stop.
+// Owner: daemon T3 wake watcher.
 #[tokio::test]
-async fn starting_a_wait_prunes_only_expired_finished_records() {
-    let signals = tempfile::tempdir().unwrap();
-    let token = uuid::Uuid::new_v4().to_string();
-    let expired = std::time::SystemTime::now() - FINISHED_RECORD_TTL - Duration::from_secs(60);
-    let records = [
-        ("old finished", format!("{token}\nmake exited 0"), expired),
-        ("old waiting", token.clone(), expired),
-        (
-            "new finished",
-            format!("{token}\nmake exited 0"),
-            std::time::SystemTime::now(),
-        ),
-    ]
-    .map(|(name, contents, modified)| {
-        let path = signals
-            .path()
-            .join(format!("{}.watcher", uuid::Uuid::new_v4()));
-        std::fs::write(&path, contents).unwrap();
-        std::fs::File::options()
-            .write(true)
-            .open(&path)
-            .unwrap()
-            .set_modified(modified)
-            .unwrap();
-        (name, path)
-    });
-    let signal = WakeSignal::parse_in(signals.path(), &uuid::Uuid::new_v4().to_string()).unwrap();
-    signal.fire("cargo test exited 0").unwrap();
+async fn interrupted_arming_gives_up_on_a_hung_host() {
+    let mut fixture = Fixture::with_delegate(Reply::Never);
+    fixture.start_process().await;
+    let interrupt = CancellationToken::new();
+    interrupt.cancel();
 
-    let summary = signal
-        .wait(WATCHER_SESSION, &CancellationToken::new())
-        .await;
+    let armed = tokio::time::timeout(TEST_WAIT, fixture.prompt_ended_interrupted_by(&interrupt))
+        .await
+        .expect("an interrupted host call gives up");
 
+    let left: Vec<_> = std::fs::read_dir(fixture.dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
     assert_eq!(
-        (
-            summary.as_deref(),
-            records.map(|(name, path)| (name, path.exists()))
-        ),
-        (
-            Some("cargo test exited 0"),
-            [
-                ("old finished", false),
-                ("old waiting", true),
-                ("new finished", true)
-            ]
-        )
+        (armed.is_err(), fixture.wake.armed.is_none(), left),
+        (true, true, Vec::new())
     );
 }
 
-// Covers: when the finished record cannot be written, the watcher keeps the
-// parent's signal, so a restarted watcher still repeats the real result.
-// Dropping it first turns finished work into the parent-ended notice.
-// Owner: daemon T3 wake watcher.
-#[tokio::test]
-async fn failed_result_record_keeps_the_signal_for_the_restarted_watcher() {
-    let signals = tempfile::tempdir().unwrap();
-    let signal = WakeSignal::parse_in(signals.path(), &uuid::Uuid::new_v4().to_string()).unwrap();
-    signal.fire("cargo test exited 0").unwrap();
-    // A directory where the record stages its write makes every write fail.
-    std::fs::create_dir(
-        signals
-            .path()
-            .join(format!("{WATCHER_SESSION}.watcher-tmp")),
-    )
-    .unwrap();
+/// What a prompt's leading text asks of the wake watchers.
+#[derive(Debug, PartialEq)]
+enum Command {
+    Wake(String),
+    Rejected,
+    NotWake,
+}
 
-    let first = signal
-        .wait(WATCHER_SESSION, &CancellationToken::new())
-        .await;
-    let restarted = signal
-        .wait(WATCHER_SESSION, &CancellationToken::new())
-        .await;
+// Covers: `/rho-wake <token>` starts a watcher's wait with the token
+// normalised, a token that is not a UUID, which could name a path outside
+// the wake directory, is rejected, and a longer word is left to the shared
+// commands. The token is a path component: a loose match lets a prompt read
+// or write any file. Owner: daemon T3 wake command.
+#[test]
+fn wake_command_matches_only_a_uuid_token() {
+    let home = tempfile::tempdir().unwrap();
+    let dir = WakeDir::in_home(home.path());
+    let cases = [
+        (
+            "wake watcher",
+            Some("/rho-wake 0F4E2C3A-9B1D-4E5F-8A7B-6C5D4E3F2A1B"),
+            Command::Wake("0f4e2c3a-9b1d-4e5f-8a7b-6c5d4e3f2a1b".into()),
+        ),
+        (
+            "wake token that could name a path",
+            Some("/rho-wake ../config.toml"),
+            Command::Rejected,
+        ),
+        (
+            "wake prefix of a longer word",
+            Some("/rho-wakeup now"),
+            Command::NotWake,
+        ),
+        ("prompt without leading text", None, Command::NotWake),
+    ];
 
-    assert_eq!(
-        (first.as_deref(), restarted.as_deref()),
-        (Some("cargo test exited 0"), Some("cargo test exited 0"))
-    );
+    for (label, text, expected) in cases {
+        let command = match wake_command(&dir, text) {
+            Some(Ok(signal)) => Command::Wake(signal.token().to_owned()),
+            Some(Err(_)) => Command::Rejected,
+            None => Command::NotWake,
+        };
+        assert_eq!(command, expected, "{label}");
+    }
 }

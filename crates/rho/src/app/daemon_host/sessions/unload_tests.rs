@@ -40,7 +40,7 @@ fn ids(records: Vec<JobRecord>) -> BTreeSet<String> {
 async fn a_session_idle_for_the_grace_leaves_and_no_other() {
     let (root, home) = (TempDir::new().unwrap(), TempDir::new().unwrap());
     let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
-    let sessions = Sessions::new(jobs);
+    let sessions = Sessions::new(jobs, home.path());
     let busy = load(&sessions, &root, Load::Busy).await;
     let followed = load(&sessions, &root, Load::Saved).await;
     let _follower = followed.feed.attach(None);

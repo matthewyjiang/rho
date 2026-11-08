@@ -9,9 +9,10 @@
 //! running, the session delegates one watcher task through the host whose
 //! prompt is the unadvertised `/rho-wake <token>` command. The watcher, a
 //! fresh daemon session T3 opens, makes no model call: it waits for the
-//! signal file this parent writes once a result is ready, then ends its
-//! turn, and T3 wakes this thread with a prompt. The result itself stays
-//! here and reaches the model through the usual boundary delivery.
+//! signal file this parent writes once a result is ready (see [`signal`]),
+//! then ends its turn, and T3 wakes this thread with a prompt. The result
+//! itself stays here and reaches the model through the usual boundary
+//! delivery.
 //!
 //! Work that finishes during a turn is delivered in that turn, so a quick
 //! `cargo check` never shows a watcher in T3's subagent panel.
@@ -20,40 +21,48 @@
 //! end once the parent session is unloaded or deleted, or the daemon dies.
 
 use std::{
-    path::{Path, PathBuf},
+    future::Future,
+    num::NonZeroUsize,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
 use rho_sdk::{
-    tool::{tool_progress_channel, ToolContext, ToolInvocation},
+    tool::{tool_progress_channel, ToolContext, ToolError, ToolErrorKind},
     CancellationToken, ToolCallId,
 };
-use serde_json::{json, Value};
 use tokio::task::JoinHandle;
 
 use crate::{
-    app::session_runtime::{BackgroundWait, SessionRuntime, SessionTools},
+    app::session_runtime::{BackgroundWait, CommandRejected, SessionRuntime, SessionTools},
     tools::{agent::HostContract, process::ProcessManager, workflow_tracker::WorkflowRunTracker},
 };
 
-/// The watcher's prompt command. Not advertised, so hosts never offer it.
-pub(super) const WAKE_COMMAND: &str = "/rho-wake";
+mod signal;
 
-/// How often a watcher checks for its signal. T3 takes seconds to start the
-/// woken turn, so a half-second poll adds little latency and no real load.
-const SIGNAL_POLL: Duration = Duration::from_millis(500);
+pub(super) use signal::{WakeDir, WakeSignal};
+
+/// The watcher's prompt command. Not advertised, so hosts never offer it.
+const WAKE_COMMAND: &str = "/rho-wake";
 
 /// Longest background label in a watcher title; T3's roster truncates anyway.
 const TITLE_LABEL_CHARS: usize = 60;
 
+/// How many ended watchers a parent keeps the locks of; past that the
+/// oldest goes. Tripwire, not measured: T3 delivers a cancel, or its notice
+/// that a watcher finished, within a turn or two of the parent, so older
+/// entries are watchers T3 already finished, whose locks only hold file
+/// descriptors. Dropping one early only lets a watcher T3 never cancelled
+/// report that its parent ended.
+const ENDED_WATCHERS_KEPT: usize = 16;
+
 /// The parent's watcher state, kept across turns.
 pub(super) struct T3Wake {
     /// Where this parent writes signals and its watchers look for them.
-    signal_dir: PathBuf,
+    dir: WakeDir,
     armed: Option<Watcher>,
-    /// Watchers no longer armed: fired, or cancelled. T3's notice that one
-    /// finished may still be on its way as a later prompt.
+    /// Watchers no longer armed, oldest first: fired, or cancelled. T3's
+    /// notice that one finished may still be on its way as a later prompt.
+    /// At most [`ENDED_WATCHERS_KEPT`].
     ended: Vec<EndedWatcher>,
 }
 
@@ -67,8 +76,9 @@ struct Watcher {
 
 /// A watcher that fired or was cancelled. A fired one may not have read its
 /// signal yet, and a cancelled one may not have seen its cancel, so its lock
-/// stays held until T3 reports it finished or the session ends. Releasing
-/// it earlier would make the watcher report that this parent ended.
+/// stays held until T3 reports it finished, the session ends, or
+/// [`ENDED_WATCHERS_KEPT`] later watchers ended. Releasing it earlier would
+/// make the watcher report that this parent ended.
 struct EndedWatcher {
     task_id: String,
     _lock: std::fs::File,
@@ -210,28 +220,27 @@ impl Background {
 }
 
 impl T3Wake {
-    /// The wake state of the session `runtime` runs, when its host wakes it.
-    pub(super) fn of(runtime: &SessionRuntime) -> Option<Self> {
+    /// The wake state of the session `runtime` runs, with its files in
+    /// `dir`, when its host wakes it.
+    pub(super) fn of(runtime: &SessionRuntime, dir: &WakeDir) -> Option<Self> {
         match runtime.background_wait() {
             BackgroundWait::HoldPrompt => None,
-            // The daemon serves from the Rho home, so this fails only if
-            // the home became unreadable since it started.
-            BackgroundWait::HostWakes => match signal_dir() {
-                Ok(dir) => Some(Self::new(dir)),
-                Err(error) => {
-                    tracing::warn!(%error, "T3 wake watchers are off: no Rho home");
-                    None
-                }
-            },
+            BackgroundWait::HostWakes => Some(Self::new(dir.clone())),
         }
     }
 
-    fn new(signal_dir: PathBuf) -> Self {
+    fn new(dir: WakeDir) -> Self {
         Self {
-            signal_dir,
+            dir,
             armed: None,
             ended: Vec::new(),
         }
+    }
+
+    /// Where this session's watchers wait, and, as a watcher, it records
+    /// its own wait.
+    pub(super) fn dir(&self) -> &WakeDir {
+        &self.dir
     }
 
     /// Call as a prompt starts, before anything it awaits, with its leading
@@ -249,7 +258,7 @@ impl T3Wake {
                 if !fired {
                     watcher.signal.remove();
                 }
-                self.ended.push(EndedWatcher {
+                self.end(EndedWatcher {
                     task_id: watcher.task_id,
                     _lock: watcher.lock,
                 });
@@ -265,28 +274,48 @@ impl T3Wake {
     }
 
     /// Call as a prompt's turn ends, before its end is told: T3 refuses a
-    /// thread's writes once its run ended. Arms a watcher while work is outstanding,
-    /// and retires one that has nothing left to wait for. Fails when T3
-    /// refused to start the watcher, so the session can say that results
-    /// wait for the next message.
+    /// thread's writes once its run ended. Arms a watcher while work is
+    /// outstanding, and retires one that has nothing left to wait for. The
+    /// host calls give up once `interrupt` trips. Fails when T3 refused to
+    /// start the watcher, or the call was interrupted, so the session can
+    /// say that results wait for the next message.
     pub(super) async fn prompt_ended(
         &mut self,
         tools: SessionTools<'_>,
         background: Background,
+        interrupt: &CancellationToken,
     ) -> anyhow::Result<()> {
         if !background.outstanding() {
             if let Some(watcher) = self.armed.take() {
-                self.ended.push(retire(tools, watcher).await);
+                let ended = retire(tools, watcher, interrupt).await;
+                self.end(ended);
             }
             return Ok(());
         }
         if self.armed.is_none() {
             let labels = background.live_labels();
-            self.armed = Some(arm(tools, &self.signal_dir, &labels).await?);
+            self.armed = Some(arm(tools, &self.dir, &labels, interrupt).await?);
         }
         let watcher = self.armed.as_mut().expect("armed watcher");
-        watcher.notifier = Some(Notifier::spawn(background, watcher.signal.clone()));
+        let notifier = Notifier::spawn(background, watcher.signal.clone());
+        if let Some(old) = watcher.notifier.replace(notifier) {
+            old.quiet();
+        }
         Ok(())
+    }
+
+    /// Keeps `watcher`'s lock until T3 reports it finished, dropping the
+    /// oldest ended watcher past [`ENDED_WATCHERS_KEPT`].
+    fn end(&mut self, watcher: EndedWatcher) {
+        if self.ended.len() == ENDED_WATCHERS_KEPT {
+            let oldest = self.ended.remove(0);
+            tracing::info!(
+                task_id = %oldest.task_id,
+                limit = ENDED_WATCHERS_KEPT,
+                "releasing the oldest ended T3 wake watcher past ENDED_WATCHERS_KEPT"
+            );
+        }
+        self.ended.push(watcher);
     }
 }
 
@@ -302,24 +331,42 @@ impl Drop for T3Wake {
     }
 }
 
-/// Delegates a watcher titled after the running work.
+/// The watcher's wait a prompt whose leading text is `text` asks for, as
+/// `/rho-wake <token>` with its signal in `dir`: `None` when the prompt is
+/// not the command, rejected when the token is malformed.
+pub(super) fn wake_command(
+    dir: &WakeDir,
+    text: Option<&str>,
+) -> Option<Result<WakeSignal, CommandRejected>> {
+    let token = text?
+        .strip_prefix(WAKE_COMMAND)
+        .filter(|rest| rest.starts_with(char::is_whitespace))?;
+    Some(
+        WakeSignal::parse(dir, token)
+            .ok_or_else(|| CommandRejected(format!("usage: {WAKE_COMMAND} <token>"))),
+    )
+}
+
+/// Delegates a watcher titled after the running work, its signal in `dir`.
 async fn arm(
     tools: SessionTools<'_>,
-    signal_dir: &Path,
+    dir: &WakeDir,
     labels: &[String],
+    interrupt: &CancellationToken,
 ) -> anyhow::Result<Watcher> {
     let host = host_tasks(tools)?;
-    let (signal, lock) = WakeSignal::create(signal_dir)?;
-    let arguments = json!({
-        "task": format!("{WAKE_COMMAND} {}", signal.token),
-        "title": watcher_title(labels),
-        "mode": "async",
-    });
-    let task_id = match host.delegate(invocation(arguments), host_context()).await {
+    let (signal, lock) = WakeSignal::create(dir)?;
+    let task = format!("{WAKE_COMMAND} {}", signal.token());
+    let title = watcher_title(labels);
+    let delegated = host_call(interrupt, |context| {
+        host.delegate(call_id(), &task, Some(title.as_str()), context)
+    })
+    .await;
+    let task_id = match delegated {
         Ok(task) => task.task_id,
         Err(error) => {
             signal.cleanup();
-            anyhow::bail!("delegate_task failed: {}", error.message());
+            return Err(anyhow::Error::msg(error.message().to_owned()));
         }
     };
     Ok(Watcher {
@@ -333,28 +380,28 @@ async fn arm(
 /// Cancels a watcher whose work was delivered in-prompt, so it exits by
 /// cancel rather than by a released lock. Best effort: a leftover watcher
 /// only costs an idle child in T3's panel until this parent ends.
-async fn retire(tools: SessionTools<'_>, mut watcher: Watcher) -> EndedWatcher {
+async fn retire(
+    tools: SessionTools<'_>,
+    mut watcher: Watcher,
+    interrupt: &CancellationToken,
+) -> EndedWatcher {
     if let Some(notifier) = watcher.notifier.take() {
         notifier.quiet();
     }
     watcher.signal.remove();
     let cancelled = match host_tasks(tools) {
-        Ok(host) => host
-            .cancel(
-                call_id(),
-                &watcher.task_id,
-                /*reason*/ None,
-                host_context(),
-            )
-            .await
-            .map_err(|error| error.message().to_owned())
-            .and_then(|output| {
-                if output.is_failure() {
-                    Err(output.content().to_owned())
-                } else {
-                    Ok(())
-                }
-            }),
+        Ok(host) => host_call(interrupt, |context| {
+            host.cancel(call_id(), &watcher.task_id, /*reason*/ None, context)
+        })
+        .await
+        .map_err(|error| error.message().to_owned())
+        .and_then(|output| {
+            if output.is_failure() {
+                Err(output.content().to_owned())
+            } else {
+                Ok(())
+            }
+        }),
         Err(error) => Err(error.to_string()),
     };
     if let Err(error) = cancelled {
@@ -371,19 +418,37 @@ fn host_tasks(tools: SessionTools<'_>) -> anyhow::Result<HostContract> {
     HostContract::bind(|name| tools.tool_named(name)).map_err(anyhow::Error::msg)
 }
 
-fn invocation(arguments: Value) -> ToolInvocation {
-    ToolInvocation::new(call_id(), arguments)
-}
-
 fn call_id() -> ToolCallId {
     ToolCallId::from_string(format!("t3-wake-{}", uuid::Uuid::new_v4()))
         .expect("uuid call ids are valid")
 }
 
-/// A host-originated context: these calls belong to no model turn.
-fn host_context() -> ToolContext {
-    let (progress, _receiver) = tool_progress_channel(std::num::NonZeroUsize::MIN);
-    ToolContext::new(/*workspace*/ None, CancellationToken::new(), progress)
+/// Runs the host call `call` makes with a host-originated context, as these
+/// calls belong to no model turn, whose cancellation is `interrupt`. Gives
+/// up once `interrupt` trips, even when the tool does not watch its context.
+async fn host_call<T, F>(
+    interrupt: &CancellationToken,
+    call: impl FnOnce(ToolContext) -> F,
+) -> Result<T, ToolError>
+where
+    F: Future<Output = Result<T, ToolError>>,
+{
+    // Nobody reads progress: the receiver goes now, so a send fails at once
+    // instead of waiting on a full channel.
+    let (progress, _) = tool_progress_channel(NonZeroUsize::MIN);
+    let call = call(ToolContext::new(
+        /*workspace*/ None,
+        interrupt.clone(),
+        progress,
+    ));
+    tokio::select! {
+        biased;
+        () = interrupt.cancelled() => Err(ToolError::new(
+            ToolErrorKind::Cancelled,
+            "interrupted: the turn was cancelled or the daemon is stopping",
+        )),
+        result = call => result,
+    }
 }
 
 /// `waiting: <oldest label> (+N more)`.
@@ -416,265 +481,6 @@ fn finished_summary(background: &Background) -> String {
             None => format!("{} finished", summary.command),
         },
         None => "background work finished".into(),
-    }
-}
-
-/// Signals live under the daemon's Rho home, where a restarted daemon
-/// still finds the records of its watchers.
-fn signal_dir() -> anyhow::Result<PathBuf> {
-    Ok(crate::paths::rho_dir()?.join("acp-wakes"))
-}
-
-/// The watcher's result when its parent ended before any result was ready.
-const PARENT_ENDED: &str = "the Rho session that started this background work ended before it \
-                            finished";
-
-/// The files one watcher shares with its parent: the signal the parent
-/// writes when a result is ready, and a lock the parent holds while it
-/// lives. The token is a UUID, so a watcher prompt cannot name a path
-/// outside the signal directory.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct WakeSignal {
-    token: String,
-    path: PathBuf,
-}
-
-impl WakeSignal {
-    /// A fresh signal, with the parent's lock on it held by the returned file.
-    fn create(dir: &Path) -> anyhow::Result<(Self, std::fs::File)> {
-        std::fs::create_dir_all(dir)?;
-        let token = uuid::Uuid::new_v4().to_string();
-        let signal = Self {
-            path: dir.join(&token),
-            token,
-        };
-        let lock = std::fs::File::create(signal.lock_path())?;
-        lock.lock()?;
-        Ok((signal, lock))
-    }
-
-    /// The signal a `/rho-wake` prompt names, if its token is well formed.
-    pub(super) fn parse(token: &str) -> Option<Self> {
-        Self::parse_in(&signal_dir().ok()?, token)
-    }
-
-    fn parse_in(dir: &Path, token: &str) -> Option<Self> {
-        let token = uuid::Uuid::parse_str(token.trim()).ok()?.to_string();
-        Some(Self {
-            path: dir.join(&token),
-            token,
-        })
-    }
-
-    /// The signal watcher session `session_id` waited on in an earlier
-    /// turn, if any. The wait runs in the daemon, so it outlives a T3 Code
-    /// restart, but T3 then sends each thread the restart cut off a prompt
-    /// to continue, which must resume the wait, or repeat its result,
-    /// instead of starting a model turn.
-    pub(super) fn recorded(session_id: &str) -> Option<Self> {
-        let dir = signal_dir().ok()?;
-        let token = WaitRecord::of(&dir, session_id)?.read()?.token;
-        Self::parse_in(&dir, &token)
-    }
-
-    fn lock_path(&self) -> PathBuf {
-        self.path.with_extension("lock")
-    }
-
-    /// Writes `summary` whole: a temp file renamed into place, so a polling
-    /// watcher never reads a partial file.
-    fn fire(&self, summary: &str) -> std::io::Result<()> {
-        let staging = self.path.with_extension("tmp");
-        std::fs::write(&staging, summary)?;
-        std::fs::rename(staging, &self.path)
-    }
-
-    fn remove(&self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-
-    fn cleanup(&self) {
-        self.remove();
-        let _ = std::fs::remove_file(self.lock_path());
-    }
-
-    /// Whether the parent let go of its lock: the daemon unloaded or
-    /// deleted its session, or died, as the OS then releases its locks.
-    /// The lock is per open file, so a watcher in the parent's own daemon
-    /// sees it held.
-    fn parent_ended(&self) -> bool {
-        match std::fs::File::open(self.lock_path()) {
-            Ok(lock) => lock.try_lock().is_ok(),
-            Err(error) => error.kind() == std::io::ErrorKind::NotFound,
-        }
-    }
-
-    /// Drops what watcher session `session_id` recorded, waiting or
-    /// finished, with the signal it names.
-    pub(super) fn forget(session_id: &str) {
-        if let Some(signal) = Self::recorded(session_id) {
-            signal.abandon(session_id);
-        }
-    }
-
-    fn record(&self, session_id: &str) -> Option<WaitRecord> {
-        WaitRecord::of(self.path.parent()?, session_id)
-    }
-
-    /// Waits, as watcher session `session_id`, for the parent's signal or
-    /// for the parent to end, and cleans up, returning the watcher's result.
-    ///
-    /// The wait and then its result stay recorded under the session, so a
-    /// watcher whose result T3 Code has not seen repeats it on the next
-    /// prompt (see [`Self::recorded`]). `None` when `cancel` trips first,
-    /// leaving the wait recorded for the caller to
-    /// [abandon](Self::abandon).
-    pub(super) async fn wait(
-        &self,
-        session_id: &str,
-        cancel: &CancellationToken,
-    ) -> Option<String> {
-        let record = self.record(session_id);
-        if let Some(record) = &record {
-            if let Some(summary) = record.read().and_then(|recorded| {
-                (recorded.token == self.token)
-                    .then_some(recorded.summary)
-                    .flatten()
-            }) {
-                return Some(summary);
-            }
-            record.prune_finished();
-            // A watcher left unrecorded only loses restart recovery.
-            let _ = record.write(&self.token, /*summary*/ None);
-        }
-        let summary = loop {
-            if let Ok(summary) = std::fs::read_to_string(&self.path) {
-                break summary;
-            }
-            if self.parent_ended() {
-                break PARENT_ENDED.into();
-            }
-            tokio::select! {
-                () = cancel.cancelled() => return None,
-                () = tokio::time::sleep(SIGNAL_POLL) => {}
-            }
-        };
-        // The signal and lock go only once the record holds the result: a
-        // later wait repeats it from either, and from neither would report
-        // that the parent ended.
-        let recorded = record
-            .as_ref()
-            .is_none_or(|record| record.write(&self.token, Some(&summary)));
-        if recorded {
-            self.cleanup();
-        }
-        Some(summary)
-    }
-
-    /// Drops the signal, the parent's lock file, and the wait session
-    /// `session_id` recorded on them.
-    pub(super) fn abandon(&self, session_id: &str) {
-        self.cleanup();
-        if let Some(record) = self.record(session_id) {
-            record.remove();
-        }
-    }
-}
-
-/// How long a finished watcher's record outlives its result. T3 Code asks
-/// a watcher to continue only when it restarted before it saw the result,
-/// and it asks as it starts again, so the record matters until T3's next
-/// start. A month covers a machine left off for weeks; past that a lost
-/// result costs one model turn in the watcher, as before records existed.
-const FINISHED_RECORD_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
-
-/// One watcher session's file naming the signal it waits on, and, once the
-/// wait ends, its result: the token on the first line, then the result.
-struct WaitRecord {
-    path: PathBuf,
-}
-
-struct RecordedWait {
-    token: String,
-    /// The result, once the wait ended.
-    summary: Option<String>,
-}
-
-impl WaitRecord {
-    /// `None` for a session id that is not a UUID, which Rho never creates,
-    /// so a host's session id cannot name a path outside `dir`.
-    fn of(dir: &Path, session_id: &str) -> Option<Self> {
-        let session_id = uuid::Uuid::parse_str(session_id).ok()?;
-        Some(Self {
-            path: dir.join(format!("{session_id}.watcher")),
-        })
-    }
-
-    fn read(&self) -> Option<RecordedWait> {
-        std::fs::read_to_string(&self.path)
-            .ok()
-            .map(|contents| Self::parse(&contents))
-    }
-
-    fn parse(contents: &str) -> RecordedWait {
-        let (token, summary) = match contents.split_once('\n') {
-            Some((token, summary)) => (token, Some(summary.to_owned())),
-            None => (contents, None),
-        };
-        RecordedWait {
-            token: token.to_owned(),
-            summary,
-        }
-    }
-
-    /// Writes whole, through a temp file, so a crash never leaves a waiting
-    /// record half turned into a finished one. Returns whether it wrote;
-    /// a failure is logged.
-    fn write(&self, token: &str, summary: Option<&str>) -> bool {
-        let contents = match summary {
-            Some(summary) => format!("{token}\n{summary}"),
-            None => token.to_owned(),
-        };
-        let staging = self.path.with_extension("watcher-tmp");
-        let written =
-            std::fs::write(&staging, contents).and_then(|()| std::fs::rename(&staging, &self.path));
-        if let Err(error) = &written {
-            tracing::warn!(%error, "could not record the T3 wake watcher's wait");
-        }
-        written.is_ok()
-    }
-
-    fn remove(&self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-
-    /// Removes finished records older than [`FINISHED_RECORD_TTL`] beside
-    /// this one. Waiting records stay: their wait may still be under way.
-    fn prune_finished(&self) {
-        let Some(entries) = self
-            .path
-            .parent()
-            .and_then(|dir| std::fs::read_dir(dir).ok())
-        else {
-            return;
-        };
-        for path in entries.flatten().map(|entry| entry.path()) {
-            let expired = path
-                .extension()
-                .is_some_and(|extension| extension == "watcher")
-                && std::fs::metadata(&path)
-                    .and_then(|metadata| metadata.modified())
-                    .is_ok_and(|modified| {
-                        modified
-                            .elapsed()
-                            .is_ok_and(|age| age > FINISHED_RECORD_TTL)
-                    })
-                && std::fs::read_to_string(&path)
-                    .is_ok_and(|contents| Self::parse(&contents).summary.is_some());
-            if expired {
-                let _ = std::fs::remove_file(path);
-            }
-        }
     }
 }
 

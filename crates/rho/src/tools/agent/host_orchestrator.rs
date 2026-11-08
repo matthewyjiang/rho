@@ -60,16 +60,23 @@ impl HostContract {
         })
     }
 
-    /// Starts a T3 task with `invocation`'s arguments. A refusal, or a reply
-    /// without a task id, is an execution error; a cancel stays a cancel.
+    /// Starts T3 task `task` in the background, under `title` when given,
+    /// else one T3 derives from the task. A refusal, or a reply without a
+    /// task id, is an execution error; a cancel stays a cancel.
     pub(crate) async fn delegate(
         &self,
-        invocation: ToolInvocation,
+        call_id: ToolCallId,
+        task: &str,
+        title: Option<&str>,
         context: ToolContext,
     ) -> Result<DelegatedTask, ToolError> {
+        let mut arguments = json!({"task": task, "mode": "async"});
+        if let Some(title) = title {
+            arguments["title"] = json!(title);
+        }
         let output = self
             .delegate
-            .call(invocation, context)
+            .call(ToolInvocation::new(call_id, arguments), context)
             .await
             .map_err(|error| {
                 if error.kind() == ToolErrorKind::Cancelled {
@@ -104,11 +111,27 @@ impl HostContract {
         })
     }
 
+    /// T3's status of task `task_id`. The reply stays opaque: T3 owns
+    /// status and completion semantics.
+    pub(crate) async fn status(
+        &self,
+        call_id: ToolCallId,
+        task_id: &str,
+        context: ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        self.status
+            .call(
+                ToolInvocation::new(call_id, json!({"taskId": task_id})),
+                context,
+            )
+            .await
+    }
+
     /// Asks T3 to cancel task `task_id`, for `reason` when given. T3's
     /// reply stays opaque.
     pub(crate) async fn cancel(
         &self,
-        invocation_id: ToolCallId,
+        call_id: ToolCallId,
         task_id: &str,
         reason: Option<&str>,
         context: ToolContext,
@@ -118,7 +141,7 @@ impl HostContract {
             arguments["reason"] = json!(reason);
         }
         self.cancel
-            .call(ToolInvocation::new(invocation_id, arguments), context)
+            .call(ToolInvocation::new(call_id, arguments), context)
             .await
     }
 }
@@ -159,13 +182,16 @@ impl HostOrchestrator {
         model_override: Option<&str>,
         context: ToolContext,
     ) -> Result<HostRun, ToolError> {
-        let arguments = delegate_arguments(definition, prompt, model_override);
+        let task = child_task(definition, prompt, model_override);
+        // T3 derives the display title from the task: copying instructions
+        // into its separate title field can exceed its budget and reject the
+        // launch.
         let DelegatedTask {
             task_id,
             child_thread_id,
         } = self
             .contract()?
-            .delegate(ToolInvocation::new(invocation_id, arguments), context)
+            .delegate(invocation_id, &task, /*title*/ None, context)
             .await?;
         let run = HostRun {
             task_id,
@@ -205,7 +231,6 @@ impl HostOrchestrator {
             .cloned()
     }
 
-    /// Keep the host's response opaque: T3 owns status and completion semantics.
     pub(super) async fn status(
         &self,
         invocation_id: ToolCallId,
@@ -213,11 +238,7 @@ impl HostOrchestrator {
         context: ToolContext,
     ) -> Result<ToolOutput, ToolError> {
         self.contract()?
-            .status
-            .call(
-                ToolInvocation::new(invocation_id, json!({"taskId": task_id})),
-                context,
-            )
+            .status(invocation_id, task_id, context)
             .await
     }
 
@@ -234,29 +255,20 @@ impl HostOrchestrator {
     }
 }
 
-/// A child receives just the rebinding command and the self-contained task.
-/// No `target.model` is sent: T3 accepts only models the ACP agent advertises,
-/// which excludes most pinned definition models (measured: `openai-codex/
-/// gpt-6-luna` failed with `model_unavailable`). The child's `/agent:` rebind
-/// applies the definition's model policy or the explicit per-call override itself.
-fn delegate_arguments(
-    definition: &AgentDefinition,
-    prompt: &str,
-    model_override: Option<&str>,
-) -> Value {
-    // Let T3 derive its display title from the task. Copying instructions into
-    // the separate title field can exceed its budget and reject the launch.
-    let task = match model_override {
+/// The task a child receives: just the rebinding command and the
+/// self-contained task. No `target.model` is sent: T3 accepts only models the
+/// ACP agent advertises, which excludes most pinned definition models
+/// (measured: `openai-codex/gpt-6-luna` failed with `model_unavailable`). The
+/// child's `/agent:` rebind applies the definition's model policy or the
+/// explicit per-call override itself.
+fn child_task(definition: &AgentDefinition, prompt: &str, model_override: Option<&str>) -> String {
+    match model_override {
         Some(model) => format!("/agent:{} --model {model} -- {prompt}", definition.id),
         None if prompt.trim_start().starts_with("--") => {
             format!("/agent:{} -- {prompt}", definition.id)
         }
         None => format!("/agent:{} {prompt}", definition.id),
-    };
-    json!({
-        "task": task,
-        "mode": "async",
-    })
+    }
 }
 
 #[cfg(test)]

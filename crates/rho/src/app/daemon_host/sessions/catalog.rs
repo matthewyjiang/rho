@@ -130,7 +130,7 @@ impl Sessions {
         };
         if deleted.is_ok() {
             // A T3 wake watcher's recorded wait goes with its session.
-            WakeSignal::forget(id.as_str());
+            WakeSignal::forget(&self.wakes, id.as_str());
         }
         let child_sessions = match (loaded, deleted) {
             (Some(session), Ok(ExactDelete::Deleted(outcome))) => {

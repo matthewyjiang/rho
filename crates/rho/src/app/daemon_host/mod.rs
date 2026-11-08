@@ -71,12 +71,14 @@ pub(super) struct DaemonHost {
 }
 
 impl DaemonHost {
-    /// A host for the daemon listening on `socket` since `started_at` (Unix
-    /// seconds), keeping its jobs in `jobs`. `rho/daemon/stop` calls
-    /// [`Self::begin_stop`], which cancels `shutdown`, the transport's; once
-    /// the transport stopped serving, call [`Self::stop_sessions`].
+    /// A host for the daemon of `rho_home` listening on `socket` since
+    /// `started_at` (Unix seconds), keeping its jobs in `jobs`.
+    /// `rho/daemon/stop` calls [`Self::begin_stop`], which cancels
+    /// `shutdown`, the transport's; once the transport stopped serving, call
+    /// [`Self::stop_sessions`].
     pub(super) fn new(
         JobRecords(jobs): JobRecords,
+        rho_home: &Path,
         socket: PathBuf,
         started_at: u64,
         shutdown: CancellationToken,
@@ -85,7 +87,7 @@ impl DaemonHost {
             socket,
             started_at,
             started: Instant::now(),
-            sessions: Arc::new(Sessions::new(Arc::clone(&jobs))),
+            sessions: Arc::new(Sessions::new(Arc::clone(&jobs), rho_home)),
             logins: Arc::new(Logins::new()),
             shutdown,
             jobs,

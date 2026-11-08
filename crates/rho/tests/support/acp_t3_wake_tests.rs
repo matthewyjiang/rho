@@ -2,10 +2,7 @@
 //! server and the daemon behind it.
 //!
 //! The test plays the watcher's parent: it holds the parent's lock on the
-//! signal, writes the signal or lets the lock go, and reads what the
-//! watcher session answers. A wait cut off mid-way by a killed `rho acp`
-//! goes on in the daemon with no event the new client could wait on, so
-//! these cover a wait answered before the restart.
+//! signal, writes the signal, and reads what the watcher session answers.
 
 use std::{fs::File, path::PathBuf};
 
@@ -16,17 +13,8 @@ use super::{AcpServer, Workspace};
 
 const TOKEN: &str = "0f4e2c3a-9b1d-4e5f-8a7b-6c5d4e3f2a1b";
 
-const PARENT_ENDED: &str =
-    "the Rho session that started this background work ended before it finished";
-
-/// What the watcher's parent did while the watcher waited.
-#[derive(Clone, Copy, Debug)]
-enum Parent {
-    /// Its work finished: it wrote the signal.
-    Signalled,
-    /// It ended, releasing its lock.
-    Ended,
-}
+/// The parent's result, which the watcher answers with.
+const RESULT: &str = "cargo test exited 0";
 
 /// A `rho acp --t3code` server with one watcher session waiting on
 /// [`TOKEN`], whose parent lock this holds.
@@ -36,7 +24,8 @@ struct Watcher {
     server: AcpServer,
     workspace: Workspace,
     session_id: String,
-    parent_lock: Option<File>,
+    /// Held so the watcher waits for the signal.
+    _parent_lock: File,
 }
 
 impl Watcher {
@@ -44,7 +33,7 @@ impl Watcher {
     /// once the daemon accepted it.
     fn start() -> Self {
         let workspace = Workspace::new();
-        let signals = workspace.home.rho_home().join("acp-wakes");
+        let signals = workspace.home.rho_home().join("t3-wakes");
         std::fs::create_dir_all(&signals).unwrap();
         let parent_lock = File::create(signals.join(format!("{TOKEN}.lock"))).unwrap();
         parent_lock.lock().unwrap();
@@ -58,7 +47,7 @@ impl Watcher {
             workspace,
             server,
             session_id,
-            parent_lock: Some(parent_lock),
+            _parent_lock: parent_lock,
         };
         let session_id = watcher.session_id.clone();
         let accepted = watcher.request_beside_wake(
@@ -73,7 +62,7 @@ impl Watcher {
     }
 
     fn signals(&self) -> PathBuf {
-        self.workspace.home.rho_home().join("acp-wakes")
+        self.workspace.home.rho_home().join("t3-wakes")
     }
 
     /// The watcher session's record of its wait.
@@ -81,18 +70,24 @@ impl Watcher {
         self.signals().join(format!("{}.watcher", self.session_id))
     }
 
-    /// Plays the parent: signals or lets go. Returns the watcher's answer.
-    fn parent(&mut self, parent: Parent) -> &'static str {
-        match parent {
-            Parent::Signalled => {
-                std::fs::write(self.signals().join(TOKEN), "cargo test exited 0").unwrap();
-                "cargo test exited 0"
-            }
-            Parent::Ended => {
-                drop(self.parent_lock.take());
-                PARENT_ENDED
-            }
+    /// Plays the parent whose work finished: writes [`RESULT`] whole, as
+    /// the daemon does, since a polling watcher takes a partial file.
+    fn signal(&self) {
+        let staging = self.signals().join(format!("{TOKEN}.tmp"));
+        std::fs::write(&staging, RESULT).unwrap();
+        std::fs::rename(staging, self.signals().join(TOKEN)).unwrap();
+    }
+
+    /// Restarts T3 Code as `restart` says: the old `rho acp` goes, a new one
+    /// attaches the watcher session.
+    fn restart(&mut self, restart: Restart) {
+        let restarted = t3_server(&self.workspace);
+        let old = std::mem::replace(&mut self.server, restarted);
+        match restart {
+            Restart::Quit => old.quit(),
+            Restart::Killed => drop(old),
         }
+        self.load();
     }
 
     /// Sends `method` while the watcher's prompt may be open, and waits for
@@ -104,29 +99,6 @@ impl Watcher {
             let message = self.server.recv(&format!("reply to {method}"));
             if message["id"] == method {
                 return message;
-            }
-        }
-    }
-
-    /// Sends `method`, which ends the waiting prompt, and waits for both
-    /// its reply and the prompt's `idle` with `stop_reason`, which come in
-    /// either order.
-    fn request_ending_wake(&mut self, method: &str, params: Value, stop_reason: &str) -> Value {
-        self.server
-            .send(&json!({"jsonrpc": "2.0", "id": method, "method": method, "params": params}));
-        let mut reply = None;
-        let mut idle = false;
-        loop {
-            let message = self.server.recv(&format!("reply to {method} and idle"));
-            let update = &message["params"]["update"];
-            if message["id"] == method {
-                reply = Some(message);
-            } else if update["sessionUpdate"] == "state_update" && update["state"] == "idle" {
-                assert_eq!(update["stopReason"], stop_reason);
-                idle = true;
-            }
-            if let (Some(reply), true) = (&reply, idle) {
-                return reply.clone();
             }
         }
     }
@@ -215,102 +187,82 @@ fn t3_server(workspace: &Workspace) -> AcpServer {
 
 // Covers: a watcher answers, then T3 Code restarts before it saw the answer
 // and sends "Continue where you left off." to the watcher thread. The daemon
-// must repeat the answer, the parent's result or the parent-ended notice,
-// with no model turn: a model turn there wakes a model in the watcher and
-// hands its parent a bogus result.
+// must repeat the answer with no model turn: a model turn there wakes a
+// model in the watcher and hands its parent a bogus result.
 // Owner: daemon T3 wake watcher, over the real stdio server
 #[test]
 fn restarted_watcher_repeats_its_answer_without_a_model_turn() {
-    for parent in [Parent::Signalled, Parent::Ended] {
-        let mut watcher = Watcher::start();
-        let expected = watcher.parent(parent);
-        let answered = watcher.finish_wake("end_turn");
-        // T3 Code restarts: the old `rho acp` dies, a new one attaches.
-        let restarted = t3_server(&watcher.workspace);
-        drop(std::mem::replace(&mut watcher.server, restarted));
-        watcher.load();
+    let mut watcher = Watcher::start();
+    watcher.signal();
+    let answered = watcher.finish_wake("end_turn");
+    watcher.restart(Restart::Killed);
 
-        assert_eq!(
-            (answered, watcher.continue_prompt()),
-            (
-                expected.to_owned(),
-                Continued {
-                    stop_reason: json!("end_turn"),
-                    answer: expected.to_owned(),
-                    ran_tool: false,
-                }
-            ),
-            "{parent:?}"
-        );
-    }
+    assert_eq!(
+        (answered, watcher.continue_prompt()),
+        (
+            RESULT.to_owned(),
+            Continued {
+                stop_reason: json!("end_turn"),
+                answer: RESULT.to_owned(),
+                ran_tool: false,
+            }
+        )
+    );
 }
 
-/// How the host ends a watcher.
+/// How T3 Code restarts while a watcher waits.
 #[derive(Clone, Copy, Debug)]
-enum Ending {
-    /// `session/cancel` while it waits.
-    Cancel,
-    /// `session/close` while it waits, as T3's task_cancel does.
-    Close,
-    /// `session/delete` once its wait answered.
-    DeleteAnswered,
+enum Restart {
+    /// It quits: `rho acp` detaches, which cancels the waiting prompt.
+    Quit,
+    /// `rho acp` is killed: the wait goes on in the daemon, so the next
+    /// prompt finds the session busy with it.
+    Killed,
 }
 
-// Covers: a cancel or close, as T3 Code's task_cancel sends, ends a waiting
-// watcher for good, and a delete drops an answered one's record: a later
-// prompt of the session runs as an ordinary model turn instead of reviving
-// the wait or repeating its answer, and no record is left behind.
+// Covers: T3 Code restarts while a watcher waits, then sends "Continue
+// where you left off." to the watcher thread. Whether the restart
+// cancelled the wait or left it running, the prompt must resume the wait
+// and answer with the parent's result, not run a model turn or be refused
+// as busy: either wakes the parent early with no result.
 // Owner: daemon T3 wake watcher, over the real stdio server
 #[test]
-fn ended_watcher_drops_its_wait() {
-    // With whether the session's next prompt ran a model turn; a deleted
-    // session has none.
-    for (ending, expected_model_turn) in [
-        (Ending::Cancel, Some(true)),
-        (Ending::Close, Some(true)),
-        (Ending::DeleteAnswered, None),
-    ] {
+fn watcher_cut_off_mid_wait_resumes_it_on_the_next_prompt() {
+    for restart in [Restart::Quit, Restart::Killed] {
         let mut watcher = Watcher::start();
+        watcher.restart(restart);
         let session_id = watcher.session_id.clone();
-        match ending {
-            Ending::Cancel => {
-                watcher.server.send(&json!({
-                    "jsonrpc": "2.0", "method": "session/cancel",
-                    "params": {"sessionId": session_id},
-                }));
-                watcher.finish_wake("cancelled");
-            }
-            Ending::Close => {
-                let reply = watcher.request_ending_wake(
-                    "session/close",
-                    json!({"sessionId": session_id}),
-                    "cancelled",
-                );
-                assert!(reply.get("error").is_none(), "{reply}");
-            }
-            Ending::DeleteAnswered => {
-                watcher.parent(Parent::Ended);
-                watcher.finish_wake("end_turn");
-                let reply =
-                    watcher.request_beside_wake("session/delete", json!({"sessionId": session_id}));
-                assert!(reply.get("error").is_none(), "{reply}");
-            }
-        }
-        let record_kept = watcher.record().exists();
-        let model_turn = match ending {
-            Ending::Cancel | Ending::Close => {
-                watcher.load();
-                let continued = watcher.continue_prompt();
-                assert_eq!(continued.stop_reason, json!("end_turn"), "{ending:?}");
-                Some(continued.ran_tool)
-            }
-            Ending::DeleteAnswered => None,
-        };
-
-        assert_eq!(
-            (record_kept, model_turn),
-            (false, expected_model_turn),
-            "{ending:?}"
+        let accepted = watcher.request_beside_wake(
+            "session/prompt",
+            json!({
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": "Continue where you left off."}],
+            }),
         );
+        let refused = accepted.get("error").cloned();
+        // Only once the resumed wait began, so the old one cannot take it.
+        watcher.signal();
+        let answer = watcher.finish_wake("end_turn");
+
+        assert_eq!((refused, answer), (None, RESULT.to_owned()), "{restart:?}");
     }
+}
+
+// Covers: deleting an answered watcher's session drops its record, so the
+// wake directory does not keep a file per watcher T3 deleted.
+// Owner: daemon T3 wake watcher (session delete), over the real stdio server
+#[test]
+fn deleted_watcher_drops_its_record() {
+    let mut watcher = Watcher::start();
+    watcher.signal();
+    watcher.finish_wake("end_turn");
+    let recorded = watcher.record().exists();
+    let session_id = watcher.session_id.clone();
+
+    let reply = watcher.request_beside_wake("session/delete", json!({"sessionId": session_id}));
+
+    assert_eq!(
+        (recorded, reply.get("error"), watcher.record().exists()),
+        (true, None, false)
+    );
 }

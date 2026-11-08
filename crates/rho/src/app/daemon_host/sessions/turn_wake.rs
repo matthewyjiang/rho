@@ -6,12 +6,12 @@
 //! wait, without a model turn.
 
 use rho_protocol as wire;
-use rho_sdk::UserInput;
+use rho_sdk::{CancellationToken, UserInput};
 
 use super::{
     super::{
-        t3_wake::{Background, PromptOrigin, WakeSignal, WAKE_COMMAND},
-        LoadedSession,
+        t3_wake::{wake_command, Background, PromptOrigin, WakeSignal},
+        LoadedSession, TurnKind,
     },
     DaemonView, Ran,
 };
@@ -60,44 +60,75 @@ pub(super) async fn prompt_started(session: &LoadedSession, input: &UserInput) -
         return WakePrompt::Prompt(PromptOrigin::Other);
     };
     let text = leading_text(input);
-    let origin = wake.lock().await.prompt_started(text);
-    if let Some(signal) = WakeSignal::recorded(session.id.as_str()) {
+    let mut wake = wake.lock().await;
+    let origin = wake.prompt_started(text);
+    if let Some(signal) = WakeSignal::recorded(wake.dir(), session.id.as_str()) {
         return WakePrompt::Watch(Ok(signal));
     }
-    let token = text
-        .and_then(|text| text.strip_prefix(WAKE_COMMAND))
-        .filter(|rest| rest.starts_with(char::is_whitespace));
-    match token {
-        Some(token) => WakePrompt::Watch(
-            WakeSignal::parse(token)
-                .ok_or_else(|| CommandRejected(format!("usage: {WAKE_COMMAND} <token>"))),
-        ),
+    match wake_command(wake.dir(), text) {
+        Some(signal) => WakePrompt::Watch(signal),
         None => WakePrompt::Prompt(origin),
     }
 }
 
 /// Call as `session`'s turn on `runtime` ended as `ended`, before its end
-/// is told: arms a watcher while background work runs on. A cancelled turn
-/// usually gives way to the next prompt, whose end arms instead, so only
-/// other ends tell clients that arming failed.
+/// is told: arms a watcher while background work runs on, unless the
+/// daemon is `stopping`, which takes the session's work down with it. The
+/// daemon's stop, or a cancel sent meanwhile, interrupts the host calls. A
+/// cancelled turn usually gives way to the next prompt, whose end arms
+/// instead, so only other ends that were not interrupted tell clients that
+/// arming failed.
 pub(super) async fn prompt_ended(
     session: &LoadedSession,
     runtime: &SessionRuntime,
     ended: &anyhow::Result<Ran>,
+    stopping: &CancellationToken,
 ) {
     let Some(wake) = &session.wake else {
         return;
     };
+    if stopping.is_cancelled() {
+        return;
+    }
+    // A fresh cancel for the rest of the turn: the turn's own may have
+    // tripped already, ending its run, and a cancel from here on must still
+    // reach the host calls.
+    let cancel = {
+        let mut turn = session.turn();
+        turn.cancel = CancellationToken::new();
+        turn.cancel.clone()
+    };
+    let interrupt = CancellationToken::new();
     let tools = runtime.tools();
     let background = Background::of(tools, runtime.session_id().to_string());
-    let Err(error) = wake.lock().await.prompt_ended(tools, background).await else {
+    let arming = async {
+        wake.lock()
+            .await
+            .prompt_ended(tools, background, &interrupt)
+            .await
+    };
+    tokio::pin!(arming);
+    let armed = tokio::select! {
+        armed = &mut arming => armed,
+        () = async {
+            tokio::select! {
+                () = stopping.cancelled() => {}
+                () = cancel.cancelled() => {}
+            }
+        } => {
+            // The host calls give up at once; arming keeps what they got to.
+            interrupt.cancel();
+            arming.await
+        }
+    };
+    let Err(error) = armed else {
         return;
     };
-    match ended {
-        Ok(Ran::Cancelled) => {
-            tracing::debug!(%error, "could not arm T3 wake watcher after a cancelled turn");
+    match (ended, interrupt.is_cancelled()) {
+        (Ok(Ran::Cancelled), _) | (_, true) => {
+            tracing::debug!(%error, "could not arm T3 wake watcher after a cancel or stop");
         }
-        Ok(Ran::Completed(_)) | Err(_) => {
+        (Ok(Ran::Completed(_)) | Err(_), false) => {
             tracing::warn!(%error, "could not arm T3 wake watcher");
             session.feed.publish([wire::SessionEvent::Notice {
                 text: format!(
@@ -124,15 +155,20 @@ pub(super) async fn watch(
         .live()
         .shown_prompt(display, &InsertedMessage::Unreplayed);
     view.session.feed.publish([shown]);
+    // A prompt sent while the wait runs resumes it.
+    view.session.turn().kind = TurnKind::WakeWait;
     // Nothing rejects the prompt from here on; its request need not wait
     // for the parent.
     view.began();
-    let session_id = view.session.id.as_str();
-    let Some(summary) = signal.wait(session_id, scope.cancellation()).await else {
-        // A cancel, as T3's task_cancel sends by closing the watcher's
-        // session, or the daemon's stop ends the wait for good: a session
-        // that saved nothing does not outlive its daemon.
-        signal.abandon(session_id);
+    let Some(summary) = signal
+        .wait(view.session.id.as_str(), scope.cancellation())
+        .await
+    else {
+        // A cancel keeps the wait recorded, so the session's next prompt
+        // resumes it: T3 Code cancels its prompts as it quits, then sends
+        // "continue" once it starts again. A watcher T3 cancelled is never
+        // prompted again; the parent's retire and the directory's pruning
+        // clean up after it.
         return Ok(Ran::Cancelled);
     };
     let reply = view

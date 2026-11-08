@@ -31,7 +31,7 @@
 use std::{
     collections::HashMap,
     num::NonZeroUsize,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard, PoisonError, Weak},
     time::Duration,
 };
@@ -85,7 +85,7 @@ use inputs::Inputs;
 use open::{open_session, session_environment, OpenWith, OpenedSession, Opening, Workspace};
 use queued::Queued;
 use reopen::ReopenLocks;
-use t3_wake::T3Wake;
+use t3_wake::{T3Wake, WakeDir};
 use turn::{PromptStart, TurnLimit, TurnTask};
 use unload::Residency;
 pub(in crate::app) use unload::UNLOAD_IDLE_AFTER;
@@ -118,6 +118,9 @@ pub(super) struct Sessions {
     /// Read-held from each idle unload decision through its teardown, and
     /// through each delete; the stop write-locks it to wait for them.
     unloading: tokio::sync::RwLock<()>,
+    /// Where the sessions' T3 wake watchers keep their files (see
+    /// [`t3_wake`]).
+    wakes: WakeDir,
 }
 
 /// A session this daemon loaded.
@@ -162,14 +165,40 @@ struct LoadedSession {
 struct TurnSlot {
     /// The cancel of the session's current or last turn. A prompt replaces
     /// it as its turn starts, and a cancel trips it and the session's
-    /// handle, so a cancel never reaches a turn it did not see start.
+    /// handle, so a cancel never reaches a turn it did not see start. A
+    /// turn that arms a T3 wake watcher replaces it once more as its run
+    /// ends, so a later cancel still reaches its host calls.
     cancel: CancellationToken,
+    /// What the session's current or last turn runs, which decides what a
+    /// prompt sent while it runs does. A prompt sets it as its turn starts.
+    kind: TurnKind,
     /// Whether the session is in use, idle, or unloaded, as the idle unload
     /// tracks it.
     residency: Residency,
     /// What holds the session, if anything: neither a delete nor the idle
     /// unload takes a held session. Set and freed by [`Held`].
     hold: Option<Hold>,
+}
+
+/// What a session's turn runs, as far as a prompt sent meanwhile goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TurnKind {
+    /// A prompt: one sent meanwhile is refused as busy.
+    Prompt,
+    /// A T3 wake watcher's wait (see [`t3_wake`]), which the watch sets: one
+    /// sent meanwhile, as T3 Code sends once restarted after its `rho acp`
+    /// was killed, cancels the wait and runs once it ended, resuming it.
+    WakeWait,
+}
+
+/// How a prompt entered its session.
+enum Entered {
+    /// Its turn started, with the turn's cancel and its place in the queue
+    /// on the session's runtime.
+    Started(CancellationToken, Queued<Option<SessionRuntime>>),
+    /// It cancelled the wake wait under way (see [`TurnKind::WakeWait`]),
+    /// and starts once that wait ended.
+    BehindWakeWait,
 }
 
 /// What holds a session: its queued settings changes or its delete, which
@@ -267,11 +296,14 @@ impl LoadedSession {
     /// Its feed begins with the conversation the session has saved and how
     /// the job's last turn ended, which a new session has neither of, so a
     /// client attaching to a reopened session learns that end (#1661).
+    /// Its T3 wake watchers, when its host wakes it, keep their files in
+    /// `wakes`.
     fn new(
         job: &JobRecord,
         jobs: Arc<JobRegistry>,
         opened: OpenedSession,
         auths: &[String],
+        wakes: &WakeDir,
     ) -> Self {
         let OpenedSession {
             runtime,
@@ -302,7 +334,7 @@ impl LoadedSession {
         let job = job.id.clone();
         Self {
             id: runtime.session_id().clone(),
-            wake: T3Wake::of(&runtime).map(tokio::sync::Mutex::new),
+            wake: T3Wake::of(&runtime, wakes).map(tokio::sync::Mutex::new),
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),
             live: Mutex::new(live),
@@ -320,6 +352,7 @@ impl LoadedSession {
             environment,
             turn: Mutex::new(TurnSlot {
                 cancel: CancellationToken::new(),
+                kind: TurnKind::Prompt,
                 residency: Residency::InUse,
                 hold: None,
             }),
@@ -405,19 +438,25 @@ impl LoadedSession {
     /// Cancels the turn under way, if any, even one that has not begun its
     /// prompt yet.
     fn cancel_turn(&self) {
+        self.cancel_turn_under(&self.turn());
+    }
+
+    /// [`Self::cancel_turn`], with `turn`, the session's turn lock, held.
+    fn cancel_turn_under(&self, turn: &TurnSlot) {
         // Both under the turn lock, which a prompt takes to start its turn,
         // so the handle's cancel cannot reach a turn started after this
         // cancel. Lock order: the turn lock, then the prompt gate's
         // slot inside `handle.cancel()`; nothing takes them the other way.
-        let turn = self.turn();
         turn.cancel.cancel();
         self.handle.cancel();
     }
 }
 
 impl Sessions {
-    /// No sessions yet; their turns are recorded in `jobs`.
-    pub(super) fn new(jobs: Arc<JobRegistry>) -> Self {
+    /// No sessions yet; their turns are recorded in `jobs`, and they keep
+    /// their T3 wake watchers' files under `rho_home`, the daemon's Rho
+    /// home.
+    pub(super) fn new(jobs: Arc<JobRegistry>, rho_home: &Path) -> Self {
         let stopping = CancellationToken::new();
         Self {
             subagents: Subagents::new(Arc::clone(&jobs), stopping.clone()),
@@ -426,6 +465,7 @@ impl Sessions {
             reopening: ReopenLocks::default(),
             stopping,
             unloading: tokio::sync::RwLock::new(()),
+            wakes: WakeDir::in_home(rho_home),
         }
     }
 
@@ -500,7 +540,13 @@ impl Sessions {
     ) -> Result<Arc<LoadedSession>, RpcError> {
         let session = opened.runtime.session_id().clone();
         let auths = options::available_auths().await;
-        let entry = LoadedSession::new(job.job(), Arc::clone(&self.jobs), opened, &auths);
+        let entry = LoadedSession::new(
+            job.job(),
+            Arc::clone(&self.jobs),
+            opened,
+            &auths,
+            &self.wakes,
+        );
         let refused = {
             let mut loaded = self.loaded();
             match self
@@ -525,8 +571,9 @@ impl Sessions {
     }
 
     /// Starts a turn of the prompt's content on a session and returns once
-    /// the turn began. The turn runs in a daemon task from then
-    /// on.
+    /// the turn began. The turn runs in a daemon task from then on. A
+    /// session busy with a T3 wake wait gives way (see
+    /// [`TurnKind::WakeWait`]).
     pub(super) async fn prompt(
         &self,
         params: SessionPromptParams,
@@ -544,44 +591,18 @@ impl Sessions {
             environment: session_environment(&params.environment)?,
             setup: SessionSetup::default(),
         };
-        let (session, (cancel, runtime)) = self
-            .enter_session(&params.session, &with, |session, turn| {
-                match turn.hold {
-                    // The turn queues on the runtime behind the changes, so
-                    // they apply first, the prompt waiting for them.
-                    Some(Hold::Configuring(_)) | None => {}
-                    Some(Hold::Deleting) => return Err(being_deleted()),
-                }
-                match self.jobs.start_turn(&session.job) {
-                    // Told under the turn lock, which the last turn's
-                    // end is told under too, so the feed never says `running`
-                    // before the last turn's end, nor a turn's end after the next
-                    // turn began.
-                    Ok(()) => session.feed.publish([state_event(&JobState::Running)]),
-                    Err(StartTurnError::Busy) => {
-                        return Err(RpcError::new(
-                            ErrorCode::SessionBusy,
-                            "session already has a turn in progress",
-                        ))
-                    }
-                    Err(StartTurnError::Unknown(_)) => {
-                        return Err(RpcError::new(
-                            ErrorCode::InternalError,
-                            format!("session's job {} is not recorded", session.job),
-                        ))
-                    }
-                }
-                // The turn's processes and hooks, and later turns' until
-                // another prompt, start in the prompting client's environment.
-                session.environment.replace(with.environment.clone());
-                turn.cancel = CancellationToken::new();
-                // Queued on the runtime under the turn lock the turn starts
-                // under, as a change queues under it (see `configure`): a
-                // change counted before this applies before the turn, and
-                // one sent once the job said `running` waits for its end.
-                Ok((turn.cancel.clone(), Queued::join(&session.runtime)))
-            })
-            .await?;
+        let (session, cancel, runtime) = loop {
+            let (session, entered) = self
+                .enter_session(&params.session, &with, |session, turn| {
+                    self.start_turn(session, turn, &with)
+                })
+                .await?;
+            match entered {
+                Entered::Started(cancel, runtime) => break (session, cancel, runtime),
+                // Free once the cancelled wait recorded its end.
+                Entered::BehindWakeWait => drop(session.runtime.lock().await),
+            }
+        };
         // Spawned before anything awaits, so the turn runs and records its
         // end apart from this request: the transport joins every request it
         // read, but this one stops waiting once the daemon stops.
@@ -607,6 +628,59 @@ impl Sessions {
             },
             () = self.stopping.cancelled() => Err(stopping()),
         }
+    }
+
+    /// Starts a turn of a prompt sent with `with` on `session`, whose turn
+    /// lock `turn` is held, unless the session is busy or being deleted.
+    fn start_turn(
+        &self,
+        session: &LoadedSession,
+        turn: &mut TurnSlot,
+        with: &OpenWith,
+    ) -> Result<Entered, RpcError> {
+        match turn.hold {
+            // The turn queues on the runtime behind the changes, so they
+            // apply first, the prompt waiting for them.
+            Some(Hold::Configuring(_)) | None => {}
+            Some(Hold::Deleting) => return Err(being_deleted()),
+        }
+        match self.jobs.start_turn(&session.job) {
+            // Told under the turn lock, which the last turn's end is told
+            // under too, so the feed never says `running` before the last
+            // turn's end, nor a turn's end after the next turn began.
+            Ok(()) => session.feed.publish([state_event(&JobState::Running)]),
+            Err(StartTurnError::Busy) => match turn.kind {
+                TurnKind::Prompt => {
+                    return Err(RpcError::new(
+                        ErrorCode::SessionBusy,
+                        "session already has a turn in progress",
+                    ))
+                }
+                TurnKind::WakeWait => {
+                    session.cancel_turn_under(turn);
+                    return Ok(Entered::BehindWakeWait);
+                }
+            },
+            Err(StartTurnError::Unknown(_)) => {
+                return Err(RpcError::new(
+                    ErrorCode::InternalError,
+                    format!("session's job {} is not recorded", session.job),
+                ))
+            }
+        }
+        // The turn's processes and hooks, and later turns' until another
+        // prompt, start in the prompting client's environment.
+        session.environment.replace(with.environment.clone());
+        turn.cancel = CancellationToken::new();
+        turn.kind = TurnKind::Prompt;
+        // Queued on the runtime under the turn lock the turn starts under,
+        // as a change queues under it (see `configure`): a change counted
+        // before this applies before the turn, and one sent once the job
+        // said `running` waits for its end.
+        Ok(Entered::Started(
+            turn.cancel.clone(),
+            Queued::join(&session.runtime),
+        ))
     }
 
     /// Cancels a session's turn, if one is under way, even one that has not

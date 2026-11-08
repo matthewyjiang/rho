@@ -136,9 +136,12 @@ impl Delegation {
     /// attach succeeds, so a failed attach keeps it for the next prompt.
     /// Subagents keep their artifacts in `storage`'s folder when it has one,
     /// and save their sessions as `persistence` says the session does.
+    /// Running workflows and processes hold natural completion as `wait`
+    /// says.
     pub(super) fn attach(
         session: &Session,
         sources: BackgroundSources<'_>,
+        wait: BackgroundWait,
         storage: Option<&crate::session::Session>,
         persistence: SessionPersistence,
         held: &mut Option<HeldNotices>,
@@ -168,13 +171,9 @@ impl Delegation {
             processes: sources.processes.cloned(),
             workflows,
             prompt_started: Instant::now(),
-            background_wait: BackgroundWait::HoldPrompt,
+            background_wait: wait,
             displays: None,
         })
-    }
-
-    pub(super) fn set_background_wait(&mut self, wait: BackgroundWait) {
-        self.background_wait = wait;
     }
 
     /// Display rows for every delivery offered from now on. The host claims

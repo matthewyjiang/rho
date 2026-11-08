@@ -20,7 +20,7 @@ use crate::{
     app::{
         daemon_host::{
             jobs::{JobId, JobRecord, JobRegistry, JobState, JobStore, TurnEnd},
-            sessions::{open::OpenedSession, LoadedSession},
+            sessions::{open::OpenedSession, t3_wake::WakeDir, LoadedSession},
         },
         session_runtime::{
             unattended_runtime_on, HangUntilCancel, InsertedMessage, QuestionSupport, SessionEvent,
@@ -70,6 +70,7 @@ async fn loaded_session(root: &Path, jobs: &Arc<JobRegistry>, job: JobId) -> Arc
             environment: SessionEnvironment::default(),
         },
         /*auths*/ &[],
+        &WakeDir::in_home(root),
     ))
 }
 

@@ -156,16 +156,8 @@ impl TurnTask {
             // without beginning its prompt, as the turns the stop stops do.
             Some(_) if stopping.is_cancelled() => (Ok(Ran::Cancelled), None),
             Some(runtime) => {
-                let wake_prompt = wake::prompt_started(&session, &input).await;
                 let (ended, timed_out) = {
-                    let turn = run_turn(
-                        runtime,
-                        &mut view,
-                        input,
-                        wake_prompt,
-                        &session.config,
-                        &cancel,
-                    );
+                    let turn = run_turn(runtime, &mut view, input, &session.config, &cancel);
                     tokio::pin!(turn);
                     // The deadline first, so a limit already past cancels
                     // the turn before it saves its prompt.
@@ -186,10 +178,7 @@ impl TurnTask {
                 // The turn may have left new skills, prompts, or MCP prompts
                 // behind; clients see them before they see the turn end.
                 session.refresh_options(runtime, &available_auths().await);
-                // A stopping daemon takes the session's work down with it.
-                if !stopping.is_cancelled() {
-                    wake::prompt_ended(&session, runtime, &ended).await;
-                }
+                wake::prompt_ended(&session, runtime, &ended, &stopping).await;
                 (
                     ended.map_err(|error| failure(&session, runtime, &error)),
                     timed_out,
@@ -270,18 +259,17 @@ async fn report_title(session: Weak<LoadedSession>, title: TitleJob) {
 }
 
 /// Begins a prompt of `input` on `runtime` and runs it: the T3 wake
-/// watcher's wait when `wake_prompt` says it is one, its slash command when it
-/// starts with one the daemon runs, else a model turn on it. A command the
-/// daemon cannot run fails the turn as a configuration error before the
-/// prompt is saved.
+/// watcher's wait when it is one, its slash command when it starts with one
+/// the daemon runs, else a model turn on it. A command the daemon cannot run
+/// fails the turn as a configuration error before the prompt is saved.
 async fn run_turn(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,
     input: UserInput,
-    wake_prompt: WakePrompt,
     config: &Config,
     cancel: &CancellationToken,
 ) -> anyhow::Result<Ran> {
+    let wake_prompt = wake::prompt_started(&view.session, &input).await;
     let scope = match runtime.begin_prompt(config).await {
         Ok(scope) => scope,
         // A daemon session loads again only once the daemon unloads it.

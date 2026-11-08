@@ -52,8 +52,9 @@ The daemon never starts a turn by itself, and T3 refuses a thread's own requests
 - It waits until the parent signals a finished result, then ends, and T3 wakes the parent. The model gets T3's notice with a note that the watcher holds no result. The results follow it as usual.
 - One watcher covers everything still running. Work that finishes during a prompt is delivered in that prompt, so most short commands never start one.
 - If the watched work is delivered during a later prompt, Rho cancels the watcher. A watcher also ends when its parent session is deleted or unloaded, or the daemon stops, and it reports that the work did not finish. The daemon never unloads a session whose background work still runs.
-- When T3 Code restarts after the watcher answered but before it saw the answer, it tells the watcher thread to continue. The watcher repeats its answer instead of running a model turn. A restart that cuts the watcher off while it waits ends the wait: the watcher thread runs an ordinary turn when T3 tells it to continue, and the parent arms a new watcher once T3 wakes it.
+- When T3 Code restarts, it tells each thread the restart cut off to continue. A watcher that already answered repeats its answer instead of running a model turn. A watcher cut off while it waits resumes the wait, whether T3 quit or crashed.
 - If T3 refuses the watcher, Rho says so in the transcript and the results arrive with your next message.
+- Watchers keep their files in `~/.rho/t3-wakes`, readable only by you. A watcher that starts cleans up files no watcher can use any more once they are 30 days old.
 
 The same applies to a finished `/workflow:` command: it wakes the thread instead of waiting for your next message.
 
