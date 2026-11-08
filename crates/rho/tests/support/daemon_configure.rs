@@ -128,8 +128,15 @@ async fn a_change_reaches_attached_clients_and_the_next_turn() {
         .collect::<Vec<_>>();
     assert_eq!(
         slash_commands,
-        ["init"],
-        "no workflow or agent the daemon refuses"
+        [
+            "compact",
+            "init",
+            "agent:default",
+            "agent:explorer",
+            "agent:reviewer",
+            "agent:worker",
+        ],
+        "the built-ins the daemon runs and the workspace's Rho agents, no TUI command"
     );
     let (watcher, mut notifications) = sandbox.connect_following().await;
     let attached = watcher

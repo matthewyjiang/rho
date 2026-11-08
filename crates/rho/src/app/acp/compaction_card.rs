@@ -14,6 +14,8 @@ use agent_client_protocol::schema::v1::{
     CompactionId, CompactionStatus, CompactionUpdate, SessionUpdate,
 };
 
+pub(super) use crate::compaction::outcome_summary;
+
 /// Error for a compaction the run ended before it reported a result.
 pub(super) const UNFINISHED: &str = "compaction ended without a result";
 
@@ -50,20 +52,5 @@ impl CompactionCard {
 
     fn update(&self, status: CompactionStatus) -> SessionUpdate {
         SessionUpdate::CompactionUpdate(CompactionUpdate::new(self.id.clone(), status))
-    }
-}
-
-/// What a finished compaction did, in the words `/compact` replies with.
-pub(super) fn outcome_summary(outcome: &rho_sdk::CompactionOutcome) -> String {
-    if crate::compaction::outcome_reduced_context(outcome) {
-        format!(
-            "context compacted: {} → {} messages, {} → {} tokens",
-            outcome.previous_messages(),
-            outcome.current_messages(),
-            outcome.previous_tokens(),
-            outcome.current_tokens(),
-        )
-    } else {
-        "context not compacted: compaction ran but did not reduce context".into()
     }
 }

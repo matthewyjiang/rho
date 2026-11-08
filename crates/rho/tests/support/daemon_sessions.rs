@@ -16,9 +16,9 @@ use rho_protocol::{
         SessionNew, SessionPrompt,
     },
     AnswerStop, ApprovalAsk, ApprovalSource, Ask, Client, ClientEnvironment, ClientError,
-    ClientInfo, ContentBlock, Cursor, DaemonNotification, DetachReason, ErrorCode, InputAnswer,
-    InputRequest, InputRequestId, JobId, JobKind, JobListParams, JobState, JobSummary,
-    Notifications, Operation, PathScope, Replay, Resolution, Seq, SessionAnswerParams,
+    ClientInfo, CompactionStatus, ContentBlock, Cursor, DaemonNotification, DetachReason,
+    ErrorCode, InputAnswer, InputRequest, InputRequestId, JobId, JobKind, JobListParams, JobState,
+    JobSummary, Notifications, Operation, PathScope, Replay, Resolution, Seq, SessionAnswerParams,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionDetachParams,
     SessionDetachedParams, SessionEvent, SessionHoldParams, SessionId, SessionNewParams,
     SessionPromptParams, SessionSetup, StreamId, ToolCallId, ToolContent, ToolStatus, TurnError,
@@ -274,12 +274,20 @@ impl Sandbox {
         client: &Client,
         session: &SessionId,
     ) -> Result<(), Option<ErrorCode>> {
+        self.prompt_text(client, session, "hello").await
+    }
+
+    /// Prompts `session` with `text`; the error code of a refused prompt.
+    pub(super) async fn prompt_text(
+        &self,
+        client: &Client,
+        session: &SessionId,
+        text: &str,
+    ) -> Result<(), Option<ErrorCode>> {
         client
             .request::<SessionPrompt>(&SessionPromptParams {
                 session: session.clone(),
-                content: vec![ContentBlock::Text {
-                    text: "hello".into(),
-                }],
+                content: vec![ContentBlock::Text { text: text.into() }],
                 timeout_ms: None,
                 environment: self.client_environment(),
             })
@@ -539,6 +547,58 @@ async fn a_turn_tells_clients_how_it_ended() {
         let job = settled_job(&sandbox, &client, &session).await;
         assert_eq!((job.state, job.error), (state, listed), "{mode}: job list");
     }
+}
+
+// Covers: `/compact` runs in a daemon session with no model turn: clients
+// get one compaction that starts and completes under one id, no user
+// message, since the command is not saved as one, then a turn that answers
+// with what the compaction did (#1670).
+// Owner: daemon session commands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compact_reports_its_compaction_and_answers_with_the_result() {
+    let sandbox = Sandbox::new();
+    let client = sandbox.start_daemon("fixed").await;
+    let session = sandbox.new_session(&client).await;
+    let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
+    watcher.read_until(is_state(JobState::Completed)).await;
+    let answered = watcher.events.len();
+    assert_eq!(
+        sandbox.prompt_text(&client, &session, "/compact").await,
+        Ok(())
+    );
+    watcher.read_until(is_state(JobState::Completed)).await;
+
+    let compact_turn = &watcher.events[answered..];
+    let compactions: Vec<_> = compact_turn
+        .iter()
+        .filter_map(|(_, event)| match event {
+            SessionEvent::Compaction { id, status } => Some((id.clone(), status.clone())),
+            _ => None,
+        })
+        .collect();
+    let [(started, CompactionStatus::Started), (completed, CompactionStatus::Completed)] =
+        compactions.as_slice()
+    else {
+        panic!(
+            "one compaction starts and completes: {compact_turn:#?}\nlog:\n{}",
+            sandbox.isolated.daemon_log()
+        );
+    };
+    let shown_prompt = compact_turn
+        .iter()
+        .any(|(_, event)| matches!(event, SessionEvent::UserMessage { .. }));
+    let answer = compact_turn.iter().find_map(|(_, event)| match event {
+        SessionEvent::TurnEnded {
+            outcome: TurnOutcome::Answered { text, stop },
+        } => Some((text.starts_with("context "), *stop)),
+        _ => None,
+    });
+    assert_eq!(
+        (started == completed, shown_prompt, answer),
+        (true, false, Some((true, AnswerStop::EndTurn))),
+        "{compact_turn:#?}"
+    );
 }
 
 // Covers: a prompt's image and resource blocks reach the model, the image
@@ -824,6 +884,59 @@ async fn a_workflow_run_is_a_child_job_of_its_session() {
         .map(|run| run.unwrap().file_name().into_string().unwrap())
         .collect();
     assert_eq!(workflow.workflow_run.map(|run| vec![run]), Some(runs));
+}
+
+// Covers: `/workflow:<name>` in a daemon session starts the workspace
+// workflow as a child job, with no model turn: clients see the prompt and
+// the start notice as the messages a later client replays from the saved
+// session, under the same ids, and the turn answers with the notice, which
+// names the run (#1670).
+// Owner: daemon session commands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_workflow_command_starts_its_run_without_a_model_turn() {
+    let sandbox = Sandbox::new();
+    let workflow = sandbox.workspace.join(".rho/workflows/daemon-run");
+    std::fs::create_dir_all(workflow.join("agents")).unwrap();
+    std::fs::write(workflow.join("workflow.star"), WORKFLOW).unwrap();
+    std::fs::write(workflow.join("agents/fixture.md"), WORKFLOW_AGENT).unwrap();
+    let client = sandbox.start_daemon("fixed").await;
+    let session = sandbox.new_session(&client).await;
+    let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let started = sandbox
+        .prompt_text(&client, &session, "/workflow:daemon-run")
+        .await;
+    watcher.read_until(is_state(JobState::Completed)).await;
+    let parent = settled_job(&sandbox, &client, &session).await;
+    let run = settled(&sandbox, &client, |job| {
+        job.parent.as_ref() == Some(&parent.id)
+    })
+    .await;
+    let (mut latecomer, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    latecomer.read_until(is_state(JobState::Completed)).await;
+
+    let shown = conversation(&watcher.events);
+    let (notice, answer) = match shown.as_slice() {
+        [SessionEvent::UserMessage { .. }, SessionEvent::AgentMessageChunk { text, .. }, SessionEvent::TurnEnded {
+            outcome: TurnOutcome::Answered { text: answer, .. },
+        }] => (text.clone(), answer.clone()),
+        _ => panic!(
+            "the prompt, then the notice, then an answer: {shown:#?}\nlog:\n{}",
+            sandbox.isolated.daemon_log()
+        ),
+    };
+    let run_id = run.workflow_run.clone().expect("the job names its run");
+    assert_eq!(
+        (
+            started,
+            notice == answer,
+            notice.contains(&run_id),
+            run.state
+        ),
+        (Ok(()), true, true, JobState::Completed),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+    assert_eq!(conversation(&latecomer.events), shown);
 }
 
 // Covers: a turn cancelled through `rho/session/cancel` is recorded

@@ -166,9 +166,9 @@ pub struct SessionPromptParams {
     pub environment: ClientEnvironment,
 }
 
-/// Result of [`SESSION_PROMPT`]: the prompt is saved and its turn is
-/// running. The turn runs on in the daemon; [`super::JOB_LIST`] reports how
-/// it ends.
+/// Result of [`SESSION_PROMPT`]: the prompt is saved, or, for `/compact`,
+/// which saves none, the compaction began, and its turn is running. The
+/// turn runs on in the daemon; [`super::JOB_LIST`] reports how it ends.
 ///
 /// A turn that ends before its prompt is saved answers with an error
 /// instead: [`crate::ErrorCode::TurnEnded`], whose `data` is the turn's

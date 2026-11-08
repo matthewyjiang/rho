@@ -12,7 +12,7 @@ use rho_protocol::{
 use rho_sdk::{
     model,
     tool::{ToolMetadata, ToolOutput},
-    ContextEstimate, RunEvent, ToolCompletion, UserInput,
+    CompactionOutcome, ContextEstimate, RunEvent, ToolCompletion, UserInput,
 };
 
 use super::{
@@ -22,7 +22,7 @@ use super::{
 };
 use crate::{
     app::session_runtime::{context_window, InsertedMessage, SessionEvent, SessionTools},
-    session::tree::ProjectedMessage,
+    session::tree::{DisplayRowOrigin, ProjectedMessage},
     tools::{mcp::exported_name::McpToolNames, todo::TodoState},
 };
 
@@ -88,6 +88,15 @@ pub(crate) struct LiveEvents {
     message: Option<OpenMessage>,
 }
 
+/// How a compaction ended, as [`LiveEvents::compaction_ended`] reports it.
+pub(crate) enum CompactionEnd<'a> {
+    Completed(&'a CompactionOutcome),
+    Cancelled,
+    /// Failed with this error, which clients see: never a provider's raw
+    /// text, which may echo a credential.
+    Failed(String),
+}
+
 /// Which message stream a chunk belongs to.
 #[derive(Clone, Copy, PartialEq)]
 enum ChunkKind {
@@ -151,6 +160,44 @@ impl LiveEvents {
     pub(crate) fn prompt(&mut self, input: &UserInput) {
         self.prompt = Some(user_content(input.blocks()));
         self.call_ids.cover(&self.replayed_ids);
+    }
+
+    /// Maps with `tools` from now on, as a session that `/agent:` rebound to
+    /// an agent with tools of its own does, against `configured_window`, the
+    /// agent model's. The message and call ids it gave and the rows it
+    /// replayed stay counted, so nothing replays twice.
+    pub(crate) fn rebind_tools(
+        &mut self,
+        workspace: &Path,
+        tools: SessionTools<'_>,
+        configured_window: Option<u64>,
+    ) {
+        let todo = tools.todo_state();
+        self.workspace = workspace.to_owned();
+        self.mcp_tools = tools.mcp_report().tool_names();
+        self.configured_window = configured_window;
+        self.window = configured_window;
+        self.sent_plan = plan_entries(&todo);
+        self.todo = todo;
+    }
+
+    /// `text`, a host command's reply saved as the display row right after
+    /// the prompt `inserted` names, as `/workflow:` saves its notice: one
+    /// agent message, under the id replay gives that row, or a fresh one when
+    /// the prompt was not saved.
+    pub(crate) fn saved_reply(&mut self, inserted: &InsertedMessage, text: String) -> WireEvent {
+        let message = match inserted {
+            InsertedMessage::Saved(DisplayRowOrigin { node, row }) => {
+                saved_message_id(&DisplayRowOrigin {
+                    node: node.clone(),
+                    row: row + 1,
+                })
+            }
+            InsertedMessage::Unreplayed => fresh_message_id(),
+        };
+        // A reply is a message of its own, which no chunk continues.
+        self.message = None;
+        WireEvent::AgentMessageChunk { message, text }
     }
 
     /// The wire events that replay the rows of `rows`, the session's saved
@@ -296,42 +343,13 @@ impl LiveEvents {
                 self.proposed.clear();
                 vec![WireEvent::ResponseDiscarded]
             }
-            RunEvent::CompactionStarted { .. } => {
-                let id = fresh_compaction_id();
-                self.compaction = Some(id.clone());
-                vec![WireEvent::Compaction {
-                    id,
-                    status: CompactionStatus::Started,
-                }]
-            }
+            RunEvent::CompactionStarted { .. } => self.compaction_started(),
             RunEvent::CompactionCompleted { outcome, .. } => {
-                // A completion whose start was not seen still gets an id.
-                let id = self.compaction.take().unwrap_or_else(fresh_compaction_id);
-                // The compacted context's fill, as ACP reports it.
-                let usage = WireEvent::Usage {
-                    used_tokens: outcome.current_tokens(),
-                    window_tokens: self.window,
-                    cost_usd_micros: None,
-                };
-                vec![
-                    WireEvent::Compaction {
-                        id,
-                        status: CompactionStatus::Completed,
-                    },
-                    usage,
-                ]
+                self.compaction_ended(CompactionEnd::Completed(outcome))
             }
             // A cancel ends the compaction under way as cancelled; the
             // calls it interrupted close when the run's events end.
-            RunEvent::Cancelled { .. } => self
-                .compaction
-                .take()
-                .map(|id| WireEvent::Compaction {
-                    id,
-                    status: CompactionStatus::Cancelled,
-                })
-                .into_iter()
-                .collect(),
+            RunEvent::Cancelled { .. } => self.compaction_ended(CompactionEnd::Cancelled),
             // [`SessionEvent::RunClosed`] closes what the run left open.
             RunEvent::Started { .. } | RunEvent::Completed { .. } | RunEvent::Failed { .. } => {
                 Vec::new()
@@ -401,18 +419,60 @@ impl LiveEvents {
         self.proposed.clear();
         // Never the run's own error: it is not redacted, and may echo a
         // credential; the turn's end carries the redacted outcome (#1670).
-        let compaction = self.compaction.take().map(|id| WireEvent::Compaction {
-            id,
-            status: CompactionStatus::Failed {
-                error: UNFINISHED_COMPACTION.to_owned(),
-            },
-        });
+        let compaction =
+            self.compaction_ended(CompactionEnd::Failed(UNFINISHED_COMPACTION.to_owned()));
         let announced = std::mem::take(&mut self.announced);
         let calls = announced
             .into_values()
             .filter(|call| call.state == CallState::Open)
             .map(|call| WireEvent::tool_call(status_update(call.id, Some(ToolStatus::Failed))));
         compaction.into_iter().chain(calls).collect()
+    }
+
+    /// A compaction starting: the run's automatic one, or one a host runs
+    /// between turns, such as `/compact`, which emits no run events.
+    pub(crate) fn compaction_started(&mut self) -> Vec<WireEvent> {
+        let id = fresh_compaction_id();
+        self.compaction = Some(id.clone());
+        // Called outside [`Self::map`] too: a compaction ends any message.
+        self.message = None;
+        vec![WireEvent::Compaction {
+            id,
+            status: CompactionStatus::Started,
+        }]
+    }
+
+    /// The compaction under way ending as `end`, under the id it started
+    /// with; a cancel or failure with no compaction under way reports
+    /// nothing.
+    pub(crate) fn compaction_ended(&mut self, end: CompactionEnd<'_>) -> Vec<WireEvent> {
+        let (id, status, usage) = match end {
+            CompactionEnd::Completed(outcome) => (
+                // A completion whose start was not seen still gets an id.
+                Some(self.compaction.take().unwrap_or_else(fresh_compaction_id)),
+                CompactionStatus::Completed,
+                // The compacted context's fill, as ACP reports it.
+                Some(WireEvent::Usage {
+                    used_tokens: outcome.current_tokens(),
+                    window_tokens: self.window,
+                    cost_usd_micros: None,
+                }),
+            ),
+            CompactionEnd::Cancelled => (self.compaction.take(), CompactionStatus::Cancelled, None),
+            CompactionEnd::Failed(error) => (
+                self.compaction.take(),
+                CompactionStatus::Failed { error },
+                None,
+            ),
+        };
+        let Some(id) = id else {
+            return Vec::new();
+        };
+        // Called outside [`Self::map`] too: a compaction ends any message.
+        self.message = None;
+        std::iter::once(WireEvent::Compaction { id, status })
+            .chain(usage)
+            .collect()
     }
 
     /// A progress or result update for a call, sent as a full card when

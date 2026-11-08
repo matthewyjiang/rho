@@ -103,6 +103,22 @@ pub(crate) fn outcome_reduced_context(outcome: &rho_sdk::CompactionOutcome) -> b
     outcome.current_messages() < outcome.previous_messages() || outcome.removed_tokens() > 0
 }
 
+/// What a finished `/compact` did, in the words session hosts (ACP, the
+/// daemon) reply with.
+pub(crate) fn outcome_summary(outcome: &rho_sdk::CompactionOutcome) -> String {
+    if outcome_reduced_context(outcome) {
+        format!(
+            "context compacted: {} → {} messages, {} → {} tokens",
+            outcome.previous_messages(),
+            outcome.current_messages(),
+            outcome.previous_tokens(),
+            outcome.current_tokens(),
+        )
+    } else {
+        "context not compacted: compaction ran but did not reduce context".into()
+    }
+}
+
 /// History split for text-summary compaction, as positions in the partitioned
 /// history.
 ///

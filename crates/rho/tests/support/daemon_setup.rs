@@ -92,12 +92,22 @@ pub(super) async fn asked_operation(
 /// fixture answers with. It attaches first with no setup, so it reopens a
 /// session the daemon unloaded as a prompt would.
 async fn inspected_request(sandbox: &Sandbox, client: &Client, session: &SessionId) -> Value {
+    inspected_request_of(sandbox, client, session, "hello").await
+}
+
+/// [`inspected_request`] of a turn of `text`.
+async fn inspected_request_of(
+    sandbox: &Sandbox,
+    client: &Client,
+    session: &SessionId,
+    text: &str,
+) -> Value {
     let (follower, mut notifications) = sandbox.connect_following().await;
     let attached = follower
         .request::<SessionAttach>(&attach(sandbox, session))
         .await
         .unwrap();
-    assert_eq!(sandbox.prompt(client, session).await, Ok(()));
+    assert_eq!(sandbox.prompt_text(client, session, text).await, Ok(()));
     // A reset replays the last turn's end first; this prompt's comes after.
     let mut replayed = attached.replay_events;
     loop {
@@ -379,6 +389,46 @@ async fn a_session_runs_as_the_agent_its_client_names() {
     assert_eq!(
         instructed,
         [(None, false), (Some("archivist"), true)],
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: `/agent:<name> <task>` in a daemon session rebinds the fresh
+// session to that agent before its turn: the model gets the agent's
+// instructions, which the default agent's lack, and the task alone, not the
+// command (#1670).
+// Owner: daemon session commands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_agent_command_runs_its_task_as_that_agent() {
+    let sandbox = Sandbox::new();
+    let archivist = sandbox.isolated.home.join(".agents/agents/archivist.md");
+    std::fs::create_dir_all(archivist.parent().unwrap()).unwrap();
+    std::fs::write(&archivist, ARCHIVIST_AGENT).unwrap();
+    // The fixture answers with the request it got.
+    let client = sandbox.start_daemon("inspect").await;
+    let session = new_session(&sandbox, &client, None, SessionSetup::default())
+        .await
+        .unwrap();
+    let command = "/agent:archivist summarize the notes";
+    let request = inspected_request_of(&sandbox, &client, &session, command).await;
+
+    let system = request["messages"][0]["System"]
+        .as_str()
+        .expect("the request has a system prompt");
+    let prompt = request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|message| message.get("User").is_some())
+        .cloned();
+    assert_eq!(
+        (system.contains("Archive."), prompt),
+        (
+            true,
+            Some(serde_json::json!({"User": [{"Text": "summarize the notes"}]}))
+        ),
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

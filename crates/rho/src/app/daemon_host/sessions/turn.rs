@@ -29,22 +29,24 @@ use crate::{
         session_commands::{
             self, BuiltInCommand, CommandScope, CommandSet, Hosting, PromptCommand,
         },
-        session_events::outcome,
+        session_events::{outcome, CompactionEnd},
         session_runtime::{
-            CommandRejected, PlanReport, SessionEvent, SessionRuntime, TitleJob, Turn, TurnControl,
-            TurnIo, TurnOutcome, TurnView,
+            PlanReport, PromptScope, SessionEvent, SessionRuntime, TitleJob, Turn, TurnControl,
+            TurnIo, TurnOutcome, TurnView, WorkflowStart,
         },
+        workflow_cli::discover::StartCommand,
     },
     config::Config,
 };
 
 /// How a prompt's turn began, as the request that sent the prompt learns
-/// it. A turn that completed saved its prompt, so it began `Saved`. A turn
-/// the daemon's stop interrupted before it saved its prompt sends no
-/// answer: the request answers `DaemonStopping` once the stop begins.
+/// it. A turn that completed began `Saved`. A turn the daemon's stop
+/// interrupted before it saved its prompt sends no answer: the request
+/// answers `DaemonStopping` once the stop begins.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum PromptStart {
-    /// The turn saved the prompt and runs on.
+    /// The turn saved the prompt, or began `/compact`, which saves none,
+    /// and runs on.
     Saved,
     /// The turn ended before it saved the prompt, as this says: cancelled,
     /// timed out, or failed.
@@ -84,14 +86,22 @@ async fn expired(limit: Option<TurnLimit>) -> u64 {
     }
 }
 
-/// The commands a daemon session runs, which its menu lists too.
-/// `/compact`, workflows, and `/agent:` are not among them yet.
+/// The commands a daemon session runs, which its menu lists too: every
+/// command a session host runs, so the TUI's own commands are the only ones
+/// it refuses.
 pub(super) const DAEMON_COMMANDS: CommandSet = CommandSet {
-    built_ins: &[BuiltInCommand::Init],
-    workflows: Hosting::Refused,
-    agents: Hosting::Refused,
+    built_ins: &[BuiltInCommand::Compact, BuiltInCommand::Init],
+    workflows: Hosting::Runs,
+    agents: Hosting::Runs,
     sessions_label: "daemon sessions",
 };
+
+/// How a prompt's turn ran, before the daemon records its end: a model
+/// turn and a command that ran to its end both finish with an outcome.
+enum Ran {
+    Finished(wire::TurnOutcome),
+    Cancelled,
+}
 
 /// One turn of a session whose job already recorded the turn's start.
 pub(super) struct TurnTask {
@@ -143,7 +153,7 @@ impl TurnTask {
             // The daemon began stopping while the turn waited for the
             // runtime, behind changes or the last turn: it ends interrupted
             // without beginning its prompt, as the turns the stop stops do.
-            Some(_) if stopping.is_cancelled() => (Ok(TurnOutcome::Cancelled), None),
+            Some(_) if stopping.is_cancelled() => (Ok(Ran::Cancelled), None),
             Some(runtime) => {
                 let (ended, timed_out) = {
                     let turn = run_turn(runtime, &mut view, input, &session.config, &cancel);
@@ -173,25 +183,19 @@ impl TurnTask {
                 )
             }
             // Only the daemon's stop takes the runtime, after its last turn.
-            None => (Ok(TurnOutcome::Cancelled), None),
+            None => (Ok(Ran::Cancelled), None),
         };
         let title = runtime.as_mut().and_then(SessionRuntime::take_title);
         let (outcome, end) = match (ended, timed_out) {
-            (Ok(TurnOutcome::Completed(run)), _) => {
-                (Some(outcome::finished(&run)), TurnEnd::Completed)
-            }
+            (Ok(Ran::Finished(outcome)), _) => (Some(outcome), TurnEnd::Completed),
             // The daemon's stop already detached every client, so none
             // hears how the turn ended; the job records it interrupted.
-            (Ok(TurnOutcome::Cancelled), _) if stopping.is_cancelled() => {
-                (None, TurnEnd::Interrupted)
-            }
-            (Ok(TurnOutcome::Cancelled), Some(timeout_ms)) => (
+            (Ok(Ran::Cancelled), _) if stopping.is_cancelled() => (None, TurnEnd::Interrupted),
+            (Ok(Ran::Cancelled), Some(timeout_ms)) => (
                 Some(wire::TurnOutcome::TimedOut { timeout_ms }),
                 TurnEnd::TimedOut { timeout_ms },
             ),
-            (Ok(TurnOutcome::Cancelled), None) => {
-                (Some(wire::TurnOutcome::Cancelled), TurnEnd::Cancelled)
-            }
+            (Ok(Ran::Cancelled), None) => (Some(wire::TurnOutcome::Cancelled), TurnEnd::Cancelled),
             (Err(error), _) => {
                 let (outcome, end) = failed(error);
                 (Some(outcome), end)
@@ -214,6 +218,12 @@ fn failure(
     error: &anyhow::Error,
 ) -> wire::TurnError {
     tracing::warn!(job = %session.job, error = format!("{error:#}"), "a turn failed");
+    client_error(runtime, error)
+}
+
+/// `error` on `runtime` as clients are told it, hiding an authentication
+/// failure's text, which may echo credentials.
+fn client_error(runtime: &SessionRuntime, error: &anyhow::Error) -> wire::TurnError {
     // The model the turn ran on, which a configure may have switched from
     // the config's.
     let current = runtime.current_model();
@@ -256,14 +266,14 @@ async fn run_turn(
     input: UserInput,
     config: &Config,
     cancel: &CancellationToken,
-) -> anyhow::Result<TurnOutcome> {
+) -> anyhow::Result<Ran> {
     let scope = runtime.begin_prompt(config).await?;
     // A cancel sent before the prompt began only tripped `cancel`: the turn
     // ends here, before it saves the prompt or calls the model, and dropping
     // `scope` ends the prompt. A cancel from here on reaches the prompt
     // through the session's handle.
     if cancel.is_cancelled() {
-        return Ok(TurnOutcome::Cancelled);
+        return Ok(Ran::Cancelled);
     }
     let home = crate::paths::home_dir();
     let command = {
@@ -271,32 +281,128 @@ async fn run_turn(
         // Expansion can wait on an MCP server, so a cancel drops it.
         tokio::select! {
             biased;
-            () = scope.cancellation().cancelled() => return Ok(TurnOutcome::Cancelled),
+            () = scope.cancellation().cancelled() => return Ok(Ran::Cancelled),
             command = session_commands::resolve(input.clone(), &commands, DAEMON_COMMANDS) => command,
         }
     };
-    let (model, calls) = match command? {
-        PromptCommand::Turn { input, calls } => (input, calls),
-        // `DAEMON_COMMANDS` runs no `/compact`, workflow, or `/agent:`, so
-        // the resolver rejects them first.
-        PromptCommand::Compact { .. }
-        | PromptCommand::StartWorkflow(_)
-        | PromptCommand::RunAsAgent(_) => {
-            return Err(CommandRejected(
-                "could not run the command: not available in daemon sessions".into(),
-            )
-            .into())
+    match command? {
+        PromptCommand::Turn {
+            input: model,
+            calls,
+        } => {
+            // The command stays the shown message; the model gets its
+            // expansion.
+            let turn = Turn {
+                display: input,
+                model,
+                calls,
+            };
+            model_turn(runtime, view, &scope, turn, config).await
         }
-    };
-    view.session.live().prompt(&input);
-    // The command stays the shown message; the model gets its expansion.
-    let turn = Turn {
-        display: input,
-        model,
-        calls,
-    };
+        PromptCommand::Compact { instructions } => {
+            compact(runtime, view, &scope, instructions).await
+        }
+        PromptCommand::StartWorkflow(start) => {
+            start_workflow(runtime, view, &scope, input, start, config).await
+        }
+        PromptCommand::RunAsAgent(task) => {
+            runtime.rebind_agent(&scope, &task, config).await?;
+            let auths = available_auths().await;
+            view.rebound(runtime, &auths);
+            // The command stays the shown message; the model gets the task.
+            let turn = Turn {
+                display: input,
+                model: task.input,
+                calls: Vec::new(),
+            };
+            model_turn(runtime, view, &scope, turn, config).await
+        }
+    }
+}
+
+/// Runs `turn` as `scope`'s model turn.
+async fn model_turn(
+    runtime: &mut SessionRuntime,
+    view: &mut DaemonView,
+    scope: &PromptScope,
+    turn: Turn,
+    config: &Config,
+) -> anyhow::Result<Ran> {
+    view.session.live().prompt(&turn.display);
     // A turn builds a large future; keep it on the heap.
-    Box::pin(runtime.run_prompt_turn(view, &scope, turn, config)).await
+    let ended = Box::pin(runtime.run_prompt_turn(view, scope, turn, config)).await?;
+    Ok(match ended {
+        TurnOutcome::Completed(run) => Ran::Finished(outcome::finished(&run)),
+        TurnOutcome::Cancelled => Ran::Cancelled,
+    })
+}
+
+/// Runs `/compact` within `scope`, with optional `instructions` on what to
+/// keep, and shows it as a model turn's automatic compaction shows: the
+/// runtime's compaction reports no run events. It answers with what the
+/// compaction did. The command is not saved as a user message: the
+/// runtime saves the compacted context alone.
+async fn compact(
+    runtime: &mut SessionRuntime,
+    view: &mut DaemonView,
+    scope: &PromptScope,
+    instructions: Option<String>,
+) -> anyhow::Result<Ran> {
+    let started = view.session.live().compaction_started();
+    view.session.feed.publish(started);
+    // Nothing rejects the command from here on; the prompt's request need
+    // not wait for the compaction.
+    view.began();
+    let compacted = runtime.compact(scope, instructions).await;
+    let end = match &compacted {
+        Ok(Some(outcome)) => CompactionEnd::Completed(outcome),
+        Ok(None) => CompactionEnd::Cancelled,
+        Err(error) => CompactionEnd::Failed(client_error(runtime, error).message),
+    };
+    let ended = view.session.live().compaction_ended(end);
+    let ended = cost::priced(ended, &view.session.id).await;
+    view.session.feed.publish(ended);
+    Ok(match compacted? {
+        Some(outcome) => Ran::Finished(wire::TurnOutcome::Answered {
+            text: crate::compaction::outcome_summary(&outcome),
+            stop: wire::AnswerStop::EndTurn,
+        }),
+        None => Ran::Cancelled,
+    })
+}
+
+/// Starts `start`'s workflow within `scope`, without a model turn. The
+/// runtime saves the prompt, `display`, with the start's notice as its
+/// reply; clients see both as a reload replays them, and the turn answers
+/// with the notice.
+async fn start_workflow(
+    runtime: &mut SessionRuntime,
+    view: &mut DaemonView,
+    scope: &PromptScope,
+    display: UserInput,
+    start: StartCommand,
+    config: &Config,
+) -> anyhow::Result<Ran> {
+    let (notice, inserted) = match runtime
+        .start_workflow(scope, &display, start, config)
+        .await?
+    {
+        WorkflowStart::Started { notice, inserted } => (notice, inserted),
+        WorkflowStart::Cancelled => return Ok(Ran::Cancelled),
+    };
+    let shown = {
+        let mut live = view.session.live();
+        live.prompt(&display);
+        let mut shown = live.map(&SessionEvent::MessageInserted(inserted.clone()));
+        shown.push(live.saved_reply(&inserted, notice.clone()));
+        shown
+    };
+    view.session.feed.publish(shown);
+    view.began();
+    Ok(Ran::Finished(wire::TurnOutcome::Answered {
+        text: notice,
+        stop: wire::AnswerStop::EndTurn,
+    }))
 }
 
 /// The outcome of a turn that failed with `error`, and the end its job
@@ -319,8 +425,8 @@ const UNEXPECTED_STOP: &str = "the turn stopped unexpectedly; see the daemon log
 /// [`UNEXPECTED_STOP`].
 struct DaemonView {
     session: Arc<LoadedSession>,
-    /// Answered `Saved` once the turn saved its prompt, or with how the
-    /// turn ended if it ends first.
+    /// Answered `Saved` once the turn saved its prompt or began `/compact`,
+    /// or with how the turn ended if it ends first.
     started: Option<oneshot::Sender<PromptStart>>,
     /// Whether the turn's end is recorded.
     ended: bool,
@@ -365,6 +471,27 @@ impl DaemonView {
         }
     }
 
+    /// Tells the request that sent the prompt, if it still waits, that the
+    /// turn began (see [`PromptStart::Saved`]).
+    fn began(&mut self) {
+        if let Some(started) = self.started.take() {
+            let _ = started.send(PromptStart::Saved);
+        }
+    }
+
+    /// Follows `runtime` once `/agent:` rebound it: its events map with
+    /// the agent's tools, and clients see the agent's options, its model
+    /// among them, before its turn's output. `auths` as for
+    /// [`LoadedSession::refresh_options`].
+    fn rebound(&self, runtime: &SessionRuntime, auths: &[String]) {
+        self.session.live().rebind_tools(
+            runtime.workspace_root(),
+            runtime.tools(),
+            runtime.configured_context_window(),
+        );
+        self.session.refresh_options(runtime, auths);
+    }
+
     /// Takes the model turn's events until it drops its sender, opening
     /// and withdrawing input requests whose answers go to `control`. Holds
     /// `control` until then: a turn whose control channel closes fails, and
@@ -379,9 +506,7 @@ impl DaemonView {
             let wire = cost::priced(wire, &self.session.id).await;
             self.session.feed.publish(wire);
             if matches!(event, SessionEvent::MessageInserted(_)) {
-                if let Some(started) = self.started.take() {
-                    let _ = started.send(PromptStart::Saved);
-                }
+                self.began();
             }
             self.session
                 .change_inputs(|inputs| inputs.note(&control, &event, SystemTime::now()));

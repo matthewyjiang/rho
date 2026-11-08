@@ -43,7 +43,7 @@ mod replay;
 mod test_support;
 mod tools;
 
-pub(crate) use live::LiveEvents;
+pub(crate) use live::{CompactionEnd, LiveEvents};
 
 /// Hands out wire ids for tool calls. Providers may reuse a call id across
 /// turns, and a reused wire id would update the earlier card, so each call
