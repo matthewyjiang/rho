@@ -25,9 +25,32 @@ const APPROVAL_DETAIL_CHROME_ROWS: usize = APPROVAL_FIXED_COMPOSER_ROWS + APPROV
 const MIN_DETAIL_PAGE_LINES: usize = 3;
 
 /// Body rows for an approval prompt: the thing being approved, then dim context.
-struct ApprovalDetails {
-    primary: Vec<String>,
-    meta: Vec<String>,
+#[derive(Clone, Debug, Default)]
+pub(super) struct ApprovalDetails {
+    pub(super) primary: Vec<String>,
+    pub(super) meta: Vec<String>,
+}
+
+/// What an approval prompt shows, whoever asks: its title, the details of
+/// what it would allow, and the policy's reason. Built once when the prompt
+/// opens, from the in-process runtime's request or a daemon session's ask
+/// (`daemon_ask`).
+#[derive(Clone, Debug)]
+pub(in crate::tui) struct ApprovalPrompt {
+    pub(super) title: String,
+    pub(super) details: ApprovalDetails,
+    pub(super) reason: String,
+}
+
+impl ApprovalPrompt {
+    /// The prompt for an in-process capability request.
+    pub(in crate::tui) fn of_capability(request: &CapabilityRequest, reason: &str) -> Self {
+        Self {
+            title: approval_title(request),
+            details: approval_detail_sections(request),
+            reason: reason.to_owned(),
+        }
+    }
 }
 
 /// Approval composer rows plus the clickable choice rows.
@@ -42,8 +65,7 @@ pub(in crate::tui) fn approval_frame(
     viewport_height: usize,
 ) -> ApprovalFrame {
     approval_frame_for_position(
-        approval.request().capability(),
-        approval.request().reason(),
+        approval.prompt(),
         approval.active(),
         approval.detail_offset(),
         width,
@@ -52,8 +74,7 @@ pub(in crate::tui) fn approval_frame(
 }
 
 pub(super) fn approval_frame_for_position(
-    request: &CapabilityRequest,
-    reason: &str,
+    prompt: &ApprovalPrompt,
     active: ApprovalChoice,
     detail_offset: usize,
     width: usize,
@@ -62,11 +83,11 @@ pub(super) fn approval_frame_for_position(
     let width = width.max(1);
     let page_lines = approval_detail_page_lines(viewport_height);
     let mut lines = vec![Line::styled(
-        truncate_one_line(&approval_title(request), width),
+        truncate_one_line(&prompt.title, width),
         Theme::input_prompt(),
     )];
 
-    let details = wrapped_detail_lines(request, reason, width);
+    let details = wrapped_detail_lines(prompt, width);
     let max_offset = details.len().saturating_sub(page_lines);
     let detail_offset = detail_offset.min(max_offset);
     let detail_end = (detail_offset + page_lines).min(details.len());
@@ -141,11 +162,8 @@ pub(super) fn approval_frame_for_position(
     ApprovalFrame { lines, hits }
 }
 
-pub(super) fn approval_detail_line_count(
-    request: &rho_sdk::ApprovalRequest,
-    width: usize,
-) -> usize {
-    wrapped_detail_lines(request.capability(), request.reason(), width.max(1)).len()
+pub(super) fn approval_detail_line_count(prompt: &ApprovalPrompt, width: usize) -> usize {
+    wrapped_detail_lines(prompt, width.max(1)).len()
 }
 
 pub(super) fn approval_detail_page_lines(viewport_height: usize) -> usize {
@@ -154,20 +172,15 @@ pub(super) fn approval_detail_page_lines(viewport_height: usize) -> usize {
         .max(MIN_DETAIL_PAGE_LINES)
 }
 
-fn wrapped_detail_lines(
-    request: &CapabilityRequest,
-    reason: &str,
-    width: usize,
-) -> Vec<Line<'static>> {
-    let details = approval_detail_sections(request);
+fn wrapped_detail_lines(prompt: &ApprovalPrompt, width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    for text in details.primary {
-        push_wrapped_text(&mut lines, &text, width, Theme::text(), LineFill::Natural);
+    for text in &prompt.details.primary {
+        push_wrapped_text(&mut lines, text, width, Theme::text(), LineFill::Natural);
     }
-    for text in details.meta {
-        push_wrapped_text(&mut lines, &text, width, Theme::dim(), LineFill::Natural);
+    for text in &prompt.details.meta {
+        push_wrapped_text(&mut lines, text, width, Theme::dim(), LineFill::Natural);
     }
-    let reason = reason.trim();
+    let reason = prompt.reason.trim();
     if !reason.is_empty() {
         push_wrapped_text(
             &mut lines,
@@ -181,24 +194,40 @@ fn wrapped_detail_lines(
 }
 
 pub(super) fn approval_title(request: &CapabilityRequest) -> String {
+    let actor = match request.source() {
+        CapabilitySource::BuiltInTool { name } => Actor::BuiltInTool(name),
+        CapabilitySource::HostProvidedTool { name } => Actor::HostTool(name),
+        CapabilitySource::PromptConstruction => Actor::Rho,
+        _ => Actor::Rho,
+    };
+    title(actor, Some(request.kind()))
+}
+
+/// Who asks for a capability, as an approval title names it.
+pub(super) enum Actor<'a> {
+    BuiltInTool(&'a str),
+    HostTool(&'a str),
+    Rho,
+}
+
+/// "`actor` wants to `kind`'s verb"; `None` is a capability this rho
+/// cannot name.
+pub(super) fn title(actor: Actor<'_>, kind: Option<CapabilityKind>) -> String {
     // Host-provided tools are a different trust boundary from SDK built-ins.
     // Put the provenance marker first so narrow-title truncation keeps it.
-    let actor = match request.source() {
-        CapabilitySource::BuiltInTool { name } => sanitize_controls(name),
-        CapabilitySource::HostProvidedTool { name } => {
-            format!("host {}", sanitize_controls(name))
-        }
-        CapabilitySource::PromptConstruction => "rho".into(),
-        _ => "rho".into(),
+    let actor = match actor {
+        Actor::BuiltInTool(name) => sanitize_controls(name),
+        Actor::HostTool(name) => format!("host {}", sanitize_controls(name)),
+        Actor::Rho => "rho".into(),
     };
-    let verb = match request.kind() {
-        CapabilityKind::Write => "write",
-        CapabilityKind::Process => "run a command",
-        CapabilityKind::Read => "read",
-        CapabilityKind::Network => "access the network",
-        CapabilityKind::Skill => "load a skill",
-        CapabilityKind::InstructionDiscovery => "discover instructions",
-        _ => "use a capability",
+    let verb = match kind {
+        Some(CapabilityKind::Write) => "write",
+        Some(CapabilityKind::Process) => "run a command",
+        Some(CapabilityKind::Read) => "read",
+        Some(CapabilityKind::Network) => "access the network",
+        Some(CapabilityKind::Skill) => "load a skill",
+        Some(CapabilityKind::InstructionDiscovery) => "discover instructions",
+        Some(_) | None => "use a capability",
     };
     format!("{actor} wants to {verb}")
 }
@@ -240,10 +269,7 @@ fn approval_detail_sections(request: &CapabilityRequest) -> ApprovalDetails {
                 meta,
             }
         }
-        _ => ApprovalDetails {
-            primary: Vec::new(),
-            meta: Vec::new(),
-        },
+        _ => ApprovalDetails::default(),
     }
 }
 
@@ -294,7 +320,7 @@ fn format_executable_lookup(selection: ExecutableSelection) -> &'static str {
     }
 }
 
-fn format_path_scope(scope: &PathScope) -> String {
+pub(super) fn format_path_scope(scope: &PathScope) -> String {
     match scope {
         PathScope::PrimaryWorkspace => "scope primary workspace".into(),
         PathScope::GrantedRoot { root } => format!(
@@ -354,6 +380,6 @@ fn format_json_strings<'a>(values: impl IntoIterator<Item = &'a str>) -> String 
     sanitize_controls(&format!("[{serialized}]"))
 }
 
-fn sanitize_controls(text: &str) -> String {
+pub(super) fn sanitize_controls(text: &str) -> String {
     escape_controls(text, LineBreaks::Escape)
 }

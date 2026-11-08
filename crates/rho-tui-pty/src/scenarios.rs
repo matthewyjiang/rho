@@ -24,6 +24,8 @@ mod conversation_tree;
 mod copy_output;
 // The rho daemon is unix-only (#1665).
 #[cfg(unix)]
+mod daemon_approval;
+#[cfg(unix)]
 mod daemon_prompt;
 #[cfg(unix)]
 mod daemon_resume;
@@ -673,6 +675,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_prompt::DAEMON_PROMPT_SCENARIO,
     #[cfg(unix)]
     daemon_prompt::DAEMON_CANCEL_SCENARIO,
+    #[cfg(unix)]
+    daemon_approval::DAEMON_APPROVAL_SCENARIO,
+    #[cfg(unix)]
+    daemon_approval::DAEMON_APPROVAL_DENY_SCENARIO,
     Scenario::new(
         "sessions_hub",
         "Inspect a foreign session safely, then browse, resume, and delete locally",

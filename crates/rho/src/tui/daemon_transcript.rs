@@ -1,7 +1,8 @@
 //! Shows a daemon session's [`DaemonView`]s through the TUI's own transcript
 //! paths (#1667): history entries and the live tool batch, fed the same
 //! view-model events an in-process turn feeds them, and the busy chrome an
-//! in-process turn shows, which here follows the job's state.
+//! in-process turn shows, which here follows the job's state. Input
+//! requests open and close their prompts through `daemon_answers`.
 
 use std::time::Instant;
 
@@ -27,6 +28,7 @@ impl App {
                     self.set_history_entries(Vec::new());
                     self.turn.clear_tool_calls();
                     self.set_todo_list(None);
+                    self.drop_daemon_inputs();
                 }
                 DaemonView::User(text) => self.insert_entry(&Entry::User(text)),
                 DaemonView::Text { kind, text, opens } => {
@@ -86,6 +88,11 @@ impl App {
                     let _ = self.take_accepted_steering(std::slice::from_ref(&id));
                 }
                 DaemonView::SteerDelivered(id) => self.record_delivered_steering(&id),
+                DaemonView::InputOpened(request) => self.ask_daemon_input(*request).await,
+                DaemonView::InputClosed { id, notice } => {
+                    self.close_daemon_input(id, notice).await;
+                }
+                DaemonView::InputHeld(id) => self.daemon_input_held(id),
                 DaemonView::Status(text) => self.set_status(text),
                 DaemonView::Notice(text) => self.insert_entry(&Entry::Notice(text)),
                 DaemonView::Error(text) => self.insert_entry(&Entry::Error(text)),
@@ -138,7 +145,8 @@ impl App {
         self.turn.start_loading();
     }
 
-    /// Ends the busy chrome as the turn rested `rest`. Cards still running
+    /// Ends the busy chrome as the turn rested `rest`, closing any input
+    /// request's prompt still open. Cards still running
     /// stay in the transcript as interrupted, as a replay of a turn the
     /// daemon never closed leaves them; a session already at rest only
     /// tidies those.
@@ -148,6 +156,9 @@ impl App {
     /// applied as follow-ups, and a completed one arms the next follow-up,
     /// which the app loop sends once the composer is free.
     async fn end_daemon_turn(&mut self, rest: Rest) {
+        // A turn withdraws its requests before it ends, so any prompt still
+        // open is one the TUI can no longer follow.
+        self.drop_daemon_inputs();
         for entry in self.turn.interrupted_tool_entries() {
             self.insert_entry(&Entry::Tool(entry));
         }

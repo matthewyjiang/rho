@@ -1,18 +1,28 @@
+use std::{collections::BTreeMap, path::PathBuf};
+
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     display::{Presentation, ToolCard, ToolCardStatus, ToolFamily, ToolHeader},
-    AnswerStop, ContentBlock, JobState, MessageId, SessionEvent, SteerId, ToolCallId as WireCallId,
-    ToolCallUpdate, ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
+    AnswerStop, ApprovalAsk, ApprovalSource, Ask, Choice, ContentBlock, InputAnswer, InputRequest,
+    InputRequestId, InputTimeout, JobState, MessageId, Operation, PathScope, Question, QuestionAsk,
+    Resolution, Selection, SessionEvent, SteerId, ToolCallId as WireCallId, ToolCallUpdate,
+    ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
 };
 use rho_sdk::{SteeringId, ToolCallId};
 
 use super::{DaemonEvents, DaemonView, Rest, TurnState};
-use crate::tui::StreamKind;
+use crate::tui::{daemon_inputs::AnswerRefusal, StreamKind};
 
-/// What the session hands the mapper: an event, or a reset replay's start.
+/// What the session hands the mapper: an event, a reset replay's start, an
+/// attach's open requests and its replay's end, or what came of an answer
+/// the TUI sent.
 enum Step {
     Event(SessionEvent),
     Reset,
+    Attached(Vec<InputRequest>),
+    ReplayEnded(JobState),
+    Answering(InputRequestId),
+    Refused(InputRequestId, AnswerRefusal),
 }
 
 /// The views one session's mapper makes of `steps`.
@@ -23,6 +33,10 @@ fn map(steps: Vec<Step>) -> Vec<DaemonView> {
         match step {
             Step::Event(event) => views.extend(events.map(event)),
             Step::Reset => views.push(events.reset()),
+            Step::Attached(inputs) => events.attached(inputs),
+            Step::ReplayEnded(state) => views.extend(events.end_replay(state)),
+            Step::Answering(id) => events.answering(id),
+            Step::Refused(id, refusal) => views.extend(events.answer_refused(id, refusal)),
         }
     }
     views
@@ -367,6 +381,191 @@ fn job_states_and_steers_map_to_turn_views() {
                 DaemonView::SteerDelivered(steer()),
                 DaemonView::SteerApplied(steer()),
                 DaemonView::User("check the tests too".into()),
+            ],
+        ),
+    ];
+
+    for (name, steps, expected) in cases {
+        assert_eq!(map(steps), expected, "{name}");
+    }
+}
+
+/// A write approval, request `id`.
+fn approval(id: u64) -> InputRequest {
+    InputRequest {
+        id: InputRequestId(id),
+        ask: Ask::Approval(ApprovalAsk {
+            source: ApprovalSource::BuiltInTool {
+                name: "write".into(),
+            },
+            operation: Operation::WritePath {
+                path: PathBuf::from("notes.md"),
+                scope: PathScope::Workspace,
+            },
+            reason: String::new(),
+        }),
+        tool_call: None,
+        timeout: None,
+    }
+}
+
+/// A question, request `id`, that the daemon answers at a timeout.
+fn timed_question(id: u64) -> InputRequest {
+    InputRequest {
+        id: InputRequestId(id),
+        ask: Ask::Question(QuestionAsk {
+            title: "Colour".into(),
+            questions: vec![Question {
+                id: "colour".into(),
+                prompt: "Pick a colour".into(),
+                header: None,
+                choices: vec![Choice {
+                    value: "red".into(),
+                    label: "Red".into(),
+                    description: None,
+                }],
+                selection: Selection::One,
+                allow_other: false,
+                help: None,
+                default: None,
+                required: true,
+            }],
+        }),
+        tool_call: None,
+        timeout: Some(InputTimeout {
+            deadline_ms: 1,
+            answer: InputAnswer::Answers {
+                answers: BTreeMap::from([("colour".to_owned(), vec!["red".to_owned()])]),
+            },
+            reason: "red keeps the build going".into(),
+        }),
+    }
+}
+
+fn requested(request: InputRequest) -> Step {
+    Step::Event(SessionEvent::InputRequested {
+        request: Box::new(request),
+    })
+}
+
+fn resolved(id: u64, resolution: Resolution) -> Step {
+    Step::Event(SessionEvent::InputResolved {
+        id: InputRequestId(id),
+        resolution,
+    })
+}
+
+fn opened(request: InputRequest) -> DaemonView {
+    DaemonView::InputOpened(Box::new(request))
+}
+
+// Covers: an input request shows once, whether it opened live or the replay
+// left it open (listed by the attach, repeated by the replay, or neither),
+// and never when the replay opened and closed it; one another client
+// answered, the turn withdrew, or the daemon answered at its timeout closes
+// with a notice, one the TUI answered closes silently, and a refused answer
+// shows the request again only while it is still open.
+// Owner: tui daemon event mapping
+#[test]
+fn input_requests_show_once_and_close_as_resolved() {
+    let held = InputRequest {
+        timeout: None,
+        ..timed_question(3)
+    };
+    let cases = [
+        (
+            "the replay leaves a request open: it shows once the replay ends",
+            vec![
+                Step::Attached(vec![approval(1)]),
+                requested(approval(1)),
+                requested(approval(2)),
+                Step::ReplayEnded(JobState::WaitingForInput),
+            ],
+            vec![
+                DaemonView::Turn(TurnState::WaitingForInput),
+                opened(approval(1)),
+                opened(approval(2)),
+            ],
+        ),
+        (
+            "the replay opens and closes a request: it never shows",
+            vec![
+                Step::Attached(Vec::new()),
+                requested(approval(1)),
+                resolved(1, Resolution::Answered),
+                Step::ReplayEnded(JobState::Running),
+            ],
+            vec![DaemonView::Turn(TurnState::Running)],
+        ),
+        (
+            "a request held during the replay shows without its timeout",
+            vec![
+                Step::Attached(vec![timed_question(3)]),
+                Step::Event(SessionEvent::InputHeld {
+                    id: InputRequestId(3),
+                }),
+                Step::ReplayEnded(JobState::WaitingForInput),
+            ],
+            vec![DaemonView::Turn(TurnState::WaitingForInput), opened(held)],
+        ),
+        (
+            "live requests close as resolved elsewhere",
+            vec![
+                requested(approval(1)),
+                requested(approval(1)),
+                resolved(1, Resolution::Answered),
+                requested(approval(2)),
+                resolved(2, Resolution::Withdrawn),
+                requested(timed_question(3)),
+                resolved(3, Resolution::TimedOut),
+            ],
+            vec![
+                opened(approval(1)),
+                DaemonView::InputClosed {
+                    id: InputRequestId(1),
+                    notice: "another client answered the approval".into(),
+                },
+                opened(approval(2)),
+                DaemonView::InputClosed {
+                    id: InputRequestId(2),
+                    notice: "the turn withdrew the approval".into(),
+                },
+                opened(timed_question(3)),
+                DaemonView::InputClosed {
+                    id: InputRequestId(3),
+                    notice: "timeout fallback: red keeps the build going".into(),
+                },
+            ],
+        ),
+        (
+            "a request the TUI answered closes silently",
+            vec![
+                requested(approval(1)),
+                Step::Answering(InputRequestId(1)),
+                resolved(1, Resolution::Answered),
+            ],
+            vec![opened(approval(1))],
+        ),
+        (
+            "a refused answer asks again; one no longer open does not",
+            vec![
+                requested(approval(1)),
+                Step::Answering(InputRequestId(1)),
+                Step::Refused(
+                    InputRequestId(1),
+                    AnswerRefusal::Failed("the daemon is busy".into()),
+                ),
+                requested(approval(2)),
+                Step::Answering(InputRequestId(2)),
+                Step::Refused(InputRequestId(2), AnswerRefusal::NotOpen),
+                resolved(2, Resolution::Answered),
+            ],
+            vec![
+                opened(approval(1)),
+                DaemonView::Error("could not answer the request: the daemon is busy".into()),
+                opened(approval(1)),
+                opened(approval(2)),
+                DaemonView::Error("could not answer the request: it is no longer open".into()),
             ],
         ),
     ];

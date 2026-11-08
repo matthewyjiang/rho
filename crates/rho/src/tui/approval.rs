@@ -1,12 +1,14 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use rho_sdk::{ApprovalDecision, PendingApproval};
+use tokio::sync::oneshot;
 
 use super::{composer_pointer::ChoiceClick, App, ComposerMode, UserWait};
 
+mod daemon_ask;
 mod render;
 
-pub(in crate::tui) use render::approval_frame;
 use render::{approval_detail_line_count, approval_detail_page_lines};
+pub(in crate::tui) use render::{approval_frame, ApprovalPrompt};
 
 const CANCELLED_BY_USER_REASON: &str = "cancelled by user";
 
@@ -63,9 +65,39 @@ impl ApprovalChoice {
     }
 }
 
+/// Where an approval prompt's decision goes.
+#[derive(Debug)]
+// Unboxed: boxing the runtime's request only moves the same lint onto
+// `ComposerMode`, whose sizes it balances. T6 (#1667) deletes the runtime
+// variant with `InteractiveRuntime`.
+#[allow(clippy::large_enum_variant)]
+enum ApprovalResponder {
+    /// The in-process runtime's request.
+    Runtime(PendingApproval),
+    /// A channel its opener reads, as for a daemon session's request.
+    /// Dropped unanswered, it says nothing was decided.
+    Channel(Option<oneshot::Sender<ApprovalDecision>>),
+}
+
+impl ApprovalResponder {
+    fn respond(&mut self, decision: ApprovalDecision) {
+        match self {
+            Self::Runtime(pending) => {
+                let _ = pending.respond(decision);
+            }
+            Self::Channel(reply) => {
+                if let Some(reply) = reply.take() {
+                    let _ = reply.send(decision);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct ApprovalComposer {
-    pending: PendingApproval,
+    prompt: ApprovalPrompt,
+    responder: ApprovalResponder,
     active: ApprovalChoice,
     /// First visible detail line, measured from the start of the request.
     detail_offset: usize,
@@ -74,17 +106,18 @@ pub(super) struct ApprovalComposer {
 }
 
 impl ApprovalComposer {
-    fn new(pending: PendingApproval, restore_side: bool) -> Self {
+    fn new(prompt: ApprovalPrompt, responder: ApprovalResponder, restore_side: bool) -> Self {
         Self {
-            pending,
+            prompt,
+            responder,
             active: ApprovalChoice::Deny,
             detail_offset: 0,
             restore_side,
         }
     }
 
-    pub(super) fn request(&self) -> &rho_sdk::ApprovalRequest {
-        self.pending.request()
+    pub(super) fn prompt(&self) -> &ApprovalPrompt {
+        &self.prompt
     }
 
     pub(super) fn active(&self) -> ApprovalChoice {
@@ -97,7 +130,7 @@ impl ApprovalComposer {
 
     fn scroll_details_by(&mut self, delta_pages: isize, width: usize, viewport_height: usize) {
         let page_lines = approval_detail_page_lines(viewport_height).max(1);
-        let detail_len = approval_detail_line_count(self.request(), width);
+        let detail_len = approval_detail_line_count(&self.prompt, width);
         let max_offset = detail_len.saturating_sub(page_lines);
         let current = self.detail_offset.min(max_offset);
         let delta_lines = delta_pages.saturating_mul(page_lines as isize);
@@ -121,20 +154,52 @@ impl ApprovalComposer {
     }
 
     fn respond(&mut self, decision: ApprovalDecision) {
-        let _ = self.pending.respond(decision);
+        self.responder.respond(decision);
     }
 }
 
 impl App {
     pub(super) async fn open_approval(&mut self, pending: PendingApproval) {
+        let request = pending.request();
+        let prompt = ApprovalPrompt::of_capability(request.capability(), request.reason());
+        self.open_approval_prompt(prompt, ApprovalResponder::Runtime(pending))
+            .await;
+    }
+
+    /// Opens the approval prompt for `prompt`, whose decision goes to
+    /// `reply`, as a daemon session's request does.
+    pub(super) async fn open_replying_approval(
+        &mut self,
+        prompt: ApprovalPrompt,
+        reply: oneshot::Sender<ApprovalDecision>,
+    ) {
+        self.open_approval_prompt(prompt, ApprovalResponder::Channel(Some(reply)))
+            .await;
+    }
+
+    async fn open_approval_prompt(&mut self, prompt: ApprovalPrompt, responder: ApprovalResponder) {
         let restore_side = self.side_overlay_open();
         self.input_ui
             .set_composer(ComposerMode::Approval(ApprovalComposer::new(
-                pending,
+                prompt,
+                responder,
                 restore_side,
             )));
         self.set_status("approval requested");
         self.wait_for_user(UserWait::Approval).await;
+    }
+
+    /// Closes the approval prompt undecided, as when its request closed
+    /// elsewhere; `/side` comes back if the prompt replaced it.
+    pub(super) fn withdraw_approval(&mut self) {
+        match self.input_ui.take_composer() {
+            ComposerMode::Approval(approval) => {
+                if approval.restore_side && self.side_chat.is_some() {
+                    self.input_ui.set_composer(ComposerMode::Side);
+                }
+            }
+            composer => self.input_ui.set_composer(composer),
+        }
     }
 
     pub(super) fn handle_approval_key(

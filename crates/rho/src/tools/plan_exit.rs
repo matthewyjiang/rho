@@ -181,25 +181,39 @@ fn host_error(error: rho_sdk::Error) -> ToolError {
     }
 }
 
-/// Asks the TUI's decision and feedback questionnaire.
-async fn ask_questionnaire(
-    context: &ToolContext,
+/// The id of the plan approval's decision question, whose answer is the
+/// name of the mode to approve into, or anything else to keep planning.
+pub(crate) const DECISION_QUESTION_ID: &str = "decision";
+
+/// The plan approval's decision question: approve into one of `targets`,
+/// or keep planning. The in-process TUI asks it with a feedback field; a
+/// daemon session's plan approval takes no feedback, so the daemon-hosted
+/// TUI asks it alone.
+pub(crate) fn decision_question(
     targets: &[PermissionMode],
-) -> Result<PlanExitDecision, ToolError> {
+) -> Result<HostQuestion, rho_sdk::Error> {
     let mut choices = targets
         .iter()
         .map(|&mode| HostChoice::new(mode.as_str(), approval_label(mode)))
         .collect::<Vec<_>>();
     choices.push(HostChoice::new("keep_planning", "Keep planning"));
-    let question = HostQuestion::new(
-        "decision",
+    Ok(HostQuestion::new(
+        DECISION_QUESTION_ID,
         "Plan ready. How should Rho continue?",
         choices,
         SelectionMode::One,
-    )
-    .map_err(host_error)?
-    .with_header("Decision")
-    .with_help("Review the plan in the tool card above. Approval lasts until Rho exits; it is not saved, and the next launch starts in your saved mode.");
+    )?
+    .with_header("Decision"))
+}
+
+/// Asks the TUI's decision and feedback questionnaire.
+async fn ask_questionnaire(
+    context: &ToolContext,
+    targets: &[PermissionMode],
+) -> Result<PlanExitDecision, ToolError> {
+    let question = decision_question(targets)
+        .map_err(host_error)?
+        .with_help("Review the plan in the tool card above. Approval lasts until Rho exits; it is not saved, and the next launch starts in your saved mode.");
     // Feedback can contain arbitrary text, including reserved decision values.
     // Only the closed decision question authorizes a permission change.
     let feedback = HostQuestion::new(
@@ -220,7 +234,7 @@ async fn ask_questionnaire(
         .map_err(host_error)?;
     let answer = response
         .answers()
-        .get("decision")
+        .get(DECISION_QUESTION_ID)
         .and_then(|answers| answers.first())
         .ok_or_else(|| {
             ToolError::new(ToolErrorKind::Execution, "plan approval answer is missing")

@@ -58,8 +58,12 @@ mod context_overlay;
 mod copy_interaction;
 // The TUI as a daemon client (#1667). The daemon is unix-only (#1665), so
 // elsewhere no daemon session opens and the mapper is never built.
+mod daemon_answers;
+mod daemon_asks;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod daemon_events;
+#[cfg_attr(not(unix), allow(dead_code))]
+mod daemon_inputs;
 mod daemon_prompt;
 mod daemon_session;
 mod daemon_transcript;
@@ -577,6 +581,9 @@ struct App {
     /// Live delegated-agent cap, shared with the executor so `/config` can resize it.
     agent_concurrency: Option<crate::app::agent_concurrency::AgentConcurrency>,
     pending_subagent_questionnaire: Option<PendingSubagentQuestionnaire>,
+    /// The followed daemon session's input request the TUI shows, and those
+    /// waiting behind it; empty on the in-process path.
+    daemon_answers: daemon_answers::DaemonAnswers,
     input_ui: InputUi,
     /// Palette match caches shared by keystroke and render paths.
     palette_caches: palette::PaletteCaches,

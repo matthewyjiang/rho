@@ -8,12 +8,12 @@
 //! [`next_views`], which maps what the daemon sent since through
 //! [`DaemonEvents`]: the reset replay of the saved conversation first, then
 //! live events. Once the replay is over, the job state the attach answered
-//! with says whether a turn runs.
+//! with says whether a turn runs, and the input requests still open show.
 //!
 //! The TUI prompts, cancels, steers, and withdraws steers through it
-//! (`daemon_turn`); input requests come in T1d, options in T1e. Quitting
-//! drops the connection, and the daemon keeps the session; a detach, and
-//! reattaching after `lagged`, come in T1f.
+//! (`daemon_turn`), and answers and holds input requests (`daemon_answers`);
+//! options come in T1e. Quitting drops the connection, and the daemon keeps
+//! the session; a detach, and reattaching after `lagged`, come in T1f.
 //!
 //! Off unix there is no daemon (#1665): the type is uninhabited, so the
 //! TUI's daemon paths compile everywhere and never run there.
@@ -74,6 +74,18 @@ impl DaemonSession {
     ) -> anyhow::Result<rho_protocol::UnsteerOutcome> {
         match *self {}
     }
+
+    pub(in crate::tui) async fn answer(
+        &mut self,
+        _id: rho_protocol::InputRequestId,
+        _answer: rho_protocol::InputAnswer,
+    ) {
+        match *self {}
+    }
+
+    pub(in crate::tui) async fn hold(&mut self, _id: rho_protocol::InputRequestId) -> bool {
+        match *self {}
+    }
 }
 
 #[cfg(unix)]
@@ -84,19 +96,27 @@ mod unix {
     };
 
     use anyhow::Context;
+    use rho_protocol::ClientError;
     use rho_protocol::{
         methods::{
-            SessionAttach, SessionCancel, SessionNew, SessionPrompt, SessionSteer, SessionUnsteer,
+            SessionAnswer, SessionAttach, SessionCancel, SessionHold, SessionNew, SessionPrompt,
+            SessionSteer, SessionUnsteer,
         },
-        ClientEnvironment, ContentBlock, DetachReason, ErrorCode, JobState, Replay,
-        SessionAttachParams, SessionCancelParams, SessionId, SessionNewParams, SessionPromptParams,
-        SessionSetup, SessionSteerParams, SessionUnsteerParams, SteerId, UnsteerOutcome,
+        ClientEnvironment, ContentBlock, DetachReason, ErrorCode, InputAnswer, InputRequestId,
+        JobState, Replay, SessionAnswerParams, SessionAttachParams, SessionCancelParams,
+        SessionHoldParams, SessionId, SessionNewParams, SessionPromptParams, SessionSetup,
+        SessionSteerParams, SessionUnsteerParams, SteerId, UnsteerOutcome,
     };
     use rho_sdk::SteeringId;
     use tokio::sync::mpsc;
 
-    use super::super::daemon_events::{DaemonEvents, DaemonView, Rest, TurnState};
+    use super::super::{
+        daemon_events::{DaemonEvents, DaemonView, Rest, TurnState},
+        daemon_inputs::AnswerRefusal,
+    };
     use crate::app::daemon_client::{Daemon, Link, Part, Routed, StreamPosition};
+
+    const LOST: &str = "lost the connection to the rho daemon";
 
     /// Which session the TUI follows.
     pub(crate) enum DaemonTarget {
@@ -127,8 +147,9 @@ mod unix {
         /// The job state the attach answered with, which the replay ends in,
         /// until the replay is over.
         replay_state: Option<JobState>,
-        /// Views the attach response itself made, such as the reset replay's
-        /// [`DaemonView::Clear`], shown with the first views.
+        /// Views made outside the event stream, shown with the next views:
+        /// the attach response's, such as the reset replay's
+        /// [`DaemonView::Clear`], and a refused answer's or hold's.
         pending: Vec<DaemonView>,
         /// Set once the daemon ended the attachment; nothing more arrives.
         ended: bool,
@@ -165,7 +186,7 @@ mod unix {
                 environment: ClientEnvironment::of_this_process(),
                 setup,
             };
-            let response = match daemon.request::<SessionAttach>(&params).await {
+            let mut response = match daemon.request::<SessionAttach>(&params).await {
                 Ok(response) => response,
                 Err(error) => {
                     daemon.unroute(&id);
@@ -180,10 +201,13 @@ mod unix {
                 // reattaches after `lagged` with one.
                 Replay::Tail => Vec::new(),
             };
-            let mut replay_state = Some(response.state);
-            if response.replay_events == 0 {
-                pending.extend(replay_state.take().map(|state| events.turn(state)));
-            }
+            events.attached(std::mem::take(&mut response.inputs));
+            let replay_state = if response.replay_events == 0 {
+                pending.extend(events.end_replay(response.state));
+                None
+            } else {
+                Some(response.state)
+            };
             Ok(Self {
                 position: StreamPosition::attached(&response),
                 daemon,
@@ -247,11 +271,9 @@ mod unix {
                         let part = self.position.observe(seq);
                         views.extend(self.events.map(event));
                         if let Part::Replayed { left: 0, .. } = part {
-                            views.extend(
-                                self.replay_state
-                                    .take()
-                                    .map(|state| self.events.turn(state)),
-                            );
+                            if let Some(state) = self.replay_state.take() {
+                                views.extend(self.events.end_replay(state));
+                            }
                         }
                     }
                     Some(Routed::Detached(reason)) => {
@@ -290,7 +312,7 @@ mod unix {
         async fn attached_link(&self) -> anyhow::Result<Arc<Link>> {
             match self.daemon.current().await.filter(|_| !self.ended) {
                 Some(link) => Ok(link),
-                None => anyhow::bail!("lost the connection to the rho daemon"),
+                None => anyhow::bail!(LOST),
             }
         }
 
@@ -363,10 +385,68 @@ mod unix {
                 Err(error) => Err(steer_refused(error)),
             }
         }
+
+        /// Answers input request `id` with `answer`. Once this returns, a
+        /// refusal's views wait for [`Self::take_views`]: an error row, then
+        /// the request again while it is still open. An answer the daemon
+        /// took shows nothing: the prompt already closed.
+        pub(in crate::tui) async fn answer(&mut self, id: InputRequestId, answer: InputAnswer) {
+            self.events.answering(id);
+            let params = SessionAnswerParams {
+                session: self.id.clone(),
+                request: id,
+                answer,
+            };
+            let answered = match self.attached_link().await {
+                Ok(link) => link.request::<SessionAnswer>(&params).await.map_err(Some),
+                Err(_) => Err(None),
+            };
+            let refusal = match answered {
+                Ok(_) => return,
+                Err(Some(error)) if error.error_code() == Some(ErrorCode::InputNotOpen) => {
+                    AnswerRefusal::NotOpen
+                }
+                Err(Some(error)) => {
+                    AnswerRefusal::Failed(format!("{:#}", anyhow::Error::new(error)))
+                }
+                // Following ends once the TUI reads the connection's loss.
+                Err(None) => AnswerRefusal::Failed(LOST.to_owned()),
+            };
+            let views = self.events.answer_refused(id, refusal);
+            self.pending.extend(views);
+        }
+
+        /// Stops input request `id`'s timeout, as once the person starts on
+        /// it, and says whether it needs no more holding: the daemon held
+        /// it, it already closed (its resolution says how), or the
+        /// connection is gone. Once a hold fails, its error row waits for
+        /// [`Self::take_views`].
+        pub(in crate::tui) async fn hold(&mut self, id: InputRequestId) -> bool {
+            let params = SessionHoldParams {
+                session: self.id.clone(),
+                request: id,
+            };
+            // Without the attached connection there is nothing to hold for:
+            // following ends once the TUI reads its loss.
+            let Ok(link) = self.attached_link().await else {
+                return true;
+            };
+            match link.request::<SessionHold>(&params).await {
+                Ok(_) => true,
+                Err(error) if error.error_code() == Some(ErrorCode::InputNotOpen) => true,
+                Err(error) => {
+                    self.pending.push(DaemonView::Error(format!(
+                        "could not hold the request: {:#}",
+                        anyhow::Error::new(error)
+                    )));
+                    false
+                }
+            }
+        }
     }
 
     /// Why a steer, or its withdrawal, was refused, as the TUI says it.
-    fn steer_refused(error: rho_protocol::ClientError) -> anyhow::Error {
+    fn steer_refused(error: ClientError) -> anyhow::Error {
         if error.error_code() == Some(ErrorCode::NotSteerable) {
             anyhow::anyhow!("no model request is taking input")
         } else {

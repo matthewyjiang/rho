@@ -12,17 +12,22 @@
 //! the TUI's busy chrome; steers carry their id, so the TUI's pending panel
 //! drops a steer once the daemon applied it.
 //!
-//! It holds only what the events leave implicit: which message the last
-//! text chunk extended, the reply the last turn streamed, each open call's
-//! last card, which a call cut off shows as interrupted, and why the last
-//! turn failed, which its job state leaves out.
+//! Input requests open and close through [`OpenInputs`], which keeps those
+//! still open, so the ones a replay leaves open show once it ends
+//! ([`DaemonEvents::end_replay`]).
+//!
+//! Otherwise it holds only what the events leave implicit: which message the
+//! last text chunk extended, the reply the last turn streamed, each open
+//! call's last card, which a call cut off shows as interrupted, and why the
+//! last turn failed, which its job state leaves out.
 
 use std::collections::HashMap;
 
 use rho_protocol::{
     display::{Presentation, ToolCard, ToolCardStatus},
-    CompactionStatus, ContentBlock, JobState, MessageId, PlanEntry, PlanStatus, SessionEvent,
-    SteerId, ToolCallId as WireCallId, ToolCallUpdate, ToolStatus, TurnOutcome,
+    CompactionStatus, ContentBlock, InputRequest, InputRequestId, JobState, MessageId, PlanEntry,
+    PlanStatus, SessionEvent, SteerId, ToolCallId as WireCallId, ToolCallUpdate, ToolStatus,
+    TurnOutcome,
 };
 use rho_sdk::{SteeringId, ToolCallId};
 
@@ -30,6 +35,7 @@ use super::{
     compaction_display::{
         cancelled_card, compaction_call_id, failed_card, running_card, unchanged_card,
     },
+    daemon_inputs::{AnswerRefusal, OpenInputs},
     transcript_events::final_answer_delta,
     FinalAnswerDelta, StreamKind,
 };
@@ -75,6 +81,17 @@ pub(super) enum DaemonView {
     /// The provider took the steer mid-request; it can no longer be
     /// withdrawn.
     SteerDelivered(SteeringId),
+    /// An input request to put to the person: opened live, or still open
+    /// when the replay ended.
+    InputOpened(Box<InputRequest>),
+    /// Input request `id` closed without the TUI's answer; `notice` says
+    /// how.
+    InputClosed {
+        id: InputRequestId,
+        notice: String,
+    },
+    /// Input request `id` no longer times out: a client held it.
+    InputHeld(InputRequestId),
     /// Status-line feedback.
     Status(String),
     Notice(String),
@@ -122,6 +139,7 @@ pub(super) struct DaemonEvents {
     running: HashMap<WireCallId, ToolCard>,
     /// Why the last turn failed, which its `failed` job state shows.
     failure: Option<String>,
+    inputs: OpenInputs,
 }
 
 impl DaemonEvents {
@@ -129,6 +147,35 @@ impl DaemonEvents {
     pub(super) fn reset(&mut self) -> DaemonView {
         *self = Self::default();
         DaemonView::Clear
+    }
+
+    /// Starts an attachment whose response lists `inputs` as the requests
+    /// open now. Its replay follows, until [`Self::end_replay`]: none of
+    /// its input requests shows before then.
+    pub(super) fn attached(&mut self, inputs: Vec<InputRequest>) {
+        self.inputs.attached(inputs);
+    }
+
+    /// The replay is over, ending in the job's `state`, as the attach
+    /// response said: whether a turn runs, then each request still open.
+    pub(super) fn end_replay(&mut self, state: JobState) -> Vec<DaemonView> {
+        let mut views = vec![self.turn(state)];
+        views.extend(self.inputs.end_replay());
+        views
+    }
+
+    /// The TUI sent an answer to request `id`.
+    pub(super) fn answering(&mut self, id: InputRequestId) {
+        self.inputs.answering(id);
+    }
+
+    /// The daemon took no answer to request `id`, as `refusal` says.
+    pub(super) fn answer_refused(
+        &mut self,
+        id: InputRequestId,
+        refusal: AnswerRefusal,
+    ) -> Vec<DaemonView> {
+        self.inputs.refused(id, refusal)
     }
 
     /// What `event` changes.
@@ -191,10 +238,13 @@ impl DaemonEvents {
             // daemon saved before it sent this; T1e shows it as it changes.
             SessionEvent::TitleChanged { .. } => Vec::new(),
             SessionEvent::State { state } => vec![self.turn(state)],
-            // Input requests are answered from the TUI in T1d.
-            SessionEvent::InputRequested { .. }
-            | SessionEvent::InputResolved { .. }
-            | SessionEvent::InputHeld { .. } => Vec::new(),
+            SessionEvent::InputRequested { request } => {
+                self.inputs.requested(*request).into_iter().collect()
+            }
+            SessionEvent::InputResolved { id, resolution } => {
+                self.inputs.resolved(id, resolution).into_iter().collect()
+            }
+            SessionEvent::InputHeld { id } => self.inputs.held(id).into_iter().collect(),
             // The session's options reach the TUI's model and mode in T1e.
             SessionEvent::OptionsChanged { .. } => Vec::new(),
             // `Unknown`, or an event a newer daemon sends.
@@ -204,7 +254,7 @@ impl DaemonEvents {
 
     /// Whether a turn runs once the job is in `state`, as an event or the
     /// attach response says.
-    pub(super) fn turn(&mut self, state: JobState) -> DaemonView {
+    fn turn(&mut self, state: JobState) -> DaemonView {
         let turn = match state {
             JobState::Running | JobState::Queued => {
                 self.failure = None;

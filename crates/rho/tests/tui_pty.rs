@@ -1146,3 +1146,20 @@ fn daemon_prompt_streams_the_turn_and_returns_to_idle() {
 fn daemon_cancel_interrupts_the_turn_and_returns_to_idle() {
     assert_pass("daemon_cancel");
 }
+
+// Covers: with RHO_TUI_DAEMON=1 in supervised mode, a daemon turn's write
+// opens the TUI's approval prompt, Allow once answers the daemon, and the
+// turn completes with the write done.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_approval_allows_the_turns_write() {
+    assert_pass("daemon_approval");
+}
+
+// Covers: with RHO_TUI_DAEMON=1, Enter on the approval prompt's default
+// denies the daemon turn's write, and the turn completes with it refused.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_approval_denies_the_turns_write() {
+    assert_pass("daemon_approval_deny");
+}

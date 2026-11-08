@@ -3,11 +3,12 @@
 //!
 //! The daemon owns the turn. A prompt only asks it to start one: the user
 //! row is the daemon's `user_message` echo, and the busy chrome follows the
-//! job's state ([`super::daemon_transcript`]). While the job runs, the app
-//! loop hands the terminal to [`App::follow_daemon_turn`], which routes keys
-//! as an in-process turn does (`during_turn`), so Esc cancels and Enter
-//! queues a steer, which this sends to the daemon. Quitting leaves the turn
-//! running in the daemon, which keeps the session.
+//! job's state ([`super::daemon_transcript`]). While the job runs, or waits
+//! for input, the app loop hands the terminal to [`App::follow_daemon_turn`],
+//! which routes keys as an in-process turn does (`during_turn`), so Esc
+//! cancels, Enter queues a steer, which this sends to the daemon, and an
+//! open input request's prompt takes its keys (`daemon_answers`). Quitting
+//! leaves the turn running in the daemon, which keeps the session.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -103,7 +104,7 @@ impl App {
 
     /// Shows what the daemon sent up to now without waiting, so a turn the
     /// TUI just started shows busy before the next key is read.
-    async fn show_taken_daemon_views(
+    pub(super) async fn show_taken_daemon_views(
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
@@ -150,6 +151,10 @@ impl App {
                             &tool_call_active,
                         )
                         .await;
+                    // Before any cancel: Esc at an approval denies it, then
+                    // cancels the turn, in that order, as in process.
+                    let cancelling = matches!(control, Ok(StreamControl::Interrupt));
+                    self.answer_daemon_input(terminal, cancelling).await?;
                     match control {
                         // Quitting leaves the turn to the daemon.
                         Ok(StreamControl::Interrupt) if self.should_quit => {}
@@ -192,7 +197,7 @@ impl App {
     }
 
     /// Asks the daemon to stop its turn; the turn's end shows that it did.
-    async fn cancel_daemon_turn(&mut self) {
+    pub(super) async fn cancel_daemon_turn(&mut self) {
         let Some(session) = self.info.session.daemon.as_ref() else {
             return;
         };
