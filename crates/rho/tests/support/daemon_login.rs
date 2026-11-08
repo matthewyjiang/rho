@@ -294,7 +294,7 @@ async fn rho_login_signs_in_through_a_daemon_it_starts() {
         .spawn()
         .unwrap();
     let mut stderr = BufReader::new(login.stderr.take().unwrap());
-    let (url, stderr) = tokio::task::spawn_blocking(move || {
+    let printed_url = tokio::task::spawn_blocking(move || {
         let mut printed = String::new();
         loop {
             let mut line = String::new();
@@ -305,18 +305,25 @@ async fn rho_login_signs_in_through_a_daemon_it_starts() {
                 return (line.trim_end().to_owned(), stderr);
             }
         }
-    })
-    .await
-    .unwrap();
+    });
+    // Each read ends when `rho login` writes or exits; killing it on the
+    // deadline ends a read that would otherwise wait forever.
+    let Ok(printed_url) = tokio::time::timeout(DEADLINE, printed_url).await else {
+        login.kill().unwrap();
+        panic!("rho login printed no URL\nlog:\n{}", sandbox.daemon_log());
+    };
+    let (url, mut stderr) = printed_url.unwrap();
     approve(&url).await;
-    let (status, rest) = tokio::task::spawn_blocking(move || {
+    let rest = tokio::task::spawn_blocking(move || {
         let mut rest = String::new();
-        let mut stderr = stderr;
         std::io::Read::read_to_string(&mut stderr, &mut rest).unwrap();
-        (login.wait().unwrap(), rest)
-    })
-    .await
-    .unwrap();
+        rest
+    });
+    let Ok(rest) = tokio::time::timeout(DEADLINE, rest).await else {
+        login.kill().unwrap();
+        panic!("rho login did not exit\nlog:\n{}", sandbox.daemon_log());
+    };
+    let (status, rest) = (login.wait().unwrap(), rest.unwrap());
 
     assert_eq!(
         (status.code(), saved_token(&sandbox)),
