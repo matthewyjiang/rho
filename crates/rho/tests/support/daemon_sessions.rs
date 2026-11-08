@@ -550,9 +550,9 @@ async fn a_turn_tells_clients_how_it_ended() {
 }
 
 // Covers: `/compact` runs in a daemon session with no model turn: clients
-// get one compaction that starts and completes under one id, no user
-// message, since the command is not saved as one, then a turn that answers
-// with what the compaction did (#1670).
+// see the command, one compaction that starts and completes under one id,
+// then what the compaction did as an agent message, which the turn answers
+// with too (#1670).
 // Owner: daemon session commands.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn compact_reports_its_compaction_and_answers_with_the_result() {
@@ -588,15 +588,26 @@ async fn compact_reports_its_compaction_and_answers_with_the_result() {
     let shown_prompt = compact_turn
         .iter()
         .any(|(_, event)| matches!(event, SessionEvent::UserMessage { .. }));
+    let shown_reply = compact_turn.iter().find_map(|(_, event)| match event {
+        SessionEvent::AgentMessageChunk { text, .. } => Some(text.clone()),
+        _ => None,
+    });
     let answer = compact_turn.iter().find_map(|(_, event)| match event {
         SessionEvent::TurnEnded {
             outcome: TurnOutcome::Answered { text, stop },
-        } => Some((text.starts_with("context "), *stop)),
+        } => Some((text.clone(), *stop)),
         _ => None,
     });
     assert_eq!(
-        (started == completed, shown_prompt, answer),
-        (true, false, Some((true, AnswerStop::EndTurn))),
+        (
+            started == completed,
+            shown_prompt,
+            shown_reply
+                .as_deref()
+                .is_some_and(|text| text.starts_with("context ")),
+            answer.map(|(text, stop)| (Some(text) == shown_reply, stop)),
+        ),
+        (true, true, true, Some((true, AnswerStop::EndTurn))),
         "{compact_turn:#?}"
     );
 }

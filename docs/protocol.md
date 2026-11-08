@@ -45,7 +45,7 @@ A prompt whose turn ends before it saves the prompt returns an error instead of 
 
 A prompt that starts with a slash command resolves as it does in [`rho run`](/automation-cli#sessions-commands-and-questions): prompt templates, MCP prompts, `/init`, `/agent:<name>`, and `$skill` mentions work, and so do `/compact` and `/workflow:<name>`, which run no model turn:
 
-- `/compact [instructions]` compacts the session's context. Clients get a `compaction` event that starts and ends, and the turn ends `answered` with the before and after counts as `text`. The command itself is not saved as a message.
+- `/compact [instructions]` compacts the session's context. Clients get the command as a `user_message`, a `compaction` event that starts and ends, then the before and after counts as an agent message, and the turn ends `answered` with the same `text`. Neither message is saved: a reload replays the compacted context's own row.
 - `/workflow:<name> [inputs JSON]` starts the workspace workflow in the background. Clients get the prompt as a `user_message` and the start notice, with the run id, as an `agent_message_chunk`, both saved, and the turn ends `answered` with the notice as `text`.
 - `/agent:<name> [--model <reference> --] <task>` rebinds a session that has no conversation yet to that agent, then runs `task` as its turn; clients get the agent's options as `options_changed` before the turn's output.
 

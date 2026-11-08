@@ -31,8 +31,8 @@ use crate::{
         },
         session_events::{outcome, CompactionEnd},
         session_runtime::{
-            PlanReport, PromptScope, SessionEvent, SessionRuntime, TitleJob, Turn, TurnControl,
-            TurnIo, TurnOutcome, TurnView, WorkflowStart,
+            InsertedMessage, PlanReport, PromptScope, SessionEvent, SessionRuntime, TitleJob, Turn,
+            TurnControl, TurnIo, TurnOutcome, TurnView, WorkflowStart,
         },
         workflow_cli::discover::StartCommand,
     },
@@ -300,7 +300,7 @@ async fn run_turn(
             model_turn(runtime, view, &scope, turn, config).await
         }
         PromptCommand::Compact { instructions } => {
-            compact(runtime, view, &scope, instructions).await
+            compact(runtime, view, &scope, &input, instructions).await
         }
         PromptCommand::StartWorkflow(start) => {
             start_workflow(runtime, view, &scope, input, start, config).await
@@ -338,17 +338,25 @@ async fn model_turn(
 }
 
 /// Runs `/compact` within `scope`, with optional `instructions` on what to
-/// keep, and shows it as a model turn's automatic compaction shows: the
-/// runtime's compaction reports no run events. It answers with what the
-/// compaction did. The command is not saved as a user message: the
-/// runtime saves the compacted context alone.
+/// keep. Clients see the command, `display`, then the compaction as a model
+/// turn's automatic compaction shows (the runtime's compaction reports no
+/// run events), then what it did as an agent message, which the turn
+/// answers with too. Neither message is saved: the runtime saves the
+/// compacted context alone, which a reload replays as its own row.
 async fn compact(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,
     scope: &PromptScope,
+    display: &UserInput,
     instructions: Option<String>,
 ) -> anyhow::Result<Ran> {
-    let started = view.session.live().compaction_started();
+    let started = {
+        let mut live = view.session.live();
+        live.prompt(display);
+        let mut shown = live.map(&SessionEvent::MessageInserted(InsertedMessage::Unreplayed));
+        shown.extend(live.compaction_started());
+        shown
+    };
     view.session.feed.publish(started);
     // Nothing rejects the command from here on; the prompt's request need
     // not wait for the compaction.
@@ -359,12 +367,27 @@ async fn compact(
         Ok(None) => CompactionEnd::Cancelled,
         Err(error) => CompactionEnd::Failed(client_error(runtime, error).message),
     };
-    let ended = view.session.live().compaction_ended(end);
+    let summary = compacted
+        .as_ref()
+        .ok()
+        .and_then(Option::as_ref)
+        .map(crate::compaction::outcome_summary);
+    let ended = {
+        let mut live = view.session.live();
+        let mut ended = live.compaction_ended(end);
+        ended.extend(
+            summary
+                .clone()
+                .map(|text| live.saved_reply(&InsertedMessage::Unreplayed, text)),
+        );
+        ended
+    };
     let ended = cost::priced(ended, &view.session.id).await;
     view.session.feed.publish(ended);
-    Ok(match compacted? {
-        Some(outcome) => Ran::Finished(wire::TurnOutcome::Answered {
-            text: crate::compaction::outcome_summary(&outcome),
+    compacted?;
+    Ok(match summary {
+        Some(text) => Ran::Finished(wire::TurnOutcome::Answered {
+            text,
             stop: wire::AnswerStop::EndTurn,
         }),
         None => Ran::Cancelled,
