@@ -14,8 +14,6 @@ use agent_client_protocol::schema::v1::{
     CompactionId, CompactionStatus, CompactionUpdate, SessionUpdate,
 };
 
-pub(super) use crate::compaction::outcome_summary;
-
 /// Error for a compaction the run ended before it reported a result.
 pub(super) const UNFINISHED: &str = "compaction ended without a result";
 

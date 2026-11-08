@@ -285,11 +285,12 @@ async fn open_runtime(
     })
 }
 
-/// The agent `stored` runs as, bound as its root with `available_tools`:
-/// the one it was saved as, refused when its definition changed or is
-/// gone, so a reopen never widens a session to another agent's tools
-/// (#1661). A session `/agent:` rebound runs as the default agent, under
-/// which the runtime binds the child again with the child's own checks.
+/// The root agent `stored` runs under, bound with `available_tools`: the
+/// one it was saved as, refused when its definition changed or is gone, so
+/// a reopen never widens a session to another agent's tools (#1661). A
+/// session `/agent:` rebound binds the root it was rebound from, with the
+/// same checks; the runtime then binds the child again under that root's
+/// tools, with the child's own checks.
 fn bind_saved_agent(
     cwd: &Path,
     config: &Config,
@@ -297,7 +298,15 @@ fn bind_saved_agent(
     available_tools: AgentCapabilities,
 ) -> anyhow::Result<BoundAgent> {
     if stored.delegated_agent_id()?.is_some() {
-        return bind_agent(cwd, config, DEFAULT_AGENT_ID, available_tools);
+        let Some((launch_id, _fingerprint)) = stored.launch_agent_identity()? else {
+            // Written before launch identities were saved, as an in-process
+            // ACP child was: nothing names its root, so it runs under the
+            // default agent, as it did then.
+            return bind_agent(cwd, config, DEFAULT_AGENT_ID, available_tools);
+        };
+        let agent = bind_agent(cwd, config, &launch_id, available_tools)?;
+        stored.validate_launch_agent_definition_identity(agent.definition())?;
+        return Ok(agent);
     }
     let Some((id, _fingerprint)) = stored.stored_agent_identity()? else {
         anyhow::bail!(

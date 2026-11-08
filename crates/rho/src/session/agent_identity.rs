@@ -1,6 +1,6 @@
 //! Identity on the session header line: which agent definition a session
-//! belongs to, whether ACP rebound it as a delegated child, and the host
-//! that created it.
+//! belongs to, whether `/agent:` rebound it as a delegated child of which
+//! root, and the host that created it.
 
 use std::{
     fs,
@@ -20,9 +20,9 @@ use super::{
 };
 
 /// How the session's agent was bound. Absent from the header means `Root`:
-/// the process launch agent. `Delegated` marks an ACP session rebound with
-/// `/agent:<name>`, whose reload must restore the child's tool boundary even
-/// when the child shares the launch agent's id.
+/// the process launch agent. `Delegated` marks a session rebound with
+/// `/agent:<name>`, by ACP or the daemon, whose reload must restore the
+/// child's tool boundary even when the child shares the launch agent's id.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SessionAgentRole {
@@ -52,6 +52,21 @@ pub(super) fn read_agent_identity(path: &Path) -> anyhow::Result<Option<(String,
         SessionEntry::Session {
             agent_id: Some(id),
             agent_fingerprint: Some(fingerprint),
+            ..
+        } => Ok(Some((id, fingerprint))),
+        SessionEntry::Session { .. } => Ok(None),
+        _ => anyhow::bail!("session file does not start with session metadata"),
+    }
+}
+
+/// The root agent a delegated session was rebound from, by id and
+/// fingerprint; `None` for a root session, or a delegated one written
+/// before launch identities were recorded.
+pub(super) fn read_launch_agent_identity(path: &Path) -> anyhow::Result<Option<(String, String)>> {
+    match read_header(path)? {
+        SessionEntry::Session {
+            launch_agent_id: Some(id),
+            launch_agent_fingerprint: Some(fingerprint),
             ..
         } => Ok(Some((id, fingerprint))),
         SessionEntry::Session { .. } => Ok(None),
@@ -123,11 +138,20 @@ impl Session {
             agent_id: stored_id,
             agent_fingerprint,
             agent_role,
+            launch_agent_id,
+            launch_agent_fingerprint,
             ..
         } = &mut entry
         else {
             anyhow::bail!("session file does not start with session metadata");
         };
+        // The root's identity moves aside, so a reload can bind the root
+        // again and cap the child at its tools. A header already delegated
+        // keeps the launch identity it has.
+        if agent_role.is_root() {
+            *launch_agent_id = stored_id.take();
+            *launch_agent_fingerprint = agent_fingerprint.take();
+        }
         *stored_id = Some(agent_id.to_owned());
         *agent_fingerprint = Some(fingerprint.to_owned());
         *agent_role = SessionAgentRole::Delegated;

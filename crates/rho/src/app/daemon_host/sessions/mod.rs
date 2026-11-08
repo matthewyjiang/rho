@@ -587,7 +587,7 @@ impl Sessions {
         tokio::select! {
             biased;
             start = start => match start {
-                Ok(PromptStart::Saved) => Ok(SessionPromptResponse {}),
+                Ok(PromptStart::Began) => Ok(SessionPromptResponse {}),
                 Ok(PromptStart::Ended(outcome)) => Err(ended_early(&outcome)),
                 // Only a turn the daemon's stop interrupted, or one whose
                 // task the exiting runtime dropped, sends no answer.

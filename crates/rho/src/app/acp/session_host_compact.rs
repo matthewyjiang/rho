@@ -7,13 +7,12 @@ use agent_client_protocol::schema::v1::{
 };
 
 use super::{send_notification, session_signals, SessionHost};
-use crate::app::{
-    acp::{
-        compaction_card::{outcome_summary, CompactionCard},
-        events::EventMapper,
-        AcpClientPort,
+use crate::{
+    app::{
+        acp::{compaction_card::CompactionCard, events::EventMapper, AcpClientPort},
+        session_runtime::PromptScope,
     },
-    session_runtime::PromptScope,
+    compaction::outcome_summary,
 };
 
 impl SessionHost {

@@ -513,6 +513,8 @@ fn write_session_file(root: &Path, cwd: &Path, id: &str, timestamp: u64, prompts
         agent_id: None,
         agent_fingerprint: None,
         agent_role: crate::session::agent_identity::SessionAgentRole::Root,
+        launch_agent_id: None,
+        launch_agent_fingerprint: None,
         origin: None,
         parent_session: None,
     }];

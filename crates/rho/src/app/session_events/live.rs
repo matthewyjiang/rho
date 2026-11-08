@@ -22,7 +22,7 @@ use super::{
 };
 use crate::{
     app::session_runtime::{context_window, InsertedMessage, SessionEvent, SessionTools},
-    session::tree::{DisplayRowOrigin, ProjectedMessage},
+    session::tree::ProjectedMessage,
     tools::{mcp::exported_name::McpToolNames, todo::TodoState},
 };
 
@@ -125,8 +125,8 @@ struct AnnouncedCall {
 impl LiveEvents {
     /// A mapper for the session in `workspace` whose tools are `tools`. A
     /// checklist the session already has counts as sent: [`super::replay`]
-    /// ends with it. Build a new one when the session's tools are rebuilt,
-    /// since the checklist lives with them. Usage reports
+    /// ends with it. When the session's tools are rebuilt, the checklist
+    /// with them, follow them with [`Self::rebind_tools`]. Usage reports
     /// `configured_window`, the context window the session's model is
     /// configured with, when it has one (`session_runtime::context_window`).
     pub(crate) fn new(
@@ -164,40 +164,45 @@ impl LiveEvents {
 
     /// Maps with `tools` from now on, as a session that `/agent:` rebound to
     /// an agent with tools of its own does, against `configured_window`, the
-    /// agent model's. The message and call ids it gave and the rows it
-    /// replayed stay counted, so nothing replays twice.
-    pub(crate) fn rebind_tools(
-        &mut self,
-        workspace: &Path,
-        tools: SessionTools<'_>,
-        configured_window: Option<u64>,
-    ) {
-        let todo = tools.todo_state();
-        self.workspace = workspace.to_owned();
-        self.mcp_tools = tools.mcp_report().tool_names();
-        self.configured_window = configured_window;
-        self.window = configured_window;
-        self.sent_plan = plan_entries(&todo);
-        self.todo = todo;
+    /// agent model's: as a new mapper in the same workspace, except that
+    /// the call ids it gave and the rows it replayed stay counted, so no
+    /// call id is reused and nothing replays twice. Call between turns.
+    pub(crate) fn rebind_tools(&mut self, tools: SessionTools<'_>, configured_window: Option<u64>) {
+        let rebound = Self::new(&self.workspace, tools, configured_window);
+        let Self {
+            call_ids,
+            replayed_ids,
+            replayed_rows,
+            ..
+        } = std::mem::replace(self, rebound);
+        self.call_ids = call_ids;
+        self.replayed_ids = replayed_ids;
+        self.replayed_rows = replayed_rows;
     }
 
-    /// `text`, a host command's reply saved as the display row right after
-    /// the prompt `inserted` names, as `/workflow:` saves its notice: one
-    /// agent message, under the id replay gives that row, or a fresh one when
-    /// the prompt was not saved.
-    pub(crate) fn saved_reply(&mut self, inserted: &InsertedMessage, text: String) -> WireEvent {
-        let message = match inserted {
-            InsertedMessage::Saved(DisplayRowOrigin { node, row }) => {
-                saved_message_id(&DisplayRowOrigin {
-                    node: node.clone(),
-                    row: row + 1,
-                })
-            }
-            InsertedMessage::Unreplayed => fresh_message_id(),
-        };
-        // A reply is a message of its own, which no chunk continues.
+    /// `display`, the prompt of a host command that runs no model turn, such
+    /// as `/workflow:` or `/compact`, shown as the user message `inserted`
+    /// names.
+    pub(crate) fn shown_prompt(
+        &mut self,
+        display: &UserInput,
+        inserted: &InsertedMessage,
+    ) -> WireEvent {
         self.message = None;
-        WireEvent::AgentMessageChunk { message, text }
+        WireEvent::UserMessage {
+            message: inserted_message_id(inserted),
+            content: user_content(display.blocks()),
+        }
+    }
+
+    /// `text`, a host command's reply, shown as one agent message under the
+    /// id of the row `reply` names, which no chunk continues.
+    pub(crate) fn shown_reply(&mut self, reply: &InsertedMessage, text: String) -> WireEvent {
+        self.message = None;
+        WireEvent::AgentMessageChunk {
+            message: inserted_message_id(reply),
+            text,
+        }
     }
 
     /// The wire events that replay the rows of `rows`, the session's saved
@@ -272,11 +277,10 @@ impl LiveEvents {
     /// prompt was noted, since the event does not carry the message.
     fn user_message(&mut self, inserted: &InsertedMessage) -> Option<WireEvent> {
         let content = self.prompt.take()?;
-        let message = match inserted {
-            InsertedMessage::Saved(origin) => saved_message_id(origin),
-            InsertedMessage::Unreplayed => fresh_message_id(),
-        };
-        Some(WireEvent::UserMessage { message, content })
+        Some(WireEvent::UserMessage {
+            message: inserted_message_id(inserted),
+            content,
+        })
     }
 
     fn run_event(&mut self, event: &RunEvent) -> Vec<WireEvent> {
@@ -611,6 +615,15 @@ fn output_content(output: &ToolOutput, cwd: &Path) -> Vec<ToolContent> {
         );
     }
     content
+}
+
+/// The wire id of the message `inserted` names: the one a replay gives its
+/// row, or a fresh one for a message no replay shows.
+fn inserted_message_id(inserted: &InsertedMessage) -> MessageId {
+    match inserted {
+        InsertedMessage::Saved(origin) => saved_message_id(origin),
+        InsertedMessage::Unreplayed => fresh_message_id(),
+    }
 }
 
 /// A live message's id. Replayed messages derive theirs from saved rows.

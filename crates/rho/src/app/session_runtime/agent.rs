@@ -259,10 +259,12 @@ impl SessionRuntime {
 
 /// The agent and config a loaded session runs with. Roots run as
 /// `launch_agent`; a session `/agent:` rebound is marked delegated, so it
-/// binds as that child again and must match its saved definition. A changed
-/// or missing definition fails the load rather than widening the child to
-/// the root's tools. `catalog` discovers definitions only for delegated
-/// sessions.
+/// binds as that child again, capped at `launch_agent`'s tools, and must
+/// match its saved definition. A changed or missing definition fails the
+/// load rather than widening the child to the root's tools. The host picks
+/// `launch_agent`: the daemon binds the root the session was rebound from
+/// (see its `bind_saved_agent`), ACP its process's launch agent. `catalog`
+/// discovers definitions only for delegated sessions.
 pub(super) fn loaded_agent(
     launch_agent: &BoundAgent,
     stored: &StoredSession,

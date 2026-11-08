@@ -385,7 +385,9 @@ impl SessionHost {
             .await?;
         match started {
             WorkflowStart::Cancelled => Ok(PromptResponse::new(StopReason::Cancelled)),
-            WorkflowStart::Started { notice, inserted } => {
+            WorkflowStart::Started {
+                notice, inserted, ..
+            } => {
                 self.prompt_acceptance.accept(inserted);
                 send_notification(
                     client,

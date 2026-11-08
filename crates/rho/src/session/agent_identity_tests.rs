@@ -5,9 +5,9 @@ use rho_providers::model::{Message, ModelIdentity};
 
 use super::super::{tree::SessionTree, Session, SESSION_VERSION};
 
-// Covers: fresh delegated rebinding commits its identity and initial state
-// together for current/legacy headers, survives resume and later appends, and
-// cannot rewrite history.
+// Covers: fresh delegated rebinding commits its identity, the root's it
+// replaces, and initial state together for current/legacy headers, survives
+// resume and later appends, and cannot rewrite history.
 // Owner: session agent identity.
 #[test]
 fn fresh_agent_identity_rewrite_preserves_append_and_resume() {
@@ -46,7 +46,10 @@ fn fresh_agent_identity_rewrite_preserves_append_and_resume() {
             .rebind_fresh_delegated_agent("restricted-child", "new-fingerprint", Some(&snapshot))
             .unwrap();
         let expected_identity = Some(("restricted-child".into(), "new-fingerprint".into()));
+        // The root moves aside, so a reload can cap the child at its tools.
+        let expected_launch = Some(("root".into(), "old".into()));
         assert_eq!(session.stored_agent_identity().unwrap(), expected_identity);
+        assert_eq!(session.launch_agent_identity().unwrap(), expected_launch);
         assert_eq!(
             session.delegated_agent_id().unwrap(),
             Some("restricted-child".into())
@@ -60,6 +63,7 @@ fn fresh_agent_identity_rewrite_preserves_append_and_resume() {
             Session::open_by_id_with_histories_in_root(root.path(), cwd.path(), session.id())
                 .unwrap();
         assert_eq!(reopened.stored_agent_identity().unwrap(), expected_identity);
+        assert_eq!(reopened.launch_agent_identity().unwrap(), expected_launch);
         assert_eq!(
             reopened.session_metadata("test-selection").unwrap(),
             Some("selected".into())

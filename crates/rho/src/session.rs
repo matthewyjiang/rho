@@ -430,6 +430,13 @@ impl Session {
         agent_identity::read_agent_identity(&self.path)
     }
 
+    /// The root agent, by id and fingerprint, that `/agent:` rebound this
+    /// session from; `None` for a root session, or a delegated one written
+    /// before launch identities were recorded.
+    pub(crate) fn launch_agent_identity(&self) -> anyhow::Result<Option<(String, String)>> {
+        agent_identity::read_launch_agent_identity(&self.path)
+    }
+
     /// Rebinds the session to a delegated child agent, only before any
     /// history has been persisted. An initial snapshot is committed atomically
     /// with the identity so reload cannot observe half of the child binding.
@@ -468,32 +475,17 @@ impl Session {
         &self,
         definition: &crate::agent::AgentDefinition,
     ) -> anyhow::Result<()> {
-        self.validate_agent_identity_with(definition.id.as_str(), |stored| {
-            definition.accepts_stored_fingerprint(stored)
-        })
+        validate_agent_identity_with(self.stored_agent_identity()?, definition)
     }
 
-    fn validate_agent_identity_with(
+    /// The same check against the root a delegated session was rebound
+    /// from (see [`Self::launch_agent_identity`]), so a reload binds that
+    /// root again only while its definition is unchanged.
+    pub(crate) fn validate_launch_agent_definition_identity(
         &self,
-        selected_id: &str,
-        accepts_fingerprint: impl FnOnce(&str) -> bool,
+        definition: &crate::agent::AgentDefinition,
     ) -> anyhow::Result<()> {
-        let Some((stored_id, stored_fingerprint)) = self.stored_agent_identity()? else {
-            anyhow::bail!(
-                "cannot resume this session as agent '{selected_id}': the session has no stored agent definition identity"
-            );
-        };
-        if stored_id != selected_id {
-            anyhow::bail!(
-                "cannot resume session created by agent '{stored_id}' as selected agent '{selected_id}'"
-            );
-        }
-        if !accepts_fingerprint(&stored_fingerprint) {
-            anyhow::bail!(
-                "cannot resume agent '{selected_id}': its definition changed since the session was created"
-            );
-        }
-        Ok(())
+        validate_agent_identity_with(self.launch_agent_identity()?, definition)
     }
 
     /// Lists `listing`'s sessions in workspace `cwd`, newest first.
@@ -909,4 +901,30 @@ impl Session {
     pub(crate) fn cwd(&self) -> &Path {
         &self.cwd
     }
+}
+
+/// Refuses to resume as `definition` unless `stored`, a saved agent
+/// identity, names it with a fingerprint it accepts: the current one or an
+/// exact legacy v1 one.
+fn validate_agent_identity_with(
+    stored: Option<(String, String)>,
+    definition: &crate::agent::AgentDefinition,
+) -> anyhow::Result<()> {
+    let selected_id = definition.id.as_str();
+    let Some((stored_id, stored_fingerprint)) = stored else {
+        anyhow::bail!(
+            "cannot resume this session as agent '{selected_id}': the session has no stored agent definition identity"
+        );
+    };
+    if stored_id != selected_id {
+        anyhow::bail!(
+            "cannot resume session created by agent '{stored_id}' as selected agent '{selected_id}'"
+        );
+    }
+    if !definition.accepts_stored_fingerprint(&stored_fingerprint) {
+        anyhow::bail!(
+            "cannot resume agent '{selected_id}': its definition changed since the session was created"
+        );
+    }
+    Ok(())
 }

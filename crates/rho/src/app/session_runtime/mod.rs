@@ -285,6 +285,12 @@ impl SessionRuntime {
         self.storage.file().is_some()
     }
 
+    /// Whether a compaction rewrote live state it could not save, so
+    /// [`Self::begin_prompt`] refuses every prompt until a reload.
+    pub(crate) fn has_unsaved_compaction(&self) -> bool {
+        self.unsaved_compaction
+    }
+
     /// Whether background work the session's prompts started still runs or
     /// holds a result for the next prompt, which [`Self::shutdown`] would
     /// stop or drop (#1661).

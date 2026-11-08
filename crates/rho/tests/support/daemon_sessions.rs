@@ -551,8 +551,8 @@ async fn a_turn_tells_clients_how_it_ended() {
 
 // Covers: `/compact` runs in a daemon session with no model turn: clients
 // see the command, one compaction that starts and completes under one id,
-// then what the compaction did as an agent message, which the turn answers
-// with too (#1670).
+// its usage, then what the compaction did as an agent message, which the
+// turn answers with too (#1670).
 // Owner: daemon session commands.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn compact_reports_its_compaction_and_answers_with_the_result() {
@@ -570,25 +570,35 @@ async fn compact_reports_its_compaction_and_answers_with_the_result() {
     watcher.read_until(is_state(JobState::Completed)).await;
 
     let compact_turn = &watcher.events[answered..];
-    let compactions: Vec<_> = compact_turn
+    // What the turn showed, in order: the kinds of its conversation's events
+    // and the compaction's usage.
+    let shown: Vec<_> = compact_turn
         .iter()
         .filter_map(|(_, event)| match event {
-            SessionEvent::Compaction { id, status } => Some((id.clone(), status.clone())),
+            SessionEvent::UserMessage { .. } => Some("user_message"),
+            SessionEvent::Compaction {
+                status: CompactionStatus::Started,
+                ..
+            } => Some("compaction_started"),
+            SessionEvent::Compaction {
+                status: CompactionStatus::Completed,
+                ..
+            } => Some("compaction_completed"),
+            SessionEvent::Compaction { .. } => Some("compaction_unfinished"),
+            SessionEvent::Usage { .. } => Some("usage"),
+            SessionEvent::AgentMessageChunk { .. } => Some("agent_message_chunk"),
+            SessionEvent::TurnEnded { .. } => Some("turn_ended"),
             _ => None,
         })
         .collect();
-    let [(started, CompactionStatus::Started), (completed, CompactionStatus::Completed)] =
-        compactions.as_slice()
-    else {
-        panic!(
-            "one compaction starts and completes: {compact_turn:#?}\nlog:\n{}",
-            sandbox.isolated.daemon_log()
-        );
-    };
-    let shown_prompt = compact_turn
+    let compaction_ids: Vec<_> = compact_turn
         .iter()
-        .any(|(_, event)| matches!(event, SessionEvent::UserMessage { .. }));
-    let shown_reply = compact_turn.iter().find_map(|(_, event)| match event {
+        .filter_map(|(_, event)| match event {
+            SessionEvent::Compaction { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect();
+    let reply = compact_turn.iter().find_map(|(_, event)| match event {
         SessionEvent::AgentMessageChunk { text, .. } => Some(text.clone()),
         _ => None,
     });
@@ -598,17 +608,23 @@ async fn compact_reports_its_compaction_and_answers_with_the_result() {
         } => Some((text.clone(), *stop)),
         _ => None,
     });
+    let one_id = compaction_ids.first().map(|id| vec![id.clone(); 2]);
     assert_eq!(
+        (shown, Some(compaction_ids), answer),
         (
-            started == completed,
-            shown_prompt,
-            shown_reply
-                .as_deref()
-                .is_some_and(|text| text.starts_with("context ")),
-            answer.map(|(text, stop)| (Some(text) == shown_reply, stop)),
+            vec![
+                "user_message",
+                "compaction_started",
+                "compaction_completed",
+                "usage",
+                "agent_message_chunk",
+                "turn_ended",
+            ],
+            one_id,
+            reply.map(|text| (text, AnswerStop::EndTurn)),
         ),
-        (true, true, true, Some((true, AnswerStop::EndTurn))),
-        "{compact_turn:#?}"
+        "{compact_turn:#?}\nlog:\n{}",
+        sandbox.isolated.daemon_log()
     );
 }
 
@@ -936,14 +952,13 @@ async fn a_workflow_command_starts_its_run_without_a_model_turn() {
         ),
     };
     let run_id = run.workflow_run.clone().expect("the job names its run");
+    assert!(
+        notice.contains(&run_id),
+        "the notice names run {run_id}: {notice}"
+    );
     assert_eq!(
-        (
-            started,
-            notice == answer,
-            notice.contains(&run_id),
-            run.state
-        ),
-        (Ok(()), true, true, JobState::Completed),
+        (started, answer, run.state),
+        (Ok(()), notice.clone(), JobState::Completed),
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

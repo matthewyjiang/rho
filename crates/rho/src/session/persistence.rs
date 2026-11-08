@@ -346,6 +346,13 @@ pub(super) enum SessionEntry {
         agent_fingerprint: Option<String>,
         #[serde(default, skip_serializing_if = "SessionAgentRole::is_root")]
         agent_role: SessionAgentRole,
+        /// The root agent a `Delegated` session was rebound from, whose
+        /// tools cap the child's on reload; `None` for a root session, or a
+        /// delegated one written before launch identities were recorded.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        launch_agent_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        launch_agent_fingerprint: Option<String>,
         /// The host that created the session; `None` in a file written
         /// before origins were recorded.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -568,6 +575,8 @@ impl Session {
             agent_id: agent.map(|(id, _)| id.to_string()),
             agent_fingerprint: agent.map(|(_, fingerprint)| fingerprint.to_string()),
             agent_role: SessionAgentRole::Root,
+            launch_agent_id: None,
+            launch_agent_fingerprint: None,
             origin: Some(provenance.origin),
             parent_session: provenance.parent.clone(),
         })?;
