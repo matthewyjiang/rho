@@ -31,18 +31,25 @@ use tokio::sync::watch;
 
 use super::{
     auth::{AgentLogin, SignIn},
-    auth_key::KeyLogin,
+    auth_key,
     host_features::Forms,
     AcpClientPort,
 };
 use crate::{
-    app::{config_repository::ConfigRepository, sign_in},
+    app::{
+        config_repository::ConfigRepository,
+        credential_writes::{self, ApiKeyAuth},
+    },
     credential_store::AppCredentialStore,
 };
 
 /// Signs in to auth profile `auth` for the `authenticate` request
 /// `request_id`. `config` is the `--config` override the process started
 /// with; `forms` is how the host draws the credential store question.
+///
+/// An API-key profile is checked before anything is asked of the user, so
+/// a login that cannot finish neither asks where to store credentials nor
+/// switches the process to the store config selects.
 pub(super) async fn authenticate(
     auth: &str,
     sign_in: SignIn,
@@ -56,22 +63,31 @@ pub(super) async fn authenticate(
             "'{auth}' is not an authenticate method this connection advertised"
         )));
     };
-    let key_login = match login {
+    let key_auth = match login {
         AgentLogin::OAuth => None,
-        AgentLogin::ApiKey => Some(KeyLogin::prepare(auth)?),
+        AgentLogin::ApiKey => Some(ApiKeyAuth::resolve(auth).map_err(auth_key::profile_error)?),
     };
     super::auth_store::choose_if_unset(config.clone(), forms, &request_id, port).await?;
     let repository = ConfigRepository::new(config);
-    let config = sign_in::open_credential_store(&repository)
+    let loaded = credential_writes::load_config(&repository)
         .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
-    match key_login {
+    loaded
+        .activate_store()
+        .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
+    match key_auth {
         None => sign_in_with_oauth(auth, request_id, port).await?,
-        Some(key_login) => {
-            let endpoint = key_login.endpoint(&config);
-            key_login
-                .sign_in(endpoint.as_ref(), &AppCredentialStore, request_id, port)
-                .await?;
-            key_login.record_login(&repository)?;
+        Some(key_auth) => {
+            auth_key::serve_key_page(
+                key_auth,
+                loaded.config(),
+                &AppCredentialStore,
+                request_id,
+                port,
+            )
+            .await?;
+            key_auth
+                .record_login(&repository)
+                .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
         }
     }
     Ok(AuthenticateResponse::new())

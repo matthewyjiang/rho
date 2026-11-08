@@ -17,6 +17,7 @@ mod computer_cli;
 pub(crate) mod config_repository;
 pub(crate) mod context_report;
 pub(crate) mod conversation_switch;
+mod credential_writes;
 mod daemon_cli;
 #[cfg(unix)]
 mod daemon_host;
@@ -50,7 +51,6 @@ mod session_runtime;
 mod sessions_cli;
 mod shutdown_signal;
 pub(crate) mod side_chat;
-mod sign_in;
 pub(crate) mod subagent_host_input;
 pub(crate) mod subagent_manager;
 pub(crate) mod subagent_messaging;

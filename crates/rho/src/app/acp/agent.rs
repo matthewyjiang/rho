@@ -12,7 +12,11 @@ use super::{
     session_host::{History, ReopenRequest, Reopened, SessionHost},
     AcpClientPort, AcpStartup,
 };
-use crate::app::session_runtime::{Closing, SessionHandle};
+use crate::app::{
+    config_repository::ConfigRepository,
+    credential_writes::{self, SignOutError},
+    session_runtime::{Closing, SessionHandle},
+};
 use agent_client_protocol::schema::v1::{AgentAuthCapabilities, LogoutCapabilities};
 use agent_client_protocol::schema::v1::{
     DeleteSessionRequest, DeleteSessionResponse, ResumeSessionRequest, ResumeSessionResponse,
@@ -172,7 +176,7 @@ impl RhoAcpAgent {
                             .list(SessionListCapabilities::new())
                             .delete(SessionDeleteCapabilities::new()),
                     )
-                    // `logout`; see `super::auth_logout`.
+                    // `logout`; see `RhoAcpAgent::logout`.
                     .auth(AgentAuthCapabilities::new().logout(LogoutCapabilities::new())),
             )
             .auth_methods(super::auth::methods(request, sign_in))
@@ -479,14 +483,20 @@ impl RhoAcpAgent {
         Ok(CloseSessionResponse::new())
     }
 
-    /// `logout` for the auth profile new sessions use, deleting its
-    /// credentials from the store found through the `--config` override
-    /// `config` (see `super::auth_logout`). It waits for the session opens
-    /// and closes in progress, as the ACP reference promises; live sessions
-    /// pick up the logout from the credential generation it moves (#1662),
-    /// whenever they read their credentials. Running turns are left alone:
-    /// the credential store refuses to save a refresh over credentials a
-    /// logout deleted.
+    /// `logout`: signs out of the auth profile new sessions use, the way
+    /// `/logout <provider>` does in the TUI, deleting its credentials from
+    /// the store found through the `--config` override `config`, as
+    /// `authenticate` finds it, and forgetting an Ollama login (see
+    /// [`credential_writes::sign_out_selected`]). A credential set in the
+    /// environment refuses with `invalid_request` before anything is
+    /// deleted: success always means new sessions need a sign-in.
+    ///
+    /// It waits for the session opens and closes in progress, as the ACP
+    /// reference promises. Live sessions pick up the logout from the
+    /// credential generation it moves (#1662) and rebuild their provider
+    /// before their next prompt, which then fails `auth_required` like a
+    /// refused credential does. Running turns are left alone: the credential
+    /// store refuses to save a refresh over credentials a logout deleted.
     pub(super) async fn logout(&self, config: Option<std::path::PathBuf>) -> Result<(), AcpError> {
         let _gate = self.install_gate.write().await;
         if self.closed.load(Ordering::Acquire) {
@@ -494,11 +504,21 @@ impl RhoAcpAgent {
         }
         // Synchronous: a newer `authenticate` that supersedes this logout
         // drops it at an await, so it either signs out or does nothing.
-        super::auth_logout::sign_out(
+        credential_writes::sign_out_selected(
             &self.startup.config.provider,
             &self.startup.config.auth,
-            config,
+            &ConfigRepository::new(config),
         )
+        .map_err(|error| match error {
+            SignOutError::EnvironmentOverride(_) => {
+                AcpError::invalid_request().data(error.to_string())
+            }
+            SignOutError::Open(_)
+            | SignOutError::Delete { .. }
+            | SignOutError::ForgetLogin { .. } => {
+                AcpError::internal_error().data(error.to_string())
+            }
+        })
     }
 
     pub(super) async fn shutdown_all(&self) {

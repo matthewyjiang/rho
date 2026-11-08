@@ -266,7 +266,7 @@ impl SessionRuntime {
             added_dirs: Default::default(),
             permission,
             reopen_notice: None,
-            credentials: SessionCredentials::scripted(),
+            credentials: SessionCredentials::Scripted,
         })
     }
 

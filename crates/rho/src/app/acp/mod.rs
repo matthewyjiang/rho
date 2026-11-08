@@ -2,7 +2,6 @@ mod agent;
 mod auth;
 mod auth_key;
 mod auth_login;
-mod auth_logout;
 mod auth_store;
 mod client_files;
 mod client_io;

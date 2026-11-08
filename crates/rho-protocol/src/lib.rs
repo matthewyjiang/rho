@@ -80,7 +80,7 @@ pub use methods::{
     SessionNewResponse, SessionPromptParams, SessionPromptResponse, SessionSteerParams,
     SessionSteerResponse, StatusParams, StopParams, StopResponse, StreamId, ToolCallId,
     ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
-    SESSION_ANSWER, SESSION_HOLD,
+    UncheckedKey, UncheckedReason, SESSION_ANSWER, SESSION_HOLD,
 };
 pub use server::{serve_connection, ServerInfo, Service, CLOSE_GRACE};
 pub use subscription::{subscription, Published, Publisher, Subscription};

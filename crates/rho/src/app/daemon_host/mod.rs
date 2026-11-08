@@ -193,6 +193,6 @@ impl Service for DaemonHost {
     }
 
     async fn logout_auth(&self, params: AuthLogoutParams) -> Result<AuthLogoutResponse, RpcError> {
-        auth::logout(params)
+        auth::logout(params).await
     }
 }

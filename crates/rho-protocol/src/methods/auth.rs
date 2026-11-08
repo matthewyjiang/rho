@@ -53,7 +53,35 @@ pub struct AuthKeyResponse {
     /// Why the key was saved without the provider checking it. Absent when
     /// the provider accepted it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unchecked: Option<String>,
+    pub unchecked: Option<UncheckedKey>,
+}
+
+/// Why [`AUTH_KEY`] saved a key the provider did not check.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct UncheckedKey {
+    /// Why, for a program to branch on.
+    pub reason: UncheckedReason,
+    /// The reason in words, for a person: what went wrong when the provider
+    /// could not be reached, such as `HTTP 404`. It never contains the key.
+    pub message: String,
+}
+
+/// Why a key went unchecked. Protocol minors may add reasons.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum UncheckedReason {
+    /// Rho lists no models for the provider, so it cannot ask about a key.
+    NoModelListing,
+    /// The provider's models endpoint did not answer the question: it could
+    /// not be reached, or it failed with a status other than a refusal, as a
+    /// gateway without `/models` does.
+    Unreachable,
+    /// A reason a newer daemon sends that this crate does not know. Reading
+    /// it leniently keeps the response usable; daemons never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
 }
 
 /// Params of [`AUTH_LOGOUT`].

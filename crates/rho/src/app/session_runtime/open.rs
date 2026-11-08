@@ -152,9 +152,7 @@ impl SessionRuntime {
         } = opening;
         let config = session_config(process_config, &host_mcp);
         let agent = build.launch.agent.clone();
-        // Taken before the build reads credentials, so a change during the
-        // build still reads as after it.
-        let credentials = SessionCredentials::read_at(AppCredentialStore::generation());
+        let credentials = SessionCredentials::Read(AppCredentialStore::generation());
         let (built, permission) = build_session(&build, &agent, &config, cwd, &added_dirs, |_| {
             Ok(session_options_for_id(id))
         })
@@ -222,9 +220,7 @@ impl SessionRuntime {
             session_config(process_config, &host_mcp),
             || Ok(AgentCatalog::discover(cwd)?),
         )?;
-        // Taken before the build reads credentials, so a change during the
-        // build still reads as after it.
-        let credentials = SessionCredentials::read_at(AppCredentialStore::generation());
+        let credentials = SessionCredentials::Read(AppCredentialStore::generation());
         let (built, permission) =
             build_session(&build, &agent, &config, cwd, &added_dirs, |provider| {
                 let snapshot = stored

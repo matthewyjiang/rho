@@ -86,14 +86,10 @@ impl CredentialFailure {
 }
 
 /// Whether the session's provider still holds credentials the store has.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct SessionCredentials {
-    state: CredentialState,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CredentialState {
-    /// Read from the store at this generation; stale once it moves.
+pub(crate) enum SessionCredentials {
+    /// Read from the store at this generation, taken with
+    /// [`AppCredentialStore::generation`]; stale once it moves.
     Read(CredentialGeneration),
     /// A prompt failed on a credential failure; reacquire before the next.
     Refused,
@@ -105,23 +101,15 @@ enum CredentialState {
 }
 
 impl SessionCredentials {
-    /// For a provider built after `read` was taken with
-    /// [`AppCredentialStore::generation`].
-    pub(super) fn read_at(read: CredentialGeneration) -> Self {
-        Self {
-            state: CredentialState::Read(read),
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn scripted() -> Self {
-        Self {
-            state: CredentialState::Scripted,
-        }
-    }
-
+    /// Records that the provider was rebuilt after `read` was taken. A
+    /// scripted provider stays scripted: a test that switches it swaps one
+    /// scripted provider for another.
     pub(super) fn mark_read(&mut self, read: CredentialGeneration) {
-        self.state = CredentialState::Read(read);
+        match *self {
+            Self::Read(_) | Self::Refused => *self = Self::Read(read),
+            #[cfg(test)]
+            Self::Scripted => {}
+        }
     }
 }
 
@@ -133,21 +121,19 @@ impl SessionRuntime {
         &mut self,
         process_config: &Config,
     ) -> anyhow::Result<()> {
-        match self.credentials.state {
-            CredentialState::Read(read) if read == AppCredentialStore::generation() => {
+        match self.credentials {
+            SessionCredentials::Read(read) if read == AppCredentialStore::generation() => {
                 return Ok(());
             }
             // This process's writes keep the OS store's cache current, so
             // a moved generation needs no reread.
-            CredentialState::Read(_) => {}
+            SessionCredentials::Read(_) => {}
             // The login that fixes a refusal may have run in another
             // process, such as the editor's terminal login.
-            CredentialState::Refused => AppCredentialStore::reread_external_logins(),
+            SessionCredentials::Refused => AppCredentialStore::reread_external_logins(),
             #[cfg(test)]
-            CredentialState::Scripted => return Ok(()),
+            SessionCredentials::Scripted => return Ok(()),
         }
-        // Taken before the build reads credentials, so a change during the
-        // build still reads as after it.
         let read = AppCredentialStore::generation();
         let mut config = model_scoped_config(&self.current_model(), process_config);
         config.reasoning = self.built.session.reasoning_level();
@@ -173,7 +159,7 @@ impl SessionRuntime {
             .as_ref()
             .is_err_and(|error| CredentialFailure::find(error).is_some())
         {
-            self.credentials.state = CredentialState::Refused;
+            self.credentials = SessionCredentials::Refused;
         }
     }
 }

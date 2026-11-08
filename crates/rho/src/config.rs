@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, fmt, fs, path::PathBuf, str::FromStr};
 
 use {
     crate::compaction::CompactionConfig,
-    crate::credential_store::AppCredentialStore,
+    crate::credential_store::UntrackedCredentialStore,
     crate::keybindings::Keybindings,
     crate::model_aliases::ModelAliases,
     crate::paths,
@@ -594,7 +594,8 @@ impl Config {
 
     pub fn save(&self, path: Option<PathBuf>) -> anyhow::Result<()> {
         let path = path.map(Ok).unwrap_or_else(Self::default_path)?;
-        self.save_with_store(path, &AppCredentialStore)
+        // Saving migrates web-search keys only, which feed no provider.
+        self.save_with_store(path, &UntrackedCredentialStore)
     }
 
     /// Write config without opening or migrating credentials.

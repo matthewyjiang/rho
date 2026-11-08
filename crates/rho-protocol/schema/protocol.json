@@ -195,11 +195,15 @@
       "description": "Result of [`AUTH_KEY`]: the key is saved to the credential store the\ndaemon's config selects. Running sessions on the auth profile use it from\ntheir next prompt; new sessions use it at once.\n\nThe daemon first asks the provider's models endpoint about the key and\nrefuses one the provider refuses with\n[`crate::ErrorCode::KeyRefused`], saving nothing. A key the provider\ncannot be asked about, because rho lists no models for it or the endpoint\ndid not answer, is saved unchecked, as `rho login` saves it.",
       "properties": {
         "unchecked": {
-          "description": "Why the key was saved without the provider checking it. Absent when\nthe provider accepted it.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UncheckedKey"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why the key was saved without the provider checking it. Absent when\nthe provider accepted it."
         }
       },
       "type": "object"
@@ -2338,6 +2342,44 @@
         }
       ],
       "description": "How a turn ended."
+    },
+    "UncheckedKey": {
+      "description": "Why [`AUTH_KEY`] saved a key the provider did not check.",
+      "properties": {
+        "message": {
+          "description": "The reason in words, for a person: what went wrong when the provider\ncould not be reached, such as `HTTP 404`. It never contains the key.",
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/UncheckedReason",
+          "description": "Why, for a program to branch on."
+        }
+      },
+      "required": [
+        "reason",
+        "message"
+      ],
+      "type": "object"
+    },
+    "UncheckedReason": {
+      "anyOf": [
+        {
+          "const": "no_model_listing",
+          "description": "Rho lists no models for the provider, so it cannot ask about a key.",
+          "type": "string"
+        },
+        {
+          "const": "unreachable",
+          "description": "The provider's models endpoint did not answer the question: it could\nnot be reached, or it failed with a status other than a refusal, as a\ngateway without `/models` does.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Why a key went unchecked. Protocol minors may add reasons."
     },
     "VersionFix": {
       "description": "Which side of an incompatible pair has to change.",

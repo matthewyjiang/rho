@@ -48,7 +48,7 @@ mod session;
 
 pub use auth::{
     AuthKeyParams, AuthKeyResponse, AuthLogoutParams, AuthLogoutResponse, EnvironmentOverride,
-    AUTH_KEY, AUTH_LOGOUT,
+    UncheckedKey, UncheckedReason, AUTH_KEY, AUTH_LOGOUT,
 };
 pub use daemon::{
     ClientInfo, DaemonInfo, DaemonStatus, HelloParams, HelloResponse, StatusParams, StopParams,

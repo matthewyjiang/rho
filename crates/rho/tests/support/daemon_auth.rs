@@ -190,7 +190,7 @@ fn error_of<T: std::fmt::Debug>(result: Result<T, RpcError>) -> (Option<ErrorCod
 
 // Covers: a key saved by one client reaches another client's running
 // session at its next prompt, a key the provider refuses is not saved over
-// the one in the store, and a logout makes the running session's next
+// the one in the store and does not leak into the error, and a logout makes the running session's next
 // prompt fail as an authentication failure even though the provider still
 // accepts the key the session last read (#1662).
 // Owner: daemon credential methods and the session credential generation,
@@ -214,12 +214,14 @@ async fn a_key_saved_or_deleted_by_one_client_applies_to_another_clients_session
     );
 
     *valid.lock().unwrap() = SECOND_KEY.to_owned();
+    // The provider quotes the key it refuses; the whole error shows none of
+    // it.
     assert_eq!(
+        (save_key(&second, WRONG_KEY).await, fixture.saved_key()),
         (
-            error_of(save_key(&second, WRONG_KEY).await),
-            fixture.saved_key()
-        ),
-        ((Some(ErrorCode::KeyRefused), None), Some(FIRST_KEY.into()))
+            Err(RpcError::new(ErrorCode::KeyRefused, "mock refused the key")),
+            Some(FIRST_KEY.into())
+        )
     );
     assert_eq!(
         save_key(&second, SECOND_KEY).await,
