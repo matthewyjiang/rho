@@ -174,6 +174,10 @@ impl Pump {
                     self.options_changed(options).await;
                     let _ = told.send(());
                 }
+                // Nothing is shown until an attachment starts.
+                Inbound::Session(Control::Flush(done)) => {
+                    let _ = done.send(());
+                }
                 event @ Inbound::Event { .. } => self.buffer.push_back(event),
                 Inbound::Detached(_) | Inbound::Lost => self.buffer.clear(),
             }
@@ -232,6 +236,9 @@ impl Pump {
                     self.options_changed(options).await;
                     let _ = told.send(());
                 }
+                Inbound::Session(Control::Flush(done)) => {
+                    let _ = done.send(());
+                }
                 // A request attached again; the old attachment is over.
                 Inbound::Session(Control::Attached(attached)) => self.begin(attached).await,
                 Inbound::Detached(reason) => {
@@ -274,7 +281,11 @@ impl Pump {
             Show::Missed => self.live(event).await,
             Show::Skip => {}
         }
-        if self.replaying.as_ref().is_some_and(|replay| replay.remaining == 0) {
+        if self
+            .replaying
+            .as_ref()
+            .is_some_and(|replay| replay.remaining == 0)
+        {
             self.end_replay().await;
         }
     }
@@ -371,9 +382,9 @@ impl Pump {
                 Ok(()) => None,
                 Err(error) => Some(self.stale(error)),
             },
-            DetachReason::DaemonStopping => Some(
-                self.stale(AcpError::internal_error().data("rho daemon is stopping")),
-            ),
+            DetachReason::DaemonStopping => {
+                Some(self.stale(AcpError::internal_error().data("rho daemon is stopping")))
+            }
             DetachReason::Deleted => {
                 self.stale(AcpError::resource_not_found(Some(
                     self.context.acp_id.0.to_string(),
@@ -434,4 +445,3 @@ impl Pump {
         }
     }
 }
-

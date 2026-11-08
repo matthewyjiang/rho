@@ -75,6 +75,17 @@ impl Adapter {
         let outcome = match link.request::<SessionPrompt>(&params).await {
             Ok(_) => ended.await.map_err(|_| daemon::lost())??,
             Err(error) => {
+                // What the turn showed before it ended, such as a menu its
+                // end refreshed, reaches the host before this answer.
+                link.fence().await;
+                let (flushed, done) = oneshot::channel();
+                if live
+                    .inbound
+                    .send(Inbound::Session(Control::Flush(flushed)))
+                    .is_ok()
+                {
+                    let _ = done.await;
+                }
                 return match error.turn_ended() {
                     Some(outcome) => stop_reason(outcome),
                     None => Err(daemon::daemon_error(&error)),

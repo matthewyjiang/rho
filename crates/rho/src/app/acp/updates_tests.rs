@@ -279,6 +279,13 @@ fn tool_calls_open_a_card_then_patch_it() {
                 path: "/w/src/lib.rs".into(),
                 old_text: Some("a".into()),
                 new_text: "b".into(),
+                deleted: false,
+            },
+            wire::ToolContent::Diff {
+                path: "/w/src/gone.rs".into(),
+                old_text: Some("c".into()),
+                new_text: String::new(),
+                deleted: true,
             },
             wire::ToolContent::Unknown,
         ]),
@@ -309,9 +316,20 @@ fn tool_calls_open_a_card_then_patch_it() {
                 ToolCallId::new("c1"),
                 ToolCallUpdateFields::new()
                     .status(ToolCallStatus::Completed)
-                    .content(vec![ToolCallContent::Diff(
-                        Diff::new("/w/src/lib.rs", "b").old_text("a".to_owned()),
-                    )]),
+                    .content(vec![
+                        ToolCallContent::Diff(
+                            Diff::new("/w/src/lib.rs", "b").old_text("a".to_owned()),
+                        ),
+                        // v1 cannot say a file is gone; `_meta` does.
+                        ToolCallContent::Diff(
+                            Diff::new("/w/src/gone.rs", "")
+                                .old_text("c".to_owned())
+                                .meta(serde_json::Map::from_iter([(
+                                    "rho/fileDeleted".to_owned(),
+                                    json!(true),
+                                )])),
+                        ),
+                    ]),
             )),
             SessionUpdate::ToolCall(
                 ToolCall::new(ToolCallId::new("c2"), "tool")

@@ -282,16 +282,28 @@ provider = "disabled"
     }
 }
 
+/// Stops `home`'s daemon, so the next `rho acp` starts a fresh one that
+/// reopens sessions from their files, as after a restart.
+fn stop_daemon(home: &IsolatedHome) {
+    let status = home
+        .command(env!("CARGO_BIN_EXE_rho"))
+        .args(["daemon", "stop"])
+        .stdin(Stdio::null())
+        .status()
+        .expect("run rho daemon stop");
+    assert!(status.success(), "rho daemon stop: {status}");
+}
+
 /// Whether the fixture's read of `notes.txt` returned the file.
 fn read_the_extra_file(reply: &str) -> bool {
     reply.lines().last() == Some("1:extra root content")
 }
 
-// Covers: additionalDirectories on session/new and session/load must put
-// those roots in the session's workspace scope (plan mode denies reads
-// outside it), each request must set the active roots without reviving
-// stored ones, and initialize must advertise the capability so hosts such
-// as Zed send them at all.
+// Covers: additionalDirectories on session/new must put those roots in the
+// session's workspace scope (plan mode denies reads outside it), the
+// session keeps them when a later load names none, even once a daemon
+// restart reopens it from its file (#1661), and initialize must advertise
+// the capability so hosts such as Zed send them at all.
 // Owner: ACP session lifecycle, over the real stdio server
 #[test]
 fn additional_directories_scope_new_and_loaded_sessions() {
@@ -319,23 +331,25 @@ fn additional_directories_scope_new_and_loaded_sessions() {
     let reply = server.prompt(&session_id, "read the shared notes");
     assert!(read_the_extra_file(&reply), "{reply}");
 
-    for (label, additional, readable) in [
-        ("load without roots", json!([]), false),
-        ("load with roots", json!([extra]), true),
-    ] {
-        let (loaded, _) = server.request(
-            "session/load",
-            json!({
-                "sessionId": session_id,
-                "cwd": workspace.project,
-                "mcpServers": [],
-                "additionalDirectories": additional,
-            }),
-        );
-        loaded.unwrap_or_else(|error| panic!("{label}: {error}"));
-        let reply = server.prompt(&session_id, "read the shared notes");
-        assert_eq!(read_the_extra_file(&reply), readable, "{label}: {reply}");
-    }
+    drop(server);
+    stop_daemon(&workspace.home);
+    let mut server = workspace.server();
+    server
+        .request("initialize", json!({"protocolVersion": 1}))
+        .0
+        .unwrap();
+    let (loaded, _) = server.request(
+        "session/load",
+        json!({
+            "sessionId": session_id,
+            "cwd": workspace.project,
+            "mcpServers": [],
+            "additionalDirectories": [],
+        }),
+    );
+    loaded.unwrap();
+    let reply = server.prompt(&session_id, "read the shared notes");
+    assert!(read_the_extra_file(&reply), "{reply}");
 }
 
 // Covers: an additionalDirectories entry the session cannot grant must fail
@@ -370,9 +384,10 @@ fn additional_directories_reject_entries_they_cannot_grant() {
     }
 }
 
-// Covers: loading saved history after a server restart must restore paired
-// tool cards, arguments, result status and output before session/load replies,
-// even when successive provider turns reuse the same tool-call ID.
+// Covers: loading saved history after a restart of `rho acp` and its daemon
+// must restore paired tool cards, arguments, result status and output before
+// session/load replies, even when successive provider turns reuse the same
+// tool-call ID.
 // Owner: ACP session replay, over the real stdio server
 #[test]
 fn load_replays_tool_calls_and_results() {
@@ -424,6 +439,9 @@ fn load_replays_tool_calls_and_results() {
                 .0
                 .unwrap();
             drop(server);
+            // A fresh daemon reopens the session from its file, with a
+            // fresh fixture provider.
+            stop_daemon(&workspace.home);
             server = workspace.server();
             server
                 .request("initialize", json!({"protocolVersion": 1}))

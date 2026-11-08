@@ -179,7 +179,10 @@ impl Adapter {
         let ended = match raced {
             Raced::Ended(ended) => ended,
             Raced::Answered(answer) => {
-                match answer.map_err(|error| unshown(&label, auth, &error))?.action {
+                match answer
+                    .map_err(|error| unshown(&label, auth, &error))?
+                    .action
+                {
                     ElicitationAction::Accept(_) => running.ending(Some(cancellation)).await?,
                     ElicitationAction::Decline | ElicitationAction::Cancel => None,
                     // An action this version does not know is not consent
@@ -235,9 +238,10 @@ fn finished(outcome: LoginOutcome) -> Result<(), AcpError> {
         LoginOutcome::Failed { message } => Err(AcpError::internal_error().data(message)),
         LoginOutcome::Cancelled => Err(AcpError::request_cancelled()),
         // `Unknown`, or an outcome a newer daemon sends.
-        _ => Err(
-            AcpError::internal_error().data("the sign-in ended in a way this rho does not know"),
-        ),
+        _ => {
+            Err(AcpError::internal_error()
+                .data("the sign-in ended in a way this rho does not know"))
+        }
     }
 }
 
@@ -271,10 +275,7 @@ struct RunningLogin<'a> {
 impl RunningLogin<'_> {
     /// The login's next step. `cancellation` is the host's cancel of
     /// `authenticate`; `None` once the login is being cancelled anyway.
-    async fn next(
-        &mut self,
-        cancellation: Option<&RequestCancellation>,
-    ) -> Result<Step, AcpError> {
+    async fn next(&mut self, cancellation: Option<&RequestCancellation>) -> Result<Step, AcpError> {
         let cancelled = async {
             match cancellation {
                 Some(cancellation) => cancellation.cancelled().await,

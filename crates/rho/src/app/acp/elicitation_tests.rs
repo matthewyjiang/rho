@@ -140,10 +140,7 @@ fn request() -> QuestionAsk {
         question(
             "checks",
             "Which checks?",
-            vec![
-                choice("fmt", "Format"),
-                choice("test", "Test"),
-            ],
+            vec![choice("fmt", "Format"), choice("test", "Test")],
             Selection::Many,
         )
         .optional(),
@@ -373,13 +370,7 @@ fn free_text_companions_do_not_collide_with_question_ids() {
     let request = ask(
         "Server form",
         vec![
-            question(
-                "x",
-                "X?",
-                vec![choice("a", "A")],
-                Selection::One,
-            )
-            .allow_other(),
+            question("x", "X?", vec![choice("a", "A")], Selection::One).allow_other(),
             question(
                 "x.other",
                 "Note?",
@@ -534,10 +525,7 @@ fn t3_code_multiple_choice_hint_names_a_separator_no_label_contains() {
         vec![question(
             "q",
             "Pick",
-            vec![
-                choice("all", every.as_str()),
-                choice("b", "B"),
-            ],
+            vec![choice("all", every.as_str()), choice("b", "B")],
             Selection::Many,
         )],
     );
@@ -556,10 +544,7 @@ fn defaults_prefer_a_choice_value_over_another_label() {
         let question = question(
             "q",
             "Pick",
-            vec![
-                choice("first", "second"),
-                choice("second", "Other"),
-            ],
+            vec![choice("first", "second"), choice("second", "Other")],
             Selection::One,
         )
         .with_default_value(default);

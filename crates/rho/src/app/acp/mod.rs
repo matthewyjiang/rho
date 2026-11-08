@@ -24,20 +24,20 @@ mod v2;
 use std::{collections::BTreeSet, future::Future, pin::Pin, sync::Arc};
 
 use agent_client_protocol::{
-    schema::ProtocolVersion,
     schema::v1::{
         AgentAuthCapabilities, AgentCapabilities, AuthenticateRequest, CancelNotification,
         CloseSessionRequest, CompleteElicitationNotification, CreateElicitationRequest,
         CreateElicitationResponse, DeleteSessionRequest, Implementation, InitializeRequest,
         InitializeResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest,
-        LoadSessionResponse, LogoutCapabilities, LogoutRequest, McpCapabilities,
-        NewSessionRequest, NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse,
-        RequestPermissionRequest, RequestPermissionResponse,
-        ResumeSessionRequest, ResumeSessionResponse, SessionAdditionalDirectoriesCapabilities,
-        SessionCapabilities, SessionCloseCapabilities, SessionDeleteCapabilities,
-        SessionListCapabilities, SessionNotification, SessionResumeCapabilities,
-        SetSessionConfigOptionRequest, SetSessionModeRequest,
+        LoadSessionResponse, LogoutCapabilities, LogoutRequest, McpCapabilities, NewSessionRequest,
+        NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse,
+        RequestPermissionRequest, RequestPermissionResponse, ResumeSessionRequest,
+        ResumeSessionResponse, SessionAdditionalDirectoriesCapabilities, SessionCapabilities,
+        SessionCloseCapabilities, SessionDeleteCapabilities, SessionListCapabilities,
+        SessionNotification, SessionResumeCapabilities, SetSessionConfigOptionRequest,
+        SetSessionModeRequest,
     },
+    schema::ProtocolVersion,
     Agent, Client, ConnectTo, ConnectionTo, Error as AcpError, JsonRpcResponse, Responder, Role,
     Stdio,
 };

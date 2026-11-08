@@ -24,9 +24,7 @@ pub(super) fn update(
 ) -> Option<SessionUpdate> {
     let id = CompactionId::new(id.as_str());
     let update = match status {
-        wire::CompactionStatus::Started => {
-            CompactionUpdate::new(id, CompactionStatus::InProgress)
-        }
+        wire::CompactionStatus::Started => CompactionUpdate::new(id, CompactionStatus::InProgress),
         wire::CompactionStatus::Completed => CompactionUpdate::new(id, CompactionStatus::Completed),
         wire::CompactionStatus::Cancelled => CompactionUpdate::new(id, CompactionStatus::Cancelled),
         wire::CompactionStatus::Failed { error } => {

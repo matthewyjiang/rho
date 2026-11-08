@@ -6,10 +6,8 @@ use rho_sdk::tool::Tool;
 
 use crate::tools::{
     mcp::{McpCatalog, McpSessionReport},
-    process::ProcessManager,
     sdk_registry::AppToolSet,
     todo::TodoState,
-    workflow_tracker::WorkflowRunTracker,
 };
 
 /// A read-only view of a session's tools, for hosts that list what the
@@ -51,15 +49,5 @@ impl<'a> SessionTools<'a> {
     /// The session's todo checklist, shared with its `todo` tool.
     pub(crate) fn todo_state(self) -> TodoState {
         self.0.todo_state()
-    }
-
-    /// The session's background processes, when it offers process tools.
-    pub(crate) fn processes(self) -> Option<&'a ProcessManager> {
-        self.0.processes()
-    }
-
-    /// The session's background workflow runs.
-    pub(crate) fn workflow_tracker(self) -> &'a WorkflowRunTracker {
-        self.0.workflow_tracker()
     }
 }

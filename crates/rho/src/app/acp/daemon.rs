@@ -21,8 +21,8 @@ use std::{
 
 use agent_client_protocol::Error as AcpError;
 use rho_protocol::{
-    methods::Method, Client, ClientError, DaemonNotification, DetachReason, ErrorCode,
-    LoginId, LoginOutcome, LoginPrompt, Notifications, SessionEvent, SessionId,
+    methods::Method, Client, ClientError, DaemonNotification, DetachReason, ErrorCode, LoginId,
+    LoginOutcome, LoginPrompt, Notifications, SessionEvent, SessionId,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -45,8 +45,14 @@ pub(super) enum Inbound {
 
 /// What the router hands the login in flight.
 pub(super) enum LoginEvent {
-    Prompt { login: LoginId, prompt: LoginPrompt },
-    Finished { login: LoginId, outcome: LoginOutcome },
+    Prompt {
+        login: LoginId,
+        prompt: LoginPrompt,
+    },
+    Finished {
+        login: LoginId,
+        outcome: LoginOutcome,
+    },
     Lost,
 }
 
@@ -113,7 +119,9 @@ impl Daemon {
         params: &M::Params,
     ) -> Result<M::Result, AcpError> {
         let link = self.link().await?;
-        link.request::<M>(params).await.map_err(|error| daemon_error(&error))
+        link.request::<M>(params)
+            .await
+            .map_err(|error| daemon_error(&error))
     }
 
     /// Routes session `session`'s notifications to `sender`, replacing any
@@ -258,9 +266,7 @@ pub(super) fn daemon_error(error: &ClientError) -> AcpError {
         other => other.to_string(),
     };
     let acp_error = match error.error_code() {
-        Some(ErrorCode::InvalidParams | ErrorCode::SessionOpenFailed) => {
-            AcpError::invalid_params()
-        }
+        Some(ErrorCode::InvalidParams | ErrorCode::SessionOpenFailed) => AcpError::invalid_params(),
         Some(ErrorCode::SessionNotFound | ErrorCode::SessionNotLoaded) => {
             AcpError::resource_not_found(None)
         }

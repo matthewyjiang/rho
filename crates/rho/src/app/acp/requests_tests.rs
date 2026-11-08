@@ -2,8 +2,8 @@ use std::{collections::BTreeSet, path::PathBuf};
 
 use agent_client_protocol::schema::v1::{
     AudioContent, BlobResourceContents, ContentBlock as AcpContentBlock, EmbeddedResource,
-    EmbeddedResourceResource, EnvVariable, ImageContent, McpServer as AcpMcpServer,
-    McpServerHttp, McpServerStdio, ResourceLink, TextContent, TextResourceContents,
+    EmbeddedResourceResource, EnvVariable, ImageContent, McpServer as AcpMcpServer, McpServerHttp,
+    McpServerStdio, ResourceLink, TextContent, TextResourceContents,
 };
 use pretty_assertions::assert_eq;
 use rho_protocol::{
@@ -114,7 +114,9 @@ fn launch_flags_and_host_request_make_the_session_setup() {
                     name: "files".into(),
                     command: "/bin/files".into(),
                     args: vec!["--root".into()],
-                    env: [("TOKEN".to_owned(), "new".to_owned())].into_iter().collect(),
+                    env: [("TOKEN".to_owned(), "new".to_owned())]
+                        .into_iter()
+                        .collect(),
                 },
                 McpServer::Http {
                     name: "search".into(),

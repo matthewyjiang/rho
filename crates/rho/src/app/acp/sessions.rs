@@ -66,6 +66,9 @@ pub(super) enum Control {
     /// update before the response, and only once even when the daemon's
     /// `OptionsChanged` arrived first.
     Options(SessionOptions, oneshot::Sender<()>),
+    /// Answered once the pump handled everything routed before it, so a
+    /// response sent after the answer follows the updates sent before it.
+    Flush(oneshot::Sender<()>),
 }
 
 /// An attachment's start, built from the attach response.
@@ -482,9 +485,9 @@ impl Adapter {
         let current = lock(&live.shared).options.clone();
         let change = options::change(request, &current, toggles)?;
         let options = self.configure(&live, change).await?;
-        Ok(SetSessionConfigOptionResponse::new(options::config_options(
-            &options, toggles,
-        )))
+        Ok(SetSessionConfigOptionResponse::new(
+            options::config_options(&options, toggles),
+        ))
     }
 
     /// `session/set_mode`.

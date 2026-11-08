@@ -28,13 +28,21 @@ fn answered(stop: AnswerStop) -> TurnOutcome {
 #[test]
 fn turn_outcomes_answer_the_prompt() {
     let cases = [
-        ("answer", answered(AnswerStop::EndTurn), Ok(StopReason::EndTurn)),
+        (
+            "answer",
+            answered(AnswerStop::EndTurn),
+            Ok(StopReason::EndTurn),
+        ),
         (
             "output limit",
             answered(AnswerStop::MaxTokens),
             Ok(StopReason::MaxTokens),
         ),
-        ("refusal", answered(AnswerStop::Refusal), Ok(StopReason::Refusal)),
+        (
+            "refusal",
+            answered(AnswerStop::Refusal),
+            Ok(StopReason::Refusal),
+        ),
         (
             "unknown stop",
             answered(AnswerStop::Unknown),
@@ -71,7 +79,11 @@ fn turn_outcomes_answer_the_prompt() {
             failed(TurnErrorKind::Provider, "503"),
             Err(AcpError::internal_error().data("503")),
         ),
-        ("unknown outcome", TurnOutcome::Unknown, Ok(StopReason::EndTurn)),
+        (
+            "unknown outcome",
+            TurnOutcome::Unknown,
+            Ok(StopReason::EndTurn),
+        ),
     ];
     for (label, outcome, expected) in cases {
         assert_eq!(stop_reason(outcome), expected, "{label}");

@@ -378,11 +378,7 @@ impl Separator {
 
 /// T3 Code answers with a chosen label or typed text; a multiple choice
 /// types several, split by the question's [`Separator`] when it has one.
-fn t3_choices(
-    question: &Question,
-    selection: Selection,
-    values: Vec<String>,
-) -> Vec<String> {
+fn t3_choices(question: &Question, selection: Selection, values: Vec<String>) -> Vec<String> {
     let separator = Separator::for_question(question);
     let pieces = values
         .into_iter()

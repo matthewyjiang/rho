@@ -17,9 +17,9 @@
 
 use agent_client_protocol::{
     schema::v1::{
-        AvailableCommand, AvailableCommandInput, SessionConfigOption,
-        SessionConfigOptionCategory, SessionConfigSelectOption, SessionMode, SessionModeState,
-        SetSessionConfigOptionRequest, UnstructuredCommandInput,
+        AvailableCommand, AvailableCommandInput, SessionConfigOption, SessionConfigOptionCategory,
+        SessionConfigSelectOption, SessionMode, SessionModeState, SetSessionConfigOptionRequest,
+        UnstructuredCommandInput,
     },
     Error as AcpError,
 };
@@ -103,14 +103,13 @@ pub(super) fn change(
             mode_change(value)
         }
         MODEL_CONFIG_ID => model_change(value_id(request, MODEL_CONFIG_ID)?, &options.model),
-        THOUGHT_LEVEL_ID => {
-            reasoning_change(value_id(request, THOUGHT_LEVEL_ID)?, options.reasoning.as_ref())
-        }
+        THOUGHT_LEVEL_ID => reasoning_change(
+            value_id(request, THOUGHT_LEVEL_ID)?,
+            options.reasoning.as_ref(),
+        ),
         FAST_MODE_ID => {
             if options.fast_mode.is_none() {
-                return Err(
-                    AcpError::invalid_params().data("the current model has no fast mode")
-                );
+                return Err(AcpError::invalid_params().data("the current model has no fast mode"));
             }
             fast_mode_value(request, toggles).map(|enabled| SessionChange::FastMode { enabled })
         }

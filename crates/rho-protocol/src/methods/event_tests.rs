@@ -91,6 +91,7 @@ fn every_session_event_round_trips_through_its_wire_form() {
                         path: "a.rs".into(),
                         old_text: None,
                         new_text: "fn a() {}".into(),
+                        deleted: false,
                     },
                 ]),
                 locations: Some(vec![Location {

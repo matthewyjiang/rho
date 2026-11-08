@@ -611,6 +611,7 @@ fn output_content(output: &ToolOutput, cwd: &Path) -> Vec<ToolContent> {
                     path: cwd.join(change.path()),
                     old_text: change.old_text().map(str::to_owned),
                     new_text: change.new_text().to_owned(),
+                    deleted: change.is_deleted(),
                 }),
         );
     }

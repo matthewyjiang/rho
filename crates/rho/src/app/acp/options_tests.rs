@@ -167,7 +167,12 @@ fn modes_list_known_permission_modes() {
 // Owner: ACP config options
 #[test]
 fn picks_become_daemon_changes() {
-    let cases: [(&str, SessionConfigOptionValue, Toggles, Result<SessionChange, ErrorCode>); 11] = [
+    let cases: [(
+        &str,
+        SessionConfigOptionValue,
+        Toggles,
+        Result<SessionChange, ErrorCode>,
+    ); 11] = [
         (
             "mode",
             "auto".into(),
@@ -176,7 +181,12 @@ fn picks_become_daemon_changes() {
                 mode: wire::PermissionMode::Auto,
             }),
         ),
-        ("mode", "sideways".into(), Toggles::Select, Err(ErrorCode::InvalidParams)),
+        (
+            "mode",
+            "sideways".into(),
+            Toggles::Select,
+            Err(ErrorCode::InvalidParams),
+        ),
         (
             "model",
             "openrouter/openai/gpt-4".into(),
@@ -185,7 +195,12 @@ fn picks_become_daemon_changes() {
                 model: model_ref("openrouter", "openai/gpt-4"),
             }),
         ),
-        ("model", "anthropic/claude".into(), Toggles::Select, Err(ErrorCode::InvalidParams)),
+        (
+            "model",
+            "anthropic/claude".into(),
+            Toggles::Select,
+            Err(ErrorCode::InvalidParams),
+        ),
         (
             "thought_level",
             "xhigh".into(),
@@ -194,7 +209,12 @@ fn picks_become_daemon_changes() {
                 level: wire::ReasoningLevel::Xhigh,
             }),
         ),
-        ("thought_level", "max".into(), Toggles::Select, Err(ErrorCode::InvalidParams)),
+        (
+            "thought_level",
+            "max".into(),
+            Toggles::Select,
+            Err(ErrorCode::InvalidParams),
+        ),
         (
             "fast_mode",
             "off".into(),
@@ -213,8 +233,18 @@ fn picks_become_daemon_changes() {
             Toggles::Boolean,
             Ok(SessionChange::FastMode { enabled: true }),
         ),
-        ("fast_mode", "on".into(), Toggles::Boolean, Err(ErrorCode::InvalidParams)),
-        ("verbosity", "high".into(), Toggles::Select, Err(ErrorCode::InvalidParams)),
+        (
+            "fast_mode",
+            "on".into(),
+            Toggles::Boolean,
+            Err(ErrorCode::InvalidParams),
+        ),
+        (
+            "verbosity",
+            "high".into(),
+            Toggles::Select,
+            Err(ErrorCode::InvalidParams),
+        ),
     ];
     for (id, value, toggles, expected) in cases {
         let request = SetSessionConfigOptionRequest::new(SessionId::new("s"), id, value);

@@ -239,6 +239,7 @@ fn tool_results_open_complete_cards_and_never_reopen() {
                                 path: PathBuf::from("/work/a.txt"),
                                 old_text: Some("a\nb\n".into()),
                                 new_text: "a\nB\n".into(),
+                                deleted: false,
                             },
                         ],
                     )

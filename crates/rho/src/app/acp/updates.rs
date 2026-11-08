@@ -29,7 +29,6 @@ use crate::permission::PermissionMode;
 
 /// v1 diffs cannot tell a deleted file from an emptied one, so a deletion
 /// says so in `_meta`; ACP v2's structured changes read it.
-// The wire `ToolContent::Diff` carries no deletion yet, so nothing sets it.
 pub(super) const DELETED_FILE_META_KEY: &str = "rho/fileDeleted";
 
 /// Hosts with their own transcript use this marker to avoid duplicating it.
@@ -285,14 +284,11 @@ fn content_block(block: &wire::ContentBlock) -> Option<ContentBlock> {
         wire::ContentBlock::Image { mime_type, data } => {
             ContentBlock::Image(ImageContent::new(data.as_str(), mime_type.as_str()))
         }
-        wire::ContentBlock::Resource { uri, text } => {
-            ContentBlock::Resource(EmbeddedResource::new(
-                EmbeddedResourceResource::TextResourceContents(TextResourceContents::new(
-                    text.as_str(),
-                    uri.as_str(),
-                )),
-            ))
-        }
+        wire::ContentBlock::Resource { uri, text } => ContentBlock::Resource(
+            EmbeddedResource::new(EmbeddedResourceResource::TextResourceContents(
+                TextResourceContents::new(text.as_str(), uri.as_str()),
+            )),
+        ),
         wire::ContentBlock::ResourceLink {
             uri,
             name,
@@ -336,16 +332,25 @@ fn tool_status(status: wire::ToolStatus) -> ToolCallStatus {
 fn tool_content(content: &wire::ToolContent) -> Option<ToolCallContent> {
     Some(match content {
         wire::ToolContent::Text { text } => ToolCallContent::from(text.as_str()),
-        wire::ToolContent::Image { mime_type, data } => ToolCallContent::from(
-            ContentBlock::Image(ImageContent::new(data.as_str(), mime_type.as_str())),
-        ),
+        wire::ToolContent::Image { mime_type, data } => ToolCallContent::from(ContentBlock::Image(
+            ImageContent::new(data.as_str(), mime_type.as_str()),
+        )),
         wire::ToolContent::Diff {
             path,
             old_text,
             new_text,
-        } => ToolCallContent::Diff(
-            Diff::new(path.clone(), new_text.as_str()).old_text(old_text.clone()),
-        ),
+            deleted,
+        } => {
+            let diff = Diff::new(path.clone(), new_text.as_str()).old_text(old_text.clone());
+            ToolCallContent::Diff(if *deleted {
+                diff.meta(serde_json::Map::from_iter([(
+                    DELETED_FILE_META_KEY.to_owned(),
+                    Value::Bool(true),
+                )]))
+            } else {
+                diff
+            })
+        }
         // `Unknown`, or content a newer daemon sends.
         _ => return None,
     })

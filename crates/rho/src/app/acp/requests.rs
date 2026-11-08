@@ -67,7 +67,7 @@ pub(super) fn session_cwd(cwd: &Path) -> Result<PathBuf, AcpError> {
     }
     if !cwd.is_dir() {
         return Err(
-            AcpError::invalid_params().data("ACP session cwd must be an existing directory"),
+            AcpError::invalid_params().data("ACP session cwd must be an existing directory")
         );
     }
     Ok(cwd.to_path_buf())

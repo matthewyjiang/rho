@@ -234,9 +234,9 @@ pub(super) fn setup(options: &SessionOptions, toggles: Toggles) -> Result<Setup,
         config_options: super::updates::config_options(acp_options::config_options(
             options, toggles,
         ))?,
-        available_commands: super::updates::available_commands(
-            acp_options::available_commands(&options.commands),
-        )?,
+        available_commands: super::updates::available_commands(acp_options::available_commands(
+            &options.commands,
+        ))?,
     })
 }
 
