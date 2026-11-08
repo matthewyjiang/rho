@@ -153,6 +153,9 @@ pub enum SessionEvent {
     InputHeld { id: InputRequestId },
     /// The turn ended, and how (#1669).
     TurnEnded { outcome: super::TurnOutcome },
+    /// The session's options changed, as after [`super::SESSION_CONFIGURE`]
+    /// or a plan approval's mode switch: all of them, replacing the last.
+    OptionsChanged { options: super::SessionOptions },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]

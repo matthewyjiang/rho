@@ -127,6 +127,13 @@ impl JobRegistry {
         self.lock().get(id).cloned()
     }
 
+    /// Whether job `id` has a turn under way, one waiting for input included.
+    pub(in crate::app::daemon_host) fn turn_in_progress(&self, id: &JobId) -> bool {
+        self.lock()
+            .get(id)
+            .is_some_and(|record| record.state.in_progress())
+    }
+
     /// Every job, oldest first.
     pub(in crate::app::daemon_host) fn list(&self) -> Vec<JobRecord> {
         let mut jobs: Vec<_> = self.lock().values().cloned().collect();

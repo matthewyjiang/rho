@@ -47,6 +47,7 @@ pub(crate) mod sdk_config;
 mod session_assembly;
 mod session_commands;
 mod session_events;
+mod session_options;
 mod session_runtime;
 mod sessions_cli;
 mod shutdown_signal;

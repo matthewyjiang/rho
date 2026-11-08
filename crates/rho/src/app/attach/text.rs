@@ -76,7 +76,8 @@ impl<O: Write, E: Write> TextView<O, E> {
             | SessionEvent::State { .. }
             | SessionEvent::InputRequested { .. }
             | SessionEvent::InputResolved { .. }
-            | SessionEvent::InputHeld { .. } => {}
+            | SessionEvent::InputHeld { .. }
+            | SessionEvent::OptionsChanged { .. } => {}
             // `SessionEvent` is non-exhaustive; an event a newer daemon sends
             // is not shown.
             _ => {}

@@ -1,6 +1,7 @@
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    AnswerStop, Cursor, JobState, MessageId, Replay, Seq, SessionAttachResponse, SessionEvent,
+    AnswerStop, Cursor, JobState, MessageId, ModelOptions, ModelRef, PermissionMode,
+    PermissionModeOptions, Replay, Seq, SessionAttachResponse, SessionEvent, SessionOptions,
     StreamId, TurnError, TurnErrorKind, TurnOutcome,
 };
 
@@ -15,6 +16,22 @@ fn response(replay: Replay, replay_events: u64, state: JobState) -> SessionAttac
         state,
         inputs: Vec::new(),
         title: None,
+        options: SessionOptions {
+            model: ModelOptions {
+                current: ModelRef {
+                    provider: "test".into(),
+                    model: "model".into(),
+                },
+                available: Vec::new(),
+            },
+            reasoning: None,
+            fast_mode: None,
+            permission_mode: PermissionModeOptions {
+                current: PermissionMode::Bypass,
+                available: Vec::new(),
+            },
+            commands: Vec::new(),
+        },
     }
 }
 

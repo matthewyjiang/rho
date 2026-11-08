@@ -3,15 +3,15 @@
 //! Hosts list `available_commands_update` entries in their command menus and
 //! send a picked command back as `/name args` prompt text. ACP sessions run
 //! every command of [`crate::app::session_commands`], which resolves them,
-//! including both built-ins, `/compact` and `/init`; this module advertises
-//! them.
+//! including both built-ins, `/compact` and `/init`;
+//! [`crate::app::session_options`] lists them, and this module renders that
+//! list for ACP, as the ACP adapter will render the daemon's (#1670).
 //!
 //! T3 Code fills its `$` menu only from `available_commands_update` entries
 //! named `$<skill>` and sends a picked skill back as a `$<skill>` mention in
 //! plain prompt text. Rho advertises its discovered skills that way; the
 //! shared resolver then loads every mentioned skill before the first model
 //! request, as one batch of host-requested `skill` calls.
-//! [`crate::skills::mention`] owns the mention rule shared with the TUI.
 //!
 //! `/rho-wake <token>` runs a T3 wake watcher (see [`super::t3_wake`]). It is
 //! ACP's own command, matched before the shared ones, and never advertised:
@@ -20,31 +20,22 @@
 use agent_client_protocol::schema::v1::{
     AvailableCommand, AvailableCommandInput, UnstructuredCommandInput,
 };
+use rho_protocol as wire;
 use rho_sdk::UserInput;
 
 use super::t3_wake::{WakeSignal, WAKE_COMMAND};
-use crate::{
-    agent::AgentRuntimeSpec,
-    app::{
-        session_commands::{
-            self, command_args, leading_text, BuiltInCommand, CommandScope, CommandSet,
-            PromptCommand,
-        },
-        session_runtime::CommandRejected,
-        workflow_cli::discover as workflows,
+use crate::app::{
+    session_commands::{
+        self, leading_text, BuiltInCommand, CommandScope, CommandSet, Hosting, PromptCommand,
     },
-    commands::COMMANDS,
-    prompt_templates,
-    skills::{
-        mention::{self, SKILL_TOOL},
-        Skill,
-    },
-    tools::workflow as workflow_tool,
+    session_runtime::CommandRejected,
 };
 
-/// The shared commands ACP sessions run: every built-in.
-const ACP_COMMANDS: CommandSet = CommandSet {
+/// The shared commands ACP sessions run: every one.
+pub(super) const ACP_COMMANDS: CommandSet = CommandSet {
     built_ins: &[BuiltInCommand::Compact, BuiltInCommand::Init],
+    workflows: Hosting::Runs,
+    agents: Hosting::Runs,
     sessions_label: "ACP sessions",
 };
 
@@ -57,64 +48,11 @@ pub(super) enum AcpPrompt {
     AwaitWake(WakeSignal),
 }
 
-/// Every command this session can run: built-ins, prompt templates, MCP
-/// prompts, workflows when the session has the workflow tool, `$skill`
-/// mentions when it has the skill tool, and Rho agent definitions.
-pub(super) fn available_commands(scope: &CommandScope<'_>) -> Vec<AvailableCommand> {
-    let built_in = COMMANDS
-        .iter()
-        .filter(|spec| ACP_COMMANDS.built_in(spec.id).is_some())
-        .map(|spec| command(spec.name.to_string(), spec.description, spec.usage));
-    let templates = scope.templates().into_iter().map(|(name, template)| {
-        let name = format!("prompt:{name}");
-        let usage = prompt_templates::usage(&name, &template);
-        command(name, &prompt_templates::description(&template), &usage)
-    });
-    let mcp_prompts = scope
-        .tools
-        .mcp_catalog()
-        .prompts()
-        .into_iter()
-        .map(|prompt| {
-            let description = prompt.description.as_deref().unwrap_or(prompt.label());
-            command(prompt.command_name(), description, &prompt.usage())
-        });
-    let mut commands = built_in
-        .chain(templates)
-        .chain(mcp_prompts)
-        .collect::<Vec<_>>();
-    if scope.tools.contains(workflow_tool::NAME) {
-        commands.extend(
-            workflows::command_workflows(scope.cwd)
-                .into_iter()
-                .filter_map(|workflow| {
-                    Some(command(
-                        workflow.command_name()?,
-                        &workflow.command_description(),
-                        &workflow.command_usage()?,
-                    ))
-                }),
-        );
-    }
-    if scope.tools.contains(SKILL_TOOL) {
-        commands.extend(skill_commands(&scope.skills()));
-    }
-    if let Ok(catalog) = scope.agent_catalog() {
-        commands.extend(catalog.iter().filter_map(|entry| {
-            let definition = &entry.definition;
-            match &definition.runtime {
-                AgentRuntimeSpec::Rho { .. } => Some(command(
-                    format!("agent:{}", definition.id),
-                    &definition.description,
-                    &format!("/agent:{} <task>", definition.id),
-                )),
-                AgentRuntimeSpec::ClaudeCli(_)
-                | AgentRuntimeSpec::Cursor(_)
-                | AgentRuntimeSpec::Antigravity(_) => None,
-            }
-        }));
-    }
-    commands
+/// `commands` as `available_commands_update` entries: skills named
+/// `$<skill>`, the rest by name with their argument hint as unstructured
+/// input. A command of a kind this rho does not know is left out.
+pub(super) fn available_commands(commands: &[wire::SessionCommand]) -> Vec<AvailableCommand> {
+    commands.iter().filter_map(advertised).collect()
 }
 
 /// Matches ACP's `/rho-wake`, then resolves the shared commands.
@@ -135,26 +73,20 @@ pub(super) async fn resolve(
         .map(AcpPrompt::Shared)
 }
 
-/// `$<name>` commands for every skill a T3 composer can mention.
-fn skill_commands(skills: &[Skill]) -> Vec<AvailableCommand> {
-    skills
-        .iter()
-        .filter(|skill| mention::mentionable(&skill.name))
-        .map(|skill| AvailableCommand::new(format!("${}", skill.name), skill.description.clone()))
-        .collect()
-}
-
-/// An advertised command. `usage` is `/name args`; the args become the hint.
-fn command(name: String, description: &str, usage: &str) -> AvailableCommand {
-    let hint = command_args(usage);
-    let command = AvailableCommand::new(name, description);
-    if hint.is_empty() {
-        command
-    } else {
-        command.input(AvailableCommandInput::Unstructured(
-            UnstructuredCommandInput::new(hint),
-        ))
-    }
+fn advertised(command: &wire::SessionCommand) -> Option<AvailableCommand> {
+    let name = match command.kind {
+        wire::CommandKind::Slash => command.name.clone(),
+        wire::CommandKind::Skill => format!("${}", command.name),
+        // `wire::CommandKind` is non-exhaustive: a kind a newer daemon sends.
+        _ => return None,
+    };
+    let advertised = AvailableCommand::new(name, command.description.clone());
+    Some(match &command.input_hint {
+        Some(hint) => advertised.input(AvailableCommandInput::Unstructured(
+            UnstructuredCommandInput::new(hint.clone()),
+        )),
+        None => advertised,
+    })
 }
 
 #[cfg(test)]

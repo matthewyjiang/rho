@@ -19,13 +19,14 @@ use crate::{
         AuthKey, AuthKeyParams, AuthKeyResponse, AuthLogout, AuthLogoutParams, AuthLogoutResponse,
         Hello, JobList, JobListParams, JobListResponse, Method, SessionAnswer, SessionAnswerParams,
         SessionAnswerResponse, SessionAttach, SessionAttachParams, SessionAttachResponse,
-        SessionCancel, SessionCancelParams, SessionCancelResponse, SessionDetach,
-        SessionDetachParams, SessionDetachResponse, SessionHold, SessionHoldParams,
-        SessionHoldResponse, SessionNew, SessionNewParams, SessionNewResponse, SessionPrompt,
-        SessionPromptParams, SessionPromptResponse, SessionSteer, SessionSteerParams,
-        SessionSteerResponse, Status, Stop, AUTH_KEY, AUTH_LOGOUT, DAEMON_STATUS, DAEMON_STOP,
-        HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH,
-        SESSION_HOLD, SESSION_NEW, SESSION_PROMPT, SESSION_STEER,
+        SessionCancel, SessionCancelParams, SessionCancelResponse, SessionConfigure,
+        SessionConfigureParams, SessionConfigureResponse, SessionDetach, SessionDetachParams,
+        SessionDetachResponse, SessionHold, SessionHoldParams, SessionHoldResponse, SessionNew,
+        SessionNewParams, SessionNewResponse, SessionPrompt, SessionPromptParams,
+        SessionPromptResponse, SessionSteer, SessionSteerParams, SessionSteerResponse, Status,
+        Stop, AUTH_KEY, AUTH_LOGOUT, DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER,
+        SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DETACH, SESSION_HOLD,
+        SESSION_NEW, SESSION_PROMPT, SESSION_STEER,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -107,6 +108,13 @@ pub trait Service: Send + Sync {
         &self,
         params: SessionHoldParams,
     ) -> impl Future<Output = Result<SessionHoldResponse, RpcError>> + Send;
+
+    /// Handles `rho/session/configure`: apply one change to the session's
+    /// settings between its turns, and answer with its options then.
+    fn configure_session(
+        &self,
+        params: SessionConfigureParams,
+    ) -> impl Future<Output = Result<SessionConfigureResponse, RpcError>> + Send;
 
     /// Handles `rho/session/attach`: subscribe this connection to the
     /// session's events (see [`crate::subscription()`]). The connection sends
@@ -412,6 +420,7 @@ enum ServiceCall {
     SteerSession(SessionSteerParams),
     AnswerSession(SessionAnswerParams),
     HoldSession(SessionHoldParams),
+    ConfigureSession(SessionConfigureParams),
     ListJobs,
     SaveAuthKey(AuthKeyParams),
     LogoutAuth(AuthLogoutParams),
@@ -475,6 +484,9 @@ impl ServiceCall {
             SESSION_STEER => decode_params::<SessionSteer>(params).map(Self::SteerSession),
             SESSION_ANSWER => decode_params::<SessionAnswer>(params).map(Self::AnswerSession),
             SESSION_HOLD => decode_params::<SessionHold>(params).map(Self::HoldSession),
+            SESSION_CONFIGURE => {
+                decode_params::<SessionConfigure>(params).map(Self::ConfigureSession)
+            }
             JOB_LIST => decode_params::<JobList>(params).map(|JobListParams {}| Self::ListJobs),
             AUTH_KEY => decode_params::<AuthKey>(params).map(Self::SaveAuthKey),
             AUTH_LOGOUT => decode_params::<AuthLogout>(params).map(Self::LogoutAuth),
@@ -510,6 +522,9 @@ impl ServiceCall {
             }
             Self::HoldSession(params) => {
                 encode_result::<SessionHold>(&service.hold_session(params).await?)
+            }
+            Self::ConfigureSession(params) => {
+                encode_result::<SessionConfigure>(&service.configure_session(params).await?)
             }
             Self::ListJobs => encode_result::<JobList>(&service.list_jobs().await),
             Self::SaveAuthKey(params) => {

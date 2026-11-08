@@ -21,7 +21,7 @@ use super::{
     agent_binding::BoundAgent,
     automation_protocol::{JsonlStream, RunEnd, TerminalReason},
     headless_host::{self, HeadlessView, PromptEnd, RunReporter, StopCause, Stops},
-    session_commands::{self, BuiltInCommand, CommandScope, CommandSet, PromptCommand},
+    session_commands::{self, BuiltInCommand, CommandScope, CommandSet, Hosting, PromptCommand},
     session_events::outcome,
     session_runtime::{
         CommandRejected, HostCapabilities, PromptScope, RunShape, SessionBuild, SessionLaunch,
@@ -130,8 +130,12 @@ pub(super) struct Startup<'a> {
 
 /// The commands `rho run` runs. `/compact` is not among them: a run's
 /// session is new, so there is nothing to compact.
+/// The commands `rho run` runs. A workflow would outlive the process, which
+/// exits with its prompt.
 const RUN_COMMANDS: CommandSet = CommandSet {
     built_ins: &[BuiltInCommand::Init],
+    workflows: Hosting::Refused,
+    agents: Hosting::Runs,
     sessions_label: "rho run",
 };
 
@@ -399,15 +403,11 @@ async fn run_text(
                 .run_prompt_turn(view, prompt, turn, process_config)
                 .await
         }
-        // `RUN_COMMANDS` has no `/compact`, so the resolver rejects it first.
-        PromptCommand::Compact { .. } => Err(rejected(
-            "could not run /compact: not available in rho run".into(),
+        // `RUN_COMMANDS` runs neither `/compact` nor workflows, so the
+        // resolver rejects them first.
+        PromptCommand::Compact { .. } | PromptCommand::StartWorkflow(_) => Err(rejected(
+            "could not run the command: not available in rho run".into(),
         )),
-        // The workflow would outlive the process, which exits with its prompt.
-        PromptCommand::StartWorkflow(start) => Err(rejected(format!(
-            "could not run /workflow:{}: not available in rho run; use rho workflow run",
-            start.workflow.label
-        ))),
     }
 }
 

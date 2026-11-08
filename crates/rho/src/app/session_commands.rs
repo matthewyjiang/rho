@@ -59,14 +59,27 @@ impl BuiltInCommand {
 }
 
 /// The commands one kind of host runs. Every host runs prompt templates,
-/// MCP prompts, workflows, `/agent:`, and `$skill` mentions; built-ins it
-/// does not list are rejected, as are the TUI's own commands.
+/// MCP prompts, and `$skill` mentions; built-ins it does not list, workflows
+/// and `/agent:` when it does not run them, and the TUI's own commands are
+/// rejected. A host's menu (`session_options`) lists what this set runs.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CommandSet {
     /// The built-ins this host runs.
     pub(crate) built_ins: &'static [BuiltInCommand],
+    /// `/workflow:<name>`, which starts a run that outlives the prompt.
+    pub(crate) workflows: Hosting,
+    /// `/agent:<name>`, which rebinds a fresh session to an agent definition.
+    pub(crate) agents: Hosting,
     /// The host's sessions as rejections name them, such as `ACP sessions`.
     pub(crate) sessions_label: &'static str,
+}
+
+/// Whether a host runs one kind of command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Hosting {
+    Runs,
+    /// Rejected before the prompt is saved, and left out of the host's menu.
+    Refused,
 }
 
 impl CommandSet {
@@ -166,7 +179,7 @@ pub(crate) async fn resolve(
     match crate::commands::parse_command(text) {
         Ok(None) => Ok(turn(input, &[], scope)),
         Ok(Some(invocation)) => built_in(input, invocation, scope, commands),
-        Err(CommandParseError::Unknown(name)) => dynamic(input, &name, scope).await,
+        Err(CommandParseError::Unknown(name)) => dynamic(input, &name, scope, commands).await,
     }
 }
 
@@ -243,6 +256,15 @@ fn run_as_agent(
     }
     let rejected =
         |detail: String| CommandRejected(format!("could not run /agent:{agent_id}: {detail}"));
+    match commands.agents {
+        Hosting::Runs => {}
+        Hosting::Refused => {
+            return Err(rejected(format!(
+                "not available in {}",
+                commands.sessions_label
+            )))
+        }
+    }
     let catalog = scope
         .agent_catalog()
         .map_err(|error| rejected(error.to_string()))?;
@@ -273,6 +295,7 @@ async fn dynamic(
     input: UserInput,
     name: &str,
     scope: &CommandScope<'_>,
+    commands: CommandSet,
 ) -> Result<PromptCommand, CommandRejected> {
     // Spec-following clients send a picked `$skill` command as `/$skill`. It
     // loads first, then any skills mentioned after it.
@@ -286,6 +309,15 @@ async fn dynamic(
     let trailing = leading_text(&input).map_or("", command_args);
     if let Some(resolved) = workflows::resolve_start_command(scope.cwd, name, trailing) {
         let rejected = |detail: &str| CommandRejected(format!("could not run /{name}: {detail}"));
+        match commands.workflows {
+            Hosting::Runs => {}
+            Hosting::Refused => {
+                return Err(rejected(&format!(
+                    "not available in {}; use rho workflow run",
+                    commands.sessions_label
+                )))
+            }
+        }
         if !scope.tools.contains(workflow_tool::NAME) {
             return Err(rejected("this session has no workflow tool"));
         }

@@ -7,18 +7,9 @@ use agent_client_protocol::{
     ErrorCode,
 };
 use pretty_assertions::assert_eq;
-use rho_providers::reasoning::ReasoningLevel;
+use rho_protocol as wire;
 
 use super::{config_options, parse_thought_level_request, THOUGHT_LEVEL_ID};
-use crate::config::Config;
-
-fn test_config() -> Config {
-    Config {
-        provider: "test".into(),
-        model: "model".into(),
-        ..Config::default()
-    }
-}
 
 fn select_current(options: &[SessionConfigOption]) -> &str {
     match &options[0].kind {
@@ -46,12 +37,25 @@ fn select_entries(options: &[SessionConfigOption]) -> Vec<(String, String)> {
 // current reasoning select, not omit it or encode it as a boolean, with
 // lowercase config ids hosts send back and capitalized labels hosts display; a
 // model with no configurable reasoning omits it so hosts do not render a
-// one-entry select that can never change.
+// one-entry select that can never change, nor a level it cannot send back.
 // Owner: acp session config mapper
 #[test]
 fn advertises_thought_level_select_for_the_current_reasoning() {
-    let config = test_config();
-    let options = config_options(&config, ReasoningLevel::High);
+    // A level a newer daemon sends is left out.
+    let reasoning = wire::ReasoningOptions {
+        current: wire::ReasoningLevel::High,
+        available: vec![
+            wire::ReasoningLevel::Off,
+            wire::ReasoningLevel::Minimal,
+            wire::ReasoningLevel::Low,
+            wire::ReasoningLevel::Medium,
+            wire::ReasoningLevel::High,
+            wire::ReasoningLevel::Xhigh,
+            wire::ReasoningLevel::Max,
+            wire::ReasoningLevel::Unknown,
+        ],
+    };
+    let options = config_options(Some(&reasoning));
     assert_eq!(options.len(), 1);
     assert_eq!(options[0].id.0.as_ref(), THOUGHT_LEVEL_ID);
     assert_eq!(
@@ -76,12 +80,12 @@ fn advertises_thought_level_select_for_the_current_reasoning() {
         ]
     );
 
-    let fixed = Config {
-        provider: "github-copilot".into(),
-        model: "gpt-4.1".into(),
-        ..Config::default()
+    assert!(config_options(None).is_empty());
+    let unknown_current = wire::ReasoningOptions {
+        current: wire::ReasoningLevel::Unknown,
+        ..reasoning
     };
-    assert!(config_options(&fixed, ReasoningLevel::High).is_empty());
+    assert!(config_options(Some(&unknown_current)).is_empty());
 }
 
 // Covers: hosts must get InvalidParams for a non-select thought_level value

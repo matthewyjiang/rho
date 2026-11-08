@@ -19,13 +19,14 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/hello` | `protocol` (`{major, minor}`), `client` (`{name, version}`) | The daemon's `protocol`, `daemon` (`{version, pid}`), and `capabilities`. |
 | `rho/daemon/status` | | `pid`, `version`, `protocol`, `started_at`, `uptime_secs`, `jobs` (jobs queued, running, or waiting for input), `socket`. |
 | `rho/daemon/stop` | | `{}`; the daemon then shuts down as [described](/daemon#commands). |
-| `rho/session/new` | `cwd`, `environment` | Opens a new session whose workspace is `cwd`, an absolute path to an existing directory, and returns its `session` id. `environment` is the client's environment variables, an object of strings, which the session's commands run with ([below](#the-client-s-environment)). |
+| `rho/session/new` | `cwd`, `environment` | Opens a new session whose workspace is `cwd`, an absolute path to an existing directory, and returns its `session` id and `options` ([below](#changing-a-session-s-settings)). `environment` is the client's environment variables, an object of strings, which the session's commands run with ([below](#the-client-s-environment)). |
 | `rho/session/prompt` | `session`, `content`, optional `timeout_ms`, `environment` | Starts a turn of `content`, a non-empty list of [content blocks](#content-blocks), whose commands and those of later turns run with `environment`, and returns `{}` once the turn has saved the prompt. A session runs one turn at a time; a prompt while a turn is under way gets `SessionBusy`. With `timeout_ms`, the daemon cancels a turn still running that many milliseconds after it took the prompt, and the turn ends `timed_out`. |
 | `rho/session/cancel` | `session` | Cancels the turn under way, if any. The turn ends `cancelled`, or `interrupted` when the daemon is stopping; one already past its `timeout_ms` ends `timed_out`. |
 | `rho/session/steer` | `session`, `text` | Adds `text` to the running turn's next model request. Gets `NotSteerable` when no model request is taking input. |
-| `rho/session/attach` | `session`, `after`?, `environment` | Follows the session's events, reopening an unloaded session with its commands in `environment` ([below](#following-a-session)). Returns its `stream`, its `workspace`, the `replay` that follows (`tail` or `reset`) and how many events it holds (`replay_events`), its job `state`, the input requests open now (`inputs`), and its `title`, once it has one. |
+| `rho/session/attach` | `session`, `after`?, `environment` | Follows the session's events, reopening an unloaded session with its commands in `environment` ([below](#following-a-session)). Returns its `stream`, its `workspace`, the `replay` that follows (`tail` or `reset`) and how many events it holds (`replay_events`), its job `state`, the input requests open now (`inputs`), its `title`, once it has one, and the session's `options` ([below](#changing-a-session-s-settings)). |
 | `rho/session/detach` | `session` | Stops following the session; no event of it arrives after the response. |
 | `rho/session/answer` | `session`, `request`, `answer` | Answers one of the turn's open input requests ([below](#answering-a-turn-s-requests)) and returns `{}` once the daemon has handed the answer to the turn. |
+| `rho/session/configure` | `session`, `change` | Changes one of a loaded session's settings for its later turns and returns its `options` ([below](#changing-a-session-s-settings)). |
 | `rho/session/hold` | `session`, `request` | Stops an open input request's timeout, so it waits for an answer ([below](#timeouts)), and returns `{}`. |
 | `rho/job/list` | | `jobs`: every job the daemon knows, including those earlier daemons ran, oldest first. Each has its `id`, `kind` (`session`, `subagent`, or `workflow`), `state`, `workspace`, and timestamps; the `session` it writes, absent for a workflow and for a subagent on another runtime; the `parent` job that started it, for a subagent or workflow; the `workflow_run` it drives, for a workflow; the `error` when it failed; and, usually while it is `queued`, its `queue` place: the `budget` it waits on, that budget's `limit`, and its `position`, 1 for the next to start. |
 | `rho/auth/key` | `auth`, `key` | Checks the API key with the provider of auth profile `auth`, such as `openai-api-key`, and saves it ([below](#signing-in-and-out)). Returns `{}`, or, when the provider could not be asked, `unchecked` with its `reason` and a `message`. |
@@ -74,6 +75,7 @@ After `rho/session/attach`, the daemon sends the session's events as `rho/sessio
 | `input_resolved` | The request `id` closed, with its `resolution`: `answered`, `withdrawn`, or `timed_out`. |
 | `input_held` | The request `id`'s timeout stopped; it waits for an answer. |
 | `turn_ended` | The turn ended, with its `outcome` ([below](#how-a-turn-ends)). |
+| `options_changed` | The session's `options` changed ([below](#changing-a-session-s-settings)), all of them, replacing the last. |
 
 Each loaded session has one stream of events, numbered by `seq` from 1. A client keeps the `stream` and the highest `seq` it has handled since its attach response as its cursor, and passes them as `after` when it attaches again, for example after the TUI is closed and reopened. A session the daemon [unloaded](/daemon#unloading-idle-sessions) and reopened since has a new stream. The response's `replay` says what follows:
 
@@ -129,6 +131,31 @@ Never answer a timeout yourself: an answer sent with `rho/session/answer` counts
 
 Once the user starts on the request, on their first key, paste, or click in it, call `rho/session/hold`. The request is then held for good, with no timeout: every attached client receives `input_held`, the request waits for an answer like any other, and a client that attaches later finds it in `inputs` without a `timeout`. Holding a request that has no timeout, or one already held, changes nothing. The setting applies to sessions opened after it changes.
 
+## Changing a session's settings
+
+A session's `options` are what a frontend shows as its settings and command menu: ACP's config options and available commands, and the TUI's model picker, reasoning, fast mode, and permission controls. `rho/session/new` and `rho/session/attach` return them, and every attached client receives `options_changed` when they change: after `rho/session/configure`, at a turn's end, which may leave new skills, prompt templates, or MCP prompts behind, after a plan approval switches the permission mode, and after `rho/auth/key` or `rho/auth/logout` changes the models a session may switch to. A session in a turn when a credential write lands refreshes at the turn's end.
+
+| Field | What it carries |
+| --- | --- |
+| `model` | The `current` model, as `{provider, model}`, and the models the session may switch to (`available`), each with a short `label`; the user's favorites first. |
+| `reasoning` | The `current` reasoning level and the levels the model takes (`available`): `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Absent when the model's reasoning cannot be configured. |
+| `fast_mode` | Whether fast mode is `enabled`: faster responses at a higher credit rate. Absent when the model has no fast mode. |
+| `permission_mode` | The `current` permission mode and every mode (`available`): `bypass`, `auto`, `allow_edits`, `plan`, `supervised`. |
+| `commands` | The commands a prompt may run, in menu order: each `name`, `kind`, `description`, and `input_hint`, what to type after the name, absent when it takes nothing. A `slash` command starts the prompt as `/<name>`; a `skill` is mentioned anywhere as `$<name>`. Commands the daemon does not run yet, `/workflow:<name>` and `/agent:<name>`, are left out. |
+
+`rho/session/configure` applies one `change`, tagged by `kind`, and answers with the session's `options` as they are now:
+
+| `kind` | Fields | Change |
+| --- | --- | --- |
+| `model` | `model` (`{provider, model}`) | Switches to one of `model.available`, keeping the reasoning level; a model that cannot keep it is refused. |
+| `reasoning` | `level` | Spends one of `reasoning.available` on later turns. |
+| `fast_mode` | `enabled` | Turns fast mode on, for a model that has it, or off. |
+| `permission_mode` | `mode` | Gates later turns' tool calls with `mode`. |
+
+A change the session cannot take, such as a model no saved credential serves or fast mode on a model without it, gets `InvalidParams` naming why, and the session keeps its setting. A change that fails as it applies, such as a model switch whose provider could not be built, gets `InternalError`; the session's `options` then report what it runs with, which `options_changed` carries if that changed. A session whose turn is under way, waiting for input included, refuses a change with `SessionBusy`: send it again once the turn ends. While a change applies, a prompt or another change for the session gets `SessionBusy` too. Only a session the daemon has loaded takes a change; any other gets `SessionNotLoaded`, so attach first.
+
+Settings persist with the session: from its first change on, the session keeps its model, reasoning level, fast mode, and permission mode with its file, as they stand at each save, a plan approval's mode switch included. A session the daemon [unloads](/daemon#unloading-idle-sessions) and reopens, or one a later daemon reopens, runs with them, and its `options` say so. A setting it can no longer take, such as a model whose credentials are gone, falls back to the config's.
+
 ## Signing in and out
 
 `rho/auth/key` and `rho/auth/logout` change the credential store the daemon's sessions read, as `/login` and `/logout` do in the TUI. The daemon moves to the store its config selects when the request arrives and writes that one; a request it refuses writes nothing. Moving stores alone changes no running session's credentials. A change applies to every session the daemon runs, whichever client opened it: a running session uses a new key, or drops a deleted one, from its next prompt, and new sessions use it at once. After a logout, a session's next prompt fails with `TurnEnded`, whose outcome is a `failed` turn of kind `authentication`, until a key is saved again.
@@ -157,7 +184,7 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 | -32000 | `HandshakeRequired` | A request other than `rho/hello` came before the handshake. |
 | -32001 | `VersionMismatch` | The protocol majors differ; `data` says which side to change. |
 | -32003 | `SessionNotFound` | No session is saved under the id. |
-| -32004 | `SessionBusy` | The session already has a turn under way, or another job, such as a subagent run, writes the saved session a prompt or an attach would reopen. |
+| -32004 | `SessionBusy` | The session already has a turn under way (for a prompt or a settings change) or a settings change applying, or another job, such as a subagent run, writes the saved session a prompt or an attach would reopen. |
 | -32005 | `NotSteerable` | No model request is taking input. |
 | -32006 | `SteerRefused` | The running turn refused the steering input. |
 | -32007 | `DaemonStopping` | The daemon is stopping and starts nothing new. |
@@ -168,6 +195,7 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 | -32013 | `EnvironmentOverride` | A variable in the daemon's environment holds the auth profile's credential, so saving or deleting one would change nothing; `data.variable` names it. |
 | -32014 | `KeyRefused` | The provider rejected the API key, and nothing was saved. |
 | -32015 | `CredentialStoreUnavailable` | The credential store could not be opened, read, or written, as when the OS keyring is locked. |
+| -32016 | `SessionNotLoaded` | The daemon has not loaded the session, which a settings change needs; attach to it first. |
 
 ## Versions and compatibility
 

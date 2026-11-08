@@ -5,15 +5,15 @@ use agent_client_protocol::schema::v1::{
     EmbeddedResourceResource, SessionConfigKind, SessionConfigOption,
 };
 use pretty_assertions::assert_eq;
+use rho_protocol as wire;
 use rho_sdk::model::ContentBlock;
 
 use super::{
     advertised_config_options,
     convert::{user_input_from_prompt, validate_session_cwd, workspace_cwd, SessionCwdError},
-    setting_error, CurrentModel, CurrentSettings, Toggles,
+    setting_error, Toggles,
 };
-use crate::{app::session_runtime::SettingChangeError, config::Config, permission::PermissionMode};
-use rho_providers::reasoning::ReasoningLevel;
+use crate::app::session_runtime::SettingChangeError;
 
 // Covers: session/new and session/load must refuse a non-workspace cwd
 // Owner: acp session host
@@ -95,65 +95,57 @@ fn acp_only_prompt_blocks_reach_the_model_as_fenced_text() {
 // must advertise the permission mode first (spec clients ignore legacy
 // `modes` once config options exist), then model, then thought_level only
 // when the current model can change reasoning, then fast_mode only when it
-// implements fast mode.
+// implements fast mode. Which models can is `session_options`' to decide.
 // Owner: acp session config mapper
 #[test]
 fn advertised_options_merge_model_with_per_model_options() {
+    let reasoning = wire::ReasoningOptions {
+        current: wire::ReasoningLevel::High,
+        available: vec![wire::ReasoningLevel::Low, wire::ReasoningLevel::High],
+    };
+    let fast_mode = wire::FastModeOptions { enabled: true };
     let cases = [
         (
-            CurrentModel {
-                provider: "test".into(),
-                model: "model".into(),
-                auth: "api-key".into(),
-            },
+            Some(reasoning.clone()),
+            None,
             ["mode", "model", "thought_level"].as_slice(),
         ),
         (
-            CurrentModel {
-                provider: "openai-codex".into(),
-                model: "gpt-5.5".into(),
-                auth: "codex".into(),
-            },
+            Some(reasoning),
+            Some(fast_mode),
             ["mode", "model", "thought_level", "fast_mode"].as_slice(),
         ),
-        (
-            CurrentModel {
-                provider: "github-copilot".into(),
-                model: "gpt-4.1".into(),
-                auth: "github-copilot".into(),
-            },
-            ["mode", "model"].as_slice(),
-        ),
+        (None, None, ["mode", "model"].as_slice()),
     ];
-    for (current, expected_ids) in cases {
-        let config = Config {
-            provider: current.provider.clone(),
-            model: current.model.clone(),
-            auth: current.auth.clone(),
-            ..Config::default()
+    for (reasoning, fast_mode, expected_ids) in cases {
+        let options = wire::SessionOptions {
+            model: wire::ModelOptions {
+                current: wire::ModelRef {
+                    provider: "test".into(),
+                    model: "model".into(),
+                },
+                available: Vec::new(),
+            },
+            reasoning,
+            fast_mode,
+            permission_mode: wire::PermissionModeOptions {
+                current: wire::PermissionMode::AllowEdits,
+                available: vec![wire::PermissionMode::AllowEdits, wire::PermissionMode::Plan],
+            },
+            commands: Vec::new(),
         };
-        let settings = CurrentSettings {
-            permission_mode: PermissionMode::AllowEdits,
-            reasoning: ReasoningLevel::High,
-            fast: true,
-        };
-        let options = advertised_config_options(&current, &config, settings, Toggles::Select);
-        let ids = options
+        let advertised = advertised_config_options(&options, Toggles::Select);
+        let ids = advertised
             .iter()
             .map(|option| option.id.0.as_ref())
             .collect::<Vec<_>>();
-        assert_eq!(ids, expected_ids, "{}", current.provider);
-        assert_eq!(
-            select_current(&options[0]),
-            "allow_edits",
-            "{}",
-            current.provider
-        );
-        if let Some(thought) = options
+        assert_eq!(ids, expected_ids);
+        assert_eq!(select_current(&advertised[0]), "allow_edits");
+        if let Some(thought) = advertised
             .iter()
             .find(|option| option.id.0.as_ref() == "thought_level")
         {
-            assert_eq!(select_current(thought), "high", "{}", current.provider);
+            assert_eq!(select_current(thought), "high");
         }
     }
 }

@@ -23,7 +23,9 @@ use tokio::{
 use super::{super::jobs::TurnEnd, cost, inputs::Inputs, saved_replay, LoadedSession};
 use crate::{
     app::{
-        session_commands::{self, BuiltInCommand, CommandScope, CommandSet, PromptCommand},
+        session_commands::{
+            self, BuiltInCommand, CommandScope, CommandSet, Hosting, PromptCommand,
+        },
         session_events::outcome,
         session_runtime::{
             CommandRejected, PlanReport, SessionEvent, SessionRuntime, TitleJob, Turn, TurnControl,
@@ -79,9 +81,12 @@ async fn expired(limit: Option<TurnLimit>) -> u64 {
     }
 }
 
-/// The commands a daemon session runs. `/compact` is not among them yet.
-const DAEMON_COMMANDS: CommandSet = CommandSet {
+/// The commands a daemon session runs, which its menu lists too.
+/// `/compact`, workflows, and `/agent:` are not among them yet.
+pub(super) const DAEMON_COMMANDS: CommandSet = CommandSet {
     built_ins: &[BuiltInCommand::Init],
+    workflows: Hosting::Refused,
+    agents: Hosting::Refused,
     sessions_label: "daemon sessions",
 };
 
@@ -128,29 +133,36 @@ impl TurnTask {
         // down at the deadline.
         let (ended, timed_out) = match &mut *runtime {
             Some(runtime) => {
-                let turn = run_turn(runtime, &mut view, input, &session.config, &cancel);
-                tokio::pin!(turn);
-                // The deadline first, so a limit already past cancels the
-                // turn before it saves its prompt.
-                tokio::select! {
-                    biased;
-                    timeout_ms = expired(limit) => {
-                        let timed_out = (!cancel.is_cancelled()).then_some(timeout_ms);
-                        session.cancel_turn();
-                        (turn.await, timed_out)
+                let (ended, timed_out) = {
+                    let turn = run_turn(runtime, &mut view, input, &session.config, &cancel);
+                    tokio::pin!(turn);
+                    // The deadline first, so a limit already past cancels
+                    // the turn before it saves its prompt.
+                    tokio::select! {
+                        biased;
+                        timeout_ms = expired(limit) => {
+                            let timed_out = (!cancel.is_cancelled()).then_some(timeout_ms);
+                            session.cancel_turn();
+                            (turn.await, timed_out)
+                        }
+                        ended = &mut turn => (ended, None),
                     }
-                    ended = &mut turn => (ended, None),
-                }
+                };
+                // Before the end is recorded, so the state event that
+                // reports it follows the transcript's cut: a client reset
+                // from then on gets the saved turn, then how it ended.
+                save_transcript(&session, runtime);
+                // The turn may have left new skills, prompts, or MCP prompts
+                // behind; clients see them before they see the turn end.
+                session.refresh_options(runtime);
+                (
+                    ended.map_err(|error| failure(&session, runtime, &error)),
+                    timed_out,
+                )
             }
             // Only the daemon's stop takes the runtime, after its last turn.
             None => (Ok(TurnOutcome::Cancelled), None),
         };
-        // Before the end is recorded, so the state event that reports it
-        // follows the transcript's cut: a client reset from then on gets the
-        // saved turn, then how it ended.
-        if let Some(runtime) = &*runtime {
-            save_transcript(&session, runtime);
-        }
         let title = runtime.as_mut().and_then(SessionRuntime::take_title);
         let (outcome, end) = match (ended, timed_out) {
             (Ok(TurnOutcome::Completed(run)), _) => {
@@ -169,13 +181,7 @@ impl TurnTask {
                 (Some(wire::TurnOutcome::Cancelled), TurnEnd::Cancelled)
             }
             (Err(error), _) => {
-                // Logged whole, to the daemon's own log only: the outcome
-                // hides an authentication failure's text, which may echo
-                // credentials, from clients.
-                tracing::warn!(job = %session.job, error = format!("{error:#}"), "a turn failed");
-                let config = &session.config;
-                let (outcome, end) =
-                    failed(outcome::turn_error(&error, &config.provider, &config.auth));
+                let (outcome, end) = failed(error);
                 (Some(outcome), end)
             }
         };
@@ -185,6 +191,21 @@ impl TurnTask {
             tokio::spawn(report_title(Arc::downgrade(&session), title));
         }
     }
+}
+
+/// The error a turn that failed with `error` on `runtime` reports. Logged
+/// whole, to the daemon's own log only: the error it reports hides an
+/// authentication failure's text, which may echo credentials, from clients.
+fn failure(
+    session: &LoadedSession,
+    runtime: &SessionRuntime,
+    error: &anyhow::Error,
+) -> wire::TurnError {
+    tracing::warn!(job = %session.job, error = format!("{error:#}"), "a turn failed");
+    // The model the turn ran on, which a configure may have switched from
+    // the config's.
+    let current = runtime.current_model();
+    outcome::turn_error(error, &current.provider, &current.auth)
 }
 
 /// Moves what the turn saved into the session's feed transcript, so a
@@ -244,24 +265,13 @@ async fn run_turn(
     };
     let (model, calls) = match command? {
         PromptCommand::Turn { input, calls } => (input, calls),
-        // `DAEMON_COMMANDS` has no `/compact`, so the resolver rejects it
-        // first.
-        PromptCommand::Compact { .. } => {
+        // `DAEMON_COMMANDS` runs no `/compact`, workflow, or `/agent:`, so
+        // the resolver rejects them first.
+        PromptCommand::Compact { .. }
+        | PromptCommand::StartWorkflow(_)
+        | PromptCommand::RunAsAgent(_) => {
             return Err(CommandRejected(
-                "could not run /compact: not available in the daemon yet".into(),
-            )
-            .into())
-        }
-        PromptCommand::StartWorkflow(start) => {
-            return Err(CommandRejected(format!(
-                "could not run /workflow:{}: not available in the daemon yet; use rho workflow run",
-                start.workflow.label
-            ))
-            .into())
-        }
-        PromptCommand::RunAsAgent(_) => {
-            return Err(CommandRejected(
-                "could not run /agent: not available in the daemon yet".into(),
+                "could not run the command: not available in daemon sessions".into(),
             )
             .into())
         }
@@ -392,13 +402,16 @@ impl TurnView for DaemonView {
         )
     }
 
-    /// The handoff reaches clients with the turn's events, in #1657.
+    /// The handoff reaches clients with the turn's events, in #1657. An
+    /// approval that switched the permission mode changes the session's
+    /// options, which clients see before the implementation turn.
     fn report_plan(
         &mut self,
-        _runtime: &SessionRuntime,
+        runtime: &SessionRuntime,
         _process_config: &Config,
         _report: PlanReport,
     ) -> impl Future<Output = ()> + Send {
+        self.session.refresh_options(runtime);
         std::future::ready(())
     }
 }

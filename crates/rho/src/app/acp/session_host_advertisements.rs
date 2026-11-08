@@ -8,10 +8,10 @@ use agent_client_protocol::schema::v1::{
 };
 
 use super::{
-    commands, runtime_config_options, send_notification, AcpClientPort, Config, SessionHost,
+    advertised_config_options, commands, send_notification, AcpClientPort, Config, SessionHost,
     SessionRuntime, Toggles,
 };
-use crate::app::session_commands::CommandScope;
+use crate::app::session_options;
 
 /// The last payloads advertised to this host. Refresh caches advance only after
 /// successful delivery. New/load seed them under the publication guard, which
@@ -39,8 +39,7 @@ impl Advertisements {
         process_config: &Config,
         client: &'a dyn AcpClientPort,
     ) -> impl Future<Output = ()> + Send + 'a {
-        let options = runtime_config_options(runtime, process_config, toggles);
-        let commands = discovered_commands(runtime, process_config);
+        let (options, commands) = menus(runtime, process_config, toggles);
         async move {
             if self.config_options.as_ref() != Some(&options) {
                 let notification = SessionNotification::new(
@@ -79,8 +78,8 @@ impl SessionHost {
         &mut self,
         process_config: &Config,
     ) -> SessionNotification {
-        let commands = discovered_commands(&self.runtime, process_config);
-        self.advertisements.config_options = Some(self.config_options(process_config));
+        let (options, commands) = menus(&self.runtime, process_config, self.host_features.toggles);
+        self.advertisements.config_options = Some(options);
         self.advertisements.commands = Some(commands.clone());
         SessionNotification::new(
             self.acp_session_id.clone(),
@@ -106,7 +105,15 @@ impl SessionHost {
     }
 }
 
-fn discovered_commands(runtime: &SessionRuntime, process_config: &Config) -> Vec<AvailableCommand> {
-    let home = crate::paths::home_dir();
-    commands::available_commands(&CommandScope::of(runtime, home.as_deref(), process_config))
+/// `runtime`'s config options and commands, from one read of its options.
+fn menus(
+    runtime: &SessionRuntime,
+    process_config: &Config,
+    toggles: Toggles,
+) -> (Vec<SessionConfigOption>, Vec<AvailableCommand>) {
+    let options = session_options::of(runtime, process_config, commands::ACP_COMMANDS);
+    (
+        advertised_config_options(&options, toggles),
+        commands::available_commands(&options.commands),
+    )
 }

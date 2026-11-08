@@ -124,6 +124,9 @@ pub struct SessionNewParams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionNewResponse {
     pub session: SessionId,
+    /// The session's settings and the choices it offers, which
+    /// [`super::SESSION_CONFIGURE`] changes.
+    pub options: super::SessionOptions,
 }
 
 /// Params of [`SESSION_PROMPT`].
@@ -237,6 +240,9 @@ pub struct SessionAttachResponse {
     /// so a reset may not replay the one that set it (#1670).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The session's options when the attachment began; a later
+    /// [`super::SessionEvent::OptionsChanged`] replaces them.
+    pub options: super::SessionOptions,
 }
 
 /// What the events after a [`SessionAttachResponse`] start with.

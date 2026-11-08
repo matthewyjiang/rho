@@ -225,6 +225,9 @@ impl SessionRuntime {
                 built.tools.code_mode(),
                 &self.added_dirs,
                 &config.auth,
+                // As before the rebind; the next save records the rebound
+                // session's.
+                &self.settings_record(),
                 built.session.snapshot(),
             )
         });

@@ -19,9 +19,9 @@ use rho_protocol::{
     AuthKeyParams, AuthKeyResponse, AuthLogoutParams, AuthLogoutResponse, DaemonStatus,
     JobListResponse, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
-    SessionHoldParams, SessionHoldResponse, SessionNewParams, SessionNewResponse,
-    SessionPromptParams, SessionPromptResponse, SessionSteerParams, SessionSteerResponse,
-    Subscription, PROTOCOL_VERSION,
+    SessionConfigureParams, SessionConfigureResponse, SessionHoldParams, SessionHoldResponse,
+    SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
+    SessionSteerParams, SessionSteerResponse, Subscription, PROTOCOL_VERSION,
 };
 use rho_sdk::CancellationToken;
 
@@ -167,6 +167,13 @@ impl Service for DaemonHost {
         self.sessions.hold(params).await
     }
 
+    async fn configure_session(
+        &self,
+        params: SessionConfigureParams,
+    ) -> Result<SessionConfigureResponse, RpcError> {
+        self.sessions.configure(params).await
+    }
+
     async fn attach_session(
         &self,
         params: SessionAttachParams,
@@ -188,11 +195,16 @@ impl Service for DaemonHost {
         }
     }
 
+    // A credential write changes the models every session may switch to.
     async fn save_auth_key(&self, params: AuthKeyParams) -> Result<AuthKeyResponse, RpcError> {
-        auth::save_key(params).await
+        let saved = auth::save_key(params).await?;
+        self.sessions.refresh_idle_options();
+        Ok(saved)
     }
 
     async fn logout_auth(&self, params: AuthLogoutParams) -> Result<AuthLogoutResponse, RpcError> {
-        auth::logout(params).await
+        let logged_out = auth::logout(params).await?;
+        self.sessions.refresh_idle_options();
+        Ok(logged_out)
     }
 }

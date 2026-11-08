@@ -1,12 +1,15 @@
-use agent_client_protocol::schema::v1::{AvailableCommand, AvailableCommandInput};
+use agent_client_protocol::schema::v1::{
+    AvailableCommand, AvailableCommandInput, UnstructuredCommandInput,
+};
 use pretty_assertions::assert_eq;
+use rho_protocol as wire;
 use rho_sdk::UserInput;
 use serde_json::json;
 
-use super::{available_commands, resolve, skill_commands, AcpPrompt};
-use crate::{
-    app::session_commands::{test_support::Fixture, PromptCommand},
-    skills::{Skill, SkillSource},
+use super::{available_commands, resolve, AcpPrompt, ACP_COMMANDS};
+use crate::app::{
+    session_commands::{test_support::Fixture, PromptCommand},
+    session_options,
 };
 
 /// The parts of an ACP prompt the wake tests tell apart.
@@ -61,7 +64,8 @@ async fn resolve_matches_the_wake_command_first() {
 fn available_commands_list_every_command_kind() {
     let fixture = Fixture::new();
 
-    let commands = available_commands(&fixture.scope())
+    let listed = session_options::available_commands(&fixture.scope(), ACP_COMMANDS);
+    let commands = available_commands(&listed)
         .into_iter()
         .map(|command| {
             let hint = command.input.map(|input| match input {
@@ -94,32 +98,33 @@ fn available_commands_list_every_command_kind() {
     );
 }
 
-fn skill(name: &str) -> Skill {
-    Skill {
-        name: name.into(),
-        description: format!("{name} description"),
-        disable_model_invocation: false,
-        source: SkillSource::BuiltIn,
-        contents: String::new(),
-    }
-}
-
-// Covers: the `$` menu must list exactly the skills a T3 composer can mention
+// Covers: a skill is advertised as `$<skill>`, which T3 Code's `$` menu
+// requires, a slash command by name with its hint, and a command of a kind
+// a newer daemon sends is left out rather than shown as something it is not
+// (#1670).
 // Owner: acp commands
 #[test]
-fn skill_commands_skip_names_t3_reads_as_amounts() {
-    let skills = [
-        skill("review"),
-        skill("2fa"),
-        skill("20k"),
-        skill("1e6"),
-        skill("42"),
-    ];
+fn available_commands_render_each_kind_and_skip_unknown_ones() {
+    let command = |name: &str, kind, input_hint: Option<&str>| wire::SessionCommand {
+        name: name.into(),
+        kind,
+        description: format!("{name} description"),
+        input_hint: input_hint.map(str::to_owned),
+    };
 
-    let names = skill_commands(&skills)
-        .into_iter()
-        .map(|AvailableCommand { name, .. }| name)
-        .collect::<Vec<_>>();
+    let advertised = available_commands(&[
+        command("prompt:review", wire::CommandKind::Slash, Some("[$1]")),
+        command("demo", wire::CommandKind::Skill, None),
+        command("later", wire::CommandKind::Unknown, None),
+    ]);
 
-    assert_eq!(names, ["$review", "$2fa"]);
+    assert_eq!(
+        advertised,
+        [
+            AvailableCommand::new("prompt:review", "prompt:review description").input(
+                AvailableCommandInput::Unstructured(UnstructuredCommandInput::new("[$1]"))
+            ),
+            AvailableCommand::new("$demo", "demo description"),
+        ]
+    );
 }

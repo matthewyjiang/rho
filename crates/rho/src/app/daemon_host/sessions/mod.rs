@@ -7,12 +7,16 @@
 //! id. A prompt or an attach for a saved session the daemon has not loaded,
 //! such as one an earlier daemon ran or one the TUI saved, reopens it from
 //! its file in its own workspace, recording its turns on the session's last
-//! job (#1661). Cancel, steer, answer, and hold never load a session: one
-//! that is not loaded has no turn to act on.
+//! job (#1661). Cancel, steer, answer, hold, and configure never load a
+//! session: one that is not loaded has no turn to act on, and a client
+//! attaches before it changes settings.
 //!
 //! Clients attach to a loaded session to follow its events (#1657); see
-//! [`feed`]. A session that sits idle, with no turn under way and no client
-//! attached, is unloaded until a request reopens it; see [`unload`].
+//! [`feed`]. Between turns, a client may change the session's settings,
+//! which the session keeps with its file; see [`configure`] and
+//! [`options`]. A session that sits idle, with no turn under way and no
+//! client attached, is unloaded until a request reopens it; see
+//! [`unload`].
 //!
 //! Once the daemon starts stopping, it refuses new sessions and prompts and
 //! detaches every client; then it stops the turns under way, waits for them
@@ -51,9 +55,11 @@ use crate::{
 };
 
 mod cost;
+mod configure;
 mod feed;
 mod inputs;
 mod open;
+mod options;
 mod reopen;
 #[cfg(test)]
 mod test_events;
@@ -136,6 +142,18 @@ struct TurnSlot {
     /// Whether the session is in use, idle, or unloaded, as the idle unload
     /// tracks it.
     residency: Residency,
+    /// Whether a configure is changing the session's settings, which no
+    /// turn starts during.
+    settings: Settings,
+}
+
+/// Whether a configure is changing a session's settings. The turn lock is a
+/// std mutex no request holds across the change's awaits, so a configure
+/// marks the change here instead of holding the lock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Settings {
+    Settled,
+    Changing,
 }
 
 /// Times out input request `id` of `session` after `after`, unless the
@@ -187,7 +205,11 @@ impl LoadedSession {
         );
         // Titles are not saved with the transcript, so the feed starts with
         // the one the session's file has.
-        let feed = Feed::new((&job.state).into(), runtime.stored_title());
+        let feed = Feed::new(
+            (&job.state).into(),
+            runtime.stored_title(),
+            options::daemon_options(&runtime, &config),
+        );
         if let Some(saved) = saved_replay(&mut live, &runtime, &job.id) {
             feed.end_turn(saved);
         }
@@ -218,6 +240,7 @@ impl LoadedSession {
             turn: Mutex::new(TurnSlot {
                 cancel: CancellationToken::new(),
                 residency: Residency::InUse,
+                settings: Settings::Settled,
             }),
         }
     }
@@ -367,10 +390,11 @@ impl Sessions {
             opened.runtime.workspace_root().to_path_buf(),
             session.clone(),
         );
-        self.add(SessionJobRecord::Register(record), opened).await?;
+        let added = self.add(SessionJobRecord::Register(record), opened).await?;
         tracing::info!(%session, %job, "opened session");
         Ok(SessionNewResponse {
             session: session_to_wire(session),
+            options: added.feed.options(),
         })
     }
 
@@ -423,6 +447,15 @@ impl Sessions {
         let environment = session_environment(&params.environment)?;
         let (session, cancel) = self
             .enter_session(&params.session, &environment, |session, turn| {
+                match turn.settings {
+                    Settings::Changing => {
+                        return Err(RpcError::new(
+                            ErrorCode::SessionBusy,
+                            "the session's settings are changing; prompt again once they apply",
+                        ))
+                    }
+                    Settings::Settled => {}
+                }
                 match self.jobs.start_turn(&session.job) {
                     // Told under the turn lock, which the last turn's
                     // end is told under too, so the feed never says `running`
@@ -559,6 +592,7 @@ impl Sessions {
             job,
             inputs,
             title,
+            options,
             subscription,
         } = attached;
         let response = SessionAttachResponse {
@@ -569,6 +603,7 @@ impl Sessions {
             state: job,
             inputs,
             title,
+            options,
         };
         Ok((response, subscription))
     }

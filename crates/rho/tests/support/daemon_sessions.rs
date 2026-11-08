@@ -122,7 +122,7 @@ impl Sandbox {
 
     /// Starts `rho daemon run` with `args` and the fixture in `mode`, and
     /// connects to it once it answers.
-    async fn start_daemon_with(&self, mode: &str, args: &[&str]) -> (DaemonProcess, Client) {
+    pub(super) async fn start_daemon_with(&self, mode: &str, args: &[&str]) -> (DaemonProcess, Client) {
         self.spawn_daemon(self.rho(mode), args).await
     }
 
@@ -164,7 +164,7 @@ impl Sandbox {
     }
 
     /// A connection and the session events the daemon sends on it.
-    async fn connect_following(&self) -> (Client, Notifications) {
+    pub(super) async fn connect_following(&self) -> (Client, Notifications) {
         self.try_connect().await.expect("the daemon answers")
     }
 
@@ -1140,7 +1140,7 @@ fn is_state(state: JobState) -> impl Fn(&SessionEvent) -> bool {
 }
 
 /// What a conversation shows: its events without job states, context
-/// usage, and titles, which describe the session as it was when they were
+/// usage, titles, and options, which describe the session as it was when they were
 /// sent.
 fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
     events
@@ -1152,6 +1152,7 @@ fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
                 SessionEvent::State { .. }
                     | SessionEvent::Usage { .. }
                     | SessionEvent::TitleChanged { .. }
+                    | SessionEvent::OptionsChanged { .. }
             )
         })
         .collect()

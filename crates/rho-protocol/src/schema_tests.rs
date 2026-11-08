@@ -7,10 +7,10 @@ use serde_json::{json, Value};
 
 use super::OTHER;
 use crate::methods::{
-    AnswerStop, ApprovalSource, Ask, Budget, CardTone, CompactionStatus, ContentBlock,
+    AnswerStop, ApprovalSource, Ask, Budget, CardTone, CommandKind, CompactionStatus, ContentBlock,
     DefaultStyle, DetachReason, JobKind, JobState, Operation, PathScope, PermissionMode,
-    PlanStatus, Resolution, Selection, SessionEvent, ToolContent, ToolKind, ToolStatus,
-    TurnErrorKind, TurnOutcome, UncheckedReason,
+    PlanStatus, ReasoningLevel, Resolution, Selection, SessionEvent, ToolContent, ToolKind,
+    ToolStatus, TurnErrorKind, TurnOutcome, UncheckedReason,
 };
 
 // Covers: the committed schema/protocol.json is what the wire types
@@ -93,6 +93,11 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
             "UncheckedReason",
             reads_as(unseen(), UncheckedReason::Unknown),
         ),
+        (
+            "ReasoningLevel",
+            reads_as(unseen(), ReasoningLevel::Unknown),
+        ),
+        ("CommandKind", reads_as(unseen(), CommandKind::Unknown)),
     ];
 
     let document = super::document();

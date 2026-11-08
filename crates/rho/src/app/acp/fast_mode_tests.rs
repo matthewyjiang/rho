@@ -8,67 +8,31 @@ use agent_client_protocol::{
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
+use rho_protocol as wire;
+
 use super::{config_options, parse_fast_mode_request, FAST_MODE_ID};
-use crate::app::{acp::host_features::Toggles, session_runtime::CurrentModel};
+use crate::app::acp::host_features::Toggles;
 
-fn current(provider: &str, model: &str, auth: &str) -> CurrentModel {
-    CurrentModel {
-        provider: provider.into(),
-        model: model.into(),
-        auth: auth.into(),
-    }
-}
-
-// Covers: fast_mode must appear only for models that implement fast mode,
-// report whether the session is in fast mode as its current value in the
-// shape the host accepts (a boolean only for hosts that advertise boolean
-// options), and stay out of the `mode` category (T3 hides its
-// permission-mode picker when any option uses it).
+// Covers: fast_mode must appear only when the model has fast mode, report
+// whether the session is in fast mode as its current value in the shape the
+// host accepts (a boolean only for hosts that advertise boolean options),
+// and stay out of the `mode` category (T3 hides its permission-mode picker
+// when any option uses it).
 // Owner: acp session config mapper
 #[test]
-fn advertises_fast_mode_in_the_host_shape_only_for_fast_capable_models() {
-    let codex = current("openai-codex", "gpt-5.5", "codex");
+fn advertises_fast_mode_in_the_host_shape_only_when_available() {
+    let off = Some(wire::FastModeOptions { enabled: false });
+    let on = Some(wire::FastModeOptions { enabled: true });
     let cases = [
-        (
-            &codex,
-            false,
-            Toggles::Select,
-            Some(json!(["select", "off"])),
-        ),
-        (&codex, true, Toggles::Select, Some(json!(["select", "on"]))),
-        (
-            &codex,
-            false,
-            Toggles::Boolean,
-            Some(json!(["boolean", false])),
-        ),
-        (
-            &codex,
-            true,
-            Toggles::Boolean,
-            Some(json!(["boolean", true])),
-        ),
-        (
-            &current("xai", "grok-4.7", "xai-oauth"),
-            true,
-            Toggles::Select,
-            Some(json!(["select", "on"])),
-        ),
-        (
-            &current("xai", "grok-4.7", "api-key"),
-            true,
-            Toggles::Boolean,
-            None,
-        ),
-        (
-            &current("openai-codex", "gpt-5.4", "codex"),
-            true,
-            Toggles::Select,
-            None,
-        ),
+        (&off, Toggles::Select, Some(json!(["select", "off"]))),
+        (&on, Toggles::Select, Some(json!(["select", "on"]))),
+        (&off, Toggles::Boolean, Some(json!(["boolean", false]))),
+        (&on, Toggles::Boolean, Some(json!(["boolean", true]))),
+        (&None, Toggles::Select, None),
+        (&None, Toggles::Boolean, None),
     ];
-    for (model, fast, toggles, expected) in cases {
-        let options = config_options(model, fast, toggles);
+    for (fast_mode, toggles, expected) in cases {
+        let options = config_options(fast_mode.as_ref(), toggles);
         let advertised = options.first().map(|option| {
             assert_eq!(option.id.0.as_ref(), FAST_MODE_ID);
             assert_eq!(
@@ -78,11 +42,7 @@ fn advertises_fast_mode_in_the_host_shape_only_for_fast_capable_models() {
             let wire = serde_json::to_value(option).unwrap();
             json!([wire["type"], wire["currentValue"]])
         });
-        assert_eq!(
-            advertised, expected,
-            "{}/{} via {} as {toggles:?}",
-            model.provider, model.model, model.auth
-        );
+        assert_eq!(advertised, expected, "{fast_mode:?} as {toggles:?}");
     }
 }
 

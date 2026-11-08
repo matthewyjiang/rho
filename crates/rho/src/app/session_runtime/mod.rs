@@ -58,6 +58,7 @@ mod prompt;
 mod prompt_gate;
 mod prompt_turn;
 mod pump;
+mod saved_settings;
 mod session_tools;
 mod settings;
 mod switch;
@@ -94,6 +95,7 @@ pub(crate) use persist::SessionStorage;
 pub(crate) use prompt::PromptScope;
 pub(crate) use prompt_gate::Closing;
 pub(crate) use prompt_turn::{PlanReport, TurnView};
+use saved_settings::SettingsPolicy;
 pub(crate) use session_tools::SessionTools;
 pub(crate) use settings::SettingChangeError;
 #[cfg(test)]
@@ -176,6 +178,8 @@ pub(crate) struct SessionRuntime {
     reopen_notice: Option<String>,
     /// Child notice binding kept between prompts, since children outlive them.
     held_notices: Option<HeldNotices>,
+    /// Whether the session's saves record its settings for a reopen.
+    settings: SettingsPolicy,
 }
 
 impl SessionRuntime {
@@ -194,6 +198,7 @@ impl SessionRuntime {
             credentials,
         } = opened;
         built.tools.bind_recall(storage.file());
+        let settings = SettingsPolicy::of(storage.file());
         Self {
             built,
             storage,
@@ -210,6 +215,7 @@ impl SessionRuntime {
             unsaved_compaction: false,
             reopen_notice,
             held_notices: None,
+            settings,
         }
     }
 

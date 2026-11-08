@@ -3,13 +3,16 @@ use rho_sdk::{model::ContentBlock, UserInput};
 use serde_json::json;
 
 use super::{
-    resolve, test_support::Fixture, BuiltInCommand, CommandScope, CommandSet, PromptCommand,
+    resolve, test_support::Fixture, BuiltInCommand, CommandScope, CommandSet, Hosting,
+    PromptCommand,
 };
 use crate::app::session_runtime::AgentTask;
 
-/// A host that runs every built-in.
+/// A host that runs every command.
 const ALL: CommandSet = CommandSet {
     built_ins: &[BuiltInCommand::Compact, BuiltInCommand::Init],
+    workflows: Hosting::Runs,
+    agents: Hosting::Runs,
     sessions_label: "test sessions",
 };
 
@@ -217,13 +220,26 @@ async fn resolve_routes_prompts_to_commands() {
     // A host such as `rho run`, whose one prompt has nothing to compact.
     let without_compact = CommandSet {
         built_ins: &[BuiltInCommand::Init],
-        sessions_label: "test runs",
+        ..ALL
     };
     assert_eq!(
         resolved("/compact", &scope, without_compact).await,
         Resolved::Rejected,
         "a host whose set leaves out /compact rejects it"
     );
+    // A host such as the daemon, which runs neither yet.
+    let refusing = CommandSet {
+        workflows: Hosting::Refused,
+        agents: Hosting::Refused,
+        ..ALL
+    };
+    for text in ["/workflow:check", "/agent:worker inspect"] {
+        assert_eq!(
+            resolved(text, &scope, refusing).await,
+            Resolved::Rejected,
+            "a host that refuses the kind rejects {text}"
+        );
+    }
 }
 
 // Covers: a command must keep the images attached to its prompt

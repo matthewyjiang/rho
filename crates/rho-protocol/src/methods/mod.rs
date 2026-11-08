@@ -17,6 +17,7 @@
 //! | [`SESSION_HOLD`] | [`SessionHoldParams`] | [`SessionHoldResponse`] |
 //! | [`SESSION_ATTACH`] | [`SessionAttachParams`] | [`SessionAttachResponse`] |
 //! | [`SESSION_DETACH`] | [`SessionDetachParams`] | [`SessionDetachResponse`] |
+//! | [`SESSION_CONFIGURE`] | [`SessionConfigureParams`] | [`SessionConfigureResponse`] |
 //! | [`JOB_LIST`] | [`JobListParams`] | [`JobListResponse`] |
 //! | [`AUTH_KEY`] | [`AuthKeyParams`] | [`AuthKeyResponse`] |
 //! | [`AUTH_LOGOUT`] | [`AuthLogoutParams`] | [`AuthLogoutResponse`] |
@@ -43,6 +44,7 @@ mod daemon;
 mod event;
 mod input;
 mod job;
+mod options;
 mod outcome;
 mod session;
 
@@ -68,6 +70,11 @@ pub use input::{
 pub use job::{
     Budget, JobId, JobKind, JobListParams, JobListResponse, JobState, JobSummary, QueuePlace,
     JOB_LIST,
+};
+pub use options::{
+    CommandKind, FastModeOptions, ModelChoice, ModelOptions, ModelRef, PermissionModeOptions,
+    ReasoningLevel, ReasoningOptions, SessionChange, SessionCommand, SessionConfigureParams,
+    SessionConfigureResponse, SessionOptions, SESSION_CONFIGURE,
 };
 pub use outcome::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome};
 pub use session::{
@@ -160,6 +167,7 @@ protocol! {
         SessionHold = SESSION_HOLD: SessionHoldParams => SessionHoldResponse,
         SessionAttach = SESSION_ATTACH: SessionAttachParams => SessionAttachResponse,
         SessionDetach = SESSION_DETACH: SessionDetachParams => SessionDetachResponse,
+        SessionConfigure = SESSION_CONFIGURE: SessionConfigureParams => SessionConfigureResponse,
         JobList = JOB_LIST: JobListParams => JobListResponse,
         AuthKey = AUTH_KEY: AuthKeyParams => AuthKeyResponse,
         AuthLogout = AUTH_LOGOUT: AuthLogoutParams => AuthLogoutResponse,

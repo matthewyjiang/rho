@@ -1,5 +1,7 @@
-//! The `thought_level` session config option. This advertises and parses
-//! it; the session runtime applies it (`SessionRuntime::set_reasoning_level`).
+//! The `thought_level` session config option. This renders a session's
+//! [`wire::ReasoningOptions`], as the ACP adapter will render the daemon's
+//! (#1670), and parses a pick; the session runtime applies it
+//! (`SessionRuntime::set_reasoning_level`).
 
 use agent_client_protocol::{
     schema::v1::{
@@ -8,12 +10,10 @@ use agent_client_protocol::{
     },
     Error as AcpError,
 };
-use rho_providers::{
-    model::{models_dev::cached_reasoning_capabilities, ReasoningCapabilities},
-    reasoning::ReasoningLevel,
-};
+use rho_protocol as wire;
+use rho_providers::reasoning::ReasoningLevel;
 
-use crate::config::Config;
+use crate::app::session_options::reasoning_from_wire;
 
 pub(super) const THOUGHT_LEVEL_ID: &str = "thought_level";
 
@@ -21,32 +21,34 @@ pub(super) const THOUGHT_LEVEL_ID: &str = "thought_level";
 ///
 /// Hosts that support `session/set_config_option` use this instead of
 /// restarting `rho acp` to change reasoning. New and loaded sessions advertise
-/// it only when the current model exposes configurable reasoning.
-pub(super) fn config_options(config: &Config, current: ReasoningLevel) -> Vec<SessionConfigOption> {
-    match thought_capabilities(config) {
-        ReasoningCapabilities::NotConfigurable => Vec::new(),
-        ReasoningCapabilities::Unknown | ReasoningCapabilities::Levels(_) => {
-            vec![thought_level_option(config, current)]
-        }
-    }
-}
-
-pub(super) fn thought_level_option(
-    config: &Config,
-    current: ReasoningLevel,
-) -> SessionConfigOption {
-    let choices = selectable_thought_levels(config, current)
-        .into_iter()
-        .map(|level| SessionConfigSelectOption::new(level.to_string(), thought_level_label(level)))
+/// it only when the current model exposes configurable reasoning
+/// (`reasoning` is `Some`). Value ids are the lowercase config spellings
+/// hosts send back. A level this rho does not know is left out, and so is
+/// the option when the current level is one.
+pub(super) fn config_options(
+    reasoning: Option<&wire::ReasoningOptions>,
+) -> Vec<SessionConfigOption> {
+    let Some(reasoning) = reasoning else {
+        return Vec::new();
+    };
+    let Some(current) = reasoning_from_wire(reasoning.current) else {
+        return Vec::new();
+    };
+    let choices = reasoning
+        .available
+        .iter()
+        .filter_map(|&level| reasoning_from_wire(level))
+        .map(|level| SessionConfigSelectOption::new(level.to_string(), reasoning_label(level)))
         .collect::<Vec<_>>();
-    SessionConfigOption::select(THOUGHT_LEVEL_ID, "Reasoning", current.to_string(), choices)
-        .description("How much reasoning the model spends on each turn.")
-        .category(SessionConfigOptionCategory::ThoughtLevel)
+    vec![
+        SessionConfigOption::select(THOUGHT_LEVEL_ID, "Reasoning", current.to_string(), choices)
+            .description("How much reasoning the model spends on each turn.")
+            .category(SessionConfigOptionCategory::ThoughtLevel),
+    ]
 }
 
-/// Human label for a level in host pickers. The value id stays the
-/// lowercase config spelling hosts send back in `session/set_config_option`.
-fn thought_level_label(level: ReasoningLevel) -> &'static str {
+/// The label hosts show for `level`; they send back its value id.
+fn reasoning_label(level: ReasoningLevel) -> &'static str {
     match level {
         ReasoningLevel::Off => "Off",
         ReasoningLevel::Minimal => "Minimal",
@@ -56,13 +58,6 @@ fn thought_level_label(level: ReasoningLevel) -> &'static str {
         ReasoningLevel::Xhigh => "Extra high",
         ReasoningLevel::Max => "Max",
     }
-}
-
-pub(super) fn selectable_thought_levels(
-    config: &Config,
-    current: ReasoningLevel,
-) -> Vec<ReasoningLevel> {
-    thought_capabilities(config).selectable_levels(&ReasoningLevel::ALL, Some(current))
 }
 
 pub(super) fn parse_thought_level_request(
@@ -82,10 +77,6 @@ pub(super) fn parse_thought_level_request(
     value.0.as_ref().parse::<ReasoningLevel>().map_err(|_| {
         AcpError::invalid_params().data(format!("unknown thought_level '{}'", value.0.as_ref()))
     })
-}
-
-fn thought_capabilities(config: &Config) -> ReasoningCapabilities {
-    cached_reasoning_capabilities(&config.provider, &config.model)
 }
 
 #[cfg(test)]
