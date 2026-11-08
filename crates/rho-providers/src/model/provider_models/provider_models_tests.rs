@@ -925,7 +925,8 @@ fn with_isolated_catalog_registry(test: impl std::future::Future<Output = ()>) {
 // Covers: Mistral lists each model under several ids (`-latest`, dated, and
 // legacy names) next to embedding and OCR models. The picker must show one
 // tool-capable chat row per model, keeping the id models.dev describes, while
-// a config naming any alias still selects and borrows that model's metadata
+// a config or the provider default naming any alias still selects it as
+// written and borrows that model's metadata
 // Owner: OpenAI-compatible discovery and the provider model cache
 #[test]
 fn mistral_refresh_collapses_aliases_and_resolves_them() {
@@ -944,6 +945,9 @@ fn mistral_refresh_collapses_aliases_and_resolves_them() {
                 {"id":"mistral-medium-latest","name":"mistral-medium-latest","max_context_length":262144,
                  "aliases":["mistral-medium","mistral-medium-2604"],
                  "capabilities":{"completion_chat":true,"function_calling":true}},
+                {"id":"mistral-medium-2604","name":"mistral-medium-latest","max_context_length":262144,
+                 "aliases":["mistral-medium","mistral-medium-latest"],
+                 "capabilities":{"completion_chat":true,"function_calling":true}},
                 {"id":"mistral-small-latest","name":"mistral-small-2603","max_context_length":131072,
                  "aliases":["mistral-small-2603"],
                  "capabilities":{"completion_chat":true,"function_calling":true}},
@@ -959,13 +963,19 @@ fn mistral_refresh_collapses_aliases_and_resolves_them() {
         .await;
         let models_dev_cache = tempfile::tempdir().unwrap();
         let _models_dev = ModelsDevCacheDirGuard::new(models_dev_cache.path().to_path_buf());
-        // Only the dated small id has a catalog row, though `-latest` is listed first.
+        // Only the dated small id has a catalog row, though `-latest` is listed
+        // first, and only the dated medium id, though `name` is the alias.
         let small = ModelMetadata {
             display_name: Some("Mistral Small 4".into()),
             reasoning_metadata_complete: true,
             ..ModelMetadata::default()
         };
         write_cached_model_metadata_for_tests("mistral", "mistral-small-2603", &small);
+        write_cached_model_metadata_for_tests(
+            "mistral",
+            "mistral-medium-2604",
+            &ModelMetadata::default(),
+        );
         mark_catalog_snapshot_current_for_tests();
         let cache = tempfile::tempdir().unwrap();
         set_provider_models_cache_dir_for_tests(Some(cache.path().to_path_buf()));
@@ -994,18 +1004,23 @@ fn mistral_refresh_collapses_aliases_and_resolves_them() {
         assert_eq!(
             models,
             vec![
-                listed("mistral-medium-latest", "mistral-medium-latest", 262_144),
+                listed("mistral-medium-2604", "mistral-medium-latest", 262_144),
                 listed("mistral-small-2603", "mistral-small-2603", 131_072),
             ]
         );
-        // An alias selects the listed model but keeps the id the config named.
+        // An alias selects the listed model but keeps the id the config named,
+        // and the descriptor default stays the floating alias.
         assert_eq!(
-            cached_provider_model("mistral", "mistral-medium-2604"),
+            cached_provider_model("mistral", "mistral-medium-latest"),
             Some(listed(
-                "mistral-medium-2604",
+                "mistral-medium-latest",
                 "mistral-medium-latest",
                 262_144
             ))
+        );
+        assert_eq!(
+            crate::model::catalog::default_model_for_provider("mistral").as_deref(),
+            Some("mistral-medium-latest")
         );
         assert_eq!(
             current_model_metadata("mistral", "mistral-small-latest")

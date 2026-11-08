@@ -657,13 +657,17 @@ fn selected_model_for_refresh(config: &Config, provider: &str) -> Option<String>
 ///
 /// A descriptor default makes `default_model_for_provider` answer even on an
 /// empty cache, so a named model is checked on its own: selection accepts the
-/// descriptor default uncached, and any other model must be listed.
+/// descriptor default uncached, and any other model must be listed. Only a
+/// missing or stale list (24h) is refetched for it; a fresh list that lacks
+/// the model (a typo or retired id) fails fast instead of waiting on the
+/// network every run.
 fn needs_model_discovery(
     descriptor: &provider::ProviderDescriptor,
     selected_model: Option<&str>,
 ) -> bool {
     let requires_cache = descriptor.model_source == ProviderModelSource::CachedProviderModels;
     let selected_uncached = requires_cache
+        && !provider_models_are_fresh(descriptor.name)
         && selected_model.is_some_and(|model| {
             descriptor.default_model != Some(model)
                 && cached_provider_model(descriptor.name, model).is_none()
