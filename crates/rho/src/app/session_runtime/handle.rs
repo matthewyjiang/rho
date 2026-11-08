@@ -32,8 +32,7 @@ pub(crate) enum SteerError {
 /// as ACP does in its session slot, so a cancel, steer, close, or reload
 /// acts at once instead of waiting for the running prompt to give the
 /// runtime back.
-/// Clones are the same handle; [`Self::same_runtime`] tells one runtime's
-/// handle from a successor's.
+/// Clones are the same handle.
 #[derive(Clone)]
 pub(crate) struct SessionHandle(Arc<Shared>);
 
@@ -56,13 +55,6 @@ impl SessionHandle {
     #[cfg(test)]
     pub(in crate::app) fn detached_for_tests() -> Self {
         Self::new()
-    }
-
-    /// Starts a prompt as the runtime does, for host tests that hold a slot
-    /// with no runtime behind it. The prompt lasts until the scope drops.
-    #[cfg(test)]
-    pub(in crate::app) fn begin_prompt_scope_for_tests(&self) -> super::PromptScope {
-        super::PromptScope::begin(self)
     }
 
     pub(super) fn gate(&self) -> &PromptGate {
@@ -114,13 +106,6 @@ impl SessionHandle {
         self.0.gate.is_closed()
     }
 
-    /// Whether a new prompt may wait for the runtime instead of being
-    /// refused: the current prompt was cancelled, none is running, or the
-    /// session is closing, which ends the waiting prompt cancelled.
-    pub(crate) fn admits_queued_prompt(&self) -> bool {
-        self.0.gate.admits_queued_prompt()
-    }
-
     /// Hands the session file to another runtime, so this one no longer
     /// writes it.
     pub(crate) fn mark_replaced(&self) {
@@ -136,11 +121,6 @@ impl SessionHandle {
     /// Whether another runtime owns the session file.
     pub(crate) fn is_replaced(&self) -> bool {
         self.0.replaced.load(Ordering::Acquire)
-    }
-
-    /// Whether `other` is a handle on the same runtime.
-    pub(crate) fn same_runtime(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
     }
 }
 

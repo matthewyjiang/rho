@@ -1,6 +1,12 @@
 //! `rho acp` driven over stdio the way an editor host drives it. The
 //! automation fixture provider stands in for the model, so each prompt
 //! deterministically calls one tool and replies with its result.
+//!
+//! `rho acp` is a client of the rho daemon, which it starts in the
+//! sandbox; the daemon inherits the first client's environment, fixture
+//! mode included, and the sandbox stops it when it drops, after the server.
+//! The daemon is unix-only (#1665), and so is `rho acp`.
+#![cfg(unix)]
 
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -28,17 +34,6 @@ mod auth_required;
 
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;
-
-// The session cwd is a symlink.
-#[cfg(unix)]
-#[path = "support/acp_client_files_tests.rs"]
-mod client_files;
-
-// Only `bash` runs in host terminals; Windows has `powershell`, which runs
-// locally.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-#[path = "support/acp_client_terminals_tests.rs"]
-mod client_terminals;
 
 #[path = "support/acp_compaction_cards_tests.rs"]
 mod compaction_cards;

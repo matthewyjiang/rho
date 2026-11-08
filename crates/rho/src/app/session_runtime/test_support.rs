@@ -279,12 +279,6 @@ impl SessionRuntime {
         &self.agent
     }
 
-    /// The session's whole tool set, for host tests that check what a
-    /// rebuild registered.
-    pub(in crate::app) fn tool_set_for_tests(&self) -> &AppToolSet {
-        &self.built.tools
-    }
-
     /// The session's live history, for host tests that compare it with what
     /// was saved.
     pub(in crate::app) fn history_for_tests(&self) -> Vec<rho_sdk::model::Message> {

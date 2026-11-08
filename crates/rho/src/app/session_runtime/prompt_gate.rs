@@ -254,18 +254,6 @@ impl PromptGate {
             || slot.suspended
             || matches!(slot.state, PromptGateState::Closed(Closing::Disconnected))
     }
-
-    /// Whether a new prompt may wait for the host instead of being refused:
-    /// the current prompt was cancelled, none is running (the host is only
-    /// held briefly by teardown or a setup request), or the session is
-    /// closing, which ends the waiting prompt cancelled.
-    pub(super) fn admits_queued_prompt(&self) -> bool {
-        match &self.slot().state {
-            PromptGateState::Idle | PromptGateState::Closed(_) => true,
-            PromptGateState::Starting(token)
-            | PromptGateState::Active(ActiveWork { token, .. }) => token.is_cancelled(),
-        }
-    }
 }
 
 #[cfg(test)]

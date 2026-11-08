@@ -1,3 +1,5 @@
+// `rho acp` is a client of the rho daemon, which is unix-only (#1665).
+#[cfg(unix)]
 mod acp;
 #[cfg(debug_assertions)]
 mod acp_fixture_agent;

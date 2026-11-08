@@ -1,37 +1,24 @@
+//! A daemon approval (`wire::Ask::Approval`) or plan approval
+//! (`wire::Ask::PlanApproval`) as ACP `session/request_permission`, and the
+//! host's pick as the daemon's answer.
+
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use agent_client_protocol::schema::v1::{
     PermissionOption, PermissionOptionKind, RequestPermissionOutcome, RequestPermissionRequest,
-    SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption, SessionId,
-    SessionMode, SessionModeId, SetSessionConfigOptionRequest, ToolCallContent, ToolCallId,
-    ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    SessionId, SessionModeId, ToolCallContent, ToolCallId, ToolCallUpdate, ToolCallUpdateFields,
+    ToolKind,
 };
-use agent_client_protocol::Error as AcpError;
-use rho_protocol as wire;
+use rho_protocol::{self as wire, ApprovalAsk, InputAnswer, Operation, PlanApprovalAsk};
 
-use crate::{
-    app::session_runtime::{cancelled_approval, PlanApprovalRequest},
-    permission::PermissionMode,
-    tools::plan_exit::{self, PlanPermissionAnswer},
-};
-use rho_sdk::CapabilityKind;
-
-/// Config option id for the permission mode. ACP clients that support config
-/// options ignore the legacy `modes` field, so the mode is advertised both ways.
-pub(super) const MODE_CONFIG_ID: &str = "mode";
+use crate::{permission::PermissionMode, tools::plan_exit};
 
 const OPTION_ALLOW_ONCE: &str = "allow_once";
 const OPTION_ALLOW_ALWAYS: &str = "allow_always";
 const OPTION_REJECT_ONCE: &str = "reject_once";
 const OPTION_KEEP_PLANNING: &str = "keep_planning";
 
-pub(super) fn mode_list() -> Vec<SessionMode> {
-    PermissionMode::ALL
-        .into_iter()
-        .map(|mode| SessionMode::new(mode_id(mode), mode.label()))
-        .collect()
-}
-
+/// The ACP id of permission mode `mode`; also its `mode` config value.
 pub(super) fn mode_id(mode: PermissionMode) -> SessionModeId {
     SessionModeId::new(mode.as_str())
 }
@@ -42,58 +29,26 @@ pub(super) fn parse_mode_id(id: &str) -> Option<PermissionMode> {
         .find(|mode| mode.as_str() == id)
 }
 
-/// The `mode` config option of a session's `modes`, as the ACP adapter will
-/// render the daemon's (#1670): the same permission modes as the legacy
-/// `modes` field, with the same ids, so both stay in sync. A mode this rho
-/// does not know is left out, and so is the option when the current mode is
-/// one.
-pub(super) fn mode_config_option(
-    modes: &wire::PermissionModeOptions,
-) -> Option<SessionConfigOption> {
-    let current = PermissionMode::try_from(modes.current).ok()?;
-    let choices = modes
-        .available
-        .iter()
-        .filter_map(|&mode| PermissionMode::try_from(mode).ok())
-        .map(|mode| SessionConfigSelectOption::new(mode.as_str(), mode.label()))
-        .collect::<Vec<_>>();
-    Some(
-        SessionConfigOption::select(MODE_CONFIG_ID, "Mode", current.as_str(), choices)
-            .description("Which tool calls run without asking.")
-            .category(SessionConfigOptionCategory::Mode),
-    )
-}
-
-/// Parses a `mode` config value into a permission mode.
-pub(super) fn parse_mode_config_request(
-    request: &SetSessionConfigOptionRequest,
-) -> Result<PermissionMode, AcpError> {
-    let Some(value) = request.value.as_value_id() else {
-        return Err(AcpError::invalid_params().data("mode requires a select value id"));
-    };
-    parse_mode_id(value.0.as_ref()).ok_or_else(|| {
-        AcpError::invalid_params().data(format!("unknown session mode '{}'", value.0.as_ref()))
-    })
-}
-
+/// A fresh card id for a prompt about a call the host never saw.
 pub(super) fn next_placeholder_tool_call_id(counter: &AtomicU64) -> String {
     format!("pending-{}", counter.fetch_add(1, Ordering::Relaxed) + 1)
 }
 
 /// The prompt for one approval. A request for a call the host already saw
 /// reuses that card and keeps the kind it was announced with; only a
-/// placeholder card, which has no kind yet, takes one from the capability.
+/// placeholder card, which has no kind yet, takes one from the operation.
 pub(super) fn permission_request(
     session_id: &SessionId,
-    request: &rho_sdk::ApprovalRequest,
+    ask: &ApprovalAsk,
+    tool_call: Option<&wire::ToolCallId>,
     placeholder_tool_call_id: &str,
 ) -> RequestPermissionRequest {
-    let fields = ToolCallUpdateFields::new().title(request.reason());
-    let (tool_call_id, fields) = match request.tool_call_id() {
+    let fields = ToolCallUpdateFields::new().title(ask.reason.clone());
+    let (tool_call_id, fields) = match tool_call {
         Some(id) => (id.as_str(), fields),
         None => (
             placeholder_tool_call_id,
-            fields.kind(tool_kind_for_capability(request.capability().kind())),
+            fields.kind(tool_kind_for_operation(&ask.operation)),
         ),
     };
     RequestPermissionRequest::new(
@@ -103,23 +58,27 @@ pub(super) fn permission_request(
     )
 }
 
-pub(super) fn decision_for(outcome: &RequestPermissionOutcome) -> rho_sdk::ApprovalDecision {
-    match outcome {
-        RequestPermissionOutcome::Cancelled => cancelled_approval(),
-        RequestPermissionOutcome::Selected(selected) => match selected.option_id.0.as_ref() {
-            OPTION_ALLOW_ONCE => rho_sdk::ApprovalDecision::AllowOnce,
-            OPTION_ALLOW_ALWAYS => rho_sdk::ApprovalDecision::AllowForSession,
-            OPTION_REJECT_ONCE => rho_sdk::ApprovalDecision::Deny {
-                reason: "permission rejected".into(),
-            },
-            _ => rho_sdk::ApprovalDecision::Deny {
-                reason: "unknown permission option".into(),
-            },
+/// The daemon's answer to an approval the host answered with `outcome`.
+/// A host that cancelled the prompt answers nothing: the turn's cancel
+/// withdraws the request.
+pub(super) fn approval_answer(outcome: &RequestPermissionOutcome) -> Option<InputAnswer> {
+    let selected = match outcome {
+        RequestPermissionOutcome::Cancelled => return None,
+        RequestPermissionOutcome::Selected(selected) => selected,
+        _ => {
+            return Some(InputAnswer::Deny {
+                reason: Some("unknown permission outcome".into()),
+            });
+        }
+    };
+    Some(match selected.option_id.0.as_ref() {
+        OPTION_ALLOW_ONCE => InputAnswer::AllowOnce,
+        OPTION_ALLOW_ALWAYS => InputAnswer::AllowForSession,
+        OPTION_REJECT_ONCE => InputAnswer::Deny { reason: None },
+        _ => InputAnswer::Deny {
+            reason: Some("unknown permission option".into()),
         },
-        _ => rho_sdk::ApprovalDecision::Deny {
-            reason: "unknown permission outcome".into(),
-        },
-    }
+    })
 }
 
 fn permission_options() -> Vec<PermissionOption> {
@@ -142,28 +101,32 @@ fn permission_options() -> Vec<PermissionOption> {
     ]
 }
 
-fn tool_kind_for_capability(kind: CapabilityKind) -> ToolKind {
-    match kind {
-        CapabilityKind::Read | CapabilityKind::InstructionDiscovery => ToolKind::Read,
-        CapabilityKind::Write => ToolKind::Edit,
-        CapabilityKind::Process => ToolKind::Execute,
-        CapabilityKind::Network => ToolKind::Fetch,
-        CapabilityKind::Skill => ToolKind::Other,
+fn tool_kind_for_operation(operation: &Operation) -> ToolKind {
+    match operation {
+        Operation::ReadPath { .. } | Operation::DiscoverInstructions { .. } => ToolKind::Read,
+        Operation::WritePath { .. } => ToolKind::Edit,
+        Operation::RunProcess { .. } => ToolKind::Execute,
+        Operation::Network { .. } => ToolKind::Fetch,
+        Operation::LoadSkill { .. } => ToolKind::Other,
+        // `Unknown`, or an operation a newer daemon sends.
         _ => ToolKind::Other,
     }
 }
 
 /// The plan approval prompt, drawn on the `exit_plan_mode` call's card with
 /// the plan as its content. Each option approves into one mode, by mode id,
-/// so hosts show what each choice grants; "keep planning" rejects.
+/// so hosts show what each choice grants; "keep planning" rejects. A mode
+/// this rho does not know is not offered.
 pub(super) fn plan_approval_request(
     session_id: &SessionId,
-    request: &PlanApprovalRequest,
+    ask: &PlanApprovalAsk,
+    tool_call_id: &str,
 ) -> RequestPermissionRequest {
-    let mut options = request
-        .targets
+    let mut options = ask
+        .modes
         .iter()
-        .map(|&mode| {
+        .filter_map(|&mode| PermissionMode::try_from(mode).ok())
+        .map(|mode| {
             // Hosts style "always" as the broader grant; supervised still
             // asks before each change, so it is the "once" choice.
             let kind = match mode {
@@ -184,26 +147,29 @@ pub(super) fn plan_approval_request(
     RequestPermissionRequest::new(
         session_id.clone(),
         ToolCallUpdate::new(
-            ToolCallId::new(request.call_id.as_str()),
+            ToolCallId::new(tool_call_id),
             ToolCallUpdateFields::new()
                 .title("Plan ready. How should Rho continue?")
                 .kind(ToolKind::SwitchMode)
-                .content(vec![ToolCallContent::from(request.plan.clone())]),
+                .content(vec![ToolCallContent::from(ask.plan.clone())]),
         ),
         options,
     )
 }
 
-/// The user's plan decision; the tool checks the mode was offered. A
-/// cancelled prompt or any other option keeps planning.
-pub(super) fn plan_answer_for(outcome: &RequestPermissionOutcome) -> PlanPermissionAnswer {
-    let RequestPermissionOutcome::Selected(selected) = outcome else {
-        return PlanPermissionAnswer::KeepPlanning;
+/// The user's plan decision; the daemon checks the mode was offered. Any
+/// option other than a mode keeps planning, and a cancelled prompt answers
+/// nothing, as an approval's does.
+pub(super) fn plan_answer(outcome: &RequestPermissionOutcome) -> Option<InputAnswer> {
+    let selected = match outcome {
+        RequestPermissionOutcome::Cancelled => return None,
+        RequestPermissionOutcome::Selected(selected) => selected,
+        _ => return Some(InputAnswer::KeepPlanning),
     };
-    parse_mode_id(selected.option_id.0.as_ref()).map_or(
-        PlanPermissionAnswer::KeepPlanning,
-        PlanPermissionAnswer::Approve,
-    )
+    Some(match parse_mode_id(selected.option_id.0.as_ref()) {
+        Some(mode) => InputAnswer::ApprovePlan { mode: mode.into() },
+        None => InputAnswer::KeepPlanning,
+    })
 }
 
 #[cfg(test)]

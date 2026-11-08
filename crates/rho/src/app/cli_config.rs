@@ -62,12 +62,34 @@ pub(super) fn validate(cli: &Cli) -> anyhow::Result<()> {
             "rho login does not take --config: the rho daemon saves the credential under its own config"
         );
     }
+    // `rho acp` sessions run in the rho daemon under its config (#1670);
+    // the host picks the model and mode per session.
+    if let (Some(Command::Acp(_)), Some(flag)) = (&cli.command, acp_refused_flag(cli)) {
+        anyhow::bail!(
+            "rho acp does not take {flag}: its sessions run in the rho daemon, under its own config; choose the model and mode in the ACP host"
+        );
+    }
     if let Some(Command::Run { detach: true, .. }) = &cli.command {
         if let Err(refused) = super::detach::detach_flags(cli) {
             anyhow::bail!(super::detach::refusal(&refused));
         }
     }
     Ok(())
+}
+
+/// The first flag given that `rho acp` cannot honor.
+fn acp_refused_flag(cli: &Cli) -> Option<&'static str> {
+    [
+        ("--provider", cli.provider.is_some()),
+        ("--model", cli.model.is_some()),
+        ("--config", cli.config.is_some()),
+        ("--auth", cli.auth.is_some()),
+        ("--reasoning", cli.reasoning.is_some()),
+        ("--permission-mode", cli.permission_mode.is_some()),
+        ("--save", cli.save),
+    ]
+    .into_iter()
+    .find_map(|(flag, given)| given.then_some(flag))
 }
 
 pub(super) async fn refresh_model_cache(

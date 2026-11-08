@@ -4,14 +4,12 @@
 //! prompt may run.
 //!
 //! The daemon sends them as they are, and the TUI client reads them (#1667).
-//! ACP renders them as config options and `available_commands_update`
-//! (`acp/config_options.rs`, `thought_level.rs`, `fast_mode.rs`,
-//! `commands.rs`), renderers the ACP adapter keeps once it reads these from
-//! the daemon (#1670). Each host parses its own change requests and applies
-//! them through the [`SessionRuntime`]'s settings cores
-//! (`set_permission_mode`, `switch_model`, `set_reasoning_level`,
-//! `set_fast_mode`), then rebuilds these: a model switch adds or drops the
-//! per-model reasoning levels and fast mode.
+//! The ACP adapter renders them as config options and
+//! `available_commands_update` (`acp/options.rs`). Each host parses its own
+//! change requests and applies them through the [`SessionRuntime`]'s
+//! settings cores (`set_permission_mode`, `switch_model`,
+//! `set_reasoning_level`, `set_fast_mode`), then rebuilds these: a model
+//! switch adds or drops the per-model reasoning levels and fast mode.
 
 use rho_protocol as wire;
 use rho_providers::{model::catalog, providers::fast_mode::supports_fast_mode};

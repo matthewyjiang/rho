@@ -81,7 +81,6 @@ pub(crate) use build::{
     ChildAgents, HostCapabilities, QuestionSupport, RunShape, SessionBuild, SessionLaunch,
     SessionRole,
 };
-pub(crate) use credentials::CredentialFailure;
 use credentials::SessionCredentials;
 pub(crate) use delegation::BackgroundWait;
 use delegation::HeldNotices;
@@ -237,16 +236,6 @@ impl SessionRuntime {
         SessionTools::of(&self.built.tools)
     }
 
-    /// Reads the session's context fill against its current model's
-    /// window, including while a turn runs. Take a new gauge after a model
-    /// switch.
-    pub(crate) fn context_gauge(&self) -> ContextGauge {
-        ContextGauge {
-            session: self.built.session.clone(),
-            configured_window: self.configured_context_window(),
-        }
-    }
-
     /// The context window the session's current model is configured with,
     /// when its catalog entry knows one.
     pub(crate) fn configured_context_window(&self) -> Option<u64> {
@@ -325,45 +314,6 @@ impl SessionRuntime {
             rho_sdk::hooks::HookSessionFailureKind::RunFailed,
             message,
         );
-    }
-}
-
-/// Reads one session's context fill and the window it fills, and nothing
-/// that changes the session. A host keeps it while a turn runs, when the
-/// runtime itself is busy.
-#[derive(Clone)]
-pub(crate) struct ContextGauge {
-    session: rho_sdk::Session,
-    /// The configured window of the session's model when the gauge was
-    /// taken.
-    configured_window: Option<u64>,
-}
-
-impl ContextGauge {
-    /// A gauge on `session` whose model is configured with
-    /// `configured_window`, for host tests that have no runtime.
-    #[cfg(test)]
-    pub(in crate::app) fn of_session_for_tests(
-        session: rho_sdk::Session,
-        configured_window: Option<u64>,
-    ) -> Self {
-        Self {
-            session,
-            configured_window,
-        }
-    }
-
-    pub(crate) fn estimate(&self) -> rho_sdk::ContextEstimate {
-        self.session.context_estimate()
-    }
-
-    /// The context window `estimate` fills; see [`context_window`].
-    pub(crate) fn window_for(&self, estimate: rho_sdk::ContextEstimate) -> Option<u64> {
-        context_window(self.configured_window, estimate)
-    }
-
-    pub(crate) fn session_id(&self) -> &rho_sdk::SessionId {
-        self.session.id()
     }
 }
 

@@ -196,6 +196,7 @@ fn wait_for(path: &Path) {
 // and hands its parent a bogus result.
 // Owner: ACP T3 wake watcher, over the real stdio server
 #[test]
+#[ignore = "daemon-side T3 wake lands with #1670 A3"]
 fn stopped_watcher_resumes_its_wait_without_a_model_turn() {
     for (stop, parent) in [
         (Stop::Kill, Parent::Signalled),
@@ -262,6 +263,7 @@ enum Ending {
 // reviving the wait or repeating its answer.
 // Owner: ACP T3 wake watcher, over the real stdio server
 #[test]
+#[ignore = "daemon-side T3 wake lands with #1670 A3"]
 fn ended_watcher_drops_its_wait() {
     for ending in [
         Ending::Cancel,

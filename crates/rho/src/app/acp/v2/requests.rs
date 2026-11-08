@@ -7,7 +7,10 @@
 use agent_client_protocol::schema::{v1, v2, ProtocolVersion};
 use agent_client_protocol::Error as AcpError;
 
+use rho_protocol::SessionOptions;
+
 use super::bridge;
+use crate::app::acp::{host_features::Toggles, options as acp_options};
 
 /// `initialize` as v1 would have negotiated it. v2 made notices, compaction
 /// cards, and boolean config options baseline, so the v1 markers for them are
@@ -217,25 +220,23 @@ pub(super) fn resume_session_request(
 }
 
 /// The config options and commands a v2 session setup response carries. v1
-/// sent the commands as a notification after the response; v2 puts them in it.
+/// sends the commands as a notification after the response; v2 puts them in
+/// it.
 pub(super) struct Setup {
     pub(super) config_options: Vec<v2::SessionConfigOption>,
     pub(super) available_commands: Vec<v2::AvailableCommand>,
 }
 
-pub(super) fn setup(
-    config_options: Option<Vec<v1::SessionConfigOption>>,
-    commands: v1::SessionNotification,
-) -> Result<Setup, AcpError> {
-    let available_commands = match commands.update {
-        v1::SessionUpdate::AvailableCommandsUpdate(update) => {
-            super::updates::available_commands(update.available_commands)?
-        }
-        _ => Vec::new(),
-    };
+/// The setup of a session with `options`, with on/off options drawn as
+/// `toggles`.
+pub(super) fn setup(options: &SessionOptions, toggles: Toggles) -> Result<Setup, AcpError> {
     Ok(Setup {
-        config_options: super::updates::config_options(config_options.unwrap_or_default())?,
-        available_commands,
+        config_options: super::updates::config_options(acp_options::config_options(
+            options, toggles,
+        ))?,
+        available_commands: super::updates::available_commands(
+            acp_options::available_commands(&options.commands),
+        )?,
     })
 }
 

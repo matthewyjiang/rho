@@ -10,11 +10,8 @@
 //! agent message, automatic compaction shows only in `usage_update`, notices
 //! are agent messages, on/off options are two-value selects, Rho offers no
 //! questionnaire tool and declines MCP elicitation, and sign-in runs in a
-//! terminal (as it does on hosts without forms until a credential store is
-//! chosen). A host advertising both `clientCapabilities.fs.readTextFile`
-//! and `.writeTextFile` serves file text through `fs/*` requests, and one
-//! advertising `clientCapabilities.terminal` runs shell commands through
-//! `terminal/*`; others keep Rho on disk and local processes.
+//! terminal. Rho asks no host for `fs/*` or `terminal/*`: the daemon runs
+//! the session's tools on its own disk and processes.
 
 use std::sync::{Arc, OnceLock};
 
@@ -36,11 +33,6 @@ pub(in crate::app) struct HostFeatures {
     /// URL-mode `elicitation/create`: links the user opens, such as an OAuth
     /// sign-in page or Rho's API-key page.
     pub(super) urls: bool,
-    /// `fs/read_text_file` and `fs/write_text_file`. Rho needs both: writing
-    /// without reading would overwrite unsaved edits it never saw.
-    pub(super) files: bool,
-    /// `terminal/*`: the host runs shell commands in terminals it shows.
-    pub(super) terminals: bool,
 }
 
 /// The shape of an on/off session config option, such as `fast_mode`.
@@ -99,14 +91,12 @@ impl HostFeatures {
             toggles,
             forms,
             urls: elicitation.is_some_and(|elicitation| elicitation.url.is_some()),
-            files: capabilities.fs.read_text_file && capabilities.fs.write_text_file,
-            terminals: capabilities.terminal,
         }
     }
 }
 
-/// The host's choice and connection, recorded by `initialize` and read when
-/// the first session starts. Every connection begins with `initialize`: the
+/// The host's choices and connection, recorded by `initialize` and read by
+/// every session. Every connection begins with `initialize`: the
 /// protocol router that picks the version rejects anything else first.
 #[derive(Default)]
 pub(super) struct NegotiatedFeatures(OnceLock<(HostFeatures, Arc<dyn AcpClientPort>)>);

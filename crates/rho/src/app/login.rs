@@ -2,14 +2,15 @@
 //!
 //! On unix `rho login` is a client of the rho daemon, which saves the
 //! credential and runs interactive logins for it (#1662), starting the
-//! daemon when none runs (`daemon_client.rs`). `rho acp --login` still signs
-//! in in this process until the ACP adapter becomes a daemon client
-//! (#1670), as does `rho login` where the daemon is unsupported (Windows,
-//! #1665) (`in_process.rs`).
+//! daemon when none runs (`daemon_client.rs`). `rho acp --login`, which an
+//! ACP host runs in a terminal, signs in the same way. Where the daemon is
+//! unsupported (Windows, #1665) `rho login` signs in in this process
+//! (`in_process.rs`), and `rho acp` is unavailable.
 
 #[cfg(unix)]
 mod daemon_client;
 pub(super) mod drive;
+#[cfg(not(unix))]
 mod in_process;
 #[cfg(unix)]
 pub(super) mod relay_wire;
@@ -21,6 +22,7 @@ use rho_providers::{
     provider::{provider_descriptor, ProviderDescriptor},
 };
 
+#[cfg(not(unix))]
 use self::drive::Saved;
 use super::config_repository::ConfigRepository;
 use crate::{cli::Command, config::Config};
@@ -65,6 +67,10 @@ pub(super) async fn run(
     config: &mut Config,
     config_path: &std::path::Path,
 ) -> anyhow::Result<()> {
+    // A daemon login saves under the daemon's config; only an in-process
+    // login saves under these.
+    #[cfg(unix)]
+    let _ = (repository, config, config_path);
     match command {
         #[cfg(unix)]
         LoginCommand::Cli {
@@ -88,22 +94,14 @@ pub(super) async fn run(
         {
             Saved::Confirmed | Saved::Unconfirmed { .. } => Ok(()),
         },
-        // The exit status promises a finished sign-in, which a login the
-        // provider cannot confirm is not.
-        LoginCommand::AcpTerminal { auth } => match in_process::run(
-            target(auth)?,
-            /*device_auth*/ false,
-            repository,
-            config,
-            config_path,
-        )
-        .await?
-        {
-            Saved::Confirmed => Ok(()),
-            Saved::Unconfirmed { .. } => anyhow::bail!(
-                "login could not be confirmed; complete the provider's instructions and reconnect"
-            ),
-        },
+        // The exit status promises a finished sign-in: the daemon reports
+        // one only once the provider confirmed it, or the key is saved.
+        #[cfg(unix)]
+        LoginCommand::AcpTerminal { auth } => {
+            daemon_client::run(target(auth)?, /*device_auth*/ false).await
+        }
+        #[cfg(not(unix))]
+        LoginCommand::AcpTerminal { .. } => anyhow::bail!(super::daemon_cli::UNSUPPORTED),
     }
 }
 

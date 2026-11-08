@@ -1,10 +1,11 @@
 //! ACP `compaction_update` cards, for hosts that advertise
 //! `clientCapabilities.session.compaction`.
 //!
-//! A card opens `in_progress` and ends with exactly one terminal update,
-//! which consumes it. Each compaction gets a fresh random ID: hosts such as
-//! T3 Code keep their transcript across reconnects, so an ID that restarts
-//! per process would patch an earlier card in place.
+//! A card opens `in_progress` and ends with exactly one terminal update.
+//! The card's ID is the daemon's compaction ID, which is random per
+//! compaction: hosts such as T3 Code keep their transcript across
+//! reconnects, so an ID that restarted per process would patch an earlier
+//! card in place.
 //!
 //! Cards carry no `summary`: ACP reserves it for retained summary content,
 //! not status text such as the before and after counts, which hosts get
@@ -13,42 +14,26 @@
 use agent_client_protocol::schema::v1::{
     CompactionId, CompactionStatus, CompactionUpdate, SessionUpdate,
 };
+use rho_protocol as wire;
 
-/// Error for a compaction the run ended before it reported a result.
-pub(super) const UNFINISHED: &str = "compaction ended without a result";
-
-/// One compaction the host shows as a card.
-#[derive(Debug)]
-pub(super) struct CompactionCard {
-    id: CompactionId,
-}
-
-impl CompactionCard {
-    pub(super) fn new() -> Self {
-        Self {
-            id: CompactionId::new(format!("compaction-{}", uuid::Uuid::new_v4())),
+/// The card update for compaction `id` reaching `status`; nothing for a
+/// status a newer daemon sends.
+pub(super) fn update(
+    id: &wire::CompactionId,
+    status: &wire::CompactionStatus,
+) -> Option<SessionUpdate> {
+    let id = CompactionId::new(id.as_str());
+    let update = match status {
+        wire::CompactionStatus::Started => {
+            CompactionUpdate::new(id, CompactionStatus::InProgress)
         }
-    }
-
-    pub(super) fn in_progress(&self) -> SessionUpdate {
-        self.update(CompactionStatus::InProgress)
-    }
-
-    pub(super) fn completed(self) -> SessionUpdate {
-        self.update(CompactionStatus::Completed)
-    }
-
-    pub(super) fn failed(self, error: impl Into<String>) -> SessionUpdate {
-        SessionUpdate::CompactionUpdate(
-            CompactionUpdate::new(self.id, CompactionStatus::Failed).error(error.into()),
-        )
-    }
-
-    pub(super) fn cancelled(self) -> SessionUpdate {
-        self.update(CompactionStatus::Cancelled)
-    }
-
-    fn update(&self, status: CompactionStatus) -> SessionUpdate {
-        SessionUpdate::CompactionUpdate(CompactionUpdate::new(self.id.clone(), status))
-    }
+        wire::CompactionStatus::Completed => CompactionUpdate::new(id, CompactionStatus::Completed),
+        wire::CompactionStatus::Cancelled => CompactionUpdate::new(id, CompactionStatus::Cancelled),
+        wire::CompactionStatus::Failed { error } => {
+            CompactionUpdate::new(id, CompactionStatus::Failed).error(error.clone())
+        }
+        // `Unknown`, or a status a newer daemon sends.
+        _ => return None,
+    };
+    Some(SessionUpdate::CompactionUpdate(update))
 }

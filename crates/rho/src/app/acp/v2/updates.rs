@@ -226,7 +226,7 @@ fn file_diff(diff: &v1::Diff) -> v2::Diff {
     let mut meta = diff.meta.clone();
     let deleted = meta
         .as_mut()
-        .and_then(|meta| meta.remove(crate::app::acp::events::DELETED_FILE_META_KEY))
+        .and_then(|meta| meta.remove(crate::app::acp::updates::DELETED_FILE_META_KEY))
         .is_some_and(|marker| marker == true);
     let meta = meta.filter(|meta| !meta.is_empty());
     let (change, contents) = match (&diff.old_text, deleted) {

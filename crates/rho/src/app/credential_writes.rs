@@ -149,20 +149,6 @@ pub(crate) fn refuse_environment_override(
     }
 }
 
-/// Signs out of auth profile `auth` on `provider`, the ones a host's config
-/// selects, as ACP `logout` signs out. The keyless profile is shared by
-/// every keyless provider, so only `provider` says which endpoint login to
-/// forget. `repository` is the config the host reads.
-pub(crate) fn sign_out_selected(
-    provider: &str,
-    auth: &str,
-    repository: &ConfigRepository,
-) -> Result<(), CredentialWriteError> {
-    load_config_and_store(repository)?;
-    refuse_environment_override(auth, CredentialWrite::SignOut)?;
-    write_sign_out(auth, provider::provider_descriptor(provider), repository)
-}
-
 /// Signs out of auth profile `auth`, which a client named, on the provider
 /// it signs in to, as `rho/auth/logout` signs out.
 pub(crate) fn sign_out_named(

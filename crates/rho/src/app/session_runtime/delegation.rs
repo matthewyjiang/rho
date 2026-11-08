@@ -16,10 +16,11 @@
 //! keeps their notice binding between prompts with
 //! [`Delegation::hold_notices`]. `rho run` drops it with the run.
 //!
-//! A host that can wake its idle session itself, such as T3 Code (see
-//! `acp::t3_wake`), sets [`BackgroundWait::HostWakes`]: running workflows and
-//! processes then never hold natural completion, and finished ones still
-//! deliver at every boundary.
+//! A host that can wake its idle session itself sets
+//! [`BackgroundWait::HostWakes`]: running workflows and processes then never
+//! hold natural completion, and finished ones still deliver at every
+//! boundary. T3 Code's in-process ACP host did; the daemon's T3 wake-ups
+//! arrive with #1670 A3.
 
 use std::time::Instant;
 
