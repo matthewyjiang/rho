@@ -97,6 +97,7 @@ impl App {
             subagent_inbox: crate::tui::subagent_inbox::SubagentInbox::default(),
             agent_concurrency: None,
             pending_subagent_questionnaire: None,
+            daemon_answers: Default::default(),
             input_ui: InputUi::default(),
             palette_caches: PaletteCaches::default(),
             status_overlay: None,

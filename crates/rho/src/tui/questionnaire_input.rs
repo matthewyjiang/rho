@@ -265,6 +265,15 @@ impl App {
         self.set_status("answer cancelled");
     }
 
+    /// Closes the questionnaire unanswered, as when its request closed
+    /// elsewhere.
+    pub(super) fn withdraw_questionnaire(&mut self) {
+        match self.input_ui.take_composer() {
+            ComposerMode::Questionnaire(_) => self.clear_submitted_input(),
+            composer => self.input_ui.set_composer(composer),
+        }
+    }
+
     pub(super) async fn open_questionnaire(
         &mut self,
         request: QuestionAnswerRequest,

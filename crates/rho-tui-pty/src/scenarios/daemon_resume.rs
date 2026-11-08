@@ -98,22 +98,31 @@ pub(super) fn run_daemon_resume(runner: &ScenarioRunner) -> Result<ScenarioOutco
     })
 }
 
-/// Config for a daemon-hosted fixture session. The daemon has no one to ask
-/// for approval until input requests reach the TUI (T1d), so tools run
-/// without asking.
+/// Config for a daemon-hosted fixture session whose tools run without
+/// asking.
 pub(super) fn write_daemon_config(home: &IsolatedHome) -> Result<()> {
+    write_daemon_config_in_mode(home, "bypass")
+}
+
+/// Config for a daemon-hosted fixture session in `permission_mode`.
+pub(super) fn write_daemon_config_in_mode(
+    home: &IsolatedHome,
+    permission_mode: &str,
+) -> Result<()> {
     std::fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        format!(
+            r#"provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
 check_for_updates = false
 web_search.mode = "off"
-permission_mode = "bypass"
+permission_mode = "{permission_mode}"
 
 [behavior]
 credential_store = "file"
-"#,
+"#
+        ),
     )?;
     Ok(())
 }
