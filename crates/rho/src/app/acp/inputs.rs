@@ -28,12 +28,12 @@ use rho_protocol::{
 use tokio::task::JoinHandle;
 
 use super::{
-    daemon::Daemon,
     elicitation,
     host_features::{Forms, HostFeatures},
     permission::{self, Card},
     AcpClientPort,
 };
+use crate::app::daemon_client::Daemon;
 
 /// What every input task of a session shares.
 #[derive(Clone)]

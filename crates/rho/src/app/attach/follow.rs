@@ -1,18 +1,17 @@
-//! Where an attachment stands in a session's events: which of them replay
-//! what the client missed, and whether the turn it follows has ended.
+//! Where an attachment stands in a session's events, and whether the turn
+//! it follows has ended.
 //!
 //! `rho attach` follows the session's turn under way, or reports its last
-//! turn when none is. A reset replays the session's saved conversation,
-//! then its recent events, which hold the last turn's `turn_ended` until the
-//! next turn saves, so only once the replay is over does the attachment know
-//! whether the turn it reports already ended. A tail replay holds only
-//! events the client has not seen, so they end the turn as live ones do.
+//! turn when none is. A reset's replay is history, so it ends the turn only
+//! once it is over, by what it held of the last turn and the job's state
+//! ([`ResetReplay`]). A tail replay holds only events the client has not
+//! seen, so they end the turn as live ones do.
 
 use rho_protocol::{
     Cursor, JobState, Replay, Seq, SessionAttachResponse, SessionEvent, TurnOutcome,
 };
 
-use crate::app::stream_position::{Part, StreamPosition};
+use crate::app::daemon_client::{Part, ReplayedTurn, ResetReplay, StreamPosition};
 
 /// How the turn an attachment followed ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,18 +20,17 @@ pub(super) enum Ending {
     Turn(TurnOutcome),
     /// The daemon stopped before the turn ended.
     Interrupted,
-    /// A reset's replay ended in a finished job but held no `turn_ended`,
-    /// which the daemon promises it does: a daemon bug.
+    /// A reset's replay ended in a finished job, but its last turn held no
+    /// `turn_ended`, which the daemon promises it does: a daemon bug.
     Unreported,
 }
 
 /// One attachment's place in its session's events.
 pub(super) struct Follow {
     position: StreamPosition,
-    /// The job state the replay ends in.
-    state: JobState,
-    /// How the last turn the replay holds ended.
-    replayed: Option<TurnOutcome>,
+    /// The last attach's replay, read as far as its events came; what it
+    /// holds counts only when the replay is a reset.
+    replay: ResetReplay,
 }
 
 impl Follow {
@@ -41,8 +39,7 @@ impl Follow {
     pub(super) fn attached(response: &SessionAttachResponse) -> (Self, Option<Ending>) {
         let follow = Self {
             position: StreamPosition::attached(response),
-            state: response.state,
-            replayed: None,
+            replay: ResetReplay::new(response.state),
         };
         let ending = follow.settled_by(response);
         (follow, ending)
@@ -52,8 +49,7 @@ impl Follow {
     /// resets. Returns how the turn ended when the response alone says it.
     pub(super) fn reattached(&mut self, response: &SessionAttachResponse) -> Option<Ending> {
         self.position.reattached(response);
-        self.state = response.state;
-        self.replayed = None;
+        self.replay = ResetReplay::new(response.state);
         self.settled_by(response)
     }
 
@@ -74,9 +70,7 @@ impl Follow {
                 replay: Replay::Reset,
                 left,
             } => {
-                if let SessionEvent::TurnEnded { outcome } = event {
-                    self.replayed = Some(outcome.clone());
-                }
+                self.replay.observe(event);
                 if left == 0 {
                     self.settled()
                 } else {
@@ -110,11 +104,11 @@ impl Follow {
     /// How the job's last turn ended, once a reset's replay is over, if the
     /// job is not running one.
     fn settled(&self) -> Option<Ending> {
-        match self.state {
+        match self.replay.state {
             JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::TimedOut => {
-                Some(match &self.replayed {
-                    Some(outcome) => Ending::Turn(outcome.clone()),
-                    None => Ending::Unreported,
+                Some(match &self.replay.turn {
+                    ReplayedTurn::Ended(outcome) => Ending::Turn(outcome.clone()),
+                    ReplayedTurn::Unseen | ReplayedTurn::Began(_) => Ending::Unreported,
                 })
             }
             JobState::Interrupted => Some(Ending::Interrupted),

@@ -21,6 +21,9 @@ pub(crate) mod conversation_switch;
 #[cfg(unix)]
 mod credential_writes;
 mod daemon_cli;
+// The rho daemon is unix-only (#1665).
+#[cfg(unix)]
+mod daemon_client;
 #[cfg(unix)]
 mod daemon_host;
 mod detach;
@@ -56,8 +59,6 @@ mod session_runtime;
 mod sessions_cli;
 mod shutdown_signal;
 pub(crate) mod side_chat;
-#[cfg(unix)]
-mod stream_position;
 pub(crate) mod subagent_host_input;
 pub(crate) mod subagent_manager;
 pub(crate) mod subagent_messaging;

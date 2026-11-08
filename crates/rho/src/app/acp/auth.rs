@@ -34,16 +34,13 @@ use tokio::{
     task::JoinHandle,
 };
 
-use super::{
-    daemon::{self, Daemon, LoginEvent},
-    host_features::HostFeatures,
-    AcpClientPort, Adapter,
-};
+use super::{daemon, host_features::HostFeatures, AcpClientPort, Adapter};
 use crate::{
     agent::{AgentCatalog, DEFAULT_AGENT_ID},
     app::{
         agent_binding::{root_host_tools, AgentBinder, AgentInvocation, AgentRole, LaunchTools},
         config_repository::ConfigRepository,
+        daemon_client::{Daemon, LoginEvent},
         login::{self, drive, relay_wire},
     },
 };

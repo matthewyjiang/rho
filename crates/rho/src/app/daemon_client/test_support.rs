@@ -1,0 +1,40 @@
+//! Fixtures for the daemon clients' tests.
+
+use rho_protocol::{
+    JobState, ModelOptions, ModelRef, PermissionMode, PermissionModeOptions, Replay,
+    SessionAttachResponse, SessionOptions, StreamId,
+};
+
+/// An attach's response, on the stream named `"stream"`: a `replay`
+/// replay of `replay_events` events, ending with the job in `state`.
+pub(crate) fn attach_response(
+    replay: Replay,
+    replay_events: u64,
+    state: JobState,
+) -> SessionAttachResponse {
+    SessionAttachResponse {
+        stream: StreamId::new("stream"),
+        workspace: "/work".into(),
+        replay,
+        replay_events,
+        state,
+        inputs: Vec::new(),
+        title: None,
+        options: SessionOptions {
+            model: ModelOptions {
+                current: ModelRef {
+                    provider: "test".into(),
+                    model: "model".into(),
+                },
+                available: Vec::new(),
+            },
+            reasoning: None,
+            fast_mode: None,
+            permission_mode: PermissionModeOptions {
+                current: PermissionMode::Bypass,
+                available: Vec::new(),
+            },
+            commands: Vec::new(),
+        },
+    }
+}

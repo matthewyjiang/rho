@@ -1,11 +1,12 @@
 //! `rho acp`: an ACP agent over stdio that relays the rho daemon.
 //!
 //! The daemon runs every session; this process is one of its clients, with
-//! one connection for all the sessions its host opens (`daemon.rs`). Each
-//! ACP request becomes daemon requests (`sessions.rs`, `prompt.rs`,
-//! `auth.rs`), and each session's daemon events become ACP updates
-//! (`updates.rs`) and host prompts (`inputs.rs`). A connection that
-//! negotiates ACP v2 is served by translating at its boundary (`v2`).
+//! one connection for all the sessions its host opens (`app::daemon_client`,
+//! whose errors `daemon.rs` maps to ACP errors). Each ACP request becomes
+//! daemon requests (`sessions.rs`, `prompt.rs`, `auth.rs`), and each
+//! session's daemon events become ACP updates (`updates.rs`) and host
+//! prompts (`inputs.rs`). A connection that negotiates ACP v2 is served by
+//! translating at its boundary (`v2`).
 
 mod auth;
 mod daemon;
@@ -43,13 +44,12 @@ use agent_client_protocol::{
 use rho_protocol::{methods::SessionList, ChildThreads, SessionListParams, SessionPart};
 use tokio::signal::unix::{signal, Signal, SignalKind};
 
-use super::shutdown_signal::ShutdownSignals;
+use super::{daemon_client::Daemon, shutdown_signal::ShutdownSignals};
 use crate::{
     cli::Cli,
     herdr::{HerdrReporter, HerdrSource},
 };
 use auth::LoginFlight;
-use daemon::Daemon;
 use host_features::NegotiatedFeatures;
 use requests::Launch;
 use sessions::{Sessions, Started};
