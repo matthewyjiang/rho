@@ -64,7 +64,7 @@ pub(super) fn paths() -> anyhow::Result<DaemonPaths> {
 #[cfg(unix)]
 #[derive(Debug, thiserror::Error)]
 #[error("could not reach the rho daemon: {reason}; see https://matthewyjiang.github.io/rho/daemon")]
-pub(super) struct Unreachable {
+pub(crate) struct Unreachable {
     reason: String,
 }
 
