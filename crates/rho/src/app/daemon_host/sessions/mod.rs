@@ -513,7 +513,7 @@ impl Sessions {
     }
 
     /// Starts a turn of the prompt's content on a session and returns once
-    /// the turn saved its prompt. The turn runs in a daemon task from then
+    /// the turn began. The turn runs in a daemon task from then
     /// on.
     pub(super) async fn prompt(
         &self,
@@ -587,7 +587,7 @@ impl Sessions {
         tokio::select! {
             biased;
             start = start => match start {
-                Ok(PromptStart::Saved) => Ok(SessionPromptResponse {}),
+                Ok(PromptStart::Began) => Ok(SessionPromptResponse {}),
                 Ok(PromptStart::Ended(outcome)) => Err(ended_early(&outcome)),
                 // Only a turn the daemon's stop interrupted, or one whose
                 // task the exiting runtime dropped, sends no answer.
@@ -841,7 +841,7 @@ fn stopping() -> RpcError {
 }
 
 /// The error a prompt answers when its turn ended, as `outcome` says,
-/// before it saved the prompt: `TurnEnded`, with the outcome as its data.
+/// before it began: `TurnEnded`, with the outcome as its data.
 fn ended_early(outcome: &TurnOutcome) -> RpcError {
     let message = match outcome {
         TurnOutcome::Failed { error } => error.message.clone(),
@@ -849,7 +849,7 @@ fn ended_early(outcome: &TurnOutcome) -> RpcError {
         TurnOutcome::TimedOut { timeout_ms } => {
             format!("the turn reached its {timeout_ms}ms time limit before it started")
         }
-        // Only those three end a turn before its prompt is saved.
+        // Only those three end a turn before it begins.
         _ => "the turn ended before it started".to_owned(),
     };
     let data = serde_json::to_value(outcome).expect("a turn outcome serializes");

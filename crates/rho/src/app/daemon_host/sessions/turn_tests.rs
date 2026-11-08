@@ -109,37 +109,37 @@ struct EndCase {
 // Owner: daemon session turn view.
 #[tokio::test]
 async fn the_job_waits_for_input_while_any_request_is_open() {
-    let saved = || Some(PromptStart::Saved);
+    let began = || Some(PromptStart::Began);
     let cases = vec![
         WaitingCase {
             name: "no request",
             events: vec![inserted(), SessionEvent::RunStarted],
             state: JobState::Running,
-            start: saved(),
+            start: began(),
         },
         WaitingCase {
             name: "an open approval",
             events: vec![inserted(), approval(0)],
             state: JobState::WaitingForInput,
-            start: saved(),
+            start: began(),
         },
         WaitingCase {
             name: "an approval withdrawn",
             events: vec![inserted(), approval(0), approval_withdrawn(0)],
             state: JobState::Running,
-            start: saved(),
+            start: began(),
         },
         WaitingCase {
             name: "one of two approvals withdrawn",
             events: vec![inserted(), approval(0), approval(1), approval_withdrawn(1)],
             state: JobState::WaitingForInput,
-            start: saved(),
+            start: began(),
         },
         WaitingCase {
             name: "a plan open after the question closed",
             events: vec![inserted(), question("q"), plan(0), question_withdrawn("q")],
             state: JobState::WaitingForInput,
-            start: saved(),
+            start: began(),
         },
         WaitingCase {
             name: "every kind opened and withdrawn",
@@ -153,13 +153,13 @@ async fn the_job_waits_for_input_while_any_request_is_open() {
                 question_withdrawn("q"),
             ],
             state: JobState::Running,
-            start: saved(),
+            start: began(),
         },
         WaitingCase {
             name: "a withdrawal of a request never opened",
             events: vec![inserted(), approval_withdrawn(3), question_withdrawn("x")],
             state: JobState::Running,
-            start: saved(),
+            start: began(),
         },
         WaitingCase {
             name: "events before the message is saved",
@@ -240,19 +240,19 @@ async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
             name: "completed after saving",
             events: vec![inserted()],
             release: Release::End(completed()),
-            start: Some(PromptStart::Saved),
+            start: Some(PromptStart::Began),
         },
         EndCase {
             name: "failed after saving",
             events: vec![inserted()],
             release: Release::End(failed()),
-            start: Some(PromptStart::Saved),
+            start: Some(PromptStart::Began),
         },
         EndCase {
             name: "completed without a saved message",
             events: vec![],
             release: Release::End(completed()),
-            start: Some(PromptStart::Saved),
+            start: Some(PromptStart::Began),
         },
         EndCase {
             name: "cancelled before saving",
@@ -279,7 +279,7 @@ async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
             name: "dropped while waiting for input",
             events: vec![inserted(), approval(0)],
             release: Release::Drop,
-            start: Some(PromptStart::Saved),
+            start: Some(PromptStart::Began),
         },
         EndCase {
             name: "dropped before saving",
@@ -411,7 +411,7 @@ async fn the_daemon_times_a_turn_out_at_its_limit() {
             timeout_ms: 3_600_000,
             busy: false,
             cancelled_first: false,
-            start: PromptStart::Saved,
+            start: PromptStart::Began,
             end: TurnEnd::TimedOut {
                 timeout_ms: 3_600_000,
             },

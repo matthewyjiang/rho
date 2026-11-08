@@ -59,8 +59,8 @@ fn chain_message(error: &anyhow::Error) -> String {
 /// never from its text.
 fn failure_kind(error: &anyhow::Error) -> TurnErrorKind {
     for cause in error.chain() {
-        // A prompt command the session cannot run, as one a daemon session
-        // does not run yet.
+        // A prompt command the session cannot run, such as a TUI command
+        // in a daemon session.
         if cause.downcast_ref::<CommandRejected>().is_some() {
             return TurnErrorKind::Configuration;
         }

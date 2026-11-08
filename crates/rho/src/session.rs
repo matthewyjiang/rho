@@ -16,6 +16,7 @@ use rho_sdk::SessionSnapshot;
 use rho_sdk::{CompactionState, Revision, SessionId};
 
 mod agent_identity;
+mod append_cursor;
 pub(crate) mod catalog;
 mod delete;
 mod display_rows;
@@ -50,16 +51,18 @@ mod version_tests;
 pub(crate) mod workspace_checkpoint;
 mod workspace_scope;
 
+use append_cursor::AppendCursor;
 #[cfg(test)]
 use layout::encode_cwd;
 use persistence::{
-    parse_timestamp, session_root, session_web_dir, unix_timestamp_secs, AppendCursor, SessionStore,
+    parse_timestamp, session_root, session_web_dir, unix_timestamp_secs, SessionStore,
 };
 #[cfg(test)]
 use persistence::{
     read_entries, session_dir_in_root, summarize_session_file, SessionEntry, SESSION_VERSION,
 };
 
+pub(crate) use agent_identity::SavedAgent;
 pub use delete::{is_cross_project, DeleteOptions, DeleteOutcome};
 pub(crate) use delete::{CleanupOutcome, ExactDelete, RunNotFinished, WorkspaceDeleteOutcome};
 pub(crate) use id_match::SavedInManyWorkspaces;
@@ -430,6 +433,14 @@ impl Session {
         agent_identity::read_agent_identity(&self.path)
     }
 
+    /// The root agent the session reopens under: its own agent, or the
+    /// root `/agent:` rebound it from. `None` for a delegated session
+    /// written before launch identities were saved; an error for a root
+    /// session whose header names no agent.
+    pub(crate) fn root_agent(&self) -> anyhow::Result<Option<SavedAgent>> {
+        agent_identity::read_root_agent(&self.path)
+    }
+
     /// Rebinds the session to a delegated child agent, only before any
     /// history has been persisted. An initial snapshot is committed atomically
     /// with the identity so reload cannot observe half of the child binding.
@@ -468,32 +479,13 @@ impl Session {
         &self,
         definition: &crate::agent::AgentDefinition,
     ) -> anyhow::Result<()> {
-        self.validate_agent_identity_with(definition.id.as_str(), |stored| {
-            definition.accepts_stored_fingerprint(stored)
-        })
-    }
-
-    fn validate_agent_identity_with(
-        &self,
-        selected_id: &str,
-        accepts_fingerprint: impl FnOnce(&str) -> bool,
-    ) -> anyhow::Result<()> {
-        let Some((stored_id, stored_fingerprint)) = self.stored_agent_identity()? else {
+        let selected_id = definition.id.as_str();
+        let Some((id, fingerprint)) = self.stored_agent_identity()? else {
             anyhow::bail!(
                 "cannot resume this session as agent '{selected_id}': the session has no stored agent definition identity"
             );
         };
-        if stored_id != selected_id {
-            anyhow::bail!(
-                "cannot resume session created by agent '{stored_id}' as selected agent '{selected_id}'"
-            );
-        }
-        if !accepts_fingerprint(&stored_fingerprint) {
-            anyhow::bail!(
-                "cannot resume agent '{selected_id}': its definition changed since the session was created"
-            );
-        }
-        Ok(())
+        SavedAgent { id, fingerprint }.validate(definition)
     }
 
     /// Lists `listing`'s sessions in workspace `cwd`, newest first.

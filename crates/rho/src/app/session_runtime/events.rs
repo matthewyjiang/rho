@@ -51,12 +51,13 @@ pub(crate) struct PlanApprovalRequest {
     pub(crate) targets: Vec<PermissionMode>,
 }
 
-/// The user message a prompt inserted.
+/// A message a prompt inserted: its user message, or a host command's
+/// reply, such as `/workflow:`'s notice.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum InsertedMessage {
     /// Saved as this display row; a reload replays the message from it.
     Saved(DisplayRowOrigin),
-    /// Not replayed, such as the prompt of a runtime that a successor
+    /// Not replayed, such as a message of a runtime that a successor
     /// replaced, or of a host command that saves nothing.
     Unreplayed,
 }

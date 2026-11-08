@@ -103,14 +103,15 @@ async fn the_daemon_times_a_detached_turn_out() {
 }
 
 // Covers: the daemon resolves a detached prompt's slash command as `rho
-// run` does, and one it does not run yet fails the turn before its prompt
-// is saved, which the detach reports as a configuration error, exit 2.
+// run` does, and one it does not run, such as the TUI's `/model`, fails the
+// turn before its prompt is saved, which the detach reports as a
+// configuration error, exit 2.
 // Owner: rho run --detach CLI (process contract).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_detached_command_the_daemon_cannot_run_is_refused() {
     let sandbox = Sandbox::new();
     let _client = sandbox.start_daemon("fixed").await;
-    let refused = detach(&sandbox, "fixed", &["/compact"]);
+    let refused = detach(&sandbox, "fixed", &["/model"]);
 
     assert_eq!(
         (
@@ -119,7 +120,7 @@ async fn a_detached_command_the_daemon_cannot_run_is_refused() {
         ),
         (
             Some(2),
-            "Error: could not run /compact: not available in daemon sessions\n".to_owned()
+            "Error: could not run /model: not available in daemon sessions\n".to_owned()
         ),
         "log:\n{}",
         sandbox.isolated.daemon_log()

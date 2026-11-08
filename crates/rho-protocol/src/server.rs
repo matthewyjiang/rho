@@ -79,7 +79,7 @@ pub trait Service: Send + Sync {
     ) -> impl Future<Output = Result<SessionNewResponse, RpcError>> + Send;
 
     /// Handles `rho/session/prompt`: start a turn the service runs in a task
-    /// of its own, resolving once the turn has saved its prompt (see
+    /// of its own, resolving once the turn has begun (see
     /// [`SessionPromptResponse`]). The turn outlives the request and the
     /// connection.
     fn prompt_session(

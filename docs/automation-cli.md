@@ -235,9 +235,8 @@ rho attach "$SESSION"
   to the session as they do to a foreground run, and the session keeps the
   directories and the parts left out when the daemon unloads it and a later
   `rho attach` or prompt reopens it.
-- Slash commands resolve as they do in a foreground run, except that
-  `/agent:<name>` does not run in the daemon yet; like `/compact` and
-  `/workflow:<name>`, it fails with exit 2.
+- Slash commands resolve as they do in a foreground run, and `/compact` and
+  `/workflow:<name>` run too; TUI-only commands fail with exit 2.
 - `--output`, `--output-file`, `--max-steps`, and `--no-save` do not apply and
   are refused.
 - Unlike a foreground run's, the session is listed like one you had yourself,

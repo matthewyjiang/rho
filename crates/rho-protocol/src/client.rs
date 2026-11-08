@@ -111,8 +111,7 @@ impl ClientError {
     }
 
     /// How the turn ended, when the daemon refused a prompt with
-    /// [`ErrorCode::TurnEnded`] because its turn ended before it saved the
-    /// prompt.
+    /// [`ErrorCode::TurnEnded`] because its turn ended before it began.
     pub fn turn_ended(&self) -> Option<crate::TurnOutcome> {
         match self {
             Self::Rpc { error, .. } if error.error_code() == Some(ErrorCode::TurnEnded) => {

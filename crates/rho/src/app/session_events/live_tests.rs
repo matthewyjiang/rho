@@ -11,7 +11,7 @@ use rho_sdk::{
     UserInput,
 };
 
-use super::LiveEvents;
+use super::{CompactionEnd, LiveEvents};
 use crate::{
     app::{
         session_events::test_support::{
@@ -364,10 +364,17 @@ fn finished_tools_send_the_checklist_only_when_it_changed() {
 
 // Covers: a compaction reports as events of its own: it starts, and ends
 // cancelled with a cancelled run, or, when the run ends first, `failed`
-// with why, under one id.
+// with why, under one id; a host's own compaction that fails ends `failed`
+// with the error the host gives.
 // Owner: session event live mapping
 #[test]
 fn compactions_always_end() {
+    /// How a case drives the mapper: with a run's events, or as a host
+    /// whose own compaction, such as `/compact`'s, fails with this error.
+    enum Drive {
+        Run(Vec<SessionEvent>),
+        HostFailed(&'static str),
+    }
     let started = || {
         SessionEvent::Run(RunEvent::CompactionStarted {
             trigger: rho_sdk::CompactionTrigger::Manual,
@@ -384,27 +391,39 @@ fn compactions_always_end() {
     let cases = [
         (
             "the run ended first",
-            vec![started(), closed(RunEnd::Ended)],
+            Drive::Run(vec![started(), closed(RunEnd::Ended)]),
             failed("compaction ended without a result"),
         ),
         (
             "the turn failed, without echoing its unredacted error",
-            vec![
+            Drive::Run(vec![
                 started(),
                 closed(RunEnd::Failed("provider unavailable".into())),
-            ],
+            ]),
             failed("compaction ended without a result"),
         ),
         (
             "the run was cancelled",
-            vec![started(), cancelled, closed(RunEnd::Ended)],
+            Drive::Run(vec![started(), cancelled, closed(RunEnd::Ended)]),
             CompactionStatus::Cancelled,
         ),
+        (
+            "a host's compaction failed",
+            Drive::HostFailed("could not compact context"),
+            failed("could not compact context"),
+        ),
     ];
-    for (name, events, ended) in cases {
+    for (name, drive, ended) in cases {
         let tool_set = AppToolSet::disabled();
         let mut live = live(&tool_set);
-        let mapped = map_all(&mut live, &events);
+        let mapped = match drive {
+            Drive::Run(events) => map_all(&mut live, &events),
+            Drive::HostFailed(error) => {
+                let mut mapped = live.compaction_started();
+                mapped.extend(live.compaction_ended(CompactionEnd::Failed(error.into())));
+                mapped
+            }
+        };
         let id = match mapped.first() {
             Some(WireEvent::Compaction { id, .. }) => id.clone(),
             other => panic!("expected the compaction to start, got {other:?}"),

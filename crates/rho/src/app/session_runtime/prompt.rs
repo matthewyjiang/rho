@@ -85,9 +85,7 @@ impl SessionRuntime {
         process_config: &Config,
     ) -> anyhow::Result<PromptScope> {
         if self.unsaved_compaction {
-            anyhow::bail!(
-                "could not continue session: its compacted context was not saved; load the session again"
-            );
+            return Err(super::UnsavedCompaction.into());
         }
         let scope = PromptScope::begin(&self.handle);
         self.renew_stale_credentials(process_config).await?;

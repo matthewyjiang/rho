@@ -285,27 +285,26 @@ async fn open_runtime(
     })
 }
 
-/// The agent `stored` runs as, bound as its root with `available_tools`:
-/// the one it was saved as, refused when its definition changed or is
-/// gone, so a reopen never widens a session to another agent's tools
-/// (#1661). A session `/agent:` rebound runs as the default agent, under
-/// which the runtime binds the child again with the child's own checks.
+/// The root agent `stored` runs under, bound with `available_tools`: the
+/// one it was saved as, refused when its definition changed or is gone, so
+/// a reopen never widens a session to another agent's tools (#1661). A
+/// session `/agent:` rebound binds the root it was rebound from, with the
+/// same checks; the runtime then binds the child again under that root's
+/// tools, with the child's own checks.
 fn bind_saved_agent(
     cwd: &Path,
     config: &Config,
     stored: &StoredSession,
     available_tools: AgentCapabilities,
 ) -> anyhow::Result<BoundAgent> {
-    if stored.delegated_agent_id()?.is_some() {
+    let Some(root) = stored.root_agent()? else {
+        // A delegated session written before launch identities were saved:
+        // nothing names its root, so it runs under the default agent, as it
+        // did then.
         return bind_agent(cwd, config, DEFAULT_AGENT_ID, available_tools);
-    }
-    let Some((id, _fingerprint)) = stored.stored_agent_identity()? else {
-        anyhow::bail!(
-            "the session has no saved agent, so the daemon cannot tell which agent to reopen it as"
-        );
     };
-    let agent = bind_agent(cwd, config, &id, available_tools)?;
-    stored.validate_agent_definition_identity(agent.definition())?;
+    let agent = bind_agent(cwd, config, &root.id, available_tools)?;
+    root.validate(agent.definition())?;
     Ok(agent)
 }
 

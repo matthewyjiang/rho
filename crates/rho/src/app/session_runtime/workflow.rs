@@ -26,11 +26,12 @@ pub(crate) enum WorkflowStart {
     /// Cancelled while planning; no run exists.
     Cancelled,
     /// The run is going in the background; `notice` is the reply the prompt
-    /// was saved with, for the host to show, and `inserted` the prompt's
-    /// user message as saved.
+    /// was saved with, for the host to show, `inserted` the prompt's user
+    /// message as saved, and `reply` the notice as saved.
     Started {
         notice: String,
         inserted: InsertedMessage,
+        reply: InsertedMessage,
     },
 }
 
@@ -111,27 +112,31 @@ impl SessionRuntime {
         })?;
 
         let (model, notice) = start_context_prompts(&run_id, &workflow_name, &program_digest);
-        let inserted = self.record_started(display, model, &notice)?;
-        Ok(WorkflowStart::Started { notice, inserted })
+        let (inserted, reply) = self.record_started(display, model, &notice)?;
+        Ok(WorkflowStart::Started {
+            notice,
+            inserted,
+            reply,
+        })
     }
 
     /// Adds the run id to model context and saves the prompt with `notice` as
-    /// its reply, returning the prompt's user message as saved. A failed
-    /// save rolls the context back so the live session never holds history
-    /// its file lacks. No SDK run happens here, so no turn checkpoint is
+    /// its reply, returning the prompt's user message and the reply as
+    /// saved. A failed save rolls the context back so the live session never
+    /// holds history its file lacks. No SDK run happens here, so no turn checkpoint is
     /// involved; a replaced runtime leaves the file to its successor.
     fn record_started(
         &mut self,
         display: &UserInput,
         model: String,
         notice: &str,
-    ) -> anyhow::Result<InsertedMessage> {
+    ) -> anyhow::Result<(InsertedMessage, InsertedMessage)> {
         let session = self.built.session.clone();
         let before = session.history();
         session.append_message(Message::user_text(model))?;
         let saved = self.save_prompt_rows(
             Message::User(display.blocks().to_vec()),
-            &[Message::assistant_text(notice)],
+            [Message::assistant_text(notice)],
         );
         if let Err(error) = &saved {
             session.replace_history(before)?;
@@ -139,6 +144,7 @@ impl SessionRuntime {
             // cause inline.
             anyhow::bail!("workflow started, but could not save its run id: {error:#}");
         }
-        saved
+        let (inserted, [reply]) = saved?;
+        Ok((inserted, reply))
     }
 }

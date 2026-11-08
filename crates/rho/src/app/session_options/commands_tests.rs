@@ -9,7 +9,7 @@ use crate::{
 
 // Covers: a menu lists only the built-ins its host runs, and leaves out the
 // workflows and agents it refuses, so a host never offers a command it
-// rejects (the daemon refuses both until it can run them, #1667, #1670).
+// rejects.
 // Owner: session options
 #[test]
 fn a_menu_leaves_out_built_ins_and_kinds_its_host_does_not_run() {

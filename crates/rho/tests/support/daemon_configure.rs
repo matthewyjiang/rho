@@ -120,17 +120,16 @@ async fn a_change_reaches_attached_clients_and_the_next_turn() {
         .await
         .unwrap();
     let (session, before) = (opened.session, opened.options);
-    let slash_commands = before
+    // The built-ins the daemon runs, and agents, whichever the workspace
+    // defines; no TUI command.
+    let (agents, built_ins): (Vec<_>, Vec<_>) = before
         .commands
         .iter()
         .filter(|command| command.kind == CommandKind::Slash)
         .map(|command| command.name.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        slash_commands,
-        ["init"],
-        "no workflow or agent the daemon refuses"
-    );
+        .partition(|name| name.starts_with("agent:"));
+    assert_eq!(built_ins, ["compact", "init"], "agents: {agents:?}");
+    assert!(!agents.is_empty(), "the menu lists the workspace's agents");
     let (watcher, mut notifications) = sandbox.connect_following().await;
     let attached = watcher
         .request::<SessionAttach>(&SessionAttachParams {

@@ -3000,7 +3000,7 @@
       "type": "object"
     },
     "SessionPromptResponse": {
-      "description": "Result of [`SESSION_PROMPT`]: the prompt is saved and its turn is\nrunning. The turn runs on in the daemon; [`super::JOB_LIST`] reports how\nit ends.\n\nA turn that ends before its prompt is saved answers with an error\ninstead: [`crate::ErrorCode::TurnEnded`], whose `data` is the turn's\n[`crate::TurnOutcome`], or [`crate::ErrorCode::DaemonStopping`] when the\ndaemon stopped it.",
+      "description": "Result of [`SESSION_PROMPT`]: the turn began: it saved its prompt, or,\nfor `/compact`, its compaction started. The turn runs on in the daemon;\n[`super::JOB_LIST`] reports how it ends.\n\nA turn that ends before it began answers with an error\ninstead: [`crate::ErrorCode::TurnEnded`], whose `data` is the turn's\n[`crate::TurnOutcome`], or [`crate::ErrorCode::DaemonStopping`] when the\ndaemon stopped it.",
       "type": "object"
     },
     "SessionRenameParams": {

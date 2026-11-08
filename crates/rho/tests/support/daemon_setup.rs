@@ -92,14 +92,26 @@ pub(super) async fn asked_operation(
 /// fixture answers with. It attaches first with no setup, so it reopens a
 /// session the daemon unloaded as a prompt would.
 async fn inspected_request(sandbox: &Sandbox, client: &Client, session: &SessionId) -> Value {
+    inspected_turn(sandbox, client, session, "hello").await.0
+}
+
+/// The model request of `session`'s turn of `text`, as [`inspected_request`]
+/// gets it, with the events the turn sent before it ended.
+async fn inspected_turn(
+    sandbox: &Sandbox,
+    client: &Client,
+    session: &SessionId,
+    text: &str,
+) -> (Value, Vec<SessionEvent>) {
     let (follower, mut notifications) = sandbox.connect_following().await;
     let attached = follower
         .request::<SessionAttach>(&attach(sandbox, session))
         .await
         .unwrap();
-    assert_eq!(sandbox.prompt(client, session).await, Ok(()));
+    assert_eq!(sandbox.prompt_text(client, session, text).await, Ok(()));
     // A reset replays the last turn's end first; this prompt's comes after.
     let mut replayed = attached.replay_events;
+    let mut events = Vec::new();
     loop {
         let notification = tokio::time::timeout(DEADLINE, notifications.recv())
             .await
@@ -115,11 +127,24 @@ async fn inspected_request(sandbox: &Sandbox, client: &Client, session: &Session
         }
         if let SessionEvent::TurnEnded { outcome } = event {
             match outcome {
-                TurnOutcome::Answered { text, .. } => return serde_json::from_str(&text).unwrap(),
+                TurnOutcome::Answered { text, .. } => {
+                    return (serde_json::from_str(&text).unwrap(), events)
+                }
                 outcome => panic!("the turn answers: {outcome:?}"),
             }
         }
+        events.push(event);
     }
+}
+
+/// The names of the tools a model request offered.
+fn offered_tools(request: &Value) -> BTreeSet<String> {
+    request["tools"]
+        .as_array()
+        .expect("the request lists its tools")
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_owned())
+        .collect()
 }
 
 /// What a model request offered the model.
@@ -379,6 +404,108 @@ async fn a_session_runs_as_the_agent_its_client_names() {
     assert_eq!(
         instructed,
         [(None, false), (Some("archivist"), true)],
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: `/agent:<name> <task>` in a daemon session rebinds the fresh
+// session to that agent before its turn: the model gets the agent's
+// instructions, which the default agent's lack, and the task alone, not the
+// command, and a follower gets the agent's options before the turn's
+// output (#1670).
+// Owner: daemon session commands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_agent_command_runs_its_task_as_that_agent() {
+    let sandbox = Sandbox::new();
+    let archivist = sandbox.isolated.home.join(".agents/agents/archivist.md");
+    std::fs::create_dir_all(archivist.parent().unwrap()).unwrap();
+    // Its own model, so the rebind changes the session's options.
+    std::fs::write(
+        &archivist,
+        "---\ndescription: Fixture agent with its own model\nmodel-policy: select\nprovider: xai\nmodel: grok-child\n---\n\nArchive.\n",
+    )
+    .unwrap();
+    // The fixture answers with the request it got.
+    let client = sandbox.start_daemon("inspect").await;
+    let session = new_session(&sandbox, &client, None, SessionSetup::default())
+        .await
+        .unwrap();
+    let command = "/agent:archivist summarize the notes";
+    let (request, events) = inspected_turn(&sandbox, &client, &session, command).await;
+
+    let system = request["messages"][0]["System"]
+        .as_str()
+        .expect("the request has a system prompt");
+    let prompt = request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|message| message.get("User").is_some())
+        .cloned();
+    // Which of the two comes first, as runs of either.
+    let mut order: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::OptionsChanged { .. } => Some("options_changed"),
+            SessionEvent::AgentMessageChunk { .. } => Some("agent_message_chunk"),
+            _ => None,
+        })
+        .collect();
+    order.dedup();
+    order.truncate(2);
+    assert_eq!(
+        (system.contains("Archive."), prompt, order),
+        (
+            true,
+            Some(serde_json::json!({"User": [{"Text": "summarize the notes"}]})),
+            vec!["options_changed", "agent_message_chunk"],
+        ),
+        "events: {events:?}\nlog:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a session opened as a read-only agent that `/agent:` rebound to
+// an agent with every tool keeps the read-only agent's ceiling after the
+// daemon unloads it: the reopened turn offers the model the tools the
+// rebound turn did, rather than the reopen binding the child under the
+// default agent's tools.
+// Owner: daemon session commands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rebound_session_keeps_its_root_agents_tools_after_a_reopen() {
+    let sandbox = Sandbox::new();
+    // The fixture answers with the request it got.
+    let client = sandbox
+        .start_daemon_with("inspect", &["--unload-idle-after", "200ms"])
+        .await;
+    let explorer = Some("explorer");
+    let baseline = new_session(&sandbox, &client, explorer, SessionSetup::default())
+        .await
+        .unwrap();
+    let read_only = offered_tools(&inspected_request(&sandbox, &client, &baseline).await);
+    assert!(
+        !read_only.contains("write"),
+        "explorer is read-only: {read_only:?}"
+    );
+    // Another session: `/agent:` rebinds only a session with no history.
+    let session = new_session(&sandbox, &client, explorer, SessionSetup::default())
+        .await
+        .unwrap();
+    let command = "/agent:worker summarize the notes";
+    let rebound = offered_tools(&inspected_turn(&sandbox, &client, &session, command).await.0);
+    settled_job(&sandbox, &client, &session).await;
+    sandbox.wait_unloaded(&session, /*times*/ 1).await;
+
+    let reopened = offered_tools(&inspected_request(&sandbox, &client, &session).await);
+
+    assert_eq!(
+        (
+            rebound.difference(&read_only).cloned().collect::<Vec<_>>(),
+            reopened,
+        ),
+        (Vec::new(), rebound.clone()),
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );
