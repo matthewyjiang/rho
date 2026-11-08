@@ -15,8 +15,7 @@ use super::LiveEvents;
 use crate::{
     app::{
         session_events::test_support::{
-            agent, canonical_messages, closed, finished_call, opened, origin, shell_call, text,
-            updated,
+            agent, canonical_messages, closed, opened, origin, shell_call, text, updated,
         },
         session_runtime::{InsertedMessage, RunEnd, SessionEvent, SessionTools},
     },
@@ -35,6 +34,7 @@ fn live(tool_set: &AppToolSet) -> LiveEvents {
     LiveEvents::new(
         Path::new("/work"),
         SessionTools::of_tool_set_for_tests(tool_set),
+        /*configured_window*/ None,
     )
 }
 
@@ -83,16 +83,16 @@ fn usage(tokens: u64) -> WireEvent {
     WireEvent::Usage {
         used_tokens: tokens,
         window_tokens: None,
-        cost: None,
+        cost_usd_micros: None,
     }
 }
 
 // Covers: one live turn as a client sees it: the prompt as the saved user
 // message, each step's context fill, text deltas sharing a message until the
 // next step, a call that opens with its card and arguments, reports
-// progress, and finishes with its output and the text the model got as raw
-// output, a call the run left open closing `failed` when the run's events
-// end, and the settled context fill the run ends with.
+// progress, and finishes with its output, a call the run left open closing
+// `failed` when the run's events end, and the settled context fill the run
+// ends with.
 // Owner: session event live mapping
 #[test]
 fn a_live_turn_streams_its_prompt_text_and_calls() {
@@ -140,7 +140,7 @@ fn a_live_turn_streams_its_prompt_text_and_calls() {
             agent("m1", "look."),
             opened("call-1", "ls"),
             updated("call-1", ToolStatus::InProgress, vec![text("running")]),
-            finished_call("call-1", ToolStatus::Completed, vec![text("a.rs")], "a.rs"),
+            updated("call-1", ToolStatus::Completed, vec![text("a.rs")]),
             usage(200),
             agent("m2", "Found a.rs."),
             opened("call-2", "cat a.rs"),
@@ -152,10 +152,10 @@ fn a_live_turn_streams_its_prompt_text_and_calls() {
 
 // Covers: tool results beyond plain output: a call finished without
 // starting still opens a complete card (titled from its proposal, or
-// generically) with no raw output, late progress cannot reopen a finished
-// call, an edit shows whole-file diffs and points at its first changed
-// line, output the tool marked failed closes the call failed with that
-// output, and a failed run closes only the calls still open.
+// generically), late progress cannot reopen a finished call, an edit shows
+// whole-file diffs and points at its first changed line, output the tool
+// marked failed closes the call failed with that output, and a failed run
+// closes only the calls still open.
 // Owner: session event live mapping
 #[test]
 fn tool_results_open_complete_cards_and_never_reopen() {
@@ -215,7 +215,7 @@ fn tool_results_open_complete_cards_and_never_reopen() {
             ],
             vec![
                 opened("call-1", "ls"),
-                finished_call("call-1", ToolStatus::Completed, vec![text("a.rs")], "a.rs"),
+                updated("call-1", ToolStatus::Completed, vec![text("a.rs")]),
             ],
         ),
         (
@@ -234,7 +234,6 @@ fn tool_results_open_complete_cards_and_never_reopen() {
                 }),
                 WireEvent::tool_call(ToolCallUpdate {
                     locations: Some(vec![location(Some(1))]),
-                    raw_output: Some(serde_json::json!("ok")),
                     ..card(
                         "call-1",
                         ToolStatus::Completed,
@@ -262,12 +261,7 @@ fn tool_results_open_complete_cards_and_never_reopen() {
             ],
             vec![
                 opened("call-1", "ls"),
-                finished_call(
-                    "call-1",
-                    ToolStatus::Failed,
-                    vec![text("no such file")],
-                    "no such file",
-                ),
+                updated("call-1", ToolStatus::Failed, vec![text("no such file")]),
             ],
         ),
     ];
@@ -286,7 +280,6 @@ fn card(id: &str, status: ToolStatus, content: Vec<ToolContent>) -> ToolCallUpda
         kind: None,
         status: Some(status),
         raw_input: None,
-        raw_output: None,
         content: Some(content),
         locations: None,
     }
@@ -395,12 +388,12 @@ fn compactions_always_end() {
             failed("compaction ended without a result"),
         ),
         (
-            "the turn failed",
+            "the turn failed, without echoing its unredacted error",
             vec![
                 started(),
                 closed(RunEnd::Failed("provider unavailable".into())),
             ],
-            failed("provider unavailable"),
+            failed("compaction ended without a result"),
         ),
         (
             "the run was cancelled",
@@ -467,13 +460,17 @@ fn a_discarded_response_drops_what_it_proposed() {
 #[test]
 fn usage_reports_the_configured_window() {
     let tool_set = AppToolSet::disabled();
-    let mut live = live(&tool_set).with_configured_window(Some(1_000));
+    let mut live = LiveEvents::new(
+        Path::new("/work"),
+        SessionTools::of_tool_set_for_tests(&tool_set),
+        /*configured_window*/ Some(1_000),
+    );
     assert_eq!(
         map_all(&mut live, &[step(100)]),
         vec![WireEvent::Usage {
             used_tokens: 100,
             window_tokens: Some(1_000),
-            cost: None,
+            cost_usd_micros: None,
         }]
     );
 }

@@ -20,11 +20,11 @@ use tokio::{
     time::Instant,
 };
 
-use super::{super::jobs::TurnEnd, inputs::Inputs, saved_replay, LoadedSession};
+use super::{super::jobs::TurnEnd, cost, inputs::Inputs, saved_replay, LoadedSession};
 use crate::{
     app::{
         session_commands::{self, BuiltInCommand, CommandScope, CommandSet, PromptCommand},
-        session_events::{self, outcome},
+        session_events::outcome,
         session_runtime::{
             CommandRejected, PlanReport, SessionEvent, SessionRuntime, TitleJob, Turn, TurnControl,
             TurnIo, TurnOutcome, TurnView,
@@ -148,13 +148,10 @@ impl TurnTask {
         // Before the end is recorded, so the state event that reports it
         // follows the transcript's cut: a client reset from then on gets the
         // saved turn, then how it ended.
-        let title = match &mut *runtime {
-            Some(runtime) => {
-                save_transcript(&session, runtime);
-                runtime.take_title()
-            }
-            None => None,
-        };
+        if let Some(runtime) = &*runtime {
+            save_transcript(&session, runtime);
+        }
+        let title = runtime.as_mut().and_then(SessionRuntime::take_title);
         let (outcome, end) = match (ended, timed_out) {
             (Ok(TurnOutcome::Completed(run)), _) => {
                 (Some(outcome::finished(&run)), TurnEnd::Completed)
@@ -202,8 +199,10 @@ fn save_transcript(session: &LoadedSession, runtime: &SessionRuntime) {
 
 /// Generates the title the session's first answered turn asked for, which
 /// saves it, and tells the session's clients (#1670). It lands seconds
-/// after the turn; a session the daemon dropped by then is titled all the
-/// same, with no clients to tell.
+/// after the turn; a session the daemon unloaded by then is titled all the
+/// same, with no clients to tell. Holds the session weakly, so a pending
+/// title never keeps an unloaded session's feed alive; a session reloaded
+/// once the title saved starts its feed with it, and reports it on attach.
 async fn report_title(session: Weak<LoadedSession>, title: TitleJob) {
     if let Some(title) = title.generate().await {
         if let Some(session) = session.upgrade() {
@@ -355,7 +354,7 @@ impl DaemonView {
     ) {
         while let Some(event) = events.recv().await {
             let wire = self.session.live().map(&event);
-            let wire = session_events::priced(wire, &self.session.id).await;
+            let wire = cost::priced(wire, &self.session.id).await;
             self.session.feed.publish(wire);
             if matches!(event, SessionEvent::MessageInserted(_)) {
                 if let Some(started) = self.started.take() {

@@ -8,7 +8,7 @@ use rho_sdk::UserInput;
 
 use crate::{
     added_dirs::AddedDirs,
-    app::prompt_content::{self, fence_context},
+    app::prompt_content::{self, fence_context, InvalidPrompt},
 };
 
 /// Why an ACP session cwd cannot be used as the workspace root.
@@ -107,9 +107,12 @@ pub(super) fn session_added_dirs(
 /// Maps ACP prompt blocks onto SDK user input, through the wire blocks the
 /// daemon's prompts carry, so both convert alike (#1670).
 ///
-/// Blocks the wire has no kind for (audio, a binary resource) become fenced
-/// text here, so the model still sees them.
-pub(super) fn user_input_from_prompt(prompt: &[AcpContentBlock]) -> anyhow::Result<UserInput> {
+/// Blocks the wire has no kind for (audio, a binary resource, an ACP block
+/// this build does not know) become fenced text here, so the model still
+/// sees them.
+pub(super) fn user_input_from_prompt(
+    prompt: &[AcpContentBlock],
+) -> Result<UserInput, InvalidPrompt> {
     let blocks: Vec<_> = prompt.iter().map(wire_block).collect();
     prompt_content::user_input(&blocks)
 }
@@ -130,14 +133,11 @@ fn wire_block(block: &AcpContentBlock) -> ContentBlock {
         AcpContentBlock::ResourceLink(link) => ContentBlock::ResourceLink {
             uri: link.uri.clone(),
             name: link.name.clone(),
-            title: link.title.clone(),
             description: link.description.clone(),
-            mime_type: link.mime_type.clone(),
         },
         AcpContentBlock::Resource(embedded) => match &embedded.resource {
             EmbeddedResourceResource::TextResourceContents(resource) => ContentBlock::Resource {
                 uri: resource.uri.clone(),
-                mime_type: resource.mime_type.clone(),
                 text: resource.text.clone(),
             },
             EmbeddedResourceResource::BlobResourceContents(resource) => {
@@ -149,6 +149,6 @@ fn wire_block(block: &AcpContentBlock) -> ContentBlock {
             }
             _ => fenced("resource", "embedded", ""),
         },
-        _ => ContentBlock::Unknown,
+        _ => fenced("context", "unsupported", ""),
     }
 }

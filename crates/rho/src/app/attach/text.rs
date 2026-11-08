@@ -45,12 +45,11 @@ impl<O: Write, E: Write> TextView<O, E> {
                 let text = content
                     .iter()
                     .map(|block| match block {
-                        ContentBlock::Text { text } => text.clone(),
-                        ContentBlock::Image { .. } => "[image]".to_owned(),
-                        ContentBlock::Resource { uri, .. } => format!("[resource {uri}]"),
-                        ContentBlock::ResourceLink { uri, .. } => format!("[link {uri}]"),
+                        ContentBlock::Text { text } => text.as_str(),
+                        ContentBlock::Image { .. } => "[image]",
+                        // A saved user message holds only text and images;
                         // `ContentBlock` is non-exhaustive.
-                        _ => "[content]".to_owned(),
+                        _ => "[content]",
                     })
                     .collect::<Vec<_>>()
                     .join("\n");

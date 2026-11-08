@@ -32,7 +32,6 @@ pub(super) fn opened(id: &str, command: &str) -> WireEvent {
         kind: Some(ToolKind::Other),
         status: Some(ToolStatus::InProgress),
         raw_input: Some(json!({ "command": command })),
-        raw_output: None,
         content: None,
         locations: None,
     })
@@ -43,22 +42,6 @@ pub(super) fn updated(id: &str, status: ToolStatus, content: Vec<ToolContent>) -
     WireEvent::tool_call(ToolCallUpdate {
         status: Some(status),
         content: Some(content),
-        ..closed_update(id)
-    })
-}
-
-/// Call `id` finished as `status`, showing `content`, with `raw_output`,
-/// the text the model got, as its raw output.
-pub(super) fn finished_call(
-    id: &str,
-    status: ToolStatus,
-    content: Vec<ToolContent>,
-    raw_output: &str,
-) -> WireEvent {
-    WireEvent::tool_call(ToolCallUpdate {
-        status: Some(status),
-        content: Some(content),
-        raw_output: Some(json!(raw_output)),
         ..closed_update(id)
     })
 }
@@ -75,7 +58,6 @@ fn closed_update(id: &str) -> ToolCallUpdate {
         kind: None,
         status: Some(ToolStatus::Failed),
         raw_input: None,
-        raw_output: None,
         content: None,
         locations: None,
     }

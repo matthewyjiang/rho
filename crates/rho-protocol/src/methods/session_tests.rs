@@ -20,15 +20,17 @@ fn a_prompt_carries_its_message_as_content_blocks() {
             },
             ContentBlock::Resource {
                 uri: "file:///w/a.rs".into(),
-                mime_type: None,
                 text: "fn a() {}".into(),
             },
             ContentBlock::ResourceLink {
                 uri: "file:///w/notes.md".into(),
                 name: "notes.md".into(),
-                title: None,
+                description: Some("meeting notes".into()),
+            },
+            ContentBlock::ResourceLink {
+                uri: "file:///w/c".into(),
+                name: "c".into(),
                 description: None,
-                mime_type: None,
             },
         ],
         timeout_ms: None,
@@ -40,7 +42,13 @@ fn a_prompt_carries_its_message_as_content_blocks() {
             {"type": "text", "text": "look at these"},
             {"type": "image", "mime_type": "image/png", "data": "aGk="},
             {"type": "resource", "uri": "file:///w/a.rs", "text": "fn a() {}"},
-            {"type": "resource_link", "uri": "file:///w/notes.md", "name": "notes.md"},
+            {
+                "type": "resource_link",
+                "uri": "file:///w/notes.md",
+                "name": "notes.md",
+                "description": "meeting notes",
+            },
+            {"type": "resource_link", "uri": "file:///w/c", "name": "c"},
         ],
         "environment": {"HOME": "/home/u"},
     });

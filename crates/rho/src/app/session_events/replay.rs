@@ -5,7 +5,6 @@ use std::{collections::HashMap, path::Path};
 
 use rho_protocol::{MessageId, SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolStatus};
 use rho_sdk::model::{self, Message, SemanticMessage, ToolResult};
-use serde_json::Value;
 
 use super::{
     cards, opened_call, plan_entries, result_content, status_update, user_content, CallIds,
@@ -197,9 +196,8 @@ impl Replay<'_> {
     }
 
     /// A result updates the latest call opened under its id; results replace
-    /// a call's content as a whole, so it keeps earlier output. Its raw
-    /// output is the text the model got, as live. An orphan result still
-    /// opens a complete card.
+    /// a call's content as a whole, so it keeps earlier output. An orphan
+    /// result still opens a complete card.
     fn result(&mut self, result: &ToolResult) {
         let status = if result.is_failure() {
             ToolStatus::Failed
@@ -207,13 +205,11 @@ impl Replay<'_> {
             ToolStatus::Completed
         };
         let content = result_content(&result.content, &result.images);
-        let raw_output = Some(Value::String(result.content.clone()));
         if let Some(call) = self.calls.get_mut(&result.id) {
             call.status = status;
             call.content.extend(content);
             self.events.push(WireEvent::tool_call(ToolCallUpdate {
                 content: Some(call.content.clone()),
-                raw_output,
                 ..status_update(call.id.clone(), Some(status))
             }));
             return;
@@ -223,7 +219,6 @@ impl Replay<'_> {
             title: Some(UNNAMED_TOOL_TITLE.to_owned()),
             kind: Some(rho_protocol::ToolKind::Other),
             content: Some(content),
-            raw_output,
             ..status_update(id.clone(), Some(status))
         };
         self.open(&result.id, id, orphan);

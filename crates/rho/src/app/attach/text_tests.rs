@@ -13,7 +13,6 @@ fn tool_call(title: Option<&str>, status: ToolStatus) -> SessionEvent {
         kind: None,
         status: Some(status),
         raw_input: None,
-        raw_output: None,
         content: None,
         locations: None,
     })

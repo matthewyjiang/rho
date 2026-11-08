@@ -8,11 +8,10 @@
 //! so a conversation reads the same whether a client watched it live or
 //! received it replayed, apart from how its text was chunked. Only live
 //! turns report usage, compactions, and discarded responses; saved rows
-//! hold none.
+//! hold none, and the daemon tells titles itself.
 //!
 //! [`outcome`] says how a turn ended, for the daemon's clients and
-//! `rho run` alike, and the daemon's `priced` adds the session's cost to
-//! its usage.
+//! `rho run` alike.
 //!
 //! Ported from the ACP `EventMapper`; the ACP adapter maps these wire events
 //! instead, and drops its own mapper, in #1670.
@@ -43,13 +42,8 @@ mod replay;
 #[cfg(test)]
 mod test_support;
 mod tools;
-// Only the daemon prices its usage events.
-#[cfg(unix)]
-mod usage;
 
 pub(crate) use live::LiveEvents;
-#[cfg(unix)]
-pub(crate) use usage::priced;
 
 /// Hands out wire ids for tool calls. Providers may reuse a call id across
 /// turns, and a reused wire id would update the earlier card, so each call
@@ -138,7 +132,6 @@ fn status_update(id: ToolCallId, status: Option<ToolStatus>) -> ToolCallUpdate {
         kind: None,
         status,
         raw_input: None,
-        raw_output: None,
         content: None,
         locations: None,
     }

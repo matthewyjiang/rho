@@ -74,6 +74,9 @@ struct FeedState {
     /// them even once the buffer no longer holds the events that opened
     /// them.
     inputs: BTreeMap<wire::InputRequestId, wire::InputRequest>,
+    /// The session's title: the saved one, then the last title change sent,
+    /// so an attach reports it though no transcript holds it.
+    title: Option<String>,
     subscribers: Vec<Publisher>,
     /// Set by [`Feed::close`]: a client attaching later is detached at once.
     closed: Option<DetachReason>,
@@ -95,14 +98,17 @@ pub(super) struct Attached {
     pub(super) job: wire::JobState,
     /// The input requests open as of the attach, oldest first.
     pub(super) inputs: Vec<wire::InputRequest>,
+    /// The session's title as of the attach, if it has one.
+    pub(super) title: Option<String>,
     pub(super) subscription: Subscription,
 }
 
 impl Feed {
     /// A stream with nothing saved yet, its job in `job`: idle for a new
     /// session, its last turn's end for a reopened one (#1661), whose saved
-    /// conversation [`Self::end_turn`] then adds.
-    pub(super) fn new(job: wire::JobState) -> Self {
+    /// conversation [`Self::end_turn`] then adds. `title` is the one the
+    /// session has saved, if any.
+    pub(super) fn new(job: wire::JobState, title: Option<String>) -> Self {
         Self {
             state: Mutex::new(FeedState {
                 stream: StreamId::new(uuid::Uuid::new_v4().to_string()),
@@ -114,6 +120,7 @@ impl Feed {
                 transcript: Vec::new(),
                 job,
                 inputs: BTreeMap::new(),
+                title,
                 subscribers: Vec::new(),
                 closed: None,
             }),
@@ -164,6 +171,7 @@ impl Feed {
             replay_events,
             job: state.job,
             inputs: state.inputs.values().cloned().collect(),
+            title: state.title.clone(),
             subscription,
         }
     }
@@ -212,6 +220,7 @@ impl FeedState {
                     request.timeout = None;
                 }
             }
+            wire::SessionEvent::TitleChanged { title } => self.title = Some(title.clone()),
             _ => {}
         }
         let seq = Seq(self.last.0 + 1);

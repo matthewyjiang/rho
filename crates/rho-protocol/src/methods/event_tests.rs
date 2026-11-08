@@ -61,50 +61,6 @@ fn every_session_event_round_trips_through_its_wire_form() {
             ]}),
         ),
         (
-            SessionEvent::UserMessage {
-                message: message(),
-                content: vec![
-                    ContentBlock::Resource {
-                        uri: "file:///w/a.rs".into(),
-                        mime_type: Some("text/x-rust".into()),
-                        text: "fn a() {}".into(),
-                    },
-                    ContentBlock::Resource {
-                        uri: "file:///w/b.txt".into(),
-                        mime_type: None,
-                        text: "b".into(),
-                    },
-                    ContentBlock::ResourceLink {
-                        uri: "file:///w/notes.md".into(),
-                        name: "notes.md".into(),
-                        title: Some("Notes".into()),
-                        description: Some("meeting notes".into()),
-                        mime_type: Some("text/markdown".into()),
-                    },
-                    ContentBlock::ResourceLink {
-                        uri: "file:///w/c".into(),
-                        name: "c".into(),
-                        title: None,
-                        description: None,
-                        mime_type: None,
-                    },
-                ],
-            },
-            json!({"type": "user_message", "message": "m1", "content": [
-                {"type": "resource", "uri": "file:///w/a.rs", "mime_type": "text/x-rust", "text": "fn a() {}"},
-                {"type": "resource", "uri": "file:///w/b.txt", "text": "b"},
-                {
-                    "type": "resource_link",
-                    "uri": "file:///w/notes.md",
-                    "name": "notes.md",
-                    "title": "Notes",
-                    "description": "meeting notes",
-                    "mime_type": "text/markdown",
-                },
-                {"type": "resource_link", "uri": "file:///w/c", "name": "c"},
-            ]}),
-        ),
-        (
             SessionEvent::AgentMessageChunk {
                 message: message(),
                 text: "he".into(),
@@ -125,7 +81,6 @@ fn every_session_event_round_trips_through_its_wire_form() {
                 kind: Some(ToolKind::SwitchMode),
                 status: Some(ToolStatus::InProgress),
                 raw_input: Some(json!({"path": "a.rs"})),
-                raw_output: Some(json!("ok")),
                 content: Some(vec![
                     ToolContent::Text { text: "ok".into() },
                     ToolContent::Image {
@@ -150,7 +105,6 @@ fn every_session_event_round_trips_through_its_wire_form() {
                 "kind": "switch_mode",
                 "status": "in_progress",
                 "raw_input": {"path": "a.rs"},
-                "raw_output": "ok",
                 "content": [
                     {"type": "text", "text": "ok"},
                     {"type": "image", "mime_type": "image/png", "data": "aGk="},
@@ -166,7 +120,6 @@ fn every_session_event_round_trips_through_its_wire_form() {
                 kind: None,
                 status: Some(ToolStatus::Completed),
                 raw_input: None,
-                raw_output: None,
                 content: None,
                 locations: None,
             }),
@@ -185,23 +138,20 @@ fn every_session_event_round_trips_through_its_wire_form() {
             SessionEvent::Usage {
                 used_tokens: 10,
                 window_tokens: Some(200),
-                cost: Some(Cost {
-                    amount_micros: 1_250_000,
-                    currency: "USD".into(),
-                }),
+                cost_usd_micros: Some(1_250_000),
             },
             json!({
                 "type": "usage",
                 "used_tokens": 10,
                 "window_tokens": 200,
-                "cost": {"amount_micros": 1_250_000, "currency": "USD"},
+                "cost_usd_micros": 1_250_000,
             }),
         ),
         (
             SessionEvent::Usage {
                 used_tokens: 10,
                 window_tokens: None,
-                cost: None,
+                cost_usd_micros: None,
             },
             json!({"type": "usage", "used_tokens": 10}),
         ),
@@ -277,9 +227,8 @@ fn every_session_event_round_trips_through_its_wire_form() {
     }
 }
 
-// Covers: an event type, tool kind, tool status, tool content, compaction
-// status, card tone, or content block a newer daemon adds reads as
-// `Unknown` instead of failing the notification.
+// Covers: an event type, tool kind, tool status, or tool content a newer
+// daemon adds reads as `Unknown` instead of failing the notification.
 // Owner: protocol forward compatibility.
 #[test]
 fn unknown_event_values_read_as_unknown() {
@@ -302,33 +251,9 @@ fn unknown_event_values_read_as_unknown() {
                 kind: Some(ToolKind::Unknown),
                 status: Some(ToolStatus::Unknown),
                 raw_input: None,
-                raw_output: None,
                 content: Some(vec![ToolContent::Unknown]),
                 locations: None,
             }),
-        ),
-        (
-            json!({"type": "compaction", "id": "c1", "status": {"type": "paused"}}),
-            SessionEvent::Compaction {
-                id: CompactionId::new("c1"),
-                status: CompactionStatus::Unknown,
-            },
-        ),
-        (
-            json!({"type": "card", "title": "t", "markdown": "m", "plain": "p", "tone": "loud"}),
-            SessionEvent::Card {
-                title: "t".into(),
-                markdown: "m".into(),
-                plain: "p".into(),
-                tone: CardTone::Unknown,
-            },
-        ),
-        (
-            json!({"type": "user_message", "message": "m1", "content": [{"type": "audio"}]}),
-            SessionEvent::UserMessage {
-                message: MessageId::new("m1"),
-                content: vec![ContentBlock::Unknown],
-            },
         ),
     ];
     for (wire, event) in cases {

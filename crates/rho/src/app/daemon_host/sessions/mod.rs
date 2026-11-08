@@ -50,6 +50,7 @@ use crate::{
     config::Config,
 };
 
+mod cost;
 mod feed;
 mod inputs;
 mod open;
@@ -97,6 +98,8 @@ pub(super) struct Sessions {
 
 /// A session this daemon loaded.
 struct LoadedSession {
+    /// The session's id, which its usage is recorded under in the usage
+    /// ledger.
     id: SessionId,
     /// The job that records the session's turns, in `jobs`.
     job: JobId,
@@ -177,9 +180,14 @@ impl LoadedSession {
             config,
             environment,
         } = opened;
-        let mut live = LiveEvents::new(runtime.workspace_root(), runtime.tools())
-            .with_configured_window(runtime.configured_context_window());
-        let feed = Feed::new((&job.state).into());
+        let mut live = LiveEvents::new(
+            runtime.workspace_root(),
+            runtime.tools(),
+            runtime.configured_context_window(),
+        );
+        // Titles are not saved with the transcript, so the feed starts with
+        // the one the session's file has.
+        let feed = Feed::new((&job.state).into(), runtime.stored_title());
         if let Some(saved) = saved_replay(&mut live, &runtime, &job.id) {
             feed.end_turn(saved);
         }
@@ -550,6 +558,7 @@ impl Sessions {
             replay_events,
             job,
             inputs,
+            title,
             subscription,
         } = attached;
         let response = SessionAttachResponse {
@@ -559,6 +568,7 @@ impl Sessions {
             replay_events,
             state: job,
             inputs,
+            title,
         };
         Ok((response, subscription))
     }

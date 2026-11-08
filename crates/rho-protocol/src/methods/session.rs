@@ -131,8 +131,10 @@ pub struct SessionNewResponse {
 pub struct SessionPromptParams {
     pub session: SessionId,
     /// The user message: at least one block, or the prompt is refused as
-    /// [`crate::ErrorCode::InvalidParams`]. Text and images reach the model
-    /// as written. A resource reaches it as its text, and a resource link as
+    /// [`crate::ErrorCode::InvalidParams`], as is one with an image whose
+    /// data is not a base64 PNG, JPEG, GIF, or WebP of the declared type
+    /// within the daemon's image limit. Text and images reach the model as
+    /// written. A resource reaches it as its text, and a resource link as
     /// its description, else its name, each fenced under its URI (#1670). A
     /// slash command the message starts with that the session runs, such as
     /// `/init`, a prompt template, or an MCP prompt, is expanded first, as
@@ -230,6 +232,11 @@ pub struct SessionAttachResponse {
     /// events that opened them (#1660). The replay may repeat some; an
     /// input request's id names it.
     pub inputs: Vec<InputRequest>,
+    /// The session's title when the attachment began; absent until it has
+    /// one. Saved transcripts hold no [`super::SessionEvent::TitleChanged`],
+    /// so a reset may not replay the one that set it (#1670).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 /// What the events after a [`SessionAttachResponse`] start with.

@@ -475,6 +475,7 @@ impl Service for AttachService {
             replay_events: 0,
             state: JobState::Idle,
             inputs: Vec::new(),
+            title: None,
         };
         Ok((response, subscription))
     }

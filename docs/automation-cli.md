@@ -66,7 +66,9 @@ sessions you had yourself: `rho sessions list`, the `/resume` picker and
 search scopes skip them. A run opens by its id, which the JSONL stream's
 `run_started` reports as `session`: `rho sessions export <ID>` writes its
 transcript and `rho --resume <ID>` continues it in the TUI. A run does not ask
-a model to title its session; `rho sessions rename` names it.
+a model to title its session; `rho sessions rename` names it. A
+[detached run](#running-in-the-daemon) is a daemon session instead: listed,
+and titled.
 
 Pass `rho run --no-save` to skip saving. The run's session stays in memory:
 no session folder or index row is written, so nothing is left to export or
@@ -133,7 +135,7 @@ starting at 1, and a `type`:
 | `type` | When | Fields |
 | --- | --- | --- |
 | `run_started` | The run's session opened. | `session`, its id; `workspace`, the working directory. |
-| `event` | Each of the session's events. | `event`: a [daemon protocol session event](/protocol#following-a-session) of the conversation, as a client attached to a daemon session receives it. A run has no job, and nobody answers its requests, so the stream holds no `state` or `input_*` events, and `usage` carries no `cost`. |
+| `event` | Each of the session's events. | `event`: a [daemon protocol session event](/protocol#following-a-session) of the conversation, as a client attached to a daemon session receives it. A run has no job, and nobody answers its requests, so the stream holds no `state` or `input_*` events, and `usage` carries no `cost_usd_micros`. |
 | `run_ended` | Last, unless writing to stdout failed: then the stream stops, and the run exits 1 with the write error on stderr. | `reason`, `exit_code` (the process's [exit status](#exit-status)), and a `message` unless the run completed. |
 
 Once the session opened, its last event is `turn_ended`, whose `outcome` says
@@ -234,6 +236,9 @@ rho attach "$SESSION"
   `/workflow:<name>`, it fails with exit 2.
 - `--output`, `--output-file`, `--max-steps`, and `--no-save` do not apply and
   are refused.
+- Unlike a foreground run's, the session is listed like one you had yourself,
+  and titled in the background after its first answered turn with one small
+  model call, as the TUI titles its sessions.
 - The daemon is not supported on Windows yet
   ([#1665](https://github.com/matthewyjiang/rho/issues/1665)).
 

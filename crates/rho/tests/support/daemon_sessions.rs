@@ -123,10 +123,24 @@ impl Sandbox {
     /// Starts `rho daemon run` with `args` and the fixture in `mode`, and
     /// connects to it once it answers.
     async fn start_daemon_with(&self, mode: &str, args: &[&str]) -> (DaemonProcess, Client) {
+        self.spawn_daemon(self.rho(mode), args).await
+    }
+
+    /// [`Self::start_daemon`], with the TUI fixture answering the title
+    /// agent, whose one-shot provider skips the automation fixture: it
+    /// names a session "Fixture session title".
+    async fn start_titling_daemon(&self, mode: &str) -> (DaemonProcess, Client) {
+        let mut command = self.rho(mode);
+        command.env("RHO_TUI_TEST_MODE", "matrix");
+        self.spawn_daemon(command, &[]).await
+    }
+
+    /// Runs `command daemon run args`, and connects once the daemon answers.
+    async fn spawn_daemon(&self, mut command: Command, args: &[&str]) -> (DaemonProcess, Client) {
         // Outside every session's workspace, as a service manager starts it,
         // so nothing a session runs can lean on the daemon's own directory.
         let daemon = DaemonProcess(
-            self.rho(mode)
+            command
                 .current_dir(self.daemon.home())
                 .args(["daemon", "run"])
                 .args(args)
@@ -492,7 +506,9 @@ async fn a_turn_tells_clients_how_it_ended() {
 
 // Covers: a prompt's image and resource blocks reach the model, the image
 // as an image and the resource as its text fenced under its URI, and the
-// prompt's user message shows clients what was saved (#1670).
+// prompt's user message shows clients what was saved; a prompt with no
+// blocks, or an image that is not what it declares, is refused as invalid
+// params before a turn starts (#1670).
 // Owner: daemon session prompt content.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_prompts_image_and_resource_reach_the_model() {
@@ -503,6 +519,29 @@ async fn a_prompts_image_and_resource_reach_the_model() {
     let (_daemon, client) = sandbox.start_daemon("inspect").await;
     let session = sandbox.new_session(&client).await;
     let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let refused = [
+        Vec::new(),
+        vec![ContentBlock::Image {
+            mime_type: "image/jpeg".into(),
+            data: PNG.into(),
+        }],
+    ];
+    for content in refused {
+        let refusal = client
+            .request::<SessionPrompt>(&SessionPromptParams {
+                session: session.clone(),
+                content: content.clone(),
+                timeout_ms: None,
+                environment: sandbox.client_environment(),
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| match error {
+                ClientError::Rpc { error, .. } => error.error_code(),
+                error => panic!("prompt failed outside the protocol: {error}"),
+            });
+        assert_eq!(refusal, Err(Some(ErrorCode::InvalidParams)), "{content:?}");
+    }
     client
         .request::<SessionPrompt>(&SessionPromptParams {
             session: session.clone(),
@@ -516,7 +555,6 @@ async fn a_prompts_image_and_resource_reach_the_model() {
                 },
                 ContentBlock::Resource {
                     uri: "file:///notes.md".into(),
-                    mime_type: Some("text/markdown".into()),
                     text: "remember the milk".into(),
                 },
             ],
@@ -571,6 +609,58 @@ async fn a_prompts_image_and_resource_reach_the_model() {
             {"Image": {"data": PNG, "mime_type": "image/png"}},
             {"Text": fenced},
         ]}))
+    );
+}
+
+// Covers: after a session's first answered turn, the daemon titles it in
+// the background, saves the title where session lists read it, and tells
+// attached clients with `title_changed`; a client that attaches later,
+// whose replay need not hold that event, gets it in the attach response
+// (#1670).
+// Owner: daemon session titles.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_answered_session_is_titled_for_its_clients() {
+    let sandbox = Sandbox::new();
+    let (_daemon, client) = sandbox.start_titling_daemon("fixed").await;
+    let session = sandbox.new_session(&client).await;
+    let (mut watcher, before) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
+    watcher
+        .read_until(|event| matches!(event, SessionEvent::TitleChanged { .. }))
+        .await;
+    let (_, after) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+
+    let listed = sandbox
+        .rho("fixed")
+        .args(["sessions", "list", "--json"])
+        .stdout(Stdio::piped())
+        .output()
+        .unwrap();
+    let listing: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let saved = listing["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|listed| listed["id"] == session.to_string())
+        .map(|listed| listed["title"].clone());
+    let title = "Fixture session title";
+    assert_eq!(
+        (
+            before.title,
+            watcher.events.last().map(|(_, event)| event.clone()),
+            after.title,
+            saved,
+        ),
+        (
+            None,
+            Some(SessionEvent::TitleChanged {
+                title: title.into()
+            }),
+            Some(title.into()),
+            Some(serde_json::Value::from(title)),
+        ),
+        "log:\n{}",
+        sandbox.daemon_log()
     );
 }
 

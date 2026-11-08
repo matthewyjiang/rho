@@ -630,8 +630,12 @@ fn reloaded_session(session_id: &SessionId) -> AcpError {
     ))
 }
 
-/// A command the prompt names but cannot run is the caller's to fix.
+/// A prompt rho cannot read, or a command it names but cannot run, is the
+/// caller's to fix.
 fn prompt_error(error: anyhow::Error) -> AcpError {
+    if let Some(invalid) = error.downcast_ref::<crate::app::prompt_content::InvalidPrompt>() {
+        return AcpError::invalid_params().data(invalid.to_string());
+    }
     match error.downcast::<crate::app::session_runtime::CommandRejected>() {
         Ok(rejected) => AcpError::invalid_params().data(rejected.to_string()),
         Err(error) => host_error(error),

@@ -17,9 +17,7 @@ use crate::{
     agent::{AgentCapabilities, ToolCapability},
     app::{
         session_events::{
-            test_support::{
-                canonical_messages, closed, finished_call, opened, origin, shell_call, text,
-            },
+            test_support::{canonical_messages, closed, opened, origin, shell_call, text, updated},
             CallIds, LiveEvents,
         },
         session_runtime::{InsertedMessage, RunEnd, SessionEvent, SessionTools},
@@ -126,7 +124,7 @@ fn a_saved_conversation_replays_messages_calls_and_cards() {
             user(saved_id(0, 0), "list files"),
             saved_agent(saved_id(1, 0), "Let me look."),
             opened("call-1", "ls"),
-            finished_call("call-1", ToolStatus::Completed, vec![text("a.rs")], "a.rs"),
+            updated("call-1", ToolStatus::Completed, vec![text("a.rs")]),
             WireEvent::Card {
                 title: "Background done".into(),
                 markdown: "all good".into(),
@@ -149,6 +147,7 @@ fn live_and_replayed_turns_agree() {
     let mut live = LiveEvents::new(
         Path::new("/work"),
         SessionTools::of_tool_set_for_tests(&tool_set),
+        /*configured_window*/ None,
     );
     live.prompt(&UserInput::text("list files"));
     let step = || {
@@ -269,8 +268,8 @@ fn replay_pairs_out_of_order_results_with_their_images() {
                 opened("a", "ls"),
                 saved_agent(saved_id(1, 0), "between"),
                 opened("b", "ls"),
-                finished_call("b", status, vec![text("output"), image_content()], "output"),
-                finished_call("a", ToolStatus::Completed, Vec::new(), ""),
+                updated("b", status, vec![text("output"), image_content()]),
+                updated("a", ToolStatus::Completed, Vec::new()),
             ]
         );
     }
@@ -312,7 +311,6 @@ fn replay_closes_incomplete_calls_and_opens_orphan_results() {
                 kind: Some(ToolKind::Other),
                 status: Some(status),
                 raw_input: None,
-                raw_output: Some(json!("output")),
                 content: Some(vec![text("output")]),
                 locations: None,
             })]
@@ -340,11 +338,10 @@ fn replay_gives_reused_provider_ids_their_own_calls() {
             opened("reused", "ls"),
             closed("reused"),
             opened("reused#2", "ls"),
-            finished_call(
+            updated(
                 "reused#2",
                 ToolStatus::Failed,
-                vec![text("second output"), image_content()],
-                "second output",
+                vec![text("second output"), image_content()]
             ),
             opened("reused#3", "ls"),
             closed("reused#3"),
@@ -385,7 +382,7 @@ fn replayed_messages_split_where_live_ones_do() {
             saved_agent(saved_id(1, 1), "before"),
             opened("a", "ls"),
             saved_agent(saved_id(1, 2), "after more"),
-            finished_call("a", ToolStatus::Completed, Vec::new(), ""),
+            updated("a", ToolStatus::Completed, Vec::new()),
             user(saved_id(3, 0), "continue"),
         ]
     );
@@ -472,7 +469,7 @@ fn a_replay_with_no_new_rows_reports_nothing_saved() {
     let tool_set = AppToolSet::disabled();
     let tools = || SessionTools::of_tool_set_for_tests(&tool_set);
     let rows = saved_rows(&[Message::Assistant(vec![call_block("call")])]);
-    let mut live = LiveEvents::new(Path::new("/work"), tools());
+    let mut live = LiveEvents::new(Path::new("/work"), tools(), /*configured_window*/ None);
     assert!(live.replay(&rows, Path::new("/work"), tools()).is_some());
     assert_eq!(live.replay(&rows, Path::new("/work"), tools()), None);
 }
@@ -490,7 +487,7 @@ fn live_calls_continue_the_numbering_of_the_saved_transcript() {
         Message::Assistant(vec![call_block("reused")]),
         Message::ToolResult(ToolResult::succeeded("reused", "a.rs")),
     ];
-    let mut live = LiveEvents::new(Path::new("/work"), tools());
+    let mut live = LiveEvents::new(Path::new("/work"), tools(), /*configured_window*/ None);
     live.replay(&saved_rows(&saved), Path::new("/work"), tools());
     live.prompt(&UserInput::text("again"));
     let call_id = rho_sdk::ToolCallId::from_string("reused").unwrap();
@@ -523,12 +520,7 @@ fn live_calls_continue_the_numbering_of_the_saved_transcript() {
         live_calls,
         vec![
             opened("reused#2", "ls"),
-            finished_call(
-                "reused#2",
-                ToolStatus::Completed,
-                vec![text("b.rs")],
-                "b.rs"
-            ),
+            updated("reused#2", ToolStatus::Completed, vec![text("b.rs")]),
         ]
     );
     assert_eq!(live_calls, replayed_tail);

@@ -14,6 +14,7 @@ fn response(replay: Replay, replay_events: u64, state: JobState) -> SessionAttac
         replay_events,
         state,
         inputs: Vec::new(),
+        title: None,
     }
 }
 

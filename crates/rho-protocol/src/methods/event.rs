@@ -106,11 +106,12 @@ pub enum SessionEvent {
         used_tokens: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         window_tokens: Option<u64>,
-        /// The session's whole spend so far, turns before a daemon restart
-        /// included. Absent while no request has a price, as when every
-        /// request ran on a local model (#1670).
+        /// The session's whole spend so far in millionths of a US dollar,
+        /// so it stays exact, turns before a daemon restart included.
+        /// Absent while no request has a price, as when every request ran
+        /// on a local model (#1670).
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        cost: Option<Cost>,
+        cost_usd_micros: Option<u64>,
     },
     /// The session has a new title, as when the daemon named it after its
     /// first turn (#1670).
@@ -180,10 +181,6 @@ pub struct ToolCallUpdate {
     /// The tool's input, as the model wrote it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_input: Option<serde_json::Value>,
-    /// The tool's result as the model got it, sent once the call finishes
-    /// (#1670).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub raw_output: Option<serde_json::Value>,
     /// Replaces the call's content when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<Vec<ToolContent>>,
@@ -273,8 +270,6 @@ pub enum ContentBlock {
     /// A text resource embedded whole, such as a file the user attached.
     Resource {
         uri: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        mime_type: Option<String>,
         text: String,
     },
     /// A resource the user points at without its contents.
@@ -282,26 +277,13 @@ pub enum ContentBlock {
         uri: String,
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        title: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
         description: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        mime_type: Option<String>,
     },
-    /// A value a newer daemon sends that this crate does not know; daemons
-    /// never send it.
+    /// A block a newer peer sends that this crate does not know; nothing
+    /// sends it.
     #[serde(other)]
     #[schemars(extend("x-rho-other" = true))]
     Unknown,
-}
-
-/// An amount of money, in millionths of `currency`'s unit, so it stays
-/// exact.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct Cost {
-    pub amount_micros: u64,
-    /// An ISO 4217 code, such as `USD`.
-    pub currency: String,
 }
 
 /// Where a compaction is. Every status but `started` ends it.
