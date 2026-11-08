@@ -6,47 +6,72 @@
 use std::sync::Arc;
 
 use rho_protocol as wire;
+use rho_providers::credentials::available_auth_modes;
 
 use super::{turn::DAEMON_COMMANDS, LoadedSession, Sessions};
 use crate::{
     app::{session_options, session_runtime::SessionRuntime},
     config::Config,
+    credential_store::AppCredentialStore,
 };
 
 impl LoadedSession {
-    /// Rebuilds the session's options from `runtime`, tells attached
-    /// clients when they changed, and returns them. Call after anything
-    /// that may change them: a configure, a plan approval's mode switch, a
-    /// credential write, or a turn, which may leave new skills, prompts, or
-    /// MCP prompts behind.
-    pub(super) fn refresh_options(&self, runtime: &SessionRuntime) -> wire::SessionOptions {
-        let options = daemon_options(runtime, &self.config);
+    /// Rebuilds the session's options from `runtime` and `auths` (see
+    /// [`available_auths`]), tells attached clients when they changed, and
+    /// returns them. Call after anything that may change them: a configure,
+    /// a plan approval's mode switch, a credential write, or a turn, which
+    /// may leave new skills, prompts, or MCP prompts behind.
+    pub(super) fn refresh_options(
+        &self,
+        runtime: &SessionRuntime,
+        auths: &[String],
+    ) -> wire::SessionOptions {
+        let options = daemon_options(runtime, &self.config, auths);
         self.feed.update_options(options.clone());
         options
     }
 }
 
 impl Sessions {
-    /// Refreshes the options of every loaded session whose runtime is free,
-    /// after a credential write changed the models they may switch to. A
-    /// session in a turn or a configure refreshes at its end instead.
-    pub(in crate::app::daemon_host) fn refresh_idle_options(&self) {
+    /// Refreshes every loaded session's options after a credential write
+    /// changed the models they may switch to. Each refresh waits in its own
+    /// task for the session's runtime, so a session in a turn or a
+    /// configure refreshes once it lets the runtime go, even when its own
+    /// refresh there read the auths before the write. The runtime's lock
+    /// is fair, so refreshes for later writes queue after this one's.
+    pub(in crate::app::daemon_host) async fn refresh_all_options(&self) {
+        let auths: Arc<[String]> = available_auths().await.into();
         let sessions: Vec<Arc<LoadedSession>> = self.loaded().values().cloned().collect();
         for session in sessions {
-            if let Ok(runtime) = session.runtime.try_lock() {
-                // `None` once the daemon's stop took it.
-                if let Some(runtime) = runtime.as_ref() {
-                    session.refresh_options(runtime);
+            let auths = Arc::clone(&auths);
+            tokio::spawn(async move {
+                // `None` once the daemon's stop or the idle unload took it.
+                if let Some(runtime) = session.runtime.lock().await.as_ref() {
+                    session.refresh_options(runtime, &auths);
                 }
-            }
+            });
         }
     }
 }
 
-/// `runtime`'s options now, with the choices `process_config` gives it.
+/// The auths the credential store can use, read off the async workers: a
+/// locked OS keyring blocks its reader, as `daemon_host/auth.rs` notes.
+pub(super) async fn available_auths() -> Vec<String> {
+    match tokio::task::spawn_blocking(|| available_auth_modes(&AppCredentialStore)).await {
+        Ok(auths) => auths,
+        Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+        // Cancelled before it ran: the runtime is shutting down, and no
+        // client reads options again.
+        Err(_) => Vec::new(),
+    }
+}
+
+/// `runtime`'s options now, with the choices `process_config` and `auths`
+/// give it.
 pub(super) fn daemon_options(
     runtime: &SessionRuntime,
     process_config: &Config,
+    auths: &[String],
 ) -> wire::SessionOptions {
-    session_options::of(runtime, process_config, DAEMON_COMMANDS)
+    session_options::of(runtime, process_config, auths, DAEMON_COMMANDS)
 }

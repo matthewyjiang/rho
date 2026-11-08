@@ -20,7 +20,10 @@ use tokio::{
     time::Instant,
 };
 
-use super::{super::jobs::TurnEnd, cost, inputs::Inputs, saved_replay, LoadedSession};
+use super::{
+    super::jobs::TurnEnd, cost, inputs::Inputs, options::available_auths, saved_replay,
+    LoadedSession,
+};
 use crate::{
     app::{
         session_commands::{
@@ -154,7 +157,7 @@ impl TurnTask {
                 save_transcript(&session, runtime);
                 // The turn may have left new skills, prompts, or MCP prompts
                 // behind; clients see them before they see the turn end.
-                session.refresh_options(runtime);
+                session.refresh_options(runtime, &available_auths().await);
                 (
                     ended.map_err(|error| failure(&session, runtime, &error)),
                     timed_out,
@@ -411,8 +414,10 @@ impl TurnView for DaemonView {
         _process_config: &Config,
         _report: PlanReport,
     ) -> impl Future<Output = ()> + Send {
-        self.session.refresh_options(runtime);
-        std::future::ready(())
+        let session = Arc::clone(&self.session);
+        async move {
+            session.refresh_options(runtime, &available_auths().await);
+        }
     }
 }
 

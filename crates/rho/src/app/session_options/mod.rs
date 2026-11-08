@@ -14,9 +14,7 @@
 //! per-model reasoning levels and fast mode.
 
 use rho_protocol as wire;
-use rho_providers::{
-    credentials::available_auth_modes, model::catalog, providers::fast_mode::supports_fast_mode,
-};
+use rho_providers::{model::catalog, providers::fast_mode::supports_fast_mode};
 use rho_sdk::ReasoningLevel;
 
 use crate::{
@@ -25,7 +23,6 @@ use crate::{
         session_runtime::{model_scoped_config, CurrentModel, SessionRuntime},
     },
     config::Config,
-    credential_store::AppCredentialStore,
     permission::PermissionMode,
 };
 
@@ -37,11 +34,15 @@ pub(crate) use commands::available_commands;
 pub(crate) use models::resolve_model;
 pub(crate) use reasoning::reasoning_from_wire;
 
-/// `runtime`'s options now: the choices `process_config` and the credential
-/// store give it, and the commands of `commands` its prompts may run.
+/// `runtime`'s options now: the choices `process_config` gives it, the
+/// models of `available_auths` (the credential store's
+/// `available_auth_modes`, which a host reads where blocking is allowed:
+/// it may wait on the OS keyring), and the commands of `commands` its
+/// prompts may run.
 pub(crate) fn of(
     runtime: &SessionRuntime,
     process_config: &Config,
+    available_auths: &[String],
     commands: CommandSet,
 ) -> wire::SessionOptions {
     let home = crate::paths::home_dir();
@@ -49,6 +50,7 @@ pub(crate) fn of(
     build(
         &runtime.current_model(),
         process_config,
+        available_auths,
         runtime.reasoning_level(),
         wire::FastModeOptions {
             enabled: runtime.fast_mode(),
@@ -59,8 +61,8 @@ pub(crate) fn of(
 }
 
 /// The options of a session on `current` at `reasoning` in
-/// `permission_mode`, offering `commands`: the models of every auth the
-/// credential store can use, ordered by `process_config`'s favorites, and
+/// `permission_mode`, offering `commands`: the models of every auth in
+/// `available_auths`, ordered by `process_config`'s favorites, and
 /// `current`'s reasoning levels. `fast_mode` is the session's fast-mode
 /// preference, reported only when `current` has fast mode; the preference
 /// stays on the session across a model switch, like the TUI's `/fast`, so a
@@ -68,17 +70,17 @@ pub(crate) fn of(
 fn build(
     current: &CurrentModel,
     process_config: &Config,
+    available_auths: &[String],
     reasoning: ReasoningLevel,
     fast_mode: wire::FastModeOptions,
     permission_mode: PermissionMode,
     commands: Vec<wire::SessionCommand>,
 ) -> wire::SessionOptions {
-    let available_auths = available_auth_modes(&AppCredentialStore);
     wire::SessionOptions {
         model: models::model_options(
             current,
             &process_config.favorite_models,
-            catalog::available_models_for_auths(&available_auths),
+            catalog::available_models_for_auths(available_auths),
         ),
         reasoning: reasoning::reasoning_options(
             &model_scoped_config(current, process_config),

@@ -129,9 +129,8 @@ pub(super) struct Startup<'a> {
 }
 
 /// The commands `rho run` runs. `/compact` is not among them: a run's
-/// session is new, so there is nothing to compact.
-/// The commands `rho run` runs. A workflow would outlive the process, which
-/// exits with its prompt.
+/// session is new, so there is nothing to compact. A workflow would outlive
+/// the process, which exits with its prompt.
 const RUN_COMMANDS: CommandSet = CommandSet {
     built_ins: &[BuiltInCommand::Init],
     workflows: Hosting::Refused,

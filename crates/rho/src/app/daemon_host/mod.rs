@@ -198,13 +198,13 @@ impl Service for DaemonHost {
     // A credential write changes the models every session may switch to.
     async fn save_auth_key(&self, params: AuthKeyParams) -> Result<AuthKeyResponse, RpcError> {
         let saved = auth::save_key(params).await?;
-        self.sessions.refresh_idle_options();
+        self.sessions.refresh_all_options().await;
         Ok(saved)
     }
 
     async fn logout_auth(&self, params: AuthLogoutParams) -> Result<AuthLogoutResponse, RpcError> {
         let logged_out = auth::logout(params).await?;
-        self.sessions.refresh_idle_options();
+        self.sessions.refresh_all_options().await;
         Ok(logged_out)
     }
 }

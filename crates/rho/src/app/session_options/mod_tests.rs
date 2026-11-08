@@ -20,6 +20,7 @@ fn fast_mode_of(provider: &str, model: &str, auth: &str) -> Option<wire::FastMod
     build(
         &current,
         &config,
+        /*available_auths*/ &[],
         ReasoningLevel::High,
         wire::FastModeOptions { enabled: true },
         PermissionMode::Supervised,

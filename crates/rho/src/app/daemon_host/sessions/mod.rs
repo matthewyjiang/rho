@@ -192,7 +192,12 @@ impl LoadedSession {
     /// Its feed begins with the conversation the session has saved and how
     /// the job's last turn ended, which a new session has neither of, so a
     /// client attaching to a reopened session learns that end (#1661).
-    fn new(job: &JobRecord, jobs: Arc<JobRegistry>, opened: OpenedSession) -> Self {
+    fn new(
+        job: &JobRecord,
+        jobs: Arc<JobRegistry>,
+        opened: OpenedSession,
+        auths: &[String],
+    ) -> Self {
         let OpenedSession {
             runtime,
             config,
@@ -208,7 +213,7 @@ impl LoadedSession {
         let feed = Feed::new(
             (&job.state).into(),
             runtime.stored_title(),
-            options::daemon_options(&runtime, &config),
+            options::daemon_options(&runtime, &config, auths),
         );
         if let Some(saved) = saved_replay(&mut live, &runtime, &job.id) {
             feed.end_turn(saved);
@@ -409,7 +414,8 @@ impl Sessions {
         opened: OpenedSession,
     ) -> Result<Arc<LoadedSession>, RpcError> {
         let session = opened.runtime.session_id().clone();
-        let entry = LoadedSession::new(job.job(), Arc::clone(&self.jobs), opened);
+        let auths = options::available_auths().await;
+        let entry = LoadedSession::new(job.job(), Arc::clone(&self.jobs), opened, &auths);
         let refused = {
             let mut loaded = self.loaded();
             match self

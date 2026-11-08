@@ -418,7 +418,12 @@ fn runtime_config_options(
     process_config: &Config,
     toggles: Toggles,
 ) -> Vec<SessionConfigOption> {
-    let options = session_options::of(runtime, process_config, commands::ACP_COMMANDS);
+    let options = session_options::of(
+        runtime,
+        process_config,
+        &available_auth_modes(&AppCredentialStore),
+        commands::ACP_COMMANDS,
+    );
     advertised_config_options(&options, toggles)
 }
 

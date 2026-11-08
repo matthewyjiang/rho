@@ -11,7 +11,9 @@ use super::{
     advertised_config_options, commands, send_notification, AcpClientPort, Config, SessionHost,
     SessionRuntime, Toggles,
 };
-use crate::app::session_options;
+use rho_providers::credentials::available_auth_modes;
+
+use crate::{app::session_options, credential_store::AppCredentialStore};
 
 /// The last payloads advertised to this host. Refresh caches advance only after
 /// successful delivery. New/load seed them under the publication guard, which
@@ -111,7 +113,12 @@ fn menus(
     process_config: &Config,
     toggles: Toggles,
 ) -> (Vec<SessionConfigOption>, Vec<AvailableCommand>) {
-    let options = session_options::of(runtime, process_config, commands::ACP_COMMANDS);
+    let options = session_options::of(
+        runtime,
+        process_config,
+        &available_auth_modes(&AppCredentialStore),
+        commands::ACP_COMMANDS,
+    );
     (
         advertised_config_options(&options, toggles),
         commands::available_commands(&options.commands),

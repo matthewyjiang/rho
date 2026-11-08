@@ -66,6 +66,7 @@ async fn loaded_session(root: &Path, jobs: &Arc<JobRegistry>, job: JobId) -> Arc
             config,
             environment: SessionEnvironment::default(),
         },
+        /*auths*/ &[],
     ))
 }
 

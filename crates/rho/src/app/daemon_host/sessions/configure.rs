@@ -18,17 +18,16 @@ use std::sync::Arc;
 use rho_protocol::{
     self as wire, ErrorCode, RpcError, SessionConfigureParams, SessionConfigureResponse,
 };
-use rho_providers::{credentials::available_auth_modes, model::catalog::ModelSelection};
+use rho_providers::model::catalog::ModelSelection;
 use rho_sdk::ReasoningLevel;
 
-use super::{stopping, LoadedSession, Sessions, Settings};
+use super::{options::available_auths, stopping, LoadedSession, Sessions, Settings};
 use crate::{
     app::{
         session_options::{reasoning_from_wire, resolve_model},
         session_runtime::{SessionRuntime, SettingChangeError},
     },
     config::Config,
-    credential_store::AppCredentialStore,
     permission::PermissionMode,
 };
 
@@ -79,6 +78,10 @@ impl Sessions {
             }
             Changing(Arc::clone(&session))
         };
+        // Read before the runtime is locked, and off the async workers; a
+        // credential write after this read refreshes the options again once
+        // this releases the runtime (see `Sessions::refresh_all_options`).
+        let auths = available_auths().await;
         // With no turn under way and none starting, only a turn that just
         // recorded its end or the daemon's stop holds the runtime, each
         // briefly.
@@ -87,17 +90,20 @@ impl Sessions {
         let Some(runtime) = runtime.as_mut() else {
             return Err(stopping());
         };
-        let applied = change.apply(runtime, &session.config).await.and_then(|()| {
-            runtime.keep_settings().map_err(|error| {
-                RpcError::new(
-                    ErrorCode::InternalError,
-                    format!("could not save the session's settings: {error:#}"),
-                )
-            })
-        });
+        let applied = change
+            .apply(runtime, &session.config, &auths)
+            .await
+            .and_then(|()| {
+                runtime.keep_settings().map_err(|error| {
+                    RpcError::new(
+                        ErrorCode::InternalError,
+                        format!("could not save the session's settings: {error:#}"),
+                    )
+                })
+            });
         // Even after a failure: a model switch can fail partway, after it
         // changed what the session reports.
-        let options = session.refresh_options(runtime);
+        let options = session.refresh_options(runtime, &auths);
         drop(changing);
         applied.map(|()| SessionConfigureResponse { options })
     }
@@ -130,10 +136,15 @@ impl Change {
         }
     }
 
-    async fn apply(self, runtime: &mut SessionRuntime, config: &Config) -> Result<(), RpcError> {
+    async fn apply(
+        self,
+        runtime: &mut SessionRuntime,
+        config: &Config,
+        auths: &[String],
+    ) -> Result<(), RpcError> {
         let applied = match self {
             Self::Model(model) => {
-                let selection = model_selection(runtime, &model)?;
+                let selection = model_selection(runtime, &model, auths)?;
                 runtime.switch_model(&selection, config).await
             }
             Self::Reasoning(level) => runtime.set_reasoning_level(level, config),
@@ -144,17 +155,18 @@ impl Change {
     }
 }
 
-/// The selection `model` names for `runtime`'s session, with an auth the
-/// credential store can use.
+/// The selection `model` names for `runtime`'s session, with an auth in
+/// `auths`.
 fn model_selection(
     runtime: &SessionRuntime,
     model: &wire::ModelRef,
+    auths: &[String],
 ) -> Result<ModelSelection, RpcError> {
     resolve_model(
         &model.provider,
         &model.model,
         &runtime.current_model(),
-        &available_auth_modes(&AppCredentialStore),
+        auths,
     )
     .map_err(|refused| invalid(refused.to_string()))
 }
