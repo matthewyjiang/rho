@@ -60,12 +60,13 @@ HANDLED = {
     "properties",
     "required",
     "items",
+    "prefixItems",
     "additionalProperties",
     OTHER,
 }
 
 # Where a fact applies: a root such as `method rho/hello params`, then
-# segments: `.field`, `[]` (items), `{}` (map values), ` <value>` (the variant
+# segments: `.field`, `[]` (items), `[0]` (a tuple's first value), `{}` (map values), ` <value>` (the variant
 # with that tag), and ` required`.
 Where = tuple[str, ...]
 
@@ -204,6 +205,9 @@ def walk_children(
         walk(defs, field, (*path, f".{name}"), out, refs)
     if "items" in node:
         walk(defs, node["items"], (*path, "[]"), out, refs)
+    # A tuple: each position is its own value.
+    for index, item in enumerate(node.get("prefixItems", [])):
+        walk(defs, item, (*path, f"[{index}]"), out, refs)
     if isinstance(node.get("additionalProperties"), dict):
         walk(defs, node["additionalProperties"], (*path, "{}"), out, refs)
 
