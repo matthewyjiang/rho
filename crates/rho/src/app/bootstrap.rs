@@ -20,11 +20,12 @@ use {
 
 use super::{
     acp,
-    agent_binding::{root_host_tools, AgentBinder, AgentInvocation, AgentRole, SubagentTools},
+    agent_binding::{root_host_tools, AgentBinder, AgentInvocation, AgentRole, LaunchTools},
     automation, classifier_eval, cli_config, compaction_eval,
     config_repository::ConfigRepository,
     daemon_cli, doctor_cli, interactive, login, mcp_cli, plugins_cli,
     sdk_config::SdkBootstrapOptions,
+    session_runtime::LeftOut,
     sessions_cli, workflow_cli,
 };
 
@@ -222,7 +223,7 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
     }) = &cli.command
     {
         return Ok(EarlyDispatch::Handled(
-            super::detach::run(prompt.clone(), *stdin, *timeout).await,
+            super::detach::run(cli, prompt.clone(), *stdin, *timeout).await,
         ));
     }
     if matches!(cli.command, Some(Command::Update)) {
@@ -302,7 +303,7 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     let absolute_config = absolute_config_path(&config_repository)?;
     crate::credential_store::initialize_from_config(&mut config, &absolute_config)?;
     let cwd = std::env::current_dir()?;
-    let added_dirs = launch_added_dirs(&cli, &cwd)?;
+    let added_dirs = crate::added_dirs::launch_added_dirs(&cli.add_dirs, &cwd)?;
     let automation_prompt = automation::prompt_for_command(&cli.command)?;
     let (output_file, output, max_steps, timeout) = match &cli.command {
         Some(Command::Run {
@@ -408,23 +409,6 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     })
 }
 
-/// Resolves `--add-dir` values against the launch directory. A bad path fails
-/// startup instead of silently narrowing the scope the user asked for.
-fn launch_added_dirs(
-    cli: &Cli,
-    cwd: &std::path::Path,
-) -> anyhow::Result<crate::added_dirs::AddedDirs> {
-    let workspace_root = std::fs::canonicalize(cwd)?;
-    let home = crate::paths::home_dir();
-    let mut added = crate::added_dirs::AddedDirs::default();
-    for raw in &cli.add_dirs {
-        let dir = crate::added_dirs::resolve(raw, cwd, home.as_deref())
-            .map_err(|error| anyhow::anyhow!("invalid --add-dir: {error}"))?;
-        added.insert(&workspace_root, dir);
-    }
-    Ok(added)
-}
-
 struct AutomationStartup<'a> {
     prompt: String,
     config: &'a crate::config::Config,
@@ -452,9 +436,7 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
             config: startup.config,
             config_path: absolute_config_path(startup.config_repository)?,
             cwd: startup.cwd,
-            no_system_prompt: startup.cli.no_system_prompt,
-            no_tools: startup.cli.no_tools,
-            no_subagents: startup.cli.no_subagents,
+            left_out: launch_left_out(startup.cli),
             agent: startup.bound_agent,
             output_file: startup.output_file,
             output: startup.output,
@@ -499,9 +481,7 @@ pub(super) async fn prepare_acp(
         config,
         config_path: absolute_config_path(&startup.config_repository)?,
         cwd: startup.cwd,
-        no_system_prompt: startup.cli.no_system_prompt,
-        no_tools: startup.cli.no_tools,
-        no_subagents: startup.cli.no_subagents,
+        left_out: launch_left_out(&startup.cli),
         agent: startup.bound_agent,
         diagnostics,
         herdr: HerdrReporter::from_env().with_source(crate::herdr::HerdrSource::Headless),
@@ -726,6 +706,15 @@ fn run_credential_store_command(
     }
 }
 
+/// The parts a `rho run` or `rho acp` launch leaves out of its sessions.
+fn launch_left_out(cli: &Cli) -> LeftOut {
+    LeftOut {
+        system_prompt: cli.no_system_prompt,
+        tools: cli.no_tools,
+        subagents: cli.no_subagents,
+    }
+}
+
 pub(super) fn host_capabilities(
     cli: &Cli,
     config: &crate::config::Config,
@@ -733,15 +722,11 @@ pub(super) fn host_capabilities(
 ) -> crate::agent::AgentCapabilities {
     use crate::agent::ToolCapability;
 
-    if cli.no_tools {
+    let launch = LaunchTools::from_flags(cli.no_tools, cli.no_subagents);
+    if launch == LaunchTools::None {
         return crate::agent::AgentCapabilities::default();
     }
-    let subagents = if cli.no_subagents {
-        SubagentTools::Withheld
-    } else {
-        SubagentTools::Offered
-    };
-    let mut tools = root_host_tools(config, subagents);
+    let mut tools = root_host_tools(config, launch);
     // ACP sessions decide per host: they offer it only when the host draws
     // forms (`elicitation.form`).
     let acp = matches!(cli.command, Some(Command::Acp(_)));

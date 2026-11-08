@@ -1,4 +1,6 @@
-//! Directories added to a session's workspace scope with `--add-dir` or `/add-dir`.
+//! Directories added to a session's workspace scope with `--add-dir` or
+//! `/add-dir`, or by the client that opens it: an ACP host's
+//! `additionalDirectories` or a daemon client's setup.
 //!
 //! An added directory becomes an SDK granted root, so checked permission modes
 //! treat reads there like workspace reads. Its `AGENTS.md` files join prompt
@@ -122,6 +124,68 @@ pub(crate) fn saved_dirs(encoded: Option<&str>) -> Vec<PathBuf> {
         tracing::warn!(%error, "ignoring unreadable saved added directories");
         Vec::new()
     })
+}
+
+/// Resolves `--add-dir` values against the launch directory `cwd`, as
+/// [`resolve`] does with the user's home. A bad path fails startup instead
+/// of silently narrowing the scope the user asked for.
+pub(crate) fn launch_added_dirs(raw_dirs: &[PathBuf], cwd: &Path) -> anyhow::Result<AddedDirs> {
+    let workspace_root = std::fs::canonicalize(cwd)?;
+    let home = crate::paths::home_dir();
+    let mut added = AddedDirs::default();
+    for raw in raw_dirs {
+        let dir = resolve(raw, cwd, home.as_deref())
+            .map_err(|error| anyhow::anyhow!("invalid --add-dir: {error}"))?;
+        added.insert(&workspace_root, dir);
+    }
+    Ok(added)
+}
+
+/// A requested added directory the session cannot grant. A client that asks
+/// for roots expects all of them, so one bad entry fails the request that
+/// opens the session rather than open it with fewer.
+#[derive(Debug)]
+pub(crate) struct RejectedDirectory {
+    entry: PathBuf,
+    reason: String,
+}
+
+impl std::fmt::Display for RejectedDirectory {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "additional directory '{}': {}",
+            self.entry.display(),
+            self.reason
+        )
+    }
+}
+
+impl std::error::Error for RejectedDirectory {}
+
+/// The directories a client that opens a session asks to add, such as an
+/// ACP host's `additionalDirectories` or a daemon client's setup. Entries
+/// must be absolute, then resolve like `--add-dir`: an existing UTF-8
+/// directory, canonicalized. `root` is the canonical session workspace;
+/// entries it or another entry already covers are folded in.
+pub(crate) fn session_added_dirs(
+    requested: &[PathBuf],
+    root: &Path,
+) -> Result<AddedDirs, RejectedDirectory> {
+    let mut client = AddedDirs::default();
+    for entry in requested {
+        let reject = |reason: String| RejectedDirectory {
+            entry: entry.clone(),
+            reason,
+        };
+        // An empty path is not absolute either.
+        if !entry.is_absolute() {
+            return Err(reject("path must be absolute".into()));
+        }
+        let dir = resolve(entry, root, /*home*/ None).map_err(|error| reject(error.to_string()))?;
+        client.insert(root, dir);
+    }
+    Ok(client)
 }
 
 /// Resolves a user-supplied directory: `~` expands to `home`, relative paths

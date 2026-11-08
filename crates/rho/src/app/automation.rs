@@ -112,9 +112,8 @@ pub(super) struct Startup<'a> {
     pub config: &'a Config,
     pub config_path: PathBuf,
     pub cwd: PathBuf,
-    pub no_system_prompt: bool,
-    pub no_tools: bool,
-    pub no_subagents: bool,
+    /// What `--no-*` flags leave out of the run's session.
+    pub left_out: super::session_runtime::LeftOut,
     pub agent: BoundAgent,
     pub output_file: Option<PathBuf>,
     pub output: OutputFormat,
@@ -284,9 +283,7 @@ async fn run_session(
     let build = SessionBuild {
         launch: SessionLaunch {
             config_path: startup.config_path.clone(),
-            no_system_prompt: startup.no_system_prompt,
-            no_tools: startup.no_tools,
-            no_subagents: startup.no_subagents,
+            left_out: startup.left_out,
             diagnostics: startup.diagnostics.clone(),
             agent: startup.agent.clone(),
             prompt_suffix: None,

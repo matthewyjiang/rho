@@ -10,7 +10,9 @@ use std::{collections::BTreeMap, fmt, path::PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{ContentBlock, Cursor, InputRequest, JobState, Seq, SessionEvent, StreamId};
+use super::{
+    ContentBlock, Cursor, InputRequest, JobState, Seq, SessionEvent, SessionSetup, StreamId,
+};
 
 /// Open a new session in a workspace, before its first prompt.
 pub const SESSION_NEW: &str = "rho/session/new";
@@ -116,6 +118,16 @@ pub struct SessionNewParams {
     /// The client's environment, which the session's processes run with
     /// until a prompt brings another.
     pub environment: ClientEnvironment,
+    /// The agent the session runs as, by id, one of the workspace's as
+    /// `rho --agent` finds them; absent, the default agent. One the
+    /// workspace does not define, or that cannot run as a session's own
+    /// agent, is [`crate::ErrorCode::SessionOpenFailed`]. A session reopened
+    /// later runs as the agent it was saved as.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// The client's choices for the session.
+    #[serde(default, skip_serializing_if = "SessionSetup::is_default")]
+    pub setup: SessionSetup,
 }
 
 /// Result of [`SESSION_NEW`]: the session is loaded and its job is
@@ -207,6 +219,11 @@ pub struct SessionAttachParams {
     /// (#1661): its processes run with it until a prompt brings another.
     /// A session the daemon has loaded keeps its own.
     pub environment: ClientEnvironment,
+    /// The client's choices for the session if this attach reopens it. A
+    /// session the daemon has loaded keeps its own, and one a prompt
+    /// reopened has none.
+    #[serde(default, skip_serializing_if = "SessionSetup::is_default")]
+    pub setup: SessionSetup,
 }
 
 /// Result of [`SESSION_ATTACH`]. The session's events then arrive as

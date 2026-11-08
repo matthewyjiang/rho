@@ -7,7 +7,7 @@ use std::path::Path;
 use rho_protocol::{
     methods::{JobList, SessionAttach},
     Client, Cursor, DaemonNotification, DetachReason, JobKind, JobListParams, JobSummary, Replay,
-    SessionAttachParams, SessionAttachResponse, SessionEvent, SessionId,
+    SessionAttachParams, SessionAttachResponse, SessionEvent, SessionId, SessionSetup,
 };
 
 use super::{
@@ -236,6 +236,7 @@ async fn attach_session(
         after: after.cloned(),
         // Only a session the attach reopens takes it (#1659).
         environment: rho_protocol::ClientEnvironment::of_this_process(),
+        setup: SessionSetup::default(),
     };
     client
         .request::<SessionAttach>(&params)

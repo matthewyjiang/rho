@@ -51,6 +51,7 @@ mod credentials;
 mod delegation;
 mod events;
 mod handle;
+mod left_out;
 mod mode;
 mod open;
 mod persist;
@@ -89,6 +90,7 @@ pub(crate) use events::{
     SessionEvent, TurnControl,
 };
 pub(crate) use handle::{SessionHandle, SteerError};
+pub(crate) use left_out::LeftOut;
 pub(crate) use mode::SessionPermission;
 pub(crate) use open::{NodeSession, SavedHistory, SessionOpening};
 pub(crate) use persist::SessionStorage;

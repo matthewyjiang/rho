@@ -12,7 +12,7 @@ use rho_protocol::{
     Client, ClientError, CommandKind, DaemonNotification, ErrorCode, Notifications, PermissionMode,
     ReasoningLevel, ReasoningOptions, RpcError, SessionAttachParams, SessionCancelParams,
     SessionChange, SessionConfigureParams, SessionDeleteParams, SessionDetachParams, SessionEvent,
-    SessionId, SessionNewParams, SessionOptions, TurnOutcome,
+    SessionId, SessionNewParams, SessionOptions, SessionSetup, TurnOutcome,
 };
 use serde_json::Value;
 
@@ -114,6 +114,8 @@ async fn a_change_reaches_attached_clients_and_the_next_turn() {
         .request::<SessionNew>(&SessionNewParams {
             cwd: sandbox.workspace.clone(),
             environment: sandbox.client_environment(),
+            agent: None,
+            setup: SessionSetup::default(),
         })
         .await
         .unwrap();
@@ -135,6 +137,7 @@ async fn a_change_reaches_attached_clients_and_the_next_turn() {
             session: session.clone(),
             after: None,
             environment: sandbox.client_environment(),
+            setup: SessionSetup::default(),
         })
         .await
         .unwrap();
@@ -233,6 +236,7 @@ async fn a_change_sent_during_a_turn_applies_at_its_end_before_the_next_turn() {
             session: session.clone(),
             after: None,
             environment: sandbox.client_environment(),
+            setup: SessionSetup::default(),
         })
         .await
         .unwrap()
@@ -330,6 +334,7 @@ async fn a_change_outlasts_the_idle_unload() {
         session: session.clone(),
         after: None,
         environment: sandbox.client_environment(),
+        setup: SessionSetup::default(),
     };
     watcher.request::<SessionAttach>(&attach).await.unwrap();
     // Saved, so the unload has a file to reopen.
@@ -359,18 +364,7 @@ async fn a_change_outlasts_the_idle_unload() {
         })
         .await
         .unwrap();
-    sandbox
-        .poll_until("the daemon to unload the idle session", async || {
-            sandbox
-                .isolated
-                .daemon_log()
-                .lines()
-                .any(|line| {
-                    line.contains("unloaded idle session") && line.contains(session.as_str())
-                })
-                .then_some(())
-        })
-        .await;
+    sandbox.wait_unloaded(&session, /*times*/ 1).await;
 
     let (follower, mut notifications) = sandbox.connect_following().await;
     let reopened = follower.request::<SessionAttach>(&attach).await.unwrap();

@@ -5,7 +5,7 @@
 //! requests into its parameters and the results into ACP's. All take the
 //! host's `additionalDirectories` as the session's added directories.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use agent_client_protocol::schema::v1::{
     LoadSessionRequest, LoadSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
@@ -13,13 +13,15 @@ use agent_client_protocol::schema::v1::{
 };
 
 use super::{
-    super::{client_io::ClientIo, host_mcp::host_mcp_config, permission},
-    convert::{session_added_dirs, validate_session_cwd, workspace_cwd},
+    super::{client_io::ClientIo, host_mcp::protocol_servers, permission},
+    convert::{validate_session_cwd, workspace_cwd},
     send_notification, session_build, EventMapper, HostBuild, SessionHost,
 };
 use crate::{
+    added_dirs::{session_added_dirs, AddedDirs},
     app::{
         acp::{AcpClientPort, AcpStartup},
+        host_mcp::host_mcp_config,
         session_runtime::{SavedHistory, SessionOpening, SessionRuntime},
     },
     config::Config,
@@ -27,15 +29,25 @@ use crate::{
     session::SessionPersistence,
 };
 
+/// A session's added directories in workspace `cwd`: `--add-dir`'s and
+/// the host's `additionalDirectories`, `requested`.
+fn session_dirs(
+    startup: &AcpStartup,
+    cwd: &Path,
+    requested: &[PathBuf],
+) -> anyhow::Result<AddedDirs> {
+    let root = std::fs::canonicalize(cwd)?;
+    let requested = session_added_dirs(requested, &root)?;
+    Ok(startup.added_dirs.union(&root, &requested))
+}
+
 impl SessionHost {
     pub(in crate::app::acp) async fn create(
         startup: &AcpStartup,
         request: NewSessionRequest,
     ) -> anyhow::Result<(Self, NewSessionResponse)> {
         let cwd = validate_session_cwd(&request.cwd)?;
-        let root = std::fs::canonicalize(cwd)?;
-        let added_dirs =
-            session_added_dirs(&startup.added_dirs, &request.additional_directories, &root)?;
+        let added_dirs = session_dirs(startup, cwd, &request.additional_directories)?;
         let sdk_id = rho_sdk::SessionId::new();
         let io = ClientIo::new(
             startup,
@@ -48,7 +60,7 @@ impl SessionHost {
             SessionOpening {
                 build,
                 process_config: &startup.config,
-                host_mcp: host_mcp_config(&request.mcp_servers),
+                host_mcp: host_mcp_config(&protocol_servers(&request.mcp_servers)),
                 cwd,
                 added_dirs,
             },
@@ -78,9 +90,7 @@ impl SessionHost {
         if !request.cwd.as_os_str().is_empty() {
             validate_session_cwd(cwd)?;
         }
-        let root = std::fs::canonicalize(cwd)?;
-        let added_dirs =
-            session_added_dirs(&startup.added_dirs, &request.additional_directories, &root)?;
+        let added_dirs = session_dirs(startup, cwd, &request.additional_directories)?;
         let io = ClientIo::new(
             startup,
             request.session_id.clone(),
@@ -91,7 +101,7 @@ impl SessionHost {
         let opening = SessionOpening {
             build,
             process_config: &startup.config,
-            host_mcp: host_mcp_config(&request.mcp_servers),
+            host_mcp: host_mcp_config(&protocol_servers(&request.mcp_servers)),
             cwd,
             added_dirs,
         };

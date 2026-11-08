@@ -1,14 +1,17 @@
 //! `rho run --detach` through the real binary: it starts a daemon when none
-//! runs, leaves the turn running there for `rho attach`, and has the daemon
-//! enforce `--timeout`. Which flags it refuses is `cli_config`'s, tested
-//! there.
+//! runs, leaves the turn running there for `rho attach`, has the daemon
+//! enforce `--timeout`, and passes `--add-dir` on as the session's setup.
+//! Which flags it refuses is `cli_config`'s, tested there.
 
 use std::process::{Output, Stdio};
 
 use pretty_assertions::assert_eq;
-use rho_protocol::{JobState, SessionId};
+use rho_protocol::{JobState, Operation, PathScope, SessionId};
 
-use super::sessions::{settled_job, Sandbox, REPLY};
+use super::{
+    sessions::{settled_job, Sandbox, REPLY},
+    setup::{asked_operation, extra_dir},
+};
 
 /// `rho run --detach` with `args` against the fixture in `mode`.
 fn detach(sandbox: &Sandbox, mode: &str, args: &[&str]) -> Output {
@@ -118,6 +121,41 @@ async fn a_detached_command_the_daemon_cannot_run_is_refused() {
             Some(2),
             "Error: could not run /compact: not available in daemon sessions\n".to_owned()
         ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: `rho run --detach --add-dir` resolves a relative directory against
+// the current directory, as a foreground run does, and the daemon session
+// it opens takes it: a write there is to a root the user granted.
+// Owner: rho run --detach CLI (process contract).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_detached_run_passes_its_added_directories_to_the_daemon() {
+    let sandbox = Sandbox::new();
+    sandbox.set_permission_mode("supervised");
+    let extra = extra_dir(&sandbox);
+    let note = extra.join("note.txt");
+    // The fixture makes the call the prompt spells out as JSON.
+    let client = sandbox.start_daemon("tool-call").await;
+    let call = serde_json::json!({
+        "id": "edit",
+        "name": "write",
+        "arguments": {"path": note, "content": "granted"},
+    });
+    let prompt = call.to_string();
+    let session = session_of(&detach(
+        &sandbox,
+        "tool-call",
+        &["--add-dir", "../extra", prompt.as_str()],
+    ));
+
+    assert_eq!(
+        asked_operation(&sandbox, &client, &session).await,
+        Operation::WritePath {
+            path: note,
+            scope: PathScope::GrantedRoot { root: extra },
+        },
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

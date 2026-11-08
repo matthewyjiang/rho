@@ -63,59 +63,11 @@ pub(super) fn validate(cli: &Cli) -> anyhow::Result<()> {
         );
     }
     if let Some(Command::Run { detach: true, .. }) = &cli.command {
-        if let Some(flags) = refused_by_detach(cli) {
-            anyhow::bail!(
-                "rho run --detach does not take {flags}: the daemon opens the session with the workspace's config"
-            );
+        if let Err(refused) = super::detach::detach_flags(cli) {
+            anyhow::bail!(super::detach::refusal(&refused));
         }
     }
     Ok(())
-}
-
-/// The flags set on `cli` that `rho run --detach` cannot pass to the
-/// daemon, which opens the session with the workspace's config (#1669), by
-/// name; `None` when there are none. Every field is named, so a new flag
-/// does not compile until someone decides whether a detached run takes it.
-fn refused_by_detach(cli: &Cli) -> Option<String> {
-    let Cli {
-        provider,
-        model,
-        config,
-        auth,
-        no_system_prompt,
-        no_tools,
-        no_subagents,
-        agent,
-        reasoning,
-        permission_mode,
-        add_dirs,
-        save,
-        // Refused above with any command.
-        no_save: _,
-        resume: _,
-        continue_latest: _,
-        prompt: _,
-        command: _,
-    } = cli;
-    let set = [
-        ("--provider", provider.is_some()),
-        ("--model", model.is_some()),
-        ("--config", config.is_some()),
-        ("--auth", auth.is_some()),
-        ("--no-system-prompt", *no_system_prompt),
-        ("--no-tools", *no_tools),
-        ("--no-subagents", *no_subagents),
-        ("--agent", agent.is_some()),
-        ("--reasoning", reasoning.is_some()),
-        ("--permission-mode", permission_mode.is_some()),
-        ("--add-dir", !add_dirs.is_empty()),
-        ("--save", *save),
-    ];
-    let names: Vec<&str> = set
-        .into_iter()
-        .filter_map(|(name, set)| set.then_some(name))
-        .collect();
-    (!names.is_empty()).then(|| names.join(", "))
 }
 
 pub(super) async fn refresh_model_cache(

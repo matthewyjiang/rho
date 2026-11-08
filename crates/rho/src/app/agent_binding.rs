@@ -39,30 +39,45 @@ pub(crate) struct AgentInvocation {
     pub(crate) available_tools: AgentCapabilities,
 }
 
-/// Whether a launch offers the subagent tools its config enables.
+/// Which of a root session's built-in tools its launch keeps.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SubagentTools {
-    Offered,
-    /// `--no-subagents`.
-    Withheld,
+pub(crate) enum LaunchTools {
+    /// Every tool, the subagent tools when the config enables them.
+    All,
+    /// Every tool but the subagent tools: `--no-subagents`.
+    NoSubagents,
+    /// None: `--no-tools`.
+    None,
+}
+
+impl LaunchTools {
+    /// What a launch keeps when it leaves out every tool (`no_tools`) or
+    /// the subagent tools (`no_subagents`); leaving out every tool wins.
+    pub(crate) fn from_flags(no_tools: bool, no_subagents: bool) -> Self {
+        match (no_tools, no_subagents) {
+            (true, _) => Self::None,
+            (false, true) => Self::NoSubagents,
+            (false, false) => Self::All,
+        }
+    }
 }
 
 /// The built-in tools a root session on this platform starts from, before
-/// its host's own policy: all of them but the other platform's shell, and
-/// no subagent tools when the launch withholds them or `config` disables
-/// them.
-pub(crate) fn root_host_tools(config: &Config, subagents: SubagentTools) -> AgentCapabilities {
+/// its host's own policy: those its launch keeps, but the other platform's
+/// shell, and no subagent tools when `config` disables them.
+pub(crate) fn root_host_tools(config: &Config, launch: LaunchTools) -> AgentCapabilities {
+    let subagents = match launch {
+        LaunchTools::None => return AgentCapabilities::default(),
+        LaunchTools::All => config.enable_subagents,
+        LaunchTools::NoSubagents => false,
+    };
     let mut tools = AgentCapabilities::all_host_tools();
     // web_search is gated after bind against the resolved provider/model.
     #[cfg(windows)]
     tools.remove(&ToolCapability::Bash);
     #[cfg(not(windows))]
     tools.remove(&ToolCapability::Powershell);
-    let offered = match subagents {
-        SubagentTools::Offered => config.enable_subagents,
-        SubagentTools::Withheld => false,
-    };
-    if !offered {
+    if !subagents {
         tools.remove(&ToolCapability::Agent);
         tools.remove(&ToolCapability::Agents);
     }

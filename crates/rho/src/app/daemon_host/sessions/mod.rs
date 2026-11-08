@@ -35,8 +35,8 @@ use rho_protocol::{
     DetachReason, ErrorCode, RpcError, SessionAnswerParams, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
     SessionHoldParams, SessionHoldResponse, SessionNewParams, SessionNewResponse,
-    SessionPromptParams, SessionPromptResponse, SessionSteerParams, SessionSteerResponse,
-    Subscription, TurnOutcome,
+    SessionPromptParams, SessionPromptResponse, SessionSetup, SessionSteerParams,
+    SessionSteerResponse, Subscription, TurnOutcome,
 };
 use rho_sdk::{CancellationToken, SessionId, UserInput};
 
@@ -65,6 +65,7 @@ mod open;
 mod options;
 mod queued;
 mod reopen;
+mod setup;
 mod store;
 #[cfg(test)]
 mod test_events;
@@ -75,7 +76,7 @@ mod unload;
 
 use feed::{Attached, Feed};
 use inputs::Inputs;
-use open::{open_session, session_environment, OpenedSession, Opening, Workspace};
+use open::{open_session, session_environment, OpenWith, OpenedSession, Opening, Workspace};
 use queued::Queued;
 use reopen::ReopenLocks;
 use turn::{PromptStart, TurnLimit, TurnTask};
@@ -436,22 +437,31 @@ impl Sessions {
         }
     }
 
-    /// Opens a new session in `cwd` and registers the job of its turns.
+    /// Opens a new session in `cwd`, as `agent`, with the client's `setup`,
+    /// and registers the job of its turns.
     pub(super) async fn open_new(
         &self,
         params: SessionNewParams,
     ) -> Result<SessionNewResponse, RpcError> {
+        let SessionNewParams {
+            cwd,
+            environment,
+            agent,
+            setup,
+        } = params;
         self.refuse_when_stopping()?;
-        let workspace = Workspace::parse(&params.cwd)?;
+        let workspace = Workspace::parse(&cwd)?;
         let job = JobId::generate();
         let opened = open_session(
-            Opening::New(workspace),
-            session_environment(&params.environment)?,
+            Opening::New { workspace, agent },
+            &OpenWith {
+                environment: session_environment(&environment)?,
+                setup,
+            },
             &self.subagents,
             &job,
         )
-        .await
-        .map_err(open_failed)?;
+        .await?;
         let session = opened.runtime.session_id().clone();
         let record = JobRecord::new_session(
             job.clone(),
@@ -516,9 +526,14 @@ impl Sessions {
                 format!("could not read the prompt: {error}"),
             )
         })?;
-        let environment = session_environment(&params.environment)?;
+        // A prompt carries no setup, so a session it reopens opens with what
+        // its file keeps alone.
+        let with = OpenWith {
+            environment: session_environment(&params.environment)?,
+            setup: SessionSetup::default(),
+        };
         let (session, (cancel, runtime)) = self
-            .enter_session(&params.session, &environment, |session, turn| {
+            .enter_session(&params.session, &with, |session, turn| {
                 match turn.hold {
                     // The turn queues on the runtime behind the changes, so
                     // they apply first, the prompt waiting for them.
@@ -546,7 +561,7 @@ impl Sessions {
                 }
                 // The turn's processes and hooks, and later turns' until
                 // another prompt, start in the prompting client's environment.
-                session.environment.replace(environment.clone());
+                session.environment.replace(with.environment.clone());
                 turn.cancel = CancellationToken::new();
                 // Queued on the runtime under the turn lock the turn starts
                 // under, as a change queues under it (see `configure`): a
@@ -652,12 +667,16 @@ impl Sessions {
         // attach never sees the last turn's end once the job list says the
         // next turn runs, and the idle unload never takes a session a client
         // just attached to.
+        // Applied only if this attach reopens the session: one the daemon
+        // has loaded keeps the environment and setup it opened with.
+        let with = OpenWith {
+            environment: session_environment(&params.environment)?,
+            setup: params.setup,
+        };
         let (session, attached) = self
-            .enter_session(
-                &params.session,
-                &session_environment(&params.environment)?,
-                |session, _turn| Ok(session.feed.attach(params.after.as_ref())),
-            )
+            .enter_session(&params.session, &with, |session, _turn| {
+                Ok(session.feed.attach(params.after.as_ref()))
+            })
             .await?;
         let Attached {
             stream,

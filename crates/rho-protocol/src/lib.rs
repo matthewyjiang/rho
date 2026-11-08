@@ -100,6 +100,7 @@ pub use methods::{
     ReasoningLevel, ReasoningOptions, SessionChange, SessionCommand, SessionConfigureParams,
     SessionConfigureResponse, SessionOptions, SESSION_CONFIGURE,
 };
+pub use methods::{McpServer, SecretMap, SessionPart, SessionSetup};
 pub use methods::{
     SessionDeleteParams, SessionDeleteResponse, SessionListParams, SessionListResponse,
     SessionRenameParams, SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST,

@@ -119,16 +119,7 @@ impl SessionRuntime {
     /// the session has a file; a new session's first save writes them.
     pub(crate) fn keep_settings(&mut self) -> anyhow::Result<()> {
         self.settings = SettingsPolicy::Keep;
-        if self.is_replaced() {
-            return Ok(());
-        }
-        let Some(stored) = self.storage.file() else {
-            return Ok(());
-        };
-        // The settings changed without a commit; a new revision lets the
-        // file take a snapshot that differs from its leaf only by them.
-        self.built.session.advance_revision()?;
-        stored.save_snapshot(&self.durable_snapshot(), &[])
+        self.save_state()
     }
 
     /// Applies the settings the session's file keeps, if any host recorded

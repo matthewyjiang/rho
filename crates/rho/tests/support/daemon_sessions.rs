@@ -21,8 +21,8 @@ use rho_protocol::{
     Notifications, Operation, PathScope, Replay, Resolution, Seq, SessionAnswerParams,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionDetachParams,
     SessionDetachedParams, SessionEvent, SessionHoldParams, SessionId, SessionNewParams,
-    SessionPromptParams, StreamId, ToolCallId, ToolContent, ToolStatus, TurnError, TurnErrorKind,
-    TurnOutcome,
+    SessionPromptParams, SessionSetup, StreamId, ToolCallId, ToolContent, ToolStatus, TurnError,
+    TurnErrorKind, TurnOutcome,
 };
 use rho_tui_pty::IsolatedHome;
 use tokio::{
@@ -69,7 +69,7 @@ WORKFLOW = define(inputs = {}, build = build)
 "#;
 
 /// An agent a session is saved as, other than the default.
-const ARCHIVIST_AGENT: &str = "---
+pub(super) const ARCHIVIST_AGENT: &str = "---
 description: Fixture agent a session is saved as
 ---
 
@@ -227,6 +227,23 @@ impl Sandbox {
         }
     }
 
+    /// Waits until the daemon's log records it unloading idle `session` for
+    /// the `times`th time since it started.
+    pub(super) async fn wait_unloaded(&self, session: &SessionId, times: usize) {
+        self.poll_until("the daemon to unload the idle session", async || {
+            let unloads = self
+                .isolated
+                .daemon_log()
+                .lines()
+                .filter(|line| {
+                    line.contains("unloaded idle session") && line.contains(session.as_str())
+                })
+                .count();
+            (unloads >= times).then_some(())
+        })
+        .await;
+    }
+
     /// Opens a new session in the workspace.
     pub(super) async fn new_session(&self, client: &Client) -> SessionId {
         self.new_session_with_environment(client, self.client_environment())
@@ -243,6 +260,8 @@ impl Sandbox {
             .request::<SessionNew>(&SessionNewParams {
                 cwd: self.workspace.clone(),
                 environment,
+                agent: None,
+                setup: SessionSetup::default(),
             })
             .await
             .unwrap()
@@ -941,6 +960,7 @@ async fn a_session_another_process_saved_reopens_once_it_lets_go() {
                 session: session.clone(),
                 after: None,
                 environment: sandbox.client_environment(),
+                setup: SessionSetup::default(),
             })
             .await
             .map(|_| ())
@@ -1093,6 +1113,7 @@ impl Follower {
                 session: session.clone(),
                 after,
                 environment: sandbox.client_environment(),
+                setup: SessionSetup::default(),
             })
             .await
             .unwrap();

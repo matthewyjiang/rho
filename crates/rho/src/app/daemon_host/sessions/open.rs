@@ -5,15 +5,17 @@
 //! instructions are those of the session's workspace, as `rho` launched
 //! there would find them.
 //!
-//! A new session runs as the default agent with the configured model,
-//! reasoning, fast mode, and permission mode. A reopened one runs as the
-//! agent it was saved as, which must still be defined as it was, and with
-//! the settings a client last chose for it (`rho/session/configure`), else
-//! the configured ones. Its host answers approvals and questions (both reach
-//! the daemon as turn events), its children run in the daemon on the
-//! daemon-wide budget, each a child job of the session's (see
-//! `subagents.rs`), and an MCP server's browser login is refused rather than
-//! left waiting for a terminal nobody watches.
+//! A new session runs as the agent its client names, else the default
+//! agent, with the configured model, reasoning, fast mode, and permission
+//! mode. A reopened one runs as the agent it was saved as, which must still
+//! be defined as it was, and with the settings a client last chose for it
+//! (`rho/session/configure`), else the configured ones. Either way it takes
+//! the setup of the request that opens it, on top of the directories and
+//! parts left out its file keeps (see `setup.rs`). Its host answers
+//! approvals and questions (both reach the daemon as turn events), its
+//! children run in the daemon on the daemon-wide budget, each a child job
+//! of the session's (see `subagents.rs`), and an MCP server's browser login
+//! is refused rather than left waiting for a terminal nobody watches.
 //!
 //! The session's processes, MCP servers, hooks, OpenAPI sources, CLI agents,
 //! and workflow runs use its client's environment, not the daemon's (#1659):
@@ -25,21 +27,24 @@ use std::{
     sync::Arc,
 };
 
-use rho_protocol::{ClientEnvironment, ErrorCode, RpcError};
+use rho_protocol::{ClientEnvironment, ErrorCode, RpcError, SessionSetup};
 
-use super::super::{jobs::JobId, subagents::Subagents};
+use super::{
+    super::{jobs::JobId, subagents::Subagents},
+    open_failed,
+    setup::Setup,
+};
 use crate::{
-    added_dirs::AddedDirs,
-    agent::{AgentCatalog, DEFAULT_AGENT_ID},
+    agent::{AgentCapabilities, AgentCatalog, DEFAULT_AGENT_ID},
     app::{
         agent_binding::{
-            root_host_tools, AgentBinder, AgentInvocation, AgentRole, BoundAgent, SubagentTools,
+            root_host_tools, AgentBinder, AgentInvocation, AgentRole, BoundAgent, LaunchTools,
         },
         cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
         config_repository::ConfigRepository,
         session_runtime::{
-            ApprovalPolicy, BackgroundWait, ChildAgents, HostCapabilities, QuestionSupport,
-            RunShape, SessionBuild, SessionLaunch, SessionOpening, SessionRole, SessionRuntime,
+            ApprovalPolicy, BackgroundWait, ChildAgents, HostCapabilities, RunShape, SessionBuild,
+            SessionLaunch, SessionOpening, SessionRole, SessionRuntime,
         },
     },
     config::Config,
@@ -75,19 +80,38 @@ impl Workspace {
 
 /// What a session opens from.
 pub(super) enum Opening {
-    /// Nothing yet: a new session in this workspace.
-    New(Workspace),
-    /// The session saved here, opened in its own workspace.
+    /// Nothing yet: a new session in `workspace`, running as agent `agent`,
+    /// the default agent when `None`.
+    New {
+        workspace: Workspace,
+        agent: Option<String>,
+    },
+    /// The session saved here, opened in its own workspace as the agent it
+    /// was saved as.
     Saved(StoredSession),
 }
 
 impl Opening {
     fn cwd(&self) -> &Path {
         match self {
-            Self::New(Workspace(cwd)) => cwd,
+            Self::New {
+                workspace: Workspace(cwd),
+                ..
+            } => cwd,
             Self::Saved(stored) => stored.cwd(),
         }
     }
+}
+
+/// What a request brings for the session it names, which applies only when
+/// that request opens the session: a new session, or a saved one it
+/// reopens. A session the daemon has loaded keeps what it opened with, so a
+/// request for it leaves this unused.
+pub(super) struct OpenWith {
+    /// The environment the session's children start in.
+    pub(super) environment: Ambient,
+    /// The client's choices for the session.
+    pub(super) setup: SessionSetup,
 }
 
 /// A session, open, and the config it runs with.
@@ -123,26 +147,61 @@ pub(super) fn session_environment(environment: &ClientEnvironment) -> Result<Amb
     Ok(Ambient::Client(Arc::new(variables)))
 }
 
-/// Opens the session `opening` says, whose turns are job `job`, with its
-/// children starting in `environment`. A new session's file is written
-/// with its first prompt.
+/// Opens the session `opening` says, whose turns are job `job`, with what
+/// `with` brings. A new session's file is written with its first prompt.
+/// A setup the session cannot take is invalid params (see `setup.rs`); any
+/// other failure is `SessionOpenFailed`.
 pub(super) async fn open_session(
     opening: Opening,
-    environment: Ambient,
+    with: &OpenWith,
+    subagents: &Subagents,
+    job: &JobId,
+) -> Result<OpenedSession, RpcError> {
+    let saved = match &opening {
+        Opening::New { .. } => None,
+        Opening::Saved(stored) => Some(stored),
+    };
+    let setup = Setup::resolve(&with.setup, opening.cwd(), saved)?;
+    open_runtime(opening, &with.environment, setup, subagents, job)
+        .await
+        .map_err(open_failed)
+}
+
+/// [`open_session`] once its setup resolved.
+async fn open_runtime(
+    opening: Opening,
+    environment: &Ambient,
+    setup: Setup,
     subagents: &Subagents,
     job: &JobId,
 ) -> anyhow::Result<OpenedSession> {
     let cwd = &opening.cwd().to_path_buf();
-    let environment = SessionEnvironment::new(environment);
+    let environment = SessionEnvironment::new(environment.clone());
+    let Setup {
+        left_out,
+        questions,
+        added_dirs,
+        host_mcp,
+        adds_to_saved,
+    } = setup;
     let repository = ConfigRepository::new(None);
     let config_path = repository.configured_path()?;
     let config = repository.load()?;
     // The last config read publishes its custom providers to the daemon,
     // as each rho process publishes its own at startup.
     config.providers.activate()?;
+    let available_tools = root_host_tools(
+        &config,
+        LaunchTools::from_flags(left_out.tools, left_out.subagents),
+    );
     let agent = match &opening {
-        Opening::New(_) => bind_agent(cwd, &config, DEFAULT_AGENT_ID)?,
-        Opening::Saved(stored) => bind_saved_agent(cwd, &config, stored)?,
+        Opening::New { agent, .. } => bind_agent(
+            cwd,
+            &config,
+            agent.as_deref().unwrap_or(DEFAULT_AGENT_ID),
+            available_tools,
+        )?,
+        Opening::Saved(stored) => bind_saved_agent(cwd, &config, stored, available_tools)?,
     };
     // The agent's own config, which may pin a model and reasoning, replaces
     // the loaded one; an agent on another runtime keeps it.
@@ -160,15 +219,13 @@ pub(super) async fn open_session(
     let build = SessionBuild {
         launch: SessionLaunch {
             config_path,
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: false,
+            left_out,
             diagnostics,
             agent,
             prompt_suffix: None,
         },
         host: HostCapabilities {
-            questions: QuestionSupport::Available,
+            questions,
             children: ChildAgents::InProcess(subagents.pool_for(job.clone())),
             // Nothing wakes an idle session yet, so background work holds the
             // turn open, as it does for `rho run`.
@@ -190,13 +247,13 @@ pub(super) async fn open_session(
     let session = SessionOpening {
         build,
         process_config: &config,
-        host_mcp: Default::default(),
+        host_mcp,
         cwd,
-        added_dirs: AddedDirs::default(),
+        added_dirs,
     };
     // Opening a session builds a large future; keep it on the heap.
     let runtime = match opening {
-        Opening::New(_) => {
+        Opening::New { .. } => {
             Box::pin(SessionRuntime::open_new(
                 session,
                 rho_sdk::SessionId::new(),
@@ -204,7 +261,20 @@ pub(super) async fn open_session(
             ))
             .await?
         }
-        Opening::Saved(stored) => Box::pin(SessionRuntime::open_saved(session, stored)).await?,
+        Opening::Saved(stored) => {
+            let mut runtime = Box::pin(SessionRuntime::open_saved(session, stored)).await?;
+            if adds_to_saved {
+                // The next turn would save it too; an unload before then
+                // would lose it.
+                if let Err(error) = runtime.save_state() {
+                    tracing::warn!(
+                        error = format!("{error:#}"),
+                        "could not save the setup a reopen added; the session's next turn saves it"
+                    );
+                }
+            }
+            runtime
+        }
     };
     // Only a session that opened resizes every session's budget.
     subagents.set_limit(&config);
@@ -215,39 +285,45 @@ pub(super) async fn open_session(
     })
 }
 
-/// The agent `stored` runs as, bound as its root: the one it was saved as,
-/// refused when its definition changed or is gone, so a reopen never widens
-/// a session to another agent's tools (#1661). A session `/agent:` rebound
-/// runs as the default agent, under which the runtime binds the child again
-/// with the child's own checks.
+/// The agent `stored` runs as, bound as its root with `available_tools`:
+/// the one it was saved as, refused when its definition changed or is
+/// gone, so a reopen never widens a session to another agent's tools
+/// (#1661). A session `/agent:` rebound runs as the default agent, under
+/// which the runtime binds the child again with the child's own checks.
 fn bind_saved_agent(
     cwd: &Path,
     config: &Config,
     stored: &StoredSession,
+    available_tools: AgentCapabilities,
 ) -> anyhow::Result<BoundAgent> {
     if stored.delegated_agent_id()?.is_some() {
-        return bind_agent(cwd, config, DEFAULT_AGENT_ID);
+        return bind_agent(cwd, config, DEFAULT_AGENT_ID, available_tools);
     }
     let Some((id, _fingerprint)) = stored.stored_agent_identity()? else {
         anyhow::bail!(
             "the session has no saved agent, so the daemon cannot tell which agent to reopen it as"
         );
     };
-    let agent = bind_agent(cwd, config, &id)?;
+    let agent = bind_agent(cwd, config, &id, available_tools)?;
     stored.validate_agent_definition_identity(agent.definition())?;
     Ok(agent)
 }
 
 /// Agent `id` of `cwd`'s catalog, bound as a person's root session with
-/// every tool this platform offers.
-fn bind_agent(cwd: &Path, config: &Config, id: &str) -> anyhow::Result<BoundAgent> {
+/// `available_tools`.
+fn bind_agent(
+    cwd: &Path,
+    config: &Config,
+    id: &str,
+    available_tools: AgentCapabilities,
+) -> anyhow::Result<BoundAgent> {
     let catalog = AgentCatalog::discover(cwd)?;
     let definition = Arc::new(catalog.find(id)?.definition.clone());
     AgentBinder::bind(
         definition,
         AgentInvocation {
             role: AgentRole::InteractiveRoot,
-            available_tools: root_host_tools(config, SubagentTools::Offered),
+            available_tools,
         },
         config,
     )

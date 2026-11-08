@@ -19,7 +19,7 @@ use rho_protocol::{
     Client, ClientError, DaemonNotification, DetachReason, ErrorCode, Notifications, RpcError,
     SessionAttachParams, SessionCancelParams, SessionDeleteParams, SessionDetachedParams,
     SessionEvent, SessionId, SessionListParams, SessionListResponse, SessionNewParams,
-    SessionRenameParams, SessionRenameResponse, SessionSummary,
+    SessionRenameParams, SessionRenameResponse, SessionSetup, SessionSummary,
 };
 
 use super::sessions::{settled_job, Sandbox, DEADLINE};
@@ -47,6 +47,8 @@ async fn open_session(sandbox: &Sandbox, client: &Client, cwd: PathBuf) -> Sessi
         &SessionNewParams {
             cwd,
             environment: sandbox.client_environment(),
+            agent: None,
+            setup: SessionSetup::default(),
         },
     )
     .await
@@ -105,6 +107,7 @@ async fn follow(sandbox: &Sandbox, session: &SessionId) -> (Client, Notification
             session: session.clone(),
             after: None,
             environment: sandbox.client_environment(),
+            setup: SessionSetup::default(),
         },
     )
     .await
@@ -294,6 +297,7 @@ async fn a_delete_detaches_a_loaded_sessions_clients_and_removes_it() {
             session: deleted.clone(),
             after: None,
             environment: sandbox.client_environment(),
+            setup: SessionSetup::default(),
         },
     )
     .await
@@ -325,18 +329,7 @@ async fn a_delete_removes_a_session_the_daemon_has_not_loaded() {
         .start_daemon_with("fixed", &["--unload-idle-after", "200ms"])
         .await;
     let session = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
-    sandbox
-        .poll_until("the daemon to unload the idle session", async || {
-            sandbox
-                .isolated
-                .daemon_log()
-                .lines()
-                .any(|line| {
-                    line.contains("unloaded idle session") && line.contains(session.as_str())
-                })
-                .then_some(())
-        })
-        .await;
+    sandbox.wait_unloaded(&session, /*times*/ 1).await;
     let delete = || {
         let params = SessionDeleteParams {
             session: session.clone(),

@@ -869,8 +869,9 @@ async fn cli_custom_host_refresh_uses_stored_key_for_configured_keyless_host() {
 }
 
 // Covers: `rho run --detach` refuses, by name, every flag that would change
-// how its session opens, which the daemon cannot take; it takes `rho run`'s
-// own options, and a plain run takes those flags.
+// the config its session opens with, which the daemon cannot take; it takes
+// `rho run`'s own options and the flags it passes to the daemon (`--agent`,
+// `--add-dir`, `--no-*`), and a plain run takes them all.
 // Owner: cli config validation
 #[test]
 fn validate_cli_refuses_session_flags_with_a_detached_run() {
@@ -886,9 +887,21 @@ fn validate_cli_refuses_session_flags_with_a_detached_run() {
         (&["rho", "--model", "m", "run", "go"], None),
         (
             &[
-                "rho", "--model", "m", "--agent", "a", "run", "--detach", "go",
+                "rho",
+                "--model",
+                "m",
+                "--agent",
+                "a",
+                "--add-dir",
+                "/x",
+                "--no-tools",
+                "--no-system-prompt",
+                "--no-subagents",
+                "run",
+                "--detach",
+                "go",
             ],
-            Some("--model, --agent"),
+            Some("--model"),
         ),
         (
             &[
@@ -899,24 +912,16 @@ fn validate_cli_refuses_session_flags_with_a_detached_run() {
                 "c.toml",
                 "--auth",
                 "api-key",
-                "--no-system-prompt",
-                "--no-tools",
-                "--no-subagents",
                 "--reasoning",
                 "high",
                 "--permission-mode",
                 "plan",
-                "--add-dir",
-                "/x",
                 "--save",
                 "run",
                 "--detach",
                 "go",
             ],
-            Some(
-                "--provider, --config, --auth, --no-system-prompt, --no-tools, \
-                 --no-subagents, --reasoning, --permission-mode, --add-dir, --save",
-            ),
+            Some("--provider, --config, --auth, --reasoning, --permission-mode, --save"),
         ),
     ];
     let found: Vec<_> = cases.iter().map(|(args, _)| refused(args)).collect();
