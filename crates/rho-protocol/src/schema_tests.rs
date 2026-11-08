@@ -50,7 +50,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 24] = [
+    let cases: [(&str, bool); 26] = [
         ("JobKind", reads_as(unseen(), JobKind::Unknown)),
         ("JobState", reads_as(unseen(), JobState::Unknown)),
         ("Budget", reads_as(unseen(), Budget::Unknown)),

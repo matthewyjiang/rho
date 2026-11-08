@@ -54,8 +54,8 @@ use crate::{
     config::Config,
 };
 
-mod cost;
 mod configure;
+mod cost;
 mod feed;
 mod inputs;
 mod open;

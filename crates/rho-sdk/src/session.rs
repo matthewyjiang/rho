@@ -860,6 +860,17 @@ impl Session {
         self.core.commit(history)
     }
 
+    /// Advances the revision while the session is idle, for host state a
+    /// store adds to each snapshot, such as settings in its metadata, that
+    /// changed without a commit: the snapshot saved next records the change
+    /// as a new revision.
+    pub fn advance_revision(&self) -> Result<Revision, Error> {
+        let _inactive = self.core.lock_inactive()?;
+        let mut data = self.core.lock_data();
+        data.revision = data.next_revision()?;
+        Ok(data.revision)
+    }
+
     /// Replaces committed history while the session is idle.
     ///
     /// Hosts use this after durable persistence fails following

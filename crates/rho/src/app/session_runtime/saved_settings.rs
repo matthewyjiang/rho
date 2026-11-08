@@ -125,6 +125,9 @@ impl SessionRuntime {
         let Some(stored) = self.storage.file() else {
             return Ok(());
         };
+        // The settings changed without a commit; a new revision lets the
+        // file take a snapshot that differs from its leaf only by them.
+        self.built.session.advance_revision()?;
         stored.save_snapshot(&self.durable_snapshot(), &[])
     }
 

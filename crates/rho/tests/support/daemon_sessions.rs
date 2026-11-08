@@ -122,7 +122,11 @@ impl Sandbox {
 
     /// Starts `rho daemon run` with `args` and the fixture in `mode`, and
     /// connects to it once it answers.
-    pub(super) async fn start_daemon_with(&self, mode: &str, args: &[&str]) -> (DaemonProcess, Client) {
+    pub(super) async fn start_daemon_with(
+        &self,
+        mode: &str,
+        args: &[&str],
+    ) -> (DaemonProcess, Client) {
         self.spawn_daemon(self.rho(mode), args).await
     }
 
