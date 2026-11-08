@@ -4,19 +4,15 @@ use pretty_assertions::assert_eq;
 /// All lifecycle cases use an isolated home, credentials, cache, and fixture
 /// provider through the real ACP stdio transport, without paid network calls.
 fn new_session(workspace: &Workspace) -> (AcpServer, String) {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_rho"));
+    let mut command = workspace.home.command(env!("CARGO_BIN_EXE_rho"));
     command
         .current_dir(&workspace.project)
-        .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("HOME", workspace.home.path())
-        .env("RHO_HOME", workspace.home.path().join(".rho"))
-        .env("XDG_CACHE_HOME", workspace.home.path().join(".cache"))
-        .env("RHO_CREDENTIAL_STORE", "file")
+        // Where a test seeds the provider model cache.
+        .env("XDG_CACHE_HOME", workspace.home.home.join(".cache"))
         .env("RHO_AUTOMATION_TEST_MODE", "inspect")
         .env("XAI_API_KEY", "fixture-key-not-a-real-credential")
         .arg("--config")
-        .arg(workspace.home.path().join("config.toml"))
+        .arg(&workspace.home.config_path)
         .arg("acp");
     let mut server = AcpServer::from_command(&mut command);
     server
@@ -43,10 +39,10 @@ fn overridden_child_rejects_switch_that_breaks_definition_fast_policy() {
 
     let workspace = Workspace::new();
     std::fs::write(
-        workspace.home.path().join("config.toml"),
+        &workspace.home.config_path,
         "provider = \"openai-codex\"\nmodel = \"gpt-6.1-sol\"\nauth = \"codex\"\n[behavior]\npermission_mode = \"plan\"\ncheck_for_updates = false\n",
     ).unwrap();
-    let rho_home = workspace.home.path().join(".rho");
+    let rho_home = workspace.home.rho_home();
     let agents = rho_home.join("agents");
     std::fs::create_dir_all(&agents).unwrap();
     std::fs::write(
@@ -112,7 +108,7 @@ fn overridden_keyless_child_survives_new_optional_credentials() {
     };
 
     let workspace = Workspace::new();
-    let cache = workspace.home.path().join(".cache");
+    let cache = workspace.home.home.join(".cache");
     let names = intern_custom_openai_compatible_providers([CustomProviderSpec::new(
         "review-fixture",
         None,
@@ -133,7 +129,7 @@ fn overridden_keyless_child_survives_new_optional_credentials() {
         )
         .unwrap();
     });
-    let config = workspace.home.path().join("config.toml");
+    let config = workspace.home.config_path.clone();
     std::fs::write(
         &config,
         r#"provider = "openai-codex"
@@ -147,7 +143,7 @@ check_for_updates = false
 "#,
     )
     .unwrap();
-    let rho_home = workspace.home.path().join(".rho");
+    let rho_home = workspace.home.rho_home();
     let (mut server, session_id) = new_session(&workspace);
     let id = session_id.as_str();
     server.prompt(
@@ -177,7 +173,7 @@ check_for_updates = false
 fn overridden_child_survives_load_save_load_with_foreign_parent_auth() {
     let workspace = Workspace::new();
     std::fs::write(
-        workspace.home.path().join("config.toml"),
+        &workspace.home.config_path,
         "provider = \"openai-codex\"\nmodel = \"gpt-6.1-sol\"\nauth = \"codex\"\n[behavior]\npermission_mode = \"plan\"\ncheck_for_updates = false\n",
     ).unwrap();
     let (mut server, session_id) = new_session(&workspace);

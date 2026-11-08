@@ -14,8 +14,8 @@ use std::{
 };
 
 use pretty_assertions::assert_eq;
+use rho_tui_pty::IsolatedHome;
 use serde_json::{json, Value};
-use tempfile::TempDir;
 
 #[path = "support/acp_advertisements_tests.rs"]
 mod advertisements;
@@ -91,29 +91,22 @@ struct AcpServer {
 }
 
 impl AcpServer {
-    /// Starts `rho acp` in `cwd` with the fixture provider in `mode`;
-    /// `path` is the file the fixture's tool call targets.
-    fn spawn(home: &Path, cwd: &Path, mode: &str, path: &Path) -> Self {
+    /// Starts `rho acp` in `home`'s sandbox, in `cwd`, with the fixture
+    /// provider in `mode`; `path` is the file the fixture's tool call
+    /// targets.
+    fn spawn(home: &IsolatedHome, cwd: &Path, mode: &str, path: &Path) -> Self {
         Self::from_command(&mut Self::command(home, cwd, mode, path))
     }
 
     /// The command [`Self::spawn`] runs, for tests that add to it.
-    fn command(home: &Path, cwd: &Path, mode: &str, path: &Path) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_rho"));
+    fn command(home: &IsolatedHome, cwd: &Path, mode: &str, path: &Path) -> Command {
+        let mut command = home.command(env!("CARGO_BIN_EXE_rho"));
         command
             .current_dir(cwd)
-            .env("HOME", home)
-            .env("RHO_HOME", home.join(".rho"))
-            // Fixture sessions must not query the developer's OS keyring.
-            .env("RHO_CREDENTIAL_STORE", "file")
             .env("RHO_AUTOMATION_TEST_MODE", mode)
             .env("RHO_AUTOMATION_TEST_PATH", path)
-            .env_remove("RHO_AUTOMATION_TEST_RESPONSE")
-            .env_remove("HERDR_ENV")
-            .env_remove("HERDR_SOCKET_PATH")
-            .env_remove("HERDR_PANE_ID")
             .arg("--config")
-            .arg(home.join("config.toml"))
+            .arg(&home.config_path)
             .arg("acp");
         command
     }
@@ -256,19 +249,19 @@ impl Drop for AcpServer {
     }
 }
 
-/// A home with a plan-mode config, a project, and a directory outside it
-/// holding `notes.txt`.
+/// A sandbox with a plan-mode config, a project in its home, and a
+/// directory outside the project holding `notes.txt`.
 struct Workspace {
-    home: TempDir,
+    home: IsolatedHome,
     project: PathBuf,
     extra: PathBuf,
 }
 
 impl Workspace {
     fn new() -> Self {
-        let home = TempDir::new().unwrap();
+        let home = IsolatedHome::new().unwrap();
         std::fs::write(
-            home.path().join("config.toml"),
+            &home.config_path,
             r#"provider = "xai"
 model = "grok-fixture"
 auth = "xai-oauth"
@@ -282,7 +275,7 @@ provider = "disabled"
 "#,
         )
         .unwrap();
-        let root = home.path().canonicalize().unwrap();
+        let root = home.home.canonicalize().unwrap();
         let project = root.join("project");
         let extra = root.join("shared-lib");
         std::fs::create_dir_all(&project).unwrap();
@@ -297,7 +290,7 @@ provider = "disabled"
 
     fn server(&self) -> AcpServer {
         AcpServer::spawn(
-            self.home.path(),
+            &self.home,
             &self.project,
             "read-path",
             &self.extra.join("notes.txt"),

@@ -1,8 +1,8 @@
 //! Generated session titles reported to ACP hosts as `session_info_update`.
 
 use pretty_assertions::assert_eq;
+use rho_tui_pty::IsolatedHome;
 use serde_json::json;
-use tempfile::TempDir;
 
 use super::AcpServer;
 
@@ -12,9 +12,9 @@ use super::AcpServer;
 // Owner: ACP session titles, over the real stdio server
 #[test]
 fn generated_title_reaches_the_host() {
-    let home = TempDir::new().unwrap();
+    let home = IsolatedHome::new().unwrap();
     std::fs::write(
-        home.path().join("config.toml"),
+        &home.config_path,
         r#"provider = "xai"
 model = "grok-fixture"
 auth = "xai-oauth"
@@ -25,9 +25,9 @@ provider = "disabled"
 "#,
     )
     .unwrap();
-    let project = home.path().canonicalize().unwrap().join("project");
+    let project = home.home.canonicalize().unwrap().join("project");
     std::fs::create_dir_all(&project).unwrap();
-    let mut command = AcpServer::command(home.path(), &project, "fixed", &project);
+    let mut command = AcpServer::command(&home, &project, "fixed", &project);
     // The title agent's one-shot provider skips the automation fixture; the
     // TUI fixture answers its request instead.
     command.env("RHO_TUI_TEST_MODE", "matrix");

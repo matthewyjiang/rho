@@ -7,7 +7,7 @@
 use std::{
     collections::BTreeSet,
     io::{BufRead, BufReader},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
 };
 
 use pretty_assertions::assert_eq;
@@ -26,7 +26,6 @@ use tokio::{
 
 use super::{
     configure::next_options,
-    harness::DaemonProcess,
     sessions::{Sandbox, DEADLINE},
 };
 
@@ -50,7 +49,7 @@ fn rho(sandbox: &Sandbox) -> Command {
     command
 }
 
-async fn start_daemon(sandbox: &Sandbox) -> (DaemonProcess, Client) {
+async fn start_daemon(sandbox: &Sandbox) -> (Child, Client) {
     sandbox.spawn_daemon(rho(sandbox), &[]).await
 }
 
@@ -120,7 +119,7 @@ async fn approve(url: &str) {
 
 /// The access token saved for SpaceXAI in the sandbox's file store.
 fn saved_token(sandbox: &Sandbox) -> Option<String> {
-    let store = FileCredentialStore::with_rho_home(sandbox.home()).unwrap();
+    let store = FileCredentialStore::with_rho_home(sandbox.rho_home()).unwrap();
     let tokens = store.get_secret(TOKENS_ACCOUNT).unwrap()?;
     let tokens: Value = serde_json::from_str(&tokens).unwrap();
     tokens["access_token"].as_str().map(str::to_owned)
@@ -269,23 +268,14 @@ async fn a_login_ends_when_cancelled_or_its_client_leaves() {
     );
 }
 
-/// Stops the daemon a `rho login` started once the test ends, pass or fail.
-struct StopsDaemon<'a>(&'a Sandbox);
-
-impl Drop for StopsDaemon<'_> {
-    fn drop(&mut self) {
-        let _ = self.0.rho("fixed").args(["daemon", "stop"]).status();
-    }
-}
-
 // Covers: with no daemon running, `rho login` starts one, prints the prompt
 // the daemon relays, and exits 0 once the login is approved, with the
 // tokens saved where the daemon's sessions read them.
 // Owner: rho login CLI (process contract).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rho_login_signs_in_through_a_daemon_it_starts() {
+    // Dropping the sandbox stops the daemon `rho login` starts.
     let sandbox = Sandbox::new();
-    let _stops = StopsDaemon(&sandbox);
     let mut login = rho(&sandbox)
         // No browser to open, so nothing launches on the test machine.
         .env("SSH_CONNECTION", "127.0.0.1 1 127.0.0.1 2")

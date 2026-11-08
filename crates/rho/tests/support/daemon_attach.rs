@@ -123,7 +123,7 @@ async fn job_of(client: &rho_protocol::Client, session: &SessionId) -> rho_proto
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn attach_reports_how_the_last_turn_ended() {
     let sandbox = Sandbox::new();
-    let (daemon, client) = sandbox.start_daemon("fixed").await;
+    let (mut daemon, client) = sandbox.start_daemon("fixed").await;
     let session = sandbox.new_session(&client).await;
     assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
     let job = settled_job(&sandbox, &client, &session).await;
@@ -138,7 +138,7 @@ async fn attach_reports_how_the_last_turn_ended() {
         .status()
         .unwrap();
     assert!(stop.success(), "log:\n{}", sandbox.daemon_log());
-    drop(daemon);
+    daemon.wait().unwrap();
     let (_daemon, _client) = sandbox.start_daemon("fixed").await;
     let (reopened_status, reopened_lines) =
         Attach::spawn(&sandbox, "fixed", &[session.as_str(), "--output", "jsonl"])

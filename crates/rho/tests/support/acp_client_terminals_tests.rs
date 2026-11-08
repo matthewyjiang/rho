@@ -31,13 +31,13 @@ fn answer(request: &Value) -> Value {
 #[test]
 fn bash_runs_in_a_host_terminal_shown_on_its_card() {
     let workspace = Workspace::new();
-    let config = workspace.home.path().join("config.toml");
+    let config = workspace.home.config_path.clone();
     let settings = std::fs::read_to_string(&config)
         .unwrap()
         .replace("permission_mode = \"plan\"", "permission_mode = \"bypass\"");
     std::fs::write(config, settings).unwrap();
     let project = workspace.project.clone();
-    let mut server = AcpServer::spawn(workspace.home.path(), &project, "tool-call", &project);
+    let mut server = AcpServer::spawn(&workspace.home, &project, "tool-call", &project);
     server
         .request(
             "initialize",

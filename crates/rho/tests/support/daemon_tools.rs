@@ -153,7 +153,7 @@ async fn a_sessions_tools_run_with_the_prompting_clients_environment() {
     // Login init that resets `PATH`, as some distributions' does, in the
     // home the sandbox's clients send.
     std::fs::write(
-        sandbox.workspace.parent().unwrap().join(".bash_profile"),
+        sandbox.isolated.home.join(".bash_profile"),
         "export PATH=/usr/bin:/bin\n",
     )
     .unwrap();
@@ -271,7 +271,7 @@ env_from_env = { TOKEN = "PROBE_TOKEN" }
     let hook = record("hook.txt", "${PROBE-unset}")
         + " && printf '{\"version\": 1, \"decision\": \"continue\"}'";
     std::fs::write(
-        sandbox.home().join("hooks.toml"),
+        sandbox.rho_home().join("hooks.toml"),
         format!(
             r#"version = 1
 

@@ -3,26 +3,21 @@
 //! next prompt, against a provider that checks every key over real HTTP.
 
 use std::{
-    process::Stdio,
+    process::Child,
     sync::{Arc, Mutex},
 };
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{AuthKey, AuthLogout, JobList, SessionNew, SessionPrompt},
+    methods::{AuthKey, AuthLogout, JobList, SessionPrompt},
     AuthKeyParams, AuthKeyResponse, AuthLogoutParams, AuthLogoutResponse, Client, ClientError,
-    ClientInfo, ContentBlock, EnvironmentOverride, ErrorCode, JobListParams, JobState, RpcError,
-    SessionId, SessionNewParams, SessionPromptParams, TurnError, TurnErrorKind, TurnOutcome,
+    ContentBlock, EnvironmentOverride, ErrorCode, JobListParams, JobState, RpcError, SessionId,
+    SessionPromptParams, TurnError, TurnErrorKind, TurnOutcome,
 };
 use rho_providers::credentials::{CredentialStore, FileCredentialStore};
 use serde_json::Value;
-use tokio::net::UnixStream;
 
-use super::{
-    harness::{DaemonProcess, DaemonSandbox},
-    key_checking_provider::spawn_provider,
-    sessions::DEADLINE,
-};
+use super::{key_checking_provider::spawn_provider, sessions::Sandbox};
 
 const FIRST_KEY: &str = "test-first-key";
 const SECOND_KEY: &str = "test-second-key";
@@ -35,19 +30,18 @@ const KEY_VARIABLE: &str = "RHO_MOCK_API_KEY";
 /// A daemon whose config selects the custom `mock` provider at a
 /// [`spawn_provider`] host, with a file credential store in its home.
 struct Fixture {
-    sandbox: DaemonSandbox,
-    workspace: std::path::PathBuf,
+    sandbox: Sandbox,
     store: FileCredentialStore,
-    _daemon: DaemonProcess,
+    _daemon: Child,
 }
 
 impl Fixture {
     /// Starts the daemon with the variables `environment` set.
     async fn start(valid: &Arc<Mutex<String>>, environment: &[(&str, &str)]) -> Self {
         let address = spawn_provider(Arc::clone(valid));
-        let sandbox = DaemonSandbox::new();
+        let sandbox = Sandbox::new();
         std::fs::write(
-            sandbox.home().join("config.toml"),
+            &sandbox.isolated.config_path,
             format!(
                 r#"provider = "mock"
 model = "mock-model"
@@ -66,60 +60,27 @@ provider = "disabled"
             ),
         )
         .unwrap();
-        let workspace = sandbox.root().join("workspace");
-        std::fs::create_dir_all(&workspace).unwrap();
-        let store = FileCredentialStore::with_rho_home(sandbox.home()).unwrap();
-        let mut command = sandbox.rho();
+        let store = FileCredentialStore::with_rho_home(sandbox.rho_home()).unwrap();
+        let mut command = sandbox.rho("fixed");
         command
-            // Outside the session's workspace, as a service manager starts it.
-            .current_dir(sandbox.home())
-            // The test must not query the developer's OS keyring, and the
-            // session must reach the real provider, not the fixture one.
-            .env("RHO_CREDENTIAL_STORE", "file")
-            .env("XDG_CACHE_HOME", sandbox.root().join(".cache"))
+            // The session must reach the real provider, not the fixture one.
             .env_remove("RHO_AUTOMATION_TEST_MODE")
-            .env_remove(KEY_VARIABLE)
-            .envs(environment.iter().copied())
-            .args(["daemon", "run"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        let daemon = DaemonProcess(command.spawn().unwrap());
-        let fixture = Self {
+            .envs(environment.iter().copied());
+        let (daemon, _client) = sandbox.spawn_daemon(command, &[]).await;
+        Self {
             sandbox,
-            workspace: workspace.canonicalize().unwrap(),
             store,
             _daemon: daemon,
-        };
-        fixture.connect().await;
-        fixture
+        }
     }
 
     /// A new client, once the daemon answers.
     async fn connect(&self) -> Client {
-        self.sandbox
-            .poll_until("the daemon to answer", DEADLINE, async || {
-                let stream = UnixStream::connect(self.sandbox.socket()).await.ok()?;
-                let info = ClientInfo {
-                    name: "daemon-auth-test".into(),
-                    version: "0".into(),
-                };
-                Client::handshake(stream, info)
-                    .await
-                    .ok()
-                    .map(|(client, _, _)| client)
-            })
-            .await
+        self.sandbox.connect().await
     }
 
     async fn new_session(&self, client: &Client) -> SessionId {
-        client
-            .request::<SessionNew>(&SessionNewParams {
-                cwd: self.workspace.clone(),
-                environment: self.sandbox.client_environment(),
-            })
-            .await
-            .unwrap()
-            .session
+        self.sandbox.new_session(client).await
     }
 
     /// Prompts `session` and waits for its turn to end; how it ended, or
@@ -140,7 +101,7 @@ provider = "disabled"
         // the first settled state is this turn's.
         Ok(self
             .sandbox
-            .poll_until("the turn to end", DEADLINE, async || {
+            .poll_until("the turn to end", async || {
                 let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
                 let job = jobs
                     .jobs

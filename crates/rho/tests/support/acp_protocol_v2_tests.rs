@@ -100,14 +100,14 @@ fn kinds(updates: &[Value]) -> Vec<&str> {
 #[test]
 fn t3code_v2_prompt_reports_its_lifecycle_through_state_updates() {
     let workspace = Workspace::new();
-    let config = workspace.home.path().join("config.toml");
+    let config = workspace.home.config_path.clone();
     let settings = std::fs::read_to_string(&config)
         .unwrap()
         .replace("permission_mode = \"plan\"", "permission_mode = \"bypass\"");
     std::fs::write(config, settings).unwrap();
     let mut server = AcpServer::from_command(
         AcpServer::command(
-            workspace.home.path(),
+            &workspace.home,
             &workspace.project,
             "tool-call",
             &workspace.project,

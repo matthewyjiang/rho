@@ -105,14 +105,14 @@ fn prompt_through_host(
 #[test]
 fn host_served_files_route_reads_and_edits_through_the_host() {
     let workspace = Workspace::new();
-    let config = workspace.home.path().join("config.toml");
+    let config = workspace.home.config_path.clone();
     let settings = std::fs::read_to_string(&config).unwrap().replace(
         "permission_mode = \"plan\"",
         "permission_mode = \"bypass\"\nedit_tool = \"str_replace\"",
     );
     std::fs::write(config, settings).unwrap();
     let project = workspace.project.clone();
-    let cwd = workspace.home.path().join("project-link");
+    let cwd = workspace.home.home.join("project-link");
     std::os::unix::fs::symlink(&project, &cwd).unwrap();
     let tracked_on_host = cwd.join("a.txt");
     let tracked = project.join("a.txt");
@@ -123,7 +123,7 @@ fn host_served_files_route_reads_and_edits_through_the_host() {
     )]));
 
     let mut server = AcpServer::from_command(
-        AcpServer::command(workspace.home.path(), &project, "tool-call", &project)
+        AcpServer::command(&workspace.home, &project, "tool-call", &project)
             .arg("--add-dir")
             .arg(&workspace.extra),
     );

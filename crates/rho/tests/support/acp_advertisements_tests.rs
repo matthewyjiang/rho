@@ -7,7 +7,7 @@ use pretty_assertions::assert_eq;
 #[test]
 fn session_menus_follow_discovery_and_agent_rebinding() {
     let workspace = Workspace::new();
-    let agents = workspace.home.path().join(".rho/agents");
+    let agents = workspace.home.rho_home().join("agents");
     std::fs::create_dir_all(&agents).unwrap();
     std::fs::write(
         agents.join("menu-child.md"),
@@ -211,7 +211,7 @@ fn tool_created_commands_are_published_before_prompt_returns() {
     let templates = workspace.project.join(".rho/prompts");
     std::fs::create_dir_all(&templates).unwrap();
     let mut server = AcpServer::spawn(
-        workspace.home.path(),
+        &workspace.home,
         &workspace.project,
         "write-path",
         &templates.join("created.md"),

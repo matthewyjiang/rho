@@ -44,23 +44,14 @@ fn attach(sandbox: &Sandbox, mode: &str, session: &SessionId) -> Output {
         .unwrap()
 }
 
-/// Stops the daemon a detach started once the test ends, pass or fail.
-struct StopsDaemon<'a>(&'a Sandbox);
-
-impl Drop for StopsDaemon<'_> {
-    fn drop(&mut self) {
-        let _ = self.0.rho("fixed").args(["daemon", "stop"]).status();
-    }
-}
-
 // Covers: with no daemon running, `rho run --detach` starts one, prints the
 // session's id once the prompt is saved, and exits 0; the turn runs on
 // there, and `rho attach` shows the conversation and its answer.
 // Owner: rho run --detach CLI (process contract).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_detached_run_starts_the_daemon_and_runs_on_there() {
+    // Dropping the sandbox stops the daemon the detach starts.
     let sandbox = Sandbox::new();
-    let _stops = StopsDaemon(&sandbox);
     let session = session_of(&detach(&sandbox, "fixed", &["hello"]));
     let attached = attach(&sandbox, "fixed", &session);
 

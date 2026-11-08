@@ -102,7 +102,7 @@ fn delete_converges_whatever_the_session_state() {
 #[test]
 fn listed_roots_round_trip_through_load() {
     let workspace = Workspace::new();
-    let gone = workspace.home.path().canonicalize().unwrap().join("gone");
+    let gone = workspace.home.home.canonicalize().unwrap().join("gone");
     std::fs::create_dir_all(&gone).unwrap();
     let (mut server, _) = initialized(&workspace);
     let session_id = new_session(&mut server, &workspace, json!([workspace.extra, gone]));

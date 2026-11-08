@@ -5,8 +5,8 @@
 
 use std::{
     path::PathBuf,
-    process::{Command, Stdio},
-    time::Duration,
+    process::{Child, Command, Stdio},
+    time::{Duration, Instant},
 };
 
 use pretty_assertions::assert_eq;
@@ -24,16 +24,20 @@ use rho_protocol::{
     SessionPromptParams, StreamId, ToolCallId, ToolContent, ToolStatus, TurnError, TurnErrorKind,
     TurnOutcome,
 };
+use rho_tui_pty::IsolatedHome;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     net::UnixStream,
 };
 
-use super::harness::{DaemonProcess, DaemonSandbox};
-
 /// Failure bound for each wait on the daemon. Every turn here answers from
 /// the fixture provider without network; this only stops a hung test.
 pub(super) const DEADLINE: Duration = Duration::from_secs(60);
+
+/// How often a wait polls the daemon's socket, process, or job list. The
+/// daemon pushes nothing to clients yet (#1657), so polling is the only way
+/// to see it change.
+const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// The reply the fixture provider gives, which the test finds in the
 /// session file.
@@ -79,36 +83,36 @@ description: Fixture agent for a daemon workflow run
 Do the task.
 ";
 
+/// An [`IsolatedHome`] with the fixture provider's config, whose daemon a
+/// test starts itself or a client in it starts. Dropping it stops that
+/// daemon, also while a test panics. Its clients should share one fixture
+/// mode (see [`IsolatedHome`]).
 pub(super) struct Sandbox {
-    daemon: DaemonSandbox,
+    pub(super) isolated: IsolatedHome,
     /// The session's workspace, canonicalized as the daemon records it.
     pub(super) workspace: PathBuf,
 }
 
 impl Sandbox {
     pub(super) fn new() -> Self {
-        let daemon = DaemonSandbox::new();
-        std::fs::write(daemon.home().join("config.toml"), CONFIG).unwrap();
-        let workspace = daemon.root().join("workspace");
-        std::fs::create_dir_all(&workspace).unwrap();
-        let workspace = workspace.canonicalize().unwrap();
-        Self { daemon, workspace }
+        let isolated = IsolatedHome::new().unwrap();
+        std::fs::write(&isolated.config_path, CONFIG).unwrap();
+        let workspace = isolated.workspace.canonicalize().unwrap();
+        Self {
+            isolated,
+            workspace,
+        }
     }
 
-    /// `rho` in the workspace with its credential store inside the sandbox
-    /// and the fixture provider in `mode`.
+    /// `rho` in the workspace, in the sandbox, with the fixture provider in
+    /// `mode`.
     pub(super) fn rho(&self, mode: &str) -> Command {
-        let mut command = self.daemon.rho();
+        let mut command = self.isolated.command(env!("CARGO_BIN_EXE_rho"));
         command
             .current_dir(&self.workspace)
-            // Fixture sessions must not query the developer's OS keyring.
-            .env("RHO_CREDENTIAL_STORE", "file")
             .env("RHO_AUTOMATION_TEST_MODE", mode)
             .env("RHO_AUTOMATION_TEST_RESPONSE", REPLY)
-            .env_remove("RHO_AUTOMATION_TEST_PATH")
-            .env_remove("HERDR_ENV")
-            .env_remove("HERDR_SOCKET_PATH")
-            .env_remove("HERDR_PANE_ID")
+            .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         command
@@ -116,58 +120,53 @@ impl Sandbox {
 
     /// Starts `rho daemon run` with the fixture in `mode` and connects to
     /// it once it answers.
-    pub(super) async fn start_daemon(&self, mode: &str) -> (DaemonProcess, Client) {
+    pub(super) async fn start_daemon(&self, mode: &str) -> (Child, Client) {
         self.start_daemon_with(mode, &[]).await
     }
 
     /// Starts `rho daemon run` with `args` and the fixture in `mode`, and
     /// connects to it once it answers.
-    pub(super) async fn start_daemon_with(
-        &self,
-        mode: &str,
-        args: &[&str],
-    ) -> (DaemonProcess, Client) {
+    pub(super) async fn start_daemon_with(&self, mode: &str, args: &[&str]) -> (Child, Client) {
         self.spawn_daemon(self.rho(mode), args).await
     }
 
     /// [`Self::start_daemon`], with the TUI fixture answering the title
     /// agent, whose one-shot provider skips the automation fixture: it
     /// names a session "Fixture session title".
-    async fn start_titling_daemon(&self, mode: &str) -> (DaemonProcess, Client) {
+    async fn start_titling_daemon(&self, mode: &str) -> (Child, Client) {
         let mut command = self.rho(mode);
         command.env("RHO_TUI_TEST_MODE", "matrix");
         self.spawn_daemon(command, &[]).await
     }
 
     /// Runs `command daemon run args`, and connects once the daemon answers.
+    ///
+    /// The sandbox stops the daemon when it drops; the returned process is
+    /// for a test that waits for the daemon's exit or kills it. Dropping it
+    /// does neither.
     pub(super) async fn spawn_daemon(
         &self,
         mut command: Command,
         args: &[&str],
-    ) -> (DaemonProcess, Client) {
+    ) -> (Child, Client) {
         // Outside every session's workspace, as a service manager starts it,
         // so nothing a session runs can lean on the daemon's own directory.
-        let daemon = DaemonProcess(
-            command
-                .current_dir(self.daemon.home())
-                .args(["daemon", "run"])
-                .args(args)
-                .spawn()
-                .unwrap(),
-        );
+        let daemon = command
+            .current_dir(self.rho_home())
+            .args(["daemon", "run"])
+            .args(args)
+            .spawn()
+            .unwrap();
         // A daemon killed earlier left its socket file behind, so wait for
         // one that answers rather than one that exists.
         let client = self
-            .daemon
-            .poll_until("the daemon to answer", DEADLINE, async || {
-                self.try_connect().await
-            })
+            .poll_until("the daemon to answer", async || self.try_connect().await)
             .await
             .0;
         (daemon, client)
     }
 
-    async fn connect(&self) -> Client {
+    pub(super) async fn connect(&self) -> Client {
         self.connect_following().await.0
     }
 
@@ -177,7 +176,9 @@ impl Sandbox {
     }
 
     async fn try_connect(&self) -> Option<(Client, Notifications)> {
-        let stream = UnixStream::connect(self.daemon.socket()).await.ok()?;
+        let stream = UnixStream::connect(self.isolated.daemon_socket()?)
+            .await
+            .ok()?;
         let client = ClientInfo {
             name: "daemon-sessions-test".into(),
             version: "0".into(),
@@ -189,7 +190,7 @@ impl Sandbox {
     }
 
     pub(super) fn daemon_log(&self) -> String {
-        self.daemon.daemon_log()
+        self.isolated.daemon_log()
     }
 
     /// Writes the fixture config with `permission_mode = "<mode>"`, which a
@@ -202,30 +203,41 @@ impl Sandbox {
     /// TOML `tables` after it, which a daemon started after reads.
     pub(super) fn set_config(&self, mode: &str, tables: &str) {
         std::fs::write(
-            self.daemon.home().join("config.toml"),
+            &self.isolated.config_path,
             format!("permission_mode = \"{mode}\"\n{CONFIG}\n{tables}"),
         )
         .unwrap();
     }
 
     /// The daemon's `RHO_HOME`, where user `hooks.toml` lives.
-    pub(super) fn home(&self) -> PathBuf {
-        self.daemon.home()
+    pub(super) fn rho_home(&self) -> PathBuf {
+        self.isolated.rho_home()
     }
 
-    /// Calls `attempt` until it returns `Some`, failing with the daemon log
-    /// after [`DEADLINE`].
+    /// Calls `attempt` every [`POLL_INTERVAL`] until it returns `Some`, and
+    /// fails with the daemon log once [`DEADLINE`] passes.
     pub(super) async fn poll_until<T>(
         &self,
         what: &str,
-        attempt: impl AsyncFnMut() -> Option<T>,
+        mut attempt: impl AsyncFnMut() -> Option<T>,
     ) -> T {
-        self.daemon.poll_until(what, DEADLINE, attempt).await
+        let started = Instant::now();
+        loop {
+            if let Some(value) = attempt().await {
+                return value;
+            }
+            assert!(
+                started.elapsed() < DEADLINE,
+                "timed out after {DEADLINE:?} waiting for {what}; daemon log:\n{}",
+                self.daemon_log()
+            );
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
     }
 
     /// Opens a new session in the workspace.
     pub(super) async fn new_session(&self, client: &Client) -> SessionId {
-        self.new_session_with_environment(client, self.daemon.client_environment())
+        self.new_session_with_environment(client, self.client_environment())
             .await
     }
 
@@ -258,7 +270,7 @@ impl Sandbox {
                     text: "hello".into(),
                 }],
                 timeout_ms: None,
-                environment: self.daemon.client_environment(),
+                environment: self.client_environment(),
             })
             .await
             .map(|_| ())
@@ -276,7 +288,7 @@ impl Sandbox {
         session: &SessionId,
         call: &serde_json::Value,
     ) {
-        let environment = self.daemon.client_environment();
+        let environment = self.client_environment();
         self.prompt_tool_call_with_environment(client, session, call, environment)
             .await;
     }
@@ -303,16 +315,28 @@ impl Sandbox {
             .unwrap();
     }
 
-    /// The environment a client in the sandbox sends.
+    /// The environment a client in the sandbox sends, which its sessions'
+    /// processes run with (#1659): the whole environment
+    /// [`IsolatedHome::command`] gives a child, so nothing a session runs
+    /// reaches the developer's rho home or daemon. It has no fixture mode;
+    /// only the daemon does.
     pub(super) fn client_environment(&self) -> ClientEnvironment {
-        self.daemon.client_environment()
+        // `command` clears the environment, so the variables it sets are
+        // all a child gets.
+        self.isolated
+            .command(env!("CARGO_BIN_EXE_rho"))
+            .get_envs()
+            .filter_map(|(name, value)| {
+                Some((name.to_str()?.to_owned(), value?.to_str()?.to_owned()))
+            })
+            .collect()
     }
 
     /// The directory `session` is saved in, once it is: each session is a
     /// directory named for its id, below its workspace's.
     fn session_dir(&self, session: &SessionId) -> Option<PathBuf> {
         let suffix = format!("_{session}");
-        std::fs::read_dir(self.daemon.home().join("sessions"))
+        std::fs::read_dir(self.rho_home().join("sessions"))
             .ok()?
             .flatten()
             .filter_map(|workspace| std::fs::read_dir(workspace.path()).ok())
@@ -790,7 +814,7 @@ async fn a_workflow_run_is_a_child_job_of_its_session() {
         "log:\n{log}"
     );
     // The run the tool started is the only one under the daemon's home.
-    let runs: Vec<String> = std::fs::read_dir(sandbox.daemon.home().join("workflows/runs"))
+    let runs: Vec<String> = std::fs::read_dir(sandbox.rho_home().join("workflows/runs"))
         .unwrap()
         .map(|run| run.unwrap().file_name().into_string().unwrap())
         .collect();
@@ -850,12 +874,14 @@ async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
                     .status()
                     .unwrap();
                 assert!(stop.success(), "{ending:?}: log:\n{}", sandbox.daemon_log());
-                drop(daemon);
+                daemon.wait().unwrap();
                 sandbox.start_daemon("delay").await
             }
             Ending::Kill => {
                 drop(client);
-                daemon.kill();
+                // Reaped, so its lock is free for the next daemon.
+                daemon.kill().unwrap();
+                daemon.wait().unwrap();
                 sandbox.start_daemon("delay").await
             }
         };
@@ -974,7 +1000,7 @@ async fn a_session_another_process_saved_reopens_once_it_lets_go() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_session_reopens_only_as_the_agent_it_was_saved_as() {
     let sandbox = Sandbox::new();
-    let archivist = sandbox.daemon.root().join(".agents/agents/archivist.md");
+    let archivist = sandbox.isolated.home.join(".agents/agents/archivist.md");
     std::fs::create_dir_all(archivist.parent().unwrap()).unwrap();
     std::fs::write(&archivist, ARCHIVIST_AGENT).unwrap();
     let saved_as_archivist = || {
@@ -1284,9 +1310,7 @@ async fn answer(
 
 /// Starts a supervised daemon and prompts a new session's turn to `write`
 /// `note.txt`, which waits for approval with nobody attached.
-pub(super) async fn prompt_a_supervised_write(
-    sandbox: &Sandbox,
-) -> (DaemonProcess, Client, SessionId) {
+pub(super) async fn prompt_a_supervised_write(sandbox: &Sandbox) -> (Child, Client, SessionId) {
     sandbox.set_permission_mode("supervised");
     // The fixture makes the call the prompt spells out as JSON.
     let (daemon, client) = sandbox.start_daemon("tool-call").await;
@@ -1398,7 +1422,7 @@ async fn an_approval_waits_for_any_client_to_answer() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_turn_that_asks_tells_the_hooks() {
     let sandbox = Sandbox::new();
-    let home = sandbox.daemon.home();
+    let home = sandbox.rho_home();
     let events = home.join("asked.jsonl");
     let hook = home.join("on-input-requested");
     std::fs::write(&hook, format!("#!/bin/sh\ncat >> '{}'\n", events.display())).unwrap();
@@ -1444,7 +1468,7 @@ async fn a_turn_that_asks_tells_the_hooks() {
 fn sandbox_with_question_timeout(seconds: u64) -> Sandbox {
     let sandbox = Sandbox::new();
     std::fs::write(
-        sandbox.daemon.home().join("config.toml"),
+        &sandbox.isolated.config_path,
         format!("{CONFIG}\n[questionnaire]\ntimeout_seconds = {seconds}\n"),
     )
     .unwrap();

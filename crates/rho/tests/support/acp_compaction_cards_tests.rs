@@ -3,19 +3,19 @@
 //! the rest.
 
 use pretty_assertions::assert_eq;
+use rho_tui_pty::IsolatedHome;
 use serde_json::{json, Value};
-use tempfile::TempDir;
 
 use super::AcpServer;
 
 /// A fixture home whose model has `window` usable tokens, so a small window
 /// makes every prompt compact automatically.
-fn server(window: Option<u32>) -> (TempDir, AcpServer) {
-    let home = TempDir::new().unwrap();
-    let rho_home = home.path().join(".rho");
+fn server(window: Option<u32>) -> (IsolatedHome, AcpServer) {
+    let home = IsolatedHome::new().unwrap();
+    let rho_home = home.rho_home();
     std::fs::create_dir_all(&rho_home).unwrap();
     std::fs::write(
-        home.path().join("config.toml"),
+        &home.config_path,
         r#"provider = "xai"
 model = "grok-fixture"
 auth = "xai-oauth"
@@ -33,9 +33,9 @@ provider = "disabled"
         )
         .unwrap();
     }
-    let project = home.path().join("project");
+    let project = home.home.join("project");
     std::fs::create_dir_all(&project).unwrap();
-    let server = AcpServer::spawn(home.path(), &project, "fixed", &project);
+    let server = AcpServer::spawn(&home, &project, "fixed", &project);
     (home, server)
 }
 
@@ -117,7 +117,7 @@ fn manual_compaction_reports_a_card_only_to_hosts_that_advertise_it() {
         ("baseline host", json!({}), Vec::new(), 1),
     ] {
         let (home, mut server) = server(None);
-        let cwd = home.path().join("project");
+        let cwd = home.home.join("project");
         let session_id = start_session(&mut server, capabilities, &cwd);
         prompt(&mut server, &session_id, "hello");
         let updates = prompt(&mut server, &session_id, "/compact");
@@ -135,7 +135,7 @@ fn manual_compaction_reports_a_card_only_to_hosts_that_advertise_it() {
 #[test]
 fn automatic_compaction_reports_a_card() {
     let (home, mut server) = server(Some(1_000));
-    let cwd = home.path().join("project");
+    let cwd = home.home.join("project");
     let session_id = start_session(&mut server, json!({"session": {"compaction": {}}}), &cwd);
     let mut lifecycles = Vec::new();
     for text in ["hello", "again"] {

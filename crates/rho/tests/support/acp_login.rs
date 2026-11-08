@@ -38,15 +38,11 @@ fn unauthenticated_cold_start_can_discover_login() {
         }
         ids
     };
-    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_rho"));
+    let mut command = workspace.home.command(env!("CARGO_BIN_EXE_rho"));
     command
-        .env_clear()
-        .env("HOME", workspace.home.path())
-        .env("RHO_HOME", workspace.home.path().join(".rho"))
-        .env("RHO_CREDENTIAL_STORE", "file")
         .current_dir(&workspace.project)
         .arg("--config")
-        .arg(workspace.home.path().join("config.toml"))
+        .arg(&workspace.home.config_path)
         .args(["--provider", "github-copilot", "acp", "--t3code"]);
     let mut server = AcpServer::from_command(&mut command);
     let initialize =
@@ -126,7 +122,7 @@ fn advertised_terminal_login_saves_or_cancels_without_echoing_keys() {
         ),
     ] {
         let home = IsolatedHome::new().unwrap();
-        let store = FileCredentialStore::with_rho_home(home.home.join(".rho")).unwrap();
+        let store = FileCredentialStore::with_rho_home(home.rho_home()).unwrap();
         store
             .set_secret(OPENAI_API_KEY_ACCOUNT, "original-key")
             .unwrap();

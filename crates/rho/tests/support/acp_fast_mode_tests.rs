@@ -3,16 +3,16 @@
 //! the rest.
 
 use pretty_assertions::assert_eq;
+use rho_tui_pty::IsolatedHome;
 use serde_json::{json, Value};
-use tempfile::TempDir;
 
 use super::AcpServer;
 
 /// A fixture home on xAI OAuth `grok-4.7`, which supports fast mode.
-fn server() -> (TempDir, AcpServer) {
-    let home = TempDir::new().unwrap();
+fn server() -> (IsolatedHome, AcpServer) {
+    let home = IsolatedHome::new().unwrap();
     std::fs::write(
-        home.path().join("config.toml"),
+        &home.config_path,
         r#"provider = "xai"
 model = "grok-4.7"
 auth = "xai-oauth"
@@ -23,9 +23,9 @@ provider = "disabled"
 "#,
     )
     .unwrap();
-    let project = home.path().join("project");
+    let project = home.home.join("project");
     std::fs::create_dir_all(&project).unwrap();
-    let server = AcpServer::spawn(home.path(), &project, "fixed", &project);
+    let server = AcpServer::spawn(&home, &project, "fixed", &project);
     (home, server)
 }
 
@@ -76,7 +76,7 @@ fn fast_mode_is_a_switch_only_for_hosts_that_advertise_boolean_options() {
         let created = server
             .request(
                 "session/new",
-                json!({"cwd": home.path().join("project"), "mcpServers": []}),
+                json!({"cwd": home.home.join("project"), "mcpServers": []}),
             )
             .0
             .unwrap();
