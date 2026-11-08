@@ -13,8 +13,8 @@ use agent_client_protocol::{
     Error as AcpError,
 };
 use rho_protocol::{
-    self as wire, DetachReason, InputRequest, JobState, Seq, SessionAttachResponse, SessionEvent,
-    SessionId, SessionOptions, SessionSetup, TurnOutcome,
+    self as wire, DetachReason, InputRequest, Seq, SessionAttachResponse, SessionEvent,
+    SessionOptions, SessionSetup, TurnOutcome,
 };
 use tokio::{
     sync::{mpsc, oneshot},
@@ -27,14 +27,14 @@ use super::{
 use crate::{
     app::{
         acp::{
-            daemon::{self, Routed},
+            daemon,
             inputs::{InputContext, Inputs},
             updates::{self, Delivery, Updates},
             AcpClientPort,
         },
-        stream_position::{Part, StreamPosition},
+        daemon_client::{HerdrStatus, Part, ReplayedTurn, ResetReplay, Routed, StreamPosition},
     },
-    herdr::{HerdrReporter, HerdrSession, HerdrState},
+    herdr::HerdrReporter,
 };
 
 /// Starts the pump of session `context.session` on the attach that opened
@@ -50,7 +50,7 @@ pub(super) fn spawn(
 ) -> JoinHandle<()> {
     let pump = Pump {
         updates: Updates::new(context.features),
-        herdr: Herdr::new(herdr, &context.session),
+        herdr: HerdrStatus::new(herdr, &context.session),
         position: StreamPosition::attached(&opening.response),
         context,
         attacher,
@@ -64,51 +64,6 @@ pub(super) fn spawn(
     tokio::spawn(pump.run(opening))
 }
 
-/// The pane state Herdr shows for a session's job.
-fn herdr_state(state: JobState) -> HerdrState {
-    match state {
-        JobState::Running | JobState::Queued => HerdrState::Working,
-        JobState::WaitingForInput => HerdrState::Blocked,
-        JobState::Idle
-        | JobState::Completed
-        | JobState::Failed
-        | JobState::Cancelled
-        | JobState::TimedOut
-        | JobState::Interrupted => HerdrState::Idle,
-        // `Unknown`, or a state a newer daemon sends.
-        _ => HerdrState::Idle,
-    }
-}
-
-/// Reports a session's job state to Herdr when it changes.
-struct Herdr {
-    reporter: HerdrReporter,
-    session: HerdrSession,
-    last: Option<HerdrState>,
-}
-
-impl Herdr {
-    fn new(reporter: &HerdrReporter, id: &SessionId) -> Self {
-        Self {
-            reporter: reporter.clone(),
-            session: HerdrSession::without_resume(id.as_str()),
-            last: None,
-        }
-    }
-
-    async fn report(&mut self, state: JobState) {
-        let state = herdr_state(state);
-        if !self.reporter.is_enabled() || self.last == Some(state) {
-            return;
-        }
-        self.last = Some(state);
-        let _ = self
-            .reporter
-            .report_state(state, None, Some(&self.session))
-            .await;
-    }
-}
-
 /// An attachment's replay in progress.
 struct Replaying {
     show: Show,
@@ -117,35 +72,12 @@ struct Replaying {
     title: Option<String>,
     /// The input requests open when the attachment began.
     inputs: Vec<InputRequest>,
-    /// The job state the replay ends in.
-    state: JobState,
-    /// The last turn a skipped replay holds.
-    turn: ReplayedTurn,
+    /// What a skipped reset replay holds of the last turn.
+    replay: ResetReplay,
     done: Replayed,
     /// Released once the host has the response that names the session;
     /// only the attach that opened it has one.
     gate: Option<oneshot::Receiver<()>>,
-}
-
-/// The last turn a replay holds, as far as its user messages and turn ends
-/// tell.
-enum ReplayedTurn {
-    /// No turn.
-    Unseen,
-    /// The turn that began with this user message, not ended yet.
-    Began(wire::MessageId),
-    /// A turn that ended this way.
-    Ended(TurnOutcome),
-}
-
-impl ReplayedTurn {
-    fn observe(&mut self, event: &SessionEvent) {
-        match event {
-            SessionEvent::UserMessage { message, .. } => *self = Self::Began(message.clone()),
-            SessionEvent::TurnEnded { outcome } => *self = Self::Ended(outcome.clone()),
-            _ => {}
-        }
-    }
 }
 
 /// The prompt of this host's that the pump waits on.
@@ -171,7 +103,7 @@ struct Pump {
     updates: Updates,
     shared: Arc<Shared>,
     setup: SessionSetup,
-    herdr: Herdr,
+    herdr: HerdrStatus,
     waiter: Option<Armed>,
     inputs: Inputs,
     position: StreamPosition,
@@ -265,8 +197,7 @@ impl Pump {
             show,
             title: response.title,
             inputs: response.inputs,
-            state: response.state,
-            turn: ReplayedTurn::Unseen,
+            replay: ResetReplay::new(response.state),
             done,
             gate,
         });
@@ -293,7 +224,7 @@ impl Pump {
                 }
             }
             Show::Missed => self.live(event).await,
-            Show::Skip => replaying.turn.observe(&event),
+            Show::Skip => replaying.replay.observe(&event),
         }
         if left == 0 {
             self.end_replay().await;
@@ -309,8 +240,7 @@ impl Pump {
             show,
             title,
             inputs,
-            state,
-            turn,
+            replay,
             done,
             gate,
         }) = self.replaying.take()
@@ -323,7 +253,7 @@ impl Pump {
                     SessionUpdate::SessionInfoUpdate(SessionInfoUpdate::new().title(title));
                 self.send(&*port, update, Delivery::Replay).await;
             }
-            (Show::Skip, _) => self.settle_replayed(turn, state),
+            (Show::Skip, _) => self.settle_replayed(replay),
             (Show::History(_) | Show::Missed, _) => {}
         }
         let _ = done.send(Ok(()));
@@ -344,7 +274,7 @@ impl Pump {
     /// the prompt's turn shows as live events. A prompt the daemon has not
     /// saved yet, while the job is idle, is taken to be the turn that ended:
     /// the replay cannot tell them apart.
-    fn settle_replayed(&mut self, turn: ReplayedTurn, state: JobState) {
+    fn settle_replayed(&mut self, ResetReplay { state, turn }: ResetReplay) {
         match (turn, busy(state)) {
             (ReplayedTurn::Ended(outcome), false) => {
                 if let Some(armed) = self.waiter.take() {

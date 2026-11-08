@@ -1,7 +1,6 @@
 use std::{
     collections::VecDeque,
     future::Future,
-    path::PathBuf,
     pin::Pin,
     sync::{atomic::AtomicU64, Arc, Mutex},
 };
@@ -17,18 +16,23 @@ use agent_client_protocol::{
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     self as wire, AnswerStop, Cursor, DetachReason, JobState, Replay, Seq, SessionAttachResponse,
-    SessionEvent, SessionId, SessionSetup, StreamId, TurnOutcome,
+    SessionEvent, SessionId, SessionSetup, TurnOutcome,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
 use super::spawn;
 use crate::{
-    app::acp::{
-        daemon::{self, Daemon, Routed},
-        host_features::HostFeatures,
-        inputs::InputContext,
-        sessions::{Accept, Attacher, Attachment, Control, Inbound, Opening, Shared, Show, Waiter},
-        AcpClientPort,
+    app::{
+        acp::{
+            daemon,
+            host_features::HostFeatures,
+            inputs::InputContext,
+            sessions::{
+                Accept, Attacher, Attachment, Control, Inbound, Opening, Shared, Show, Waiter,
+            },
+            AcpClientPort,
+        },
+        daemon_client::{test_support::attach_response, Daemon, Routed},
     },
     herdr::HerdrReporter,
 };
@@ -118,38 +122,6 @@ impl Attacher for Script {
     }
 }
 
-fn attached(replay: Replay, replay_events: u64, state: JobState) -> SessionAttachResponse {
-    let current = wire::ModelRef {
-        provider: "openai".into(),
-        model: "gpt-5".into(),
-    };
-    SessionAttachResponse {
-        stream: StreamId::new("stream"),
-        workspace: PathBuf::from("/work"),
-        replay,
-        replay_events,
-        state,
-        inputs: Vec::new(),
-        title: None,
-        options: wire::SessionOptions {
-            model: wire::ModelOptions {
-                current: current.clone(),
-                available: vec![wire::ModelChoice {
-                    model: current,
-                    label: "GPT-5".into(),
-                }],
-            },
-            reasoning: None,
-            fast_mode: None,
-            permission_mode: wire::PermissionModeOptions {
-                current: wire::PermissionMode::Auto,
-                available: vec![wire::PermissionMode::Auto],
-            },
-            commands: Vec::new(),
-        },
-    }
-}
-
 fn user(id: &str) -> SessionEvent {
     SessionEvent::UserMessage {
         message: wire::MessageId::new(id),
@@ -198,7 +170,7 @@ impl Pump {
     fn start(state: JobState, script: Script) -> Self {
         let host = Arc::new(Host::default());
         let script = Arc::new(script);
-        let response = attached(Replay::Reset, 0, state);
+        let response = attach_response(Replay::Reset, 0, state);
         let shared = Arc::new(Shared {
             options: Mutex::new(response.options.clone()),
             attachment: watch::channel(Attachment::Stale).0,
@@ -401,7 +373,7 @@ async fn lagged_attachments_resume_and_settle_the_prompt() {
         Case {
             label: "tail holds the turn's end",
             before: vec![user("m1")],
-            resumed: attached(Replay::Tail, 1, JobState::Completed),
+            resumed: attach_response(Replay::Tail, 1, JobState::Completed),
             replay: vec![(2, ended(answered("a")))],
             after: vec![],
             resumed_after: Some(Seq(1)),
@@ -414,7 +386,7 @@ async fn lagged_attachments_resume_and_settle_the_prompt() {
         Case {
             label: "reset after the prompt's turn ended",
             before: vec![user("m1")],
-            resumed: attached(Replay::Reset, 4, JobState::Completed),
+            resumed: attach_response(Replay::Reset, 4, JobState::Completed),
             replay: vec![
                 (0, user("m0")),
                 (0, ended(answered("old"))),
@@ -432,7 +404,7 @@ async fn lagged_attachments_resume_and_settle_the_prompt() {
         Case {
             label: "reset while the prompt's turn runs",
             before: vec![],
-            resumed: attached(Replay::Reset, 3, JobState::Running),
+            resumed: attach_response(Replay::Reset, 3, JobState::Running),
             replay: vec![
                 (0, user("m0")),
                 (0, ended(answered("old"))),
@@ -449,7 +421,7 @@ async fn lagged_attachments_resume_and_settle_the_prompt() {
         Case {
             label: "reset before the prompt's turn began",
             before: vec![],
-            resumed: attached(Replay::Reset, 1, JobState::Idle),
+            resumed: attach_response(Replay::Reset, 1, JobState::Idle),
             replay: vec![(0, user("m0"))],
             after: vec![user("m1")],
             resumed_after: None,

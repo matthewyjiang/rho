@@ -3,7 +3,7 @@
 //! The daemon owns every session; this process attaches to the ones its
 //! host opens, loads, or resumes, and relays them. A session's events
 //! reach one pump task (`sessions/pump.rs`), in order, through the router
-//! (`daemon.rs`), and the requests the host sends about it
+//! (`app::daemon_client`), and the requests the host sends about it
 //! (`session/prompt`, config changes) hand the pump what it must sequence
 //! with those events as [`Control`]s on the same channel, after the events
 //! the connection already read ([`Live::deliver`]).
@@ -51,11 +51,8 @@ use tokio::{
     task::JoinHandle,
 };
 
-use super::{
-    daemon::{self, Daemon, Link, Routed, SessionRoute},
-    inputs::InputContext,
-    options, requests, AcpClientPort, Adapter,
-};
+use super::{daemon, inputs::InputContext, options, requests, AcpClientPort, Adapter};
+use crate::app::daemon_client::{Daemon, Link, Routed, SessionRoute};
 
 /// What a session's pump reads, in order: what the router read for the
 /// session, and what its requests hand it.
@@ -186,7 +183,9 @@ impl Attacher for Daemon {
                 environment: ClientEnvironment::of_this_process(),
                 setup: setup.clone(),
             };
-            self.request::<SessionAttach>(&params).await
+            self.request::<SessionAttach>(&params)
+                .await
+                .map_err(AcpError::from)
         })
     }
 }
