@@ -54,7 +54,8 @@ pub(super) async fn open(
         no_save,
         resume: _,
         continue_latest: _,
-        // Held by the composer, which says prompts come later (T1c).
+        // The TUI submits it from the composer, which sends it to the
+        // session like any prompt.
         prompt: _,
         // `None`: interactive launches have no subcommand.
         command: _,

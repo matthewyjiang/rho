@@ -60,8 +60,10 @@ mod copy_interaction;
 // elsewhere no daemon session opens and the mapper is never built.
 #[cfg_attr(not(unix), allow(dead_code))]
 mod daemon_events;
+mod daemon_prompt;
 mod daemon_session;
 mod daemon_transcript;
+mod daemon_turn;
 mod diff_pane;
 mod diff_viewer;
 mod divider;

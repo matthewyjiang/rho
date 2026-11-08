@@ -8,18 +8,23 @@
 //! the in-process TUI uses (`ToolCallUpdate::display`), so a card reads the
 //! same either way.
 //!
+//! The job's state says whether a turn runs ([`TurnState`]), which drives
+//! the TUI's busy chrome; steers carry their id, so the TUI's pending panel
+//! drops a steer once the daemon applied it.
+//!
 //! It holds only what the events leave implicit: which message the last
-//! text chunk extended, the reply the last turn streamed, and each open
-//! call's last card, which a call cut off shows as interrupted.
+//! text chunk extended, the reply the last turn streamed, each open call's
+//! last card, which a call cut off shows as interrupted, and why the last
+//! turn failed, which its job state leaves out.
 
 use std::collections::HashMap;
 
 use rho_protocol::{
     display::{Presentation, ToolCard, ToolCardStatus},
-    CompactionStatus, ContentBlock, MessageId, PlanEntry, PlanStatus, SessionEvent,
-    ToolCallId as WireCallId, ToolCallUpdate, ToolStatus, TurnOutcome,
+    CompactionStatus, ContentBlock, JobState, MessageId, PlanEntry, PlanStatus, SessionEvent,
+    SteerId, ToolCallId as WireCallId, ToolCallUpdate, ToolStatus, TurnOutcome,
 };
-use rho_sdk::ToolCallId;
+use rho_sdk::{SteeringId, ToolCallId};
 
 use super::{
     compaction_display::{
@@ -62,10 +67,43 @@ pub(super) enum DaemonView {
         used_tokens: u64,
         window_tokens: Option<u64>,
     },
+    /// Whether a turn runs, as the job's state says.
+    Turn(TurnState),
+    /// The steer the TUI sent with this id applied: the user row that
+    /// follows shows it.
+    SteerApplied(SteeringId),
+    /// The provider took the steer mid-request; it can no longer be
+    /// withdrawn.
+    SteerDelivered(SteeringId),
     /// Status-line feedback.
     Status(String),
     Notice(String),
     Error(String),
+}
+
+/// Whether the session runs a turn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum TurnState {
+    /// A turn runs.
+    Running,
+    /// The turn waits for an answer to one of its input requests.
+    WaitingForInput,
+    /// No turn runs; the last one ended so.
+    Resting(Rest),
+}
+
+/// How a session at rest got there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Rest {
+    /// No turn has run, or the last one completed.
+    Ready,
+    /// The last turn was cancelled, or the daemon stopped before it ended.
+    Interrupted,
+    /// The last turn failed, or ran out of time, for this reason.
+    Failed { error: String },
+    /// The TUI no longer follows the session: the attachment ended, and an
+    /// error row says why. Its turn may still run in the daemon.
+    Unfollowed,
 }
 
 /// Reads one daemon session's events into [`DaemonView`]s.
@@ -82,6 +120,8 @@ pub(super) struct DaemonEvents {
     called_since_reply: bool,
     /// Each open call's last running card.
     running: HashMap<WireCallId, ToolCard>,
+    /// Why the last turn failed, which its `failed` job state shows.
+    failure: Option<String>,
 }
 
 impl DaemonEvents {
@@ -94,15 +134,24 @@ impl DaemonEvents {
     /// What `event` changes.
     pub(super) fn map(&mut self, event: SessionEvent) -> Vec<DaemonView> {
         match event {
-            SessionEvent::UserMessage { content, .. } => {
+            SessionEvent::UserMessage { content, steer, .. } => {
                 self.end_messages();
+                let mut views: Vec<_> = steer
+                    .as_ref()
+                    .and_then(steering_id)
+                    .map(DaemonView::SteerApplied)
+                    .into_iter()
+                    .collect();
                 let text = user_text(&content);
-                if text.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![DaemonView::User(text)]
+                if !text.is_empty() {
+                    views.push(DaemonView::User(text));
                 }
+                views
             }
+            SessionEvent::SteeringDelivered { id } => steering_id(&id)
+                .map(DaemonView::SteerDelivered)
+                .into_iter()
+                .collect(),
             SessionEvent::AgentMessageChunk { message, text } => {
                 vec![self.text(StreamKind::Assistant, message, text)]
             }
@@ -141,8 +190,7 @@ impl DaemonEvents {
             // The TUI reads the title from the session's file, which the
             // daemon saved before it sent this; T1e shows it as it changes.
             SessionEvent::TitleChanged { .. } => Vec::new(),
-            // Busy state follows the job's state in T1c.
-            SessionEvent::State { .. } => Vec::new(),
+            SessionEvent::State { state } => vec![self.turn(state)],
             // Input requests are answered from the TUI in T1d.
             SessionEvent::InputRequested { .. }
             | SessionEvent::InputResolved { .. }
@@ -152,6 +200,30 @@ impl DaemonEvents {
             // `Unknown`, or an event a newer daemon sends.
             _ => Vec::new(),
         }
+    }
+
+    /// Whether a turn runs once the job is in `state`, as an event or the
+    /// attach response says.
+    pub(super) fn turn(&mut self, state: JobState) -> DaemonView {
+        let turn = match state {
+            JobState::Running | JobState::Queued => {
+                self.failure = None;
+                TurnState::Running
+            }
+            JobState::WaitingForInput => TurnState::WaitingForInput,
+            JobState::Idle | JobState::Completed => TurnState::Resting(Rest::Ready),
+            JobState::Cancelled | JobState::Interrupted => TurnState::Resting(Rest::Interrupted),
+            JobState::Failed | JobState::TimedOut => TurnState::Resting(Rest::Failed {
+                error: self
+                    .failure
+                    .take()
+                    .unwrap_or_else(|| "the turn failed".into()),
+            }),
+            // `Unknown`, or a state a newer daemon sends: shown at rest
+            // rather than as a turn that never ends.
+            _ => TurnState::Resting(Rest::Ready),
+        };
+        DaemonView::Turn(turn)
     }
 
     fn text(&mut self, kind: StreamKind, message: MessageId, text: String) -> DaemonView {
@@ -251,16 +323,34 @@ impl DaemonEvents {
                     FinalAnswerDelta::Mismatch => Vec::new(),
                 }
             }
+            // A replayed cancel says so too, though the TUI was never busy
+            // with that turn.
             TurnOutcome::Cancelled => vec![DaemonView::Status("model interrupted".into())],
-            TurnOutcome::TimedOut { timeout_ms } => vec![DaemonView::Error(format!(
-                "the turn timed out after {}",
-                humantime::format_duration(std::time::Duration::from_millis(timeout_ms))
-            ))],
-            TurnOutcome::Failed { error } => vec![DaemonView::Error(error.message)],
+            TurnOutcome::TimedOut { timeout_ms } => {
+                let error = format!(
+                    "the turn timed out after {}",
+                    humantime::format_duration(std::time::Duration::from_millis(timeout_ms))
+                );
+                self.failure = Some(error.clone());
+                vec![DaemonView::Error(error)]
+            }
+            TurnOutcome::Failed { error } => {
+                self.failure = Some(error.message.clone());
+                vec![DaemonView::Error(error.message)]
+            }
             // `Unknown`, or an outcome a newer daemon sends.
             _ => Vec::new(),
         }
     }
+}
+
+/// A steer's id as the TUI's pending panel keys it.
+fn steering_id(id: &SteerId) -> Option<SteeringId> {
+    let id = SteeringId::from_string(id.as_str());
+    if id.is_err() {
+        tracing::debug!("skipping a daemon steer without an id");
+    }
+    id.ok()
 }
 
 /// A user message's blocks as the transcript shows them, one per line.

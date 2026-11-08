@@ -1,15 +1,22 @@
 //! Shows a daemon session's [`DaemonView`]s through the TUI's own transcript
 //! paths (#1667): history entries and the live tool batch, fed the same
-//! view-model events an in-process turn feeds them. Also holds the composer
-//! gate for prompts, which daemon sessions do not take from the TUI yet.
+//! view-model events an in-process turn feeds them, and the busy chrome an
+//! in-process turn shows, which here follows the job's state.
+
+use std::time::Instant;
 
 use super::{
-    daemon_events::DaemonView, event_adapter::ViewModelEvent, App, DefaultTerminal, Entry,
+    activity::ActivityPhase,
+    compact_work::ReadyFollowUp,
+    daemon_events::{DaemonView, Rest, TurnState},
+    event_adapter::ViewModelEvent,
+    program_status::ProgramStatus,
+    App, DefaultTerminal, Entry, HerdrState, StreamKind,
 };
 
 impl App {
     /// Applies what the followed daemon session changed.
-    pub(super) fn show_daemon_views(
+    pub(super) async fn show_daemon_views(
         &mut self,
         views: Vec<DaemonView>,
         terminal: &mut DefaultTerminal,
@@ -22,16 +29,19 @@ impl App {
                     self.set_todo_list(None);
                 }
                 DaemonView::User(text) => self.insert_entry(&Entry::User(text)),
-                DaemonView::Text {
-                    kind,
-                    text,
-                    opens: true,
-                } => self.open_transcript_row(kind.entry(text)),
-                DaemonView::Text {
-                    kind,
-                    text,
-                    opens: false,
-                } => self.push_transcript_entry(kind.entry(text)),
+                DaemonView::Text { kind, text, opens } => {
+                    if self.turn.is_provider_turn() {
+                        self.turn.set_activity_phase(match kind {
+                            StreamKind::Assistant => ActivityPhase::Responding,
+                            StreamKind::Reasoning => ActivityPhase::Thinking,
+                        });
+                    }
+                    if opens {
+                        self.open_transcript_row(kind.entry(text));
+                    } else {
+                        self.push_transcript_entry(kind.entry(text));
+                    }
+                }
                 DaemonView::ToolRunning { call, card } => {
                     self.handle_agent_event(
                         ViewModelEvent::ToolStarted {
@@ -70,6 +80,12 @@ impl App {
                         terminal,
                     )?;
                 }
+                DaemonView::Turn(state) => self.show_daemon_turn(state).await,
+                DaemonView::SteerApplied(id) => {
+                    // The user row that follows shows it.
+                    let _ = self.take_accepted_steering(std::slice::from_ref(&id));
+                }
+                DaemonView::SteerDelivered(id) => self.record_delivered_steering(&id),
                 DaemonView::Status(text) => self.set_status(text),
                 DaemonView::Notice(text) => self.insert_entry(&Entry::Notice(text)),
                 DaemonView::Error(text) => self.insert_entry(&Entry::Error(text)),
@@ -87,14 +103,110 @@ impl App {
         self.mark_markdown_images_dirty_from(index);
     }
 
-    /// Whether the composer keeps a prompt it would send, because this TUI
-    /// follows a daemon session, which takes prompts from the TUI only once
-    /// T1c lands. Says so on the status line; the composer keeps the text.
-    pub(super) fn holds_prompt_for_daemon(&mut self) -> bool {
-        if self.info.session.daemon.is_none() {
-            return false;
+    /// Shows the session's turn as the job's state says: the busy chrome,
+    /// program status, and Herdr state an in-process turn shows while it
+    /// runs, and how it ended once it rests.
+    async fn show_daemon_turn(&mut self, state: TurnState) {
+        match state {
+            TurnState::Running => {
+                self.begin_daemon_turn();
+                if self.turn.activity_phase() == ActivityPhase::WaitingForInput {
+                    self.turn.set_activity_phase(ActivityPhase::Starting);
+                }
+                self.report_working().await;
+            }
+            TurnState::WaitingForInput => {
+                self.begin_daemon_turn();
+                self.turn.set_activity_phase(ActivityPhase::WaitingForInput);
+                self.report_herdr_state(HerdrState::Blocked, Some("waiting for input"))
+                    .await;
+            }
+            TurnState::Resting(rest) => self.end_daemon_turn(rest).await,
         }
-        self.notify_status("sending prompts to a daemon session is not supported yet");
-        true
+    }
+
+    /// The busy chrome of a turn that started, unless it shows already.
+    fn begin_daemon_turn(&mut self) {
+        if self.turn.is_provider_turn() {
+            return;
+        }
+        // After the turn's user row, which the daemon sent first.
+        self.turn.set_current_turn_start(Some(self.history.len()));
+        self.set_status("running");
+        self.begin_provider_turn_ui();
+        self.turn.set_activity_phase(ActivityPhase::Starting);
+        self.turn.start_loading();
+    }
+
+    /// Ends the busy chrome as the turn rested `rest`. Cards still running
+    /// stay in the transcript as interrupted, as a replay of a turn the
+    /// daemon never closed leaves them; a session already at rest only
+    /// tidies those.
+    ///
+    /// Pending work settles as an in-process turn's does: an interrupted
+    /// turn hands it back to the composer, any other keeps steers it never
+    /// applied as follow-ups, and a completed one arms the next follow-up,
+    /// which the app loop sends once the composer is free.
+    async fn end_daemon_turn(&mut self, rest: Rest) {
+        for entry in self.turn.interrupted_tool_entries() {
+            self.insert_entry(&Entry::Tool(entry));
+        }
+        self.turn.clear_tool_calls();
+        self.turn.set_activity_phase(ActivityPhase::default());
+        if !self.turn.is_provider_turn() {
+            return;
+        }
+        // Read before `stop_loading` clears the turn clock.
+        let worked = self.turn.elapsed_at(Instant::now());
+        if matches!(rest, Rest::Interrupted) {
+            self.restore_pending_work_to_input();
+        } else {
+            self.preserve_unapplied_steering_as_follow_ups();
+        }
+        self.clear_accepted_steering();
+        let (status, settled) = match rest {
+            Rest::Ready => {
+                self.end_provider_turn_ui();
+                if let Some(worked) = worked {
+                    self.attach_turn_worked(worked);
+                }
+                let status = if self.pending.has_follow_ups() {
+                    self.start_follow_ups = Some(ReadyFollowUp::Queued {
+                        allow_auto_compact: false,
+                    });
+                    format!(
+                        "running next queued message ({})",
+                        self.pending.follow_up_len()
+                    )
+                } else {
+                    "ready".to_owned()
+                };
+                (Some(status), ProgramStatus::Done)
+            }
+            Rest::Interrupted => {
+                self.end_busy_ui();
+                (Some("model interrupted".to_owned()), ProgramStatus::Idle)
+            }
+            Rest::Failed { error } => {
+                self.end_busy_ui();
+                (
+                    Some("error".to_owned()),
+                    ProgramStatus::Error { message: error },
+                )
+            }
+            // The error row says why; the turn may run on in the daemon.
+            Rest::Unfollowed => {
+                self.end_busy_ui();
+                (None, ProgramStatus::Idle)
+            }
+        };
+        self.turn.stop_loading();
+        self.turn.set_current_turn_start(None);
+        if let Some(status) = status {
+            self.set_status(status);
+        }
+        self.settled_program_status = settled;
+        self.notifier.turn_finished();
+        self.report_resting_herdr_state().await;
     }
 }
