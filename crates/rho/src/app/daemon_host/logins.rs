@@ -82,6 +82,7 @@ impl Logins {
         sessions: Arc<Sessions>,
     ) -> Result<(AuthLoginResponse, LoginStream), RpcError> {
         let AuthLoginParams { auth, flow } = params;
+        let flow = flow.unwrap_or_default();
         let target = off_workers(move || LoginAuth::resolve(&auth)).await??;
         let login = LoginId::new(uuid::Uuid::new_v4().to_string());
         let cancel = CancellationToken::new();

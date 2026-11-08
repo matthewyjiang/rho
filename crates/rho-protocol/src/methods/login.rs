@@ -54,10 +54,10 @@ pub struct AuthLoginParams {
     /// an interactive login ([`crate::AuthKind::Login`]); an API key goes
     /// through [`crate::methods::AUTH_KEY`].
     pub auth: String,
-    /// How the user finishes a provider that offers both flows. A provider
-    /// with one flow ignores it.
-    #[serde(default)]
-    pub flow: LoginFlow,
+    /// How the user finishes a provider that offers both flows, `browser`
+    /// when absent. A provider with one flow ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow: Option<LoginFlow>,
 }
 
 /// How the user finishes a login whose provider offers both flows. The

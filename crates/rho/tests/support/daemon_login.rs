@@ -59,7 +59,7 @@ async fn start_login(client: &Client) -> Result<LoginId, Option<ErrorCode>> {
     client
         .request::<AuthLogin>(&AuthLoginParams {
             auth: AUTH.into(),
-            flow: LoginFlow::DeviceCode,
+            flow: Some(LoginFlow::DeviceCode),
         })
         .await
         .map(|response| response.login)

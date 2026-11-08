@@ -9,7 +9,7 @@
 //! it closes, which the relay sees as [`LoginRelay::closed`]: the login has
 //! nobody left to show its prompt to.
 
-use tokio::sync::mpsc::{self, error::TryRecvError};
+use tokio::sync::mpsc;
 
 use crate::methods::{LoginOutcome, LoginPrompt};
 
@@ -84,9 +84,6 @@ impl LoginStream {
     /// The next message already sent, without waiting; `None` when there is
     /// none yet or the relay is gone.
     pub(crate) fn try_next(&mut self) -> Option<LoginEvent> {
-        match self.events.try_recv() {
-            Ok(event) => Some(event),
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => None,
-        }
+        self.events.try_recv().ok()
     }
 }

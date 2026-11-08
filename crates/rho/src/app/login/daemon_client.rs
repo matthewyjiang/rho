@@ -81,7 +81,7 @@ async fn log_in(auth: String, provider_label: &str, device_auth: bool) -> anyhow
     let login = client
         .request::<AuthLogin>(&AuthLoginParams {
             auth: auth.clone(),
-            flow,
+            flow: Some(flow),
         })
         .await
         .with_context(|| format!("could not start the {provider_label} login"))?

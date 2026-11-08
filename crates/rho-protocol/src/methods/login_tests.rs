@@ -41,7 +41,7 @@ fn login_messages_travel_in_their_wire_form() {
     round_trips(
         AuthLoginParams {
             auth: "xai-oauth".into(),
-            flow: LoginFlow::DeviceCode,
+            flow: Some(LoginFlow::DeviceCode),
         },
         json!({"auth": "xai-oauth", "flow": "device_code"}),
     );
@@ -49,7 +49,7 @@ fn login_messages_travel_in_their_wire_form() {
         serde_json::from_value::<AuthLoginParams>(json!({"auth": "github-copilot"})).unwrap(),
         AuthLoginParams {
             auth: "github-copilot".into(),
-            flow: LoginFlow::Browser,
+            flow: None,
         }
     );
     round_trips(

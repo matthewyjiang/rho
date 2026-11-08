@@ -7,10 +7,10 @@ use serde_json::{json, Value};
 
 use super::OTHER;
 use crate::methods::{
-    AnswerStop, ApprovalSource, Ask, Budget, CardTone, CommandKind, CompactionStatus, ContentBlock,
-    DefaultStyle, DetachReason, JobKind, JobState, Operation, PathScope, PermissionMode,
-    PlanStatus, ReasoningLevel, Resolution, Selection, SessionEvent, ToolContent, ToolKind,
-    ToolStatus, TurnErrorKind, TurnOutcome, UncheckedReason,
+    AnswerStop, ApprovalSource, Ask, AuthKind, AuthStatus, Budget, CardTone, CommandKind,
+    CompactionStatus, ContentBlock, DefaultStyle, DetachReason, JobKind, JobState, LoginOutcome,
+    Operation, PathScope, PermissionMode, PlanStatus, ReasoningLevel, Resolution, Selection,
+    SessionEvent, ToolContent, ToolKind, ToolStatus, TurnErrorKind, TurnOutcome, UncheckedReason,
 };
 
 // Covers: the committed schema/protocol.json is what the wire types
@@ -50,7 +50,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 26] = [
+    let cases: [(&str, bool); 29] = [
         ("JobKind", reads_as(unseen(), JobKind::Unknown)),
         ("JobState", reads_as(unseen(), JobState::Unknown)),
         ("Budget", reads_as(unseen(), Budget::Unknown)),
@@ -98,6 +98,12 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
             reads_as(unseen(), ReasoningLevel::Unknown),
         ),
         ("CommandKind", reads_as(unseen(), CommandKind::Unknown)),
+        ("AuthKind", reads_as(unseen(), AuthKind::Unknown)),
+        ("AuthStatus", reads_as(unseen(), AuthStatus::Unknown)),
+        (
+            "LoginOutcome",
+            reads_as(unseen_tag(), LoginOutcome::Unknown),
+        ),
     ];
 
     let document = super::document();
