@@ -42,6 +42,7 @@ fn test_options() -> McpSessionOptions {
         McpRoots::default(),
         // No test may open a browser.
         crate::tools::mcp::McpAuthorizationMode::NonInteractive,
+        crate::session_environment::Ambient::ThisProcess,
     )
 }
 

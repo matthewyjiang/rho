@@ -4916,6 +4916,7 @@ dependencies = [
  "url",
  "uuid",
  "vt100",
+ "which",
  "windows-sys 0.61.2",
  "winresource",
 ]
@@ -5042,7 +5043,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
- "which",
 ]
 
 [[package]]

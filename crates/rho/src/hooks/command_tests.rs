@@ -5,7 +5,7 @@
 //! The Windows job-object path is exercised by the shared shell-tool suite.
 #![cfg(unix)]
 
-use std::{path::Path, time::Duration};
+use std::{collections::BTreeMap, ffi::OsString, path::Path, time::Duration};
 
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
@@ -41,7 +41,13 @@ fn hook_running(script: &str, timeout: &str, env: &[&str], home: &TempDir) -> Ho
 }
 
 async fn run(hook: &HookDefinition, event: &str) -> Result<HookRunOutput, HookRunError> {
-    run_hook(hook, event, rho_sdk::CancellationToken::new()).await
+    run_hook(
+        hook,
+        event,
+        &Ambient::ThisProcess,
+        rho_sdk::CancellationToken::new(),
+    )
+    .await
 }
 
 #[tokio::test]
@@ -128,7 +134,9 @@ async fn cancellation_stops_a_running_handler() {
         canceller.cancel();
     });
 
-    let error = run_hook(&hook, "{}", cancellation).await.unwrap_err();
+    let error = run_hook(&hook, "{}", &Ambient::ThisProcess, cancellation)
+        .await
+        .unwrap_err();
 
     assert_eq!(error, HookRunError::Cancelled);
 }
@@ -163,29 +171,79 @@ async fn output_larger_than_the_bound_is_captured_up_to_the_bound_and_flagged() 
     assert!(output.stderr.starts_with(rho_sdk::ELLIPSIS));
 }
 
-#[tokio::test]
-async fn a_handler_receives_only_the_environment_the_contract_promises() {
+// Covers: a hook's command gets exactly its session's base set and
+// allowlist, read from the session's environment, such as a daemon client's,
+// and nothing else of it; an unset allowlisted name stays absent, and an
+// allowlist cannot override the recursion marker (#1659).
+// Owner: hook spawn contract (`build_command`)
+#[test]
+fn a_handler_gets_exactly_its_sessions_base_set_and_allowlist() {
     let home = TempDir::new().unwrap();
-    // `child_environment` owns which names pass through; this owns whether the
-    // spawned child really gets exactly that map. Reading an ambient name the
-    // contract excludes avoids mutating the shared process environment.
-    let excluded = std::env::vars()
-        .map(|(name, _)| name)
-        .find(|name| {
-            !super::super::environment::base_environment_names().contains(&name.as_str())
-                && name != crate::hooks::IN_HOOK_ENV
-        })
-        .expect("the test process has at least one variable outside the base set");
-    let hook = hook_running("env | sort", "10s", &[], &home);
-
-    let output = run(&hook, "{}").await.unwrap();
-
-    let environment = String::from_utf8_lossy(&output.stdout);
-    assert!(environment.contains(&format!("{}=1", crate::hooks::IN_HOOK_ENV)));
-    assert!(
-        !environment.contains(&format!("{excluded}=")),
-        "ambient variable {excluded} reached a hook: {environment}"
+    let hook = hook_running(
+        "true",
+        "10s",
+        &["MY_HOOK_TOKEN", "NOT_SET", crate::hooks::IN_HOOK_ENV],
+        &home,
     );
+    let session = Ambient::client(&[
+        ("PATH", "/client/bin"),
+        ("HOME", "/home/client"),
+        ("MY_HOOK_TOKEN", "token"),
+        (crate::hooks::IN_HOOK_ENV, "0"),
+        ("OPENAI_API_KEY", "secret"),
+        ("UNRELATED", "value"),
+    ]);
+
+    let command = build_command(&hook, &session);
+
+    let environment = command
+        .as_std()
+        .get_envs()
+        .map(|(name, value)| (name.to_owned(), value.map(ToOwned::to_owned)))
+        .collect::<BTreeMap<_, _>>();
+    let expected = [
+        ("PATH", "/client/bin"),
+        ("HOME", "/home/client"),
+        ("MY_HOOK_TOKEN", "token"),
+        (crate::hooks::IN_HOOK_ENV, "1"),
+    ]
+    .map(|(name, value)| (OsString::from(name), Some(OsString::from(value))));
+    assert_eq!(environment, BTreeMap::from(expected));
+}
+
+// Covers: a running hook sees exactly what its command was given from a
+// client's environment, so nothing of this process's own reaches it through
+// the spawn, such as `CARGO_MANIFEST_DIR`, which only the test process has
+// (#1659). `env` runs directly, not through a shell that would export
+// variables of its own.
+// Owner: hook spawn (`run_hook`)
+#[tokio::test]
+async fn a_running_handler_sees_only_its_clients_base_set_and_allowlist() {
+    let home = TempDir::new().unwrap();
+    let mut hook = hook_running("true", "10s", &["MY_HOOK_TOKEN"], &home);
+    hook.executable = which::which("env").expect("the test machine has `env`");
+    hook.command = vec![crate::paths::display(&hook.executable)];
+    let client = Ambient::client(&[
+        ("PATH", "/usr/bin:/bin"),
+        ("MY_HOOK_TOKEN", "token"),
+        ("UNRELATED", "value"),
+    ]);
+
+    let output = run_hook(&hook, "{}", &client, rho_sdk::CancellationToken::new())
+        .await
+        .unwrap();
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let environment = stdout
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .collect::<BTreeMap<_, _>>();
+    let expected = BTreeMap::from([
+        ("PATH", "/usr/bin:/bin"),
+        ("MY_HOOK_TOKEN", "token"),
+        (crate::hooks::IN_HOOK_ENV, "1"),
+    ]);
+    assert_eq!(environment, expected);
 }
 
 #[tokio::test]

@@ -48,7 +48,11 @@ impl Fixture {
             HookCatalog::discover(Some(self.home.path()), None, ProjectTrust::Untrusted).unwrap();
         (
             self.home,
-            Arc::new(HookEngine::new(catalog, HookPayloadBounds::default())),
+            Arc::new(HookEngine::new(
+                catalog,
+                HookPayloadBounds::default(),
+                SessionEnvironment::default(),
+            )),
         )
     }
 }
@@ -359,6 +363,7 @@ async fn drain_owns_queue_closure_even_while_an_observer_is_attached() {
     let engine = Arc::new(HookEngine::new(
         HookCatalog::default(),
         HookPayloadBounds::default(),
+        SessionEnvironment::default(),
     ));
     let cancellation = rho_sdk::CancellationToken::new();
     let (observer, worker) = observational_channel(Arc::clone(&engine), cancellation.clone());

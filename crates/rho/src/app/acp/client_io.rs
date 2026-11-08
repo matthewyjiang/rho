@@ -12,7 +12,7 @@ use std::{
 use agent_client_protocol::schema::v1::SessionId;
 
 use super::{client_files::ClientFiles, client_terminals::ClientTerminals, AcpStartup};
-use crate::tools::host_io::HostIo;
+use crate::{session_environment::SessionEnvironment, tools::host_io::HostIo};
 
 /// One session's host I/O. Each part is `None` unless the host advertised it.
 #[derive(Clone)]
@@ -63,7 +63,7 @@ impl ClientIo {
                 .map(|terminals| terminals as Arc<dyn rho_tools::HostTerminals>),
             // The ACP client started this process, so its environment is
             // already the client's.
-            environment: None,
+            environment: SessionEnvironment::default(),
         }
     }
 

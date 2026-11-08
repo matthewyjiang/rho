@@ -181,11 +181,15 @@ pub(crate) async fn assemble_tools_and_prompt(
     } else {
         crate::tools::mcp::McpSessionPlan::Inventory(crate::tools::mcp::McpLoadMode::ToolsDisabled)
     };
+    // MCP servers and OpenAPI sources take the session's environment as it is
+    // when they load (#1659).
+    let ambient = options.host_io.environment.current();
     let mcp_sampling_bridge = crate::tools::mcp::McpSamplingBridge::new();
     let mut mcp_options = crate::tools::mcp::McpSessionOptions::new(
         options.config.max_output_bytes,
         crate::tools::mcp::McpRoots::for_workspace(options.cwd),
         options.mcp_authorization,
+        ambient.clone(),
     )
     .with_elicitation(options.mcp_elicitation);
     match options.mcp_sampling {
@@ -201,7 +205,7 @@ pub(crate) async fn assemble_tools_and_prompt(
             options.cwd,
             crate::workspace::ProjectTrust::from_openapi_env(),
         )
-        .plan(&|name| std::env::var(name).ok())
+        .plan(&|name| ambient.read(name))
     } else {
         crate::tools::openapi::config::SourcePlans::default()
     };

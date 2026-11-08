@@ -167,6 +167,9 @@ where
         approval,
         session_options,
     } = options;
+    // One environment for the session's tools, MCP servers, OpenAPI sources,
+    // and hooks (#1659).
+    let environment = host_io.environment.clone();
     // from_config already scopes custom-provider resolution. Do not hold a
     // thread-local overlay across the catalog await: Tokio may resume on
     // another worker and Drop would pop the wrong stack.
@@ -240,7 +243,7 @@ where
         usage_recording: usage_recording.clone(),
         session_writes: session_writes.clone(),
     })?;
-    let hooks = crate::hooks::start_for_cwd(&workspace_root);
+    let hooks = crate::hooks::start_for_cwd(&workspace_root, environment);
     if let Some(hooks) = hooks.as_ref() {
         diagnostics.attach_hooks(hooks);
     }

@@ -14,6 +14,7 @@ use std::{
 use rho_sdk::tool::Tool;
 
 use super::{code_mode::ContextExposure, sdk_registry::ToolBundle};
+use crate::session_environment::Ambient;
 use config::{McpConfig, McpServerConfig};
 
 pub(crate) mod catalog;
@@ -70,7 +71,8 @@ pub(crate) enum McpSessionPlan {
 ///
 /// The two server-to-client services default to off, so a caller that cannot
 /// serve them, such as the `rho mcp` inventory pass, gets the safe shape without
-/// saying anything.
+/// saying anything. Every caller names the environment servers start in, so
+/// none falls back to this process's by omission (#1659).
 #[derive(Clone, Debug)]
 pub(crate) struct McpSessionOptions {
     pub(crate) max_output_bytes: usize,
@@ -80,13 +82,20 @@ pub(crate) struct McpSessionOptions {
     pub(crate) authorization: McpAuthorizationMode,
     services: session::McpSessionServices,
     image_delivery: McpImageDelivery,
+    /// The environment servers start in and read `env_from_env` and
+    /// `headers_from_env` from.
+    environment: Ambient,
 }
 
 impl McpSessionOptions {
+    /// Options for servers that start in, and read `env_from_env` and
+    /// `headers_from_env` from, `environment`: a session's, or this
+    /// process's for a caller without one.
     pub(crate) fn new(
         max_output_bytes: usize,
         roots: McpRoots,
         authorization: McpAuthorizationMode,
+        environment: Ambient,
     ) -> Self {
         Self {
             max_output_bytes: max_output_bytes.max(1),
@@ -97,6 +106,7 @@ impl McpSessionOptions {
                 elicitation: McpElicitationSupport::Unavailable,
                 sampling: None,
             },
+            environment,
         }
     }
 
@@ -210,19 +220,10 @@ impl McpBundle {
             .map(|(identity, server)| {
                 let identity = identity.clone();
                 let server = server.clone();
-                let roots = options.roots.clone();
-                let services = options.services.clone();
-                let authorization = options.authorization;
+                let options = &options;
                 async move {
                     let transport = McpTransportSummary::from_server(&server);
-                    let result = session::connect_server_bounded(
-                        &identity,
-                        &server,
-                        &roots,
-                        &services,
-                        authorization,
-                    )
-                    .await;
+                    let result = session::connect_server_bounded(&identity, &server, options).await;
                     (identity, server, transport, result)
                 }
             });

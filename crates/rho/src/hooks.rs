@@ -27,8 +27,8 @@
 //!   spawn contract is printable before trust is granted;
 //! - project hooks must name their program by path, so granting trust cannot
 //!   silently bind whatever `PATH` resolves to today;
-//! - a hook child gets a fixed base environment plus its own allowlist, never
-//!   the ambient environment.
+//! - a hook child gets a fixed base environment plus its own allowlist, read
+//!   from its session's environment (#1659), never the whole of it.
 //!
 //! A hook cannot widen anything. `before_tool_use` may only let the existing
 //! decision stand or deny it.
@@ -39,11 +39,12 @@ mod command;
 mod config;
 mod diagnostics;
 mod dispatch;
-mod environment;
 mod matcher;
 mod protocol;
 
 use std::sync::Arc;
+
+use crate::session_environment::{Ambient, SessionEnvironment};
 
 pub use catalog::{HookCatalog, ProjectTrust, TRUST_PROJECT_HOOKS_ENV};
 pub use config::HookConfigError;
@@ -56,7 +57,8 @@ pub(crate) use dispatch::WorkflowNodeFinished;
 ///
 /// A hook is trusted automation, and trusted automation may legitimately call
 /// `rho`. What it must not do is trigger the hooks that invoked it, so the child
-/// sees this marker and runs with hooks disabled.
+/// sees this marker and runs with hooks disabled. A daemon session sees it in
+/// the environment of the client that opened it (#1659).
 pub const IN_HOOK_ENV: &str = "RHO_IN_HOOK";
 
 /// Which file declared a hook.
@@ -94,14 +96,24 @@ pub struct HookPipeline {
 }
 
 impl HookPipeline {
-    /// Starts the hook pipeline, or returns `None` when nothing is configured.
+    /// Starts the hook pipeline of a session whose environment is
+    /// `environment`, which its hooks run in, or returns `None` when nothing is
+    /// configured or the session is a hook program's own.
     ///
     /// A session without hooks then pays nothing: no gate, no observer, and no
     /// hook machinery in diagnostics. A session with only observational hooks
     /// does not install a pre-tool gate; a session with only blocking hooks does
     /// not start an observational worker.
-    pub fn start(catalog: HookCatalog, cancellation: rho_sdk::CancellationToken) -> Option<Self> {
-        if catalog.is_empty() {
+    ///
+    /// Recursion is decided from the session's environment, not this
+    /// process's: a daemon session that a hook's `rho` opened runs without
+    /// hooks, while the daemon's other sessions keep theirs (#1659).
+    pub fn start(
+        catalog: HookCatalog,
+        environment: SessionEnvironment,
+        cancellation: rho_sdk::CancellationToken,
+    ) -> Option<Self> {
+        if catalog.is_empty() || running_inside_hook(&environment.current()) {
             return None;
         }
         let has_blocking = catalog.has_blocking_hooks();
@@ -109,6 +121,7 @@ impl HookPipeline {
         let engine = Arc::new(HookEngine::new(
             catalog,
             rho_sdk::hooks::HookPayloadBounds::default(),
+            environment,
         ));
         let (observer, worker) = if has_observational {
             let (observer, worker) =
@@ -204,26 +217,31 @@ impl HookPipeline {
     }
 }
 
-/// Whether this process is itself a hook program's child.
+/// Whether `environment` is a hook program's: [`IN_HOOK_ENV`] is set in it.
 ///
-/// A hook may legitimately run `rho`; it must not make that nested Rho fire the
-/// hooks that invoked it.
-pub fn running_inside_hook() -> bool {
-    std::env::var_os(IN_HOOK_ENV).is_some()
+/// A hook may legitimately run `rho`; it must not make that nested Rho, or a
+/// daemon session it opens, fire the hooks that invoked it (#1659).
+pub fn running_inside_hook(environment: &Ambient) -> bool {
+    environment.read_os(IN_HOOK_ENV).is_some()
 }
 
 /// How long queued observational hooks may finish after a session ends.
 pub const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Starts hooks for the workspace containing `cwd`.
+/// Starts hooks for the workspace containing `cwd`, run in `environment`, the
+/// session's; none when the session is a hook program's own (see
+/// [`HookPipeline::start`]).
 ///
 /// A hooks file that fails validation must not take the session down. The
 /// failure is logged and the session runs without hooks, which is the same
 /// outcome as having none configured.
-pub fn start_for_cwd(cwd: &std::path::Path) -> Option<HookPipeline> {
+pub fn start_for_cwd(
+    cwd: &std::path::Path,
+    environment: SessionEnvironment,
+) -> Option<HookPipeline> {
     let mut report = |message: String| tracing::info!(target: "rho::hooks", "{message}");
     match discover_for_cwd(cwd, &mut report) {
-        Ok(catalog) => HookPipeline::start(catalog, rho_sdk::CancellationToken::new()),
+        Ok(catalog) => HookPipeline::start(catalog, environment, rho_sdk::CancellationToken::new()),
         Err(error) => {
             tracing::warn!(target: "rho::hooks", "hooks are disabled: {error}");
             None
@@ -233,16 +251,13 @@ pub fn start_for_cwd(cwd: &std::path::Path) -> Option<HookPipeline> {
 
 /// Discovers the hooks that apply to the workspace containing `cwd`.
 ///
-/// Returns an empty catalog when hooks are suppressed by hook recursion. Reports
-/// any skipped untrusted project file through `report` so a host can show it
-/// once instead of on every dispatch.
+/// Hook recursion is the caller's decision (see [`running_inside_hook`]).
+/// Reports any skipped untrusted project file through `report` so a host can
+/// show it once instead of on every dispatch.
 pub fn discover_for_cwd(
     cwd: &std::path::Path,
     report: &mut dyn FnMut(String),
 ) -> Result<HookCatalog, HookConfigError> {
-    if running_inside_hook() {
-        return Ok(HookCatalog::default());
-    }
     let project_root = crate::workspace::project_ancestor_dirs(cwd)
         .into_iter()
         .next();

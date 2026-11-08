@@ -26,7 +26,7 @@ use crate::{
     permission::{remember_allowed_workspace_writes, PermissionMode, SessionWriteLog},
     permission_classifier_handler::ClassifierApprovalHandler,
     session::Session as StoredSession,
-    tools::sdk_registry::AppToolSet,
+    tools::{host_io::HostIo, sdk_registry::AppToolSet},
 };
 use rho_providers::providers::{build_sdk_provider_with_source, UnavailableProvider};
 
@@ -74,6 +74,9 @@ pub(super) async fn initialize(
     // `ProviderController` binds this to the provider below and keeps it in
     // sync on every switch; the process tool reads it for `keep_warm`.
     let cache_warm_route = crate::tools::process::CacheWarmRoute::default();
+    // One environment for the session's tools, MCP servers, OpenAPI sources,
+    // and hooks: this process's own (#1659).
+    let host_io = HostIo::default();
     let ToolsAndPrompt {
         tools,
         prompt,
@@ -114,7 +117,7 @@ pub(super) async fn initialize(
         } else {
             crate::tools::process::KeepWarmOffer::Hidden
         },
-        host_io: Default::default(),
+        host_io: host_io.clone(),
         subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
     })
     .await?;
@@ -149,7 +152,7 @@ pub(super) async fn initialize(
             session_writes: session_writes.clone(),
         },
     );
-    let hooks = crate::hooks::start_for_cwd(&cwd);
+    let hooks = crate::hooks::start_for_cwd(&cwd, host_io.environment);
     if let Some(hooks) = hooks.as_ref() {
         diagnostics.attach_hooks(hooks);
     }

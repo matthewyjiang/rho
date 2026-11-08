@@ -14,7 +14,7 @@ use std::{
 };
 
 use rho_protocol::{ErrorCode, RpcError};
-use rho_sdk::{ProcessEnvironment, SessionId};
+use rho_sdk::SessionId;
 use tokio::sync::OwnedMutexGuard;
 
 use super::{
@@ -27,17 +27,18 @@ use crate::{
         wire::session_from_wire,
     },
     session::{Session as StoredSession, SessionInUse, SessionOrigin},
+    session_environment::Ambient,
 };
 
 impl Sessions {
     /// The session `id` names, loaded: one the daemon has loaded, or a saved
-    /// one it reopens with its processes starting in `environment`. Two
+    /// one it reopens with its children starting in `environment`. Two
     /// requests for the same unloaded session open it once; different
     /// sessions open at the same time.
     pub(super) async fn session(
         &self,
         id: &rho_protocol::SessionId,
-        environment: &ProcessEnvironment,
+        environment: &Ambient,
     ) -> Result<Arc<LoadedSession>, RpcError> {
         let id = parse_session(id)?;
         if let Some(session) = self.loaded().get(&id) {
@@ -60,7 +61,7 @@ impl Sessions {
     pub(super) async fn enter_session<T>(
         &self,
         id: &rho_protocol::SessionId,
-        environment: &ProcessEnvironment,
+        environment: &Ambient,
         use_session: impl FnOnce(&LoadedSession, &mut TurnSlot) -> Result<T, RpcError>,
     ) -> Result<(Arc<LoadedSession>, T), RpcError> {
         loop {
@@ -88,13 +89,13 @@ impl Sessions {
         saved_workspace(&id).await.map(|_| None)
     }
 
-    /// Reopens saved session `id` from its file, with its processes
+    /// Reopens saved session `id` from its file, with its children
     /// starting in `environment`, and records its turns on the session's
     /// last job, or a new one when no daemon has run it.
     async fn reopen(
         &self,
         id: &SessionId,
-        environment: &ProcessEnvironment,
+        environment: &Ambient,
     ) -> Result<Arc<LoadedSession>, RpcError> {
         self.refuse_when_stopping()?;
         let last = match self.jobs.session_job(id) {

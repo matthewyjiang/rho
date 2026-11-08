@@ -172,11 +172,22 @@ impl Sandbox {
     /// Writes the fixture config with `permission_mode = "<mode>"`, which a
     /// daemon started after reads.
     pub(super) fn set_permission_mode(&self, mode: &str) {
+        self.set_config(mode, "");
+    }
+
+    /// Writes the fixture config with `permission_mode = "<mode>"` and the
+    /// TOML `tables` after it, which a daemon started after reads.
+    pub(super) fn set_config(&self, mode: &str, tables: &str) {
         std::fs::write(
             self.daemon.home().join("config.toml"),
-            format!("permission_mode = \"{mode}\"\n{CONFIG}"),
+            format!("permission_mode = \"{mode}\"\n{CONFIG}\n{tables}"),
         )
         .unwrap();
+    }
+
+    /// The daemon's `RHO_HOME`, where user `hooks.toml` lives.
+    pub(super) fn home(&self) -> PathBuf {
+        self.daemon.home()
     }
 
     /// Calls `attempt` until it returns `Some`, failing with the daemon log
@@ -191,10 +202,20 @@ impl Sandbox {
 
     /// Opens a new session in the workspace.
     pub(super) async fn new_session(&self, client: &Client) -> SessionId {
+        self.new_session_with_environment(client, self.daemon.client_environment())
+            .await
+    }
+
+    /// Opens a new session in the workspace for a client with `environment`.
+    pub(super) async fn new_session_with_environment(
+        &self,
+        client: &Client,
+        environment: ClientEnvironment,
+    ) -> SessionId {
         client
             .request::<SessionNew>(&SessionNewParams {
                 cwd: self.workspace.clone(),
-                environment: self.daemon.client_environment(),
+                environment,
             })
             .await
             .unwrap()

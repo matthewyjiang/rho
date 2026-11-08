@@ -5,6 +5,7 @@
 //! observational worker.
 
 use super::InteractiveRuntime;
+use crate::session_environment::Ambient;
 
 impl InteractiveRuntime {
     /// Re-reads hooks for this workspace and reports what is now configured.
@@ -17,6 +18,11 @@ impl InteractiveRuntime {
     pub(crate) fn reload_hooks(&self) -> anyhow::Result<crate::hooks::HookReport> {
         let cwd = self.workspace.root();
         let Some(hooks) = self.hooks.as_ref() else {
+            // A Rho a hook started runs without hooks; the interactive host
+            // always runs in this process's environment (#1659).
+            if crate::hooks::running_inside_hook(&Ambient::ThisProcess) {
+                return Ok(crate::hooks::HookReport::disabled());
+            }
             let mut discard = |_message: String| {};
             let catalog = crate::hooks::discover_for_cwd(cwd, &mut discard)?;
             anyhow::ensure!(

@@ -725,10 +725,12 @@ pub fn providers() -> Vec<&'static ProviderDescriptor> {
 /// Environment variable names used as provider credential overrides.
 ///
 /// Built-in auth kinds, interned custom hosts, and any currently set
-/// `RHO_*_API_KEY`. Callers typically snapshot this into
-/// [`rho_sdk::ProcessEnvironment::inherit_except`] at tool-set construction;
-/// scanning the live environment covers an override for a host that `/login`
-/// interns later in the same session.
+/// `RHO_*_API_KEY`. Rho snapshots this into
+/// [`rho_sdk::ProcessEnvironment::inherit_except`] when a session's
+/// environment is created (its `SessionEnvironment`, #1659), so the snapshot
+/// predates hosts interned later. Scanning the live environment for
+/// `RHO_*_API_KEY` covers those: an override for a custom host that `/login`
+/// interns later in the same session is already withheld.
 ///
 /// Intern config-defined hosts before calling this: a host that has never been
 /// interned has no descriptor and therefore no override name to report, unless

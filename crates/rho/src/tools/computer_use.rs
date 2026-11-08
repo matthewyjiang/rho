@@ -355,6 +355,10 @@ impl ComputerUseSession {
             self.inner.max_output_bytes,
             mcp::McpRoots::default(),
             mcp::McpAuthorizationMode::NonInteractive,
+            // #1659: computer use is TUI-only (and `rho computer`), never a
+            // daemon session's, so the driver runs in this process's
+            // environment: the user's desktop session.
+            crate::session_environment::Ambient::ThisProcess,
         )
         .with_image_delivery(mcp::McpImageDelivery::ModelAndPresentation);
         let outcome = tokio::select! {

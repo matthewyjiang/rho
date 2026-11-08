@@ -1,10 +1,15 @@
-//! Work the embedding host does for a session's coding tools.
+//! Work the embedding host does for a session's tools, and the environment
+//! its children see.
 
 use std::sync::Arc;
 
+use crate::session_environment::SessionEnvironment;
+
 /// What the embedding host does in place of local disk and local processes
-/// for one session's tools. Each part is absent unless the host offers it. Delegated Rho
-/// agents share their parent's, so both see the same files.
+/// for one session, and the environment the session's children see: its
+/// tools' processes, MCP servers, hooks, and OpenAPI sources (#1659). Each
+/// I/O part is absent unless the host offers it. Delegated Rho agents share
+/// their parent's, so both see the same files and environment.
 #[derive(Clone, Default)]
 pub(crate) struct HostIo {
     /// Text files the host serves; see [`rho_tools::HostTextFiles`].
@@ -12,22 +17,13 @@ pub(crate) struct HostIo {
     /// Terminals the host runs shell commands in; see
     /// [`rho_tools::HostTerminals`].
     pub(crate) terminals: Option<Arc<dyn rho_tools::HostTerminals>>,
-    /// The environment the session's processes start with, in place of this
-    /// process's own minus provider credentials: a daemon session's is its
-    /// client's, replaced by each prompt (#1659).
-    pub(crate) environment: Option<rho_tools::SharedProcessEnvironment>,
+    /// The environment the session's children see: this process's own by
+    /// default, a daemon session's client's, replaced by each prompt (#1659).
+    /// Clones share it, so one session's children never disagree.
+    pub(crate) environment: SessionEnvironment,
 }
 
 impl HostIo {
-    /// The environment the session's processes start with: the host's, or
-    /// this process's own without the provider credentials it sets now, so
-    /// tools cannot read host API keys.
-    pub(crate) fn process_environment(&self) -> rho_tools::SharedProcessEnvironment {
-        self.environment.clone().unwrap_or_else(|| {
-            rho_sdk::ProcessEnvironment::inherit_except(rho_providers::credential_env_vars()).into()
-        })
-    }
-
     /// `options` with the host's parts installed.
     pub(crate) fn coding_options(
         &self,

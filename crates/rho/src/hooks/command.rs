@@ -11,9 +11,10 @@ use tokio::io::AsyncWriteExt;
 use crate::{
     cli_runtime::StderrTail,
     process_tree::{ProcessTree, SupervisedTree},
+    session_environment::Ambient,
 };
 
-use super::{config::HookDefinition, environment::child_environment, protocol::MAX_DECISION_BYTES};
+use super::{config::HookDefinition, protocol::MAX_DECISION_BYTES};
 
 /// What running one hook program produced.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,17 +57,19 @@ pub enum HookRunError {
     Cancelled,
 }
 
-/// Runs `hook` with `event` on stdin.
+/// Runs `hook` with `event` on stdin, its environment taken from `environment`,
+/// its session's (#1659).
 ///
 /// Cancellation and timeout both kill the supervised tree before returning, so
 /// no descendant outlives the call.
 pub async fn run_hook(
     hook: &HookDefinition,
     event: &str,
+    environment: &Ambient,
     cancellation: rho_sdk::CancellationToken,
 ) -> Result<HookRunOutput, HookRunError> {
     let started = std::time::Instant::now();
-    let mut command = build_command(hook);
+    let mut command = build_command(hook, environment);
     SupervisedTree::prepare(&mut command);
     let mut child = command
         .spawn()
@@ -131,7 +134,19 @@ pub async fn run_hook(
     })
 }
 
-fn build_command(hook: &HookDefinition) -> tokio::process::Command {
+/// The command that runs `hook`, with exactly the environment the spawn
+/// contract promises, read from `environment`, its session's (#1659).
+///
+/// Nothing else of `environment` reaches a hook: the child gets the documented
+/// base set of [`crate::child_env`] plus the names the hook allowlisted, so
+/// provider credentials and unrelated secrets cannot reach a hook program by
+/// accident. A name that is unset is simply absent from the child. A hook that
+/// needs one must handle its absence; the runtime does not invent a value or
+/// fail the spawn, because a missing optional token is a hook concern.
+///
+/// [`super::IN_HOOK_ENV`] is always set last, so an allowlist cannot override
+/// it; it is Rho's own marker rather than an inherited value.
+fn build_command(hook: &HookDefinition, environment: &Ambient) -> tokio::process::Command {
     let argv = hook.command();
     let mut command = tokio::process::Command::new(hook.executable());
     command
@@ -140,11 +155,15 @@ fn build_command(hook: &HookDefinition) -> tokio::process::Command {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        // Nothing ambient reaches a hook: the child gets the documented base set
-        // plus its own allowlist, so provider credentials cannot leak through.
-        .env_clear()
-        .envs(child_environment(hook.env(), super::environment::ambient));
+        .kill_on_drop(true);
+    environment.apply_base(&mut command);
+    for name in hook.env() {
+        if let Some(value) = environment.read_os(name) {
+            command.env(name, value);
+        }
+    }
+    // Stops a hook that runs `rho` from re-entering the hooks that invoked it.
+    command.env(super::IN_HOOK_ENV, "1");
     command
 }
 
