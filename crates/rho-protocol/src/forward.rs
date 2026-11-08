@@ -335,10 +335,9 @@ fn login_notification(login: &LoginId, event: LoginEvent) -> jsonrpc::Notificati
                 prompt,
             })
         }
-        LoginEvent::Finished { auth, outcome } => {
+        LoginEvent::Finished(outcome) => {
             notification::<AuthLoginFinishedNotification>(&AuthLoginFinishedParams {
                 login: login.clone(),
-                auth,
                 outcome,
             })
         }

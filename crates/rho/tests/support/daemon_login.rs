@@ -197,7 +197,6 @@ async fn a_relayed_login_signs_in_a_running_session() {
             (Some(FIXTURE_CODE), None),
             AuthLoginFinishedParams {
                 login,
-                auth: AUTH.into(),
                 outcome: LoginOutcome::Succeeded,
             },
             (BTreeSet::from(["xai".to_owned()]), 0),
@@ -260,7 +259,6 @@ async fn a_login_ends_when_cancelled_or_its_client_leaves() {
             Some(Some(ErrorCode::LoginBusy)),
             AuthLoginFinishedParams {
                 login,
-                auth: AUTH.into(),
                 outcome: LoginOutcome::Cancelled,
             },
             Some(Some(ErrorCode::LoginNotFound)),

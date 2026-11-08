@@ -13,46 +13,33 @@ use tokio::sync::mpsc;
 
 use crate::methods::{LoginOutcome, LoginPrompt};
 
-/// Opens the relay of one login to auth profile `auth`.
+/// Opens the relay of one login.
 ///
 /// Unbounded, yet bounded by construction: a login sends one prompt (each
 /// provider flow in `rho-providers`' `login_dispatch` shows one) and then
 /// its outcome, which consumes the relay.
-pub fn login_relay(auth: impl Into<String>) -> (LoginRelay, LoginStream) {
+pub fn login_relay() -> (LoginRelay, LoginStream) {
     let (events, receiver) = mpsc::unbounded_channel();
-    let relay = LoginRelay {
-        auth: auth.into(),
-        events,
-    };
-    (relay, LoginStream { events: receiver })
+    (LoginRelay { events }, LoginStream { events: receiver })
 }
 
-/// The daemon's end of one login's relay.
+/// The daemon's end of one login's relay. A message sent once the
+/// connection is gone is dropped: nobody is left to tell, which
+/// [`Self::closed`] reports.
 #[derive(Debug)]
 pub struct LoginRelay {
-    auth: String,
     events: mpsc::UnboundedSender<LoginEvent>,
 }
 
-/// The relay's connection is gone, so nothing sent reaches a client.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("the client that started the login is gone")]
-pub struct RelayGone;
-
 impl LoginRelay {
     /// Sends what the user must do to the login's client.
-    pub fn prompt(&self, prompt: LoginPrompt) -> Result<(), RelayGone> {
-        self.events
-            .send(LoginEvent::Prompt(prompt))
-            .map_err(|_| RelayGone)
+    pub fn prompt(&self, prompt: LoginPrompt) {
+        let _ = self.events.send(LoginEvent::Prompt(prompt));
     }
 
     /// Sends how the login ended, its last message.
-    pub fn finish(self, outcome: LoginOutcome) -> Result<(), RelayGone> {
-        let Self { auth, events } = self;
-        events
-            .send(LoginEvent::Finished { auth, outcome })
-            .map_err(|_| RelayGone)
+    pub fn finish(self, outcome: LoginOutcome) {
+        let _ = self.events.send(LoginEvent::Finished(outcome));
     }
 
     /// Resolves once the connection that started the login is gone.
@@ -71,7 +58,7 @@ pub struct LoginStream {
 #[derive(Debug)]
 pub(crate) enum LoginEvent {
     Prompt(LoginPrompt),
-    Finished { auth: String, outcome: LoginOutcome },
+    Finished(LoginOutcome),
 }
 
 impl LoginStream {

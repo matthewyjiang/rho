@@ -519,7 +519,9 @@ pub fn auth_has_env_override(auth: &str) -> bool {
     auth_has_env_override_from(auth, |env_var| std::env::var(env_var).ok())
 }
 
-fn auth_has_env_override_from(auth: &str, env_value: impl Fn(&str) -> Option<String>) -> bool {
+/// [`auth_has_env_override`] against the environment `env_value` reads, for
+/// callers that inject it, as `rho login`'s check of its shell does.
+pub fn auth_has_env_override_from(auth: &str, env_value: impl Fn(&str) -> Option<String>) -> bool {
     let Some((_, mode)) = provider::resolve_auth_mode(auth) else {
         return false;
     };

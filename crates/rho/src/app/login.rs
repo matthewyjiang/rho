@@ -9,14 +9,19 @@
 
 #[cfg(unix)]
 mod daemon_client;
+pub(super) mod drive;
 mod in_process;
+#[cfg(unix)]
+pub(super) mod relay_wire;
 mod secret;
 
 use rho_providers::{
     auth::login_dispatch::{AuthenticationError, AuthenticationMethod, ProviderAuthentication},
     model::catalog,
+    provider::{provider_descriptor, ProviderDescriptor},
 };
 
+use self::drive::Saved;
 use super::config_repository::ConfigRepository;
 use crate::{cli::Command, config::Config};
 
@@ -31,24 +36,6 @@ pub(super) enum LoginCommand<'a> {
     /// `rho acp --login <auth>`, which an ACP host runs in a terminal and
     /// whose zero exit status promises a finished sign-in.
     AcpTerminal { auth: &'a str },
-}
-
-impl<'a> LoginCommand<'a> {
-    /// The provider or auth profile to sign in to, as given.
-    pub(super) fn provider(self) -> &'a str {
-        match self {
-            Self::Cli { provider, .. } => provider,
-            Self::AcpTerminal { auth } => auth,
-        }
-    }
-
-    /// Whether `--device-auth` asked for a device-code login.
-    pub(super) fn device_auth(self) -> bool {
-        match self {
-            Self::Cli { device_auth, .. } => device_auth,
-            Self::AcpTerminal { .. } => false,
-        }
-    }
 }
 
 /// The sign-in `command` asks for; `None` for every other command.
@@ -78,33 +65,45 @@ pub(super) async fn run(
     config: &mut Config,
     config_path: &std::path::Path,
 ) -> anyhow::Result<()> {
-    let target = target(command.provider())?;
     match command {
         #[cfg(unix)]
-        LoginCommand::Cli { device_auth, .. } => daemon_client::run(target, device_auth).await,
+        LoginCommand::Cli {
+            provider,
+            device_auth,
+        } => daemon_client::run(target(provider)?, device_auth).await,
+        // A person reads the provider's instructions, so a login it cannot
+        // confirm counts.
         #[cfg(not(unix))]
-        LoginCommand::Cli { device_auth, .. } => {
-            in_process::run(
-                target,
-                device_auth,
-                in_process::Unconfirmed::Accept,
-                repository,
-                config,
-                config_path,
-            )
-            .await
-        }
-        LoginCommand::AcpTerminal { .. } => {
-            in_process::run(
-                target,
-                /*device_auth*/ false,
-                in_process::Unconfirmed::Refuse,
-                repository,
-                config,
-                config_path,
-            )
-            .await
-        }
+        LoginCommand::Cli {
+            provider,
+            device_auth,
+        } => match in_process::run(
+            target(provider)?,
+            device_auth,
+            repository,
+            config,
+            config_path,
+        )
+        .await?
+        {
+            Saved::Confirmed | Saved::Unconfirmed { .. } => Ok(()),
+        },
+        // The exit status promises a finished sign-in, which a login the
+        // provider cannot confirm is not.
+        LoginCommand::AcpTerminal { auth } => match in_process::run(
+            target(auth)?,
+            /*device_auth*/ false,
+            repository,
+            config,
+            config_path,
+        )
+        .await?
+        {
+            Saved::Confirmed => Ok(()),
+            Saved::Unconfirmed { .. } => anyhow::bail!(
+                "login could not be confirmed; complete the provider's instructions and reconnect"
+            ),
+        },
     }
 }
 
@@ -112,8 +111,8 @@ pub(super) async fn run(
 struct Target {
     /// The auth profile's id, such as `openai-codex`.
     auth: String,
-    /// The provider's id, such as `openai`.
-    provider: String,
+    /// The provider it signs in to.
+    descriptor: &'static ProviderDescriptor,
     sign_in: SignIn,
 }
 
@@ -128,9 +127,7 @@ enum SignIn {
 
 /// The auth profile `provider`, a provider or auth profile id, signs in to.
 fn target(provider: &str) -> anyhow::Result<Target> {
-    if rho_providers::provider::provider_descriptor(provider)
-        .is_some_and(|descriptor| descriptor.is_keyless())
-    {
+    if provider_descriptor(provider).is_some_and(|descriptor| descriptor.is_keyless()) {
         anyhow::bail!("provider '{provider}' does not require login");
     }
     let Some(target) = catalog::login_target_for_provider(provider) else {
@@ -155,9 +152,12 @@ fn target(provider: &str) -> anyhow::Result<Target> {
             SignIn::Interactive { provider_label }
         }
     };
+    let Some(descriptor) = provider_descriptor(&target.provider) else {
+        anyhow::bail!("unknown provider '{}'", target.provider);
+    };
     Ok(Target {
         auth: target.auth,
-        provider: target.provider,
+        descriptor,
         sign_in,
     })
 }

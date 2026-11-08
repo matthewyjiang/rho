@@ -90,6 +90,11 @@ async fn check_on_page(
                 "Rho could not check the key with {provider}, so it saved the key unchecked."
             )),
         },
+        Ok(KeyCheck::Forbidden) => KeyVerdict::Accepted {
+            notice: Some(format!(
+                "The key may not list {provider}'s models, so Rho saved it unchecked."
+            )),
+        },
         Ok(KeyCheck::Unreachable(reason)) => KeyVerdict::Accepted {
             notice: Some(format!(
                 "Rho could not check the key with {provider} ({reason}), so it saved the key unchecked."

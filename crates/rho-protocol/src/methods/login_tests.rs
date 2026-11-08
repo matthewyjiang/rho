@@ -84,12 +84,6 @@ fn login_messages_travel_in_their_wire_form() {
     for (outcome, wire) in [
         (LoginOutcome::Succeeded, json!({"type": "succeeded"})),
         (
-            LoginOutcome::Unconfirmed {
-                instruction: "Approve the device.".into(),
-            },
-            json!({"type": "unconfirmed", "instruction": "Approve the device."}),
-        ),
-        (
             LoginOutcome::Failed {
                 message: "the code expired".into(),
             },
@@ -100,32 +94,11 @@ fn login_messages_travel_in_their_wire_form() {
         round_trips(
             AuthLoginFinishedParams {
                 login: LoginId::new("l1"),
-                auth: "xai-oauth".into(),
                 outcome,
             },
-            json!({"login": "l1", "auth": "xai-oauth", "outcome": wire}),
+            json!({"login": "l1", "outcome": wire}),
         );
     }
-}
-
-// Covers: a kind, status, or outcome a newer daemon adds reads as
-// `Unknown` instead of failing the whole list or notification (#1662).
-// Owner: protocol forward compatibility.
-#[test]
-fn values_a_newer_daemon_adds_read_as_unknown() {
-    assert_eq!(
-        (
-            serde_json::from_value::<AuthKind>(json!("passkey")).unwrap(),
-            serde_json::from_value::<AuthStatus>(json!("expired")).unwrap(),
-            serde_json::from_value::<LoginOutcome>(json!({"type": "deferred", "until": 3}))
-                .unwrap(),
-        ),
-        (
-            AuthKind::Unknown,
-            AuthStatus::Unknown,
-            LoginOutcome::Unknown
-        )
-    );
 }
 
 // Covers: a prompt's device code, which signs in whoever enters it first,

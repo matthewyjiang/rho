@@ -72,7 +72,7 @@ pub use jsonrpc::{
     FrameError, Message, MessageReader, MessageWriter, Notification, ParseError, Request,
     RequestId, Response, RpcError, MAX_LINE_BYTES,
 };
-pub use login_relay::{login_relay, LoginRelay, LoginStream, RelayGone};
+pub use login_relay::{login_relay, LoginRelay, LoginStream};
 pub use methods::{
     AnswerStop, ApprovalAsk, ApprovalSource, Ask, AuthKeyParams, AuthKeyResponse, AuthLogoutParams,
     AuthLogoutResponse, Budget, CardTone, Choice, ClientEnvironment, ClientInfo, CompactionId,

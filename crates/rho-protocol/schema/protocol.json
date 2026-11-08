@@ -192,7 +192,7 @@
       "type": "object"
     },
     "AuthKeyResponse": {
-      "description": "Result of [`AUTH_KEY`]: the key is saved to the credential store the\ndaemon's config selects. Running sessions on the auth profile use it from\ntheir next prompt; new sessions use it at once.\n\nThe daemon first asks the provider's models endpoint about the key and\nrefuses one the provider refuses with\n[`crate::ErrorCode::KeyRefused`], saving nothing. A key the provider\ncannot be asked about, because rho lists no models for it or the endpoint\ndid not answer, is saved unchecked.",
+      "description": "Result of [`AUTH_KEY`]: the key is saved to the credential store the\ndaemon's config selects. Running sessions on the auth profile use it from\ntheir next prompt; new sessions use it at once.\n\nThe daemon first asks the provider's models endpoint about the key and\nrefuses one the provider refuses with\n[`crate::ErrorCode::KeyRefused`], saving nothing. A key the provider\ncannot be asked about, because rho lists no models for it, the endpoint\ndid not answer, or the key may not list models, is saved unchecked.",
       "properties": {
         "unchecked": {
           "anyOf": [
@@ -260,16 +260,12 @@
       "type": "object"
     },
     "AuthLoginCancelResponse": {
-      "description": "Result of [`AUTH_LOGIN_CANCEL`]: the daemon is stopping the login, which\n[`AUTH_LOGIN_FINISHED`] then reports, `cancelled` unless it finished\nfirst. A login that already ended, or no login, has the id: refused with\n[`crate::ErrorCode::LoginNotFound`].",
+      "description": "Result of [`AUTH_LOGIN_CANCEL`]: the daemon is stopping the login, which\n[`AUTH_LOGIN_FINISHED`] then reports `cancelled`. A login the provider\nalready approved still saves and ends `succeeded`. A login that already\nended, or no login, has the id: refused with\n[`crate::ErrorCode::LoginNotFound`].",
       "type": "object"
     },
     "AuthLoginFinishedParams": {
       "description": "Params of the [`AUTH_LOGIN_FINISHED`] notification, the last one a login\nsends.",
       "properties": {
-        "auth": {
-          "description": "The auth profile the login signed in to, or tried to.",
-          "type": "string"
-        },
         "login": {
           "$ref": "#/$defs/LoginId"
         },
@@ -279,7 +275,6 @@
       },
       "required": [
         "login",
-        "auth",
         "outcome"
       ],
       "type": "object"
@@ -1330,7 +1325,7 @@
     "LoginOutcome": {
       "anyOf": [
         {
-          "description": "The provider confirmed the login, and the daemon saved the\ncredential.",
+          "description": "The provider approved the login, and the daemon saved the\ncredential.",
           "properties": {
             "type": {
               "const": "succeeded",
@@ -1339,23 +1334,6 @@
           },
           "required": [
             "type"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "The daemon recorded the login, but the provider sends no\nconfirmation (Ollama Cloud's device key), so it works only once the\nuser did what `instruction` says.",
-          "properties": {
-            "instruction": {
-              "type": "string"
-            },
-            "type": {
-              "const": "unconfirmed",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "instruction"
           ],
           "type": "object"
         },
@@ -1403,7 +1381,7 @@
           "x-rho-other": true
         }
       ],
-      "description": "How a login ended. A login that saved a credential applies to every\nsession the daemon runs, as [`crate::methods::AUTH_KEY`] does: running\nsessions use it from their next prompt, and each attached client gets\nthe sessions' new options."
+      "description": "How a login ended. A login that saved a credential applies to every\nsession the daemon runs, as [`crate::methods::AUTH_KEY`] does: running\nsessions use it from their next prompt, and each attached client gets\nthe sessions' new options.\n\nA provider that sends no confirmation (Ollama Cloud's device key)\nsucceeds as soon as the daemon saved the login: its prompt's\n`instruction` already told the user what to approve."
     },
     "LoginPrompt": {
       "description": "What the user must do to finish a login. The daemon opens no browser:\nthe client opens [`Self::url_with_code`], else [`Self::url`], where it\ncan, and always shows the URL too.\n\n`Debug` hides the device code, which signs in whoever enters it first.",
@@ -3399,6 +3377,11 @@
         {
           "const": "unreachable",
           "description": "The provider's models endpoint did not answer the question: it could\nnot be reached, or it failed with a status other than a refusal, as a\ngateway without `/models` does.",
+          "type": "string"
+        },
+        {
+          "const": "forbidden",
+          "description": "The provider's models endpoint answered 403 Forbidden: the key may\nnot list models, as a key restricted to running them may not, so\nthe endpoint says nothing about whether it works.",
           "type": "string"
         },
         {

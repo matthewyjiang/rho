@@ -127,6 +127,10 @@ pub(super) async fn save_key(params: AuthKeyParams) -> Result<AuthKeyResponse, R
             reason: UncheckedReason::Unreachable,
             message,
         }),
+        KeyCheck::Forbidden => Some(UncheckedKey {
+            reason: UncheckedReason::Forbidden,
+            message: "the key may not list the provider's models (HTTP 403 Forbidden), so rho could not ask about it".into(),
+        }),
     };
     Ok(AuthKeyResponse { unchecked })
 }

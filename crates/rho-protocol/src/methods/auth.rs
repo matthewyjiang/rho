@@ -11,7 +11,8 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// List the auth profiles a client can sign the daemon in to.
+/// List the auth profiles a client can sign the daemon in to. The ACP
+/// adapter's `initialize` reads it for its auth methods (#1670).
 pub const AUTH_LIST: &str = "rho/auth/list";
 /// Check an API key with its provider and save it.
 pub const AUTH_KEY: &str = "rho/auth/key";
@@ -107,8 +108,8 @@ impl fmt::Debug for AuthKeyParams {
 /// The daemon first asks the provider's models endpoint about the key and
 /// refuses one the provider refuses with
 /// [`crate::ErrorCode::KeyRefused`], saving nothing. A key the provider
-/// cannot be asked about, because rho lists no models for it or the endpoint
-/// did not answer, is saved unchecked.
+/// cannot be asked about, because rho lists no models for it, the endpoint
+/// did not answer, or the key may not list models, is saved unchecked.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AuthKeyResponse {
     /// Why the key was saved without the provider checking it. Absent when
@@ -138,6 +139,10 @@ pub enum UncheckedReason {
     /// not be reached, or it failed with a status other than a refusal, as a
     /// gateway without `/models` does.
     Unreachable,
+    /// The provider's models endpoint answered 403 Forbidden: the key may
+    /// not list models, as a key restricted to running them may not, so
+    /// the endpoint says nothing about whether it works.
+    Forbidden,
     /// A reason a newer daemon sends that this crate does not know. Reading
     /// it leniently keeps the response usable; daemons never send it.
     #[serde(other)]

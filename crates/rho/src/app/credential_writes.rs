@@ -22,14 +22,15 @@
 use std::fmt;
 
 use anyhow::Context;
+use http::StatusCode;
 use rho_providers::{
     auth::login_dispatch::ProviderAuthentication,
-    credentials::CredentialStore,
+    credentials::{self, CredentialStore},
     model::{
         provider_models::{check_api_key, ProviderModelEndpoint},
         ModelError,
     },
-    provider::{self, AuthMode, ProviderAuthKind, ProviderDescriptor},
+    provider::{self, ProviderAuthKind, ProviderDescriptor},
 };
 
 use super::{bootstrap, config_repository::ConfigRepository, endpoint_login};
@@ -61,10 +62,13 @@ pub(crate) enum CredentialWriteError {
     },
     #[error("the key is blank")]
     BlankKey,
-    /// The provider refused the key: 400, 401, or 403 from its models
-    /// endpoint.
-    #[error("{provider} refused the key")]
-    KeyRefused { provider: &'static str },
+    /// The provider refused the key: 400 or 401 from its models endpoint.
+    /// `reason` says what failed.
+    #[error("{provider} refused the key: {reason}")]
+    KeyRefused {
+        provider: &'static str,
+        reason: String,
+    },
     /// Config could not be read or updated.
     #[error("{0:#}")]
     Config(anyhow::Error),
@@ -115,22 +119,33 @@ pub(crate) fn load_config_and_store(
     Ok(config)
 }
 
-/// Refuses `auth`, whose mode is `mode`, when the environment overrides its
+/// The variable that holds auth profile `auth`'s credential in the
+/// environment `environment` reads, where it wins over a saved one. A host
+/// checks its own ([`refuse_environment_override`]); `rho login` checks its
+/// shell's too, since every rho started there reads it.
+pub(crate) fn environment_override(
+    auth: &str,
+    environment: impl Fn(&str) -> Option<String>,
+) -> Option<&'static str> {
+    let (_, mode) = provider::resolve_auth_mode(auth)?;
+    mode.auth_kind
+        .env_var()
+        .filter(|_| credentials::auth_has_env_override_from(auth, environment))
+}
+
+/// Refuses auth profile `auth` when the process environment overrides its
 /// saved credential.
 pub(crate) fn refuse_environment_override(
     auth: &str,
-    mode: &AuthMode,
     write: CredentialWrite,
 ) -> Result<(), CredentialWriteError> {
-    match mode.auth_kind.env_var() {
-        Some(variable) if ProviderAuthentication::has_environment_override(auth) => {
-            Err(CredentialWriteError::EnvironmentOverride {
-                auth: auth.into(),
-                variable,
-                write,
-            })
-        }
-        Some(_) | None => Ok(()),
+    match environment_override(auth, |variable| std::env::var(variable).ok()) {
+        Some(variable) => Err(CredentialWriteError::EnvironmentOverride {
+            auth: auth.into(),
+            variable,
+            write,
+        }),
+        None => Ok(()),
     }
 }
 
@@ -144,9 +159,7 @@ pub(crate) fn sign_out_selected(
     repository: &ConfigRepository,
 ) -> Result<(), CredentialWriteError> {
     load_config_and_store(repository)?;
-    if let Some((_, mode)) = provider::resolve_auth_mode(auth) {
-        refuse_environment_override(auth, &mode, CredentialWrite::SignOut)?;
-    }
+    refuse_environment_override(auth, CredentialWrite::SignOut)?;
     write_sign_out(auth, provider::provider_descriptor(provider), repository)
 }
 
@@ -163,7 +176,7 @@ pub(crate) fn sign_out_named(
     if matches!(mode.auth_kind, ProviderAuthKind::None) {
         return Err(CredentialWriteError::NoCredentials { auth: auth.into() });
     }
-    refuse_environment_override(auth, &mode, CredentialWrite::SignOut)?;
+    refuse_environment_override(auth, CredentialWrite::SignOut)?;
     write_sign_out(auth, Some(descriptor), repository)
 }
 
@@ -197,6 +210,10 @@ pub(crate) enum KeyCheck {
     /// The provider could not be asked (an outage, a gateway without
     /// `/models`): why, with any copy of the key removed.
     Unreachable(String),
+    /// The models endpoint answered 403: the key may not list models, as a
+    /// key restricted to running them may not, which says nothing about
+    /// whether it works (#1662).
+    Forbidden,
 }
 
 /// An auth profile an API key can sign in to: it takes a key, and no
@@ -221,7 +238,7 @@ impl ApiKeyAuth {
         };
         // The variable wins over a saved key, so saving one would change
         // nothing and the check would test the variable's key instead.
-        refuse_environment_override(auth, &mode, CredentialWrite::SignIn)?;
+        refuse_environment_override(auth, CredentialWrite::SignIn)?;
         Ok(Self {
             auth: mode.id,
             descriptor,
@@ -245,13 +262,12 @@ impl ApiKeyAuth {
     /// Asks the models endpoint `config` resolves for the provider about
     /// `key`, failing only [`CredentialWriteError::KeyRefused`]. Callers
     /// save a key the provider cannot be asked about (no model listing in
-    /// Rho, an outage, a gateway without `/models`), as the terminal login
-    /// saves it, and say it went unchecked, so such a provider can still be
+    /// Rho, an outage, a gateway without `/models`, a key that may not list
+    /// models) and say it went unchecked, so such a provider can still be
     /// signed in to.
     ///
-    /// A plain `GET /models` that carries only the key fails 400, 401, or
-    /// 403 only for the key itself; Google answers a malformed key with
-    /// 400. Response bodies may quote the request, so only statuses show.
+    /// Response bodies may quote the request, so only statuses show (see
+    /// [`status_check`]).
     pub(crate) async fn check(
         &self,
         key: &str,
@@ -268,11 +284,14 @@ impl ApiKeyAuth {
         let Err(error) = check_api_key(self.auth, key, endpoint).await else {
             return Ok(KeyCheck::Accepted);
         };
-        let refused = CredentialWriteError::KeyRefused {
-            provider: self.descriptor.display_name,
-        };
+        let provider = self.descriptor.display_name;
         let status = match &error {
-            ModelError::MissingCredentials(_) => return Err(refused),
+            ModelError::MissingCredentials(message) => {
+                return Err(CredentialWriteError::KeyRefused {
+                    provider,
+                    reason: (*message).to_owned(),
+                });
+            }
             ModelError::HttpStatus { status, .. } => *status,
             ModelError::Request(error) => match error.status() {
                 Some(status) => status,
@@ -301,11 +320,7 @@ impl ApiKeyAuth {
                 return Ok(KeyCheck::Unreachable(redacted(error.to_string(), key)));
             }
         };
-        if matches!(status.as_u16(), 400 | 401 | 403) {
-            Err(refused)
-        } else {
-            Ok(KeyCheck::Unreachable(format!("HTTP {status}")))
-        }
+        status_check(status, provider)
     }
 
     /// Saves `key` to `store`.
@@ -334,7 +349,30 @@ impl ApiKeyAuth {
     }
 }
 
+/// What a failing `status` from `provider`'s models endpoint says about the
+/// key it was asked with. A plain `GET /models` that carries only the key
+/// fails 400 or 401 only for the key itself; Google answers a malformed key
+/// with 400. A 403 says the key may not list models, not that it cannot run
+/// them, so the key is saved unchecked (#1662).
+fn status_check(
+    status: StatusCode,
+    provider: &'static str,
+) -> Result<KeyCheck, CredentialWriteError> {
+    match status.as_u16() {
+        400 | 401 => Err(CredentialWriteError::KeyRefused {
+            provider,
+            reason: format!("its models endpoint answered HTTP {status}"),
+        }),
+        403 => Ok(KeyCheck::Forbidden),
+        _ => Ok(KeyCheck::Unreachable(format!("HTTP {status}"))),
+    }
+}
+
 /// `message` with any copy of `key` removed, in case an error quoted it.
 fn redacted(message: String, key: &str) -> String {
     message.replace(key, "[key]")
 }
+
+#[cfg(test)]
+#[path = "credential_writes_tests.rs"]
+mod tests;

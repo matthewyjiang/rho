@@ -4,9 +4,10 @@
 //! The provider's own flow runs here, the one the TUI's `/login` and ACP's
 //! `authenticate` start in their processes until they become daemon clients
 //! (#1667, #1670), with no browser: its prompt goes to the client that
-//! asked, which opens the URL. Once the provider approves, the daemon saves
-//! the credential to the store its config selects, so every session it runs
-//! uses it from its next prompt, and refreshes their options
+//! asked, which opens the URL. `login/drive.rs` drives the flow, as it does
+//! for the in-process logins. Once the provider approves, the daemon saves
+//! the credential to the store its config selects then, so every session it
+//! runs uses it from its next prompt, and refreshes their options
 //! ([`super::auth::credentials_changed`]).
 //!
 //! One login per auth profile runs at a time, whichever client started it,
@@ -25,18 +26,14 @@ use std::{
 };
 
 use rho_protocol::{
-    self as wire, login_relay, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
+    login_relay, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
     AuthLoginResponse, ErrorCode, LoginFlow, LoginId, LoginOutcome, LoginRelay, LoginStream,
     RpcError,
 };
 use rho_providers::{
     auth::{
         browser::BrowserAvailability,
-        login_dispatch::{
-            AuthenticationMethod, CompletedAuthentication, InteractiveLoginCompletion,
-            InteractiveLoginMode, ProviderAuthentication, UnconfirmedAuthentication,
-        },
-        login_prompt::LoginPrompt,
+        login_dispatch::{AuthenticationError, AuthenticationMethod, ProviderAuthentication},
     },
     provider::{self, ProviderDescriptor},
 };
@@ -46,12 +43,12 @@ use super::{
     auth::{credentials_changed, off_workers, repository},
     sessions::Sessions,
 };
-use crate::{
-    app::{
-        credential_writes::{self, CredentialWrite},
-        endpoint_login,
+use crate::app::{
+    credential_writes::{self, CredentialWrite},
+    login::{
+        drive::{self, Approval, Saved},
+        relay_wire::{flow_from_wire, prompt_to_wire},
     },
-    credential_store::AppCredentialStore,
 };
 
 /// The logins under way.
@@ -87,7 +84,7 @@ impl Logins {
         let login = LoginId::new(uuid::Uuid::new_v4().to_string());
         let cancel = CancellationToken::new();
         let slot = self.claim(target.auth, &login, &cancel)?;
-        let (relay, stream) = login_relay(target.auth);
+        let (relay, stream) = login_relay();
         tracing::info!(auth = target.auth, "login started");
         tokio::spawn(run(target, flow, cancel, relay, slot, sessions));
         Ok((AuthLoginResponse { login }, stream))
@@ -125,7 +122,7 @@ impl Logins {
             return Err(RpcError::new(
                 ErrorCode::LoginBusy,
                 format!(
-                    "a login to '{auth}' is already under way; wait for it to finish or cancel it"
+                    "the daemon is already signing in to '{auth}'; wait for that login to finish"
                 ),
             ));
         }
@@ -197,7 +194,7 @@ impl LoginAuth {
         };
         // A credential in the daemon's environment wins over a saved one,
         // so the login would change nothing.
-        credential_writes::refuse_environment_override(mode.id, &mode, CredentialWrite::Login)?;
+        credential_writes::refuse_environment_override(mode.id, CredentialWrite::Login)?;
         Ok(Self {
             auth: mode.id,
             provider_label,
@@ -208,21 +205,11 @@ impl LoginAuth {
 
 /// How a login's wait for the provider ended.
 enum Ended {
-    /// The provider approved it, or why it did not, for a person.
-    Approved(Result<Approval, String>),
+    /// The provider approved it, or why it did not.
+    Approved(Result<Approval, AuthenticationError>),
     Cancelled,
     /// The connection that started it closed, so nobody can finish it.
     ClientLeft,
-}
-
-/// What a provider approved, to save.
-enum Approval {
-    Confirmed(CompletedAuthentication),
-    /// The provider sends no confirmation (Ollama Cloud's device key).
-    Unconfirmed {
-        instruction: &'static str,
-        authentication: UnconfirmedAuthentication,
-    },
 }
 
 /// Runs one login to its end and tells its client how it ended. Saving is
@@ -237,16 +224,25 @@ async fn run(
     sessions: Arc<Sessions>,
 ) {
     let auth = target.auth;
+    // The client opens the URL, so the daemon launches no browser.
+    let approved = drive::approve(
+        auth,
+        flow_from_wire(flow),
+        BrowserAvailability::Headless,
+        |prompt| relay.prompt(prompt_to_wire(prompt)),
+    );
     let ended = tokio::select! {
-        approved = approve(&target, flow, &relay) => Ended::Approved(approved),
+        approved = approved => Ended::Approved(approved),
         () = cancel.cancelled() => Ended::Cancelled,
         () = relay.closed() => Ended::ClientLeft,
     };
     let outcome = match ended {
         Ended::Approved(Ok(approval)) => save(&target, approval, &sessions).await,
-        Ended::Approved(Err(message)) => {
+        Ended::Approved(Err(error)) => {
             tracing::info!(auth, "login failed");
-            LoginOutcome::Failed { message }
+            LoginOutcome::Failed {
+                message: format!("the {} login failed: {error}", target.provider_label),
+            }
         }
         Ended::Cancelled => {
             tracing::info!(auth, "login cancelled");
@@ -260,79 +256,31 @@ async fn run(
     // Free the profile before the client hears the end, so a login it
     // starts next is not refused as busy.
     drop(slot);
-    // The client may have left since; then nobody is left to tell.
-    let _ = relay.finish(outcome);
+    relay.finish(outcome);
 }
 
-/// Runs `target`'s provider login until the provider approves it, relaying
-/// its prompt.
-async fn approve(
-    target: &LoginAuth,
-    flow: LoginFlow,
-    relay: &LoginRelay,
-) -> Result<Approval, String> {
-    let mode = match flow {
-        LoginFlow::Browser => InteractiveLoginMode::Browser,
-        LoginFlow::DeviceCode => InteractiveLoginMode::Device,
-    };
-    let label = target.provider_label;
-    // The client opens the URL, so the daemon launches no browser.
-    let login = ProviderAuthentication::start_interactive_login(
-        target.auth,
-        mode,
-        BrowserAvailability::Headless,
-    )
-    .await
-    .map_err(|error| format!("could not start the {label} login: {error}"))?;
-    // A client that left ends the login through `relay.closed()`.
-    let _ = relay.prompt(prompt_to_wire(login.prompt));
-    match login.completion {
-        InteractiveLoginCompletion::Confirm(completion) => completion
-            .await
-            .map(Approval::Confirmed)
-            .map_err(|error| format!("could not sign in to {label}: {error}")),
-        InteractiveLoginCompletion::Unconfirmed {
-            instruction,
-            authentication,
-        } => Ok(Approval::Unconfirmed {
-            instruction,
-            authentication,
-        }),
-    }
-}
-
-/// Saves what the provider approved, records the login of a provider
-/// logged in through its endpoint as `rho login` always has, and tells
-/// every session.
+/// Saves what the provider approved to the store the daemon's config
+/// selects now, records the login of a provider logged in through its
+/// endpoint as `rho login` always has, and tells every session.
 async fn save(target: &LoginAuth, approval: Approval, sessions: &Sessions) -> LoginOutcome {
-    let descriptor = target.descriptor;
-    let saved = off_workers(move || -> anyhow::Result<LoginOutcome> {
-        let outcome = match approval {
-            Approval::Confirmed(completed) => {
-                completed.save(&AppCredentialStore)?;
-                LoginOutcome::Succeeded
-            }
-            Approval::Unconfirmed {
-                instruction,
-                authentication,
-            } => {
-                authentication.accept(&AppCredentialStore)?;
-                LoginOutcome::Unconfirmed {
-                    instruction: instruction.to_owned(),
-                }
-            }
-        };
-        endpoint_login::record(&repository(), *descriptor)?;
-        Ok(outcome)
+    let descriptor = *target.descriptor;
+    let saved = off_workers(move || -> anyhow::Result<()> {
+        // The config may have chosen another store since the login started.
+        credential_writes::load_config_and_store(&repository())?;
+        match approval.save(descriptor, &repository())? {
+            // A provider that sends no confirmation (Ollama Cloud's device
+            // key) already told the user what to approve in its prompt.
+            Saved::Confirmed | Saved::Unconfirmed { .. } => Ok(()),
+        }
     })
     .await;
     // Even a failed save may have written part of an entry.
     credentials_changed(sessions).await;
     let auth = target.auth;
     match saved {
-        Ok(Ok(outcome)) => {
+        Ok(Ok(())) => {
             tracing::info!(auth, "login saved");
-            outcome
+            LoginOutcome::Succeeded
         }
         Ok(Err(error)) => {
             tracing::warn!(auth, "could not save a login: {error:#}");
@@ -346,23 +294,5 @@ async fn save(target: &LoginAuth, approval: Approval, sessions: &Sessions) -> Lo
         Err(error) => LoginOutcome::Failed {
             message: error.message,
         },
-    }
-}
-
-/// `prompt` as the wire sends it. Its browser note is the daemon's, which
-/// opens none, so the client makes its own.
-fn prompt_to_wire(prompt: LoginPrompt) -> wire::LoginPrompt {
-    let LoginPrompt {
-        url,
-        user_code,
-        url_with_code,
-        browser: _,
-        instruction,
-    } = prompt;
-    wire::LoginPrompt {
-        url,
-        user_code,
-        url_with_code,
-        instruction,
     }
 }

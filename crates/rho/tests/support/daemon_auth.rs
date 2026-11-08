@@ -221,7 +221,10 @@ async fn a_key_saved_or_deleted_by_one_client_applies_to_another_clients_session
     assert_eq!(
         (save_key(&second, WRONG_KEY).await, fixture.saved_key()),
         (
-            Err(RpcError::new(ErrorCode::KeyRefused, "mock refused the key")),
+            Err(RpcError::new(
+                ErrorCode::KeyRefused,
+                "mock refused the key: its models endpoint answered HTTP 401 Unauthorized"
+            )),
             Some(FIRST_KEY.into())
         )
     );

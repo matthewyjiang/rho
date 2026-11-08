@@ -134,9 +134,9 @@ error_codes! {
         /// changes a loaded session, such as a settings change, needs.
         /// Attach to the session first, which loads it.
         SessionNotLoaded = -32016,
-        /// A login to that auth profile is already under way in the daemon,
-        /// started by this client or another (#1662). Wait for its
-        /// `rho/auth/login_finished`, or cancel it, then start again.
+        /// The daemon is already signing in to that auth profile, for this
+        /// client or another (#1662). Wait for that login to finish, then
+        /// start again.
         LoginBusy = -32017,
         /// No login under way has that id: it already ended, or never
         /// existed (#1662).

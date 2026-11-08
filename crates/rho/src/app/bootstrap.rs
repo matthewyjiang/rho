@@ -233,18 +233,28 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
     if let Some(command) = login::command(&cli.command) {
         // agy owns its sign-in; Rho config and the credential store are not
         // involved.
-        if command
-            .provider()
-            .eq_ignore_ascii_case(crate::antigravity_runtime::ANTIGRAVITY_LABEL_NAME)
-        {
-            if command.device_auth() {
-                anyhow::bail!(
-                    "antigravity login has no device flow; paste the code agy asks for instead"
-                );
+        let antigravity = |provider: &str| {
+            provider.eq_ignore_ascii_case(crate::antigravity_runtime::ANTIGRAVITY_LABEL_NAME)
+        };
+        match command {
+            login::LoginCommand::Cli {
+                provider,
+                device_auth: true,
+            } if antigravity(provider) => anyhow::bail!(
+                "antigravity login has no device flow; paste the code agy asks for instead"
+            ),
+            login::LoginCommand::Cli {
+                provider,
+                device_auth: false,
             }
-            return Ok(EarlyDispatch::Handled(
-                crate::antigravity_runtime::auth::login().await,
-            ));
+            | login::LoginCommand::AcpTerminal { auth: provider }
+                if antigravity(provider) =>
+            {
+                return Ok(EarlyDispatch::Handled(
+                    crate::antigravity_runtime::auth::login().await,
+                ));
+            }
+            login::LoginCommand::Cli { .. } | login::LoginCommand::AcpTerminal { .. } => {}
         }
         // A daemon login saves under the daemon's config, which reads the
         // credential store chosen here (#1662).

@@ -893,12 +893,12 @@ impl Service for LoginService {
 
     async fn login(
         &self,
-        params: AuthLoginParams,
+        _: AuthLoginParams,
     ) -> Result<(AuthLoginResponse, LoginStream), RpcError> {
-        let (relay, stream) = login_relay(params.auth);
-        relay.prompt(login_prompt()).unwrap();
+        let (relay, stream) = login_relay();
+        relay.prompt(login_prompt());
         if self.finish_early {
-            relay.finish(LoginOutcome::Succeeded).unwrap();
+            relay.finish(LoginOutcome::Succeeded);
         } else {
             self.relays.send(relay).unwrap();
         }
@@ -939,7 +939,6 @@ async fn a_login_answers_then_forwards_its_prompt_and_end() {
             }),
             Seen::LoginFinished(AuthLoginFinishedParams {
                 login: LoginId::new("l1"),
-                auth: "xai-oauth".into(),
                 outcome: LoginOutcome::Succeeded,
             }),
         ]
@@ -979,6 +978,5 @@ async fn leaving_tells_a_login_its_client_is_gone() {
     tokio::time::timeout(RESPONSE_DEADLINE, relay.closed())
         .await
         .expect("the connection drops the login's stream within RESPONSE_DEADLINE");
-    assert_eq!(relay.finish(LoginOutcome::Cancelled), Err(crate::RelayGone));
     assert_eq!(peer.remaining().await, Vec::new());
 }

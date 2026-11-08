@@ -90,8 +90,9 @@ pub struct AuthLoginCancelParams {
 }
 
 /// Result of [`AUTH_LOGIN_CANCEL`]: the daemon is stopping the login, which
-/// [`AUTH_LOGIN_FINISHED`] then reports, `cancelled` unless it finished
-/// first. A login that already ended, or no login, has the id: refused with
+/// [`AUTH_LOGIN_FINISHED`] then reports `cancelled`. A login the provider
+/// already approved still saves and ends `succeeded`. A login that already
+/// ended, or no login, has the id: refused with
 /// [`crate::ErrorCode::LoginNotFound`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AuthLoginCancelResponse {}
@@ -142,8 +143,6 @@ impl fmt::Debug for LoginPrompt {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AuthLoginFinishedParams {
     pub login: LoginId,
-    /// The auth profile the login signed in to, or tried to.
-    pub auth: String,
     pub outcome: LoginOutcome,
 }
 
@@ -151,17 +150,17 @@ pub struct AuthLoginFinishedParams {
 /// session the daemon runs, as [`crate::methods::AUTH_KEY`] does: running
 /// sessions use it from their next prompt, and each attached client gets
 /// the sessions' new options.
+///
+/// A provider that sends no confirmation (Ollama Cloud's device key)
+/// succeeds as soon as the daemon saved the login: its prompt's
+/// `instruction` already told the user what to approve.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum LoginOutcome {
-    /// The provider confirmed the login, and the daemon saved the
+    /// The provider approved the login, and the daemon saved the
     /// credential.
     Succeeded,
-    /// The daemon recorded the login, but the provider sends no
-    /// confirmation (Ollama Cloud's device key), so it works only once the
-    /// user did what `instruction` says.
-    Unconfirmed { instruction: String },
     /// The login failed; `message` says why, for a person.
     Failed { message: String },
     /// A client cancelled it ([`AUTH_LOGIN_CANCEL`]).

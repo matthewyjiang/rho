@@ -5,12 +5,12 @@
 
 use std::path::Path;
 
-use rho_providers::auth::{
-    browser::BrowserAvailability,
-    login_dispatch::{InteractiveLoginCompletion, InteractiveLoginMode, ProviderAuthentication},
-};
+use rho_providers::auth::{browser::BrowserAvailability, login_dispatch::ProviderAuthentication};
 
-use super::{secret, SignIn, Target};
+use super::{
+    drive::{self, Saved},
+    secret, SignIn, Target,
+};
 use crate::{
     app::{config_repository::ConfigRepository, endpoint_login},
     config::Config,
@@ -18,85 +18,43 @@ use crate::{
     login_prompt_print::eprint_login_prompt,
 };
 
-/// What a login whose provider sends no confirmation (Ollama Cloud's device
-/// key) does once the provider's instructions are shown.
-#[derive(Clone, Copy, Debug)]
-pub(super) enum Unconfirmed {
-    /// Save it and succeed: the person reads the instructions (`rho
-    /// login`, which runs here only off unix).
-    #[cfg(not(unix))]
-    Accept,
-    /// Save it but fail, because the exit status promises a finished
-    /// sign-in (`rho acp --login`).
-    Refuse,
-}
-
-/// Signs `target` in, saving under `config`, which `repository` loads from
-/// `config_path`.
+/// Signs `target` in, with a device-code login when `device_auth` asks for
+/// one, saving under `config`, which `repository` loads from
+/// `config_path`. The caller decides what a login the provider cannot
+/// confirm ([`Saved::Unconfirmed`]) means for its exit status.
 pub(super) async fn run(
     target: Target,
     device_auth: bool,
-    unconfirmed: Unconfirmed,
     repository: &ConfigRepository,
     config: &mut Config,
     config_path: &Path,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Saved> {
     credential_store::initialize_from_config(config, config_path)?;
-    let completion = sign_in(&target, device_auth).await?;
-    if let Some(descriptor) = rho_providers::provider::provider_descriptor(&target.provider) {
-        endpoint_login::record(repository, *descriptor)?;
-    }
-    match completion {
-        Completion::Saved => Ok(()),
-        Completion::Unconfirmed => match unconfirmed {
-            #[cfg(not(unix))]
-            Unconfirmed::Accept => Ok(()),
-            Unconfirmed::Refuse => {
-                anyhow::bail!("login could not be confirmed; complete the provider's instructions and reconnect")
-            }
-        },
-    }
-}
-
-/// How a sign-in that saved its credential ended.
-enum Completion {
-    Saved,
-    /// Saved, but the provider sends no confirmation.
-    Unconfirmed,
-}
-
-async fn sign_in(target: &Target, device_auth: bool) -> anyhow::Result<Completion> {
-    let auth = &target.auth;
-    let provider_label = match target.sign_in {
+    let Target {
+        auth,
+        descriptor,
+        sign_in,
+    } = target;
+    let provider_label = match sign_in {
         SignIn::ApiKey { entry_label } => {
             let key = secret::read(entry_label).await?;
-            ProviderAuthentication::save_api_key(&AppCredentialStore, auth, &key)?;
+            ProviderAuthentication::save_api_key(&AppCredentialStore, &auth, &key)?;
+            endpoint_login::record(repository, *descriptor)?;
             eprintln!("saved credentials for {auth}");
-            return Ok(Completion::Saved);
+            return Ok(Saved::Confirmed);
         }
         SignIn::Interactive { provider_label } => provider_label,
     };
     let availability = BrowserAvailability::from_process();
-    let mode = if device_auth {
-        InteractiveLoginMode::Device
-    } else {
-        ProviderAuthentication::preferred_mode(auth, availability)
-    };
-    let login = ProviderAuthentication::start_interactive_login(auth, mode, availability).await?;
-    eprint_login_prompt(provider_label, &login.prompt);
-    match login.completion {
-        InteractiveLoginCompletion::Confirm(completion) => {
-            completion.await?.save(&AppCredentialStore)?;
-            eprintln!("Successfully logged in to {auth}");
-            Ok(Completion::Saved)
-        }
-        InteractiveLoginCompletion::Unconfirmed {
-            instruction,
-            authentication,
-        } => {
-            authentication.accept(&AppCredentialStore)?;
-            eprintln!("{instruction}");
-            Ok(Completion::Unconfirmed)
-        }
+    let mode = drive::mode(&auth, device_auth, availability);
+    let approval = drive::approve(&auth, mode, availability, |prompt| {
+        eprint_login_prompt(provider_label, &prompt);
+    })
+    .await?;
+    let saved = approval.save(*descriptor, repository)?;
+    match &saved {
+        Saved::Confirmed => eprintln!("Successfully logged in to {auth}"),
+        Saved::Unconfirmed { instruction } => eprintln!("{instruction}"),
     }
+    Ok(saved)
 }
