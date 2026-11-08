@@ -283,6 +283,10 @@ impl App {
             }
         }
 
+        if self.holds_prompt_for_daemon() {
+            return Ok(());
+        }
+
         self.load_mentioned_skills(&mut turn, agent);
 
         if !self.setup_state().signed_in {
@@ -321,6 +325,9 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.holds_prompt_for_daemon() {
+            return Ok(());
+        }
         if agent.tool_sources_pending() {
             self.hold_turn(turn, media, paste_segments);
             return Ok(());

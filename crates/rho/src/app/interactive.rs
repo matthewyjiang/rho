@@ -35,6 +35,31 @@ pub(super) struct Startup<'a> {
     pub(super) added_dirs: crate::added_dirs::AddedDirs,
 }
 
+// The daemon session a `RHO_TUI_DAEMON=1` launch follows.
+#[path = "interactive_daemon.rs"]
+mod daemon;
+
+/// Hidden switch (#1667) that hosts the interactive session in the daemon,
+/// which the TUI follows, instead of in this process. Read once per launch.
+const DAEMON_FLAG: &str = "RHO_TUI_DAEMON";
+
+/// Where an interactive launch's session runs.
+enum SessionHost {
+    InProcess,
+    Daemon,
+}
+
+impl SessionHost {
+    /// `Daemon` when [`DAEMON_FLAG`] is `1`.
+    fn from_env() -> Self {
+        if std::env::var_os(DAEMON_FLAG).is_some_and(|value| value == "1") {
+            Self::Daemon
+        } else {
+            Self::InProcess
+        }
+    }
+}
+
 fn validate_resume_agent(
     session: &Session,
     agent: &super::agent_binding::BoundAgent,
@@ -99,13 +124,25 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
         added_dirs,
     } = startup;
     let startup_session = StartupSession::from_cli(cli, &cwd)?;
+    // The one read of the hidden #1667 seam: the session runs in the daemon,
+    // which the TUI follows, or in this process. T6 deletes the flag with
+    // `InteractiveRuntime` and `tui/prompt_turn.rs`.
+    let daemon = match SessionHost::from_env() {
+        SessionHost::InProcess => None,
+        SessionHost::Daemon => Some(daemon::open(cli, &startup_session, &cwd, &added_dirs).await?),
+    };
     let open_resume_picker = matches!(startup_session, StartupSession::Picker);
     let mut recovered_messages = Vec::new();
     let opened = match startup_session {
+        // The daemon holds the session; this process opens none.
+        _ if daemon.is_some() => None,
         StartupSession::ById(id) => Some(Session::open_by_id_with_histories(&cwd, id)?),
         StartupSession::Latest(target) => Some(Session::open_target_with_histories(&target)?),
         StartupSession::Picker | StartupSession::Fresh => None,
     };
+    if let Some(daemon) = &daemon {
+        cwd = daemon.workspace().to_path_buf();
+    }
     let (session_id, history, storage) = match opened {
         Some((session, histories)) => {
             validate_resume_agent(&session, &agent)?;
@@ -186,11 +223,15 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
             },
             session: SessionBootstrap {
                 no_save: cli.no_save,
-                session_id,
+                session_id: match &daemon {
+                    Some(daemon) => daemon.saved_id().map(str::to_owned),
+                    None => session_id,
+                },
                 recovered_messages,
                 open_resume_picker,
                 resume_launch,
                 startup_prompt: cli.prompt.clone(),
+                daemon,
             },
             services: ApplicationServices {
                 config_repository,

@@ -56,6 +56,12 @@ mod config_row;
 mod context_handoff;
 mod context_overlay;
 mod copy_interaction;
+// The TUI as a daemon client (#1667). The daemon is unix-only (#1665), so
+// elsewhere no daemon session opens and the mapper is never built.
+#[cfg_attr(not(unix), allow(dead_code))]
+mod daemon_events;
+mod daemon_session;
+mod daemon_transcript;
 mod diff_pane;
 mod diff_viewer;
 mod divider;
@@ -473,6 +479,9 @@ pub struct SessionBootstrap {
     /// Take-once CLI prompt. After the first frame, the TUI submits it as the
     /// first turn once the composer is free.
     pub startup_prompt: Option<String>,
+    /// The daemon session this TUI follows instead of running one in
+    /// process (`RHO_TUI_DAEMON=1`, #1667); `None` on the in-process path.
+    pub(crate) daemon: Option<DaemonSession>,
 }
 
 pub struct ApplicationServices {
@@ -495,6 +504,9 @@ pub struct ApplicationServices {
     pub herdr: HerdrReporter,
 }
 pub(crate) use attachment::translate_run_event;
+pub(crate) use daemon_session::DaemonSession;
+#[cfg(unix)]
+pub(crate) use daemon_session::DaemonTarget;
 pub(crate) use exit_receipt::{print_exit_receipt, ExitReceipt};
 pub use herdr_resume::ResumeLaunchOptions;
 

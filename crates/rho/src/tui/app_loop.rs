@@ -236,6 +236,10 @@ impl App {
                 () = self.subagent_inbox.recv() => {
                     needs_redraw = true;
                 }
+                views = super::daemon_session::next_views(&mut self.info.session.daemon) => {
+                    self.show_daemon_views(views, terminal)?;
+                    needs_redraw = true;
+                }
                 () = async {
                     match process_exit {
                         Some(notified) => notified.await,

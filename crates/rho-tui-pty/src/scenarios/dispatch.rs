@@ -32,5 +32,9 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     if continue_latest::is_continue_latest_scenario(name) {
         return continue_latest::run_continue_latest(runner);
     }
+    #[cfg(unix)]
+    if super::daemon_resume::is_daemon_resume_scenario(name) {
+        return super::daemon_resume::run_daemon_resume(runner);
+    }
     runner.run(scenario)
 }

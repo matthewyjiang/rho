@@ -80,6 +80,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             open_resume_picker: false,
             resume_launch: Default::default(),
             startup_prompt: None,
+            daemon: None,
         },
         services: ApplicationServices {
             config_repository: ConfigRepository::temporary_for_tests().unwrap(),

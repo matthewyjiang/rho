@@ -22,6 +22,9 @@ mod context_overlay;
 mod continue_latest;
 mod conversation_tree;
 mod copy_output;
+// The rho daemon is unix-only (#1665).
+#[cfg(unix)]
+mod daemon_resume;
 mod diff_viewer;
 mod dispatch;
 mod doctor;
@@ -652,6 +655,14 @@ const ALL_SCENARIOS: &[Scenario] = &[
     Scenario::new(
         continue_latest::CONTINUE_LATEST_ID,
         "Continue the latest workspace session with -c, starting fresh when none exists",
+        DEFAULT_SIZE,
+        &[],
+        /*smoke*/ false,
+    ),
+    #[cfg(unix)]
+    Scenario::new(
+        daemon_resume::DAEMON_RESUME_ID,
+        "Resume a saved session in the daemon and show its conversation",
         DEFAULT_SIZE,
         &[],
         /*smoke*/ false,

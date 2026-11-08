@@ -1,4 +1,5 @@
-//! Mechanics the rho daemon's clients (`rho acp`, `rho attach`) share: the
+//! Mechanics the rho daemon's clients (`rho acp`, `rho attach`, and the
+//! TUI's daemon sessions, `tui::daemon_session`) share: the
 //! connection and its notification router ([`Daemon`]), a client's place
 //! in a session's event stream ([`StreamPosition`]), what a reset's replay
 //! tells of the last turn ([`ResetReplay`]), and the Herdr pane state a
