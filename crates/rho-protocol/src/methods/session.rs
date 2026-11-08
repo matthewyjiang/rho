@@ -300,6 +300,12 @@ pub enum DetachReason {
     Lagged,
     /// The daemon is stopping.
     DaemonStopping,
+    /// The session was deleted ([`super::SESSION_DELETE`]).
+    Deleted,
+    /// The daemon unloaded the session without deleting it, as a delete
+    /// that failed once it had unloaded the session does; attach again to
+    /// reopen it.
+    Unloaded,
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]

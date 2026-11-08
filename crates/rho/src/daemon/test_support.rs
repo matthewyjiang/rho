@@ -6,9 +6,11 @@ use rho_protocol::{
     AuthKeyParams, AuthKeyResponse, AuthLogoutParams, AuthLogoutResponse, DaemonStatus, ErrorCode,
     JobListResponse, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
-    SessionConfigureParams, SessionConfigureResponse, SessionHoldParams, SessionHoldResponse,
+    SessionConfigureParams, SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse,
+    SessionHoldParams, SessionHoldResponse, SessionListParams, SessionListResponse,
     SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
-    SessionSteerParams, SessionSteerResponse, Subscription, PROTOCOL_VERSION,
+    SessionRenameParams, SessionRenameResponse, SessionSteerParams, SessionSteerResponse,
+    Subscription, PROTOCOL_VERSION,
 };
 use rho_sdk::CancellationToken;
 
@@ -93,6 +95,27 @@ impl Service for StubHost {
         &self,
         _: SessionAttachParams,
     ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
+        Err(no_sessions())
+    }
+
+    async fn list_sessions(&self, _: SessionListParams) -> Result<SessionListResponse, RpcError> {
+        Ok(SessionListResponse {
+            sessions: Vec::new(),
+            next_cursor: None,
+        })
+    }
+
+    async fn rename_session(
+        &self,
+        _: SessionRenameParams,
+    ) -> Result<SessionRenameResponse, RpcError> {
+        Err(no_sessions())
+    }
+
+    async fn delete_session(
+        &self,
+        _: SessionDeleteParams,
+    ) -> Result<SessionDeleteResponse, RpcError> {
         Err(no_sessions())
     }
 

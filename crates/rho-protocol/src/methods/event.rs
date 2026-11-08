@@ -114,7 +114,8 @@ pub enum SessionEvent {
         cost_usd_micros: Option<u64>,
     },
     /// The session has a new title, as when the daemon named it after its
-    /// first turn (#1670).
+    /// first turn (#1670) or a client renamed it
+    /// ([`super::SESSION_RENAME`]).
     TitleChanged { title: String },
     /// A context compaction began or ended. Each one starts
     /// [`CompactionStatus::Started`] and ends with exactly one other

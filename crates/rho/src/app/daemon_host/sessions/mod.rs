@@ -16,7 +16,8 @@
 //! which the session keeps with its file; see [`configure`] and
 //! [`options`]. A session that sits idle, with no turn under way and no
 //! client attached, is unloaded until a request reopens it; see
-//! [`unload`].
+//! [`unload`]. Clients list, rename, and delete saved sessions, loaded or
+//! not; see [`catalog`].
 //!
 //! Once the daemon starts stopping, it refuses new sessions and prompts and
 //! detaches every client; then it stops the turns under way, waits for them
@@ -54,6 +55,7 @@ use crate::{
     config::Config,
 };
 
+mod catalog;
 mod configure;
 mod cost;
 mod feed;
@@ -142,18 +144,31 @@ struct TurnSlot {
     /// Whether the session is in use, idle, or unloaded, as the idle unload
     /// tracks it.
     residency: Residency,
-    /// Whether a configure is changing the session's settings, which no
-    /// turn starts during.
-    settings: Settings,
+    /// What holds the session between turns, which no turn starts during.
+    hold: Hold,
 }
 
-/// Whether a configure is changing a session's settings. The turn lock is a
-/// std mutex no request holds across the change's awaits, so a configure
-/// marks the change here instead of holding the lock.
+/// What holds a session between its turns, so that no turn starts
+/// meanwhile. The turn lock is a std mutex no request holds across its
+/// awaits, so a request marks its hold here instead of holding the lock, and
+/// [`Held`] frees it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Settings {
-    Settled,
-    Changing,
+enum Hold {
+    Free,
+    /// A configure is changing the session's settings.
+    Configuring,
+    /// A delete is unloading the session to delete its files.
+    Deleting,
+}
+
+/// Frees its session's [`Hold`] when dropped, whether the request that took
+/// it finished, failed, or was dropped.
+struct Held(Arc<LoadedSession>);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        self.0.turn().hold = Hold::Free;
+    }
 }
 
 /// Times out input request `id` of `session` after `after`, unless the
@@ -245,7 +260,7 @@ impl LoadedSession {
             turn: Mutex::new(TurnSlot {
                 cancel: CancellationToken::new(),
                 residency: Residency::InUse,
-                settings: Settings::Settled,
+                hold: Hold::Free,
             }),
         }
     }
@@ -453,14 +468,15 @@ impl Sessions {
         let environment = session_environment(&params.environment)?;
         let (session, cancel) = self
             .enter_session(&params.session, &environment, |session, turn| {
-                match turn.settings {
-                    Settings::Changing => {
+                match turn.hold {
+                    Hold::Configuring => {
                         return Err(RpcError::new(
                             ErrorCode::SessionBusy,
                             "the session's settings are changing; prompt again once they apply",
                         ))
                     }
-                    Settings::Settled => {}
+                    Hold::Deleting => return Err(being_deleted()),
+                    Hold::Free => {}
                 }
                 match self.jobs.start_turn(&session.job) {
                     // Told under the turn lock, which the last turn's
@@ -721,6 +737,12 @@ fn open_failed(error: anyhow::Error) -> RpcError {
         ErrorCode::SessionOpenFailed,
         format!("could not open session: {error:#}"),
     )
+}
+
+/// The error a request that needs the session answers while a delete
+/// unloads it.
+fn being_deleted() -> RpcError {
+    RpcError::new(ErrorCode::SessionBusy, "the session is being deleted")
 }
 
 fn stopping() -> RpcError {

@@ -18,6 +18,9 @@
 //! | [`SESSION_ATTACH`] | [`SessionAttachParams`] | [`SessionAttachResponse`] |
 //! | [`SESSION_DETACH`] | [`SessionDetachParams`] | [`SessionDetachResponse`] |
 //! | [`SESSION_CONFIGURE`] | [`SessionConfigureParams`] | [`SessionConfigureResponse`] |
+//! | [`SESSION_LIST`] | [`SessionListParams`] | [`SessionListResponse`] |
+//! | [`SESSION_RENAME`] | [`SessionRenameParams`] | [`SessionRenameResponse`] |
+//! | [`SESSION_DELETE`] | [`SessionDeleteParams`] | [`SessionDeleteResponse`] |
 //! | [`JOB_LIST`] | [`JobListParams`] | [`JobListResponse`] |
 //! | [`AUTH_KEY`] | [`AuthKeyParams`] | [`AuthKeyResponse`] |
 //! | [`AUTH_LOGOUT`] | [`AuthLogoutParams`] | [`AuthLogoutResponse`] |
@@ -40,6 +43,7 @@ use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Serialize};
 
 mod auth;
+mod catalog;
 mod daemon;
 mod event;
 mod input;
@@ -51,6 +55,11 @@ mod session;
 pub use auth::{
     AuthKeyParams, AuthKeyResponse, AuthLogoutParams, AuthLogoutResponse, EnvironmentOverride,
     UncheckedKey, UncheckedReason, AUTH_KEY, AUTH_LOGOUT,
+};
+pub use catalog::{
+    SessionDeleteParams, SessionDeleteResponse, SessionListParams, SessionListResponse,
+    SessionRenameParams, SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST,
+    SESSION_RENAME,
 };
 pub use daemon::{
     ClientInfo, DaemonInfo, DaemonStatus, HelloParams, HelloResponse, StatusParams, StopParams,
@@ -168,6 +177,9 @@ protocol! {
         SessionAttach = SESSION_ATTACH: SessionAttachParams => SessionAttachResponse,
         SessionDetach = SESSION_DETACH: SessionDetachParams => SessionDetachResponse,
         SessionConfigure = SESSION_CONFIGURE: SessionConfigureParams => SessionConfigureResponse,
+        SessionList = SESSION_LIST: SessionListParams => SessionListResponse,
+        SessionRename = SESSION_RENAME: SessionRenameParams => SessionRenameResponse,
+        SessionDelete = SESSION_DELETE: SessionDeleteParams => SessionDeleteResponse,
         JobList = JOB_LIST: JobListParams => JobListResponse,
         AuthKey = AUTH_KEY: AuthKeyParams => AuthKeyResponse,
         AuthLogout = AUTH_LOGOUT: AuthLogoutParams => AuthLogoutResponse,

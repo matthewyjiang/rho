@@ -183,7 +183,7 @@ impl Drop for ReopenGuard<'_> {
 
 /// The workspace of the session saved under `id`; `SessionNotFound` when
 /// nothing is.
-async fn saved_workspace(id: &SessionId) -> Result<PathBuf, RpcError> {
+pub(super) async fn saved_workspace(id: &SessionId) -> Result<PathBuf, RpcError> {
     let lookup = {
         let id = id.clone();
         tokio::task::spawn_blocking(move || StoredSession::workspace_of(id.as_str())).await
@@ -240,11 +240,11 @@ fn open_saved(cwd: &Path, id: &SessionId) -> Result<StoredSession, RpcError> {
     }
 }
 
-fn parse_session(id: &rho_protocol::SessionId) -> Result<SessionId, RpcError> {
+pub(super) fn parse_session(id: &rho_protocol::SessionId) -> Result<SessionId, RpcError> {
     session_from_wire(id).map_err(|_| RpcError::new(ErrorCode::InvalidParams, "not a session id"))
 }
 
-fn not_found(id: &SessionId) -> RpcError {
+pub(super) fn not_found(id: &SessionId) -> RpcError {
     RpcError::new(
         ErrorCode::SessionNotFound,
         format!("no session is saved under {id}"),

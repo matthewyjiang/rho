@@ -178,8 +178,9 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
                 {
                     match params.reason {
                         // Resumes after the last event seen, or starts over
-                        // when the daemon no longer buffers it.
-                        DetachReason::Lagged => {
+                        // when the daemon no longer buffers it, as it no
+                        // longer does for a session it unloaded.
+                        DetachReason::Lagged | DetachReason::Unloaded => {
                             let response =
                                 attach_session(&client, &session, follow.cursor()).await?;
                             if response.replay == Replay::Reset {
@@ -190,6 +191,9 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
                             ending
                         }
                         DetachReason::DaemonStopping => Some(Ending::Interrupted),
+                        DetachReason::Deleted => {
+                            return Err(AutomationExit::other("the session was deleted"))
+                        }
                         // `DetachReason` is non-exhaustive.
                         _ => return Err(AutomationExit::other("the rho daemon detached this client")),
                     }

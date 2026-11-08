@@ -16,6 +16,7 @@ use rho_sdk::SessionSnapshot;
 use rho_sdk::{CompactionState, Revision, SessionId};
 
 mod agent_identity;
+pub(crate) mod catalog;
 mod delete;
 mod display_rows;
 mod id_match;

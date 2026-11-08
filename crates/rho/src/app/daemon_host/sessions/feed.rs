@@ -204,6 +204,11 @@ impl Feed {
         }
     }
 
+    /// The session's job state, as the last state event left it.
+    pub(super) fn job_state(&self) -> wire::JobState {
+        self.state().job
+    }
+
     /// Whether a client still follows the session's events.
     pub(super) fn followed(&self) -> bool {
         let mut state = self.state();

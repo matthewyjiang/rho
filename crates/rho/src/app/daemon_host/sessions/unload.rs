@@ -4,7 +4,7 @@
 //! down; the next prompt or attach reopens it from its file.
 //!
 //! A session is busy, never idle, while a turn or a subagent writes it, a
-//! configure changes its settings, a client follows it, background work its
+//! configure or a delete holds it, a client follows it, background work its
 //! prompts started runs on or holds a result, or it has saved nothing yet,
 //! so a reopen would not find it.
 //!
@@ -21,7 +21,7 @@ use std::{sync::Arc, time::Duration};
 use rho_sdk::SessionId;
 use tokio::time::Instant;
 
-use super::{LoadedSession, Sessions, Settings};
+use super::{Hold, LoadedSession, Sessions};
 use crate::app::daemon_host::jobs::SessionJob;
 
 /// How long a session sits idle before the daemon unloads it, unless
@@ -99,7 +99,7 @@ impl Sessions {
         let idle_since = {
             let mut turn = session.turn();
             let busy = matches!(self.jobs.session_job(id), SessionJob::Busy(_))
-                || turn.settings == Settings::Changing
+                || turn.hold != Hold::Free
                 || session.feed.followed()
                 || session.runtime_keeps_loaded();
             let now = Instant::now();

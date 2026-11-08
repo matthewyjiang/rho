@@ -1,7 +1,7 @@
 //! `session/list` and the store side of `session/delete`: saved Rho sessions
-//! as the host's history. Every listed id loads through `session/load`.
-
-use std::{borrow::Cow, cmp::Ordering};
+//! as the host's history. Every listed id loads through `session/load`. The
+//! listing is the session catalog's, which the daemon's `rho/session/list`
+//! shares; this module maps it to ACP.
 
 use agent_client_protocol::{
     schema::v1::{
@@ -11,37 +11,33 @@ use agent_client_protocol::{
 };
 
 use crate::session::{
+    catalog::{self, CatalogScope, Cursor},
     DeleteOptions, Session as StoredSession, SessionListing, SessionSummary, SessionTarget,
 };
-
-/// Sessions per `session/list` page. Zed's thread import walks every page,
-/// and each page reads the whole session index again. Listing 445 saved
-/// sessions across all workspaces took about 0.1 s and 80 KB of
-/// `SessionInfo` JSON on a dev machine, so a page is about 18 KB and a large
-/// store still lists in a handful of requests.
-const PAGE_SIZE: usize = 100;
-
-/// An untitled session is labeled with its first user message, cut to the
-/// `/resume` picker's preview length.
-const FALLBACK_TITLE_CHARS: usize = 80;
 
 /// Lists saved sessions newest first: the request's workspace, or every
 /// workspace when it names none.
 pub(super) async fn list(request: ListSessionsRequest) -> Result<ListSessionsResponse, AcpError> {
     off_runtime(move || {
-        let summaries = match &request.cwd {
+        let scope = match &request.cwd {
             Some(cwd) if !cwd.is_absolute() => {
                 return Err(AcpError::invalid_params().data("cwd must be an absolute path"));
             }
-            // Listing creates the workspace's session directory, and a
-            // session in a missing workspace cannot load anyway.
-            Some(cwd) if !cwd.is_dir() => Vec::new(),
-            Some(cwd) => {
-                StoredSession::list(cwd, SessionListing::PersonFacing).map_err(store_error)?
-            }
-            None => StoredSession::list_all(SessionListing::PersonFacing).map_err(store_error)?,
+            Some(cwd) => CatalogScope::Workspace(cwd),
+            None => CatalogScope::Everywhere,
         };
-        page(summaries, request.cursor.as_deref())
+        let after = request
+            .cursor
+            .as_deref()
+            .map(Cursor::parse)
+            .transpose()
+            .map_err(|error| AcpError::invalid_params().data(error.to_string()))?;
+        let summaries = catalog::resumable(scope).map_err(store_error)?;
+        let page = catalog::page(summaries, after.as_ref(), catalog::DEFAULT_PAGE_SIZE);
+        Ok(
+            ListSessionsResponse::new(page.sessions.into_iter().map(session_info).collect())
+                .next_cursor(page.next_cursor),
+        )
     })
     .await
 }
@@ -76,87 +72,14 @@ fn saved_target(id: &str) -> Result<Option<SessionTarget>, AcpError> {
     }
 }
 
-/// The page of `summaries` after `cursor`. Sessions `/resume` hides, those
-/// with nothing saved yet, are left out, as are sessions whose workspace
-/// directory is gone, which `session/load` refuses.
-fn page(
-    mut summaries: Vec<SessionSummary>,
-    cursor: Option<&str>,
-) -> Result<ListSessionsResponse, AcpError> {
-    let after = cursor.map(Cursor::parse).transpose()?;
-    summaries.retain(|summary| {
-        summary.has_messages()
-            && summary.cwd.is_dir()
-            && after.as_ref().is_none_or(|after| after.precedes(summary))
-    });
-    summaries.sort_by(|left, right| Cursor::at(left).cmp_list_order(&Cursor::at(right)));
-    let next_cursor = summaries
-        .get(PAGE_SIZE)
-        .map(|_| Cursor::at(&summaries[PAGE_SIZE - 1]).encode());
-    summaries.truncate(PAGE_SIZE);
-    Ok(
-        ListSessionsResponse::new(summaries.into_iter().map(session_info).collect())
-            .next_cursor(next_cursor),
-    )
-}
-
-/// A session's place in list order: newest `updated_at` first, then id, then
-/// workspace, which also orders one id saved in two workspaces. A cursor is
-/// the place of the last session a page returned, and the next page starts
-/// right after it. Keying on a session rather than an offset keeps a walk
-/// from repeating or skipping entries when sessions are created or deleted
-/// between pages.
-#[derive(Debug, PartialEq, Eq)]
-struct Cursor<'a> {
-    updated_at: u64,
-    id: Cow<'a, str>,
-    cwd: Cow<'a, str>,
-}
-
-impl<'a> Cursor<'a> {
-    fn at(summary: &'a SessionSummary) -> Self {
-        Self {
-            updated_at: summary.updated_at,
-            id: Cow::Borrowed(&summary.id),
-            cwd: summary.cwd.to_string_lossy(),
-        }
-    }
-
-    fn encode(&self) -> String {
-        serde_json::json!([self.updated_at, self.id, self.cwd]).to_string()
-    }
-
-    fn parse(cursor: &str) -> Result<Cursor<'static>, AcpError> {
-        serde_json::from_str::<(u64, String, String)>(cursor)
-            .map(|(updated_at, id, cwd)| Cursor {
-                updated_at,
-                id: Cow::Owned(id),
-                cwd: Cow::Owned(cwd),
-            })
-            .map_err(|_| {
-                AcpError::invalid_params().data(format!("unknown session/list cursor '{cursor}'"))
-            })
-    }
-
-    fn cmp_list_order(&self, other: &Cursor<'_>) -> Ordering {
-        other
-            .updated_at
-            .cmp(&self.updated_at)
-            .then_with(|| self.id.cmp(&other.id))
-            .then_with(|| self.cwd.cmp(&other.cwd))
-    }
-
-    fn precedes(&self, summary: &SessionSummary) -> bool {
-        self.cmp_list_order(&Cursor::at(summary)) == Ordering::Less
-    }
-}
-
+/// `summary` as ACP lists it: labelled with its title, else its first user
+/// message, with its last save as an RFC 3339 time.
 fn session_info(summary: SessionSummary) -> SessionInfo {
     let title = summary.title.or_else(|| {
         summary
             .first_user_message
             .as_deref()
-            .and_then(fallback_title)
+            .and_then(catalog::preview)
     });
     let updated_at = i64::try_from(summary.updated_at)
         .ok()
@@ -174,23 +97,6 @@ fn session_info(summary: SessionSummary) -> SessionInfo {
         .additional_directories(additional_directories)
         .title(title)
         .updated_at(updated_at)
-}
-
-/// `message` on one line, cut to [`FALLBACK_TITLE_CHARS`].
-fn fallback_title(message: &str) -> Option<String> {
-    let line = message.split_whitespace().collect::<Vec<_>>().join(" ");
-    if line.is_empty() {
-        return None;
-    }
-    if line.chars().count() <= FALLBACK_TITLE_CHARS {
-        return Some(line);
-    }
-    let mut cut = line
-        .chars()
-        .take(FALLBACK_TITLE_CHARS - 1)
-        .collect::<String>();
-    cut.push('…');
-    Some(cut)
 }
 
 /// Runs blocking session-store work off the async runtime: the store reads

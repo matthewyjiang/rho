@@ -88,6 +88,11 @@ pub use methods::{
     ReasoningLevel, ReasoningOptions, SessionChange, SessionCommand, SessionConfigureParams,
     SessionConfigureResponse, SessionOptions, SESSION_CONFIGURE,
 };
+pub use methods::{
+    SessionDeleteParams, SessionDeleteResponse, SessionListParams, SessionListResponse,
+    SessionRenameParams, SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST,
+    SESSION_RENAME,
+};
 pub use server::{serve_connection, ServerInfo, Service, CLOSE_GRACE};
 pub use subscription::{subscription, Published, Publisher, Subscription};
 pub use version::{ProtocolVersion, VersionFix, VersionMismatch, PROTOCOL_VERSION};
