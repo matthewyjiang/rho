@@ -23,8 +23,8 @@ fn sorted(mut records: Vec<JobRecord>) -> Vec<JobRecord> {
 }
 
 // Covers: a record written and loaded back is the same record, rewriting a
-// record replaces it rather than adding a second, and the directory is
-// private.
+// record replaces it rather than adding a second, a removed record is gone
+// and removing it again succeeds, and the directory is private.
 // Owner: daemon job store.
 #[test]
 fn records_round_trip_and_rewrites_replace_them() {
@@ -38,6 +38,10 @@ fn records_round_trip_and_rewrites_replace_them() {
     store.write(&running).unwrap();
     running.state = JobState::WaitingForInput;
     store.write(&running).unwrap();
+    let removed = record(JobState::Idle);
+    store.write(&removed).unwrap();
+    store.remove(&removed.id).unwrap();
+    store.remove(&removed.id).unwrap();
 
     assert_eq!(sorted(store.load().unwrap()), sorted(vec![failed, running]));
     let mode = fs::metadata(home.path().join("jobs"))

@@ -13,15 +13,6 @@ use crate::app::daemon_host::{
 
 const GRACE: Duration = Duration::from_secs(60);
 
-/// The jobs of the sessions loaded in `sessions`.
-fn loaded_jobs(sessions: &Sessions) -> BTreeSet<String> {
-    sessions
-        .loaded()
-        .values()
-        .map(|session| session.job.to_string())
-        .collect()
-}
-
 /// The jobs of `sessions`.
 fn jobs_of<'a>(sessions: impl IntoIterator<Item = &'a Arc<LoadedSession>>) -> BTreeSet<String> {
     sessions
@@ -41,8 +32,7 @@ fn ids(records: Vec<JobRecord>) -> BTreeSet<String> {
 // Covers: sweeps less than a grace apart only mark an idle session idle;
 // one a grace after the first unloads a saved one, tearing its runtime down
 // and turning away requests that found it before, and discards one that
-// has saved nothing the same way, its job gone from the registry and the
-// store too. A session with a turn under way, one a client follows, saved
+// has saved nothing the same way, its job gone. A session with a turn under way, one a client follows, saved
 // or not, and one a request used since the first sweep stay loaded (#1661).
 // Owner: daemon idle session unload (unit).
 #[tokio::test]
@@ -58,11 +48,11 @@ async fn a_session_idle_for_the_grace_leaves_and_no_other() {
     let used = load(&sessions, &root, Load::Saved).await;
     let unsaved = load(&sessions, &root, Load::Unsaved).await;
     let idle = load(&sessions, &root, Load::Saved).await;
-    let everything = loaded_jobs(&sessions);
+    let everything = jobs_of(sessions.loaded().values());
 
     sessions.sweep(GRACE).await;
     sessions.sweep(GRACE).await;
-    let within_the_grace = loaded_jobs(&sessions);
+    let within_the_grace = jobs_of(sessions.loaded().values());
     drop(used.enter());
     tokio::time::pause();
     tokio::time::advance(GRACE).await;
@@ -81,17 +71,10 @@ async fn a_session_idle_for_the_grace_leaves_and_no_other() {
     assert_eq!(
         (
             within_the_grace,
-            loaded_jobs(&sessions),
+            jobs_of(sessions.loaded().values()),
             torn_down,
             ids(sessions.jobs.list()),
-            ids(JobStore::open(home.path()).unwrap().load().unwrap()),
         ),
-        (
-            everything,
-            kept,
-            vec![(true, true); 2],
-            recorded.clone(),
-            recorded
-        )
+        (everything, kept, vec![(true, true); 2], recorded)
     );
 }

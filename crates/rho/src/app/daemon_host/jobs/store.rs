@@ -60,11 +60,10 @@ impl JobStore {
     /// later daemon does not list the job.
     pub(in crate::app::daemon_host) fn remove(&self, id: &JobId) -> io::Result<()> {
         match fs::remove_file(self.path_of(id)) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(error),
+            Ok(()) => fs::File::open(&self.dir)?.sync_all(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
         }
-        fs::File::open(&self.dir)?.sync_all()
     }
 
     /// Every record in the store, in no particular order.

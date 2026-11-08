@@ -752,8 +752,8 @@ impl Sessions {
     /// Takes `session`, loaded as `id`, out of `loaded` and marks it
     /// unloaded, unless the daemon is stopping or `id` now names another
     /// session; whether it did. `turn` is `session`'s turn lock, held, so a
-    /// request either used the session before this or finds it unloaded and
-    /// reopens it. Under the lock `begin_stop` takes, so a stop either
+    /// request either used the session before this or finds it gone and
+    /// looks it up again. Under the lock `begin_stop` takes, so a stop either
     /// drains the session first or finds it gone. Lock order: the turn
     /// lock, then `loaded`.
     fn evict(&self, id: &SessionId, session: &Arc<LoadedSession>, turn: &mut TurnSlot) -> bool {

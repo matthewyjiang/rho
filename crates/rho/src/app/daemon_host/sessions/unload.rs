@@ -26,7 +26,7 @@ use rho_sdk::SessionId;
 use tokio::time::Instant;
 
 use super::{LoadedSession, Sessions};
-use crate::app::daemon_host::jobs::SessionJob;
+use crate::app::{daemon_host::jobs::SessionJob, session_runtime::SessionRuntime};
 
 /// How long a session sits idle before the daemon unloads or discards it,
 /// unless `rho daemon run --unload-idle-after` says otherwise.
@@ -67,25 +67,6 @@ impl Residency {
     }
 }
 
-/// Whether anything keeps a session loaded, as a sweep finds it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Idleness {
-    /// A turn, a hold, a follower, or background work keeps it.
-    Busy,
-    /// Nothing keeps it; once idle for the grace it leaves this way.
-    Idle(Departure),
-}
-
-/// How an idle session leaves the daemon.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Departure {
-    /// Torn down; the next request reopens it from its file.
-    Unload,
-    /// Torn down and its job forgotten: it saved nothing, so nothing could
-    /// reopen it.
-    Discard,
-}
-
 impl Sessions {
     /// Sweeps the loaded sessions every `grace`, unloading or discarding
     /// those idle for it, until the daemon starts stopping.
@@ -122,83 +103,66 @@ impl Sessions {
         // session's file until it is torn down.
         let _unloading = self.unloading.read().await;
         let _reopening = self.reopening.lock(id).await;
-        let (idle_since, departure) = {
+        let idle_since = {
             let mut turn = session.turn();
-            let idleness = if matches!(self.jobs.session_job(id), SessionJob::Busy(_))
+            let busy = matches!(self.jobs.session_job(id), SessionJob::Busy(_))
                 || turn.hold.is_some()
                 || session.feed.followed()
-            {
-                Idleness::Busy
-            } else {
-                session.runtime_idleness()
-            };
+                || session.runtime_keeps_loaded();
             let now = Instant::now();
-            let left = match (turn.residency, idleness) {
-                (Residency::Unloaded, _) => return,
-                (Residency::InUse | Residency::IdleSince(_), Idleness::Busy) => {
+            let idle_since = match turn.residency {
+                Residency::Unloaded => return,
+                Residency::InUse | Residency::IdleSince(_) if busy => {
                     turn.residency = Residency::InUse;
                     return;
                 }
-                (Residency::InUse, Idleness::Idle(_)) => {
+                Residency::InUse => {
                     turn.residency = Residency::IdleSince(now);
                     return;
                 }
-                (Residency::IdleSince(since), Idleness::Idle(_))
-                    if now.duration_since(since) < grace =>
-                {
-                    return
-                }
-                (Residency::IdleSince(since), Idleness::Idle(departure)) => (since, departure),
+                Residency::IdleSince(since) if now.duration_since(since) < grace => return,
+                Residency::IdleSince(since) => since,
             };
             // A session the stop did not drain is torn down before the
             // stop's wait on `unloading`.
             if !self.evict(id, session, &mut turn) {
                 return;
             }
-            left
+            idle_since
         };
         // Free: no turn runs, and none starts on an unloaded session.
         let runtime = session.runtime.lock().await.take();
+        // Evicted, so no turn can save it now. `None`: the stop took it.
+        let saved = runtime.as_ref().is_none_or(SessionRuntime::is_saved);
         if let Some(runtime) = runtime {
             runtime.shutdown().await;
         }
-        match departure {
-            Departure::Unload => tracing::info!(
-                session = %id,
-                job = %session.job,
-                idle_for = ?idle_since.elapsed(),
-                unload_idle_after = ?grace,
-                "unloaded idle session"
-            ),
-            Departure::Discard => {
-                self.jobs.remove(&session.job);
-                tracing::info!(
-                    session = %id,
-                    job = %session.job,
-                    idle_for = ?idle_since.elapsed(),
-                    unload_idle_after = ?grace,
-                    "discarded unsaved idle session"
-                );
-            }
+        // Nothing on disk could reopen a session that saved nothing, so its
+        // job goes with it.
+        if !saved {
+            self.jobs.remove(&session.job);
         }
+        tracing::info!(
+            session = %id,
+            job = %session.job,
+            idle_for = ?idle_since.elapsed(),
+            unload_idle_after = ?grace,
+            "{}",
+            if saved { "unloaded idle session" } else { "discarded unsaved idle session" }
+        );
     }
 }
 
 impl LoadedSession {
     /// Whether the session's runtime keeps it loaded: background work its
     /// prompts started runs on or holds a result, which a teardown would
-    /// stop or drop, or a turn that just ended still holds the runtime.
-    /// Else how it leaves: discarded when it has saved nothing yet.
-    fn runtime_idleness(&self) -> Idleness {
-        let Ok(runtime) = self.runtime.try_lock() else {
-            return Idleness::Busy;
-        };
-        match runtime.as_ref() {
-            Some(runtime) if runtime.has_background_work() => Idleness::Busy,
-            Some(runtime) if !runtime.is_saved() => Idleness::Idle(Departure::Discard),
-            // `None`: the daemon's stop took the runtime, and the eviction
-            // yields to the stop.
-            Some(_) | None => Idleness::Idle(Departure::Unload),
+    /// stop or drop. So does a runtime a turn that just ended still holds.
+    fn runtime_keeps_loaded(&self) -> bool {
+        match self.runtime.try_lock() {
+            Ok(runtime) => runtime
+                .as_ref()
+                .is_some_and(SessionRuntime::has_background_work),
+            Err(_) => true,
         }
     }
 }

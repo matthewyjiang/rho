@@ -217,10 +217,8 @@ impl JobRegistry {
         Ok(record.state.clone())
     }
 
-    /// Forgets job `id` and deletes its record, for a session the daemon
-    /// discarded having saved nothing, which no request could reopen. A
-    /// record that cannot be deleted is logged, and a restarted daemon lists
-    /// the job again.
+    /// Forgets job `id` and deletes its record. A record that cannot be
+    /// deleted is logged, and a restarted daemon lists the job again.
     pub(in crate::app::daemon_host) fn remove(&self, id: &JobId) {
         // Deleted under the lock every write takes, so no write of the job
         // races the delete and writes its record back.
