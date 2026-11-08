@@ -189,7 +189,7 @@ class CompatibilityTests(unittest.TestCase):
                 "an open enum closed",
                 close_enum,
                 "notification rho/session/detached params.reason: "
-                'one of "daemon_stopping", "lagged" (open) became one of "daemon_stopping", "lagged"',
+                'one of "daemon_stopping", "deleted", "lagged" (open) became one of "daemon_stopping", "deleted", "lagged"',
             ),
             ("a removed method", remove_method, "method rho/session/steer params: removed"),
             ("a removed error code", remove_error, "error -32011: removed"),
