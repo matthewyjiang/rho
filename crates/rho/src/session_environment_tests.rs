@@ -1,18 +1,7 @@
-use std::sync::Arc;
-
 use pretty_assertions::assert_eq;
 use rho_sdk::ProcessEnvironment;
 
 use super::{Ambient, SessionEnvironment};
-
-fn client(variables: &[(&str, &str)]) -> Ambient {
-    Ambient::Client(Arc::new(
-        variables
-            .iter()
-            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
-            .collect(),
-    ))
-}
 
 fn explicit(variables: &[(&str, &str)]) -> ProcessEnvironment {
     ProcessEnvironment::Explicit {
@@ -31,7 +20,7 @@ fn a_clients_process_environment_loses_only_provider_credentials() {
     let cases = [
         (
             "credentials only",
-            client(&[
+            Ambient::client(&[
                 ("OPENAI_API_KEY", "secret"),
                 ("RHO_MYHOST_API_KEY", "secret"),
             ]),
@@ -39,7 +28,7 @@ fn a_clients_process_environment_loses_only_provider_credentials() {
         ),
         (
             "mixed",
-            client(&[
+            Ambient::client(&[
                 ("PATH", "/bin"),
                 ("OPENAI_API_KEY", "secret"),
                 ("SSH_AUTH_SOCK", "/tmp/agent"),
@@ -59,16 +48,19 @@ fn a_clients_process_environment_loses_only_provider_credentials() {
 // Owner: unit (session environment)
 #[test]
 fn a_replacement_reaches_every_clone_and_the_process_handle() {
-    let environment = SessionEnvironment::new(client(&[("PATH", "/old")]));
+    let environment = SessionEnvironment::new(Ambient::client(&[("PATH", "/old")]));
     let clone = environment.clone();
     let process = environment.process();
 
-    environment.replace(client(&[("PATH", "/new"), ("OPENAI_API_KEY", "secret")]));
+    environment.replace(Ambient::client(&[
+        ("PATH", "/new"),
+        ("OPENAI_API_KEY", "secret"),
+    ]));
 
     assert_eq!(
         (clone.current(), process.current()),
         (
-            client(&[("PATH", "/new"), ("OPENAI_API_KEY", "secret")]),
+            Ambient::client(&[("PATH", "/new"), ("OPENAI_API_KEY", "secret")]),
             explicit(&[("PATH", "/new")]),
         )
     );

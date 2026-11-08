@@ -160,7 +160,7 @@ where
         usage_parent_session_id,
         hook_host_labels,
         added_dirs,
-        mut host_io,
+        host_io,
         subagent_pool,
         extend_tools,
         system_prompt_suffix,
@@ -169,7 +169,7 @@ where
     } = options;
     // One environment for the session's tools, MCP servers, OpenAPI sources,
     // and hooks (#1659).
-    let environment = host_io.environment();
+    let environment = host_io.environment.clone();
     // from_config already scopes custom-provider resolution. Do not hold a
     // thread-local overlay across the catalog await: Tokio may resume on
     // another worker and Drop would pop the wrong stack.

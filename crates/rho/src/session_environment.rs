@@ -53,7 +53,7 @@ impl Ambient {
     /// The environment tools' processes start with: this one without
     /// provider credentials, so commands cannot read API keys. This
     /// process's credential names are the ones set when this is called.
-    pub(crate) fn process_environment(&self) -> ProcessEnvironment {
+    fn process_environment(&self) -> ProcessEnvironment {
         match self {
             Self::ThisProcess => {
                 ProcessEnvironment::inherit_except(rho_providers::credential_env_vars())
@@ -69,12 +69,24 @@ impl Ambient {
     }
 
     /// Variable `name` as [`Self::read`] reads it, keeping a value of this
-    /// process's that is not UTF-8.
-    fn read_os(&self, name: &str) -> Option<OsString> {
+    /// process's that is not UTF-8, for passing straight to a child.
+    pub(crate) fn read_os(&self, name: &str) -> Option<OsString> {
         match self {
             Self::ThisProcess => std::env::var_os(name),
             Self::Client(variables) => variables.get(name).map(OsString::from),
         }
+    }
+
+    /// A client environment of exactly `variables`, for tests that stand in
+    /// for a daemon client.
+    #[cfg(test)]
+    pub(crate) fn client(variables: &[(&str, &str)]) -> Self {
+        Self::Client(Arc::new(
+            variables
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                .collect(),
+        ))
     }
 }
 
@@ -132,6 +144,14 @@ impl SessionEnvironment {
         let mut current = self.ambient.write().unwrap_or_else(PoisonError::into_inner);
         self.process.replace(ambient.process_environment());
         *current = ambient;
+    }
+}
+
+/// This process's own environment, which every session outside the daemon
+/// keeps.
+impl Default for SessionEnvironment {
+    fn default() -> Self {
+        Self::new(Ambient::ThisProcess)
     }
 }
 

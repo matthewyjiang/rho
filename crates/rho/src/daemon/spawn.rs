@@ -76,7 +76,10 @@ impl DaemonSpawner for ProcessSpawner {
             .stderr(Stdio::null())
             // The caller's journal stream is not the daemon's stderr; the
             // daemon logs to its file instead.
-            .env_remove("JOURNAL_STREAM");
+            .env_remove("JOURNAL_STREAM")
+            // A daemon a hook auto-started must not disable hooks for every
+            // session; each session's own client decides (#1659).
+            .env_remove(crate::hooks::IN_HOOK_ENV);
         let mut child = command.spawn()?;
         // Reap the daemon if it exits while this process is still running.
         std::thread::spawn(move || child.wait());

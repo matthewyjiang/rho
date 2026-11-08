@@ -5,7 +5,7 @@
 //! The Windows job-object path is exercised by the shared shell-tool suite.
 #![cfg(unix)]
 
-use std::{collections::BTreeMap, ffi::OsString, path::Path, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, ffi::OsString, path::Path, time::Duration};
 
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
@@ -171,25 +171,28 @@ async fn output_larger_than_the_bound_is_captured_up_to_the_bound_and_flagged() 
     assert!(output.stderr.starts_with(rho_sdk::ELLIPSIS));
 }
 
-// Covers: a hook starts with exactly its session's base set and allowlist,
-// read from the session's environment, such as a daemon client's, and
-// nothing else of it (#1659). `child_environment` owns which names pass
-// through; this owns that the command gets exactly that map from the session.
-// Owner: hook spawn
+// Covers: a hook's command gets exactly its session's base set and
+// allowlist, read from the session's environment, such as a daemon client's,
+// and nothing else of it; an unset allowlisted name stays absent, and an
+// allowlist cannot override the recursion marker (#1659).
+// Owner: hook spawn contract (`build_command`)
 #[test]
 fn a_handler_gets_exactly_its_sessions_base_set_and_allowlist() {
     let home = TempDir::new().unwrap();
-    let hook = hook_running("true", "10s", &["MY_HOOK_TOKEN"], &home);
-    let session = Ambient::Client(Arc::new(BTreeMap::from(
-        [
-            ("PATH", "/client/bin"),
-            ("HOME", "/home/client"),
-            ("MY_HOOK_TOKEN", "token"),
-            ("OPENAI_API_KEY", "secret"),
-            ("UNRELATED", "value"),
-        ]
-        .map(|(name, value)| (name.to_owned(), value.to_owned())),
-    )));
+    let hook = hook_running(
+        "true",
+        "10s",
+        &["MY_HOOK_TOKEN", "NOT_SET", crate::hooks::IN_HOOK_ENV],
+        &home,
+    );
+    let session = Ambient::client(&[
+        ("PATH", "/client/bin"),
+        ("HOME", "/home/client"),
+        ("MY_HOOK_TOKEN", "token"),
+        (crate::hooks::IN_HOOK_ENV, "0"),
+        ("OPENAI_API_KEY", "secret"),
+        ("UNRELATED", "value"),
+    ]);
 
     let command = build_command(&hook, &session);
 
@@ -206,6 +209,41 @@ fn a_handler_gets_exactly_its_sessions_base_set_and_allowlist() {
     ]
     .map(|(name, value)| (OsString::from(name), Some(OsString::from(value))));
     assert_eq!(environment, BTreeMap::from(expected));
+}
+
+// Covers: a running hook sees exactly what its command was given from a
+// client's environment, so nothing of this process's own reaches it through
+// the spawn, such as `CARGO_MANIFEST_DIR`, which only the test process has
+// (#1659). `env` runs directly, not through a shell that would export
+// variables of its own.
+// Owner: hook spawn (`run_hook`)
+#[tokio::test]
+async fn a_running_handler_sees_only_its_clients_base_set_and_allowlist() {
+    let home = TempDir::new().unwrap();
+    let mut hook = hook_running("true", "10s", &["MY_HOOK_TOKEN"], &home);
+    hook.executable = which::which("env").expect("the test machine has `env`");
+    hook.command = vec![crate::paths::display(&hook.executable)];
+    let client = Ambient::client(&[
+        ("PATH", "/usr/bin:/bin"),
+        ("MY_HOOK_TOKEN", "token"),
+        ("UNRELATED", "value"),
+    ]);
+
+    let output = run_hook(&hook, "{}", &client, rho_sdk::CancellationToken::new())
+        .await
+        .unwrap();
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let environment = stdout
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .collect::<BTreeMap<_, _>>();
+    let expected = BTreeMap::from([
+        ("PATH", "/usr/bin:/bin"),
+        ("MY_HOOK_TOKEN", "token"),
+        (crate::hooks::IN_HOOK_ENV, "1"),
+    ]);
+    assert_eq!(environment, expected);
 }
 
 #[tokio::test]

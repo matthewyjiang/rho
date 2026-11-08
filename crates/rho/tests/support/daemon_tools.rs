@@ -1,8 +1,7 @@
-//! The processes a daemon session's tools start, through the real binary:
-//! they, its MCP servers and its hooks run with the client's environment
-//! (#1659), and the
-//! daemon's stop ends them, as closing a session ends them in every rho
-//! host (#1661).
+//! The processes, MCP servers, and hooks of a daemon session, through the
+//! real binary: they run with the client's environment (#1659), and the
+//! daemon's stop ends the processes its sessions started, as closing a
+//! session ends them in every rho host (#1661).
 
 use std::path::Path;
 
@@ -213,7 +212,7 @@ async fn a_sessions_tools_run_with_the_prompting_clients_environment() {
 
 /// A client environment: the sandbox's, with `PATH` led by `bin` and the
 /// `extra` variables.
-fn client_environment(
+fn client_environment_with_bin(
     sandbox: &Sandbox,
     bin: &Path,
     extra: &[(&str, &str)],
@@ -291,12 +290,12 @@ timeout = "10s"
     let session = sandbox
         .new_session_with_environment(
             &client,
-            client_environment(&sandbox, &bin, &[("PROBE_TOKEN", "token-1659")]),
+            client_environment_with_bin(&sandbox, &bin, &[("PROBE_TOKEN", "token-1659")]),
         )
         .await;
     let call = json!({"id": "bash", "name": "bash", "arguments": {"command": "true"}});
     for probe in ["first-1659", "second-1659"] {
-        let environment = client_environment(&sandbox, &bin, &[("PROBE", probe)]);
+        let environment = client_environment_with_bin(&sandbox, &bin, &[("PROBE", probe)]);
         sandbox
             .prompt_tool_call_with_environment(&client, &session, &call, environment)
             .await;

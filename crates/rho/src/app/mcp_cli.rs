@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use crate::{
     cli::{Cli, McpCommand},
+    session_environment::Ambient,
     tools::mcp::{
         McpAuthorizationMode, McpCatalog, McpConnectOutcome, McpLoadMode, McpRoots,
         McpServerReport, McpServerStatus, McpSessionOptions, McpSessionPlan, McpSessionReport,
@@ -40,6 +41,8 @@ pub(super) async fn run(command: &McpCommand, cli: &Cli) -> anyhow::Result<()> {
             config.max_output_bytes,
             McpRoots::for_workspace(&cwd),
             McpAuthorizationMode::NonInteractive,
+            // The command runs in the shell that started it (#1659).
+            Ambient::ThisProcess,
         ),
     )
     .await;

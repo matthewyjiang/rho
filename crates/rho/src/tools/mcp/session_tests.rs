@@ -299,13 +299,13 @@ fn a_server_reads_its_sessions_environment() {
             .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
             .collect()
     }
-    let session = Ambient::Client(Arc::new(strings(&[
+    let session = Ambient::client(&[
         ("PATH", "/client/bin"),
         ("HOME", "/home/client"),
         ("GITHUB_TOKEN", "token"),
         ("API_TOKEN", "Bearer client"),
         ("UNRELATED", "value"),
-    ])));
+    ]);
 
     let mut command = tokio::process::Command::new("server");
     super::apply_stdio_environment(

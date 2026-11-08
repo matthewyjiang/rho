@@ -4,7 +4,7 @@
 //! from this fixed base set. Callers add their own allowlists and overlays on
 //! top. Hooks and MCP stdio share this contract so the two cannot drift.
 
-use std::{collections::BTreeMap, ffi::OsString};
+use std::ffi::OsString;
 
 /// Variables every sanitized child receives, on every platform.
 #[cfg(unix)]
@@ -24,25 +24,15 @@ const BASE_NAMES: &[&str] = &[
     "USERPROFILE",
 ];
 
-/// Names in the documented base set.
+/// Names in the documented base set, part of the hook spawn contract that
+/// diagnostics print before a project is trusted.
 pub(crate) fn base_names() -> &'static [&'static str] {
     BASE_NAMES
 }
 
-/// Builds a map of base names that are set in the parent via `read`.
-pub(crate) fn collect_base<F>(mut read: F) -> BTreeMap<String, String>
-where
-    F: FnMut(&str) -> Option<String>,
-{
-    BASE_NAMES
-        .iter()
-        .copied()
-        .filter_map(|name| read(name).map(|value| (name.to_owned(), value)))
-        .collect()
-}
-
 /// Clears the child environment and installs only the base names that `read`
 /// finds, such as a session's (see [`crate::session_environment::Ambient`]).
+/// A base name `read` does not find is absent from the child, never invented.
 pub(crate) fn apply_base<F>(command: &mut tokio::process::Command, mut read: F)
 where
     F: FnMut(&str) -> Option<OsString>,

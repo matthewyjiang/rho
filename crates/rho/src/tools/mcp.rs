@@ -71,8 +71,8 @@ pub(crate) enum McpSessionPlan {
 ///
 /// The two server-to-client services default to off, so a caller that cannot
 /// serve them, such as the `rho mcp` inventory pass, gets the safe shape without
-/// saying anything. Servers start in this process's environment unless a
-/// session's is given.
+/// saying anything. Every caller names the environment servers start in, so
+/// none falls back to this process's by omission (#1659).
 #[derive(Clone, Debug)]
 pub(crate) struct McpSessionOptions {
     pub(crate) max_output_bytes: usize,
@@ -88,10 +88,14 @@ pub(crate) struct McpSessionOptions {
 }
 
 impl McpSessionOptions {
+    /// Options for servers that start in, and read `env_from_env` and
+    /// `headers_from_env` from, `environment`: a session's, or this
+    /// process's for a caller without one.
     pub(crate) fn new(
         max_output_bytes: usize,
         roots: McpRoots,
         authorization: McpAuthorizationMode,
+        environment: Ambient,
     ) -> Self {
         Self {
             max_output_bytes: max_output_bytes.max(1),
@@ -102,15 +106,8 @@ impl McpSessionOptions {
                 elicitation: McpElicitationSupport::Unavailable,
                 sampling: None,
             },
-            environment: Ambient::ThisProcess,
+            environment,
         }
-    }
-
-    /// Start servers in `environment`, a session's, in place of this
-    /// process's (#1659).
-    pub(crate) fn with_environment(mut self, environment: Ambient) -> Self {
-        self.environment = environment;
-        self
     }
 
     /// Declare that this run can put a server's question in front of a person.
@@ -223,21 +220,10 @@ impl McpBundle {
             .map(|(identity, server)| {
                 let identity = identity.clone();
                 let server = server.clone();
-                let roots = options.roots.clone();
-                let services = options.services.clone();
-                let authorization = options.authorization;
-                let environment = options.environment.clone();
+                let options = &options;
                 async move {
                     let transport = McpTransportSummary::from_server(&server);
-                    let result = session::connect_server_bounded(
-                        &identity,
-                        &server,
-                        &roots,
-                        &services,
-                        authorization,
-                        &environment,
-                    )
-                    .await;
+                    let result = session::connect_server_bounded(&identity, &server, options).await;
                     (identity, server, transport, result)
                 }
             });

@@ -250,7 +250,11 @@ opened or prompted it.
 
 `RHO_IN_HOOK` is how recursion is prevented. A hook may legitimately run `rho`;
 that nested Rho sees the marker and runs with hooks disabled, so a hook cannot
-trigger itself.
+trigger itself. In a daemon session, the marker that counts is the one in the
+environment of the client that opens (or reopens) the session, not the
+daemon's: a session a hook's `rho` opens runs without hooks, and a daemon a hook
+started automatically does not take the marker, so its other sessions keep
+their hooks.
 
 The working directory is the project root for project hooks and the hooks file's
 directory for user hooks.

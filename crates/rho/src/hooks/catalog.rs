@@ -10,7 +10,6 @@ use super::{
         parse_hooks_file, ConfiguredHookEvent, HookConfigError, HookDefinition,
         WorkflowHookEventKind,
     },
-    environment::base_environment_names,
     HookSource,
 };
 
@@ -223,7 +222,9 @@ fn spawn_contract(hook: &HookDefinition, active: bool) -> HookSpawnContract {
         command: hook.command().to_vec(),
         working_directory: hook.working_directory().to_path_buf(),
         timeout: hook.timeout(),
-        environment: base_environment_names()
+        // The names `build_command` gives the child: the base set, Rho's own
+        // marker, and the hook's allowlist.
+        environment: crate::child_env::base_names()
             .iter()
             .map(|name| (*name).to_owned())
             .chain(std::iter::once(super::IN_HOOK_ENV.to_owned()))

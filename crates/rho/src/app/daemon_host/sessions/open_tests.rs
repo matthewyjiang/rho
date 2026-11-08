@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use pretty_assertions::assert_eq;
 use rho_protocol::{ClientEnvironment, ErrorCode};
 
@@ -48,14 +46,7 @@ fn a_clients_environment_is_taken_whole_unless_no_process_could_take_it() {
     ];
     for (name, environment, expected) in cases {
         let actual = session_environment(&environment).map_err(|error| error.error_code());
-        let expected = expected.map(|variables| {
-            Ambient::Client(Arc::new(
-                variables
-                    .iter()
-                    .map(|(variable, value)| ((*variable).to_owned(), (*value).to_owned()))
-                    .collect(),
-            ))
-        });
+        let expected = expected.map(Ambient::client);
         assert_eq!(actual, expected.map_err(Some), "{name}");
     }
 }

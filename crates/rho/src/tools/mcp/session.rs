@@ -35,10 +35,9 @@ use super::{
     oauth::{self, McpAuthorizationMode, McpHttpClient},
     progress::McpProgressRouter,
     report::McpLiveServerState,
-    roots::McpRoots,
     sampling::{McpSamplingBridge, McpSamplingService},
     tool::McpToolSlot,
-    validate,
+    validate, McpSessionOptions,
 };
 use crate::session_environment::Ambient;
 
@@ -139,24 +138,22 @@ impl McpServerOffers {
 }
 
 /// Establish and discover under one startup budget, with the server started in,
-/// and its headers read from, `environment` (#1659). After the session exists,
-/// failures and timeouts always attempt a bounded close instead of relying on
-/// Drop alone.
+/// and its headers read from, the environment of `options` (#1659). After the
+/// session exists, failures and timeouts always attempt a bounded close instead
+/// of relying on Drop alone.
 pub(super) async fn connect_server_bounded(
     identity: &str,
     server: &McpServerConfig,
-    roots: &McpRoots,
-    services: &McpSessionServices,
-    authorization: McpAuthorizationMode,
-    environment: &Ambient,
+    options: &McpSessionOptions,
 ) -> ConnectResult {
+    let environment = &options.environment;
     // Authorization runs before the startup clock. It carries its own budgets,
     // and a browser login is a person's pace, not a server's.
-    let http_client = match resolve_http_client(identity, server, authorization, environment).await
-    {
-        Ok(http_client) => http_client,
-        Err(error) => return ConnectResult::Failed { error },
-    };
+    let http_client =
+        match resolve_http_client(identity, server, options.authorization, environment).await {
+            Ok(http_client) => http_client,
+            Err(error) => return ConnectResult::Failed { error },
+        };
 
     let deadline = tokio::time::Instant::now() + MCP_SERVER_STARTUP_BUDGET;
     let progress = McpProgressRouter::new();
@@ -164,10 +161,10 @@ pub(super) async fn connect_server_bounded(
     let (event_sender, events) = tokio::sync::mpsc::unbounded_channel();
     let handler = McpClientHandler::new(
         identity,
-        roots.clone(),
+        options.roots.clone(),
         progress.clone(),
         event_sender,
-        client_services(identity, server, services, &calls),
+        client_services(identity, server, &options.services, &calls),
     );
     let session = match tokio::time::timeout_at(
         deadline,
@@ -379,12 +376,11 @@ async fn establish_session(
             }
             // Looked up on the session's `PATH`; a path with a separator
             // resolves against this process's working directory.
-            let executable = which::which_in(
-                command,
-                environment.path(),
-                std::env::current_dir().unwrap_or_default(),
-            )
-            .with_context(|| format!("MCP executable `{command}` was not found"))?;
+            let working_directory = std::env::current_dir().with_context(|| {
+                format!("cannot read the working directory to find MCP executable `{command}`")
+            })?;
+            let executable = which::which_in(command, environment.path(), working_directory)
+                .with_context(|| format!("MCP executable `{command}` was not found"))?;
             let mut command = tokio::process::Command::new(executable);
             command.args(args);
             if let Some(cwd) = cwd {

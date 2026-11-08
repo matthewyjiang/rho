@@ -99,8 +99,8 @@ pub(super) struct OpenedSession {
 }
 
 /// The environment a client's `environment` gives a session's children:
-/// exactly the client's variables; [`Ambient::process_environment`] keeps
-/// provider credentials from its tools' processes. A variable no process
+/// exactly the client's variables; its [`SessionEnvironment`] keeps provider
+/// credentials from its tools' processes. A variable no process
 /// could be given is invalid params, naming it, so it fails the request
 /// rather than every later command (#1659).
 pub(super) fn session_environment(environment: &ClientEnvironment) -> Result<Ambient, RpcError> {
@@ -173,7 +173,7 @@ pub(super) async fn open_session(
             // turn open, as it does for `rho run`.
             background_wait: BackgroundWait::HoldPrompt,
             host_io: HostIo {
-                environment: Some(environment.clone()),
+                environment: environment.clone(),
                 ..HostIo::default()
             },
             mcp_authorization: McpAuthorizationMode::NonInteractive,
