@@ -15,9 +15,12 @@ use super::{CompactionEnd, LiveEvents};
 use crate::{
     app::{
         interactive_presenter::InteractiveToolPresenter,
-        session_events::test_support::{
-            agent, canonical_messages, closed, opened, origin, shell_call, text, updated,
-            without_display,
+        session_events::{
+            steer_to_wire,
+            test_support::{
+                agent, canonical_messages, closed, opened, origin, shell_call, text, updated,
+                without_display,
+            },
         },
         session_runtime::{InsertedMessage, SessionEvent, SessionTools},
     },
@@ -135,6 +138,7 @@ fn a_live_turn_streams_its_prompt_text_and_calls() {
                 content: vec![ContentBlock::Text {
                     text: "list files".into()
                 }],
+                steer: None,
             },
             usage(100),
             agent("m1", "Let me "),
@@ -339,6 +343,103 @@ fn tool_calls_carry_the_tui_cards() {
             None,
         ]
     );
+}
+
+// Covers: a steer the daemon recorded shows as a user message carrying its
+// steer id once the run applies it, even when the apply reaches the mapper
+// before the daemon recorded the steer; a withdrawn steer, or one the run's
+// end dropped, never shows, nor does an apply the run's end forgot; the
+// provider taking a steer mid-request reports its id.
+// Owner: session event live mapping
+#[test]
+fn steers_show_as_user_messages_once_applied() {
+    /// What a case does next: the daemon records or withdraws the steer, or
+    /// the runtime emits an event.
+    enum Step {
+        Steered,
+        Withdrawn,
+        Runtime(SessionEvent),
+    }
+    let id = rho_sdk::SteeringId::new();
+    let applied = || {
+        Step::Runtime(SessionEvent::Run(RunEvent::SteeringApplied {
+            ids: vec![id.clone()],
+        }))
+    };
+    let run_closed = || Step::Runtime(SessionEvent::RunClosed);
+    let steer_message = vec![WireEvent::UserMessage {
+        message: MessageId::new("m0"),
+        content: vec![ContentBlock::Text {
+            text: "use tabs".into(),
+        }],
+        steer: Some(steer_to_wire(&id)),
+    }];
+    let cases = [
+        (
+            "recorded, then applied",
+            vec![(Step::Steered, vec![]), (applied(), steer_message.clone())],
+        ),
+        (
+            "applied before it was recorded",
+            vec![(applied(), vec![]), (Step::Steered, steer_message.clone())],
+        ),
+        (
+            "withdrawn",
+            vec![
+                (Step::Steered, vec![]),
+                (Step::Withdrawn, vec![]),
+                (applied(), vec![]),
+            ],
+        ),
+        (
+            "delivered",
+            vec![
+                (Step::Steered, vec![]),
+                (
+                    Step::Runtime(SessionEvent::Run(RunEvent::SteeringDelivered {
+                        id: id.clone(),
+                    })),
+                    vec![WireEvent::SteeringDelivered {
+                        id: steer_to_wire(&id),
+                    }],
+                ),
+            ],
+        ),
+        (
+            "dropped by the run's end",
+            vec![
+                (Step::Steered, vec![]),
+                (run_closed(), vec![]),
+                (applied(), vec![]),
+            ],
+        ),
+        (
+            "applied, then forgotten at the run's end",
+            vec![
+                (applied(), vec![]),
+                (run_closed(), vec![]),
+                (Step::Steered, vec![]),
+            ],
+        ),
+    ];
+    for (name, steps) in cases {
+        let tool_set = AppToolSet::disabled();
+        let mut live = live(&tool_set);
+        for (index, (step, expected)) in steps.into_iter().enumerate() {
+            let shown = match step {
+                Step::Steered => live
+                    .steered(id.clone(), &UserInput::text("use tabs"))
+                    .into_iter()
+                    .collect(),
+                Step::Withdrawn => {
+                    live.withdrawn(&id);
+                    Vec::new()
+                }
+                Step::Runtime(event) => live.map(&event),
+            };
+            assert_eq!(canonical_messages(shown), expected, "{name}, step {index}");
+        }
+    }
 }
 
 /// A call update with `status` and `content`, and nothing else.

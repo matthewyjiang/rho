@@ -1,7 +1,7 @@
 //! Maps a loaded session's live runtime events onto wire events.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -13,13 +13,14 @@ use rho_protocol::{
 use rho_sdk::{
     model,
     tool::{ToolMetadata, ToolOutput},
-    CompactionOutcome, ContextEstimate, RunEvent, ToolCompletion, UserInput,
+    CompactionOutcome, ContextEstimate, RunEvent, SteeringId, ToolCompletion, UserInput,
 };
 
 use super::{
     cards, named_call, opened_call, plan_entries,
     replay::{self, saved_message_id},
-    result_content, status_update, text_content, tools, user_content, CallIds, UNNAMED_TOOL_TITLE,
+    result_content, status_update, steer_to_wire, text_content, tools, user_content, CallIds,
+    UNNAMED_TOOL_TITLE,
 };
 use crate::{
     app::{
@@ -47,7 +48,15 @@ const UNFINISHED_COMPACTION: &str = "compaction ended without a result";
 ///
 /// Agent message and thought chunks carry a message id. Consecutive chunks
 /// of one kind share it; a chunk of the other kind, a new model step, or any
-/// other event in between, such as a tool call, starts a new message.
+/// other event in between, such as a tool call, starts a new message. Only a
+/// steer's delivery, which lands mid-response, does not.
+///
+/// A steer the daemon accepted ([`Self::steered`]) goes out as a user
+/// message carrying its steer id once the run applies it
+/// ([`RunEvent::SteeringApplied`]), and as a delivery while the provider
+/// takes it mid-request ([`RunEvent::SteeringDelivered`]). A steer the
+/// daemon did not record, such as a delegated child's parent's, shows no
+/// user message; its saved row shows once replayed.
 ///
 /// Each start, progress update and result also carries the card Rho's TUI
 /// draws for the call, from the same presenter (`ToolCallUpdate::display`).
@@ -98,6 +107,13 @@ pub(crate) struct LiveEvents {
     /// The message the latest chunk belongs to, while later chunks of its
     /// kind still continue it.
     message: Option<OpenMessage>,
+    /// The content of each steer the daemon recorded that has not applied,
+    /// by the id the run accepted it under. The run's end clears it.
+    steers: HashMap<SteeringId, Vec<ContentBlock>>,
+    /// Steers that applied before the daemon recorded them: the run's
+    /// receipt and its events reach the daemon apart. The run's end clears
+    /// it, so steers the daemon never records do not pile up.
+    applied_unseen: HashSet<SteeringId>,
 }
 
 /// How a compaction ended, as [`LiveEvents::compaction_ended`] reports it.
@@ -164,7 +180,29 @@ impl LiveEvents {
             replayed_rows: 0,
             compaction: None,
             message: None,
+            steers: HashMap::new(),
+            applied_unseen: HashSet::new(),
         }
+    }
+
+    /// Notes `input`, steer `id`, which the run accepted, so its
+    /// [`RunEvent::SteeringApplied`] shows it as a user message. When that
+    /// already arrived, returns the user message to publish now instead.
+    pub(crate) fn steered(&mut self, id: SteeringId, input: &UserInput) -> Option<WireEvent> {
+        let content = user_content(input.blocks());
+        if self.applied_unseen.remove(&id) {
+            // Published outside [`Self::map`]: a user message ends any
+            // message.
+            self.message = None;
+            return Some(steer_message(&id, content));
+        }
+        self.steers.insert(id, content);
+        None
+    }
+
+    /// Forgets steer `id`, which was withdrawn before it applied.
+    pub(crate) fn withdrawn(&mut self, id: &SteeringId) {
+        self.steers.remove(id);
     }
 
     /// Notes `input`, the display input of the turn about to start
@@ -206,6 +244,7 @@ impl LiveEvents {
         WireEvent::UserMessage {
             message: inserted_message_id(inserted),
             content: user_content(display.blocks()),
+            steer: None,
         }
     }
 
@@ -279,7 +318,9 @@ impl LiveEvents {
         if events.iter().any(|event| {
             !matches!(
                 event,
-                WireEvent::AgentMessageChunk { .. } | WireEvent::ThoughtChunk { .. }
+                WireEvent::AgentMessageChunk { .. }
+                    | WireEvent::ThoughtChunk { .. }
+                    | WireEvent::SteeringDelivered { .. }
             )
         }) {
             self.message = None;
@@ -294,7 +335,22 @@ impl LiveEvents {
         Some(WireEvent::UserMessage {
             message: inserted_message_id(inserted),
             content,
+            steer: None,
         })
+    }
+
+    /// The user messages of the steers `ids` names, in order. One the
+    /// daemon has not recorded yet waits for [`Self::steered`].
+    fn steering_applied(&mut self, ids: &[SteeringId]) -> Vec<WireEvent> {
+        ids.iter()
+            .filter_map(|id| match self.steers.remove(id) {
+                Some(content) => Some(steer_message(id, content)),
+                None => {
+                    self.applied_unseen.insert(id.clone());
+                    None
+                }
+            })
+            .collect()
     }
 
     fn run_event(&mut self, event: &RunEvent) -> Vec<WireEvent> {
@@ -387,18 +443,20 @@ impl LiveEvents {
             }
             // [`SessionEvent::BoundaryApplied`] carried the rows it shows.
             RunEvent::BoundaryInputApplied { .. } => Vec::new(),
+            RunEvent::SteeringApplied { ids } => self.steering_applied(ids),
+            RunEvent::SteeringDelivered { id } => vec![WireEvent::SteeringDelivered {
+                id: steer_to_wire(id),
+            }],
             // Questions arrive as [`SessionEvent::QuestionAsked`].
             RunEvent::HostInputRequested { .. } | RunEvent::ToolHostInputRequested { .. } => {
                 Vec::new()
             }
             // Streaming tool input lands with the TUI's tool cards (#1667);
-            // steering, retries, diagnostics, token accounting and
-            // model-call metrics land as later minors.
+            // retries, diagnostics, token accounting and model-call metrics
+            // land as later minors.
             RunEvent::ToolCallUpdated { .. }
             | RunEvent::UsageUpdated { .. }
             | RunEvent::ProviderContextUpdated { .. }
-            | RunEvent::SteeringApplied { .. }
-            | RunEvent::SteeringDelivered { .. }
             | RunEvent::ProviderDiagnostic { .. }
             | RunEvent::WebSearch { .. }
             | RunEvent::ProviderRequestRetry
@@ -445,11 +503,13 @@ impl LiveEvents {
 
     /// Closing events for the compaction and the calls clients saw open but
     /// never saw finish: each closes `failed`. Ends the run's state, so the
-    /// next run starts clean.
+    /// next run starts clean: steers it has not applied were dropped.
     fn close_unfinished(&mut self) -> Vec<WireEvent> {
         self.proposed.clear();
         self.presenter =
             InteractiveToolPresenter::new(self.workspace.clone(), self.mcp_tools.clone());
+        self.steers.clear();
+        self.applied_unseen.clear();
         // Never the run's own error: it is not redacted, and may echo a
         // credential; the turn's end carries the redacted outcome (#1670).
         let compaction =
@@ -665,6 +725,15 @@ fn inserted_message_id(inserted: &InsertedMessage) -> MessageId {
     match inserted {
         InsertedMessage::Saved(origin) => saved_message_id(origin),
         InsertedMessage::Unreplayed => fresh_message_id(),
+    }
+}
+
+/// Applied steer `id`, `content`, as a user message.
+fn steer_message(id: &SteeringId, content: Vec<ContentBlock>) -> WireEvent {
+    WireEvent::UserMessage {
+        message: fresh_message_id(),
+        content,
+        steer: Some(steer_to_wire(id)),
     }
 }
 

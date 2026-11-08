@@ -11,7 +11,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ContentBlock, Cursor, InputRequest, JobState, Seq, SessionEvent, SessionSetup, StreamId,
+    ContentBlock, Cursor, InputRequest, JobState, Seq, SessionEvent, SessionSetup, SteerId,
+    StreamId,
 };
 
 /// Open a new session in a workspace, before its first prompt.
@@ -22,6 +23,8 @@ pub const SESSION_PROMPT: &str = "rho/session/prompt";
 pub const SESSION_CANCEL: &str = "rho/session/cancel";
 /// Stage input for a running turn's next model request.
 pub const SESSION_STEER: &str = "rho/session/steer";
+/// Withdraw a steer the running turn has not applied yet.
+pub const SESSION_UNSTEER: &str = "rho/session/unsteer";
 /// Receive a session's events as [`SESSION_EVENT`] notifications.
 pub const SESSION_ATTACH: &str = "rho/session/attach";
 /// Stop receiving a session's events.
@@ -201,11 +204,54 @@ pub struct SessionSteerParams {
     pub text: String,
 }
 
-/// Result of [`SESSION_STEER`]: the input is queued for the running turn,
-/// which applies it at its next model request. A turn that ends first drops
-/// it.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct SessionSteerResponse {}
+/// Result of [`SESSION_STEER`]: the running turn accepted the input, which
+/// applies at the turn's next model request as a
+/// [`SessionEvent::UserMessage`] carrying `id`. A turn that ends first drops
+/// it: a client that never saw it apply can offer it again.
+///
+/// No model request taking input is [`crate::ErrorCode::NotSteerable`], as
+/// is a turn that ended before it accepted the input.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionSteerResponse {
+    pub id: SteerId,
+}
+
+/// Params of [`SESSION_UNSTEER`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionUnsteerParams {
+    pub session: SessionId,
+    /// The steer to withdraw, as [`SESSION_STEER`] answered it.
+    pub id: SteerId,
+}
+
+/// Result of [`SESSION_UNSTEER`]. With no model request taking input, it
+/// answers [`crate::ErrorCode::NotSteerable`] instead.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionUnsteerResponse {
+    pub outcome: UnsteerOutcome,
+}
+
+/// What [`SESSION_UNSTEER`] did with the steer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum UnsteerOutcome {
+    /// Removed before it reached the conversation: it never applies.
+    Withdrawn,
+    /// The provider already took it ([`SessionEvent::SteeringDelivered`]):
+    /// it still applies.
+    Delivered,
+    /// Already in the conversation.
+    Applied,
+    /// The running turn never accepted that id: another turn's, or one a
+    /// turn dropped when it ended.
+    NotFound,
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
 
 /// Params of [`SESSION_ATTACH`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

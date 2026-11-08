@@ -7,9 +7,10 @@
 //! id. A prompt or an attach for a saved session the daemon has not loaded,
 //! such as one an earlier daemon ran or one the TUI saved, reopens it from
 //! its file in its own workspace, recording its turns on the session's last
-//! job (#1661). Cancel, steer, answer, hold, and configure never load a
-//! session: one that is not loaded has no turn to act on, and a client
-//! attaches before it changes settings.
+//! job (#1661). Cancel, steer, unsteer, answer, hold, and configure never
+//! load a session: one that is not loaded has no turn to act on, and a
+//! client attaches before it changes settings. A steer answers with its id,
+//! which a client withdraws it by; see [`steer`].
 //!
 //! A session whose host runs its children as its own threads (T3 Code) is
 //! woken through that host once background work that outlived its turn
@@ -40,10 +41,9 @@ use rho_protocol::{
     DetachReason, ErrorCode, RpcError, SessionAnswerParams, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
     SessionHoldParams, SessionHoldResponse, SessionNewParams, SessionNewResponse,
-    SessionPromptParams, SessionPromptResponse, SessionSetup, SessionSteerParams,
-    SessionSteerResponse, Subscription, TurnOutcome,
+    SessionPromptParams, SessionPromptResponse, SessionSetup, Subscription, TurnOutcome,
 };
-use rho_sdk::{CancellationToken, SessionId, UserInput};
+use rho_sdk::{CancellationToken, SessionId};
 
 use super::{
     jobs::{
@@ -56,7 +56,7 @@ use crate::{
     app::{
         prompt_content,
         session_events::LiveEvents,
-        session_runtime::{CredentialFailure, SessionHandle, SessionRuntime, SteerError},
+        session_runtime::{CredentialFailure, SessionHandle, SessionRuntime},
     },
     config::Config,
 };
@@ -71,6 +71,7 @@ mod options;
 mod queued;
 mod reopen;
 mod setup;
+mod steer;
 mod store;
 mod t3_wake;
 #[cfg(test)]
@@ -151,7 +152,7 @@ struct LoadedSession {
     /// The session's events, as attached clients follow them.
     feed: Feed,
     /// Turns the runtime's events into the feed's; only the turn under way
-    /// uses it, so the lock is never contended.
+    /// and its steers use it, each briefly and never across an await.
     live: Mutex<LiveEvents>,
     /// The input requests the turn under way has open (#1660).
     inputs: Mutex<Inputs>,
@@ -693,27 +694,6 @@ impl Sessions {
             session.cancel_turn();
         }
         Ok(SessionCancelResponse {})
-    }
-
-    /// Stages `text` for the running turn's next model request. The receipt
-    /// is dropped: the turn reports what it applied with its events.
-    pub(super) async fn steer(
-        &self,
-        params: SessionSteerParams,
-    ) -> Result<SessionSteerResponse, RpcError> {
-        let not_steerable =
-            || RpcError::new(ErrorCode::NotSteerable, "no model request is taking input");
-        let Some(session) = self.loaded_session(&params.session).await? else {
-            return Err(not_steerable());
-        };
-        match session.handle.steer(UserInput::text(params.text)) {
-            Ok(_receipt) => Ok(SessionSteerResponse {}),
-            Err(SteerError::NotRunning) => Err(not_steerable()),
-            Err(SteerError::Refused(error)) => Err(RpcError::new(
-                ErrorCode::SteerRefused,
-                format!("could not steer session: {error}"),
-            )),
-        }
     }
 
     /// Hands a client's answer to one of a session's open input requests

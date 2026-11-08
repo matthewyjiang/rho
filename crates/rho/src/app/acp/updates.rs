@@ -70,7 +70,12 @@ impl Updates {
     /// The ACP updates `event` shows as.
     pub(super) fn map(&mut self, event: &SessionEvent) -> Vec<SessionUpdate> {
         match event {
-            SessionEvent::UserMessage { message, content } => content
+            // A steer shows as the user message it applied as.
+            SessionEvent::UserMessage {
+                message,
+                content,
+                steer: _,
+            } => content
                 .iter()
                 .filter_map(content_block)
                 .map(|block| SessionUpdate::UserMessageChunk(chunk(block, message)))
@@ -124,7 +129,9 @@ impl Updates {
             | SessionEvent::InputResolved { .. }
             | SessionEvent::InputHeld { .. }
             | SessionEvent::TurnEnded { .. }
-            | SessionEvent::OptionsChanged { .. } => Vec::new(),
+            | SessionEvent::OptionsChanged { .. }
+            // The steer shows once it applies, as a user message.
+            | SessionEvent::SteeringDelivered { .. } => Vec::new(),
             // `Unknown`, or an event a newer daemon sends.
             _ => {
                 tracing::debug!("skipping a session event this rho does not know");

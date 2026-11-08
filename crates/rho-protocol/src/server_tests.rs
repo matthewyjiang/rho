@@ -80,6 +80,13 @@ macro_rules! hosts_no_sessions {
             Err(no_such_session())
         }
 
+        async fn unsteer_session(
+            &self,
+            _: SessionUnsteerParams,
+        ) -> Result<SessionUnsteerResponse, RpcError> {
+            Err(no_such_session())
+        }
+
         async fn answer_session(
             &self,
             _: SessionAnswerParams,

@@ -93,8 +93,8 @@ error_codes! {
         SessionBusy = -32004,
         /// No model request is taking input.
         NotSteerable = -32005,
-        /// The running turn refused the steering input, as when its
-        /// command queue is full.
+        /// The running turn refused the steering input, or a request to
+        /// withdraw a steer, as when its command queue is full.
         SteerRefused = -32006,
         /// The daemon is stopping: it opens no new sessions and starts no
         /// new turns, and a prompt still waiting for its turn to start when

@@ -25,7 +25,8 @@ use rho_protocol::{
     SessionDeleteParams, SessionDeleteResponse, SessionHoldParams, SessionHoldResponse,
     SessionListParams, SessionListResponse, SessionNewParams, SessionNewResponse,
     SessionPromptParams, SessionPromptResponse, SessionRenameParams, SessionRenameResponse,
-    SessionSteerParams, SessionSteerResponse, Subscription, PROTOCOL_VERSION,
+    SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
+    Subscription, PROTOCOL_VERSION,
 };
 use rho_sdk::CancellationToken;
 
@@ -163,6 +164,13 @@ impl Service for DaemonHost {
         params: SessionSteerParams,
     ) -> Result<SessionSteerResponse, RpcError> {
         self.sessions.steer(params).await
+    }
+
+    async fn unsteer_session(
+        &self,
+        params: SessionUnsteerParams,
+    ) -> Result<SessionUnsteerResponse, RpcError> {
+        self.sessions.unsteer(params).await
     }
 
     async fn answer_session(

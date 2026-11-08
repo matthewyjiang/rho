@@ -9,8 +9,9 @@
 //! unfinished as `failed`,
 //! so a conversation reads the same whether a client watched it live or
 //! received it replayed, apart from how its text was chunked. Only live
-//! turns report usage, compactions, and discarded responses; saved rows
-//! hold none, and the daemon tells titles itself.
+//! turns report usage, compactions, discarded responses, and steers' ids
+//! and deliveries; saved rows hold none, and the daemon tells titles
+//! itself.
 //!
 //! [`outcome`] says how a turn ended, for the daemon's clients and
 //! `rho run` alike.
@@ -22,8 +23,8 @@ use std::{collections::HashMap, path::Path};
 
 use rho_protocol::display::ToolHeader;
 use rho_protocol::{
-    CardTone, ContentBlock, Location, PlanEntry, PlanStatus, SessionEvent as WireEvent, ToolCallId,
-    ToolCallUpdate, ToolContent, ToolStatus,
+    CardTone, ContentBlock, Location, PlanEntry, PlanStatus, SessionEvent as WireEvent, SteerId,
+    ToolCallId, ToolCallUpdate, ToolContent, ToolStatus,
 };
 use rho_sdk::{model, tool::ToolMetadata};
 use serde_json::Value;
@@ -180,6 +181,11 @@ fn tool_title(
         Some(identity) => format!("{}/{title}", identity.server),
         None => title,
     }
+}
+
+/// The id the run accepted a steer under, as the wire names the steer.
+pub(crate) fn steer_to_wire(id: &rho_sdk::SteeringId) -> SteerId {
+    SteerId::new(id.as_str())
 }
 
 /// A user message's content. Empty text says nothing, and a user message

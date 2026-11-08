@@ -26,6 +26,7 @@ fn user(id: &str) -> SessionEvent {
     SessionEvent::UserMessage {
         message: MessageId::new(id),
         content: Vec::new(),
+        steer: None,
     }
 }
 
