@@ -24,24 +24,34 @@ pub(super) struct HostOrchestrator {
     runs: Mutex<Vec<HostRun>>,
 }
 
-/// T3's three task tools, bound only as a complete set.
-struct HostContract {
+/// T3's three task tools, bound only as a complete set. The session's
+/// host-backed `agent` tools delegate its children through it, and the
+/// daemon's T3 wake watchers (`daemon_host::sessions::t3_wake`) start and
+/// cancel their watcher tasks through it.
+pub(crate) struct HostContract {
     delegate: Arc<dyn Tool>,
     status: Arc<dyn Tool>,
     cancel: Arc<dyn Tool>,
 }
 
+/// A task T3 accepted.
+pub(crate) struct DelegatedTask {
+    pub(crate) task_id: String,
+    /// The thread T3 runs the task in, when it said.
+    pub(crate) child_thread_id: Option<String>,
+}
+
 impl HostContract {
-    fn bind(tools: &AppToolSet) -> Result<Self, String> {
+    /// Binds the task tools of the `t3-code` server that `lookup` finds by
+    /// exported name, or says which one is missing.
+    pub(crate) fn bind(lookup: impl Fn(&str) -> Option<Arc<dyn Tool>>) -> Result<Self, String> {
         let lookup = |name| {
-            tools
-                .tool_named(&namespaced_tool_name(SERVER, name))
-                .ok_or_else(|| {
-                    format!(
-                        "host child threads need tool `{name}` from MCP server `{SERVER}`, \
-                         which did not provide it; is Rho running inside T3 Code?"
-                    )
-                })
+            lookup(&namespaced_tool_name(SERVER, name)).ok_or_else(|| {
+                format!(
+                    "T3 Code task tool `{name}` is missing from MCP server `{SERVER}`; \
+                     is Rho running inside T3 Code?"
+                )
+            })
         };
         Ok(Self {
             delegate: lookup("delegate_task")?,
@@ -49,49 +59,17 @@ impl HostContract {
             cancel: lookup("task_cancel")?,
         })
     }
-}
 
-#[derive(Clone)]
-pub(super) struct HostRun {
-    pub task_id: String,
-    pub child_thread_id: Option<String>,
-    pub agent_id: String,
-    pub title: String,
-    pub started: Instant,
-}
-
-impl HostOrchestrator {
-    /// Binds T3's three task tools from the `t3-code` server. A missing tool
-    /// does not fail the session: hosts open sessions without MCP servers too
-    /// (T3's provider status probe does). Instead every host operation fails
-    /// with the reason, so the host-threads opt-in never silently falls back to
-    /// in-process subagents.
-    pub(super) fn connect(tools: &AppToolSet) -> Self {
-        Self {
-            contract: HostContract::bind(tools),
-            runs: Mutex::new(Vec::new()),
-        }
-    }
-
-    fn contract(&self) -> Result<&HostContract, ToolError> {
-        self.contract
-            .as_ref()
-            .map_err(|reason| ToolError::new(ToolErrorKind::Execution, reason.as_str()))
-    }
-
-    pub(super) async fn delegate(
+    /// Starts a T3 task with `invocation`'s arguments. A refusal, or a reply
+    /// without a task id, is an execution error; a cancel stays a cancel.
+    pub(crate) async fn delegate(
         &self,
-        invocation_id: ToolCallId,
-        definition: &AgentDefinition,
-        prompt: &str,
-        model_override: Option<&str>,
+        invocation: ToolInvocation,
         context: ToolContext,
-    ) -> Result<HostRun, ToolError> {
-        let arguments = delegate_arguments(definition, prompt, model_override);
+    ) -> Result<DelegatedTask, ToolError> {
         let output = self
-            .contract()?
             .delegate
-            .call(ToolInvocation::new(invocation_id, arguments), context)
+            .call(invocation, context)
             .await
             .map_err(|error| {
                 if error.kind() == ToolErrorKind::Cancelled {
@@ -117,12 +95,81 @@ impl HostOrchestrator {
                     ),
                 )
             })?;
-        let run = HostRun {
+        Ok(DelegatedTask {
             task_id: task_id.to_owned(),
             child_thread_id: data
                 .and_then(|data| data.get("childThreadId"))
                 .and_then(Value::as_str)
                 .map(str::to_owned),
+        })
+    }
+
+    /// Asks T3 to cancel task `task_id`, for `reason` when given. T3's
+    /// reply stays opaque.
+    pub(crate) async fn cancel(
+        &self,
+        invocation_id: ToolCallId,
+        task_id: &str,
+        reason: Option<&str>,
+        context: ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        let mut arguments = json!({"taskId": task_id});
+        if let Some(reason) = reason {
+            arguments["reason"] = json!(reason);
+        }
+        self.cancel
+            .call(ToolInvocation::new(invocation_id, arguments), context)
+            .await
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct HostRun {
+    pub task_id: String,
+    pub child_thread_id: Option<String>,
+    pub agent_id: String,
+    pub title: String,
+    pub started: Instant,
+}
+
+impl HostOrchestrator {
+    /// Binds T3's three task tools from the `t3-code` server. A missing tool
+    /// does not fail the session: hosts open sessions without MCP servers too
+    /// (T3's provider status probe does). Instead every host operation fails
+    /// with the reason, so the host-threads opt-in never silently falls back to
+    /// in-process subagents.
+    pub(super) fn connect(tools: &AppToolSet) -> Self {
+        Self {
+            contract: HostContract::bind(|name| tools.tool_named(name)),
+            runs: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn contract(&self) -> Result<&HostContract, ToolError> {
+        self.contract
+            .as_ref()
+            .map_err(|reason| ToolError::new(ToolErrorKind::Execution, reason.as_str()))
+    }
+
+    pub(super) async fn delegate(
+        &self,
+        invocation_id: ToolCallId,
+        definition: &AgentDefinition,
+        prompt: &str,
+        model_override: Option<&str>,
+        context: ToolContext,
+    ) -> Result<HostRun, ToolError> {
+        let arguments = delegate_arguments(definition, prompt, model_override);
+        let DelegatedTask {
+            task_id,
+            child_thread_id,
+        } = self
+            .contract()?
+            .delegate(ToolInvocation::new(invocation_id, arguments), context)
+            .await?;
+        let run = HostRun {
+            task_id,
+            child_thread_id,
             agent_id: definition.id.to_string(),
             // Local run label only; T3 owns its thread's display title.
             title: prompt
@@ -181,13 +228,8 @@ impl HostOrchestrator {
         reason: Option<&str>,
         context: ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let mut arguments = json!({"taskId": task_id});
-        if let Some(reason) = reason {
-            arguments["reason"] = json!(reason);
-        }
         self.contract()?
-            .cancel
-            .call(ToolInvocation::new(invocation_id, arguments), context)
+            .cancel(invocation_id, task_id, reason, context)
             .await
     }
 }

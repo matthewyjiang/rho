@@ -48,7 +48,7 @@ Start a Rho thread from the Agent Panel's new-thread menu. Zed lists saved Rho s
 
 ### T3 Code
 
-Add Rho as an ACP agent with the command `rho` and the arguments `acp --t3code`. The connection negotiates ACP v2 when T3 Code asks for it, with v1 still available to older hosts. Rho subagents run as T3 child threads; background results do not wake an idle thread yet ([#1670](https://github.com/matthewyjiang/rho/issues/1670)). See [T3 Code](/integrations/acp/t3-code).
+Add Rho as an ACP agent with the command `rho` and the arguments `acp --t3code`. The connection negotiates ACP v2 when T3 Code asks for it, with v1 still available to older hosts. Rho subagents run as T3 child threads, and background results wake an idle thread. See [T3 Code](/integrations/acp/t3-code).
 
 ### Other hosts
 
@@ -119,7 +119,7 @@ Rho keeps the current prompt open while work it is waiting on is still running, 
 - A workflow started with `/workflow:` ends the prompt right away. Its result reaches the model with your next message, and that prompt does not wait for the run to finish.
 - Cancelling stops the wait, not the work. Subagents and processes keep running. The next prompt waits for those subagents and delivers their results; processes report in it without holding it open. Closing the session does not stop them either. Stop subagents with the `agents` tool.
 
-Under `--t3code`, subagents run as [T3 threads](/integrations/acp/t3-code#subagents-run-as-t3-threads) instead and never hold a prompt open.
+Under `--t3code`, nothing holds the prompt open: subagents run as [T3 threads](/integrations/acp/t3-code#subagents-run-as-t3-threads) and background results [wake the thread](/integrations/acp/t3-code#wake-on-background-results).
 
 ## Not covered by ACP
 

@@ -295,7 +295,7 @@ The roots are saved with the session, so `rho -R` restores them, and `session/li
 
 ## Background results
 
-ACP v1 gives an agent no way to start a turn, so Rho keeps a prompt open instead of waking an idle session. Background work runs in the daemon, so it outlives the host closing the session.
+ACP v1 gives an agent no way to start a turn, so Rho keeps a prompt open instead of waking an idle session. Under `--t3code` this changes as described in [Wake on background results](/integrations/acp/t3-code#wake-on-background-results). Background work runs in the daemon, so it outlives the host closing the session.
 
 - A result that arrives while a prompt is running reaches the model at its next step.
 - If the model ends its turn while a delegated agent Rho runs, or a workflow or background process started during that prompt, is still running, the prompt stays open and the model continues in it once that work finishes. Those agents hold the prompt open whichever prompt started them. Processes left over from earlier prompts do not; their results arrive at the next prompt.

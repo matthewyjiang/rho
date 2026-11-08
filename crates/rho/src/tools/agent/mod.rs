@@ -5,6 +5,10 @@ mod host_orchestrator;
 mod host_tools;
 pub(crate) mod message_receipt;
 
+// Only the daemon's T3 wake watchers, unix-only so far (#1665), use the
+// contract outside the host-backed `agent` tools.
+#[cfg(unix)]
+pub(crate) use host_orchestrator::HostContract;
 pub(crate) use host_tools::install_host_delegation;
 
 use std::{

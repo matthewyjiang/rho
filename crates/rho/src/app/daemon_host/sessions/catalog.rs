@@ -23,6 +23,7 @@ use super::{
     reopen::{not_found, parse_session},
     stopping,
     store::{store_blocking, store_failed},
+    t3_wake::WakeSignal,
     writing, Held, Hold, LoadedSession, Sessions,
 };
 use crate::{
@@ -127,6 +128,10 @@ impl Sessions {
             })
             .await
         };
+        if deleted.is_ok() {
+            // A T3 wake watcher's recorded wait goes with its session.
+            WakeSignal::forget(id.as_str());
+        }
         let child_sessions = match (loaded, deleted) {
             (Some(session), Ok(ExactDelete::Deleted(outcome))) => {
                 session.feed.close(DetachReason::Deleted);

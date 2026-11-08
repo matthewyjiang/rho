@@ -38,6 +38,7 @@ use crate::{
     },
     config::Config,
 };
+use wake::WakePrompt;
 
 /// How a prompt's turn began, as the request that sent the prompt learns
 /// it. A turn that completed `Began`. A turn the daemon's stop interrupted
@@ -155,8 +156,16 @@ impl TurnTask {
             // without beginning its prompt, as the turns the stop stops do.
             Some(_) if stopping.is_cancelled() => (Ok(Ran::Cancelled), None),
             Some(runtime) => {
+                let wake_prompt = wake::prompt_started(&session, &input).await;
                 let (ended, timed_out) = {
-                    let turn = run_turn(runtime, &mut view, input, &session.config, &cancel);
+                    let turn = run_turn(
+                        runtime,
+                        &mut view,
+                        input,
+                        wake_prompt,
+                        &session.config,
+                        &cancel,
+                    );
                     tokio::pin!(turn);
                     // The deadline first, so a limit already past cancels
                     // the turn before it saves its prompt.
@@ -177,6 +186,10 @@ impl TurnTask {
                 // The turn may have left new skills, prompts, or MCP prompts
                 // behind; clients see them before they see the turn end.
                 session.refresh_options(runtime, &available_auths().await);
+                // A stopping daemon takes the session's work down with it.
+                if !stopping.is_cancelled() {
+                    wake::prompt_ended(&session, runtime, &ended).await;
+                }
                 (
                     ended.map_err(|error| failure(&session, runtime, &error)),
                     timed_out,
@@ -256,14 +269,16 @@ async fn report_title(session: Weak<LoadedSession>, title: TitleJob) {
     }
 }
 
-/// Begins a prompt of `input` on `runtime` and runs it: its slash command
-/// when it starts with one the daemon runs, else a model turn on it. A
-/// command the daemon cannot run fails the turn as a configuration error
-/// before the prompt is saved.
+/// Begins a prompt of `input` on `runtime` and runs it: the T3 wake
+/// watcher's wait when `wake_prompt` says it is one, its slash command when it
+/// starts with one the daemon runs, else a model turn on it. A command the
+/// daemon cannot run fails the turn as a configuration error before the
+/// prompt is saved.
 async fn run_turn(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,
     input: UserInput,
+    wake_prompt: WakePrompt,
     config: &Config,
     cancel: &CancellationToken,
 ) -> anyhow::Result<Ran> {
@@ -280,6 +295,10 @@ async fn run_turn(
     if cancel.is_cancelled() {
         return Ok(Ran::Cancelled);
     }
+    let origin = match wake_prompt {
+        WakePrompt::Prompt(origin) => origin,
+        WakePrompt::Watch(signal) => return wake::watch(view, &scope, &input, signal?).await,
+    };
     let home = crate::paths::home_dir();
     let command = {
         let commands = CommandScope::of(runtime, home.as_deref(), config);
@@ -296,7 +315,7 @@ async fn run_turn(
             calls,
         } => Turn {
             display: input,
-            model,
+            model: wake::model_input(&origin, model),
             calls,
         },
         PromptCommand::RunAsAgent(task) => {
@@ -576,6 +595,9 @@ impl TurnView for DaemonView {
         }
     }
 }
+
+#[path = "turn_wake.rs"]
+mod wake;
 
 #[cfg(test)]
 #[path = "turn_tests.rs"]

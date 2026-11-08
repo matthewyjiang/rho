@@ -11,6 +11,10 @@
 //! session: one that is not loaded has no turn to act on, and a client
 //! attaches before it changes settings.
 //!
+//! A session whose host runs its children as its own threads (T3 Code) is
+//! woken through that host once background work that outlived its turn
+//! finishes; see [`t3_wake`].
+//!
 //! Clients attach to a loaded session to follow its events (#1657); see
 //! [`feed`]. A client may change the session's settings, which apply
 //! between turns, a change sent during a turn once it ends, and which the
@@ -68,6 +72,7 @@ mod queued;
 mod reopen;
 mod setup;
 mod store;
+mod t3_wake;
 #[cfg(test)]
 mod test_events;
 #[cfg(test)]
@@ -80,6 +85,7 @@ use inputs::Inputs;
 use open::{open_session, session_environment, OpenWith, OpenedSession, Opening, Workspace};
 use queued::Queued;
 use reopen::ReopenLocks;
+use t3_wake::T3Wake;
 use turn::{PromptStart, TurnLimit, TurnTask};
 use unload::Residency;
 pub(in crate::app) use unload::UNLOAD_IDLE_AFTER;
@@ -146,6 +152,10 @@ struct LoadedSession {
     live: Mutex<LiveEvents>,
     /// The input requests the turn under way has open (#1660).
     inputs: Mutex<Inputs>,
+    /// The watchers that wake the idle session through its host, present
+    /// exactly when its host wakes it (see [`t3_wake`]). Only turns, which
+    /// take the runtime one at a time, lock it.
+    wake: Option<tokio::sync::Mutex<T3Wake>>,
 }
 
 /// The state a session's turn lock guards.
@@ -292,6 +302,7 @@ impl LoadedSession {
         let job = job.id.clone();
         Self {
             id: runtime.session_id().clone(),
+            wake: T3Wake::of(&runtime).map(tokio::sync::Mutex::new),
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),
             live: Mutex::new(live),

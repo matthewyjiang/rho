@@ -153,6 +153,7 @@ impl SessionRuntime {
             self.storage.persistence(),
             &mut self.held_notices,
         )?;
+        delegation.set_background_wait(self.background_wait());
         let displays = delegation.offered_displays();
         // Children outlive a cancelled, failed, or step-limited prompt, as they
         // do across TUI turns: T3 Code cancels the open prompt to send each

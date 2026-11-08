@@ -9,6 +9,8 @@ use crate::tools::{
     sdk_registry::AppToolSet,
     todo::TodoState,
 };
+#[cfg(unix)]
+use crate::tools::{process::ProcessManager, workflow_tracker::WorkflowRunTracker};
 
 /// A read-only view of a session's tools, for hosts that list what the
 /// session offers or reach its background work. It reaches nothing the
@@ -49,5 +51,18 @@ impl<'a> SessionTools<'a> {
     /// The session's todo checklist, shared with its `todo` tool.
     pub(crate) fn todo_state(self) -> TodoState {
         self.0.todo_state()
+    }
+
+    /// The session's background processes, when it may run any. Only the
+    /// daemon's T3 wake watchers, unix-only so far (#1665), read them.
+    #[cfg(unix)]
+    pub(crate) fn processes(self) -> Option<&'a ProcessManager> {
+        self.0.processes()
+    }
+
+    /// The session's workflow runs (see [`Self::processes`]).
+    #[cfg(unix)]
+    pub(crate) fn workflow_tracker(self) -> &'a WorkflowRunTracker {
+        self.0.workflow_tracker()
     }
 }

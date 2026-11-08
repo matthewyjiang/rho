@@ -8,7 +8,7 @@ Parent: [Agent Client Protocol](/integrations/acp).
 rho acp --t3code
 ```
 
-With `--t3code`, Rho subagents run as [T3 threads](#subagents-run-as-t3-threads). Background results do not wake an idle thread yet ([#1670](https://github.com/matthewyjiang/rho/issues/1670)): background processes and workflows hold the prompt open, as described in [Background work](/integrations/acp#background-work). Without the flag, Rho still works in T3 Code as a plain ACP agent, and its subagents run in the daemon.
+With `--t3code`, Rho subagents run as [T3 threads](#subagents-run-as-t3-threads) and background results [wake an idle thread](#wake-on-background-results). Without the flag, Rho still works in T3 Code as a plain ACP agent: its subagents run in the daemon, and background work holds the prompt open, as described in [Background work](/integrations/acp#background-work).
 
 Rho negotiates ACP v2 when T3 Code requests it; v1 remains available when a host requests v1. Use an up-to-date T3 Code build: versions predating the October 30, 2026 prompt-echo fix can show the injected `<t3_code_instructions>` as a duplicate user message on v2. Upgrade T3 Code rather than downgrading Rho. Notices use native notice rows instead of assistant reply text.
 
@@ -41,6 +41,21 @@ sequenceDiagram
 - `rho acp --t3code` asks for T3 threads each time it opens or reloads a session, so they hold across reloads and daemon restarts. The session does not save the choice: a client that reopens it without asking, such as `rho sessions attach`, runs its children in the daemon.
 
 Rho needs T3's `delegate_task`, `task_status`, and `task_cancel` tools. If any of them is missing, the session still starts, but the `agent` tool and the `agents` `status` and `stop` actions fail with an error that names the missing tool. Rho never falls back to running the child in the daemon.
+
+## Wake on background results
+
+Under `--t3code`, a prompt that ends while background processes or workflows are still running does not stay open. The thread goes idle, so you can keep talking to it. The first result to finish wakes it with a new turn that delivers the result.
+
+The daemon never starts a turn by itself, and T3 refuses a thread's own requests once its turn ends. T3 does wake a parent when a delegated task finishes, so Rho delegates one watcher task:
+
+- The watcher is titled `waiting: <command>` and makes no model call. It runs `/rho-wake <token>`, a command Rho never lists in the menu.
+- It waits until the parent signals a finished result, then ends, and T3 wakes the parent. The model gets T3's notice with a note that the watcher holds no result. The results follow it as usual.
+- One watcher covers everything still running. Work that finishes during a prompt is delivered in that prompt, so most short commands never start one.
+- If the watched work is delivered during a later prompt, Rho cancels the watcher. A watcher also ends when its parent session is deleted or unloaded, or the daemon stops, and it reports that the work did not finish. The daemon never unloads a session whose background work still runs.
+- When T3 Code restarts after the watcher answered but before it saw the answer, it tells the watcher thread to continue. The watcher repeats its answer instead of running a model turn. A restart that cuts the watcher off while it waits ends the wait: the watcher thread runs an ordinary turn when T3 tells it to continue, and the parent arms a new watcher once T3 wakes it.
+- If T3 refuses the watcher, Rho says so in the transcript and the results arrive with your next message.
+
+The same applies to a finished `/workflow:` command: it wakes the thread instead of waiting for your next message.
 
 ## How T3 Code shows Rho
 

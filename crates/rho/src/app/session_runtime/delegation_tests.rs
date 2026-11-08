@@ -7,7 +7,7 @@ use rho_sdk::{
     BoundaryInputRequest, InputBoundary, Rho, RunEvent, SessionOptions, UserInput,
 };
 
-use super::{BackgroundSources, Delegation};
+use super::{BackgroundSources, BackgroundWait, Delegation};
 use crate::{
     app::{agent_executor::AgentRunHandle, SubagentManager},
     subagent::{RunState, RunStatus},
@@ -193,12 +193,16 @@ enum Work {
     Workflow,
     ProcessFromEarlierPrompt,
     WorkflowFromEarlierPrompt,
+    /// A process started during the prompt of a host that wakes the idle
+    /// session itself.
+    ProcessWhenHostWakes,
 }
 
 // Covers: a child, a workflow, or a process started during the prompt holds
 // natural completion, and its result continues the original run exactly once
 // with display rows the host can claim; a process or workflow left from an
-// earlier prompt, such as a `/workflow:<name>` start, does not hold it.
+// earlier prompt, such as a `/workflow:<name>` start, does not hold it,
+// and neither does one under a host that wakes the idle session (T3 Code).
 // The SDK channel tests do not own this wait.
 // Owner: shared CLI/daemon background delivery lifecycle.
 #[tokio::test]
@@ -221,6 +225,11 @@ async fn background_work_holds_natural_completion_and_continues_parent_once() {
             "workflow from an earlier prompt",
             Work::WorkflowFromEarlierPrompt,
             ("initial answer", 0, (0, 1, 0)),
+        ),
+        (
+            "process when the host wakes the idle session",
+            Work::ProcessWhenHostWakes,
+            ("initial answer", 0, (0, 0, 1)),
         ),
     ];
     for (label, work, (text, applied, undelivered)) in cases {
@@ -245,20 +254,29 @@ async fn background_work_holds_natural_completion_and_continues_parent_once() {
                 ));
                 None
             }
-            Work::Child | Work::ProcessDuringPrompt | Work::Workflow => None,
+            Work::Child
+            | Work::ProcessDuringPrompt
+            | Work::Workflow
+            | Work::ProcessWhenHostWakes => None,
         };
         let child = match work {
             Work::Child => Child::Running,
             Work::ProcessDuringPrompt
             | Work::Workflow
             | Work::ProcessFromEarlierPrompt
-            | Work::WorkflowFromEarlierPrompt => Child::Absent,
+            | Work::WorkflowFromEarlierPrompt
+            | Work::ProcessWhenHostWakes => Child::Absent,
         };
         let mut fixture = Fixture::build(child, processes, workflows).await;
+        if matches!(work, Work::ProcessWhenHostWakes) {
+            fixture.host.set_background_wait(BackgroundWait::HostWakes);
+        }
         let mut displays = fixture.host.offered_displays();
         let request = fixture.final_boundary().await;
         let during = match work {
-            Work::ProcessDuringPrompt => Some(fixture.start_process().await),
+            Work::ProcessDuringPrompt | Work::ProcessWhenHostWakes => {
+                Some(fixture.start_process().await)
+            }
             Work::Workflow => {
                 assert!(fixture
                     .workflows
@@ -282,7 +300,7 @@ async fn background_work_holds_natural_completion_and_continues_parent_once() {
                     });
                     fixture.completion.send_replace(true);
                 }
-                Work::ProcessDuringPrompt => {
+                Work::ProcessDuringPrompt | Work::ProcessWhenHostWakes => {
                     Fixture::stop_process(&fixture.processes, during.as_deref().unwrap()).await;
                 }
                 Work::Workflow | Work::WorkflowFromEarlierPrompt => {
