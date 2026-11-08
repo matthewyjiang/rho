@@ -366,15 +366,19 @@ impl App {
                 image_asset,
             } => {
                 let command = match &presentation {
-                    crate::presentation::Presentation::Card(card)
-                    | crate::presentation::Presentation::SummaryCard(card) => match &card.header {
-                        rho_tools::tool_card::ToolHeader::Shell { command, .. } => {
-                            command.as_deref()
+                    rho_protocol::display::Presentation::Card(card)
+                    | rho_protocol::display::Presentation::SummaryCard(card) => {
+                        match &card.header {
+                            rho_protocol::display::ToolHeader::Shell { command, .. } => {
+                                command.as_deref()
+                            }
+                            rho_protocol::display::ToolHeader::Call { .. }
+                            | rho_protocol::display::ToolHeader::StatusFirst { .. } => None,
+                            // `Unknown`, or a dialect a newer protocol adds.
+                            _ => None,
                         }
-                        rho_tools::tool_card::ToolHeader::Call { .. }
-                        | rho_tools::tool_card::ToolHeader::StatusFirst { .. } => None,
-                    },
-                    crate::presentation::Presentation::Notification(_) => None,
+                    }
+                    rho_protocol::display::Presentation::Notification(_) => None,
                 };
                 self.refresh_git_after_command(command);
                 let expanded = self.turn.tool_finished(&call_id);
@@ -390,11 +394,11 @@ impl App {
                         .and_then(|asset| match self.load_feed_image(asset) {
                             Ok(image) => image,
                             Err(error) => {
-                                if let crate::presentation::Presentation::Card(card)
-                                | crate::presentation::Presentation::SummaryCard(card) =
+                                if let rho_protocol::display::Presentation::Card(card)
+                                | rho_protocol::display::Presentation::SummaryCard(card) =
                                     &mut presentation
                                 {
-                                    card.push_fact(rho_tools::tool_card::ToolFact::Error {
+                                    card.push_fact(rho_protocol::display::ToolFact::Error {
                                         text: format!("image preview unavailable: {error}"),
                                     });
                                 }

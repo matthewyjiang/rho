@@ -1,5 +1,5 @@
 use ratatui::text::{Line, Span};
-use rho_tools::tool_card::{DiffRow, DiffRowKind, ToolFamily, ToolHeader};
+use rho_protocol::display::{DiffRow, DiffRowKind, ToolFamily, ToolHeader};
 use unicode_width::UnicodeWidthStr;
 
 use super::{
@@ -228,6 +228,8 @@ impl DiffSyntax {
                 }
                 self.paint_content(/*side*/ Side::New, &row.text)
             }
+            // `Unknown`, or a kind a newer protocol adds: chrome.
+            _ => None,
         }
     }
 

@@ -1,11 +1,11 @@
 use std::time::Duration;
 
 use pretty_assertions::assert_eq;
+use rho_protocol::display::{ToolCardStatus, ToolFact, ToolFamily, ToolHeader};
 use rho_sdk::{
     tool::{OperationKind, ToolAsset, ToolMetadata, ToolOutput},
     ProviderStreamResetReason, Revision, RunEvent, ToolCallId, ToolCompletion,
 };
-use rho_tools::tool_card::{ToolFact, ToolFamily, ToolHeader, ToolStatus};
 
 use super::{SdkEventAdapter, ViewEvent, ViewModelEvent};
 
@@ -74,7 +74,7 @@ fn provider_native_web_search_maps_to_tool_finished_view() {
     let mut adapter = SdkEventAdapter::default();
 
     let ViewEvent::Update(ViewModelEvent::ToolFinished {
-        presentation: crate::presentation::Presentation::Card(card),
+        presentation: rho_protocol::display::Presentation::Card(card),
         ..
     }) = only_event(adapter.translate(RunEvent::WebSearch {
         detail: "rho docs".into(),
@@ -82,16 +82,16 @@ fn provider_native_web_search_maps_to_tool_finished_view() {
     else {
         panic!("expected web search tool finished");
     };
-    assert_eq!(card.status, ToolStatus::Ok);
+    assert_eq!(card.status, ToolCardStatus::Ok);
     assert_eq!(card.family, ToolFamily::Web);
     assert_eq!(card.header, ToolHeader::call("web_search", None));
     assert_eq!(
         card.facts,
         vec![
-            rho_tools::tool_card::ToolFact::Text {
+            rho_protocol::display::ToolFact::Text {
                 text: "rho docs".into(),
             },
-            rho_tools::tool_card::ToolFact::Meta {
+            rho_protocol::display::ToolFact::Meta {
                 text: "finished".into(),
             },
         ]
@@ -133,7 +133,7 @@ fn hosted_tool_activity_maps_to_tool_finished_view() {
     ] {
         let mut adapter = SdkEventAdapter::default();
         let ViewEvent::Update(ViewModelEvent::ToolFinished {
-            presentation: crate::presentation::Presentation::Card(card),
+            presentation: rho_protocol::display::Presentation::Card(card),
             ..
         }) = only_event(adapter.translate(RunEvent::HostedToolActivity {
             name: name.into(),
@@ -144,7 +144,12 @@ fn hosted_tool_activity_maps_to_tool_finished_view() {
         };
         assert_eq!(
             (card.status, card.family, card.header, card.facts),
-            (ToolStatus::Ok, family, ToolHeader::call(name, None), facts),
+            (
+                ToolCardStatus::Ok,
+                family,
+                ToolHeader::call(name, None),
+                facts
+            ),
             "{case}"
         );
     }
@@ -219,7 +224,7 @@ fn write_does_not_label_a_mixed_omitted_diff_as_no_changes() {
     );
 
     let ViewEvent::Update(ViewModelEvent::ToolFinished {
-        presentation: crate::presentation::Presentation::Card(card),
+        presentation: rho_protocol::display::Presentation::Card(card),
         ..
     }) = only_event(adapter.translate(RunEvent::ToolFinished {
         call_id,
@@ -262,7 +267,7 @@ fn forwards_image_asset_on_tool_completion() {
     let ViewEvent::Update(ViewModelEvent::ToolFinished {
         call_id: translated_call_id,
         image_asset,
-        presentation: crate::presentation::Presentation::Card(card),
+        presentation: rho_protocol::display::Presentation::Card(card),
         ..
     }) = only_event(adapter.translate(RunEvent::ToolFinished {
         call_id: call_id.clone(),
@@ -274,7 +279,7 @@ fn forwards_image_asset_on_tool_completion() {
 
     assert_eq!(translated_call_id, call_id);
     assert_eq!(image_asset, Some(asset));
-    assert_eq!(card.status, ToolStatus::Ok);
+    assert_eq!(card.status, ToolCardStatus::Ok);
     assert_eq!(card.header, ToolHeader::call("read_file", None));
     assert_eq!(
         card.facts,
@@ -314,10 +319,10 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
         &events[0],
         ViewEvent::Update(ViewModelEvent::ToolFinished {
             call_id,
-            presentation: crate::presentation::Presentation::Card(card),
+            presentation: rho_protocol::display::Presentation::Card(card),
             ..
         }) if call_id == &crate::tui::compaction_display::compaction_call_id()
-            && card.status == ToolStatus::Error
+            && card.status == ToolCardStatus::Error
             && card.facts.iter().any(|fact| matches!(
                 fact,
                 ToolFact::Meta { text } if text == "failed"
@@ -344,10 +349,10 @@ fn compaction_cancel_closes_open_tool_block_before_run_cancelled() {
         &events[0],
         ViewEvent::Update(ViewModelEvent::ToolFinished {
             call_id,
-            presentation: crate::presentation::Presentation::Card(card),
+            presentation: rho_protocol::display::Presentation::Card(card),
             ..
         }) if call_id == &crate::tui::compaction_display::compaction_call_id()
-            && card.status == ToolStatus::Interrupted
+            && card.status == ToolCardStatus::Interrupted
     ));
     assert!(matches!(&events[1], ViewEvent::Cancelled));
 }

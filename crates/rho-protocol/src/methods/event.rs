@@ -191,6 +191,15 @@ pub struct ToolCallUpdate {
     /// Files the call touches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locations: Option<Vec<Location>>,
+    /// The call's card as Rho's TUI draws it; replaces the call's display
+    /// when present. While the call runs it is a
+    /// [`Presentation::Card`](crate::display::Presentation::Card) that each
+    /// start and progress update replaces; a finished call's is its final
+    /// presentation, which may be a summary card or a notification. A call
+    /// that closes `failed` without one was cut off: clients show its last
+    /// card as interrupted. Images the call produced stay in `content`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<crate::display::Presentation>,
 }
 
 /// What a tool does, so a client can pick an icon or a layout.

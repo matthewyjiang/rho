@@ -4,7 +4,9 @@
 //! [`LiveEvents`] maps a loaded session's live runtime events as a turn
 //! emits them; [`replay`] maps the display rows a client that attaches with
 //! a reset receives first. Both open a tool call with the same card (title,
-//! kind, raw input, locations) and close calls left unfinished as `failed`,
+//! kind, raw input, locations), attach the card Rho's TUI draws for it from
+//! the same presenter (`ToolCallUpdate::display`), and close calls left
+//! unfinished as `failed`,
 //! so a conversation reads the same whether a client watched it live or
 //! received it replayed, apart from how its text was chunked. Only live
 //! turns report usage, compactions, and discarded responses; saved rows
@@ -18,23 +20,23 @@
 
 use std::{collections::HashMap, path::Path};
 
+use rho_protocol::display::ToolHeader;
 use rho_protocol::{
     CardTone, ContentBlock, Location, PlanEntry, PlanStatus, SessionEvent as WireEvent, ToolCallId,
     ToolCallUpdate, ToolContent, ToolStatus,
 };
 use rho_sdk::{model, tool::ToolMetadata};
-use rho_tools::tool_card::ToolHeader;
 use serde_json::Value;
 
 use crate::{
     app::interactive_presenter::call_header,
     display_transcript::{DisplayRow, DisplayTranscript},
-    presentation::NotificationTone,
     tools::{
         mcp::exported_name::McpToolNames,
         todo::{TodoState, TodoStatus},
     },
 };
+use rho_protocol::display::NotificationTone;
 
 mod live;
 pub(crate) mod outcome;
@@ -134,6 +136,7 @@ fn status_update(id: ToolCallId, status: Option<ToolStatus>) -> ToolCallUpdate {
         raw_input: None,
         content: None,
         locations: None,
+        display: None,
     }
 }
 
@@ -170,6 +173,8 @@ fn tool_title(
             primary: Some(primary),
         } if !primary.is_empty() => format!("{verb}({primary})"),
         ToolHeader::Call { verb, .. } => verb,
+        // Rho's presenter writes no `Unknown` header.
+        _ => name.to_owned(),
     };
     match mcp_tools.identify(name) {
         Some(identity) => format!("{}/{title}", identity.server),
@@ -235,6 +240,8 @@ fn card_tone(row: &DisplayRow) -> CardTone {
             NotificationTone::Success => CardTone::Success,
             NotificationTone::Warning => CardTone::Warning,
             NotificationTone::Error => CardTone::Error,
+            // `Unknown`, or a tone a newer protocol adds.
+            _ => CardTone::Neutral,
         },
         DisplayRow::Notice(_) => CardTone::Neutral,
     }

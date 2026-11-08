@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use super::types::State;
-use crate::presentation::{
+use rho_protocol::display::{
     NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
     NotificationVisibility,
 };

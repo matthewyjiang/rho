@@ -1,4 +1,4 @@
-use rho_tools::tool_card::{DiffRow, DiffRowKind, ToolFamily, ToolHeader};
+use rho_protocol::display::{DiffRow, DiffRowKind, ToolFamily, ToolHeader};
 
 use super::*;
 use crate::tui::theme::{SyntaxRole, Theme};

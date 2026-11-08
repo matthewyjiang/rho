@@ -7,7 +7,7 @@ use std::{
 use rho_sdk::model::{ContextUsage, ModelUsage};
 use serde::{Deserialize, Serialize};
 
-use rho_tools::tool_card::ToolCard;
+use rho_protocol::display::ToolCard;
 
 use crate::subagent;
 
@@ -17,7 +17,7 @@ use super::previews::{PreviewReader, ToolPreviews};
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub(crate) enum AttachmentEvent {
     Prompt(String),
-    Message(Box<crate::presentation::NotificationCard>),
+    Message(Box<rho_protocol::display::NotificationCard>),
     AssistantTextDelta(String),
     ReasoningDelta(String),
     /// Delivery-only growing argument card. Never serialized into events.jsonl.
@@ -42,7 +42,7 @@ pub(crate) enum AttachmentEvent {
         key: Option<String>,
         // Retain the legacy {card: ...} wire shape; messages write {message: ...}.
         #[serde(flatten)]
-        presentation: crate::presentation::Presentation,
+        presentation: rho_protocol::display::Presentation,
     },
     Notice(String),
     ContextUsage(ContextUsage),

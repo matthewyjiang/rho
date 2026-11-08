@@ -2,7 +2,7 @@
 
 use ratatui::text::Line;
 
-use rho_tools::tool_card::CodeWindow;
+use rho_protocol::display::CodeWindow;
 
 use super::ChildGroup;
 use crate::tui::tool_code::CodeSyntax;
@@ -37,6 +37,8 @@ pub(super) fn render_code_body(
     let mut skip = match window {
         CodeWindow::Head => 0,
         CodeWindow::Tail => total_rows.saturating_sub(*paint_remaining),
+        // `Unknown`, or a window a newer protocol adds, reads as `Head`.
+        _ => 0,
     };
     let mut syntax = CodeSyntax::new(language);
     let mut groups = Vec::new();

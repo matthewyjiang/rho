@@ -17,7 +17,10 @@ use crate::{
     agent::{AgentCapabilities, ToolCapability},
     app::{
         session_events::{
-            test_support::{canonical_messages, closed, opened, origin, shell_call, text, updated},
+            test_support::{
+                canonical_messages, closed, opened, origin, shell_call, text, updated,
+                without_display,
+            },
             CallIds, LiveEvents,
         },
         session_runtime::{InsertedMessage, SessionEvent, SessionTools},
@@ -119,7 +122,7 @@ fn saved_conversation() -> Vec<Message> {
 #[test]
 fn a_saved_conversation_replays_messages_calls_and_cards() {
     assert_eq!(
-        replay_messages(&saved_conversation()),
+        without_display(replay_messages(&saved_conversation())),
         vec![
             user(saved_id(0, 0), "list files"),
             saved_agent(saved_id(1, 0), "Let me look."),
@@ -138,8 +141,8 @@ fn a_saved_conversation_replays_messages_calls_and_cards() {
 
 // Covers: a client sees the same conversation live and replayed: the same
 // messages (the user message under the same id), the same cards and the
-// same calls, apart from how live text was chunked and the usage only live
-// steps report.
+// same calls, drawn with the same TUI cards, apart from how live text was
+// chunked and the usage only live steps report.
 // Owner: session event live and replay mapping
 #[test]
 fn live_and_replayed_turns_agree() {
@@ -260,7 +263,7 @@ fn replay_pairs_out_of_order_results_with_their_images() {
             Message::ToolResult(ToolResult::succeeded("a", String::new())),
         ];
         assert_eq!(
-            replay_messages(&messages),
+            without_display(replay_messages(&messages)),
             vec![
                 user(saved_id(0, 0), "read images"),
                 opened("a", "ls"),
@@ -290,7 +293,7 @@ fn replay_closes_incomplete_calls_and_opens_orphan_results() {
         })),
     ] {
         assert_eq!(
-            replay_messages(&[message]),
+            without_display(replay_messages(&[message])),
             vec![opened("a", "ls"), closed("a")]
         );
     }
@@ -302,7 +305,7 @@ fn replay_closes_incomplete_calls_and_opens_orphan_results() {
         (ToolResult::failed("orphan", "output"), ToolStatus::Failed),
     ] {
         assert_eq!(
-            replay_messages(&[Message::ToolResult(result)]),
+            without_display(replay_messages(&[Message::ToolResult(result)])),
             vec![WireEvent::tool_call(ToolCallUpdate {
                 id: ToolCallId::new("orphan"),
                 title: Some("tool".into()),
@@ -311,6 +314,7 @@ fn replay_closes_incomplete_calls_and_opens_orphan_results() {
                 raw_input: None,
                 content: Some(vec![text("output")]),
                 locations: None,
+                display: None,
             })]
         );
     }
@@ -331,7 +335,7 @@ fn replay_gives_reused_provider_ids_their_own_calls() {
         Message::Assistant(vec![call_block("reused")]),
     ];
     assert_eq!(
-        replay_messages(&messages),
+        without_display(replay_messages(&messages)),
         vec![
             opened("reused", "ls"),
             closed("reused"),
@@ -370,7 +374,7 @@ fn replayed_messages_split_where_live_ones_do() {
         Message::user_text("continue"),
     ];
     assert_eq!(
-        replay_messages(&messages),
+        without_display(replay_messages(&messages)),
         vec![
             user(saved_id(0, 0), "continue"),
             WireEvent::ThoughtChunk {
@@ -475,7 +479,7 @@ fn a_replay_with_no_new_rows_reports_nothing_saved() {
 // Covers: a provider id the saved transcript already used is numbered live
 // as replay numbers it, so the live call opens its own card rather than
 // updating the saved one, and a client reset after the turn saves sees the
-// same id.
+// same id and the same TUI cards.
 // Owner: session event live and replay mapping
 #[test]
 fn live_calls_continue_the_numbering_of_the_saved_transcript() {
@@ -515,7 +519,7 @@ fn live_calls_continue_the_numbering_of_the_saved_transcript() {
     ]);
     let replayed_tail = replay_messages(&whole).split_off(2);
     assert_eq!(
-        live_calls,
+        without_display(live_calls.clone()),
         vec![
             opened("reused#2", "ls"),
             updated("reused#2", ToolStatus::Completed, vec![text("b.rs")]),

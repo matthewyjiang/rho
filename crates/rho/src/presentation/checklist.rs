@@ -1,6 +1,6 @@
 //! Shared checklist facts for native and external runtime cards.
 
-use rho_tools::tool_card::{ToolCard, ToolFact};
+use rho_protocol::display::{ToolCard, ToolFact};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ChecklistStatus {

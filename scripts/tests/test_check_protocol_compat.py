@@ -39,6 +39,10 @@ def require_optional_field(document: dict) -> None:
     defs(document)["SessionAttachParams"]["required"].append("after")
 
 
+def retype_tuple_position(document: dict) -> None:
+    defs(document)["DiffRow"]["properties"]["stats"]["prefixItems"][1]["type"] = "string"
+
+
 def retype_field(document: dict) -> None:
     defs(document)["Seq"]["type"] = "string"
 
@@ -190,6 +194,13 @@ class CompatibilityTests(unittest.TestCase):
                 close_enum,
                 "notification rho/session/detached params.reason: "
                 'one of "daemon_stopping", "deleted", "lagged" (open) became one of "daemon_stopping", "deleted", "lagged"',
+            ),
+            (
+                "a retyped tuple value",
+                retype_tuple_position,
+                'notification rho/session/event params.event <type="tool_call">.display <#0>.card'
+                '.body <kind="diff">.lines[].stats[1]: '
+                'integer (format "uint64", minimum 0) became string (format "uint64", minimum 0)',
             ),
             ("a removed method", remove_method, "method rho/session/steer params: removed"),
             ("a removed error code", remove_error, "error -32011: removed"),

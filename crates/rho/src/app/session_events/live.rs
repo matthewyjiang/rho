@@ -6,8 +6,9 @@ use std::{
 };
 
 use rho_protocol::{
-    CompactionId, CompactionStatus, ContentBlock, Location, MessageId, PlanEntry,
-    SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
+    display::Presentation, CompactionId, CompactionStatus, ContentBlock, Location, MessageId,
+    PlanEntry, SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolContent, ToolKind,
+    ToolStatus,
 };
 use rho_sdk::{
     model,
@@ -21,7 +22,10 @@ use super::{
     result_content, status_update, text_content, tools, user_content, CallIds, UNNAMED_TOOL_TITLE,
 };
 use crate::{
-    app::session_runtime::{context_window, InsertedMessage, SessionEvent, SessionTools},
+    app::{
+        interactive_presenter::InteractiveToolPresenter,
+        session_runtime::{context_window, InsertedMessage, SessionEvent, SessionTools},
+    },
     session::tree::ProjectedMessage,
     tools::{mcp::exported_name::McpToolNames, todo::TodoState},
 };
@@ -44,6 +48,12 @@ const UNFINISHED_COMPACTION: &str = "compaction ended without a result";
 /// Agent message and thought chunks carry a message id. Consecutive chunks
 /// of one kind share it; a chunk of the other kind, a new model step, or any
 /// other event in between, such as a tool call, starts a new message.
+///
+/// Each start, progress update and result also carries the card Rho's TUI
+/// draws for the call, from the same presenter (`ToolCallUpdate::display`).
+/// The presenter sees a proposal only once its call starts or reports, so a
+/// discarded response's proposals never reach it; streamed argument
+/// previews are not sent.
 ///
 /// The session's checklist goes out as a plan whenever a finished tool
 /// changed it. Each model step reports its context fill as usage, as do a
@@ -72,6 +82,8 @@ pub(crate) struct LiveEvents {
     /// The prompt the next [`SessionEvent::MessageInserted`] saved.
     prompt: Option<Vec<ContentBlock>>,
     proposed: HashMap<String, model::ToolCall>,
+    /// Draws the run's calls as the TUI does, for `ToolCallUpdate::display`.
+    presenter: InteractiveToolPresenter,
     /// The run's announced calls, by provider call id.
     announced: BTreeMap<String, AnnouncedCall>,
     /// Wire ids of the calls opened live.
@@ -135,9 +147,11 @@ impl LiveEvents {
         configured_window: Option<u64>,
     ) -> Self {
         let todo = tools.todo_state();
+        let mcp_tools = tools.mcp_report().tool_names();
         Self {
             workspace: workspace.to_owned(),
-            mcp_tools: tools.mcp_report().tool_names(),
+            presenter: InteractiveToolPresenter::new(workspace.to_owned(), mcp_tools.clone()),
+            mcp_tools,
             configured_window,
             window: configured_window,
             sent_plan: plan_entries(&todo),
@@ -307,36 +321,49 @@ impl LiveEvents {
                 metadata,
                 execution: _,
             } => {
+                self.present_proposal(call_id.as_str());
+                let card = self
+                    .presenter
+                    .started(call_id.clone(), name.clone(), metadata.clone())
+                    .card;
                 let arguments = self
                     .proposed
                     .remove(call_id.as_str())
                     .map(|call| call.arguments);
                 let (id, superseded) = self.announce(call_id.as_str(), CallState::Open);
-                let opened = opened_call(
-                    id,
-                    name,
-                    arguments,
-                    metadata,
-                    &self.workspace,
-                    &self.mcp_tools,
-                );
+                let opened = ToolCallUpdate {
+                    display: Some(Presentation::Card(card)),
+                    ..opened_call(
+                        id,
+                        name,
+                        arguments,
+                        metadata,
+                        &self.workspace,
+                        &self.mcp_tools,
+                    )
+                };
                 superseded
                     .into_iter()
                     .chain([WireEvent::tool_call(opened)])
                     .collect()
             }
             RunEvent::ToolUpdated { call_id, progress } => {
+                self.present_proposal(call_id.as_str());
+                let card = self.presenter.updated(call_id, progress).card;
                 let shown = CallUpdate {
                     status: ToolStatus::InProgress,
                     content: vec![text_content(progress.message())],
                     locations: None,
+                    display: Presentation::Card(card),
                 };
                 self.tool_update(call_id, CallState::Open, shown)
                     .into_iter()
                     .collect()
             }
             RunEvent::ToolFinished { call_id, result } => {
-                let finished = finished_update(result, &self.workspace);
+                self.present_proposal(call_id.as_str());
+                let (_ok, shown) = self.presenter.finished(call_id, result);
+                let finished = finished_update(result, &self.workspace, shown.presentation);
                 let finished = self.tool_update(call_id, CallState::Finished, finished);
                 // The call may have replaced the checklist, whether it ran
                 // directly or inside code mode.
@@ -421,6 +448,8 @@ impl LiveEvents {
     /// next run starts clean.
     fn close_unfinished(&mut self) -> Vec<WireEvent> {
         self.proposed.clear();
+        self.presenter =
+            InteractiveToolPresenter::new(self.workspace.clone(), self.mcp_tools.clone());
         // Never the run's own error: it is not redacted, and may echo a
         // credential; the turn's end carries the redacted outcome (#1670).
         let compaction =
@@ -493,6 +522,7 @@ impl LiveEvents {
             status: Some(shown.status),
             content: Some(shown.content),
             locations: shown.locations,
+            display: Some(shown.display),
             ..call
         };
         if let Some(call) = self.announced.get_mut(id) {
@@ -551,6 +581,14 @@ impl LiveEvents {
         self.sent_plan.clone_from(&entries);
         Some(WireEvent::Plan { entries })
     }
+
+    /// Hands the presenter the proposal held for `provider`, as the TUI's
+    /// presenter sees it, so the call's card shows its arguments.
+    fn present_proposal(&mut self, provider: &str) {
+        if let Some(call) = self.proposed.get(provider) {
+            self.presenter.proposed(call.clone());
+        }
+    }
 }
 
 /// What a progress or result update shows of a call.
@@ -559,17 +597,20 @@ struct CallUpdate {
     content: Vec<ToolContent>,
     /// Replace the call's earlier locations when given.
     locations: Option<Vec<Location>>,
+    /// The call's card as the TUI draws it at this point.
+    display: Presentation,
 }
 
-/// A finished call's status and content, and the files its output points
-/// at.
-fn finished_update(result: &ToolCompletion, cwd: &Path) -> CallUpdate {
+/// A finished call's status and content, the files its output points at,
+/// and `display`, its final presentation.
+fn finished_update(result: &ToolCompletion, cwd: &Path, display: Presentation) -> CallUpdate {
     let finished = |status, content| CallUpdate {
         status,
         content,
         locations: result
             .output()
             .and_then(|output| tools::finished_locations(output, cwd)),
+        display,
     };
     match result {
         ToolCompletion::Completed(output) => {

@@ -1,8 +1,8 @@
 use std::time::{Duration, Instant};
 
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{
-    DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
+use rho_protocol::display::{
+    DiffRow, DiffRowKind, ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader,
 };
 
 use crate::tui::{
@@ -31,7 +31,7 @@ fn rust_diff_entry(lines: usize, expanded: bool) -> ToolEntry {
         .collect();
     ToolEntry::new(
         ToolCard::new(
-            ToolStatus::Running,
+            ToolCardStatus::Running,
             ToolFamily::FileDiff,
             ToolHeader::call("write", Some("src/big.rs".into())),
         )
@@ -44,7 +44,7 @@ fn rust_diff_entry(lines: usize, expanded: bool) -> ToolEntry {
 
 fn running_shell(started_at: Instant) -> ToolEntry {
     let mut card = ToolCard::new(
-        ToolStatus::Running,
+        ToolCardStatus::Running,
         ToolFamily::FileCommand,
         ToolHeader::shell("$", Some("sleep 1".into())),
     );
@@ -94,7 +94,7 @@ fn cached_toggleability_tracks_layout_and_survives_expansion() {
     ] {
         let mut entry = ToolEntry::new(
             ToolCard::new(
-                ToolStatus::Ok,
+                ToolCardStatus::Ok,
                 ToolFamily::FileCommand,
                 ToolHeader::call("read", None),
             )

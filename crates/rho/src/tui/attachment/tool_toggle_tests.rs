@@ -1,12 +1,12 @@
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{ToolBody, ToolCard, ToolFamily, ToolHeader, ToolStatus};
+use rho_protocol::display::{ToolBody, ToolCard, ToolCardStatus, ToolFamily, ToolHeader};
 
 use super::{latest_toggle_target, tool_card_at_line, HistoryItem, PaintedHistory, ToggleTarget};
 use crate::tui::{Entry, ToolEntry};
 
 fn long_card() -> ToolCard {
     ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::FileCommand,
         ToolHeader::shell("$", Some("seq 20".into())),
     )
@@ -17,7 +17,7 @@ fn long_card() -> ToolCard {
 
 fn short_card() -> ToolCard {
     ToolCard::new(
-        ToolStatus::Ok,
+        ToolCardStatus::Ok,
         ToolFamily::Default,
         ToolHeader::call("echo", None),
     )

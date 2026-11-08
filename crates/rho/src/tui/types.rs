@@ -425,11 +425,11 @@ pub(super) enum CommandChoiceKind {
 /// started when a card is first seen running, absent otherwise.
 pub(super) fn live_started_at(
     previous: Option<&ToolEntry>,
-    status: rho_tools::tool_card::ToolStatus,
+    status: rho_protocol::display::ToolCardStatus,
 ) -> Option<Instant> {
-    previous
-        .and_then(|entry| entry.started_at)
-        .or_else(|| matches!(status, rho_tools::tool_card::ToolStatus::Running).then(Instant::now))
+    previous.and_then(|entry| entry.started_at).or_else(|| {
+        matches!(status, rho_protocol::display::ToolCardStatus::Running).then(Instant::now)
+    })
 }
 
 /// Keyed paint of one live tool card.
@@ -474,7 +474,7 @@ pub(super) struct ToolEntry {
     /// The single host-owned presentation for this row.
     /// In-place body edits must clear [`Self::render_cache`]; replacement
     /// through [`Self::new`] drops it automatically.
-    pub(in crate::tui) presentation: crate::presentation::Presentation,
+    pub(in crate::tui) presentation: rho_protocol::display::Presentation,
     pub(in crate::tui) expanded: bool,
     pub(in crate::tui) image: Option<FeedImage>,
     /// Wall clock for live shell elapsed (`timeout … · 1.2s`) while a shell
@@ -501,13 +501,13 @@ impl ToolEntry {
     pub(in crate::tui) fn visible_in_zen(&self) -> bool {
         matches!(
             &self.presentation,
-            crate::presentation::Presentation::Notification(message)
-                if matches!(message.visibility, crate::presentation::NotificationVisibility::Conversation)
+            rho_protocol::display::Presentation::Notification(message)
+                if matches!(message.visibility, rho_protocol::display::NotificationVisibility::Conversation)
         )
     }
 
     pub(in crate::tui) fn new(
-        presentation: impl Into<crate::presentation::Presentation>,
+        presentation: impl Into<rho_protocol::display::Presentation>,
         expanded: bool,
         image: Option<FeedImage>,
         started_at: Option<Instant>,

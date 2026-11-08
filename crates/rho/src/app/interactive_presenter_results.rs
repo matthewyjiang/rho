@@ -1,13 +1,13 @@
 //! Result-side ToolCard builders for interactive tool presentation.
 
-use rho_tools::{
-    parse_shell_content,
-    tool_card::{
-        compact_diff_rows, compact_diff_rows_from_card_files, parse_unified_diff, DiffCardChange,
-        DiffCardFile, DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader,
-        ToolStatus,
-    },
+use crate::presentation::diff::{
+    compact_diff_rows, compact_diff_rows_from_card_files, parse_unified_diff, DiffCardChange,
+    DiffCardFile,
 };
+use rho_protocol::display::{
+    DiffRow, DiffRowKind, ToolBody, ToolCard, ToolCardStatus, ToolFact, ToolFamily, ToolHeader,
+};
+use rho_tools::parse_shell_content;
 
 use super::super::{ToolKind, ToolView};
 use super::{
@@ -25,7 +25,7 @@ pub(super) enum EmptyDiffState {
 pub(super) fn shell_card(
     prompt: &str,
     arguments: &serde_json::Value,
-    status: ToolStatus,
+    status: ToolCardStatus,
 ) -> ToolCard {
     let command = string_arg(arguments, "command").filter(|command| !command.trim().is_empty());
     let mut card = draft_card(
@@ -41,7 +41,7 @@ pub(super) fn shell_result_card(
     prompt: &str,
     arguments: &serde_json::Value,
     content: &str,
-    status: ToolStatus,
+    status: ToolCardStatus,
 ) -> ToolCard {
     let command = string_arg(arguments, "command").filter(|command| !command.trim().is_empty());
     let mut card = draft_card(
@@ -59,7 +59,7 @@ pub(super) fn shell_result_card(
         .filter(|notice| !notice.is_empty())
         .map(str::to_string);
     if let Some(notice) = notice.clone() {
-        if status == ToolStatus::Error || notice.contains("timed out") {
+        if status == ToolCardStatus::Error || notice.contains("timed out") {
             push_error_output(&mut card, &notice);
         } else {
             card.push_fact(ToolFact::Meta { text: notice });
@@ -105,7 +105,7 @@ pub(super) fn file_diff_card(
     ok: bool,
     cwd: &std::path::Path,
 ) -> ToolCard {
-    let status = ToolStatus::from_finished(ok);
+    let status = ToolCardStatus::from_finished(ok);
     let paths = metadata_paths(view, cwd);
     let arg_paths = if let ToolKind::Edit(format) = view.kind {
         edit_paths(format, &view.arguments, cwd)
@@ -169,7 +169,7 @@ fn diff_reports_no_changes(diff: &str) -> bool {
 }
 
 pub(super) fn diff_card(
-    status: ToolStatus,
+    status: ToolCardStatus,
     name: &str,
     fallback_paths: Vec<String>,
     files: Vec<DiffCardFile>,
@@ -257,7 +257,7 @@ pub(super) fn search_result_card(
     ok: bool,
     cwd: &std::path::Path,
 ) -> ToolCard {
-    let status = ToolStatus::from_finished(ok);
+    let status = ToolCardStatus::from_finished(ok);
     let mut card = start_card(view, cwd);
     card.status = status;
     if !ok {
@@ -339,7 +339,7 @@ pub(super) fn search_result_card(
 
 /// Result card for the process tool. Compact snapshot text carries `command`
 /// so start and poll cards share the same identity without call arguments.
-pub(super) fn process_result_card(content: &str, status: ToolStatus) -> ToolCard {
+pub(super) fn process_result_card(content: &str, status: ToolCardStatus) -> ToolCard {
     #[derive(serde::Deserialize)]
     struct StopReceipt {
         stop_requested: bool,
@@ -411,7 +411,7 @@ pub(super) fn process_result_card(content: &str, status: ToolStatus) -> ToolCard
 
 /// Card for the compact text result. Identity is `command` from the snapshot
 /// header; the process id and poll cursor stay in the model-facing text.
-fn compact_process_card(content: &str, status: ToolStatus) -> ToolCard {
+fn compact_process_card(content: &str, status: ToolCardStatus) -> ToolCard {
     let header = compact_header_block(content);
     if let Some(process_id) = header_value(header, "process_id") {
         if header.lines().any(|line| line == "stop requested") {
@@ -546,7 +546,7 @@ fn process_state(state: crate::tools::process::State) -> &'static str {
 pub(super) fn web_search_card(
     arguments: &serde_json::Value,
     content: &str,
-    status: ToolStatus,
+    status: ToolCardStatus,
 ) -> ToolCard {
     let primary = search_terms(arguments);
     let mut card = draft_card(
@@ -554,7 +554,7 @@ pub(super) fn web_search_card(
         ToolFamily::Web,
         ToolHeader::call("web_search", primary),
     );
-    if status == ToolStatus::Error {
+    if status == ToolCardStatus::Error {
         if !content.trim().is_empty() {
             push_error_output(&mut card, content);
         }
@@ -600,7 +600,7 @@ pub(super) fn web_search_card(
 pub(super) fn fetch_content_card(
     arguments: &serde_json::Value,
     content: &str,
-    status: ToolStatus,
+    status: ToolCardStatus,
 ) -> ToolCard {
     let primary = first_url(arguments);
     let mut card = draft_card(
@@ -608,7 +608,7 @@ pub(super) fn fetch_content_card(
         ToolFamily::Web,
         ToolHeader::call("fetch_content", primary),
     );
-    if status == ToolStatus::Error {
+    if status == ToolCardStatus::Error {
         if !content.trim().is_empty() {
             push_error_output(&mut card, content);
         }
@@ -669,13 +669,13 @@ pub(super) fn fetch_content_card(
     card
 }
 
-pub(super) fn get_search_content_card(content: &str, status: ToolStatus) -> ToolCard {
+pub(super) fn get_search_content_card(content: &str, status: ToolCardStatus) -> ToolCard {
     let mut card = draft_card(
         status,
         ToolFamily::Web,
         ToolHeader::call("get_search_content", None),
     );
-    if status == ToolStatus::Error {
+    if status == ToolCardStatus::Error {
         if !content.trim().is_empty() {
             push_error_output(&mut card, content);
         }
@@ -717,7 +717,7 @@ pub(super) fn get_search_content_card(content: &str, status: ToolStatus) -> Tool
 pub(super) fn mcp_preview_card(
     identity: &McpToolIdentity,
     arguments: Option<&serde_json::Value>,
-    status: ToolStatus,
+    status: ToolCardStatus,
 ) -> ToolCard {
     let (header, facts) = crate::tools::mcp::display::mcp_header_and_facts(identity, arguments);
     let mut card = draft_card(status, ToolFamily::Default, header);
@@ -732,10 +732,10 @@ pub(super) fn mcp_result_card(
     identity: &McpToolIdentity,
     view: &ToolView,
     content: &str,
-    status: ToolStatus,
+    status: ToolCardStatus,
 ) -> ToolCard {
     let mut card = mcp_preview_card(identity, Some(&view.arguments), status);
-    if status == ToolStatus::Error {
+    if status == ToolCardStatus::Error {
         push_error_output(&mut card, content);
         return card;
     }
@@ -755,7 +755,7 @@ pub(super) fn mcp_result_card(
     card
 }
 
-pub(super) fn generic_card(view: &ToolView, content: &str, status: ToolStatus) -> ToolCard {
+pub(super) fn generic_card(view: &ToolView, content: &str, status: ToolCardStatus) -> ToolCard {
     let summary = view
         .metadata
         .command_summary_text()
@@ -789,7 +789,7 @@ pub(super) fn generic_card(view: &ToolView, content: &str, status: ToolStatus) -
         });
     }
     if !content.trim().is_empty() {
-        if status == ToolStatus::Error {
+        if status == ToolCardStatus::Error {
             push_error_output(&mut card, content);
         } else if card.body.is_empty() {
             card.body = ToolBody::Lines(split_body_lines(content));
@@ -871,7 +871,7 @@ mod tests {
         ];
         for (content, value, detail) in cases {
             let mut card = draft_card(
-                ToolStatus::Ok,
+                ToolCardStatus::Ok,
                 ToolFamily::Web,
                 ToolHeader::call("fetch_content", None),
             );
@@ -895,7 +895,7 @@ mod tests {
     fn compact_process_ignores_header_tokens_in_streams() {
         let card = compact_process_card(
             "process_id: proc-1\nstate: running\nnext: 2\n\nstdout:\npending\nexit: 1\nstop requested",
-            ToolStatus::Ok,
+            ToolCardStatus::Ok,
         );
         assert_eq!(
             card.header,
@@ -938,7 +938,7 @@ mod tests {
             ),
         ];
         for (content, facts) in cases {
-            let card = process_result_card(content, ToolStatus::Ok);
+            let card = process_result_card(content, ToolCardStatus::Ok);
             assert_eq!(card.facts, facts, "{content}");
         }
     }

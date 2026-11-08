@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 
 use super::render_code_body;
-use rho_tools::tool_card::CodeWindow;
+use rho_protocol::display::CodeWindow;
 
 // Covers: a tail window clips the wrong end of a wrapped source row, including
 // UTF-8, or consumes more than the existing terminal-row budget.

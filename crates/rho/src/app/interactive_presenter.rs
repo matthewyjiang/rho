@@ -6,7 +6,7 @@ use rho_sdk::{
     ToolCallId, ToolCompletion,
 };
 
-use rho_tools::tool_card::ToolCard;
+use rho_protocol::display::ToolCard;
 
 use crate::tools::mcp::exported_name::{McpToolIdentity, McpToolNames};
 
@@ -37,7 +37,7 @@ pub(crate) struct ToolPresentation {
 }
 
 pub(crate) struct FinishedToolPresentation {
-    pub(crate) presentation: crate::presentation::Presentation,
+    pub(crate) presentation: rho_protocol::display::Presentation,
     pub(crate) image_asset: Option<ToolAsset>,
 }
 
@@ -398,7 +398,7 @@ impl InteractiveToolPresenter {
     pub(crate) fn finished(
         &mut self,
         call_id: &ToolCallId,
-        result: ToolCompletion,
+        result: &ToolCompletion,
     ) -> (bool, FinishedToolPresentation) {
         let mut view = self
             .calls
@@ -409,7 +409,7 @@ impl InteractiveToolPresenter {
                 arguments: serde_json::Value::Object(Default::default()),
                 metadata: ToolMetadata::default(),
             });
-        let (ok, content, data) = match &result {
+        let (ok, content, data) = match result {
             ToolCompletion::Completed(output) => {
                 if output.presentation() != &ToolMetadata::default() {
                     view.metadata = output.presentation().clone();
@@ -437,7 +437,7 @@ impl InteractiveToolPresenter {
     ) -> FinishedToolPresentation {
         if let Some(message) = message_format::finished_message(view, content, ok) {
             return FinishedToolPresentation {
-                presentation: crate::presentation::Presentation::Notification(message),
+                presentation: rho_protocol::display::Presentation::Notification(message),
                 image_asset: None,
             };
         }
@@ -445,7 +445,7 @@ impl InteractiveToolPresenter {
             if let Some(mut card) = sessions_format::finished_card(&view.arguments, content, ok) {
                 card.push_notice_facts(view.metadata.presentation_notices());
                 return FinishedToolPresentation {
-                    presentation: crate::presentation::Presentation::SummaryCard(card),
+                    presentation: rho_protocol::display::Presentation::SummaryCard(card),
                     image_asset: None,
                 };
             }
@@ -458,7 +458,7 @@ impl InteractiveToolPresenter {
             presentation: if view.kind == ToolKind::Workflow
                 || (matches!(view.kind, ToolKind::Skill | ToolKind::ExitPlanMode) && ok)
             {
-                crate::presentation::Presentation::SummaryCard(presented.card)
+                rho_protocol::display::Presentation::SummaryCard(presented.card)
             } else {
                 presented.card.into()
             },

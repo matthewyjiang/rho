@@ -90,7 +90,7 @@ After `rho/session/attach`, the daemon sends the session's events as `rho/sessio
 | `state` | The job's new `state`. An ended turn's `turn_ended` comes first. |
 | `user_message` | A user message, whole: its `message` id and `content`. |
 | `agent_message_chunk`, `thought_chunk` | More `text` of the agent's reply or reasoning, under a `message` id. |
-| `tool_call` | Opens a tool call, or updates the call with the same `id`: its title, kind, status, input (`raw_input`), content, and locations. Once it finishes, its content starts with the text the model got from it, if any. Absent fields are unchanged. |
+| `tool_call` | Opens a tool call, or updates the call with the same `id`: its title, kind, status, input (`raw_input`), content, and locations. Once it finishes, its content starts with the text the model got from it, if any. Absent fields are unchanged. Its `display`, when present, replaces the card Rho's TUI draws for the call ([below](#tool-cards)). |
 | `plan` | The agent's plan, replacing any earlier one. |
 | `usage` | How full the model's context is: `used_tokens`, and `window_tokens` when the model's window is known. Once a request in the session had a price, `cost_usd_micros` holds what the session has cost so far, across daemon restarts, in millionths of a US dollar. A finished compaction reports one too. |
 | `title_changed` | The session's new `title`: the generated one, a few seconds after the first answered turn, `rho run --detach` runs included, or one `rho/session/rename` saved. |
@@ -122,6 +122,16 @@ The daemon detaches a client with `rho/session/detached`, after which no event o
 - `deleted`: `rho/session/delete` deleted the session.
 
 Attaching a session the connection already follows replaces the earlier attachment.
+
+### Tool cards
+
+A `tool_call`'s `display` is the card Rho's TUI draws for the call, so every frontend can draw the same one. Its types are the `display` module of `rho-protocol`; in the schema, `Presentation` and the types it uses. A `display` is one of:
+
+- `card`: a card with a status (`running`, `ok`, `error`, or `interrupted`), a header, facts under it, and a body of lines, code, search hits, or diff rows.
+- `summary_card`: a card drawn collapsed to its facts until expanded.
+- `message`: a notification, such as an agent's report.
+
+A call's start and each progress update carry a `card` that replaces the last one, and its result carries its final display. A call that closes `failed` without a `display` was cut off: draw its last card as interrupted. A reset replays the cards a client watching live got, except for a call the model was still writing when its response was aborted, which a reset does not replay. Images a call returned stay in its `content`.
 
 ### How a turn ends
 

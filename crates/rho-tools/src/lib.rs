@@ -37,7 +37,6 @@ pub use shell_process::{
 };
 mod file_mutation;
 pub mod tool;
-pub mod tool_card;
 pub mod workspace_mutation;
 pub mod workspace_walk;
 

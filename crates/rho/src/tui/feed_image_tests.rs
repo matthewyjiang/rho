@@ -42,10 +42,10 @@ fn kitty_picker() -> Picker {
 
 fn image_tool_with_image(image: FeedImage) -> Entry {
     Entry::Tool(ToolEntry::new(
-        rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Ok,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("read_file photo.png", None),
+        rho_protocol::display::ToolCard::new(
+            rho_protocol::display::ToolCardStatus::Ok,
+            rho_protocol::display::ToolFamily::Default,
+            rho_protocol::display::ToolHeader::call("read_file photo.png", None),
         ),
         false,
         Some(image),

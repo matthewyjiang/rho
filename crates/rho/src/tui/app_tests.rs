@@ -350,11 +350,11 @@ fn recovered_session_messages_become_transcript_entries() {
     assert!(matches!(
         entries[2],
         Entry::Tool(ToolEntry {
-            presentation: crate::presentation::Presentation::Card(ref card),
+            presentation: rho_protocol::display::Presentation::Card(ref card),
             ..
         }) if card.header_text().contains("read_file")
             && card.header_text().contains("src/main.rs")
-            && card.status == rho_tools::tool_card::ToolStatus::Error
+            && card.status == rho_protocol::display::ToolCardStatus::Error
     ));
 }
 
@@ -362,8 +362,8 @@ fn recovered_session_messages_become_transcript_entries() {
 // Owner: tui transcript reconstruction
 #[test]
 fn recovered_assistant_images_become_summary_cards() {
+    use rho_protocol::display::{ToolFact, ToolHeader};
     use rho_providers::model::image_summary;
-    use rho_tools::tool_card::{ToolFact, ToolHeader};
 
     let image = ImageContent {
         data: "aW1n".into(),
@@ -377,7 +377,7 @@ fn recovered_assistant_images_become_summary_cards() {
     let Entry::Tool(tool) = &entries[0] else {
         panic!("expected generated image card");
     };
-    let crate::presentation::Presentation::Card(card) = &tool.presentation else {
+    let rho_protocol::display::Presentation::Card(card) = &tool.presentation else {
         panic!("expected generated image card");
     };
     assert_eq!(card.header, ToolHeader::call("image_generation", None));
@@ -399,7 +399,7 @@ fn recovered_assistant_images_become_summary_cards() {
 // Owner: tui transcript reconstruction
 #[test]
 fn generated_image_entry_records_preview_errors() {
-    use rho_tools::tool_card::{ToolFact, ToolHeader};
+    use rho_protocol::display::{ToolFact, ToolHeader};
 
     let image = ImageContent {
         data: "aW1n".into(),
@@ -408,7 +408,7 @@ fn generated_image_entry_records_preview_errors() {
     let Entry::Tool(tool) = generated_image_entry(Err("boom".into()), &image) else {
         panic!("expected generated image card");
     };
-    let crate::presentation::Presentation::Card(card) = &tool.presentation else {
+    let rho_protocol::display::Presentation::Card(card) = &tool.presentation else {
         panic!("expected generated image card");
     };
     assert_eq!(card.header, ToolHeader::call("image_generation", None));

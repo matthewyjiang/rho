@@ -65,7 +65,7 @@ pub(super) enum UiOutput {
     InfoRuntimes(Result<Vec<String>, JoinError>),
     InfoTree(Result<anyhow::Result<crate::session::tree::SessionTreeFacts>, JoinError>),
     SpendLoad(super::spend_overlay::LoadResult),
-    DiffPatch(usize, anyhow::Result<Vec<rho_tools::tool_card::DiffRow>>),
+    DiffPatch(usize, anyhow::Result<Vec<rho_protocol::display::DiffRow>>),
     Changelog(Result<ChangelogFetchResult, JoinError>),
     WebSearchTest(Result<Result<usize, rho_tools::tool::ToolError>, JoinError>),
     CacheWarm {

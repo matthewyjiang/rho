@@ -13,7 +13,7 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use rho_tools::tool_card::DiffRow;
+use rho_protocol::display::DiffRow;
 
 use super::{
     background_tasks::{TaskId, UiOutput},

@@ -503,6 +503,26 @@
       ],
       "type": "object"
     },
+    "CodeWindow": {
+      "anyOf": [
+        {
+          "const": "head",
+          "description": "Show the opening rows, for finished or replayed source.",
+          "type": "string"
+        },
+        {
+          "const": "tail",
+          "description": "Show the newest rows, for source the model is still generating.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Which end of a [`ToolBody::Code`] stays visible when its card is\ncollapsed. The full body remains available on expansion."
+    },
     "CommandKind": {
       "anyOf": [
         {
@@ -849,6 +869,89 @@
         }
       ],
       "description": "Why the daemon dropped an attachment."
+    },
+    "DiffRow": {
+      "description": "One row of a compact diff body, with the line numbers for its gutter.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/DiffRowKind"
+        },
+        "line": {
+          "description": "Line number: the new file's for context and additions, the old file's\nfor removals. Absent for headings and for patch text without hunks.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stats": {
+          "description": "Per-file `+N -M` counts on multi-file [`DiffRowKind::File`] section\nheaders. Structured so hosts style counts without parsing display text.",
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          ],
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "text"
+      ],
+      "type": "object"
+    },
+    "DiffRowKind": {
+      "anyOf": [
+        {
+          "enum": [
+            "added",
+            "removed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "context",
+          "description": "Unchanged line kept for context.",
+          "type": "string"
+        },
+        {
+          "const": "file",
+          "description": "File path heading in a multi-file diff.",
+          "type": "string"
+        },
+        {
+          "const": "skip",
+          "description": "Gap between hunks (`⋯`).",
+          "type": "string"
+        },
+        {
+          "const": "meta",
+          "description": "Non-content annotation (edit op locators, notices). Not a hunk gap.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What a diff row represents, which decides its sign and color."
     },
     "EnvironmentOverride": {
       "description": "The `data` of a [`crate::ErrorCode::EnvironmentOverride`] error.",
@@ -1553,6 +1656,143 @@
       ],
       "type": "object"
     },
+    "NotificationCard": {
+      "description": "Something that arrived for the reader: an agent message, a delegated-run\nresult, or a finished background process. Sources supply the data; the\nrenderer stays source-agnostic.\n\nFields added after the first saved journals read as their defaults when\nabsent, and are left out when they hold them.",
+      "properties": {
+        "body": {
+          "description": "Markdown shown in the card body.",
+          "type": "string"
+        },
+        "delivery": {
+          "$ref": "#/$defs/NotificationDelivery"
+        },
+        "details": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "output": {
+          "description": "Verbatim text shown after `body`, such as a process's output tail.\nIt is never read as markdown; see [`NotificationCard::markdown_body`].",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "preview": {
+          "$ref": "#/$defs/NotificationPreview"
+        },
+        "recipient": {
+          "type": "string"
+        },
+        "reference": {
+          "description": "Optional generic identity label displayed alongside routing information.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sender": {
+          "type": "string"
+        },
+        "subtitle": {
+          "description": "Replaces the sender/recipient routing line when routing is constant\nfor the card's source (for example, background processes).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "tone": {
+          "$ref": "#/$defs/NotificationTone"
+        },
+        "visibility": {
+          "$ref": "#/$defs/NotificationVisibility"
+        }
+      },
+      "required": [
+        "title",
+        "sender",
+        "recipient",
+        "delivery",
+        "body",
+        "details"
+      ],
+      "type": "object"
+    },
+    "NotificationDelivery": {
+      "anyOf": [
+        {
+          "enum": [
+            "queued",
+            "received"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Whether the card's content waits for the recipient or has reached it."
+    },
+    "NotificationPreview": {
+      "anyOf": [
+        {
+          "enum": [
+            "truncated",
+            "full"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How much of the body a collapsed card shows."
+    },
+    "NotificationTone": {
+      "anyOf": [
+        {
+          "enum": [
+            "neutral",
+            "accent",
+            "success",
+            "warning",
+            "error"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How a notification card reads, which picks its accent color."
+    },
+    "NotificationVisibility": {
+      "anyOf": [
+        {
+          "enum": [
+            "activity",
+            "conversation"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Whether the card belongs to the conversation or only to the activity\naround it."
+    },
     "Operation": {
       "anyOf": [
         {
@@ -1860,6 +2100,49 @@
         }
       ],
       "description": "Where a plan step is."
+    },
+    "Presentation": {
+      "description": "A transcript row has exactly one presentation.\n\nClosed: each variant carries its card under its own key, which serde\ncannot read into a unit `Unknown`, so a new variant is a protocol major.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "card": {
+              "$ref": "#/$defs/ToolCard"
+            }
+          },
+          "required": [
+            "card"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Facts-only receipt when collapsed; expansion reveals the full body.",
+          "properties": {
+            "summary_card": {
+              "$ref": "#/$defs/ToolCard"
+            }
+          },
+          "required": [
+            "summary_card"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Saved as `message`; the name predates non-agent notifications.",
+          "properties": {
+            "message": {
+              "$ref": "#/$defs/NotificationCard"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "ProtocolVersion": {
       "description": "A protocol version. Minors add optional fields, methods, and error codes;\nmajors may change anything.",
@@ -3161,6 +3444,139 @@
       "description": "One loaded session's event stream. A new daemon, or a reload, starts\na new stream.",
       "type": "string"
     },
+    "ToolBody": {
+      "description": "Optional expandable body content.\n\nEvery variant except [`Self::Diff`] carries plain text lines; [`Self::Code`]\nand [`Self::Search`] add the metadata renderers need to highlight them.\n\nClosed: its variants carry their content under `lines`, which serde\ncannot read into a unit `Unknown`, so a new variant is a protocol major.",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "none",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "lines",
+              "type": "string"
+            },
+            "lines": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "lines"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Source code highlighted as `language`, a syntax name or file\nextension such as `python` or `rs`.",
+          "properties": {
+            "kind": {
+              "const": "code",
+              "type": "string"
+            },
+            "lines": {
+              "properties": {
+                "language": {
+                  "type": "string"
+                },
+                "lines": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "window": {
+                  "$ref": "#/$defs/CodeWindow",
+                  "description": "Absent means [`CodeWindow::Head`]."
+                }
+              },
+              "required": [
+                "language",
+                "lines"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "lines"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Search result previews with the query that produced them, so\nrenderers can highlight matches with the search tool's semantics.",
+          "properties": {
+            "kind": {
+              "const": "search",
+              "type": "string"
+            },
+            "lines": {
+              "properties": {
+                "case_sensitive": {
+                  "default": true,
+                  "description": "Absent means `true`.",
+                  "type": "boolean"
+                },
+                "lines": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "literal": {
+                  "description": "The pattern is a literal substring rather than a regex.",
+                  "type": "boolean"
+                },
+                "pattern": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "pattern",
+                "lines"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "lines"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Compact diff body with per-row line numbers and change kinds.",
+          "properties": {
+            "kind": {
+              "const": "diff",
+              "type": "string"
+            },
+            "lines": {
+              "items": {
+                "$ref": "#/$defs/DiffRow"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "lines"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ToolCallId": {
       "description": "Identifies one tool call; every [`ToolCallUpdate`] with the same id\nupdates that call.",
       "type": "string"
@@ -3177,6 +3593,17 @@
             "array",
             "null"
           ]
+        },
+        "display": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Presentation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The call's card as Rho's TUI draws it; replaces the call's display\nwhen present. While the call runs it is a\n[`Presentation::Card`](crate::display::Presentation::Card) that each\nstart and progress update replaces; a finished call's is its final\npresentation, which may be a summary card or a notification. A call\nthat closes `failed` without one was cut off: clients show its last\ncard as interrupted. Images the call produced stay in `content`."
         },
         "id": {
           "$ref": "#/$defs/ToolCallId"
@@ -3225,6 +3652,54 @@
         "id"
       ],
       "type": "object"
+    },
+    "ToolCard": {
+      "description": "Structured tool presentation for Call + Children rendering.",
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/ToolBody"
+        },
+        "facts": {
+          "items": {
+            "$ref": "#/$defs/ToolFact"
+          },
+          "type": "array"
+        },
+        "family": {
+          "$ref": "#/$defs/ToolFamily"
+        },
+        "header": {
+          "$ref": "#/$defs/ToolHeader"
+        },
+        "status": {
+          "$ref": "#/$defs/ToolCardStatus"
+        }
+      },
+      "required": [
+        "status",
+        "family",
+        "header"
+      ],
+      "type": "object"
+    },
+    "ToolCardStatus": {
+      "anyOf": [
+        {
+          "enum": [
+            "running",
+            "ok",
+            "error",
+            "interrupted"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Lifecycle status for the card's marker."
     },
     "ToolContent": {
       "anyOf": [
@@ -3310,6 +3785,309 @@
         }
       ],
       "description": "One piece of what a tool call shows."
+    },
+    "ToolFact": {
+      "anyOf": [
+        {
+          "properties": {
+            "added": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "diff_stat",
+              "type": "string"
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "removed": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "added",
+            "removed"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "code": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "duration_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "exit",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Shell timeout budget in seconds; `None` when the call has no timeout.\nStructured so hosts can decorate it live (elapsed clock) without\nparsing display text.",
+          "properties": {
+            "kind": {
+              "const": "timeout",
+              "type": "string"
+            },
+            "seconds": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "count",
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "value": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "label",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "meta",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "error",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "completed": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "progress",
+              "type": "string"
+            },
+            "total": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "completed"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "text",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Structured child fact under a tool header."
+    },
+    "ToolFamily": {
+      "anyOf": [
+        {
+          "enum": [
+            "file_command",
+            "file_diff",
+            "web",
+            "skill",
+            "form",
+            "agent",
+            "default"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Tool-family identity, which picks the header verb's color."
+    },
+    "ToolHeader": {
+      "anyOf": [
+        {
+          "description": "`verb(primary)` or bare `verb`.",
+          "properties": {
+            "kind": {
+              "const": "call",
+              "type": "string"
+            },
+            "primary": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "verb": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "verb"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Shell prompt dialect: `$ command` / `PS command`.",
+          "properties": {
+            "command": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "shell",
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "prompt"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Agent-style `identity  detail`.",
+          "properties": {
+            "detail": {
+              "type": "string"
+            },
+            "identity": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "status_first",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "identity",
+            "detail"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Header layout dialect within the shared Call + Children grammar."
     },
     "ToolKind": {
       "anyOf": [

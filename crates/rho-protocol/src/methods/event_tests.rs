@@ -2,7 +2,14 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use super::*;
-use crate::methods::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome};
+use crate::{
+    display::{
+        DiffRow, DiffRowKind, NotificationCard, NotificationDelivery, NotificationPreview,
+        NotificationTone, NotificationVisibility, Presentation, ToolBody, ToolCard, ToolCardStatus,
+        ToolFact, ToolFamily, ToolHeader,
+    },
+    methods::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome},
+};
 
 // Covers: every event's wire form (the `type` tag, snake_case names, and
 // absent optionals left out) round-trips, which an ACP adapter or another
@@ -98,6 +105,7 @@ fn every_session_event_round_trips_through_its_wire_form() {
                     path: "a.rs".into(),
                     line: Some(3),
                 }]),
+                display: None,
             }),
             json!({
                 "type": "tool_call",
@@ -123,8 +131,104 @@ fn every_session_event_round_trips_through_its_wire_form() {
                 raw_input: None,
                 content: None,
                 locations: None,
+                display: None,
             }),
             json!({"type": "tool_call", "id": "t1", "status": "completed"}),
+        ),
+        (
+            SessionEvent::tool_call(ToolCallUpdate {
+                display: Some(Presentation::Card(
+                    ToolCard::new(
+                        ToolCardStatus::Running,
+                        ToolFamily::FileCommand,
+                        ToolHeader::shell("$", Some("cargo test".into())),
+                    )
+                    .with_facts(vec![ToolFact::Timeout { seconds: Some(30) }])
+                    .with_body(ToolBody::Diff(vec![DiffRow::new(
+                        DiffRowKind::Added,
+                        Some(2),
+                        "new",
+                    )])),
+                )),
+                ..status_only(ToolStatus::InProgress)
+            }),
+            json!({
+                "type": "tool_call",
+                "id": "t1",
+                "status": "in_progress",
+                "display": {"card": {
+                    "status": "running",
+                    "family": "file_command",
+                    "header": {"kind": "shell", "prompt": "$", "command": "cargo test"},
+                    "facts": [{"kind": "timeout", "seconds": 30}],
+                    "body": {"kind": "diff", "lines": [{"kind": "added", "line": 2, "text": "new"}]},
+                }},
+            }),
+        ),
+        (
+            // A case-sensitive search leaves the flag to its default.
+            SessionEvent::tool_call(ToolCallUpdate {
+                display: Some(Presentation::Card(
+                    ToolCard::new(
+                        ToolCardStatus::Ok,
+                        ToolFamily::FileCommand,
+                        ToolHeader::shell("$", Some("rg needle".into())),
+                    )
+                    .with_body(ToolBody::Search {
+                        pattern: "needle".into(),
+                        literal: false,
+                        case_sensitive: true,
+                        lines: vec!["a.rs:1:needle".into()],
+                    }),
+                )),
+                ..status_only(ToolStatus::Completed)
+            }),
+            json!({
+                "type": "tool_call",
+                "id": "t1",
+                "status": "completed",
+                "display": {"card": {
+                    "status": "ok",
+                    "family": "file_command",
+                    "header": {"kind": "shell", "prompt": "$", "command": "rg needle"},
+                    "body": {"kind": "search", "lines": {
+                        "pattern": "needle",
+                        "lines": ["a.rs:1:needle"],
+                    }},
+                }},
+            }),
+        ),
+        (
+            SessionEvent::tool_call(ToolCallUpdate {
+                display: Some(Presentation::Notification(Box::new(NotificationCard {
+                    title: "Agent result".into(),
+                    sender: "worker".into(),
+                    recipient: "agent".into(),
+                    delivery: NotificationDelivery::Received,
+                    tone: NotificationTone::default(),
+                    preview: NotificationPreview::default(),
+                    visibility: NotificationVisibility::default(),
+                    reference: None,
+                    subtitle: None,
+                    body: "done".into(),
+                    output: None,
+                    details: Vec::new(),
+                }))),
+                ..status_only(ToolStatus::Completed)
+            }),
+            json!({
+                "type": "tool_call",
+                "id": "t1",
+                "status": "completed",
+                "display": {"message": {
+                    "title": "Agent result",
+                    "sender": "worker",
+                    "recipient": "agent",
+                    "delivery": "received",
+                    "body": "done",
+                    "details": [],
+                }},
+            }),
         ),
         (
             SessionEvent::Plan {
@@ -254,6 +358,31 @@ fn unknown_event_values_read_as_unknown() {
                 raw_input: None,
                 content: Some(vec![ToolContent::Unknown]),
                 locations: None,
+                display: None,
+            }),
+        ),
+        (
+            json!({
+                "type": "tool_call",
+                "id": "t1",
+                "status": "paused",
+                "display": {"card": {
+                    "status": "paused",
+                    "family": "hologram",
+                    "header": {"kind": "banner", "text": "hi"},
+                    "facts": [{"kind": "gauge", "value": 3}],
+                }},
+            }),
+            SessionEvent::tool_call(ToolCallUpdate {
+                display: Some(Presentation::Card(
+                    ToolCard::new(
+                        ToolCardStatus::Unknown,
+                        ToolFamily::Unknown,
+                        ToolHeader::Unknown,
+                    )
+                    .with_facts(vec![ToolFact::Unknown]),
+                )),
+                ..status_only(ToolStatus::Unknown)
             }),
         ),
     ];
@@ -263,5 +392,19 @@ fn unknown_event_values_read_as_unknown() {
             event,
             "{wire}"
         );
+    }
+}
+
+/// Tool call `t1` moving to `status`, with every other field absent.
+fn status_only(status: ToolStatus) -> ToolCallUpdate {
+    ToolCallUpdate {
+        id: ToolCallId::new("t1"),
+        title: None,
+        kind: None,
+        status: Some(status),
+        raw_input: None,
+        content: None,
+        locations: None,
+        display: None,
     }
 }

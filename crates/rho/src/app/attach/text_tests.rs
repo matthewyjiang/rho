@@ -15,6 +15,7 @@ fn tool_call(title: Option<&str>, status: ToolStatus) -> SessionEvent {
         raw_input: None,
         content: None,
         locations: None,
+        display: None,
     })
 }
 

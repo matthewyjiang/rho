@@ -1,8 +1,8 @@
 //! Keep the proposed plan available when the approval receipt is expanded.
 
-use rho_tools::tool_card::{ToolBody, ToolCard, ToolFamily, ToolHeader, ToolStatus};
+use rho_protocol::display::{ToolBody, ToolCard, ToolCardStatus, ToolFamily, ToolHeader};
 
-pub(super) fn card(arguments: &serde_json::Value, status: ToolStatus) -> ToolCard {
+pub(super) fn card(arguments: &serde_json::Value, status: ToolCardStatus) -> ToolCard {
     let mut card = ToolCard::new(
         status,
         ToolFamily::Form,

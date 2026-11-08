@@ -1,13 +1,13 @@
 //! Native checklist cards are rebuilt from call arguments, including on resume.
 
-use rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus};
+use rho_protocol::display::{ToolCard, ToolCardStatus, ToolFamily, ToolHeader};
 
 use crate::{
     presentation::checklist::{push_checklist_facts, ChecklistStatus},
     tools::todo::TodoStatus,
 };
 
-pub(super) fn card(arguments: &serde_json::Value, status: ToolStatus) -> ToolCard {
+pub(super) fn card(arguments: &serde_json::Value, status: ToolCardStatus) -> ToolCard {
     let mut card = ToolCard::new(status, ToolFamily::Form, ToolHeader::call("todo", None));
     if let Some(todos) = arguments.get("todos").and_then(serde_json::Value::as_array) {
         // Repaired streaming JSON can contain a trailing item without content or
@@ -35,12 +35,12 @@ pub(super) fn card(arguments: &serde_json::Value, status: ToolStatus) -> ToolCar
 
 pub(super) fn finished_card(arguments: &serde_json::Value, content: &str, ok: bool) -> ToolCard {
     if ok {
-        return card(arguments, ToolStatus::Ok);
+        return card(arguments, ToolCardStatus::Ok);
     }
     // A rejected proposal is not the checklist, and its error must remain
     // visible even when the generic card renderer collapses long output.
     let mut card = ToolCard::new(
-        ToolStatus::Error,
+        ToolCardStatus::Error,
         ToolFamily::Form,
         ToolHeader::call("todo", None),
     );

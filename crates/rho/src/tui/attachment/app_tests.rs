@@ -65,15 +65,15 @@ fn line_text(lines: &[Line<'static>]) -> Vec<String> {
 #[test]
 fn parallel_pending_tools_keep_independent_slots() {
     let (_directory, mut app) = test_app();
-    let card_a = rho_tools::tool_card::ToolCard::new(
-        rho_tools::tool_card::ToolStatus::Running,
-        rho_tools::tool_card::ToolFamily::FileCommand,
-        rho_tools::tool_card::ToolHeader::call("read_file", Some("a.rs".into())),
+    let card_a = rho_protocol::display::ToolCard::new(
+        rho_protocol::display::ToolCardStatus::Running,
+        rho_protocol::display::ToolFamily::FileCommand,
+        rho_protocol::display::ToolHeader::call("read_file", Some("a.rs".into())),
     );
-    let card_b = rho_tools::tool_card::ToolCard::new(
-        rho_tools::tool_card::ToolStatus::Running,
-        rho_tools::tool_card::ToolFamily::FileCommand,
-        rho_tools::tool_card::ToolHeader::call("read_file", Some("b.rs".into())),
+    let card_b = rho_protocol::display::ToolCard::new(
+        rho_protocol::display::ToolCardStatus::Running,
+        rho_protocol::display::ToolFamily::FileCommand,
+        rho_protocol::display::ToolHeader::call("read_file", Some("b.rs".into())),
     );
     app.apply_event(AttachmentEvent::ToolStarted {
         key: Some("call-a".into()),
@@ -87,7 +87,7 @@ fn parallel_pending_tools_keep_independent_slots() {
         key: Some("call-a".into()),
         card: card_a
             .clone()
-            .with_facts(vec![rho_tools::tool_card::ToolFact::Meta {
+            .with_facts(vec![rho_protocol::display::ToolFact::Meta {
                 text: "reading".into(),
             }]),
     });
@@ -101,7 +101,7 @@ fn parallel_pending_tools_keep_independent_slots() {
         key: Some("call-b".into()),
         presentation: card_b
             .clone()
-            .with_facts(vec![rho_tools::tool_card::ToolFact::Count {
+            .with_facts(vec![rho_protocol::display::ToolFact::Count {
                 label: "lines".into(),
                 value: 2,
                 detail: None,
@@ -113,7 +113,7 @@ fn parallel_pending_tools_keep_independent_slots() {
     assert!(!app.pending_tools.contains_key("call-b"));
     match app.transcript.last() {
         Some(Entry::Tool(ToolEntry {
-            presentation: crate::presentation::Presentation::Card(card),
+            presentation: rho_protocol::display::Presentation::Card(card),
             ..
         })) => {
             assert_eq!(card.header_text(), "● read_file(b.rs)");
@@ -131,10 +131,10 @@ fn provider_retry_replaces_output_but_preserves_presented_events() {
     app.apply_event(AttachmentEvent::Notice("keep notice".into()));
     app.apply_event(AttachmentEvent::ToolFinished {
         key: None,
-        presentation: rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Ok,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("keep tool", None),
+        presentation: rho_protocol::display::ToolCard::new(
+            rho_protocol::display::ToolCardStatus::Ok,
+            rho_protocol::display::ToolFamily::Default,
+            rho_protocol::display::ToolHeader::call("keep tool", None),
         )
         .into(),
     });
@@ -147,7 +147,7 @@ fn provider_retry_replaces_output_but_preserves_presented_events() {
         [
             Entry::User(prompt),
             Entry::Notice(notice),
-            Entry::Tool(ToolEntry { presentation: crate::presentation::Presentation::Card(card), .. }),
+            Entry::Tool(ToolEntry { presentation: rho_protocol::display::Presentation::Card(card), .. }),
             Entry::Assistant(answer)
         ] if prompt == "delegated task"
             && notice == "keep notice"
@@ -249,10 +249,10 @@ fn history_lines_follow_display_settings() {
     app.apply_event(AttachmentEvent::AssistantTextDelta("answer".into()));
     app.apply_event(AttachmentEvent::ToolFinished {
         key: None,
-        presentation: rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Ok,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("read_file", Some("a.rs".into())),
+        presentation: rho_protocol::display::ToolCard::new(
+            rho_protocol::display::ToolCardStatus::Ok,
+            rho_protocol::display::ToolFamily::Default,
+            rho_protocol::display::ToolHeader::call("read_file", Some("a.rs".into())),
         )
         .into(),
     });
@@ -310,16 +310,16 @@ fn zen_keeps_conversation_notifications_between_tool_summaries() {
     app.display.zen_mode = true;
     let tool = || AttachmentEvent::ToolFinished {
         key: None,
-        presentation: rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Ok,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("read_file", Some("a.rs".into())),
+        presentation: rho_protocol::display::ToolCard::new(
+            rho_protocol::display::ToolCardStatus::Ok,
+            rho_protocol::display::ToolFamily::Default,
+            rho_protocol::display::ToolHeader::call("read_file", Some("a.rs".into())),
         )
         .into(),
     };
     let card = crate::presentation::parent_message_card(
         "keep going".into(),
-        crate::presentation::NotificationDelivery::Received,
+        rho_protocol::display::NotificationDelivery::Received,
         "detail".into(),
     );
     app.apply_event(tool());
@@ -327,7 +327,7 @@ fn zen_keeps_conversation_notifications_between_tool_summaries() {
     app.apply_event(tool());
 
     let notification = Entry::Tool(ToolEntry::new(
-        crate::presentation::Presentation::Notification(Box::new(card)),
+        rho_protocol::display::Presentation::Notification(Box::new(card)),
         /*expanded*/ false,
         /*image*/ None,
         /*started_at*/ None,
@@ -369,12 +369,12 @@ fn history_lines_honor_max_tool_output_lines() {
     let body = (0..5).map(|i| format!("line-{i}")).collect::<Vec<_>>();
     app.apply_event(AttachmentEvent::ToolFinished {
         key: None,
-        presentation: rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Ok,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("bash", None),
+        presentation: rho_protocol::display::ToolCard::new(
+            rho_protocol::display::ToolCardStatus::Ok,
+            rho_protocol::display::ToolFamily::Default,
+            rho_protocol::display::ToolHeader::call("bash", None),
         )
-        .with_body(rho_tools::tool_card::ToolBody::Lines(body))
+        .with_body(rho_protocol::display::ToolBody::Lines(body))
         .into(),
     });
 
@@ -519,24 +519,24 @@ fn format_run_cost_prefers_status_total_via_shared_usd_helper() {
     );
 }
 
-fn long_body_card() -> rho_tools::tool_card::ToolCard {
-    rho_tools::tool_card::ToolCard::new(
-        rho_tools::tool_card::ToolStatus::Ok,
-        rho_tools::tool_card::ToolFamily::FileCommand,
-        rho_tools::tool_card::ToolHeader::shell("$", Some("seq 20".into())),
+fn long_body_card() -> rho_protocol::display::ToolCard {
+    rho_protocol::display::ToolCard::new(
+        rho_protocol::display::ToolCardStatus::Ok,
+        rho_protocol::display::ToolFamily::FileCommand,
+        rho_protocol::display::ToolHeader::shell("$", Some("seq 20".into())),
     )
-    .with_body(rho_tools::tool_card::ToolBody::Lines(
+    .with_body(rho_protocol::display::ToolBody::Lines(
         (0..20).map(|i| format!("out-{i}")).collect(),
     ))
 }
 
-fn short_body_card() -> rho_tools::tool_card::ToolCard {
-    rho_tools::tool_card::ToolCard::new(
-        rho_tools::tool_card::ToolStatus::Ok,
-        rho_tools::tool_card::ToolFamily::Default,
-        rho_tools::tool_card::ToolHeader::call("echo", None),
+fn short_body_card() -> rho_protocol::display::ToolCard {
+    rho_protocol::display::ToolCard::new(
+        rho_protocol::display::ToolCardStatus::Ok,
+        rho_protocol::display::ToolFamily::Default,
+        rho_protocol::display::ToolHeader::call("echo", None),
     )
-    .with_body(rho_tools::tool_card::ToolBody::Lines(vec!["ok".into()]))
+    .with_body(rho_protocol::display::ToolBody::Lines(vec!["ok".into()]))
 }
 
 fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {

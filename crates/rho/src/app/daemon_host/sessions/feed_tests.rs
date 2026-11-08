@@ -294,6 +294,7 @@ fn events_json_cannot_hold_are_dropped_live_and_saved() {
                 path: PathBuf::from(OsStr::from_bytes(b"/work/\xff")),
                 line: None,
             }]),
+            display: None,
         })
     };
     let feed = idle_feed();

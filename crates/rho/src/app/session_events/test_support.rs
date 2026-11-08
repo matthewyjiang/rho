@@ -34,6 +34,7 @@ pub(super) fn opened(id: &str, command: &str) -> WireEvent {
         raw_input: Some(json!({ "command": command })),
         content: None,
         locations: None,
+        display: None,
     })
 }
 
@@ -60,6 +61,7 @@ fn closed_update(id: &str) -> ToolCallUpdate {
         raw_input: None,
         content: None,
         locations: None,
+        display: None,
     }
 }
 
@@ -90,6 +92,20 @@ pub(super) fn canonical_messages(events: Vec<WireEvent>) -> Vec<WireEvent> {
                 | WireEvent::AgentMessageChunk { message, .. }
                 | WireEvent::ThoughtChunk { message, .. } => rename(message),
                 _ => {}
+            }
+            event
+        })
+        .collect()
+}
+
+/// `events` with each tool call's `display` cleared, for comparing the
+/// other fields; `tool_calls_carry_the_tui_cards` covers the cards.
+pub(super) fn without_display(events: Vec<WireEvent>) -> Vec<WireEvent> {
+    events
+        .into_iter()
+        .map(|mut event| {
+            if let WireEvent::ToolCall(update) = &mut event {
+                update.display = None;
             }
             event
         })

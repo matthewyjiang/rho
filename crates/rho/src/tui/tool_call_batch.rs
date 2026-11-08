@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use rho_sdk::ToolCallId;
 
-use rho_tools::tool_card::{ToolCard, ToolStatus};
+use rho_protocol::display::{ToolCard, ToolCardStatus};
 
 use super::{live_started_at, ToolEntry};
 
@@ -90,10 +90,11 @@ impl ToolCallBatch {
         self.live_entries()
             .cloned()
             .map(|mut entry| {
-                if let crate::presentation::Presentation::Card(card)
-                | crate::presentation::Presentation::SummaryCard(card) = &mut entry.presentation
+                if let rho_protocol::display::Presentation::Card(card)
+                | rho_protocol::display::Presentation::SummaryCard(card) =
+                    &mut entry.presentation
                 {
-                    card.status = ToolStatus::Interrupted;
+                    card.status = ToolCardStatus::Interrupted;
                 }
                 // The clock stops with the call; interrupted rows are retained
                 // in the feed and must not keep counting on every repaint.
@@ -138,7 +139,7 @@ impl ToolCallBatch {
         } else if !self.running.contains_key(&call_id) {
             self.unindexed_running_order.push(call_id.clone());
         }
-        let started_at = live_started_at(self.running.get(&call_id), ToolStatus::Running);
+        let started_at = live_started_at(self.running.get(&call_id), ToolCardStatus::Running);
         self.running
             .insert(call_id, running_entry(card, expanded, started_at));
     }
@@ -167,7 +168,7 @@ impl ToolCallBatch {
         }
         let previous = self.running.get(&call_id);
         let expanded = previous.is_some_and(|entry| entry.expanded);
-        let started_at = live_started_at(previous, ToolStatus::Running);
+        let started_at = live_started_at(previous, ToolCardStatus::Running);
         if !self.running.contains_key(&call_id) {
             self.unindexed_running_order.push(call_id.clone());
         }
