@@ -163,16 +163,12 @@ impl std::fmt::Display for RejectedDirectory {
 
 impl std::error::Error for RejectedDirectory {}
 
-/// The added directories of a session a client opens with `requested`
-/// roots, such as an ACP host's `additionalDirectories` or a daemon client's
-/// setup: the `launch` (`--add-dir`) set plus the requested ones. The
-/// request alone names the client's roots, so a reopened session does not
-/// get back roots it saved earlier. Entries must be absolute, then resolve
-/// like `--add-dir`: an existing UTF-8 directory, canonicalized. `root` is
-/// the canonical session workspace; entries it or another entry already
-/// covers are folded in.
+/// The directories a client that opens a session asks to add, such as an
+/// ACP host's `additionalDirectories` or a daemon client's setup. Entries
+/// must be absolute, then resolve like `--add-dir`: an existing UTF-8
+/// directory, canonicalized. `root` is the canonical session workspace;
+/// entries it or another entry already covers are folded in.
 pub(crate) fn session_added_dirs(
-    launch: &AddedDirs,
     requested: &[PathBuf],
     root: &Path,
 ) -> Result<AddedDirs, RejectedDirectory> {
@@ -182,16 +178,14 @@ pub(crate) fn session_added_dirs(
             entry: entry.clone(),
             reason,
         };
-        if entry.as_os_str().is_empty() {
-            return Err(reject("path is empty".into()));
-        }
+        // An empty path is not absolute either.
         if !entry.is_absolute() {
             return Err(reject("path must be absolute".into()));
         }
         let dir = resolve(entry, root, /*home*/ None).map_err(|error| reject(error.to_string()))?;
         client.insert(root, dir);
     }
-    Ok(launch.union(root, &client))
+    Ok(client)
 }
 
 /// Resolves a user-supplied directory: `~` expands to `home`, relative paths

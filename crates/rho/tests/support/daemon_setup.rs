@@ -7,13 +7,14 @@ use std::{collections::BTreeSet, path::PathBuf};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{JobList, SessionAttach, SessionNew},
-    Ask, Client, ClientError, DaemonNotification, ErrorCode, JobListParams, JobState, Operation,
-    PathScope, SessionAttachParams, SessionEvent, SessionEventParams, SessionId, SessionNewParams,
-    SessionPart, SessionSetup, TurnOutcome,
+    methods::{JobList, SessionAttach, SessionList, SessionNew},
+    Ask, Client, ClientError, DaemonNotification, ErrorCode, JobListParams, JobState, McpServer,
+    Operation, PathScope, SessionAttachParams, SessionEvent, SessionEventParams, SessionId,
+    SessionListParams, SessionNewParams, SessionPart, SessionSetup, TurnOutcome,
 };
+use serde_json::Value;
 
-use super::sessions::{Sandbox, DEADLINE};
+use super::sessions::{settled_job, Sandbox, ARCHIVIST_AGENT, DEADLINE};
 
 /// A directory outside the sandbox's workspace, canonicalized as the
 /// daemon resolves it: `../extra` from the workspace.
@@ -88,11 +89,7 @@ pub(super) async fn asked_operation(
 
 /// The model request of `session`'s turn of "hello", which the `inspect`
 /// fixture answers with.
-async fn inspected_request(
-    sandbox: &Sandbox,
-    client: &Client,
-    session: &SessionId,
-) -> serde_json::Value {
+async fn inspected_request(sandbox: &Sandbox, client: &Client, session: &SessionId) -> Value {
     let (follower, mut notifications) = sandbox.connect_following().await;
     follower
         .request::<SessionAttach>(&attach(sandbox, session))
@@ -113,6 +110,62 @@ async fn inspected_request(
                 TurnOutcome::Answered { text, .. } => return serde_json::from_str(&text).unwrap(),
                 outcome => panic!("the turn answers: {outcome:?}"),
             }
+        }
+    }
+}
+
+/// The model request the `inspect` fixture answered `session`'s last turn
+/// with, as a client attaching once the turn ended replays its answer.
+async fn replayed_request(sandbox: &Sandbox, session: &SessionId) -> Value {
+    let (follower, mut notifications) = sandbox.connect_following().await;
+    let attached = follower
+        .request::<SessionAttach>(&attach(sandbox, session))
+        .await
+        .unwrap();
+    let mut chunks = Vec::new();
+    for _ in 0..attached.replay_events {
+        let notification = tokio::time::timeout(DEADLINE, notifications.recv())
+            .await
+            .expect("the daemon replays the session's events")
+            .expect("the connection stays open");
+        if let DaemonNotification::SessionEvent(SessionEventParams {
+            event: SessionEvent::AgentMessageChunk { message, text },
+            ..
+        }) = notification
+        {
+            chunks.push((message, text));
+        }
+    }
+    let (last, _) = chunks.last().cloned().expect("the replay holds an answer");
+    let answer: String = chunks
+        .into_iter()
+        .filter(|(message, _)| *message == last)
+        .map(|(_, text)| text)
+        .collect();
+    serde_json::from_str(&answer).unwrap_or_else(|error| panic!("{error}: {answer}"))
+}
+
+/// What a model request offered the model.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Offered {
+    system_prompt: bool,
+    tools: bool,
+    questionnaire: bool,
+    /// The `agent` tool, which starts subagents.
+    agent: bool,
+}
+
+impl Offered {
+    fn by(request: &Value) -> Self {
+        let tools = request["tools"]
+            .as_array()
+            .expect("the request lists its tools");
+        let offers = |name: &str| tools.iter().any(|tool| tool["name"] == name);
+        Self {
+            system_prompt: request["messages"][0].get("System").is_some(),
+            tools: !tools.is_empty(),
+            questionnaire: offers("questionnaire"),
+            agent: offers("agent"),
         }
     }
 }
@@ -165,38 +218,210 @@ async fn a_session_takes_its_additional_directories() {
     );
 }
 
-// Covers: a session whose setup leaves parts out offers the model only what
-// it keeps: without tools, none; without questions, every tool but the
-// questionnaire; a session opened without that setup offers them all.
+// Covers: a session whose setup leaves a part out offers the model only
+// what it keeps: without tools, none; without questions, every tool but the
+// questionnaire; without subagents, every tool but `agent`; without the
+// system prompt, no system prompt; a session opened without that setup
+// offers them all.
 // Owner: daemon session setup.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_session_offers_the_model_only_the_parts_its_setup_keeps() {
     let sandbox = Sandbox::new();
     // The fixture answers with the request it got.
     let client = sandbox.start_daemon("inspect").await;
-    let mut offers = Vec::new();
-    for without in [
-        BTreeSet::new(),
-        BTreeSet::from([SessionPart::Tools]),
-        BTreeSet::from([SessionPart::Questions]),
-    ] {
+    let all = Offered {
+        system_prompt: true,
+        tools: true,
+        questionnaire: true,
+        agent: true,
+    };
+    let rows = [
+        (None, all),
+        (
+            Some(SessionPart::Tools),
+            Offered {
+                tools: false,
+                questionnaire: false,
+                agent: false,
+                ..all
+            },
+        ),
+        (
+            Some(SessionPart::Questions),
+            Offered {
+                questionnaire: false,
+                ..all
+            },
+        ),
+        (
+            Some(SessionPart::Subagents),
+            Offered {
+                agent: false,
+                ..all
+            },
+        ),
+        (
+            Some(SessionPart::SystemPrompt),
+            Offered {
+                system_prompt: false,
+                ..all
+            },
+        ),
+    ];
+    let mut offered = Vec::new();
+    for (without, _) in &rows {
         let setup = SessionSetup {
-            without,
+            without: without.iter().copied().collect(),
             ..SessionSetup::default()
         };
         let session = new_session(&sandbox, &client, None, setup).await.unwrap();
-        let request = inspected_request(&sandbox, &client, &session).await;
-        let tools = request["tools"]
-            .as_array()
-            .expect("the request lists its tools");
-        let asks = tools.iter().any(|tool| tool["name"] == "questionnaire");
-        offers.push((!tools.is_empty(), asks));
+        offered.push((
+            *without,
+            Offered::by(&inspected_request(&sandbox, &client, &session).await),
+        ));
     }
 
-    // (offers tools, offers the questionnaire)
+    assert_eq!(offered, rows, "log:\n{}", sandbox.isolated.daemon_log());
+}
+
+// Covers: a session's setup survives the daemon unloading it: a plain
+// prompt that reopens it, bringing no setup, still offers the model no
+// tools, and its file still saves the additional directory, rather than the
+// reopen widening the session or saving it without the directory (#1661).
+// Owner: daemon session setup.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_keeps_its_setup_when_a_prompt_reopens_it() {
+    let sandbox = Sandbox::new();
+    let extra = extra_dir(&sandbox);
+    // The fixture answers with the request it got.
+    let client = sandbox
+        .start_daemon_with("inspect", &["--unload-idle-after", "200ms"])
+        .await;
+    let setup = SessionSetup {
+        additional_directories: vec![extra.clone()],
+        without: BTreeSet::from([SessionPart::Tools]),
+        ..SessionSetup::default()
+    };
+    let session = new_session(&sandbox, &client, None, setup).await.unwrap();
+    // Saved, so the unload has a file to reopen.
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
+    settled_job(&sandbox, &client, &session).await;
+    sandbox
+        .poll_until("the daemon to unload the idle session", async || {
+            sandbox
+                .isolated
+                .daemon_log()
+                .lines()
+                .any(|line| {
+                    line.contains("unloaded idle session") && line.contains(session.as_str())
+                })
+                .then_some(())
+        })
+        .await;
+
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
+    settled_job(&sandbox, &client, &session).await;
+    let reopened = Offered::by(&replayed_request(&sandbox, &session).await);
+    let saved_dirs = client
+        .request::<SessionList>(&SessionListParams::default())
+        .await
+        .unwrap()
+        .sessions
+        .into_iter()
+        .find(|listed| listed.session == session)
+        .map(|listed| listed.added_dirs);
+
     assert_eq!(
-        offers,
-        vec![(true, true), (false, false), (true, false)],
+        (reopened.tools, saved_dirs),
+        (false, Some(vec![extra])),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a session opened as an agent other than the default runs as that
+// agent: the model's system prompt carries the agent's instructions, which
+// the default agent's lacks.
+// Owner: daemon session setup.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_runs_as_the_agent_its_client_names() {
+    let sandbox = Sandbox::new();
+    let archivist = sandbox.isolated.home.join(".agents/agents/archivist.md");
+    std::fs::create_dir_all(archivist.parent().unwrap()).unwrap();
+    std::fs::write(&archivist, ARCHIVIST_AGENT).unwrap();
+    // The fixture answers with the request it got.
+    let client = sandbox.start_daemon("inspect").await;
+    let mut instructed = Vec::new();
+    for agent in [None, Some("archivist")] {
+        let session = new_session(&sandbox, &client, agent, SessionSetup::default())
+            .await
+            .unwrap();
+        let request = inspected_request(&sandbox, &client, &session).await;
+        let system = request["messages"][0]["System"]
+            .as_str()
+            .expect("the request has a system prompt");
+        instructed.push((agent, system.contains("Archive.")));
+    }
+
+    assert_eq!(
+        instructed,
+        [(None, false), (Some("archivist"), true)],
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: an MCP server a session's setup provides is started with the env
+// the setup gives it, in place of the config server of the same name, which
+// is never started.
+// Owner: daemon session setup.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_setups_mcp_server_replaces_the_config_server_of_its_name() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sandbox = Sandbox::new();
+    let root = sandbox.workspace.parent().unwrap().to_path_buf();
+    let record = root.join("mcp.txt");
+    // A server that records its name and `TOKEN`, then exits: the session
+    // goes on without its tools.
+    let install = |name: &str| {
+        let path = root.join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\nprintf '%s|%s\\n' {name} \"${{TOKEN-unset}}\" >> {}\n",
+                record.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    };
+    let configured = install("config-probe").display().to_string();
+    let provided = install("setup-probe");
+    sandbox.set_config(
+        "supervised",
+        &format!("[mcp.servers.probe]\ntransport = \"stdio\"\ncommand = {configured:?}\n"),
+    );
+    let client = sandbox.start_daemon("fixed").await;
+    let setup = SessionSetup {
+        mcp_servers: vec![McpServer::Stdio {
+            name: "probe".into(),
+            command: provided,
+            args: Vec::new(),
+            env: [("TOKEN".to_owned(), "token-setup".to_owned())]
+                .into_iter()
+                .collect(),
+        }],
+        ..SessionSetup::default()
+    };
+    let session = new_session(&sandbox, &client, None, setup).await.unwrap();
+    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
+    settled_job(&sandbox, &client, &session).await;
+
+    assert_eq!(
+        std::fs::read_to_string(&record).unwrap_or_default(),
+        "setup-probe|token-setup\n",
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

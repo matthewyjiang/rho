@@ -1,9 +1,8 @@
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
-use rho_protocol::{SessionPart, SessionSetup};
 use tracing::Instrument;
 
-use super::{agent_binding::BoundAgent, automation::AutomationExit, detach::DetachedSession};
+use super::agent_binding::BoundAgent;
 use {
     crate::cli::{Cli, Command},
     crate::config::{Config, ProviderConfigs},
@@ -64,102 +63,11 @@ pub(super) fn validate(cli: &Cli) -> anyhow::Result<()> {
         );
     }
     if let Some(Command::Run { detach: true, .. }) = &cli.command {
-        let refused = detach_flags(cli).refused;
-        if !refused.is_empty() {
-            anyhow::bail!(
-                "rho run --detach does not take {}: the daemon opens the session with the workspace's config",
-                refused.join(", ")
-            );
+        if let Err(refused) = super::detach::detach_flags(cli) {
+            anyhow::bail!(super::detach::refusal(&refused));
         }
     }
     Ok(())
-}
-
-/// The daemon session `rho run --detach` asks for with `cli`'s flags, in
-/// the current directory. `--add-dir` resolves as it does for a foreground
-/// run, so `~` and relative paths mean the same; a bad one is a
-/// configuration error.
-pub(super) fn detached_session(cli: &Cli) -> Result<DetachedSession, AutomationExit> {
-    let cwd = std::env::current_dir().map_err(|error| {
-        AutomationExit::other(format!("could not read the current directory: {error}"))
-    })?;
-    let flags = detach_flags(cli);
-    let added = crate::added_dirs::launch_added_dirs(flags.add_dirs, &cwd)
-        .map_err(|error| AutomationExit::configuration(format!("{error:#}")))?;
-    Ok(DetachedSession {
-        cwd,
-        agent: flags.agent.map(str::to_owned),
-        setup: SessionSetup {
-            additional_directories: added.as_slice().to_vec(),
-            mcp_servers: Vec::new(),
-            without: flags.without,
-        },
-    })
-}
-
-/// What `rho run --detach` makes of `cli`'s flags.
-struct DetachFlags<'a> {
-    /// The flags set that the daemon cannot take, since it opens the
-    /// session with the workspace's config (#1669), by name.
-    refused: Vec<&'static str>,
-    /// `--agent`, the agent the session runs as.
-    agent: Option<&'a str>,
-    /// `--add-dir`, as given.
-    add_dirs: &'a [PathBuf],
-    /// The parts the `--no-*` flags leave out of the session.
-    without: BTreeSet<SessionPart>,
-}
-
-/// Sorts `cli`'s flags into those a detached run passes to the daemon and
-/// those it refuses. Every field is named, so a new flag does not compile
-/// until someone decides whether a detached run takes it.
-fn detach_flags(cli: &Cli) -> DetachFlags<'_> {
-    let Cli {
-        provider,
-        model,
-        config,
-        auth,
-        no_system_prompt,
-        no_tools,
-        no_subagents,
-        agent,
-        reasoning,
-        permission_mode,
-        add_dirs,
-        save,
-        // Refused in `validate` with any command.
-        no_save: _,
-        resume: _,
-        continue_latest: _,
-        prompt: _,
-        command: _,
-    } = cli;
-    let refused = [
-        ("--provider", provider.is_some()),
-        ("--model", model.is_some()),
-        ("--config", config.is_some()),
-        ("--auth", auth.is_some()),
-        ("--reasoning", reasoning.is_some()),
-        ("--permission-mode", permission_mode.is_some()),
-        ("--save", *save),
-    ]
-    .into_iter()
-    .filter_map(|(name, set)| set.then_some(name))
-    .collect();
-    let without = [
-        (SessionPart::Tools, *no_tools),
-        (SessionPart::SystemPrompt, *no_system_prompt),
-        (SessionPart::Subagents, *no_subagents),
-    ]
-    .into_iter()
-    .filter_map(|(part, set)| set.then_some(part))
-    .collect();
-    DetachFlags {
-        refused,
-        agent: agent.as_deref(),
-        add_dirs,
-        without,
-    }
 }
 
 pub(super) async fn refresh_model_cache(

@@ -1,17 +1,17 @@
 //! Converts the MCP servers a client provides for a session into
 //! session-scoped MCP config: a daemon client's
-//! `SessionSetup::mcp_servers`, and an ACP host's
-//! `mcpServers`, which `rho acp` maps onto the same servers.
+//! `SessionSetup::mcp_servers`, and an ACP host's `mcpServers`, which
+//! `rho acp` maps onto the same servers first (`acp::host_mcp`).
 //!
-//! Hosts such as T3 Code hand every session the MCP servers that expose host
-//! features (browser preview, orchestration). Rho connects them alongside the
-//! servers from its own config; the session runtime overlays them, so a host
-//! entry replaces a config server of the same name, even when it is invalid
+//! A client provides servers for features of its own, such as an editor's
+//! browser preview. Rho connects them alongside the servers from its own
+//! config; the session runtime overlays them, so a client's entry replaces
+//! a config server of the same name, even when it is invalid
 //! (`app::session_runtime::session_config`).
 
 use std::collections::BTreeMap;
 
-use rho_protocol::{EnvVariable, HttpHeader, McpServer};
+use rho_protocol::{McpServer, SecretMap};
 
 use crate::tools::mcp::{
     config::{
@@ -68,21 +68,13 @@ pub(crate) fn host_mcp_config(servers: &[McpServer]) -> McpConfig {
 fn stdio_server(
     command: &std::path::Path,
     args: &[String],
-    variables: &[EnvVariable],
+    env: &SecretMap,
 ) -> anyhow::Result<McpServerConfig> {
     let command = command.to_string_lossy().into_owned();
     if command.trim().is_empty() {
         anyhow::bail!("stdio command must not be empty");
     }
-    let mut env = BTreeMap::new();
-    for variable in variables {
-        if env
-            .insert(variable.name.clone(), variable.value.clone())
-            .is_some()
-        {
-            anyhow::bail!("stdio env repeats child variable `{}`", variable.name);
-        }
-    }
+    let env: BTreeMap<_, _> = env.clone().into_iter().collect();
     let env_from_env = BTreeMap::new();
     validate_stdio_environment(&env, &env_from_env)?;
     Ok(host_server(McpTransport::Stdio {
@@ -94,19 +86,12 @@ fn stdio_server(
     }))
 }
 
-fn http_server(url: &str, listed: &[HttpHeader]) -> anyhow::Result<McpServerConfig> {
-    // Host entries get the same transport rule as plugin servers: HTTPS, or
-    // plain HTTP only to loopback. Only the user's own config may opt out.
+fn http_server(url: &str, headers: &SecretMap) -> anyhow::Result<McpServerConfig> {
+    // Client entries get the same transport rule as plugin servers: HTTPS,
+    // or plain HTTP only to loopback. Only the user's own config may opt
+    // out.
     parse_remote_url(url)?;
-    let mut headers = BTreeMap::new();
-    for header in listed {
-        if headers
-            .insert(header.name.clone(), header.value.clone())
-            .is_some()
-        {
-            anyhow::bail!("header `{}` is listed twice", header.name);
-        }
-    }
+    let headers: BTreeMap<_, _> = headers.clone().into_iter().collect();
     validate_literal_headers(&headers)?;
     Ok(host_server(McpTransport::StreamableHttp {
         url: url.to_owned(),
@@ -122,7 +107,7 @@ fn host_server(transport: McpTransport) -> McpServerConfig {
         enabled: true,
         tools: McpToolFilter::default(),
         log_level: None,
-        // A host cannot opt a server into spending the user's model tokens.
+        // A client cannot opt a server into spending the user's model tokens.
         sampling: McpSamplingPolicy::Deny,
         transport,
         filesystem: None,

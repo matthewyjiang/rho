@@ -4,7 +4,9 @@
 //! or a new one when no daemon ran it. Cancel, steer, answer, hold, and
 //! configure never reopen one: a session that is not loaded has no turn to
 //! act on, and a client attaches before it changes settings. A reopened
-//! session runs with the settings it kept (see `open.rs`).
+//! session runs with the settings it kept (see `open.rs`), and with the
+//! directories and parts left out its file keeps, plus those of the
+//! request that reopens it (see `setup.rs`).
 //!
 //! A session another process has open is refused as in use, and a
 //! subagent's or workflow node's session as its parent's to continue.
@@ -41,7 +43,7 @@ impl Sessions {
     pub(super) async fn session(
         &self,
         id: &rho_protocol::SessionId,
-        with: OpenWith<'_>,
+        with: &OpenWith,
     ) -> Result<Arc<LoadedSession>, RpcError> {
         let id = parse_session(id)?;
         if let Some(session) = self.loaded().get(&id) {
@@ -64,7 +66,7 @@ impl Sessions {
     pub(super) async fn enter_session<T>(
         &self,
         id: &rho_protocol::SessionId,
-        with: OpenWith<'_>,
+        with: &OpenWith,
         use_session: impl FnOnce(&LoadedSession, &mut TurnSlot) -> Result<T, RpcError>,
     ) -> Result<(Arc<LoadedSession>, T), RpcError> {
         loop {
@@ -98,7 +100,7 @@ impl Sessions {
     async fn reopen(
         &self,
         id: &SessionId,
-        with: OpenWith<'_>,
+        with: &OpenWith,
     ) -> Result<Arc<LoadedSession>, RpcError> {
         self.refuse_when_stopping()?;
         let last = match self.jobs.session_job(id) {

@@ -69,7 +69,7 @@ WORKFLOW = define(inputs = {}, build = build)
 "#;
 
 /// An agent a session is saved as, other than the default.
-const ARCHIVIST_AGENT: &str = "---
+pub(super) const ARCHIVIST_AGENT: &str = "---
 description: Fixture agent a session is saved as
 ---
 

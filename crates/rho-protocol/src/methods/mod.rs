@@ -107,7 +107,7 @@ pub use session::{
     SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH, SESSION_DETACHED, SESSION_EVENT, SESSION_NEW,
     SESSION_PROMPT, SESSION_STEER,
 };
-pub use setup::{EnvVariable, HttpHeader, McpServer, SessionPart, SessionSetup};
+pub use setup::{McpServer, SecretMap, SessionPart, SessionSetup};
 
 /// A request method with typed params and result.
 ///

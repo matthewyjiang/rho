@@ -13,7 +13,7 @@ use agent_client_protocol::schema::v1::{
 };
 
 use super::{
-    super::{client_io::ClientIo, host_mcp::host_mcp_config, permission},
+    super::{client_io::ClientIo, host_mcp::protocol_servers, permission},
     convert::{validate_session_cwd, workspace_cwd},
     send_notification, session_build, EventMapper, HostBuild, SessionHost,
 };
@@ -21,6 +21,7 @@ use crate::{
     added_dirs::session_added_dirs,
     app::{
         acp::{AcpClientPort, AcpStartup},
+        host_mcp::host_mcp_config,
         session_runtime::{SavedHistory, SessionOpening, SessionRuntime},
     },
     config::Config,
@@ -35,8 +36,10 @@ impl SessionHost {
     ) -> anyhow::Result<(Self, NewSessionResponse)> {
         let cwd = validate_session_cwd(&request.cwd)?;
         let root = std::fs::canonicalize(cwd)?;
-        let added_dirs =
-            session_added_dirs(&startup.added_dirs, &request.additional_directories, &root)?;
+        let added_dirs = startup.added_dirs.union(
+            &root,
+            &session_added_dirs(&request.additional_directories, &root)?,
+        );
         let sdk_id = rho_sdk::SessionId::new();
         let io = ClientIo::new(
             startup,
@@ -49,7 +52,7 @@ impl SessionHost {
             SessionOpening {
                 build,
                 process_config: &startup.config,
-                host_mcp: host_mcp_config(&request.mcp_servers),
+                host_mcp: host_mcp_config(&protocol_servers(&request.mcp_servers)),
                 cwd,
                 added_dirs,
             },
@@ -80,8 +83,10 @@ impl SessionHost {
             validate_session_cwd(cwd)?;
         }
         let root = std::fs::canonicalize(cwd)?;
-        let added_dirs =
-            session_added_dirs(&startup.added_dirs, &request.additional_directories, &root)?;
+        let added_dirs = startup.added_dirs.union(
+            &root,
+            &session_added_dirs(&request.additional_directories, &root)?,
+        );
         let io = ClientIo::new(
             startup,
             request.session_id.clone(),
@@ -92,7 +97,7 @@ impl SessionHost {
         let opening = SessionOpening {
             build,
             process_config: &startup.config,
-            host_mcp: host_mcp_config(&request.mcp_servers),
+            host_mcp: host_mcp_config(&protocol_servers(&request.mcp_servers)),
             cwd,
             added_dirs,
         };

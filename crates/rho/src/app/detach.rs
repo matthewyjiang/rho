@@ -5,30 +5,135 @@
 //!
 //! The daemon opens the session with the workspace's config, as `rho`
 //! started there would, as the `--agent` given and with the `--add-dir` and
-//! `--no-*` flags as its setup; `cli_config::validate` refuses the flags
-//! that would change the config, before anything here runs.
+//! `--no-*` flags as its setup (see [`detach_flags`]), which the session
+//! keeps when the daemon reopens it; `cli_config::validate` refuses the
+//! flags that would change the config, before anything here runs.
 
-use std::{path::PathBuf, time::Duration};
+use std::{collections::BTreeSet, path::PathBuf, time::Duration};
 
-use rho_protocol::SessionSetup;
+use rho_protocol::{SessionNewParams, SessionPart, SessionSetup};
 
-/// The daemon session a detached run asks for, from `rho`'s flags.
-#[cfg_attr(
-    not(unix),
-    allow(dead_code, reason = "only the Unix daemon opens sessions")
-)]
-pub(super) struct DetachedSession {
-    /// The session's workspace: the current directory.
-    pub(super) cwd: PathBuf,
-    /// `--agent`: the agent the session runs as; the default when `None`.
-    pub(super) agent: Option<String>,
-    /// `--add-dir`, resolved, and the parts the `--no-*` flags leave out.
-    pub(super) setup: SessionSetup,
+use super::automation::AutomationExit;
+use crate::cli::Cli;
+
+/// The flags a detached run passes to the daemon.
+pub(super) struct Passed<'a> {
+    /// `--agent`, the agent the session runs as.
+    agent: Option<&'a str>,
+    /// `--add-dir`, as given.
+    add_dirs: &'a [PathBuf],
+    /// The parts the `--no-*` flags leave out of the session.
+    without: BTreeSet<SessionPart>,
+}
+
+/// Sorts `cli`'s flags into those a detached run passes to the daemon, or
+/// names those set that it refuses, since the daemon opens the session with
+/// the workspace's config (#1669). Every field is named, so a new flag does
+/// not compile until someone decides whether a detached run takes it.
+pub(super) fn detach_flags(cli: &Cli) -> Result<Passed<'_>, Vec<&'static str>> {
+    let Cli {
+        provider,
+        model,
+        config,
+        auth,
+        no_system_prompt,
+        no_tools,
+        no_subagents,
+        agent,
+        reasoning,
+        permission_mode,
+        add_dirs,
+        save,
+        // Refused in `validate` with any command.
+        no_save: _,
+        resume: _,
+        continue_latest: _,
+        prompt: _,
+        command: _,
+    } = cli;
+    let refused: Vec<_> = [
+        ("--provider", provider.is_some()),
+        ("--model", model.is_some()),
+        ("--config", config.is_some()),
+        ("--auth", auth.is_some()),
+        ("--reasoning", reasoning.is_some()),
+        ("--permission-mode", permission_mode.is_some()),
+        ("--save", *save),
+    ]
+    .into_iter()
+    .filter_map(|(name, set)| set.then_some(name))
+    .collect();
+    if !refused.is_empty() {
+        return Err(refused);
+    }
+    let without = [
+        (SessionPart::Tools, *no_tools),
+        (SessionPart::SystemPrompt, *no_system_prompt),
+        (SessionPart::Subagents, *no_subagents),
+    ]
+    .into_iter()
+    .filter_map(|(part, set)| set.then_some(part))
+    .collect();
+    Ok(Passed {
+        agent: agent.as_deref(),
+        add_dirs,
+        without,
+    })
+}
+
+/// Why a detached run refuses the `refused` flags.
+pub(super) fn refusal(refused: &[&str]) -> String {
+    format!(
+        "rho run --detach does not take {}: the daemon opens the session with the workspace's config",
+        refused.join(", ")
+    )
+}
+
+/// The session `rho run --detach` asks the daemon for with `cli`'s flags,
+/// in the current directory, with `environment`. `--add-dir` resolves as it
+/// does for a foreground run, so `~` and relative paths mean the same; a
+/// bad one is a configuration error.
+fn session_new(
+    cli: &Cli,
+    environment: rho_protocol::ClientEnvironment,
+) -> Result<SessionNewParams, AutomationExit> {
+    let passed =
+        detach_flags(cli).map_err(|refused| AutomationExit::configuration(refusal(&refused)))?;
+    let cwd = std::env::current_dir().map_err(|error| {
+        AutomationExit::other(format!("could not read the current directory: {error}"))
+    })?;
+    let added = crate::added_dirs::launch_added_dirs(passed.add_dirs, &cwd)
+        .map_err(|error| AutomationExit::configuration(format!("{error:#}")))?;
+    Ok(SessionNewParams {
+        cwd,
+        environment,
+        agent: passed.agent.map(str::to_owned),
+        setup: SessionSetup {
+            additional_directories: added.as_slice().to_vec(),
+            mcp_servers: Vec::new(),
+            without: passed.without,
+        },
+    })
+}
+
+/// Starts the turn of the prompt `rho run` takes from `parts` and, with
+/// `read_stdin`, stdin, in a new daemon session `cli`'s flags describe,
+/// timed out after `timeout`, and prints the session's id.
+pub(super) async fn run(
+    cli: &Cli,
+    parts: Vec<String>,
+    read_stdin: bool,
+    timeout: Option<Duration>,
+) -> anyhow::Result<()> {
+    // The session's processes run with this environment, not the daemon's
+    // (#1659).
+    let new = session_new(cli, rho_protocol::ClientEnvironment::of_this_process())?;
+    start(new, parts, read_stdin, timeout).await
 }
 
 #[cfg(not(unix))]
-pub(super) async fn run(
-    _session: DetachedSession,
+async fn start(
+    _new: SessionNewParams,
     _parts: Vec<String>,
     _read_stdin: bool,
     _timeout: Option<Duration>,
@@ -36,12 +141,11 @@ pub(super) async fn run(
     anyhow::bail!(super::daemon_cli::UNSUPPORTED)
 }
 
-/// Starts the turn of the prompt `rho run` takes from `parts` and, with
-/// `read_stdin`, stdin, in a new daemon session `session` describes, timed
-/// out after `timeout`, and prints the session's id.
+/// [`run`] once its session's params are known: opens the session, starts
+/// its turn, and prints its id.
 #[cfg(unix)]
-pub(super) async fn run(
-    session: DetachedSession,
+async fn start(
+    new: SessionNewParams,
     parts: Vec<String>,
     read_stdin: bool,
     timeout: Option<Duration>,
@@ -50,13 +154,10 @@ pub(super) async fn run(
 
     use rho_protocol::{
         methods::{SessionNew, SessionPrompt},
-        ClientEnvironment, ContentBlock, ErrorCode, SessionNewParams, SessionPromptParams,
+        ContentBlock, ErrorCode, SessionPromptParams,
     };
 
-    use super::{
-        automation::{self, AutomationExit},
-        daemon_cli,
-    };
+    use super::{automation, daemon_cli};
     use crate::daemon::{self, cli_client_info, ProcessSpawner};
 
     let timeout_ms = timeout
@@ -71,10 +172,7 @@ pub(super) async fn run(
         })
         .transpose()?;
     let text = automation::prompt_from_stdin(parts, read_stdin)?;
-    // The session's processes run with this environment, not the daemon's
-    // (#1659).
-    let environment = ClientEnvironment::of_this_process();
-    let DetachedSession { cwd, agent, setup } = session;
+    let environment = new.environment.clone();
     let paths = daemon_cli::paths().map_err(|error| AutomationExit::other(format!("{error:#}")))?;
     let spawner = ProcessSpawner::current_exe().map_err(|error| {
         AutomationExit::other(format!("could not find the rho executable: {error}"))
@@ -86,17 +184,13 @@ pub(super) async fn run(
         })?
         .client;
     let session = client
-        .request::<SessionNew>(&SessionNewParams {
-            cwd,
-            environment: environment.clone(),
-            agent,
-            setup,
-        })
+        .request::<SessionNew>(&new)
         .await
         .map_err(|error| {
             let message = format!("could not open a daemon session: {error}");
             match error.error_code() {
-                // An agent or setup the session cannot open with.
+                // An agent or setup the session cannot open with, or an
+                // environment or cwd the daemon refuses.
                 Some(ErrorCode::SessionOpenFailed | ErrorCode::InvalidParams) => {
                     AutomationExit::configuration(message)
                 }

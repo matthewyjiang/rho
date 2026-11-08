@@ -219,17 +219,18 @@ impl SessionRuntime {
         // Publish the concrete selection and delegated identity in one durable
         // replacement, before teardown or host notifications can suspend us.
         let initial_snapshot = task.model_override.as_ref().map(|_| {
-            super::persist::decorate(
-                &built.prompt,
-                &built.tools.todo_state(),
-                built.tools.code_mode(),
-                &self.added_dirs,
-                &config.auth,
+            super::persist::DurableState {
+                prompt: &built.prompt,
+                todo: &built.tools.todo_state(),
+                code_mode: built.tools.code_mode(),
+                added_dirs: &self.added_dirs,
+                left_out: super::left_out::LeftOut::of(&self.build.launch),
+                auth: &config.auth,
                 // As before the rebind; the next save records the rebound
                 // session's.
-                &self.settings_record(),
-                built.session.snapshot(),
-            )
+                settings: &self.settings_record(),
+            }
+            .decorate(built.session.snapshot())
         });
         // An ephemeral session has no file to record the rebind on.
         let rebound = self.stored().and_then(|stored| {

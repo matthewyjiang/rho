@@ -1,5 +1,5 @@
 use pretty_assertions::assert_eq;
-use rho_protocol::{EnvVariable, HttpHeader, McpServer};
+use rho_protocol::McpServer;
 use serde_json::{json, Value};
 
 use super::host_mcp_config;
@@ -47,10 +47,7 @@ fn stdio(name: &str, env: &[(&str, &str)]) -> McpServer {
         args: vec!["acp-mcp-bridge".into()],
         env: env
             .iter()
-            .map(|(name, value)| EnvVariable {
-                name: (*name).into(),
-                value: (*value).into(),
-            })
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
             .collect(),
     }
 }
@@ -59,10 +56,9 @@ fn http(name: &str, url: &str) -> McpServer {
     McpServer::Http {
         name: name.into(),
         url: url.into(),
-        headers: vec![HttpHeader {
-            name: "Authorization".into(),
-            value: "Bearer token".into(),
-        }],
+        headers: [("Authorization".to_owned(), "Bearer token".to_owned())]
+            .into_iter()
+            .collect(),
     }
 }
 
@@ -115,11 +111,6 @@ fn host_servers_convert_to_session_config() {
             "names outside MCP identity rules are rejected",
             vec![stdio("t3 code", &[])],
             json!({ "servers": {}, "invalid": ["t3 code"] }),
-        ),
-        (
-            "repeated env names are rejected",
-            vec![stdio("dup", &[("A", "1"), ("A", "2")])],
-            json!({ "servers": {}, "invalid": ["dup"] }),
         ),
     ];
     for (label, servers, expected) in cases {

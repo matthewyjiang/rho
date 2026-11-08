@@ -5,20 +5,31 @@
 //! [`super::SessionAttachParams`] carry one; the daemon applies it only when
 //! that request opens the session.
 
-use std::{collections::BTreeSet, fmt, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    path::PathBuf,
+};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Choices a client makes for a session the daemon opens for it. The
-/// session keeps them until the daemon unloads it.
+/// Choices a client makes for a session the daemon opens for it.
+///
+/// The session owns its directories and the parts it leaves out but
+/// questions: it saves them, and a reopen adds the opening request's to the
+/// saved ones, so a later client can narrow a session, never widen it. The
+/// opening client owns its MCP servers and whether it shows questions: a
+/// reopened session has those its opening request names, and none when a
+/// prompt reopens it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionSetup {
     /// Directories outside the workspace the session's tools may use, as
     /// `--add-dir` adds them: absolute paths to existing directories. An
     /// entry that is not one is [`crate::ErrorCode::InvalidParams`], naming
     /// it, and the session does not open. One the workspace or another
-    /// entry already holds is folded in.
+    /// entry already holds is folded in. The session saves them; a reopen
+    /// keeps the saved ones that still exist and adds these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub additional_directories: Vec<PathBuf>,
     /// MCP servers the client provides, which the session connects next to
@@ -26,12 +37,15 @@ pub struct SessionSetup {
     /// entry the daemon cannot connect safely, such as plain HTTP to a host
     /// other than this machine, is not connected, yet still replaces the
     /// config server of its name. When a name repeats, the last entry wins.
-    /// These servers may not sample the user's model.
+    /// These servers may not sample the user's model. The session does not
+    /// save them, since their `env` and `headers` may hold secrets.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mcp_servers: Vec<McpServer>,
     /// Parts of the session left out, as `rho`'s `--no-tools`,
     /// `--no-system-prompt`, and `--no-subagents` leave them out, and
-    /// questions a client cannot show.
+    /// questions a client cannot show. The session saves all but
+    /// [`SessionPart::Questions`]; a reopen leaves out the saved parts and
+    /// these.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub without: BTreeSet<SessionPart>,
 }
@@ -74,55 +88,67 @@ pub enum McpServer {
         name: String,
         /// The program to run.
         command: PathBuf,
+        /// The program's arguments, after its name.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         args: Vec<String>,
-        /// Variables the process gets on top of the session's environment;
-        /// a name may appear once.
-        env: Vec<EnvVariable>,
+        /// Variables the process gets on top of the session's environment,
+        /// by name.
+        #[serde(default, skip_serializing_if = "SecretMap::is_empty")]
+        env: SecretMap,
     },
     /// A server the daemon reaches over Streamable HTTP: HTTPS, or plain
     /// HTTP only to this machine.
     Http {
         /// The server's name, which its tools are listed under.
         name: String,
+        /// The server's endpoint, such as `https://example.com/mcp`.
         url: String,
-        /// Headers every request to the server carries; a name may appear
-        /// once.
-        headers: Vec<HttpHeader>,
+        /// Headers every request to the server carries, such as its
+        /// `Authorization`, by name.
+        #[serde(default, skip_serializing_if = "SecretMap::is_empty")]
+        headers: SecretMap,
     },
 }
 
-/// An environment variable an MCP server's process gets. The value is a
-/// secret: the daemon never logs it.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct EnvVariable {
-    pub name: String,
-    pub value: String,
-}
+/// Values by name that may be secrets, such as an MCP server's environment
+/// variables and headers. Its `Debug` shows only the names, so the daemon
+/// never logs a value.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct SecretMap(BTreeMap<String, String>);
 
-/// Shows only the name: the value is a secret.
-impl fmt::Debug for EnvVariable {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("EnvVariable")
-            .field("name", &self.name)
-            .finish_non_exhaustive()
+impl SecretMap {
+    /// Whether this holds no values, so the wire leaves it out.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Every value, by name.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.0
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
     }
 }
 
-/// A header every request to an MCP server carries, such as its
-/// `Authorization`. The value is a secret: the daemon never logs it.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct HttpHeader {
-    pub name: String,
-    pub value: String,
+impl FromIterator<(String, String)> for SecretMap {
+    fn from_iter<I: IntoIterator<Item = (String, String)>>(values: I) -> Self {
+        Self(values.into_iter().collect())
+    }
 }
 
-/// Shows only the name: the value is a secret.
-impl fmt::Debug for HttpHeader {
+impl IntoIterator for SecretMap {
+    type Item = (String, String);
+    type IntoIter = std::collections::btree_map::IntoIter<String, String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+/// Shows only the names: the values may be secrets.
+impl fmt::Debug for SecretMap {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("HttpHeader")
-            .field("name", &self.name)
-            .finish_non_exhaustive()
+        formatter.debug_set().entries(self.0.keys()).finish()
     }
 }

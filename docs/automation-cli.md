@@ -232,7 +232,9 @@ rho attach "$SESSION"
   `--permission-mode`, `--save`, and the like) are refused with exit 2 rather
   than dropped; set them in [config](/configuration) instead. `--agent`,
   `--add-dir`, `--no-tools`, `--no-system-prompt`, and `--no-subagents` apply
-  to the session as they do to a foreground run.
+  to the session as they do to a foreground run, and the session keeps the
+  directories and the parts left out when the daemon unloads it and a later
+  `rho attach` or prompt reopens it.
 - Slash commands resolve as they do in a foreground run, except that
   `/agent:<name>` does not run in the daemon yet; like `/compact` and
   `/workflow:<name>`, it fails with exit 2.

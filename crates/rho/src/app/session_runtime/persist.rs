@@ -39,7 +39,8 @@ use rho_sdk::{
 };
 
 use super::{
-    events::InsertedMessage, saved_settings::SettingsRecord, SessionHandle, SessionRuntime,
+    events::InsertedMessage, left_out::LeftOut, saved_settings::SettingsRecord, SessionHandle,
+    SessionRuntime,
 };
 use crate::{
     added_dirs::AddedDirs,
@@ -202,6 +203,7 @@ impl SessionRuntime {
             code_mode: self.built.tools.code_mode().clone(),
             prompt: self.built.prompt.clone(),
             added_dirs: self.added_dirs.clone(),
+            left_out: LeftOut::of(&self.build.launch),
             auth: self.auth.clone(),
             settings: self.settings_record(),
             handle: self.handle.clone(),
@@ -345,33 +347,65 @@ impl SessionRuntime {
 
     /// The live snapshot with the session state a later load restores.
     pub(super) fn durable_snapshot(&self) -> SessionSnapshot {
-        decorate(
-            &self.built.prompt,
-            &self.built.tools.todo_state(),
-            self.built.tools.code_mode(),
-            &self.added_dirs,
-            &self.auth,
-            &self.settings_record(),
-            self.built.session.snapshot(),
-        )
+        DurableState {
+            prompt: &self.built.prompt,
+            todo: &self.built.tools.todo_state(),
+            code_mode: self.built.tools.code_mode(),
+            added_dirs: &self.added_dirs,
+            left_out: LeftOut::of(&self.build.launch),
+            auth: &self.auth,
+            settings: &self.settings_record(),
+        }
+        .decorate(self.built.session.snapshot())
+    }
+
+    /// Saves the session's state now, if it has a file, as a revision that
+    /// differs from its leaf only by state a load restores, such as its
+    /// settings or what it leaves out. A new session's first save writes it.
+    pub(crate) fn save_state(&mut self) -> anyhow::Result<()> {
+        if self.is_replaced() {
+            return Ok(());
+        }
+        let Some(stored) = self.storage.file() else {
+            return Ok(());
+        };
+        self.built.session.advance_revision()?;
+        stored.save_snapshot(&self.durable_snapshot(), &[])
     }
 }
 
-/// Adds the session state a load restores, including the direct tool loadout
-/// and, once a host kept them, the session's settings.
-pub(super) fn decorate(
-    prompt: &ActivePrompt,
-    todo: &TodoState,
-    code_mode: &crate::tools::code_mode::CodeModeSurface,
-    added_dirs: &AddedDirs,
-    auth: &str,
-    settings: &SettingsRecord,
-    snapshot: SessionSnapshot,
-) -> SessionSnapshot {
-    settings.decorate(super::agent::decorate_model_override(
-        added_dirs.decorate(todo.decorate(prompt.decorate(code_mode.decorate(snapshot)))),
-        auth,
-    ))
+/// The session state a load restores, which every durable save adds to the
+/// SDK's snapshot.
+pub(super) struct DurableState<'a> {
+    pub(super) prompt: &'a ActivePrompt,
+    /// With the direct tool loadout.
+    pub(super) todo: &'a TodoState,
+    pub(super) code_mode: &'a crate::tools::code_mode::CodeModeSurface,
+    pub(super) added_dirs: &'a AddedDirs,
+    pub(super) left_out: LeftOut,
+    pub(super) auth: &'a str,
+    /// The session's settings, once a host kept them.
+    pub(super) settings: &'a SettingsRecord,
+}
+
+impl DurableState<'_> {
+    /// `snapshot` with this state in its metadata.
+    pub(super) fn decorate(&self, snapshot: SessionSnapshot) -> SessionSnapshot {
+        let Self {
+            prompt,
+            todo,
+            code_mode,
+            added_dirs,
+            left_out,
+            auth,
+            settings,
+        } = self;
+        let snapshot = todo.decorate(prompt.decorate(code_mode.decorate(snapshot)));
+        settings.decorate(super::agent::decorate_model_override(
+            left_out.decorate(added_dirs.decorate(snapshot)),
+            auth,
+        ))
+    }
 }
 
 /// The node a refused turn rolls back to: the active leaf, or for a session's
@@ -421,6 +455,7 @@ struct CheckpointStore {
     code_mode: Arc<crate::tools::code_mode::CodeModeSurface>,
     prompt: ActivePrompt,
     added_dirs: AddedDirs,
+    left_out: LeftOut,
     auth: String,
     /// The settings as the turn began; only the host changes them, between
     /// turns.
@@ -442,15 +477,16 @@ impl CheckpointStore {
         if self.handle.is_replaced() {
             return Ok(());
         }
-        let snapshot = decorate(
-            &self.prompt,
-            &self.todo,
-            &self.code_mode,
-            &self.added_dirs,
-            &self.auth,
-            &self.settings,
-            snapshot,
-        );
+        let snapshot = DurableState {
+            prompt: &self.prompt,
+            todo: &self.todo,
+            code_mode: &self.code_mode,
+            added_dirs: &self.added_dirs,
+            left_out: self.left_out,
+            auth: &self.auth,
+            settings: &self.settings,
+        }
+        .decorate(snapshot);
         if let Some(stored) = &self.stored {
             let mut display = self.lock_display();
             let pending = display.pending_rows(snapshot.history(), SaveScope::Step);

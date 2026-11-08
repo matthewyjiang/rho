@@ -65,6 +65,7 @@ mod open;
 mod options;
 mod queued;
 mod reopen;
+mod setup;
 mod store;
 #[cfg(test)]
 mod test_events;
@@ -450,13 +451,12 @@ impl Sessions {
         } = params;
         self.refuse_when_stopping()?;
         let workspace = Workspace::parse(&cwd)?;
-        let environment = session_environment(&environment)?;
         let job = JobId::generate();
         let opened = open_session(
             Opening::New { workspace, agent },
-            OpenWith {
-                environment: &environment,
-                setup: &setup,
+            &OpenWith {
+                environment: session_environment(&environment)?,
+                setup,
             },
             &self.subagents,
             &job,
@@ -526,15 +526,14 @@ impl Sessions {
                 format!("could not read the prompt: {error}"),
             )
         })?;
-        let environment = session_environment(&params.environment)?;
-        // A prompt carries no setup, so a session it reopens opens without.
-        let setup = SessionSetup::default();
-        let opening = OpenWith {
-            environment: &environment,
-            setup: &setup,
+        // A prompt carries no setup, so a session it reopens opens with what
+        // its file keeps alone.
+        let with = OpenWith {
+            environment: session_environment(&params.environment)?,
+            setup: SessionSetup::default(),
         };
         let (session, (cancel, runtime)) = self
-            .enter_session(&params.session, opening, |session, turn| {
+            .enter_session(&params.session, &with, |session, turn| {
                 match turn.hold {
                     // The turn queues on the runtime behind the changes, so
                     // they apply first, the prompt waiting for them.
@@ -562,7 +561,7 @@ impl Sessions {
                 }
                 // The turn's processes and hooks, and later turns' until
                 // another prompt, start in the prompting client's environment.
-                session.environment.replace(environment.clone());
+                session.environment.replace(with.environment.clone());
                 turn.cancel = CancellationToken::new();
                 // Queued on the runtime under the turn lock the turn starts
                 // under, as a change queues under it (see `configure`): a
@@ -668,15 +667,14 @@ impl Sessions {
         // attach never sees the last turn's end once the job list says the
         // next turn runs, and the idle unload never takes a session a client
         // just attached to.
-        let environment = session_environment(&params.environment)?;
         // Applied only if this attach reopens the session: one the daemon
         // has loaded keeps the environment and setup it opened with.
-        let opening = OpenWith {
-            environment: &environment,
-            setup: &params.setup,
+        let with = OpenWith {
+            environment: session_environment(&params.environment)?,
+            setup: params.setup,
         };
         let (session, attached) = self
-            .enter_session(&params.session, opening, |session, _turn| {
+            .enter_session(&params.session, &with, |session, _turn| {
                 Ok(session.feed.attach(params.after.as_ref()))
             })
             .await?;
