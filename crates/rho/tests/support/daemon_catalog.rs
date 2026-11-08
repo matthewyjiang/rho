@@ -140,7 +140,7 @@ async fn the_list_holds_every_workspace_or_one() {
     let other = sandbox.workspace.with_file_name("other-workspace");
     std::fs::create_dir_all(&other).unwrap();
     let other = other.canonicalize().unwrap();
-    let (_daemon, client) = sandbox.start_daemon("fixed").await;
+    let client = sandbox.start_daemon("fixed").await;
     let first = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
     let elsewhere = saved_session(&sandbox, &client, other.clone()).await;
     let last = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
@@ -210,7 +210,7 @@ async fn the_list_holds_every_workspace_or_one() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_rename_reaches_attached_clients_and_the_list() {
     let sandbox = Sandbox::new();
-    let (_daemon, client) = sandbox.start_daemon("fixed").await;
+    let client = sandbox.start_daemon("fixed").await;
     let session = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
     let (_watcher, mut notifications) = follow(&sandbox, &session).await;
     let rename = |title: String| {
@@ -267,7 +267,7 @@ async fn a_rename_reaches_attached_clients_and_the_list() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_delete_detaches_a_loaded_sessions_clients_and_removes_it() {
     let sandbox = Sandbox::new();
-    let (_daemon, client) = sandbox.start_daemon("fixed").await;
+    let client = sandbox.start_daemon("fixed").await;
     let deleted = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
     let kept = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
     let (_watcher, mut notifications) = follow(&sandbox, &deleted).await;
@@ -321,13 +321,14 @@ async fn a_delete_detaches_a_loaded_sessions_clients_and_removes_it() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_delete_removes_a_session_the_daemon_has_not_loaded() {
     let sandbox = Sandbox::new();
-    let (_daemon, client) = sandbox
+    let client = sandbox
         .start_daemon_with("fixed", &["--unload-idle-after", "200ms"])
         .await;
     let session = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
     sandbox
         .poll_until("the daemon to unload the idle session", async || {
             sandbox
+                .isolated
                 .daemon_log()
                 .lines()
                 .any(|line| {
@@ -369,7 +370,7 @@ async fn a_delete_removes_a_session_the_daemon_has_not_loaded() {
 async fn a_delete_is_refused_while_the_turn_runs() {
     let sandbox = Sandbox::new();
     // The fixture holds the turn until it is cancelled.
-    let (_daemon, client) = sandbox.start_daemon("delay").await;
+    let client = sandbox.start_daemon("delay").await;
     let session = sandbox.new_session(&client).await;
     sandbox.prompt(&client, &session).await.unwrap();
 

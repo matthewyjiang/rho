@@ -44,23 +44,14 @@ fn attach(sandbox: &Sandbox, mode: &str, session: &SessionId) -> Output {
         .unwrap()
 }
 
-/// Stops the daemon a detach started once the test ends, pass or fail.
-struct StopsDaemon<'a>(&'a Sandbox);
-
-impl Drop for StopsDaemon<'_> {
-    fn drop(&mut self) {
-        let _ = self.0.rho("fixed").args(["daemon", "stop"]).status();
-    }
-}
-
 // Covers: with no daemon running, `rho run --detach` starts one, prints the
 // session's id once the prompt is saved, and exits 0; the turn runs on
 // there, and `rho attach` shows the conversation and its answer.
 // Owner: rho run --detach CLI (process contract).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_detached_run_starts_the_daemon_and_runs_on_there() {
+    // Dropping the sandbox stops the daemon the detach starts.
     let sandbox = Sandbox::new();
-    let _stops = StopsDaemon(&sandbox);
     let session = session_of(&detach(&sandbox, "fixed", &["hello"]));
     let attached = attach(&sandbox, "fixed", &session);
 
@@ -72,7 +63,7 @@ async fn a_detached_run_starts_the_daemon_and_runs_on_there() {
         (Some(0), format!("> hello\n{REPLY}\n")),
         "{}\nlog:\n{}",
         String::from_utf8_lossy(&attached.stderr),
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }
 
@@ -83,7 +74,7 @@ async fn a_detached_run_starts_the_daemon_and_runs_on_there() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_daemon_times_a_detached_turn_out() {
     let sandbox = Sandbox::new();
-    let (_daemon, client) = sandbox.start_daemon("delay").await;
+    let client = sandbox.start_daemon("delay").await;
     let session = session_of(&detach(&sandbox, "delay", &["--timeout", "2s", "hello"]));
     let job = settled_job(&sandbox, &client, &session).await;
     let attached = attach(&sandbox, "delay", &session);
@@ -104,7 +95,7 @@ async fn the_daemon_times_a_detached_turn_out() {
             Some("Error: the turn timed out at its limit of 2s".to_owned()),
         ),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }
 
@@ -115,7 +106,7 @@ async fn the_daemon_times_a_detached_turn_out() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_detached_command_the_daemon_cannot_run_is_refused() {
     let sandbox = Sandbox::new();
-    let (_daemon, _client) = sandbox.start_daemon("fixed").await;
+    let _client = sandbox.start_daemon("fixed").await;
     let refused = detach(&sandbox, "fixed", &["/compact"]);
 
     assert_eq!(
@@ -128,6 +119,6 @@ async fn a_detached_command_the_daemon_cannot_run_is_refused() {
             "Error: could not run /compact: not available in daemon sessions\n".to_owned()
         ),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }

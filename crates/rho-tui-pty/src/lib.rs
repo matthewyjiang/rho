@@ -13,6 +13,7 @@
 #![cfg_attr(not(unix), allow(dead_code, unused_imports))]
 
 pub mod artifacts;
+mod daemon;
 pub mod env;
 pub mod harness;
 pub mod keys;

@@ -82,7 +82,7 @@ fn file_mutations_emit_acp_diffs() {
         ),
     ] {
         let workspace = Workspace::new();
-        let config = workspace.home.path().join("config.toml");
+        let config = workspace.home.config_path.clone();
         let settings = std::fs::read_to_string(&config).unwrap().replace(
             "permission_mode = \"plan\"",
             &format!("permission_mode = \"bypass\"\nedit_tool = {edit_tool:?}"),
@@ -91,12 +91,7 @@ fn file_mutations_emit_acp_diffs() {
         for (path, text) in before {
             std::fs::write(workspace.project.join(path), text).unwrap();
         }
-        let mut server = AcpServer::spawn(
-            workspace.home.path(),
-            &workspace.project,
-            "tool-call",
-            &workspace.project,
-        );
+        let mut server = AcpServer::spawn(&workspace.home, "tool-call", &workspace.project);
         server
             .request("initialize", json!({"protocolVersion": 1}))
             .0

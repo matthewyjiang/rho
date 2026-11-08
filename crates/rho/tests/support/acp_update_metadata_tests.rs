@@ -106,7 +106,7 @@ fn message_chunks_carry_ids_live_and_across_loads() {
 #[test]
 fn tool_call_locations_name_known_lines() {
     let workspace = Workspace::new();
-    let config = workspace.home.path().join("config.toml");
+    let config = workspace.home.config_path.clone();
     let settings = std::fs::read_to_string(&config).unwrap().replace(
         "permission_mode = \"plan\"",
         "permission_mode = \"bypass\"\nedit_tool = \"str_replace\"",
@@ -114,12 +114,7 @@ fn tool_call_locations_name_known_lines() {
     std::fs::write(config, settings).unwrap();
     std::fs::write(workspace.project.join("a.txt"), "alpha\nbeta\ngamma\n").unwrap();
     std::fs::write(workspace.project.join("b.txt"), "one\ntwo\nbeta\n").unwrap();
-    let mut server = AcpServer::spawn(
-        workspace.home.path(),
-        &workspace.project,
-        "tool-call",
-        &workspace.project,
-    );
+    let mut server = AcpServer::spawn(&workspace.home, "tool-call", &workspace.project);
     server
         .request("initialize", json!({"protocolVersion": 1}))
         .0

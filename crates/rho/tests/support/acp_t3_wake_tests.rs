@@ -42,8 +42,10 @@ const PARENT_ENDED: &str =
 /// A `rho acp --t3code` server with one watcher session waiting on
 /// [`TOKEN`], whose parent lock this holds.
 struct Watcher {
-    workspace: Workspace,
+    /// Before `workspace`, so the server is killed before the sandbox
+    /// tears down (see [`rho_tui_pty::IsolatedHome`]).
     server: AcpServer,
+    workspace: Workspace,
     session_id: String,
     parent_lock: Option<File>,
 }
@@ -51,7 +53,7 @@ struct Watcher {
 impl Watcher {
     fn start() -> Self {
         let workspace = Workspace::new();
-        let signals = workspace.home.path().join(".rho/acp-wakes");
+        let signals = workspace.home.rho_home().join("acp-wakes");
         std::fs::create_dir_all(&signals).unwrap();
         let parent_lock = File::create(signals.join(format!("{TOKEN}.lock"))).unwrap();
         parent_lock.lock().unwrap();
@@ -84,7 +86,7 @@ impl Watcher {
     }
 
     fn signals(&self) -> std::path::PathBuf {
-        self.workspace.home.path().join(".rho/acp-wakes")
+        self.workspace.home.rho_home().join("acp-wakes")
     }
 
     /// The watcher's wait record, published whole once its wait starts.
@@ -153,8 +155,7 @@ impl Watcher {
 
 fn t3_server(workspace: &Workspace) -> AcpServer {
     let mut command = AcpServer::command(
-        workspace.home.path(),
-        &workspace.project,
+        &workspace.home,
         "read-path",
         &workspace.extra.join("notes.txt"),
     );

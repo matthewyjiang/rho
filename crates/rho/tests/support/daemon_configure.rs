@@ -109,7 +109,7 @@ fn reasoning_and_plan_exit(request: &Value) -> (String, bool) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_change_reaches_attached_clients_and_the_next_turn() {
     let sandbox = Sandbox::new();
-    let (_daemon, client) = sandbox.start_daemon("inspect").await;
+    let client = sandbox.start_daemon("inspect").await;
     let opened = client
         .request::<SessionNew>(&SessionNewParams {
             cwd: sandbox.workspace.clone(),
@@ -206,7 +206,7 @@ async fn a_change_reaches_attached_clients_and_the_next_turn() {
         reasoning_and_plan_exit(&next_request(&mut notifications, &session).await),
         ("high".to_owned(), true),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }
 
@@ -225,7 +225,7 @@ async fn a_change_sent_during_a_turn_applies_at_its_end_before_the_next_turn() {
     }
     let sandbox = Sandbox::new();
     // The fixture holds each turn until it is cancelled.
-    let (_daemon, client) = sandbox.start_daemon("delay").await;
+    let client = sandbox.start_daemon("delay").await;
     let session = sandbox.new_session(&client).await;
     let (watcher, mut notifications) = sandbox.connect_following().await;
     let before = watcher
@@ -320,7 +320,7 @@ async fn a_change_sent_during_a_turn_applies_at_its_end_before_the_next_turn() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_change_outlasts_the_idle_unload() {
     let sandbox = Sandbox::new();
-    let (_daemon, client) = sandbox
+    let client = sandbox
         .start_daemon_with("inspect", &["--unload-idle-after", "200ms"])
         .await;
     let session = sandbox.new_session(&client).await;
@@ -362,6 +362,7 @@ async fn a_change_outlasts_the_idle_unload() {
     sandbox
         .poll_until("the daemon to unload the idle session", async || {
             sandbox
+                .isolated
                 .daemon_log()
                 .lines()
                 .any(|line| {
@@ -389,6 +390,6 @@ async fn a_change_outlasts_the_idle_unload() {
         reasoning_and_plan_exit(&next_request(&mut notifications, &session).await),
         ("high".to_owned(), true),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }

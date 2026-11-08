@@ -1,7 +1,8 @@
-//! `rho daemon` through the real binary: its lifecycle (status, single
-//! instance, and stop) here, the sessions it hosts in [`sessions`],
-//! changing their settings in [`configure`], and listing, renaming, and
-//! deleting them in [`catalog`],
+//! `rho daemon` through the real binary. Here: its lifecycle (status,
+//! single instance, and stop), and a dropped test sandbox stopping the
+//! daemon a client in it started. The sessions it hosts are in
+//! [`sessions`], changing their settings in [`configure`], and listing,
+//! renaming, and deleting them in [`catalog`],
 //! `rho attach` following them in [`attach`], and `rho run --detach`
 //! starting them in [`detach`]; the tool processes the daemon's stop ends
 //! are in [`tools`], signing it in and out over its socket in [`auth`],
@@ -10,15 +11,14 @@
 #![cfg(unix)]
 
 use std::{
+    fs::File,
+    os::fd::AsRawFd,
+    panic::AssertUnwindSafe,
     process::{Output, Stdio},
-    time::Duration,
 };
 
 use pretty_assertions::assert_eq;
 use serde_json::Value;
-
-#[path = "support/daemon_harness.rs"]
-mod harness;
 
 #[path = "support/daemon_sessions.rs"]
 mod sessions;
@@ -47,11 +47,7 @@ mod login;
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;
 
-use harness::{DaemonProcess, DaemonSandbox};
-
-/// Failure bound for each wait on the daemon process. Startup and shutdown
-/// are local file and socket operations; this only stops a hung test.
-const DEADLINE: Duration = Duration::from_secs(30);
+use sessions::Sandbox;
 
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
@@ -63,8 +59,16 @@ fn stderr(output: &Output) -> String {
 // Owner: CLI process (daemon lifecycle).
 #[tokio::test]
 async fn daemon_lifecycle_through_the_cli() {
-    let sandbox = DaemonSandbox::new();
-    let output = |args: &[&str]| sandbox.rho().args(args).output().unwrap();
+    let sandbox = Sandbox::new();
+    let output = |args: &[&str]| {
+        sandbox
+            .rho("fixed")
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap()
+    };
     for args in [
         ["daemon", "status"],
         ["daemon", "stop"],
@@ -74,34 +78,28 @@ async fn daemon_lifecycle_through_the_cli() {
         assert_eq!(output.status.code(), Some(1), "{args:?}: {output:?}");
         assert_eq!(stderr(&output), "Error: rho daemon is not running\n");
     }
-    assert!(
-        !sandbox.socket().exists(),
+    assert_eq!(
+        sandbox.isolated.daemon_socket(),
+        None,
         "status, stop, and attach never spawn"
     );
 
-    let mut daemon = DaemonProcess(
-        sandbox
-            .rho()
-            .args(["daemon", "run"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap(),
-    );
-    sandbox
-        .poll_until("the daemon socket", DEADLINE, async || {
-            sandbox.socket().exists().then_some(())
+    let mut daemon = sandbox
+        .rho("fixed")
+        .args(["daemon", "run"])
+        .spawn()
+        .unwrap();
+    let socket = sandbox
+        .poll_until("the daemon socket", async || {
+            sandbox.isolated.daemon_socket()
         })
         .await;
 
     let status = output(&["daemon", "status", "--json"]);
     assert!(status.status.success(), "{status:?}");
     let status: Value = serde_json::from_slice(&status.stdout).unwrap();
-    assert_eq!(status["pid"], Value::from(daemon.0.id()));
-    assert_eq!(
-        status["socket"],
-        Value::from(sandbox.socket().to_str().unwrap())
-    );
+    assert_eq!(status["pid"], Value::from(daemon.id()));
+    assert_eq!(status["socket"], Value::from(socket.to_str().unwrap()));
 
     let second = output(&["daemon", "run"]);
     assert_eq!(second.status.code(), Some(1), "{second:?}");
@@ -109,19 +107,63 @@ async fn daemon_lifecycle_through_the_cli() {
         stderr(&second),
         format!(
             "Error: rho daemon is already running (pid {}, version {}, socket {})\n",
-            daemon.0.id(),
+            daemon.id(),
             env!("CARGO_PKG_VERSION"),
-            sandbox.socket().display()
+            socket.display()
         )
     );
 
     let stop = output(&["daemon", "stop"]);
     assert!(stop.status.success(), "{stop:?}");
     let exit = sandbox
-        .poll_until("the daemon to exit", DEADLINE, async || {
-            daemon.0.try_wait().unwrap()
-        })
+        .poll_until("the daemon to exit", async || daemon.try_wait().unwrap())
         .await;
     assert!(exit.success(), "daemon exit: {exit:?}");
-    assert!(!sandbox.socket().exists(), "socket removed on stop");
+    assert_eq!(
+        sandbox.isolated.daemon_socket(),
+        None,
+        "socket removed on stop"
+    );
+}
+
+// Covers: dropping a sandbox stops the daemon a client in it started, so a
+// test that fails, or forgets to stop it, leaves no daemon running.
+// Owner: daemon test sandbox teardown (process).
+#[test]
+fn a_dropped_sandbox_stops_the_daemon_a_client_started() {
+    let sandbox = Sandbox::new();
+    // `rho run --detach` starts a daemon, which outlives it.
+    let detached = sandbox
+        .rho("fixed")
+        .args(["run", "--detach", "hello"])
+        .status()
+        .unwrap();
+    assert!(
+        detached.success(),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+    // Kept open, it still probes the daemon's lock once the sandbox's
+    // directory is deleted.
+    let lock = File::open(sandbox.isolated.rho_home().join("daemon/daemon.lock")).unwrap();
+    // Whether a shared lock is granted, which the daemon's exclusive one
+    // refuses until it exits.
+    // SAFETY: `flock` takes only a descriptor, which `lock` keeps open.
+    let free = || unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) == 0 };
+    assert!(!free(), "the daemon holds its lock");
+    let pid = sandbox.isolated.daemon_pid().expect("the daemon's record");
+
+    // Caught so the daemon is killed below if the teardown panics because it
+    // failed to stop it.
+    let teardown = std::panic::catch_unwind(AssertUnwindSafe(|| drop(sandbox)));
+    let released = free();
+    if !released {
+        // SAFETY: `kill` takes no pointers. The daemon must not outlive a
+        // failed test.
+        unsafe { libc::kill(libc::pid_t::try_from(pid).unwrap(), libc::SIGKILL) };
+    }
+    if let Err(panic) = teardown {
+        std::panic::resume_unwind(panic);
+    }
+    assert!(released, "the daemon (pid {pid}) still holds its lock");
 }

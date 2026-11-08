@@ -3,17 +3,17 @@
 //! mode through a permission prompt on every host.
 
 use pretty_assertions::assert_eq;
+use rho_tui_pty::IsolatedHome;
 use serde_json::{json, Value};
-use tempfile::TempDir;
 
 use super::{AcpServer, REPLY_TIMEOUT};
 
 /// A fixture home in `mode` whose model makes the tool call each prompt
 /// spells out as JSON.
-fn fixture_server(mode: &str) -> (TempDir, AcpServer) {
-    let home = TempDir::new().unwrap();
+fn fixture_server(mode: &str) -> (IsolatedHome, AcpServer) {
+    let home = IsolatedHome::new().unwrap();
     std::fs::write(
-        home.path().join("config.toml"),
+        &home.config_path,
         format!(
             r#"provider = "xai"
 model = "grok-fixture"
@@ -29,15 +29,13 @@ provider = "disabled"
         ),
     )
     .unwrap();
-    let project = home.path().join("project");
-    std::fs::create_dir_all(&project).unwrap();
-    let server = AcpServer::spawn(home.path(), &project, "tool-call", &project);
+    let server = AcpServer::spawn(&home, "tool-call", &home.workspace);
     (home, server)
 }
 
 /// Initializes with `client` (the host's `clientCapabilities` and
 /// `clientInfo`) and opens a session.
-fn start_session(server: &mut AcpServer, client: Value, home: &TempDir) -> String {
+fn start_session(server: &mut AcpServer, client: Value, home: &IsolatedHome) -> String {
     let mut initialize = json!({"protocolVersion": 1});
     initialize
         .as_object_mut()
@@ -47,7 +45,7 @@ fn start_session(server: &mut AcpServer, client: Value, home: &TempDir) -> Strin
     let created = server
         .request(
             "session/new",
-            json!({"cwd": home.path().join("project"), "mcpServers": []}),
+            json!({"cwd": home.workspace, "mcpServers": []}),
         )
         .0
         .unwrap();

@@ -7,8 +7,8 @@ use std::{
 };
 
 use pretty_assertions::assert_eq;
+use rho_tui_pty::IsolatedHome;
 use serde_json::{json, Value};
-use tempfile::TempDir;
 
 use super::AcpServer;
 
@@ -112,12 +112,10 @@ fn prompt(server: &mut AcpServer, session_id: &str, text: &str) -> (Value, Strin
 fn provider_finish_reasons_reach_the_prompt_stop_reason() {
     let requests = Requests::default();
     let address = spawn_provider(Arc::clone(&requests));
-    let home = TempDir::new().unwrap();
-    let project = home.path().join("project");
-    std::fs::create_dir_all(&project).unwrap();
-    let config = home.path().join("config.toml");
+    let home = IsolatedHome::new().unwrap();
+    let project = &home.workspace;
     std::fs::write(
-        &config,
+        &home.config_path,
         format!(
             r#"provider = "mock"
 model = "mock-model"
@@ -136,22 +134,8 @@ provider = "disabled"
         ),
     )
     .unwrap();
-    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_rho"));
-    command
-        .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("HOME", home.path())
-        .env("RHO_HOME", home.path().join(".rho"))
-        .env("XDG_CACHE_HOME", home.path().join(".cache"))
-        .env("RHO_CREDENTIAL_STORE", "file")
-        .current_dir(&project)
-        .arg("--config")
-        .arg(&config)
-        .args(["--provider", "mock", "acp"]);
-    // Winsock cannot initialize without SystemRoot.
-    if let Some(root) = std::env::var_os("SystemRoot") {
-        command.env("SystemRoot", root);
-    }
+    let mut command = home.command(env!("CARGO_BIN_EXE_rho"));
+    command.args(["--provider", "mock", "acp"]);
     let mut server = AcpServer::from_command(&mut command);
     server
         .request("initialize", json!({"protocolVersion": 1}))

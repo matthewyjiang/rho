@@ -1,14 +1,11 @@
 //! Sign-in recovery against a provider that checks its key over real HTTP.
 
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use pretty_assertions::assert_eq;
 use rho_providers::credentials::{CredentialStore, FileCredentialStore};
+use rho_tui_pty::IsolatedHome;
 use serde_json::{json, Value};
-use tempfile::TempDir;
 
 use super::{key_checking_provider::spawn_provider, AcpServer};
 
@@ -19,19 +16,16 @@ const KEY_ACCOUNT: &str = "provider:mock:api-key";
 /// A home whose config selects the custom `mock` provider at an
 /// [`spawn_provider`] host, with an empty file credential store.
 struct MockProviderHome {
-    home: TempDir,
-    project: PathBuf,
+    home: IsolatedHome,
     store: FileCredentialStore,
 }
 
 impl MockProviderHome {
     fn new(valid: &Arc<Mutex<String>>) -> Self {
         let address = spawn_provider(Arc::clone(valid));
-        let home = TempDir::new().unwrap();
-        let project = home.path().join("project");
-        std::fs::create_dir_all(&project).unwrap();
+        let home = IsolatedHome::new().unwrap();
         std::fs::write(
-            home.path().join("config.toml"),
+            &home.config_path,
             format!(
                 r#"provider = "mock"
 model = "mock-model"
@@ -51,12 +45,8 @@ provider = "disabled"
             ),
         )
         .unwrap();
-        let store = FileCredentialStore::with_rho_home(home.path().join(".rho")).unwrap();
-        Self {
-            home,
-            project,
-            store,
-        }
+        let store = FileCredentialStore::with_rho_home(home.rho_home()).unwrap();
+        Self { home, store }
     }
 
     /// Starts and initializes `rho acp`, returning the `initialize` result.
@@ -67,24 +57,8 @@ provider = "disabled"
     }
 
     fn server_with_args(&self, args: &[&str]) -> (AcpServer, Value) {
-        let home = self.home.path();
-        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_rho"));
-        command
-            .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-            .env("HOME", home)
-            .env("RHO_HOME", home.join(".rho"))
-            .env("XDG_CACHE_HOME", home.join(".cache"))
-            .env("RHO_CREDENTIAL_STORE", "file")
-            .current_dir(&self.project)
-            .arg("--config")
-            .arg(home.join("config.toml"))
-            .args(args);
-        // Winsock cannot initialize without SystemRoot, so a cleared Windows
-        // environment fails every HTTP request before it reaches the fixture.
-        if let Some(root) = std::env::var_os("SystemRoot") {
-            command.env("SystemRoot", root);
-        }
+        let mut command = self.home.command(env!("CARGO_BIN_EXE_rho"));
+        command.args(args);
         let mut server = AcpServer::from_command(&mut command);
         let initialized = server
             .request("initialize", json!({"protocolVersion": 1}))
@@ -94,7 +68,7 @@ provider = "disabled"
     }
 
     fn new_session(&self) -> Value {
-        json!({"cwd": self.project, "mcpServers": []})
+        json!({"cwd": self.home.workspace, "mcpServers": []})
     }
 }
 
@@ -204,7 +178,7 @@ fn logout_requires_a_new_sign_in_for_new_and_live_sessions() {
 #[test]
 fn logout_forgets_a_keyless_ollama_login() {
     let fixture = MockProviderHome::new(&Arc::new(Mutex::new(FIRST_KEY.to_owned())));
-    let config_path = fixture.home.path().join("config.toml");
+    let config_path = fixture.home.config_path.clone();
     // The fixture host refuses keyless requests, so no Ollama models are found.
     let config = std::fs::read_to_string(&config_path)
         .unwrap()
@@ -241,7 +215,7 @@ fn logout_forgets_a_keyless_ollama_login() {
 #[test]
 fn a_later_ollama_login_builds_against_its_recorded_endpoint() {
     let fixture = MockProviderHome::new(&Arc::new(Mutex::new(FIRST_KEY.to_owned())));
-    let config_path = fixture.home.path().join("config.toml");
+    let config_path = fixture.home.config_path.clone();
     let mock_config = std::fs::read_to_string(&config_path).unwrap();
     let base_url = mock_config
         .lines()
