@@ -5,13 +5,15 @@
 //! instructions are those of the session's workspace, as `rho` launched
 //! there would find them.
 //!
-//! A new session runs as the default agent, a reopened one as the agent it
-//! was saved as, which must still be defined as it was; both with the
-//! configured permission mode. Its host answers approvals and questions (both reach the daemon as
-//! turn events), its children run in the daemon on the daemon-wide budget,
-//! each a child job of the session's (see `subagents.rs`), and an MCP
-//! server's browser login is refused rather than left waiting for a
-//! terminal nobody watches.
+//! A new session runs as the default agent with the configured model,
+//! reasoning, fast mode, and permission mode. A reopened one runs as the
+//! agent it was saved as, which must still be defined as it was, and with
+//! the settings a client last chose for it (`rho/session/configure`), else
+//! the configured ones. Its host answers approvals and questions (both reach
+//! the daemon as turn events), its children run in the daemon on the
+//! daemon-wide budget, each a child job of the session's (see
+//! `subagents.rs`), and an MCP server's browser login is refused rather than
+//! left waiting for a terminal nobody watches.
 //!
 //! The session's processes, MCP servers, hooks, OpenAPI sources, CLI agents,
 //! and workflow runs use its client's environment, not the daemon's (#1659):

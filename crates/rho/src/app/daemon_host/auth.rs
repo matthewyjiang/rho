@@ -5,8 +5,10 @@
 //! both hosts check and save keys and sign out the same way, against the
 //! store the daemon's config selects when the request runs. Every write
 //! moves the process's credential generation, so each running session uses
-//! a new key, or drops a deleted one, from its next prompt. Config and the
-//! OS keyring block, so those steps run off the async workers.
+//! a new key, or drops a deleted one, from its next prompt, and the host
+//! refreshes the options of each session not in a turn, whose models to
+//! switch to follow the store. Config and the OS keyring block, so those
+//! steps run off the async workers.
 //!
 //! A key reaches the daemon only over its private socket. Nothing here logs
 //! a request's params, and errors that could quote a key have it removed

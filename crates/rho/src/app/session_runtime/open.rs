@@ -202,7 +202,9 @@ impl SessionRuntime {
     }
 
     /// Opens `stored` as the agent it was saved as and keeping the origin its
-    /// file records. Its host may then show its [`Self::saved_history`].
+    /// file records, with the settings its file keeps (see
+    /// [`Self::restore_settings`]). Its host may then show its
+    /// [`Self::saved_history`].
     pub(crate) async fn open_saved(
         opening: SessionOpening<'_>,
         stored: StoredSession,
@@ -240,7 +242,7 @@ impl SessionRuntime {
                 )
             })
             .flatten();
-        Ok(Self::new(OpenedSession {
+        let mut runtime = Self::new(OpenedSession {
             build,
             built,
             storage: SessionStorage::saved(stored),
@@ -253,7 +255,12 @@ impl SessionRuntime {
             permission,
             reopen_notice,
             credentials,
-        }))
+        });
+        // In every host, since every host's saves keep a record once the
+        // file has one: a host that skipped this would overwrite it with
+        // the config's settings.
+        Box::pin(runtime.restore_settings(process_config)).await;
+        Ok(runtime)
     }
 
     /// The session's saved conversation, or `None` while nothing is saved:

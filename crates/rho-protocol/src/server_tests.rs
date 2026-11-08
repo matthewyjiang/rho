@@ -10,8 +10,9 @@ use tokio::{
 use super::*;
 use crate::{
     methods::{
-        DetachReason, JobState, Replay, Seq, SessionDetachedParams, SessionEvent,
-        SessionEventParams, SessionId, StreamId, SESSION_DETACHED, SESSION_EVENT,
+        DetachReason, JobState, ModelOptions, ModelRef, PermissionMode, PermissionModeOptions,
+        Replay, Seq, SessionDetachedParams, SessionEvent, SessionEventParams, SessionId,
+        SessionOptions, StreamId, SESSION_DETACHED, SESSION_EVENT,
     },
     subscription, ProtocolVersion, Published, Publisher, RequestId,
 };
@@ -87,6 +88,13 @@ macro_rules! hosts_no_sessions {
             &self,
             _: SessionHoldParams,
         ) -> Result<SessionHoldResponse, RpcError> {
+            Err(no_such_session())
+        }
+
+        async fn configure_session(
+            &self,
+            _: SessionConfigureParams,
+        ) -> Result<SessionConfigureResponse, RpcError> {
             Err(no_such_session())
         }
 
@@ -476,6 +484,22 @@ impl Service for AttachService {
             state: JobState::Idle,
             inputs: Vec::new(),
             title: None,
+            options: SessionOptions {
+                model: ModelOptions {
+                    current: ModelRef {
+                        provider: "test".into(),
+                        model: "model".into(),
+                    },
+                    available: Vec::new(),
+                },
+                reasoning: None,
+                fast_mode: None,
+                permission_mode: PermissionModeOptions {
+                    current: PermissionMode::Bypass,
+                    available: Vec::new(),
+                },
+                commands: Vec::new(),
+            },
         };
         Ok((response, subscription))
     }

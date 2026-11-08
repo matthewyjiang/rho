@@ -313,6 +313,26 @@
       ],
       "type": "object"
     },
+    "CommandKind": {
+      "anyOf": [
+        {
+          "const": "slash",
+          "description": "The prompt starts with `/<name>`, then its input.",
+          "type": "string"
+        },
+        {
+          "const": "skill",
+          "description": "`$<name>` anywhere in the prompt loads that skill before the turn's\nfirst model request.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How a prompt runs a command."
+    },
     "CompactionId": {
       "description": "Identifies one context compaction; every [`SessionEvent::Compaction`]\nwith the same id reports on it.",
       "type": "string"
@@ -645,6 +665,18 @@
       },
       "required": [
         "variable"
+      ],
+      "type": "object"
+    },
+    "FastModeOptions": {
+      "description": "Fast mode, which the current model has: faster responses at a higher\ncredit rate.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
       ],
       "type": "object"
     },
@@ -1095,6 +1127,59 @@
       "description": "Identifies one message in a session's event stream: chunks with the\nsame id extend one message.",
       "type": "string"
     },
+    "ModelChoice": {
+      "description": "One model a session may switch to.",
+      "properties": {
+        "label": {
+          "description": "A short name for pickers, unique within the list: the catalog name,\nwith the provider or model id added where two would read alike.",
+          "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelRef"
+        }
+      },
+      "required": [
+        "model",
+        "label"
+      ],
+      "type": "object"
+    },
+    "ModelOptions": {
+      "description": "The session's model and the models it may switch to.",
+      "properties": {
+        "available": {
+          "description": "The user's favorites first, then the rest; always includes `current`.",
+          "items": {
+            "$ref": "#/$defs/ModelChoice"
+          },
+          "type": "array"
+        },
+        "current": {
+          "$ref": "#/$defs/ModelRef"
+        }
+      },
+      "required": [
+        "current",
+        "available"
+      ],
+      "type": "object"
+    },
+    "ModelRef": {
+      "description": "A model, by its provider and the provider's model id.",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "model"
+      ],
+      "type": "object"
+    },
     "Operation": {
       "anyOf": [
         {
@@ -1329,6 +1414,25 @@
       ],
       "description": "A session's permission mode, as `/permissions` names it."
     },
+    "PermissionModeOptions": {
+      "description": "The session's permission mode and the modes it may switch to.",
+      "properties": {
+        "available": {
+          "items": {
+            "$ref": "#/$defs/PermissionMode"
+          },
+          "type": "array"
+        },
+        "current": {
+          "$ref": "#/$defs/PermissionMode"
+        }
+      },
+      "required": [
+        "current",
+        "available"
+      ],
+      "type": "object"
+    },
     "PlanApprovalAsk": {
       "description": "The session, in plan mode, asks to carry out its plan.",
       "properties": {
@@ -1514,6 +1618,48 @@
       ],
       "type": "object"
     },
+    "ReasoningLevel": {
+      "anyOf": [
+        {
+          "enum": [
+            "off",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How much the model reasons on each turn."
+    },
+    "ReasoningOptions": {
+      "description": "The session's reasoning level and the levels its model takes.",
+      "properties": {
+        "available": {
+          "description": "Lowest first; always includes `current`.",
+          "items": {
+            "$ref": "#/$defs/ReasoningLevel"
+          },
+          "type": "array"
+        },
+        "current": {
+          "$ref": "#/$defs/ReasoningLevel"
+        }
+      },
+      "required": [
+        "current",
+        "available"
+      ],
+      "type": "object"
+    },
     "Replay": {
       "description": "What the events after a [`SessionAttachResponse`] start with.\n\nClosed on purpose, unlike the event enums: a client cannot follow events\nit does not know how to start from, so a new kind is a protocol major.",
       "oneOf": [
@@ -1640,6 +1786,10 @@
           },
           "type": "array"
         },
+        "options": {
+          "$ref": "#/$defs/SessionOptions",
+          "description": "The session's options when the attachment began; a later\n[`super::SessionEvent::OptionsChanged`] replaces them."
+        },
         "replay": {
           "$ref": "#/$defs/Replay"
         },
@@ -1675,7 +1825,8 @@
         "replay",
         "replay_events",
         "state",
-        "inputs"
+        "inputs",
+        "options"
       ],
       "type": "object"
     },
@@ -1693,6 +1844,136 @@
     },
     "SessionCancelResponse": {
       "description": "Result of [`SESSION_CANCEL`]: the turn in progress, if any, has been\nasked to stop. The turn saves what it did and ends\n[`crate::JobState::Cancelled`], or [`crate::JobState::Interrupted`] when\nthe daemon is stopping; one already past its\n[`SessionPromptParams::timeout_ms`] ends [`crate::JobState::TimedOut`].\nA cancel that arrives before a prompted turn begins still cancels it,\nand that prompt answers [`crate::ErrorCode::TurnEnded`].",
+      "type": "object"
+    },
+    "SessionChange": {
+      "description": "One setting to change. The value must be one the session's\n[`SessionOptions`] offers; any other is [`crate::ErrorCode::InvalidParams`].",
+      "oneOf": [
+        {
+          "description": "Switch to `model`, one of [`ModelOptions::available`]. The session\nkeeps its reasoning level, or refuses a model that cannot.",
+          "properties": {
+            "kind": {
+              "const": "model",
+              "type": "string"
+            },
+            "model": {
+              "$ref": "#/$defs/ModelRef"
+            }
+          },
+          "required": [
+            "kind",
+            "model"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Spend `level`, one of [`ReasoningOptions::available`], on later turns.",
+          "properties": {
+            "kind": {
+              "const": "reasoning",
+              "type": "string"
+            },
+            "level": {
+              "$ref": "#/$defs/ReasoningLevel"
+            }
+          },
+          "required": [
+            "kind",
+            "level"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Turn fast mode on or off. Turning it on needs a model that has it\n([`SessionOptions::fast_mode`] present); off always applies.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "kind": {
+              "const": "fast_mode",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "enabled"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Gate later turns' tool calls with `mode`.",
+          "properties": {
+            "kind": {
+              "const": "permission_mode",
+              "type": "string"
+            },
+            "mode": {
+              "$ref": "#/$defs/PermissionMode"
+            }
+          },
+          "required": [
+            "kind",
+            "mode"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SessionCommand": {
+      "description": "One command a prompt may run.",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "input_hint": {
+          "description": "What to type after the name, such as `<query>` or `[instructions]`;\nabsent for a command that takes nothing.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/CommandKind"
+        },
+        "name": {
+          "description": "The command's name, without the `/` or `$` its [`CommandKind`] puts\nbefore it: `init`, `prompt:review`, `mcp:docs:search`, `pdf`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "description"
+      ],
+      "type": "object"
+    },
+    "SessionConfigureParams": {
+      "description": "Params of [`SESSION_CONFIGURE`].",
+      "properties": {
+        "change": {
+          "$ref": "#/$defs/SessionChange",
+          "description": "One change per request, so an error names the change it refuses."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session",
+        "change"
+      ],
+      "type": "object"
+    },
+    "SessionConfigureResponse": {
+      "description": "Result of [`SESSION_CONFIGURE`]: the change applies from the next turn,\nand these are the session's options with it. Every attached client also\nreceives them as [`super::SessionEvent::OptionsChanged`] when they\nchanged. A session with a turn running or waiting for input refuses with\n[`crate::ErrorCode::SessionBusy`]; send the change again once it ends.",
+      "properties": {
+        "options": {
+          "$ref": "#/$defs/SessionOptions"
+        }
+      },
+      "required": [
+        "options"
+      ],
       "type": "object"
     },
     "SessionDetachParams": {
@@ -2054,6 +2335,23 @@
           "type": "object"
         },
         {
+          "description": "The session's options changed, as after [`super::SESSION_CONFIGURE`]\nor a plan approval's mode switch: all of them, replacing the last.",
+          "properties": {
+            "options": {
+              "$ref": "#/$defs/SessionOptions"
+            },
+            "type": {
+              "const": "options_changed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "options"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "properties": {
             "type": {
@@ -2135,12 +2433,63 @@
     "SessionNewResponse": {
       "description": "Result of [`SESSION_NEW`]: the session is loaded and its job is\n[`crate::JobState::Idle`]. `rho sessions` lists the session once its\nfirst prompt is saved; [`super::JOB_LIST`] shows its job.",
       "properties": {
+        "options": {
+          "$ref": "#/$defs/SessionOptions",
+          "description": "The session's settings and the choices it offers, which\n[`super::SESSION_CONFIGURE`] changes."
+        },
         "session": {
           "$ref": "#/$defs/SessionId"
         }
       },
       "required": [
-        "session"
+        "session",
+        "options"
+      ],
+      "type": "object"
+    },
+    "SessionOptions": {
+      "description": "What a session runs with now, and what a client may change it to.",
+      "properties": {
+        "commands": {
+          "description": "The commands a prompt may start with or mention, in menu order.",
+          "items": {
+            "$ref": "#/$defs/SessionCommand"
+          },
+          "type": "array"
+        },
+        "fast_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FastModeOptions"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent when the current model has no fast mode."
+        },
+        "model": {
+          "$ref": "#/$defs/ModelOptions"
+        },
+        "permission_mode": {
+          "$ref": "#/$defs/PermissionModeOptions"
+        },
+        "reasoning": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningOptions"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent when the current model has no reasoning to configure."
+        }
+      },
+      "required": [
+        "model",
+        "permission_mode",
+        "commands"
       ],
       "type": "object"
     },
@@ -2694,6 +3043,9 @@
     "-32015": {
       "name": "CredentialStoreUnavailable"
     },
+    "-32016": {
+      "name": "SessionNotLoaded"
+    },
     "-32600": {
       "name": "InvalidRequest"
     },
@@ -2781,6 +3133,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionCancelResponse"
+      }
+    },
+    "rho/session/configure": {
+      "params": {
+        "$ref": "#/$defs/SessionConfigureParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionConfigureResponse"
       }
     },
     "rho/session/detach": {

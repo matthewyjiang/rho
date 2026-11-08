@@ -127,6 +127,10 @@ error_codes! {
         /// The credential store could not be opened, read, or written, as
         /// when the OS keyring is locked or unavailable (#1662).
         CredentialStoreUnavailable = -32015,
+        /// The daemon has not loaded the session, which a request that only
+        /// changes a loaded session, such as a settings change, needs.
+        /// Attach to the session first, which loads it.
+        SessionNotLoaded = -32016,
     }
 }
 

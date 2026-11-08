@@ -1,8 +1,10 @@
 //! Reopening saved sessions on demand (#1661). A prompt or an attach for a
 //! saved session the daemon has not loaded opens it from its file, in its
 //! own workspace, and records its turns on the session's last session job,
-//! or a new one when no daemon ran it. Cancel, steer, answer, and hold never
-//! reopen one: a session that is not loaded has no turn to act on.
+//! or a new one when no daemon ran it. Cancel, steer, answer, hold, and
+//! configure never reopen one: a session that is not loaded has no turn to
+//! act on, and a client attaches before it changes settings. A reopened
+//! session runs with the settings it kept (see `open.rs`).
 //!
 //! A session another process has open is refused as in use, and a
 //! subagent's or workflow node's session as its parent's to continue.

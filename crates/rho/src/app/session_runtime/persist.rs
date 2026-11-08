@@ -38,7 +38,9 @@ use rho_sdk::{
     RunOutcome, SessionId, SessionSnapshot, SessionStore, SessionStoreFuture, UserInput,
 };
 
-use super::{events::InsertedMessage, SessionHandle, SessionRuntime};
+use super::{
+    events::InsertedMessage, saved_settings::SettingsRecord, SessionHandle, SessionRuntime,
+};
 use crate::{
     added_dirs::AddedDirs,
     app::active_prompt::ActivePrompt,
@@ -201,6 +203,7 @@ impl SessionRuntime {
             prompt: self.built.prompt.clone(),
             added_dirs: self.added_dirs.clone(),
             auth: self.auth.clone(),
+            settings: self.settings_record(),
             handle: self.handle.clone(),
             display: Mutex::new(display),
         }));
@@ -348,24 +351,27 @@ impl SessionRuntime {
             self.built.tools.code_mode(),
             &self.added_dirs,
             &self.auth,
+            &self.settings_record(),
             self.built.session.snapshot(),
         )
     }
 }
 
-/// Adds the session state a load restores, including the direct tool loadout.
+/// Adds the session state a load restores, including the direct tool loadout
+/// and, once a host kept them, the session's settings.
 pub(super) fn decorate(
     prompt: &ActivePrompt,
     todo: &TodoState,
     code_mode: &crate::tools::code_mode::CodeModeSurface,
     added_dirs: &AddedDirs,
     auth: &str,
+    settings: &SettingsRecord,
     snapshot: SessionSnapshot,
 ) -> SessionSnapshot {
-    super::agent::decorate_model_override(
+    settings.decorate(super::agent::decorate_model_override(
         added_dirs.decorate(todo.decorate(prompt.decorate(code_mode.decorate(snapshot)))),
         auth,
-    )
+    ))
 }
 
 /// The node a refused turn rolls back to: the active leaf, or for a session's
@@ -416,6 +422,9 @@ struct CheckpointStore {
     prompt: ActivePrompt,
     added_dirs: AddedDirs,
     auth: String,
+    /// The settings as the turn began; only the host changes them, between
+    /// turns.
+    settings: SettingsRecord,
     /// Tells the store when a successor owns the file.
     handle: SessionHandle,
     display: Mutex<TurnDisplay>,
@@ -439,6 +448,7 @@ impl CheckpointStore {
             &self.code_mode,
             &self.added_dirs,
             &self.auth,
+            &self.settings,
             snapshot,
         );
         if let Some(stored) = &self.stored {

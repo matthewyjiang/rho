@@ -19,7 +19,8 @@ use agent_client_protocol::{
     },
     Error as AcpError,
 };
-use rho_providers::{credentials::available_auth_modes, model::catalog};
+use rho_protocol as wire;
+use rho_providers::credentials::available_auth_modes;
 use rho_sdk::UserInput;
 
 use super::{
@@ -37,11 +38,12 @@ use super::{
 use crate::{
     app::{
         session_commands::{CommandScope, PromptCommand},
+        session_options,
         session_runtime::{
-            model_scoped_config, ApprovalPolicy, BackgroundWait, ChildAgents, CurrentModel,
-            HostCapabilities, InsertedMessage, PromptScope, QuestionSupport, RunShape,
-            SessionBuild, SessionHandle, SessionLaunch, SessionRole, SessionRuntime,
-            SettingChangeError, TitleJob, Turn, TurnOutcome, WorkflowStart,
+            ApprovalPolicy, BackgroundWait, ChildAgents, HostCapabilities, InsertedMessage,
+            PromptScope, QuestionSupport, RunShape, SessionBuild, SessionHandle, SessionLaunch,
+            SessionRole, SessionRuntime, SettingChangeError, TitleJob, Turn, TurnOutcome,
+            WorkflowStart,
         },
         workflow_cli::discover::StartCommand,
     },
@@ -416,16 +418,13 @@ fn runtime_config_options(
     process_config: &Config,
     toggles: Toggles,
 ) -> Vec<SessionConfigOption> {
-    advertised_config_options(
-        &runtime.current_model(),
+    let options = session_options::of(
+        runtime,
         process_config,
-        CurrentSettings {
-            permission_mode: runtime.permission_mode(),
-            reasoning: runtime.reasoning_level(),
-            fast: runtime.fast_mode(),
-        },
-        toggles,
-    )
+        &available_auth_modes(&AppCredentialStore),
+        commands::ACP_COMMANDS,
+    );
+    advertised_config_options(&options, toggles)
 }
 
 /// A [`SessionBuild`] and the T3 wake watcher that wakes its session.
@@ -502,36 +501,22 @@ fn question_support(forms: Forms) -> QuestionSupport {
     }
 }
 
-/// Session settings the advertised options report as current values.
-#[derive(Clone, Copy)]
-struct CurrentSettings {
-    permission_mode: PermissionMode,
-    reasoning: rho_sdk::ReasoningLevel,
-    fast: bool,
-}
-
-/// Every option a session advertises, rebuilt after each change so a model
-/// switch adds or drops the per-model `thought_level` and `fast_mode`. The
-/// permission `mode` comes first, as the ACP spec's own example orders it.
+/// Every option a session with `options` advertises, rebuilt after each
+/// change so a model switch adds or drops the per-model `thought_level` and
+/// `fast_mode`. The permission `mode` comes first, as the ACP spec's own
+/// example orders it.
 fn advertised_config_options(
-    current: &CurrentModel,
-    process_config: &Config,
-    settings: CurrentSettings,
+    options: &wire::SessionOptions,
     toggles: Toggles,
 ) -> Vec<SessionConfigOption> {
-    let available_auths = available_auth_modes(&AppCredentialStore);
-    let mut options = vec![permission::mode_config_option(settings.permission_mode)];
-    options.extend(config_options::model_config_options(
-        current,
-        &process_config.favorite_models,
-        catalog::available_models_for_auths(&available_auths),
+    let mut advertised = Vec::from_iter(permission::mode_config_option(&options.permission_mode));
+    advertised.push(config_options::model_config_option(&options.model));
+    advertised.extend(thought_level::config_options(options.reasoning.as_ref()));
+    advertised.extend(fast_mode::config_options(
+        options.fast_mode.as_ref(),
+        toggles,
     ));
-    options.extend(thought_level::config_options(
-        &model_scoped_config(current, process_config),
-        settings.reasoning,
-    ));
-    options.extend(fast_mode::config_options(current, settings.fast, toggles));
-    options
+    advertised
 }
 
 /// How a turn, or the prompt it answers, ended, and the first update of it

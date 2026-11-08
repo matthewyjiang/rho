@@ -7,6 +7,7 @@ use agent_client_protocol::schema::v1::{
     ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
 use agent_client_protocol::Error as AcpError;
+use rho_protocol as wire;
 
 use crate::{
     app::session_runtime::{cancelled_approval, PlanApprovalRequest},
@@ -41,20 +42,26 @@ pub(super) fn parse_mode_id(id: &str) -> Option<PermissionMode> {
         .find(|mode| mode.as_str() == id)
 }
 
-/// The `mode` config option: the same permission modes as the legacy `modes`
-/// field, with the same ids, so both stay in sync.
-pub(super) fn mode_config_option(current: PermissionMode) -> SessionConfigOption {
-    SessionConfigOption::select(
-        MODE_CONFIG_ID,
-        "Mode",
-        current.as_str(),
-        PermissionMode::ALL
-            .into_iter()
-            .map(|mode| SessionConfigSelectOption::new(mode.as_str(), mode.label()))
-            .collect::<Vec<_>>(),
+/// The `mode` config option of a session's `modes`, as the ACP adapter will
+/// render the daemon's (#1670): the same permission modes as the legacy
+/// `modes` field, with the same ids, so both stay in sync. A mode this rho
+/// does not know is left out, and so is the option when the current mode is
+/// one.
+pub(super) fn mode_config_option(
+    modes: &wire::PermissionModeOptions,
+) -> Option<SessionConfigOption> {
+    let current = PermissionMode::try_from(modes.current).ok()?;
+    let choices = modes
+        .available
+        .iter()
+        .filter_map(|&mode| PermissionMode::try_from(mode).ok())
+        .map(|mode| SessionConfigSelectOption::new(mode.as_str(), mode.label()))
+        .collect::<Vec<_>>();
+    Some(
+        SessionConfigOption::select(MODE_CONFIG_ID, "Mode", current.as_str(), choices)
+            .description("Which tool calls run without asking.")
+            .category(SessionConfigOptionCategory::Mode),
     )
-    .description("Which tool calls run without asking.")
-    .category(SessionConfigOptionCategory::Mode)
 }
 
 /// Parses a `mode` config value into a permission mode.

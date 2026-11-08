@@ -1,6 +1,7 @@
 //! The `fast_mode` session config option: the ACP counterpart of the TUI's
-//! `/fast`. This advertises and parses it; the session runtime applies it
-//! (`SessionRuntime::set_fast_mode`).
+//! `/fast`. This renders a session's [`wire::FastModeOptions`], as the ACP
+//! adapter will render the daemon's (#1670), and parses a pick; the session
+//! runtime applies it (`SessionRuntime::set_fast_mode`).
 
 use agent_client_protocol::{
     schema::v1::{
@@ -9,10 +10,9 @@ use agent_client_protocol::{
     },
     Error as AcpError,
 };
-use rho_providers::providers::fast_mode::supports_fast_mode;
+use rho_protocol as wire;
 
 use super::host_features::Toggles;
-use crate::app::session_runtime::CurrentModel;
 
 pub(super) const FAST_MODE_ID: &str = "fast_mode";
 const ON: &str = "on";
@@ -23,17 +23,15 @@ const OFF: &str = "off";
 /// Select choice names read on their own because hosts such as T3 show only
 /// the current choice.
 ///
-/// Advertised only when the current model supports fast mode. The tier stays
-/// on the session across a model switch, like the TUI, so the option shows
-/// the saved preference again when a later switch lands on a fast model.
+/// Advertised only when the current model has fast mode (`fast_mode` is
+/// `Some`).
 pub(super) fn config_options(
-    current: &CurrentModel,
-    fast: bool,
+    fast_mode: Option<&wire::FastModeOptions>,
     toggles: Toggles,
 ) -> Vec<SessionConfigOption> {
-    if !supports_fast_mode(&current.provider, &current.model, &current.auth) {
+    let Some(fast) = fast_mode.map(|fast_mode| fast_mode.enabled) else {
         return Vec::new();
-    }
+    };
     let option = match toggles {
         Toggles::Boolean => SessionConfigOption::boolean(FAST_MODE_ID, "Fast mode", fast),
         Toggles::Select => SessionConfigOption::select(

@@ -83,6 +83,11 @@ pub use methods::{
     TurnError, TurnErrorKind, TurnOutcome, UncheckedKey, UncheckedReason, SESSION_ANSWER,
     SESSION_HOLD,
 };
+pub use methods::{
+    CommandKind, FastModeOptions, ModelChoice, ModelOptions, ModelRef, PermissionModeOptions,
+    ReasoningLevel, ReasoningOptions, SessionChange, SessionCommand, SessionConfigureParams,
+    SessionConfigureResponse, SessionOptions, SESSION_CONFIGURE,
+};
 pub use server::{serve_connection, ServerInfo, Service, CLOSE_GRACE};
 pub use subscription::{subscription, Published, Publisher, Subscription};
 pub use version::{ProtocolVersion, VersionFix, VersionMismatch, PROTOCOL_VERSION};

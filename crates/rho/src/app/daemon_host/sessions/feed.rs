@@ -13,6 +13,10 @@
 //! save stays in the buffer, so resets replay it live until a later turn
 //! saves it.
 //!
+//! The feed also keeps the session's options, as the last
+//! [`wire::SessionEvent::OptionsChanged`] left them, so an attach reports
+//! them without waiting for the runtime either.
+//!
 //! A reset's transcript events carry seq 0, except the last, which carries
 //! the seq the turn in progress began after. A client's cursor is the
 //! highest seq it has seen, so one that detaches partway through a
@@ -77,6 +81,8 @@ struct FeedState {
     /// The session's title: the saved one, then the last title change sent,
     /// so an attach reports it though no transcript holds it.
     title: Option<String>,
+    /// The session's options, as the last options event sent them.
+    options: wire::SessionOptions,
     subscribers: Vec<Publisher>,
     /// Set by [`Feed::close`]: a client attaching later is detached at once.
     closed: Option<DetachReason>,
@@ -100,6 +106,8 @@ pub(super) struct Attached {
     pub(super) inputs: Vec<wire::InputRequest>,
     /// The session's title as of the attach, if it has one.
     pub(super) title: Option<String>,
+    /// The session's options as of the attach.
+    pub(super) options: wire::SessionOptions,
     pub(super) subscription: Subscription,
 }
 
@@ -107,8 +115,12 @@ impl Feed {
     /// A stream with nothing saved yet, its job in `job`: idle for a new
     /// session, its last turn's end for a reopened one (#1661), whose saved
     /// conversation [`Self::end_turn`] then adds. `title` is the one the
-    /// session has saved, if any.
-    pub(super) fn new(job: wire::JobState, title: Option<String>) -> Self {
+    /// session has saved, if any; the session opened with `options`.
+    pub(super) fn new(
+        job: wire::JobState,
+        title: Option<String>,
+        options: wire::SessionOptions,
+    ) -> Self {
         Self {
             state: Mutex::new(FeedState {
                 stream: StreamId::new(uuid::Uuid::new_v4().to_string()),
@@ -121,6 +133,7 @@ impl Feed {
                 job,
                 inputs: BTreeMap::new(),
                 title,
+                options,
                 subscribers: Vec::new(),
                 closed: None,
             }),
@@ -133,6 +146,20 @@ impl Feed {
         for event in events {
             state.push(event);
         }
+    }
+
+    /// Tells attached clients the session's options are now `options`,
+    /// unless they already are.
+    pub(super) fn update_options(&self, options: wire::SessionOptions) {
+        let mut state = self.state();
+        if state.options != options {
+            state.push(wire::SessionEvent::OptionsChanged { options });
+        }
+    }
+
+    /// The session's options now.
+    pub(super) fn options(&self) -> wire::SessionOptions {
+        self.state().options.clone()
     }
 
     /// Records that the turns since the last save saved as `saved`, their
@@ -172,6 +199,7 @@ impl Feed {
             job: state.job,
             inputs: state.inputs.values().cloned().collect(),
             title: state.title.clone(),
+            options: state.options.clone(),
             subscription,
         }
     }
@@ -221,6 +249,7 @@ impl FeedState {
                 }
             }
             wire::SessionEvent::TitleChanged { title } => self.title = Some(title.clone()),
+            wire::SessionEvent::OptionsChanged { options } => self.options = options.clone(),
             _ => {}
         }
         let seq = Seq(self.last.0 + 1);
