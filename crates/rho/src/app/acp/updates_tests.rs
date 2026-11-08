@@ -69,6 +69,7 @@ fn transcript_events_map_to_acp_updates() {
                     },
                     wire::ContentBlock::Unknown,
                 ],
+                steer: None,
             },
             vec![
                 SessionUpdate::UserMessageChunk(message("u1", "read this")),

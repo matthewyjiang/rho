@@ -57,6 +57,14 @@ string_id! {
 }
 
 string_id! {
+    /// Identifies one accepted steer ([`super::SESSION_STEER`]): the
+    /// [`SessionEvent::UserMessage`] it applies as and its
+    /// [`SessionEvent::SteeringDelivered`] carry it, and
+    /// [`super::SESSION_UNSTEER`] withdraws the steer by it.
+    SteerId
+}
+
+string_id! {
     /// One loaded session's event stream. A new daemon, or a reload, starts
     /// a new stream.
     StreamId
@@ -91,6 +99,12 @@ pub enum SessionEvent {
     UserMessage {
         message: MessageId,
         content: Vec<ContentBlock>,
+        /// Present when the message is a steer that just applied: it crossed
+        /// into the conversation for the turn's next model request, under
+        /// the id [`super::SESSION_STEER`] answered with. Replayed history
+        /// carries none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        steer: Option<SteerId>,
     },
     /// More of the agent's reply.
     AgentMessageChunk { message: MessageId, text: String },
@@ -157,6 +171,10 @@ pub enum SessionEvent {
     /// The session's options changed, as after [`super::SESSION_CONFIGURE`]
     /// or a plan approval's mode switch: all of them, replacing the last.
     OptionsChanged { options: super::SessionOptions },
+    /// The provider already took steer `id` mid-request: it can no longer
+    /// be withdrawn ([`super::SESSION_UNSTEER`]), and still applies, as a
+    /// [`Self::UserMessage`] carrying `id`, at the turn's next model request.
+    SteeringDelivered { id: SteerId },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]

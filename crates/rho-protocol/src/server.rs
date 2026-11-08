@@ -29,10 +29,11 @@ use crate::{
         SessionListParams, SessionListResponse, SessionNew, SessionNewParams, SessionNewResponse,
         SessionPrompt, SessionPromptParams, SessionPromptResponse, SessionRename,
         SessionRenameParams, SessionRenameResponse, SessionSteer, SessionSteerParams,
-        SessionSteerResponse, Status, Stop, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL,
-        AUTH_LOGOUT, DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH,
-        SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD,
-        SESSION_LIST, SESSION_NEW, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER,
+        SessionSteerResponse, SessionUnsteer, SessionUnsteerParams, SessionUnsteerResponse, Status,
+        Stop, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, DAEMON_STATUS,
+        DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL,
+        SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD, SESSION_LIST, SESSION_NEW,
+        SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -95,11 +96,19 @@ pub trait Service: Send + Sync {
     ) -> impl Future<Output = Result<SessionCancelResponse, RpcError>> + Send;
 
     /// Handles `rho/session/steer`: queue input for the running turn,
-    /// without waiting for the turn to apply it.
+    /// resolving once the turn accepted it, without waiting for the turn to
+    /// apply it.
     fn steer_session(
         &self,
         params: SessionSteerParams,
     ) -> impl Future<Output = Result<SessionSteerResponse, RpcError>> + Send;
+
+    /// Handles `rho/session/unsteer`: withdraw a steer the running turn has
+    /// not applied yet, resolving with what became of it.
+    fn unsteer_session(
+        &self,
+        params: SessionUnsteerParams,
+    ) -> impl Future<Output = Result<SessionUnsteerResponse, RpcError>> + Send;
 
     /// Handles `rho/session/answer`: hand the answer to the turn that
     /// waits for the request, if the request is still open.
@@ -496,6 +505,7 @@ enum ServiceCall {
     PromptSession(SessionPromptParams),
     CancelSession(SessionCancelParams),
     SteerSession(SessionSteerParams),
+    UnsteerSession(SessionUnsteerParams),
     AnswerSession(SessionAnswerParams),
     HoldSession(SessionHoldParams),
     ConfigureSession(SessionConfigureParams),
@@ -566,6 +576,7 @@ impl ServiceCall {
             SESSION_PROMPT => decode_params::<SessionPrompt>(params).map(Self::PromptSession),
             SESSION_CANCEL => decode_params::<SessionCancel>(params).map(Self::CancelSession),
             SESSION_STEER => decode_params::<SessionSteer>(params).map(Self::SteerSession),
+            SESSION_UNSTEER => decode_params::<SessionUnsteer>(params).map(Self::UnsteerSession),
             SESSION_ANSWER => decode_params::<SessionAnswer>(params).map(Self::AnswerSession),
             SESSION_HOLD => decode_params::<SessionHold>(params).map(Self::HoldSession),
             SESSION_CONFIGURE => {
@@ -593,6 +604,7 @@ impl ServiceCall {
             Self::PromptSession(SessionPromptParams { session, .. })
             | Self::CancelSession(SessionCancelParams { session, .. })
             | Self::SteerSession(SessionSteerParams { session, .. })
+            | Self::UnsteerSession(SessionUnsteerParams { session, .. })
             | Self::AnswerSession(SessionAnswerParams { session, .. })
             | Self::HoldSession(SessionHoldParams { session, .. })
             | Self::ConfigureSession(SessionConfigureParams { session, .. })
@@ -629,6 +641,9 @@ impl ServiceCall {
             }
             Self::SteerSession(params) => {
                 encode_result::<SessionSteer>(&service.steer_session(params).await?)
+            }
+            Self::UnsteerSession(params) => {
+                encode_result::<SessionUnsteer>(&service.unsteer_session(params).await?)
             }
             Self::AnswerSession(params) => {
                 encode_result::<SessionAnswer>(&service.answer_session(params).await?)

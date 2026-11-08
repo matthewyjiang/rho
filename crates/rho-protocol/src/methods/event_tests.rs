@@ -61,11 +61,33 @@ fn every_session_event_round_trips_through_its_wire_form() {
                         data: "aGk=".into(),
                     },
                 ],
+                steer: None,
             },
             json!({"type": "user_message", "message": "m1", "content": [
                 {"type": "text", "text": "hi"},
                 {"type": "image", "mime_type": "image/png", "data": "aGk="},
             ]}),
+        ),
+        (
+            SessionEvent::UserMessage {
+                message: message(),
+                content: vec![ContentBlock::Text {
+                    text: "use tabs".into(),
+                }],
+                steer: Some(SteerId::new("s1")),
+            },
+            json!({
+                "type": "user_message",
+                "message": "m1",
+                "content": [{"type": "text", "text": "use tabs"}],
+                "steer": "s1",
+            }),
+        ),
+        (
+            SessionEvent::SteeringDelivered {
+                id: SteerId::new("s1"),
+            },
+            json!({"type": "steering_delivered", "id": "s1"}),
         ),
         (
             SessionEvent::AgentMessageChunk {

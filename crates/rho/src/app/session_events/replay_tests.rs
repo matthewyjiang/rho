@@ -72,6 +72,7 @@ fn user(message: MessageId, text: &str) -> WireEvent {
     WireEvent::UserMessage {
         message,
         content: vec![ContentBlock::Text { text: text.into() }],
+        steer: None,
     }
 }
 

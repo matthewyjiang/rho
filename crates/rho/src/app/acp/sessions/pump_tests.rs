@@ -126,6 +126,7 @@ fn user(id: &str) -> SessionEvent {
     SessionEvent::UserMessage {
         message: wire::MessageId::new(id),
         content: vec![wire::ContentBlock::Text { text: id.into() }],
+        steer: None,
     }
 }
 

@@ -45,7 +45,12 @@ impl ResetReplay {
     /// Reads the replay's next event.
     pub(crate) fn observe(&mut self, event: &SessionEvent) {
         match event {
-            SessionEvent::UserMessage { message, .. } => {
+            // A steer applies within the turn under way; it begins none.
+            SessionEvent::UserMessage {
+                message,
+                steer: None,
+                ..
+            } => {
                 self.turn = ReplayedTurn::Began(message.clone());
             }
             SessionEvent::TurnEnded { outcome } => {

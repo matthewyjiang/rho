@@ -13,6 +13,7 @@
 //! | [`SESSION_PROMPT`] | [`SessionPromptParams`] | [`SessionPromptResponse`] |
 //! | [`SESSION_CANCEL`] | [`SessionCancelParams`] | [`SessionCancelResponse`] |
 //! | [`SESSION_STEER`] | [`SessionSteerParams`] | [`SessionSteerResponse`] |
+//! | [`SESSION_UNSTEER`] | [`SessionUnsteerParams`] | [`SessionUnsteerResponse`] |
 //! | [`SESSION_ANSWER`] | [`SessionAnswerParams`] | [`SessionAnswerResponse`] |
 //! | [`SESSION_HOLD`] | [`SessionHoldParams`] | [`SessionHoldResponse`] |
 //! | [`SESSION_ATTACH`] | [`SessionAttachParams`] | [`SessionAttachResponse`] |
@@ -75,8 +76,8 @@ pub use daemon::{
 };
 pub use event::{
     CardTone, CompactionId, CompactionStatus, ContentBlock, Cursor, Location, MessageId, PlanEntry,
-    PlanStatus, Seq, SessionEvent, StreamId, ToolCallId, ToolCallUpdate, ToolContent, ToolKind,
-    ToolStatus,
+    PlanStatus, Seq, SessionEvent, SteerId, StreamId, ToolCallId, ToolCallUpdate, ToolContent,
+    ToolKind, ToolStatus,
 };
 pub use input::{
     ApprovalAsk, ApprovalSource, Ask, Choice, DefaultAnswer, DefaultStyle, InputAnswer,
@@ -104,8 +105,9 @@ pub use session::{
     SessionCancelParams, SessionCancelResponse, SessionDetachParams, SessionDetachResponse,
     SessionDetachedParams, SessionEventParams, SessionId, SessionNewParams, SessionNewResponse,
     SessionPromptParams, SessionPromptResponse, SessionSteerParams, SessionSteerResponse,
-    SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH, SESSION_DETACHED, SESSION_EVENT, SESSION_NEW,
-    SESSION_PROMPT, SESSION_STEER,
+    SessionUnsteerParams, SessionUnsteerResponse, UnsteerOutcome, SESSION_ATTACH, SESSION_CANCEL,
+    SESSION_DETACH, SESSION_DETACHED, SESSION_EVENT, SESSION_NEW, SESSION_PROMPT, SESSION_STEER,
+    SESSION_UNSTEER,
 };
 pub use setup::{ChildThreads, McpServer, SecretMap, SessionPart, SessionSetup};
 
@@ -186,6 +188,7 @@ protocol! {
         SessionPrompt = SESSION_PROMPT: SessionPromptParams => SessionPromptResponse,
         SessionCancel = SESSION_CANCEL: SessionCancelParams => SessionCancelResponse,
         SessionSteer = SESSION_STEER: SessionSteerParams => SessionSteerResponse,
+        SessionUnsteer = SESSION_UNSTEER: SessionUnsteerParams => SessionUnsteerResponse,
         SessionAnswer = SESSION_ANSWER: SessionAnswerParams => SessionAnswerResponse,
         SessionHold = SESSION_HOLD: SessionHoldParams => SessionHoldResponse,
         SessionAttach = SESSION_ATTACH: SessionAttachParams => SessionAttachResponse,

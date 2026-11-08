@@ -87,10 +87,10 @@ pub use methods::{
     SessionCancelParams, SessionCancelResponse, SessionDetachParams, SessionDetachResponse,
     SessionDetachedParams, SessionEvent, SessionEventParams, SessionHoldParams,
     SessionHoldResponse, SessionId, SessionNewParams, SessionNewResponse, SessionPromptParams,
-    SessionPromptResponse, SessionSteerParams, SessionSteerResponse, StatusParams, StopParams,
-    StopResponse, StreamId, ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
-    TurnError, TurnErrorKind, TurnOutcome, UncheckedKey, UncheckedReason, SESSION_ANSWER,
-    SESSION_HOLD,
+    SessionPromptResponse, SessionSteerParams, SessionSteerResponse, SessionUnsteerParams,
+    SessionUnsteerResponse, StatusParams, SteerId, StopParams, StopResponse, StreamId, ToolCallId,
+    ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
+    UncheckedKey, UncheckedReason, UnsteerOutcome, SESSION_ANSWER, SESSION_HOLD,
 };
 pub use methods::{
     AuthKind, AuthListParams, AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse,

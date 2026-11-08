@@ -130,8 +130,11 @@ impl Replay<'_> {
                 let content = user_content(blocks);
                 if !content.is_empty() {
                     let message = self.message_ids.next();
-                    self.events
-                        .push(WireEvent::UserMessage { message, content });
+                    self.events.push(WireEvent::UserMessage {
+                        message,
+                        content,
+                        steer: None,
+                    });
                 }
             }
             SemanticMessage::Assistant(blocks) => self.agent(blocks),

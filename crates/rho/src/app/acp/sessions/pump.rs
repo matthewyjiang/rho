@@ -291,10 +291,20 @@ impl Pump {
 
     async fn live(&mut self, event: SessionEvent) {
         match event {
-            SessionEvent::UserMessage { message, content } => {
-                if !self.start_turn(&message) {
-                    // Another client's prompt.
-                    let event = SessionEvent::UserMessage { message, content };
+            SessionEvent::UserMessage {
+                message,
+                content,
+                steer,
+            } => {
+                // A steer applies within the turn under way; it never
+                // starts one.
+                if steer.is_some() || !self.start_turn(&message) {
+                    // Another client's prompt or steer.
+                    let event = SessionEvent::UserMessage {
+                        message,
+                        content,
+                        steer,
+                    };
                     self.send_mapped(&event).await;
                 }
             }

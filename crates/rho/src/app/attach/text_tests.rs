@@ -46,6 +46,7 @@ fn text_output_streams_the_conversation_and_tells_the_rest_on_stderr() {
             content: vec![ContentBlock::Text {
                 text: "read the docs\nthen answer".into(),
             }],
+            steer: None,
         },
         chunk("Looking"),
         tool_call(None, ToolStatus::Pending),

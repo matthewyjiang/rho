@@ -77,7 +77,9 @@ impl<O: Write, E: Write> TextView<O, E> {
             | SessionEvent::InputRequested { .. }
             | SessionEvent::InputResolved { .. }
             | SessionEvent::InputHeld { .. }
-            | SessionEvent::OptionsChanged { .. } => {}
+            | SessionEvent::OptionsChanged { .. }
+            // The steer shows once it applies, as a user message.
+            | SessionEvent::SteeringDelivered { .. } => {}
             // `SessionEvent` is non-exhaustive; an event a newer daemon sends
             // is not shown.
             _ => {}

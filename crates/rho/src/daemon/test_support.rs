@@ -11,7 +11,8 @@ use rho_protocol::{
     SessionDeleteParams, SessionDeleteResponse, SessionHoldParams, SessionHoldResponse,
     SessionListParams, SessionListResponse, SessionNewParams, SessionNewResponse,
     SessionPromptParams, SessionPromptResponse, SessionRenameParams, SessionRenameResponse,
-    SessionSteerParams, SessionSteerResponse, Subscription, PROTOCOL_VERSION,
+    SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
+    Subscription, PROTOCOL_VERSION,
 };
 use rho_sdk::CancellationToken;
 
@@ -71,6 +72,13 @@ impl Service for StubHost {
     }
 
     async fn steer_session(&self, _: SessionSteerParams) -> Result<SessionSteerResponse, RpcError> {
+        Err(no_sessions())
+    }
+
+    async fn unsteer_session(
+        &self,
+        _: SessionUnsteerParams,
+    ) -> Result<SessionUnsteerResponse, RpcError> {
         Err(no_sessions())
     }
 
