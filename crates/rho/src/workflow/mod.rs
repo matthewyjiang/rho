@@ -19,6 +19,7 @@ mod secure_fs;
 mod secure_fs_control;
 mod secure_fs_directory;
 mod secure_fs_opened;
+mod secure_fs_shebang;
 mod secure_fs_spawn;
 #[cfg(windows)]
 mod secure_fs_windows;

@@ -20,6 +20,9 @@ use acp::{
 #[path = "agent_binding_model_override.rs"]
 mod model_override;
 pub(crate) use model_override::ModelOverride;
+#[path = "agent_binding_cli_sessions.rs"]
+mod cli_sessions;
+pub(crate) use cli_sessions::CliRunInputs;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AgentRole {
@@ -268,125 +271,6 @@ impl BoundAgent {
                 reasoning: None,
             },
         }
-    }
-
-    /// Build the Claude session request for a bound Claude runtime.
-    pub(crate) fn into_claude_session(
-        self,
-        prompt: String,
-        output_file: std::path::PathBuf,
-        cwd: std::path::PathBuf,
-        cancellation: rho_tools::cancellation::RunCancellation,
-        status_tx: Option<tokio::sync::watch::Sender<crate::subagent::RunStatus>>,
-        started_status: Option<crate::subagent::RunStatus>,
-    ) -> Option<crate::claude_runtime::session::ClaudeSessionRequest> {
-        let identity = self.artifact_identity();
-        let BoundRuntime::ClaudeCli {
-            tools,
-            inherit_claude_config,
-            permission_mode,
-            max_turns,
-            ..
-        } = self.runtime
-        else {
-            return None;
-        };
-        Some(crate::claude_runtime::session::ClaudeSessionRequest {
-            system_prompt: self.definition.prompt.clone(),
-            identity,
-            tools,
-            inherit_claude_config,
-            permission_mode,
-            max_turns,
-            prompt,
-            output_file,
-            cwd,
-            cancellation,
-            status_tx,
-            started_status,
-            parent_messages: None,
-            rate_limit_state_path: None,
-            overrides: Default::default(),
-            // A saved parent's; the executor sets the parent's own.
-            persistence: crate::session::SessionPersistence::Saved,
-        })
-    }
-
-    /// Build the Cursor session request for a bound Cursor runtime.
-    pub(crate) fn into_cursor_session(
-        self,
-        prompt: String,
-        output_file: std::path::PathBuf,
-        cwd: std::path::PathBuf,
-        cancellation: rho_tools::cancellation::RunCancellation,
-        status_tx: Option<tokio::sync::watch::Sender<crate::subagent::RunStatus>>,
-        started_status: Option<crate::subagent::RunStatus>,
-    ) -> Option<crate::cursor_runtime::session::CursorSessionRequest> {
-        let identity = self.artifact_identity();
-        let BoundRuntime::Cursor {
-            tools,
-            permission_mode,
-            ..
-        } = self.runtime
-        else {
-            return None;
-        };
-        Some(crate::cursor_runtime::session::CursorSessionRequest {
-            system_prompt: self.definition.prompt.clone(),
-            identity,
-            tools,
-            prompt,
-            output_file,
-            cwd,
-            permission_mode,
-            cancellation,
-            status_tx,
-            started_status,
-            parent_messages: None,
-            // No home dir leaves only `CURSOR_CONFIG_DIR` / XDG to find the
-            // user's config; a missing file derives the managed config from `{}`.
-            config_paths: crate::cursor_runtime::acp_config::CursorConfigPaths::from_env(
-                crate::paths::home_dir().unwrap_or_default(),
-            ),
-            overrides: Default::default(),
-        })
-    }
-
-    /// Build the Antigravity session request for a bound Antigravity runtime.
-    pub(crate) fn into_antigravity_session(
-        self,
-        prompt: String,
-        output_file: std::path::PathBuf,
-        cwd: std::path::PathBuf,
-        cancellation: rho_tools::cancellation::RunCancellation,
-        status_tx: Option<tokio::sync::watch::Sender<crate::subagent::RunStatus>>,
-        started_status: Option<crate::subagent::RunStatus>,
-    ) -> Option<crate::antigravity_runtime::session::AntigravitySessionRequest> {
-        let identity = self.artifact_identity();
-        let BoundRuntime::Antigravity {
-            tools,
-            permission_mode,
-            ..
-        } = self.runtime
-        else {
-            return None;
-        };
-        Some(
-            crate::antigravity_runtime::session::AntigravitySessionRequest {
-                system_prompt: self.definition.prompt.clone(),
-                identity,
-                tools,
-                prompt,
-                output_file,
-                cwd,
-                permission_mode,
-                cancellation,
-                status_tx,
-                started_status,
-                parent_messages: None,
-                overrides: Default::default(),
-            },
-        )
     }
 }
 

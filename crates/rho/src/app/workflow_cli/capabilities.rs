@@ -257,7 +257,8 @@ impl AppWorkflowToolService {
     ) -> anyhow::Result<crate::workflow::OpenedExecutable> {
         let path = Path::new(executable);
         if path.components().count() == 1 {
-            let candidates = executable_candidates(executable);
+            let candidates =
+                executable_candidates(executable, self.environment.current().path().as_deref());
             for candidate in &candidates {
                 self.authorize_read(context, candidate, path_scope(&self.cwd, candidate))
                     .await?;

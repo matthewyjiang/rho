@@ -15,6 +15,7 @@ use rho_sdk::{
 use crate::{
     agent::AgentCapabilities,
     app::{subagent_pool::SubagentPool, workflow_runtime::RecoveryDecision},
+    session_environment::SessionEnvironment,
     tools::{
         workflow::{
             WorkflowArtifactSummary, WorkflowCancellationStateSummary, WorkflowDiagnosticSummary,
@@ -33,18 +34,21 @@ use super::{diagnostic_for_model_error, ops::WorkflowOps, plan_host::AuthorizedP
 mod capabilities;
 
 /// The `workflow` tool of a session in `cwd`, whose runs' agent nodes share
-/// the session's subagent `pool`.
+/// the session's subagent `pool` and whose runs follow the session's
+/// `environment`.
 pub(in crate::app) fn workflow_tool_service(
     cwd: PathBuf,
     config_path: Option<PathBuf>,
     tracker: WorkflowRunTracker,
     pool: SubagentPool,
+    environment: SessionEnvironment,
 ) -> Arc<dyn WorkflowToolService> {
     Arc::new(AppWorkflowToolService {
         cwd,
         config_path,
         tracker,
         pool,
+        environment,
     })
 }
 
@@ -53,6 +57,9 @@ struct AppWorkflowToolService {
     config_path: Option<PathBuf>,
     tracker: WorkflowRunTracker,
     pool: SubagentPool,
+    /// The session's environment (#1659): planning finds bare executables
+    /// on its `PATH`, and the runs this tool starts or resumes run in it.
+    environment: SessionEnvironment,
 }
 
 impl WorkflowToolService for AppWorkflowToolService {
@@ -394,6 +401,7 @@ impl AppWorkflowToolService {
                 config_path: self.config_path.clone(),
                 pool: self.pool.clone(),
                 tracker: self.tracker.clone(),
+                environment: self.environment.clone(),
             },
         )
         .await
@@ -402,7 +410,11 @@ impl AppWorkflowToolService {
     }
 
     fn ops(&self) -> anyhow::Result<WorkflowOps> {
-        WorkflowOps::open(self.cwd.clone(), self.config_path.clone())
+        WorkflowOps::open(
+            self.cwd.clone(),
+            self.config_path.clone(),
+            &self.environment.current(),
+        )
     }
 
     async fn prepare(
@@ -517,9 +529,9 @@ fn path_scope(cwd: &Path, path: &Path) -> PathScope {
     }
 }
 
-fn executable_candidates(program: &str) -> Vec<PathBuf> {
-    std::env::var_os("PATH")
-        .map(|paths| executable_candidates_in(program, std::env::split_paths(&paths)))
+/// Where `program` may be on `path`, the session's `PATH`; none without one.
+fn executable_candidates(program: &str, path: Option<&std::ffi::OsStr>) -> Vec<PathBuf> {
+    path.map(|paths| executable_candidates_in(program, std::env::split_paths(paths)))
         .unwrap_or_default()
 }
 

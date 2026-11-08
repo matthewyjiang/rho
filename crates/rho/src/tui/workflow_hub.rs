@@ -493,7 +493,12 @@ impl App {
 
     fn workflow_ops(&self) -> anyhow::Result<WorkflowOps> {
         let path = self.info.services.config_repository.configured_path().ok();
-        WorkflowOps::open(self.info.runtime.cwd.clone(), path)
+        // The TUI's sessions run in this process's environment (#1659).
+        WorkflowOps::open(
+            self.info.runtime.cwd.clone(),
+            path,
+            &crate::session_environment::Ambient::ThisProcess,
+        )
     }
 
     async fn open_workflow_run_primary(
@@ -788,6 +793,8 @@ impl App {
             config_path,
             pool: crate::app::subagent_pool::SubagentPool::Own,
             tracker,
+            // The TUI's sessions run in this process's environment (#1659).
+            environment: crate::session_environment::SessionEnvironment::default(),
         };
         match workflow_cli::spawn_background_run(run, recovery, background).await {
             Ok(_) => {

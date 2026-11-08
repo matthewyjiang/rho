@@ -335,6 +335,7 @@ impl AppToolSet {
             tool_set.advisor = Some(AdvisorTools {
                 registration: HostToolRegistration::new(super::advisor::advisor_tool(
                     store.clone(),
+                    tool_set.host_io.environment.clone(),
                 )),
                 store,
             });

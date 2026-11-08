@@ -3,6 +3,7 @@
 //! This path never touches Rho's credential store. Claude Code owns the
 //! sign-in, stores the token, and remains the source of truth after handoff.
 
+use crate::session_environment::Ambient;
 use crate::tui::DefaultTerminal;
 
 use crate::claude_runtime::{
@@ -227,7 +228,7 @@ Cancel if you did not mean to sign in.",
 fn claude_login_spec() -> ExternalLoginSpec<ClaudeAuthStatus, ClaudeAuthError> {
     ExternalLoginSpec {
         command_label: "claude-agent-acp --cli auth login",
-        resolve: executable::resolve,
+        resolve: || executable::resolve(&Ambient::ThisProcess),
         login_args: auth::login_args(),
         query: || Box::pin(auth::query()),
         is_signed_in: |status| status.logged_in,

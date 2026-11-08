@@ -76,6 +76,7 @@ impl Fixture {
                 /*config_path*/ None,
                 crate::tools::workflow_tracker::WorkflowRunTracker::new(),
                 crate::app::subagent_pool::SubagentPool::Own,
+                crate::session_environment::SessionEnvironment::default(),
             )),
         );
         tools.mcp_catalog().insert_offline_prompt(

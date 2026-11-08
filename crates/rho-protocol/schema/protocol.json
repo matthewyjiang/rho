@@ -220,7 +220,7 @@
       "additionalProperties": {
         "type": "string"
       },
-      "description": "A client's environment variables, which a daemon session's children\nsee in place of the daemon's own (#1659): its tools' commands and\nbackground processes (minus provider credentials), and its MCP servers,\nhooks, and OpenAPI sources. Values are secrets: the daemon never logs or\nsaves them.",
+      "description": "A client's environment variables, which a daemon session's children\nsee in place of the daemon's own (#1659): its tools' commands and\nbackground processes (minus provider credentials), its MCP servers,\nhooks, and OpenAPI sources, its CLI subagents and Claude Code advisor\n(credentials included), and the workflow runs it starts. Values are\nsecrets: the daemon never logs or saves them.",
       "type": "object"
     },
     "ClientInfo": {

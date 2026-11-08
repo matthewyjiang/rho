@@ -92,6 +92,7 @@ fn auto_workflow_requires_configured_permission_classifier_model() {
         Some(config.configured_path().unwrap()),
         WorkflowApprovalMode::non_interactive(Default::default()),
         crate::app::subagent_pool::SubagentPool::Own,
+        crate::session_environment::SessionEnvironment::default(),
     ) {
         Ok(_) => panic!("Auto workflow startup must require the classifier model"),
         Err(error) => error,

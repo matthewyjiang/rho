@@ -43,7 +43,11 @@ struct StatusDocument<'a> {
 }
 
 pub(super) fn run_status(prefix: &str, output: WorkflowDocumentFormat) -> anyhow::Result<()> {
-    let ops = WorkflowOps::open(std::env::current_dir()?, None)?;
+    let ops = WorkflowOps::open(
+        std::env::current_dir()?,
+        /*config_path*/ None,
+        &crate::session_environment::Ambient::ThisProcess,
+    )?;
     let run = ops.load_run_prefix(prefix)?;
     let state = &run.state.state;
     let outcome = state.outcome();

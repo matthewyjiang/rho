@@ -6,16 +6,44 @@ use pretty_assertions::assert_eq;
 use super::*;
 use crate::cli_runtime::windows_shim_args::bat_command_line;
 
-/// Covers: a bare name that is not on PATH and an explicit path that does not
-/// exist both resolve to nothing; resolution never invents a binary.
-/// Owner: `CliExecutable::resolve`.
+/// Covers: a bare name is found only on the `PATH` it is given, such as a
+/// daemon client's rather than this process's (#1659): absent from that
+/// `PATH`, or with no `PATH` at all, it resolves to nothing, and an explicit
+/// path that does not exist never resolves either.
+/// Owner: `CliExecutable::resolve_in`.
+#[cfg(unix)]
 #[test]
-fn missing_program_resolves_to_none() {
-    for name in [
-        "definitely-not-an-external-cli-binary-xyz",
-        "/tmp/rho-missing-cli-binary-xyz",
-    ] {
-        assert!(CliExecutable::resolve(name).is_none(), "name={name}");
+fn resolve_in_searches_only_the_given_path() {
+    use std::{ffi::OsStr, os::unix::fs::PermissionsExt};
+
+    let empty = tempfile::tempdir().unwrap();
+    let populated = tempfile::tempdir().unwrap();
+    let agent = populated.path().join("rho-fake-cli-agent");
+    std::fs::write(&agent, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&agent, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let with_agent = std::env::join_paths([empty.path(), populated.path()]).unwrap();
+    let without_agent = empty.path().as_os_str().to_owned();
+
+    let cases: [(&str, Option<&OsStr>, Option<PathBuf>); 4] = [
+        (
+            "rho-fake-cli-agent",
+            Some(with_agent.as_os_str()),
+            Some(agent),
+        ),
+        ("rho-fake-cli-agent", Some(without_agent.as_os_str()), None),
+        ("rho-fake-cli-agent", /*path*/ None, None),
+        (
+            "/tmp/rho-missing-cli-binary-xyz",
+            Some(with_agent.as_os_str()),
+            None,
+        ),
+    ];
+    for (program, path, expected) in cases {
+        assert_eq!(
+            CliExecutable::resolve_in(program, path).map(|found| found.path().to_path_buf()),
+            expected,
+            "program={program} path={path:?}"
+        );
     }
 }
 
@@ -171,7 +199,7 @@ fn ps1_shim_keeps_metacharacters_and_rejects_nul() {
 
 /// Covers: an explicit absolute path to a real file resolves as a direct
 /// invocation of that exact file.
-/// Owner: `CliExecutable::resolve` explicit-path branch.
+/// Owner: `CliExecutable::resolve_in` explicit-path branch.
 #[cfg(unix)]
 #[test]
 fn resolve_absolute_file_uses_direct_invocation() {
@@ -182,7 +210,7 @@ fn resolve_absolute_file_uses_direct_invocation() {
     std::fs::write(&program, "#!/bin/sh\n").unwrap();
     std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let resolved = CliExecutable::resolve(program.to_str().unwrap()).unwrap();
+    let resolved = CliExecutable::resolve_in(program.to_str().unwrap(), /*path*/ None).unwrap();
     assert_eq!(resolved.kind(), CliInvocationKind::Direct);
     assert_eq!(resolved.path(), program.as_path());
 }

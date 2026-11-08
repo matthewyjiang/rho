@@ -50,7 +50,11 @@ pub(super) fn claude_probe_available() -> bool {
     if cfg!(test) {
         return false;
     }
-    usage_probe::probe_supported() && crate::claude_runtime::executable::resolve().is_ok()
+    usage_probe::probe_supported()
+        && crate::claude_runtime::executable::resolve(
+            &crate::session_environment::Ambient::ThisProcess,
+        )
+        .is_ok()
 }
 
 pub(super) fn claude_provider_limits(

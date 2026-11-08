@@ -8,7 +8,7 @@ use std::{
 
 use rho_sdk::{
     ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, ApprovalSession,
-    CapabilityOperation, ProcessEnvironment, ProviderRequestUsageRecording, ToolHost, Workspace,
+    CapabilityOperation, ProviderRequestUsageRecording, ToolHost, Workspace,
 };
 
 use crate::{
@@ -30,7 +30,7 @@ use crate::{
     permission::{remember_allowed_workspace_writes, PermissionMode, SessionWriteLog},
     permission_classifier_handler::ClassifierApprovalHandler,
     session_environment::SessionEnvironment,
-    tools::workflow_tracker::WorkflowRunTracker,
+    tools::{host_io::HostIo, workflow_tracker::WorkflowRunTracker},
     workflow::{ResolvedNode, StoredRun, WorkflowOutcome},
 };
 
@@ -261,6 +261,9 @@ pub(crate) async fn execute_run(
         config_path,
         approval_mode,
         SubagentPool::Own,
+        // A run driven from the terminal, `rho workflow run` or `resume`,
+        // runs in this process's environment (#1659).
+        SessionEnvironment::default(),
     )?;
     let custom_providers = runtime.custom_providers.clone();
     rho_providers::provider::scope_custom_openai_compatible_providers(
@@ -311,6 +314,11 @@ pub(crate) struct BackgroundRun {
     pub(crate) pool: SubagentPool,
     /// Delivers the run's completion to the starting session.
     pub(crate) tracker: WorkflowRunTracker,
+    /// The starting session's environment (#1659), which the run's hooks,
+    /// agent nodes, and commands follow as its prompts replace it: each
+    /// node takes it as it is when the node starts. It is never saved, so a
+    /// run resumed later takes the environment of whatever resumes it.
+    pub(crate) environment: SessionEnvironment,
 }
 
 /// Starts a workflow run on a detached task and returns immediately.
@@ -330,6 +338,7 @@ pub(crate) async fn spawn_background_run(
         config_path,
         pool,
         tracker,
+        environment,
     } = background;
     let run_id = run.manifest.run_id;
     tracker.update_from_stored(&run);
@@ -343,6 +352,7 @@ pub(crate) async fn spawn_background_run(
         config_path,
         WorkflowApprovalMode::non_interactive(crate::usage::default_recording().await),
         nodes,
+        environment,
     ) {
         Ok(runtime) => runtime,
         Err(error) => {
@@ -431,13 +441,15 @@ struct WorkflowRuntime {
 
 impl WorkflowRuntime {
     /// The runtime that drives `run`, planned in `cwd`, its agent nodes
-    /// taking capacity from `nodes`.
+    /// taking capacity from `nodes` and its children their environment from
+    /// `environment`.
     fn build(
         run: &StoredRun,
         cwd: &std::path::Path,
         config_path: Option<std::path::PathBuf>,
         approval_mode: WorkflowApprovalMode,
         nodes: SubagentPool,
+        environment: SessionEnvironment,
     ) -> anyhow::Result<Self> {
         let cwd = cwd.canonicalize()?;
         let repository = ConfigRepository::new(config_path);
@@ -467,8 +479,7 @@ impl WorkflowRuntime {
             crate::credential_store::initialize_from_config(&mut config, &config_path)?;
         }
         let workspace = Workspace::new(&cwd)?.with_unrestricted_file_access();
-        // Workflows still run in this process's environment (#1659).
-        let hooks = crate::hooks::start_for_cwd(&cwd, SessionEnvironment::default());
+        let hooks = crate::hooks::start_for_cwd(&cwd, environment.clone());
         let hook_engine = hooks.as_ref().map(|pipeline| Arc::clone(pipeline.engine()));
         let command_classifier = approvals
             .classifier
@@ -486,8 +497,6 @@ impl WorkflowRuntime {
             approvals: command_approvals,
             hooks,
         });
-        let process_environment =
-            ProcessEnvironment::inherit_except(rho_providers::credential_env_vars());
         let agent_approvals = match approvals.classifier.clone() {
             Some(classifier) => UnattendedApprovals::ClassifierTemplate(classifier),
             None => UnattendedApprovals::Inherited(approvals.session),
@@ -502,7 +511,13 @@ impl WorkflowRuntime {
                 SubagentHostInputBridge::new(),
                 crate::app::subagent_messaging::SubagentNoticeBridge::new(),
             )
-            .with_approvals(agent_approvals),
+            .with_approvals(agent_approvals)
+            // Agent nodes follow the environment as in-process subagents
+            // do; the run's files stay local.
+            .with_host_io(HostIo {
+                environment: environment.clone(),
+                ..HostIo::default()
+            }),
         );
         let agent_executor: Arc<
             dyn WorkflowNodeExecutor<crate::app::workflow_runtime::AgentInvocation>,
@@ -510,7 +525,7 @@ impl WorkflowRuntime {
         let command_executor: Arc<
             dyn WorkflowNodeExecutor<crate::app::workflow_runtime::CommandInvocation>,
         > = Arc::new(WorkflowCommandExecutor::new(
-            process_environment,
+            environment.process(),
             Arc::clone(&hosts) as Arc<dyn CommandHostFactory>,
         ));
         let security = RuntimeSecurity {

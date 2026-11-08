@@ -1,21 +1,28 @@
 use std::{
     env,
+    ffi::OsStr,
     path::{Component, Path, PathBuf},
 };
 
-/// Finds a bare executable name on `PATH` without spawning it.
+/// Finds a bare executable name on this process's `PATH` without spawning
+/// it; see [`find_on`].
+pub(crate) fn find_on_path(program: &str) -> Option<PathBuf> {
+    find_on(program, &env::var_os("PATH")?)
+}
+
+/// Finds a bare executable name on `path`, a `PATH`-style list such as a
+/// daemon session's client's (#1659), without spawning it.
 ///
 /// On Windows, a bare name may omit only the `.exe` extension, matching
 /// `std::process::Command`. Shell-only `PATHEXT` entries such as `.cmd` and
 /// `.bat` must be named explicitly.
-pub(crate) fn find_on_path(program: &str) -> Option<PathBuf> {
+pub(crate) fn find_on(program: &str, path: &OsStr) -> Option<PathBuf> {
     let mut components = Path::new(program).components();
     if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
         return None;
     }
 
-    let paths = env::var_os("PATH")?;
-    find_in(program, env::split_paths(&paths))
+    find_in(program, env::split_paths(path))
 }
 
 fn find_in(program: &str, directories: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {

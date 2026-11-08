@@ -56,6 +56,7 @@ impl SessionRuntime {
         let ops = WorkflowOps::open(
             self.storage.cwd().to_path_buf(),
             Some(self.build.launch.config_path.clone()),
+            &self.build.host.host_io.environment.current(),
         )
         .map_err(failed)?;
         // The same ceiling the session's own workflow tool gives its runs.
@@ -98,6 +99,7 @@ impl SessionRuntime {
                 config_path: Some(self.build.launch.config_path.clone()),
                 pool: self.build.host.children.pool(),
                 tracker,
+                environment: self.build.host.host_io.environment.clone(),
             },
         )
         .await

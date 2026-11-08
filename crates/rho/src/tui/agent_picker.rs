@@ -468,7 +468,10 @@ pub(super) fn prompt_policy_parts(prompt: &PromptPolicy) -> (&'static str, &str)
 /// move the failure to the first advisor call.
 fn claude_code_rows_for(id: &str) -> ClaudeCodeRows {
     if internal_agent_accepts_claude_runtime(id)
-        && crate::claude_runtime::executable::resolve().is_ok()
+        && crate::claude_runtime::executable::resolve(
+            &crate::session_environment::Ambient::ThisProcess,
+        )
+        .is_ok()
     {
         ClaudeCodeRows::Offered
     } else {

@@ -13,9 +13,10 @@
 //! server's browser login is refused rather than left waiting for a
 //! terminal nobody watches.
 //!
-//! The session's processes, MCP servers, hooks, and OpenAPI sources run with
-//! its client's environment, not the daemon's (#1659): the opening client's,
-//! then each prompting client's (see [`session_environment`]).
+//! The session's processes, MCP servers, hooks, OpenAPI sources, CLI agents,
+//! and workflow runs use its client's environment, not the daemon's (#1659):
+//! the opening client's, then each prompting client's (see
+//! [`session_environment`]).
 
 use std::{
     path::{Path, PathBuf},

@@ -2,11 +2,13 @@
 
 use std::{
     collections::BTreeMap,
+    ffi::{OsStr, OsString},
     path::{Path, PathBuf},
 };
 
 use crate::{
     app::workflow_runtime::RecoveryDecision,
+    session_environment::Ambient,
     workflow::{
         normalize_workflow, validate_runtime_budgets, validate_workflow, verify_directory_identity,
         verify_executable_identity, CollectedSources, Digest, FrozenSchedulerSettings,
@@ -41,15 +43,26 @@ pub(crate) struct WorkflowOps {
     service: WorkflowService,
     workspace: PathBuf,
     config_path: Option<PathBuf>,
+    /// The `PATH` planning finds bare executables and `#!/usr/bin/env`
+    /// interpreters on, and rechecks find interpreters on again: that of
+    /// the environment runs start in (#1659).
+    executable_path: Option<OsString>,
 }
 
 impl WorkflowOps {
-    pub(crate) fn open(workspace: PathBuf, config_path: Option<PathBuf>) -> anyhow::Result<Self> {
+    /// Workflow operations in `workspace`, for runs that start in
+    /// `environment`.
+    pub(crate) fn open(
+        workspace: PathBuf,
+        config_path: Option<PathBuf>,
+        environment: &Ambient,
+    ) -> anyhow::Result<Self> {
         let workspace = workspace.canonicalize()?;
         Ok(Self {
             service: WorkflowService::new(WorkflowStore::new(&crate::paths::rho_dir()?)?),
             workspace,
             config_path,
+            executable_path: environment.path(),
         })
     }
 
@@ -84,7 +97,13 @@ impl WorkflowOps {
         limits: &PlanningLimits,
     ) -> anyhow::Result<PreparedPlan> {
         let sources = self.collect_local_sources(entry, limits).await?;
-        let host = DiscoveringPlanHost::new(&self.workspace, config, available_tools, entry)?;
+        let host = DiscoveringPlanHost::new(
+            &self.workspace,
+            config,
+            available_tools,
+            entry,
+            self.executable_path.clone(),
+        )?;
         self.prepare_from_sources(sources, inputs, &host, limits)
             .await
     }
@@ -179,7 +198,11 @@ impl WorkflowOps {
                 current_workspace
             );
         }
-        recheck_frozen_graph(&plan.graph, self.config_path.clone())
+        recheck_frozen_graph(
+            &plan.graph,
+            self.config_path.clone(),
+            self.executable_path.as_deref(),
+        )
     }
 
     pub(crate) fn recheck_run(&self, run: &StoredRun) -> anyhow::Result<()> {
@@ -199,7 +222,11 @@ impl WorkflowOps {
         {
             anyhow::bail!("workflow run consent does not match its copied frozen graph");
         }
-        recheck_frozen_graph(&run.graph, self.config_path.clone())
+        recheck_frozen_graph(
+            &run.graph,
+            self.config_path.clone(),
+            self.executable_path.as_deref(),
+        )
     }
 
     pub(crate) fn create_confirmed_run(&self, plan: &StoredPlan) -> anyhow::Result<StoredRun> {
@@ -330,6 +357,7 @@ pub(crate) fn workspace_identity(path: &Path) -> anyhow::Result<String> {
 fn recheck_frozen_graph(
     graph: &FrozenWorkflow,
     config_path: Option<PathBuf>,
+    executable_path: Option<&OsStr>,
 ) -> anyhow::Result<()> {
     validate_workflow(graph)?;
     validate_runtime_budgets(graph, &planner_worker::planning_limits()?)?;
@@ -337,7 +365,7 @@ fn recheck_frozen_graph(
     for resolved in graph.resolved_nodes.values() {
         let agent = match resolved {
             ResolvedNode::Command(command) => {
-                verify_executable_identity(&command.executable_identity)?;
+                verify_executable_identity(&command.executable_identity, executable_path)?;
                 verify_directory_identity(&command.cwd_identity)?;
                 continue;
             }
@@ -345,7 +373,7 @@ fn recheck_frozen_graph(
         };
         match (&agent.executable, &agent.executable_identity) {
             (Some(_), Some(identity)) => {
-                verify_executable_identity(identity)?;
+                verify_executable_identity(identity, executable_path)?;
             }
             (Some(path), None) => anyhow::bail!(
                 "frozen agent '{}' records executable '{}' without a frozen identity",

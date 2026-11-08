@@ -13,6 +13,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
     cli::{Cli, WorkflowCommand, WorkflowDocumentFormat, WorkflowRunFormat},
+    // `rho workflow` runs in the terminal's environment, this process's (#1659).
+    session_environment::Ambient,
     workflow::{
         CollectedSources, Diagnostic, InputName, PlanInventory, PlanInventoryItem,
         PlanningLimitValues, PlanningLimits, RunInventory, RunInventoryItem, SourceManifest,
@@ -145,7 +147,11 @@ fn run_list(
     limit: Option<NonZeroUsize>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let ops = WorkflowOps::open(std::env::current_dir()?, None)?;
+    let ops = WorkflowOps::open(
+        std::env::current_dir()?,
+        /*config_path*/ None,
+        &Ambient::ThisProcess,
+    )?;
     let include_plans = plans_only || !runs_only;
     let include_runs = runs_only || !plans_only;
     let plan_inventory = if include_plans {
@@ -331,7 +337,11 @@ async fn run_plan(
     cli: &Cli,
 ) -> anyhow::Result<()> {
     let prepared = prepare_plan(file, inputs, cli).await?;
-    let ops = WorkflowOps::open(std::env::current_dir()?, cli.config.clone())?;
+    let ops = WorkflowOps::open(
+        std::env::current_dir()?,
+        cli.config.clone(),
+        &Ambient::ThisProcess,
+    )?;
     let stored = ops.store_plan(&prepared)?;
     write_plan(&stored, output)
 }
@@ -366,7 +376,7 @@ async fn prepare_plan(
     let available_tools =
         host_capabilities(cli, &config, super::agent_binding::AgentRole::Workflow);
     let limits = planning_limits()?;
-    let ops = WorkflowOps::open(workspace, cli.config.clone())?;
+    let ops = WorkflowOps::open(workspace, cli.config.clone(), &Ambient::ThisProcess)?;
     ops.prepare_local(file, supplied_inputs, &config, &available_tools, &limits)
         .await
 }
@@ -407,7 +417,11 @@ async fn run_frozen_plan(
     if run_matrix_tui(crate::tui::workflow::MatrixWorkflowStart::Run, output).await? {
         return Ok(());
     }
-    let ops = WorkflowOps::open(std::env::current_dir()?, config_path.clone())?;
+    let ops = WorkflowOps::open(
+        std::env::current_dir()?,
+        config_path.clone(),
+        &Ambient::ThisProcess,
+    )?;
     let plan = ops.prepare_run(prefix)?;
     confirm_exact_plan(
         yes,
@@ -475,7 +489,11 @@ async fn run_resume(
     if run_matrix_tui(crate::tui::workflow::MatrixWorkflowStart::Resume, output).await? {
         return Ok(());
     }
-    let ops = WorkflowOps::open(std::env::current_dir()?, config_path.clone())?;
+    let ops = WorkflowOps::open(
+        std::env::current_dir()?,
+        config_path.clone(),
+        &Ambient::ThisProcess,
+    )?;
     let run = ops.load_run_prefix(prefix)?;
     let recovery = ops.prepare_resume(&run, recover_uncertain)?;
     confirm_exact_plan(
@@ -493,7 +511,7 @@ fn print_recovery_preview(
     output: Option<WorkflowRunFormat>,
     config_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let ops = WorkflowOps::open(std::env::current_dir()?, config_path)?;
+    let ops = WorkflowOps::open(std::env::current_dir()?, config_path, &Ambient::ThisProcess)?;
     let run_id = ops.load_run_prefix(prefix)?.manifest.run_id;
     let preview =
         crate::app::workflow_runtime::preview_recovery(&crate::paths::rho_dir()?, run_id)?;

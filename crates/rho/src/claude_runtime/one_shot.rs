@@ -13,6 +13,7 @@ use tokio::sync::watch;
 use crate::{
     acp_runtime::one_shot::{self, OneShotError, OneShotProgress},
     agent::{OneShotPhase, OneShotUpdate, PromptPolicy},
+    session_environment::Ambient,
 };
 
 use super::policy::{ClaudeAcpPolicy, ClaudeSessionShape, SessionPersistence};
@@ -28,6 +29,8 @@ pub(crate) struct ClaudeOneShotRequest {
     /// Bound reasoning; `None` inherits Claude's effort.
     pub(crate) reasoning: Option<rho_providers::reasoning::ReasoningLevel>,
     pub(crate) cwd: PathBuf,
+    /// The environment Claude runs in: the asking session's (#1659).
+    pub(crate) environment: Ambient,
     pub(crate) cancellation: CancellationToken,
 }
 
@@ -63,17 +66,20 @@ pub(crate) async fn run_one_shot(
         request.cwd,
     );
     let mut answer_so_far = String::new();
-    let answer =
-        one_shot::run_one_shot(policy, &request.input, &request.cancellation, |progress| {
-            match progress {
-                OneShotProgress::Thinking => publish(OneShotPhase::Thinking, &answer_so_far),
-                OneShotProgress::Answer(text) => {
-                    answer_so_far = text.to_owned();
-                    publish(OneShotPhase::Responding, text);
-                }
+    let answer = one_shot::run_one_shot(
+        policy,
+        &request.input,
+        &request.environment,
+        &request.cancellation,
+        |progress| match progress {
+            OneShotProgress::Thinking => publish(OneShotPhase::Thinking, &answer_so_far),
+            OneShotProgress::Answer(text) => {
+                answer_so_far = text.to_owned();
+                publish(OneShotPhase::Responding, text);
             }
-        })
-        .await?;
+        },
+    )
+    .await?;
     Ok(ClaudeOneShotResult {
         text: answer.text.trim().to_owned(),
         usage: ModelUsage {

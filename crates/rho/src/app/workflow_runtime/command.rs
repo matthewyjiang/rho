@@ -1,6 +1,7 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
-use rho_sdk::{ProcessEnvironment, ProcessExecution, ProcessOutputLimits, ToolHost, ToolHostCall};
+use rho_sdk::{ProcessExecution, ProcessOutputLimits, ToolHost, ToolHostCall};
+use rho_tools::SharedProcessEnvironment;
 
 use crate::{
     tools::process::{ExactProcessExit, WorkflowCommandTool},
@@ -28,13 +29,21 @@ pub(crate) trait CommandHostFactory: Send + Sync {
 }
 
 pub(crate) struct WorkflowCommandExecutor {
-    environment: ProcessEnvironment,
+    /// The environment each command starts with, as it is when its node
+    /// starts: a daemon session's follows its prompts (#1659).
+    environment: SharedProcessEnvironment,
     hosts: Arc<dyn CommandHostFactory>,
 }
 
 impl WorkflowCommandExecutor {
-    pub(crate) fn new(environment: ProcessEnvironment, hosts: Arc<dyn CommandHostFactory>) -> Self {
-        Self { environment, hosts }
+    pub(crate) fn new(
+        environment: impl Into<SharedProcessEnvironment>,
+        hosts: Arc<dyn CommandHostFactory>,
+    ) -> Self {
+        Self {
+            environment: environment.into(),
+            hosts,
+        }
     }
 }
 
@@ -90,7 +99,7 @@ impl WorkflowCommandExecutor {
         let execution = ProcessExecution::new(
             cwd,
             invocation.clone(),
-            self.environment.clone(),
+            self.environment.current(),
             ProcessOutputLimits::new(
                 max_output_bytes,
                 Some(Duration::from_secs(prepared.timeout_seconds)),

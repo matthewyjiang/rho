@@ -17,7 +17,10 @@ use super::{
     turn::classify_stop,
     ExtensionAnswer,
 };
-use crate::cli_runtime::{agent_event::render::usd_cost, StderrTail};
+use crate::{
+    cli_runtime::{agent_event::render::usd_cost, StderrTail},
+    session_environment::Ambient,
+};
 use agent_client_protocol::{
     schema::v1::{
         CancelNotification, ContentBlock, NewSessionRequest, RequestPermissionRequest,
@@ -53,18 +56,22 @@ pub(crate) enum OneShotError {
     Failed(String),
 }
 
-/// Spawn the policy's agent and ask it `prompt` once, in the plan's cwd.
+/// Spawn the policy's agent in `environment` and ask it `prompt` once, in
+/// the plan's cwd.
 ///
 /// There is no run directory, so the policy must be complete as constructed:
 /// `prepare` is not called.
 pub(crate) async fn run_one_shot<P: AcpAgentPolicy>(
     policy: P,
     prompt: &str,
+    environment: &Ambient,
     cancellation: &CancellationToken,
     on_progress: impl FnMut(OneShotProgress<'_>) + Send,
 ) -> Result<OneShotAnswer, OneShotError> {
     let program = policy.label().program;
-    let executable = policy.resolve_executable().map_err(OneShotError::Failed)?;
+    let executable = policy
+        .resolve_executable(environment)
+        .map_err(OneShotError::Failed)?;
     let plan = policy.spawn_plan(None).map_err(OneShotError::Failed)?;
     let cwd = plan.cwd.clone();
     let (mut child, stdin, stdout) = spawn_agent(
@@ -73,6 +80,7 @@ pub(crate) async fn run_one_shot<P: AcpAgentPolicy>(
         plan,
         Stdio::piped(),
         /*before_spawn*/ None,
+        environment,
     )
     .map_err(OneShotError::Failed)?;
     let stderr = tokio::spawn(StderrTail::capture(child.stderr()));

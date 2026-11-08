@@ -58,6 +58,9 @@ pub(crate) struct ClaudeSessionRequest {
     /// Whether the run's parent saves its session. The child of an unsaved
     /// one (`rho run --no-save`) leaves no resumable Claude session either.
     pub(crate) persistence: crate::session::SessionPersistence,
+    /// The environment the agent runs in: its session's when the run
+    /// launched (#1659).
+    pub(crate) environment: crate::session_environment::Ambient,
 }
 
 /// Run one Claude session to completion, writing the subagent contract.
@@ -79,6 +82,7 @@ pub(crate) async fn run_session(request: ClaudeSessionRequest) -> anyhow::Result
         rate_limit_state_path,
         overrides,
         persistence,
+        environment,
     } = request;
     let policy = ClaudeAcpPolicy::delegated(
         ClaudeSessionShape {
@@ -109,6 +113,7 @@ pub(crate) async fn run_session(request: ClaudeSessionRequest) -> anyhow::Result
         started_status,
         parent_messages,
         overrides,
+        environment,
     };
     acp_runtime::run_session(request, policy).await
 }

@@ -12,6 +12,7 @@ use std::time::Duration;
 use thiserror::Error;
 
 use crate::cli_runtime::{run_bounded_probe, CliExecutable, ProbeError};
+use crate::session_environment::Ambient;
 
 use super::executable::{self, AntigravityExecutableError, AGY_PROGRAM};
 
@@ -80,7 +81,7 @@ fn classify_models(success: bool, output: &str) -> ModelsProbe {
 
 /// Probe the `agy` on `PATH`.
 pub(crate) async fn query() -> Result<AntigravityStatus, AntigravityProbeError> {
-    let agy = executable::resolve()?;
+    let agy = executable::resolve(&Ambient::ThisProcess)?;
     let version = supported_version(&agy).await?;
     let models = run_bounded_probe(&agy, &["models"], PROBE_TIMEOUT).await?;
     let output = format!(
@@ -122,7 +123,7 @@ async fn supported_version(agy: &CliExecutable) -> Result<String, AntigravityPro
 /// Resolve `agy` and refuse releases without `agy acp`, before any login
 /// hands it the terminal.
 pub(crate) async fn login_preflight() -> Result<CliExecutable, AntigravityProbeError> {
-    let agy = executable::resolve()?;
+    let agy = executable::resolve(&Ambient::ThisProcess)?;
     supported_version(&agy).await?;
     Ok(agy)
 }
