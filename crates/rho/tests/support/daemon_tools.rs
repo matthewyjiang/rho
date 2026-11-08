@@ -390,20 +390,25 @@ WORKFLOW = define(inputs = {}, build = build)
     sandbox.set_permission_mode("bypass");
     let (_daemon, client) = sandbox.start_daemon("tool-call").await;
     let session = sandbox.new_session(&client).await;
-    let calls = [
-        (
-            "cli.txt",
-            "cli-1659",
-            json!({"id": "delegate", "name": "agent", "arguments": {"agent_id": "claude-env", "prompt": "Work."}}),
-        ),
-        (
+    let mut calls = vec![(
+        "cli.txt",
+        "cli-1659",
+        json!({"id": "delegate", "name": "agent", "arguments": {"agent_id": "claude-env", "prompt": "Work."}}),
+        "key-1659",
+    )];
+    // Frozen workflow commands launch only where the OS adapter can start
+    // them from verified handles (`tools/process/exact.rs`).
+    if cfg!(any(target_os = "linux", target_os = "android")) {
+        calls.push((
             "command.txt",
             "workflow-1659",
             json!({"id": "start", "name": "workflow", "arguments": {"action": "start", "file": "wf/main.star"}}),
-        ),
-    ];
+            "unset",
+        ));
+    }
     let mut seen = Vec::new();
-    for (file, probe, call) in calls {
+    let mut expected = Vec::new();
+    for (file, probe, call, key) in calls {
         let environment = client_environment_with_bin(
             &sandbox,
             &bin,
@@ -419,16 +424,8 @@ WORKFLOW = define(inputs = {}, build = build)
                 .poll_until(file, async || std::fs::read_to_string(root.join(file)).ok())
                 .await,
         );
+        expected.push(format!("{}|{probe}|{key}\n", bin.display()));
     }
-    let bin = bin.display();
 
-    assert_eq!(
-        seen,
-        [
-            format!("{bin}|cli-1659|key-1659\n"),
-            format!("{bin}|workflow-1659|unset\n"),
-        ],
-        "log:\n{}",
-        sandbox.daemon_log()
-    );
+    assert_eq!(seen, expected, "log:\n{}", sandbox.daemon_log());
 }
