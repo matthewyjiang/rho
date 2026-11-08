@@ -116,7 +116,11 @@ impl App {
     }
 
     /// Refresh in idle and running loops. Leave the reader's scroll position alone.
+    /// A daemon session's checklist arrives as its plan events instead.
     pub(super) fn refresh_todo_list(&mut self, agent: &InteractiveRuntime) -> bool {
+        if self.info.session.daemon.is_some() {
+            return false;
+        }
         self.set_todo_list(agent.todo_list())
     }
 

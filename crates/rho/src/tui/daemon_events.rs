@@ -73,8 +73,8 @@ pub(super) enum DaemonView {
 pub(super) struct DaemonEvents {
     /// The message the last text chunk extended, and its kind.
     open_message: Option<(StreamKind, MessageId)>,
-    /// What the turn's last agent message said so far, which its answer
-    /// completes when chunks went missing.
+    /// What the agent said so far since the last call or user message,
+    /// which the turn's answer completes when chunks went missing.
     reply: String,
     /// Each open call's last running card.
     running: HashMap<WireCallId, ToolCard>,
@@ -172,6 +172,9 @@ impl DaemonEvents {
     }
 
     fn tool_call(&mut self, update: ToolCallUpdate) -> Option<DaemonView> {
+        // The step's text ends at its calls, so an answer completes only
+        // the reply of the step after them.
+        self.end_messages();
         let ToolCallUpdate {
             id,
             status,

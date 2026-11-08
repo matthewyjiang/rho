@@ -35,6 +35,14 @@ pub(crate) enum DaemonSession {}
 
 #[cfg(not(unix))]
 impl DaemonSession {
+    pub(crate) fn saved_id(&self) -> Option<&str> {
+        match *self {}
+    }
+
+    pub(crate) fn workspace(&self) -> &std::path::Path {
+        match *self {}
+    }
+
     async fn next_views(&mut self) -> Vec<DaemonView> {
         match *self {}
     }

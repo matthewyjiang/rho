@@ -152,6 +152,25 @@ fn session_events_map_to_transcript_views() {
             ],
         ),
         (
+            "the answer completes the reply after the last call, not before",
+            vec![
+                reply("m1", "Let me read it."),
+                tool(
+                    ToolStatus::Completed,
+                    Some(Presentation::Card(read_card(ToolCardStatus::Ok))),
+                ),
+                answered("Done."),
+            ],
+            vec![
+                text(StreamKind::Assistant, "Let me read it.", true),
+                DaemonView::ToolFinished {
+                    call: call(),
+                    presentation: Presentation::Card(read_card(ToolCardStatus::Ok)),
+                },
+                text(StreamKind::Assistant, "Done.", true),
+            ],
+        ),
+        (
             "a reset replay forgets the open message and running cards",
             vec![
                 reply("m1", "old"),
