@@ -78,10 +78,6 @@ impl Sessions {
             }
             Changing(Arc::clone(&session))
         };
-        // Read before the runtime is locked, and off the async workers; a
-        // credential write after this read refreshes the options again once
-        // this releases the runtime (see `Sessions::refresh_all_options`).
-        let auths = available_auths().await;
         // With no turn under way and none starting, only a turn that just
         // recorded its end or the daemon's stop holds the runtime, each
         // briefly.
@@ -90,6 +86,11 @@ impl Sessions {
         let Some(runtime) = runtime.as_mut() else {
             return Err(stopping());
         };
+        // Read under the runtime's lock, which a credential write's refresh
+        // waits for (see `Sessions::refresh_all_options`): a refresh queued
+        // before this ran first, and one queued after runs once this is
+        // done, so the options this publishes are never older than one.
+        let auths = available_auths().await;
         let applied = change
             .apply(runtime, &session.config, &auths)
             .await
