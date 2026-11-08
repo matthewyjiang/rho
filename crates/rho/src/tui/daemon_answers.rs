@@ -76,9 +76,13 @@ enum Reaction {
 }
 
 impl App {
-    /// Puts `request` to the person once no other request's prompt is open.
+    /// Puts `request` to the person once no older request's prompt is open.
+    /// Requests wait in id order, which is the order the daemon opened them
+    /// in, so one shown again after a failed answer keeps its place.
     pub(super) async fn ask_daemon_input(&mut self, request: InputRequest) {
-        self.daemon_answers.waiting.push_back(request);
+        let waiting = &mut self.daemon_answers.waiting;
+        let place = waiting.partition_point(|open| open.id < request.id);
+        waiting.insert(place, request);
         self.show_next_daemon_input().await;
     }
 
