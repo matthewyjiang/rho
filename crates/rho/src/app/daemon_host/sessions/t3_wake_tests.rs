@@ -351,9 +351,10 @@ async fn watcher_that_ended_unsignalled_is_replaced_or_released() {
 
 // Covers: a daemon stop or a cancel that interrupts a prompt's end gives up
 // on a host that never answers delegate_task, instead of holding the turn,
-// and leaves no signal or lock behind. A hung host call blocks the turn's
-// end, and so the session's next prompt and the daemon's stop.
-// Owner: daemon T3 wake watcher.
+// and keeps holding the lock of the watcher T3 may have started anyway. A
+// hung host call blocks the turn's end, and so the session's next prompt and
+// the daemon's stop; a released lock makes a started watcher report that
+// its parent ended. Owner: daemon T3 wake watcher.
 #[tokio::test]
 async fn interrupted_arming_gives_up_on_a_hung_host() {
     let mut fixture = Fixture::with_delegate(Reply::Never);
@@ -365,14 +366,47 @@ async fn interrupted_arming_gives_up_on_a_hung_host() {
         .await
         .expect("an interrupted host call gives up");
 
-    let left: Vec<_> = std::fs::read_dir(fixture.dir.path())
+    let locks: Vec<_> = std::fs::read_dir(fixture.dir.path())
         .unwrap()
-        .map(|entry| entry.unwrap().file_name())
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    let held: Vec<_> = locks
+        .iter()
+        .map(|path| {
+            (
+                path.extension() == Some("lock".as_ref()),
+                !signal::released(path),
+            )
+        })
+        .collect();
+    let ended: Vec<_> = fixture
+        .wake
+        .ended
+        .iter()
+        .map(|ended| ended.task_id.clone())
         .collect();
     assert_eq!(
-        (armed.is_err(), fixture.wake.armed.is_none(), left),
-        (true, true, Vec::new())
+        (armed.is_err(), fixture.wake.armed.is_none(), held, ended),
+        (true, true, vec![(true, true)], vec![None])
     );
+}
+
+// Covers: T3's finish notice drops only the watcher it names, so `task-1`
+// does not match inside `task-12`. A loose match drops a live watcher and
+// releases its lock, and the watcher then reports that its parent ended.
+// Owner: daemon T3 wake watcher.
+#[test]
+fn finish_notice_names_its_task_whole() {
+    for (text, expected) in [
+        ("task task-1 finished", true),
+        ("Task \"task-1\" completed.", true),
+        ("task-1", true),
+        ("task task-12 finished", false),
+        ("task subtask-1 finished", false),
+        ("no task here", false),
+    ] {
+        assert_eq!(names_task(text, "task-1"), expected, "{text}");
+    }
 }
 
 /// What a prompt's leading text asks of the wake watchers.

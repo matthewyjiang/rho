@@ -293,7 +293,7 @@ fn unusable(dir: &WakeDir, path: &Path) -> bool {
 }
 
 /// Whether nobody holds the lock at `path`, or it is gone.
-fn released(path: &Path) -> bool {
+pub(super) fn released(path: &Path) -> bool {
     match File::open(path) {
         Ok(lock) => lock.try_lock().is_ok(),
         Err(error) => error.kind() == io::ErrorKind::NotFound,

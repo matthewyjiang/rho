@@ -71,11 +71,12 @@ pub(super) async fn prompt_started(session: &LoadedSession, input: &UserInput) -
     }
 }
 
-/// Call as `session`'s turn on `runtime` ended, before its end is told: arms a watcher while background work runs on, unless the
-/// daemon is `stopping`, which takes the session's work down with it. The
-/// daemon's stop, or a cancel sent meanwhile, interrupts the host calls.
-/// Clients hear when arming failed, a cancel's interruption included, so
-/// results never wait unannounced for the next message.
+/// Call as `session`'s turn on `runtime` ended, before its end is told:
+/// arms a watcher while background work runs on, unless the daemon is
+/// `stopping`, which takes the session's work down with it. The daemon's
+/// stop, or a cancel sent meanwhile, interrupts the host calls. Clients
+/// hear when arming failed, a cancel's interruption included, so results
+/// never wait unannounced for the next message.
 pub(super) async fn prompt_ended(
     session: &LoadedSession,
     runtime: &SessionRuntime,

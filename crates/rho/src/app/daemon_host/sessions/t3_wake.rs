@@ -80,7 +80,9 @@ struct Watcher {
 /// [`ENDED_WATCHERS_KEPT`] later watchers ended. Releasing it earlier would
 /// make the watcher report that this parent ended.
 struct EndedWatcher {
-    task_id: String,
+    /// `None` for a watcher whose delegation was interrupted: T3 may have
+    /// started it without Rho learning its id.
+    task_id: Option<String>,
     _lock: std::fs::File,
 }
 
@@ -249,7 +251,7 @@ impl T3Wake {
     /// this prompt reports as finished, is dropped: T3 already holds its
     /// wake.
     pub(super) fn prompt_started(&mut self, text: Option<&str>) -> PromptOrigin {
-        let mentions = |id: &str| text.is_some_and(|text| text.contains(id));
+        let mentions = |id: &str| text.is_some_and(|text| names_task(text, id));
         if let Some(watcher) = &mut self.armed {
             let fired = watcher.notifier.take().is_some_and(Notifier::quiet);
             if fired || mentions(&watcher.task_id) {
@@ -259,13 +261,14 @@ impl T3Wake {
                     watcher.signal.remove();
                 }
                 self.end(EndedWatcher {
-                    task_id: watcher.task_id,
+                    task_id: Some(watcher.task_id),
                     _lock: watcher.lock,
                 });
             }
         }
         let before = self.ended.len();
-        self.ended.retain(|ended| !mentions(&ended.task_id));
+        self.ended
+            .retain(|ended| !ended.task_id.as_deref().is_some_and(mentions));
         if self.ended.len() < before {
             PromptOrigin::WatcherNotice
         } else {
@@ -294,7 +297,21 @@ impl T3Wake {
         }
         if self.armed.is_none() {
             let labels = background.live_labels();
-            self.armed = Some(arm(tools, &self.dir, &labels, interrupt).await?);
+            match arm(tools, &self.dir, &labels, interrupt).await {
+                Ok(watcher) => self.armed = Some(watcher),
+                Err(ArmFailure {
+                    error,
+                    maybe_started,
+                }) => {
+                    if let Some(lock) = maybe_started {
+                        self.end(EndedWatcher {
+                            task_id: None,
+                            _lock: lock,
+                        });
+                    }
+                    return Err(error);
+                }
+            }
         }
         let watcher = self.armed.as_mut().expect("armed watcher");
         let notifier = Notifier::spawn(background, watcher.signal.clone());
@@ -310,7 +327,7 @@ impl T3Wake {
         if self.ended.len() == ENDED_WATCHERS_KEPT {
             let oldest = self.ended.remove(0);
             tracing::info!(
-                task_id = %oldest.task_id,
+                task_id = ?oldest.task_id,
                 limit = ENDED_WATCHERS_KEPT,
                 "releasing the oldest ended T3 wake watcher past ENDED_WATCHERS_KEPT"
             );
@@ -347,15 +364,33 @@ pub(super) fn wake_command(
     )
 }
 
+/// Why [`arm`] failed.
+struct ArmFailure {
+    error: anyhow::Error,
+    /// The lock of a watcher whose delegation was interrupted. T3 may have
+    /// started it anyway, and a released lock would make it report that its
+    /// parent ended, so the parent keeps holding it.
+    maybe_started: Option<std::fs::File>,
+}
+
+impl From<anyhow::Error> for ArmFailure {
+    fn from(error: anyhow::Error) -> Self {
+        Self {
+            error,
+            maybe_started: None,
+        }
+    }
+}
+
 /// Delegates a watcher titled after the running work, its signal in `dir`.
 async fn arm(
     tools: SessionTools<'_>,
     dir: &WakeDir,
     labels: &[String],
     interrupt: &CancellationToken,
-) -> anyhow::Result<Watcher> {
+) -> Result<Watcher, ArmFailure> {
     let host = host_tasks(tools)?;
-    let (signal, lock) = WakeSignal::create(dir)?;
+    let (signal, lock) = WakeSignal::create(dir).map_err(anyhow::Error::from)?;
     let task = format!("{WAKE_COMMAND} {}", signal.token());
     let title = watcher_title(labels);
     let delegated = host_call(interrupt, |context| {
@@ -365,8 +400,15 @@ async fn arm(
     let task_id = match delegated {
         Ok(task) => task.task_id,
         Err(error) => {
+            let error = anyhow::Error::msg(error.message().to_owned());
+            if interrupt.is_cancelled() {
+                return Err(ArmFailure {
+                    error,
+                    maybe_started: Some(lock),
+                });
+            }
             signal.cleanup();
-            return Err(anyhow::Error::msg(error.message().to_owned()));
+            return Err(error.into());
         }
     };
     Ok(Watcher {
@@ -408,9 +450,20 @@ async fn retire(
         tracing::warn!(%error, task_id = %watcher.task_id, "could not cancel T3 wake watcher");
     }
     EndedWatcher {
-        task_id: watcher.task_id,
+        task_id: Some(watcher.task_id),
         _lock: watcher.lock,
     }
+}
+
+/// Whether `text` names task `id` whole, so `task-1` is not found inside
+/// `task-12`.
+fn names_task(text: &str, id: &str) -> bool {
+    let id_char = |c: char| c.is_alphanumeric() || c == '-' || c == '_';
+    !id.is_empty()
+        && text.match_indices(id).any(|(at, _)| {
+            !text[..at].chars().next_back().is_some_and(id_char)
+                && !text[at + id.len()..].chars().next().is_some_and(id_char)
+        })
 }
 
 /// The host's task tools, bound from the session's `t3-code` MCP server.
@@ -441,13 +494,15 @@ where
         interrupt.clone(),
         progress,
     ));
+    // A call that already answered wins over the interrupt: T3 started
+    // what it answered for.
     tokio::select! {
         biased;
+        result = call => result,
         () = interrupt.cancelled() => Err(ToolError::new(
             ToolErrorKind::Cancelled,
             "interrupted: the turn was cancelled or the daemon is stopping",
         )),
-        result = call => result,
     }
 }
 
