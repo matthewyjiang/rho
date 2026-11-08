@@ -107,13 +107,13 @@ impl TurnView for PlanView {
 
     fn report_plan(
         &mut self,
-        _runtime: &SessionRuntime,
+        runtime: &SessionRuntime,
         _process_config: &Config,
         report: PlanReport,
     ) -> impl Future<Output = ()> + Send {
         self.hosted.push(match report {
-            PlanReport::Kept { notice: _ } => Hosted::Kept,
-            PlanReport::Switched { mode, notice: _ } => Hosted::Switched(mode),
+            PlanReport::Kept => Hosted::Kept,
+            PlanReport::Switched => Hosted::Switched(runtime.permission_mode()),
         });
         std::future::ready(())
     }

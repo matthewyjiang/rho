@@ -1,26 +1,19 @@
 //! Background delivery at SDK input boundaries for hosts without an interactive
-//! inbox (ACP and `rho run`). Finished subagents, workflows, and background
-//! processes reach the model at the next boundary. Natural completion waits for
-//! every undelivered child of the session, whichever prompt started it, and for
-//! workflows and processes started during this prompt, standing in for the
-//! TUI's idle wake. Workflows and processes from an earlier prompt, such as an
-//! ACP `/workflow:<name>` start, only deliver; a later prompt does not wait for
+//! inbox (the daemon and `rho run`). Finished subagents, workflows, and
+//! background processes reach the model at the next boundary. Natural
+//! completion waits for every undelivered child of the session, whichever
+//! prompt started it, and for workflows and processes started during this
+//! prompt, standing in for the TUI's idle wake: nothing wakes an idle session
+//! yet. Workflows and processes from an earlier prompt, such as a
+//! `/workflow:<name>` start, only deliver; a later prompt does not wait for
 //! them. The wait stays inside the original run, so cancellation and the SDK
-//! step budget still govern parent continuations.
-//! Host-orchestrated ACP children are not registered here: they outlive the
-//! parent prompt and complete through the host's next prompt instead. Hosts
-//! that show a transcript take [`Delegation::offered_displays`] to
-//! render what the model was given.
+//! step budget still govern parent continuations. Hosts that show a
+//! transcript take [`Delegation::offered_displays`] to render what the model
+//! was given.
 //!
-//! In-process ACP children also outlive a cancelled prompt, so the ACP host
-//! keeps their notice binding between prompts with
-//! [`Delegation::hold_notices`]. `rho run` drops it with the run.
-//!
-//! A host that can wake its idle session itself sets
-//! [`BackgroundWait::HostWakes`]: running workflows and processes then never
-//! hold natural completion, and finished ones still deliver at every
-//! boundary. T3 Code's in-process ACP host did; the daemon's T3 wake-ups
-//! arrive with #1670 A3.
+//! Children also outlive a cancelled prompt, so the session keeps their
+//! notice binding between prompts with [`Delegation::hold_notices`]. `rho run`
+//! drops it with the run.
 
 use std::time::Instant;
 
@@ -51,18 +44,8 @@ pub(super) struct Delegation {
     /// Workflows and processes started from here on hold natural completion;
     /// older ones only deliver.
     prompt_started: Instant,
-    background_wait: BackgroundWait,
     /// Display rows for each delivery offered to the runtime, when a host asked.
     displays: Option<mpsc::UnboundedSender<(UserInput, DisplayTranscript)>>,
-}
-
-/// Whether running workflows and processes hold a prompt's natural completion.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BackgroundWait {
-    /// The prompt waits for the work it started, standing in for an idle wake.
-    HoldPrompt,
-    /// The host wakes the idle session when the work finishes.
-    HostWakes,
 }
 
 /// The parent's subagent notice binding for one prompt.
@@ -156,13 +139,8 @@ impl Delegation {
             processes: sources.processes.cloned(),
             workflows,
             prompt_started: Instant::now(),
-            background_wait: BackgroundWait::HoldPrompt,
             displays: None,
         })
-    }
-
-    pub(super) fn set_background_wait(&mut self, wait: BackgroundWait) {
-        self.background_wait = wait;
     }
 
     /// Display rows for every delivery offered from now on. The host claims
@@ -335,16 +313,13 @@ impl Delegation {
                 .processes
                 .as_ref()
                 .is_some_and(ProcessManager::has_pending_notification);
-        let running = match self.background_wait {
-            BackgroundWait::HoldPrompt => {
-                self.workflows
-                    .has_live_started_since(&self.session_id, self.prompt_started)
-                    || self.processes.as_ref().is_some_and(|processes| {
-                        processes.has_live_started_since(self.prompt_started)
-                    })
-            }
-            BackgroundWait::HostWakes => false,
-        };
+        let running = self
+            .workflows
+            .has_live_started_since(&self.session_id, self.prompt_started)
+            || self
+                .processes
+                .as_ref()
+                .is_some_and(|processes| processes.has_live_started_since(self.prompt_started));
         subagents || finished || running
     }
 }

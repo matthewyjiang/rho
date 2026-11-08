@@ -7,8 +7,7 @@ use std::{
 use rho_sdk::{hooks::HookHostLabels, provider::ModelProvider, SessionOptions};
 
 use super::{
-    ensure_auto_classifier_model, ApprovalPolicy, BackgroundWait, LeftOut, SessionPermission,
-    UnattendedApprovals,
+    ensure_auto_classifier_model, ApprovalPolicy, LeftOut, SessionPermission, UnattendedApprovals,
 };
 use crate::{
     added_dirs::AddedDirs,
@@ -62,17 +61,16 @@ pub(crate) struct SessionLaunch {
     pub(crate) prompt_suffix: Option<&'static str>,
 }
 
-/// What the session's host does for it: whether it asks a person, who runs
-/// its children and answers its approvals, and what it serves its tools.
+/// What the session's host does for it: whether it asks a person, where its
+/// children take capacity, who answers its approvals, and what it serves its
+/// tools.
 #[derive(Clone)]
 pub(crate) struct HostCapabilities {
     /// Whether the host can put questions to a person.
     pub(crate) questions: QuestionSupport,
-    /// Who runs the `agent` tool's children.
-    pub(crate) children: ChildAgents,
-    /// Whether background work that outlives a prompt holds it open, or the
-    /// host wakes the idle session when the work finishes.
-    pub(crate) background_wait: BackgroundWait,
+    /// Where the session's in-process agent runs take capacity: its
+    /// subagents, and its workflow runs' agent nodes.
+    pub(crate) subagent_pool: SubagentPool,
     /// What the session's host does for its tools, shared by every tool set
     /// the session builds.
     pub(crate) host_io: HostIo,
@@ -88,13 +86,11 @@ pub(crate) struct HostCapabilities {
 impl HostCapabilities {
     /// A host nobody watches live (`rho run`, Rho subagents, workflow
     /// nodes): it asks nobody, the session decides its approvals with
-    /// `approvals`, its children run in this process, and background work
-    /// holds the prompt open, since nothing wakes the session after it.
+    /// `approvals`, and its children take capacity from its own pool.
     pub(crate) fn unattended(approvals: UnattendedApprovals) -> Self {
         Self {
             questions: QuestionSupport::Unavailable,
-            children: ChildAgents::InProcess(SubagentPool::Own),
-            background_wait: BackgroundWait::HoldPrompt,
+            subagent_pool: SubagentPool::Own,
             host_io: HostIo::default(),
             mcp_authorization: McpAuthorizationMode::from_process(),
             approvals: ApprovalPolicy::Unattended(approvals),
@@ -128,8 +124,6 @@ pub(crate) enum SessionRole {
     /// A person's session in the interactive TUI.
     #[expect(dead_code, reason = "the TUI builds on the runtime in a later PR")]
     Interactive,
-    /// An ACP client's session, such as Zed's or T3 Code's.
-    Acp,
     /// A session the rho daemon hosts, which its clients prompt.
     Daemon,
     /// `rho run`'s session.
@@ -153,7 +147,7 @@ impl SessionRole {
     /// The usage purpose the session's requests are recorded under.
     pub(super) fn usage_purpose(&self) -> &'static str {
         match self {
-            Self::Interactive | Self::Acp | Self::Daemon | Self::Run => "agent",
+            Self::Interactive | Self::Daemon | Self::Run => "agent",
             Self::Subagent { .. } | Self::WorkflowNode => "subagent",
         }
     }
@@ -163,7 +157,7 @@ impl SessionRole {
     pub(crate) fn parent(&self) -> Option<&rho_sdk::SessionId> {
         match self {
             Self::Subagent { parent, .. } => Some(parent),
-            Self::Interactive | Self::Acp | Self::Daemon | Self::Run | Self::WorkflowNode => None,
+            Self::Interactive | Self::Daemon | Self::Run | Self::WorkflowNode => None,
         }
     }
 
@@ -175,7 +169,6 @@ impl SessionRole {
     pub(super) fn provenance(&self) -> SessionProvenance {
         let (origin, parent) = match self {
             Self::Interactive => (SessionOrigin::Interactive, None),
-            Self::Acp => (SessionOrigin::Acp, None),
             Self::Daemon => (SessionOrigin::Daemon, None),
             Self::Run => (SessionOrigin::Run, None),
             Self::Subagent {
@@ -203,30 +196,6 @@ pub(crate) enum QuestionSupport {
     Unavailable,
 }
 
-/// Who runs the children the `agent` tool starts.
-#[derive(Clone)]
-pub(crate) enum ChildAgents {
-    /// Subagents run in this process, as do the agent nodes of the session's
-    /// workflow runs, taking capacity and reporting as the host says.
-    InProcess(SubagentPool),
-    /// The host runs them as its own threads (T3 Code's `--t3code`), so its
-    /// UI owns them.
-    HostThreads,
-}
-
-impl ChildAgents {
-    /// The pool the session's in-process agent runs take capacity from:
-    /// its subagents', and its workflow runs' agent nodes, which run in
-    /// process on the session's own pool even when the host's threads run
-    /// its subagents.
-    pub(crate) fn pool(&self) -> SubagentPool {
-        match self {
-            Self::InProcess(pool) => pool.clone(),
-            Self::HostThreads => SubagentPool::Own,
-        }
-    }
-}
-
 /// Builds a session as `build` says, with the permission state of
 /// `config`'s mode, for opening a session (see `open.rs`) or an agent rebind.
 /// `config` is the session's config: the process config plus the host's MCP
@@ -244,7 +213,6 @@ pub(super) async fn build_session(
     // A session request can follow a terminal login another process saved,
     // even when startup itself succeeded without credentials.
     AppCredentialStore::reread_external_logins();
-    let mut host_tools: anyhow::Result<()> = Ok(());
     // A host that cannot ask a person gets neither the questionnaire tool nor
     // the MCP capability, which Rho would then have to decline every time.
     let questions = match build.host.questions {
@@ -284,20 +252,10 @@ pub(super) async fn build_session(
         hook_host_labels: hook_labels.clone(),
         added_dirs,
         host_io: build.host.host_io.clone(),
-        subagent_pool: build.host.children.pool(),
+        subagent_pool: build.host.subagent_pool.clone(),
         extend_tools: |mut tools: AppToolSet| {
             if let Some(poster) = &build.host.parent_notices {
                 tools.add_bundle(crate::tools::message_parent_bundle(Arc::clone(poster)));
-            }
-            match build.host.children {
-                ChildAgents::InProcess(_) => {}
-                ChildAgents::HostThreads => {
-                    host_tools = crate::tools::agent::install_host_delegation(
-                        &mut tools,
-                        workspace,
-                        config.max_output_bytes,
-                    );
-                }
             }
             with_plan_exit(tools, build, agent, config)
         },
@@ -306,10 +264,6 @@ pub(super) async fn build_session(
         session_options,
     })
     .await?;
-    if let Err(error) = host_tools {
-        built.teardown().await;
-        return Err(error);
-    }
     let permission = SessionPermission {
         mode: config.permission_mode,
         writes: session_writes,

@@ -132,7 +132,6 @@ struct Shared {
 /// One session open on this host.
 pub(super) struct Live {
     pub(super) id: SessionId,
-    pub(super) acp_id: AcpSessionId,
     pub(super) inbound: mpsc::UnboundedSender<Inbound>,
     shared: Arc<Mutex<Shared>>,
     job: watch::Receiver<JobState>,
@@ -206,14 +205,17 @@ impl Adapter {
             .sessions
             .get(&id.0)
             .ok_or_else(|| AcpError::resource_not_found(Some(id.0.to_string())))?;
-        let _attaching = live.attaching.lock().await;
-        let attachment = lock(&live.shared).attachment;
-        match attachment {
-            Attachment::Attached => {}
-            Attachment::Stale => self.reattach(&live).await?,
-            Attachment::Deleted => {
-                self.sessions.remove(&id.0);
-                return Err(AcpError::resource_not_found(Some(id.0.to_string())));
+        {
+            // Held across the reattach, so concurrent requests reattach once.
+            let _attaching = live.attaching.lock().await;
+            let attachment = lock(&live.shared).attachment;
+            match attachment {
+                Attachment::Attached => {}
+                Attachment::Stale => self.reattach(&live).await?,
+                Attachment::Deleted => {
+                    self.sessions.remove(&id.0);
+                    return Err(AcpError::resource_not_found(Some(id.0.to_string())));
+                }
             }
         }
         Ok(live)
@@ -348,7 +350,6 @@ impl Adapter {
         let _ = inbound.send(Inbound::Session(Control::Attached(attached)));
         let live = Arc::new(Live {
             id,
-            acp_id: acp_id.clone(),
             inbound,
             shared,
             job: job_receiver,

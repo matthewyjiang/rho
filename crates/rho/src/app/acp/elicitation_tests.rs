@@ -343,8 +343,6 @@ fn host_responses_become_answers_or_refusals() {
             })),
             Ok(answered),
         ),
-            Err(Refusal::Declined),
-        ),
         (
             "decline",
             FormDialect::Standard,

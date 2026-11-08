@@ -24,6 +24,7 @@ mod v2;
 use std::{collections::BTreeSet, future::Future, pin::Pin, sync::Arc};
 
 use agent_client_protocol::{
+    schema::ProtocolVersion,
     schema::v1::{
         AgentAuthCapabilities, AgentCapabilities, AuthenticateRequest, CancelNotification,
         CloseSessionRequest, CompleteElicitationNotification, CreateElicitationRequest,
@@ -31,7 +32,7 @@ use agent_client_protocol::{
         InitializeResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest,
         LoadSessionResponse, LogoutCapabilities, LogoutRequest, McpCapabilities,
         NewSessionRequest, NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse,
-        ProtocolVersion, RequestPermissionRequest, RequestPermissionResponse,
+        RequestPermissionRequest, RequestPermissionResponse,
         ResumeSessionRequest, ResumeSessionResponse, SessionAdditionalDirectoriesCapabilities,
         SessionCapabilities, SessionCloseCapabilities, SessionDeleteCapabilities,
         SessionListCapabilities, SessionNotification, SessionResumeCapabilities,

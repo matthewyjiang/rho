@@ -209,7 +209,6 @@ pub(crate) enum KeyCheck {
 pub(crate) struct ApiKeyAuth {
     auth: &'static str,
     descriptor: &'static ProviderDescriptor,
-    entry_label: &'static str,
 }
 
 impl ApiKeyAuth {
@@ -219,7 +218,7 @@ impl ApiKeyAuth {
         let Some((descriptor, mode)) = provider::resolve_auth_mode(auth) else {
             return Err(CredentialWriteError::UnknownAuth { auth: auth.into() });
         };
-        let ProviderAuthKind::ApiKey { entry_label, .. } = mode.auth_kind else {
+        let ProviderAuthKind::ApiKey { .. } = mode.auth_kind else {
             return Err(CredentialWriteError::NotAnApiKey { auth: auth.into() });
         };
         // The variable wins over a saved key, so saving one would change
@@ -228,21 +227,11 @@ impl ApiKeyAuth {
         Ok(Self {
             auth: mode.id,
             descriptor,
-            entry_label,
         })
     }
 
     pub(crate) fn auth(&self) -> &'static str {
         self.auth
-    }
-
-    pub(crate) fn descriptor(&self) -> &'static ProviderDescriptor {
-        self.descriptor
-    }
-
-    /// What the provider calls the key, such as "OpenAI API key".
-    pub(crate) fn entry_label(&self) -> &'static str {
-        self.entry_label
     }
 
     /// Asks the models endpoint `config` resolves for the provider about

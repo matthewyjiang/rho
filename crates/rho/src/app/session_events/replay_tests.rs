@@ -20,7 +20,7 @@ use crate::{
             test_support::{canonical_messages, closed, opened, origin, shell_call, text, updated},
             CallIds, LiveEvents,
         },
-        session_runtime::{InsertedMessage, RunEnd, SessionEvent, SessionTools},
+        session_runtime::{InsertedMessage, SessionEvent, SessionTools},
     },
     config::Config,
     diagnostics::RuntimeDiagnostics,
@@ -183,9 +183,7 @@ fn live_and_replayed_turns_agree() {
         step(),
         delta("Found "),
         delta("a.rs."),
-        SessionEvent::RunClosed {
-            ending: RunEnd::Ended,
-        },
+        SessionEvent::RunClosed,
         SessionEvent::RunFinished {
             context: ContextEstimate::from_estimated_tokens(10),
         },

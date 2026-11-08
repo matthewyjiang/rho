@@ -43,8 +43,8 @@ use crate::{
         cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
         config_repository::ConfigRepository,
         session_runtime::{
-            ApprovalPolicy, BackgroundWait, ChildAgents, HostCapabilities, RunShape, SessionBuild,
-            SessionLaunch, SessionOpening, SessionRole, SessionRuntime,
+            ApprovalPolicy, HostCapabilities, RunShape, SessionBuild, SessionLaunch,
+            SessionOpening, SessionRole, SessionRuntime,
         },
     },
     config::Config,
@@ -226,10 +226,7 @@ async fn open_runtime(
         },
         host: HostCapabilities {
             questions,
-            children: ChildAgents::InProcess(subagents.pool_for(job.clone())),
-            // Nothing wakes an idle session yet, so background work holds the
-            // turn open, as it does for `rho run`.
-            background_wait: BackgroundWait::HoldPrompt,
+            subagent_pool: subagents.pool_for(job.clone()),
             host_io: HostIo {
                 environment: environment.clone(),
                 ..HostIo::default()

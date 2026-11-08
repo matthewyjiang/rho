@@ -57,8 +57,8 @@ pub(crate) struct PlanApprovalRequest {
 pub(crate) enum InsertedMessage {
     /// Saved as this display row; a reload replays the message from it.
     Saved(DisplayRowOrigin),
-    /// Not replayed, such as a message of a runtime that a successor
-    /// replaced, or of a host command that saves nothing.
+    /// Not replayed, such as the prompt of an ephemeral session, or of a
+    /// host command that saves nothing.
     Unreplayed,
 }
 
@@ -112,26 +112,17 @@ pub(crate) enum SessionEvent {
     /// Something to tell the user that is not part of the run, such as a
     /// note found when the session was reopened.
     Notice { text: String },
-    /// The run's event stream ended; anything it left open, such as tool
-    /// calls without a result, should close as `ending` says. Approvals
-    /// still open may follow, until each is answered or withdrawn.
-    RunClosed { ending: RunEnd },
+    /// The run's event stream ended, or the turn failed after the run
+    /// started; anything it left open, such as tool calls without a result,
+    /// should close. Approvals still open may follow, until each is answered
+    /// or withdrawn.
+    RunClosed,
     /// The run ended, whether it completed, was cancelled, or failed, with
     /// `context` as its settled context estimate. Sent before the turn is
     /// saved; not sent when the host failed the turn. By then the turn reads
     /// no more controls, so a delivery failure the host reports later does
     /// not fail the turn; see [`TurnControl::HostFailed`].
     RunFinished { context: ContextEstimate },
-}
-
-/// How the run left calls it never finished.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum RunEnd {
-    /// Its events ended: it completed, was cancelled, or its stream stopped
-    /// without a terminal event.
-    Ended,
-    /// The turn failed with this message after the run started.
-    Failed(String),
 }
 
 /// A host's answer to one request a running turn raised. Answers to ids the

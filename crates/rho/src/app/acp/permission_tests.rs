@@ -30,7 +30,7 @@ fn write_ask(reason: &str) -> ApprovalAsk {
 }
 
 fn selected(option: &str) -> RequestPermissionOutcome {
-    RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option))
+    RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option.to_owned()))
 }
 
 // Covers: hosts must see the three Rho-backed option ids and kinds, on the

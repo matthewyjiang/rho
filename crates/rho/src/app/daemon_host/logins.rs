@@ -46,7 +46,7 @@ use super::{
 use crate::app::{
     credential_writes::{self, CredentialWrite},
     login::{
-        drive::{self, Approval, Saved},
+        drive::{self, Approval},
         relay_wire::{flow_from_wire, prompt_to_wire},
     },
 };
@@ -270,11 +270,9 @@ async fn save(target: &LoginAuth, approval: Approval, sessions: &Sessions) -> Lo
     let saved = off_workers(move || -> anyhow::Result<()> {
         // The config may have chosen another store since the login started.
         credential_writes::load_config_and_store(&repository())?;
-        match approval.save(descriptor, &repository())? {
-            // A provider that sends no confirmation (Ollama Cloud's device
-            // key) already told the user what to approve in its prompt.
-            Saved::Confirmed | Saved::Unconfirmed { .. } => Ok(()),
-        }
+        // A provider that sends no confirmation (Ollama Cloud's device key)
+        // already told the user what to approve in its prompt.
+        approval.save(descriptor, &repository())
     })
     .await;
     // Even a failed save may have written part of an entry.

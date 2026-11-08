@@ -13,9 +13,9 @@ use crate::tools::{
 };
 
 /// A read-only view of a session's tools, for hosts that list what the
-/// session offers or run host-delegation tools of their own, such as T3
-/// Code's wake watchers. It reaches nothing the runtime owns: binding the
-/// tools to the session's file or search, or taking a plan decision.
+/// session offers or reach its background work. It reaches nothing the
+/// runtime owns: binding the tools to the session's file or search, or
+/// taking a plan decision.
 #[derive(Clone, Copy)]
 pub(crate) struct SessionTools<'a>(&'a AppToolSet);
 

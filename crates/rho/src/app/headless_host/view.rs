@@ -203,7 +203,7 @@ impl<'a> HeadlessView<'a> {
             | SessionEvent::ApprovalWithdrawn { .. }
             | SessionEvent::PlanApprovalWithdrawn { .. }
             | SessionEvent::Notice { .. }
-            | SessionEvent::RunClosed { .. }
+            | SessionEvent::RunClosed
             | SessionEvent::RunFinished { .. } => {}
         }
     }

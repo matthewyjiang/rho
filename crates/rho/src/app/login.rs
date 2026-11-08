@@ -19,11 +19,9 @@ mod secret;
 use rho_providers::{
     auth::login_dispatch::{AuthenticationError, AuthenticationMethod, ProviderAuthentication},
     model::catalog,
-    provider::{provider_descriptor, ProviderDescriptor},
+    provider::provider_descriptor,
 };
 
-#[cfg(not(unix))]
-use self::drive::Saved;
 use super::config_repository::ConfigRepository;
 use crate::{cli::Command, config::Config};
 
@@ -77,23 +75,20 @@ pub(super) async fn run(
             provider,
             device_auth,
         } => daemon_client::run(target(provider)?, device_auth).await,
-        // A person reads the provider's instructions, so a login it cannot
-        // confirm counts.
         #[cfg(not(unix))]
         LoginCommand::Cli {
             provider,
             device_auth,
-        } => match in_process::run(
-            target(provider)?,
-            device_auth,
-            repository,
-            config,
-            config_path,
-        )
-        .await?
-        {
-            Saved::Confirmed | Saved::Unconfirmed { .. } => Ok(()),
-        },
+        } => {
+            in_process::run(
+                target(provider)?,
+                device_auth,
+                repository,
+                config,
+                config_path,
+            )
+            .await
+        }
         // The exit status promises a finished sign-in: the daemon reports
         // one only once the provider confirmed it, or the key is saved.
         #[cfg(unix)]
@@ -109,8 +104,10 @@ pub(super) async fn run(
 struct Target {
     /// The auth profile's id, such as `openai-codex`.
     auth: String,
-    /// The provider it signs in to.
-    descriptor: &'static ProviderDescriptor,
+    /// The provider it signs in to, whose login an in-process sign-in
+    /// records; the daemon looks it up itself.
+    #[cfg(not(unix))]
+    descriptor: &'static rho_providers::provider::ProviderDescriptor,
     sign_in: SignIn,
 }
 
@@ -150,11 +147,13 @@ fn target(provider: &str) -> anyhow::Result<Target> {
             SignIn::Interactive { provider_label }
         }
     };
+    #[cfg(not(unix))]
     let Some(descriptor) = provider_descriptor(&target.provider) else {
         anyhow::bail!("unknown provider '{}'", target.provider);
     };
     Ok(Target {
         auth: target.auth,
+        #[cfg(not(unix))]
         descriptor,
         sign_in,
     })

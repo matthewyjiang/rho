@@ -175,7 +175,7 @@ impl Inputs {
             | SessionEvent::Run(_)
             | SessionEvent::BoundaryApplied { .. }
             | SessionEvent::Notice { .. }
-            | SessionEvent::RunClosed { .. }
+            | SessionEvent::RunClosed
             | SessionEvent::RunFinished { .. } => return,
         };
         let id = InputRequestId(self.next);

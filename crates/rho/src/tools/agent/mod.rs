@@ -1,10 +1,6 @@
-//! Delegated agent tools backed by native SDK runtimes or an ACP host.
+//! Delegated agent tools backed by native SDK runtimes.
 
-mod host_orchestrator;
-mod host_tools;
 pub(crate) mod message_receipt;
-
-pub(crate) use host_tools::install_host_delegation;
 
 use std::{
     future::Future,

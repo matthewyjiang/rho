@@ -1,16 +1,12 @@
-//! Signing in in this process: `rho acp --login` until the ACP adapter
-//! becomes a daemon client (#1670), and `rho login` where the daemon is
-//! unsupported (Windows, #1665). Elsewhere `rho login` asks the daemon
+//! Signing in in this process: `rho login` where the daemon is unsupported
+//! (Windows, #1665). Elsewhere `rho login` asks the daemon
 //! (`daemon_client.rs`, #1662).
 
 use std::path::Path;
 
 use rho_providers::auth::{browser::BrowserAvailability, login_dispatch::ProviderAuthentication};
 
-use super::{
-    drive::{self, Saved},
-    secret, SignIn, Target,
-};
+use super::{drive, secret, SignIn, Target};
 use crate::{
     app::{config_repository::ConfigRepository, endpoint_login},
     config::Config,
@@ -20,15 +16,14 @@ use crate::{
 
 /// Signs `target` in, with a device-code login when `device_auth` asks for
 /// one, saving under `config`, which `repository` loads from
-/// `config_path`. The caller decides what a login the provider cannot
-/// confirm ([`Saved::Unconfirmed`]) means for its exit status.
+/// `config_path`.
 pub(super) async fn run(
     target: Target,
     device_auth: bool,
     repository: &ConfigRepository,
     config: &mut Config,
     config_path: &Path,
-) -> anyhow::Result<Saved> {
+) -> anyhow::Result<()> {
     credential_store::initialize_from_config(config, config_path)?;
     let Target {
         auth,
@@ -41,7 +36,7 @@ pub(super) async fn run(
             ProviderAuthentication::save_api_key(&AppCredentialStore, &auth, &key)?;
             endpoint_login::record(repository, *descriptor)?;
             eprintln!("saved credentials for {auth}");
-            return Ok(Saved::Confirmed);
+            return Ok(());
         }
         SignIn::Interactive { provider_label } => provider_label,
     };
@@ -51,10 +46,10 @@ pub(super) async fn run(
         eprint_login_prompt(provider_label, &prompt);
     })
     .await?;
-    let saved = approval.save(*descriptor, repository)?;
-    match &saved {
-        Saved::Confirmed => eprintln!("Successfully logged in to {auth}"),
-        Saved::Unconfirmed { instruction } => eprintln!("{instruction}"),
-    }
-    Ok(saved)
+    approval.save(*descriptor, repository)?;
+    // As the daemon's `rho login` reports it: an Ollama Cloud device key
+    // saves before the user approves it, and the prompt said to approve it,
+    // so this claims the save, not the approval.
+    eprintln!("Saved the {auth} credential");
+    Ok(())
 }

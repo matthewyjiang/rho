@@ -51,7 +51,7 @@ use crate::{
     app::{
         prompt_content,
         session_events::LiveEvents,
-        session_runtime::{Closing, SessionHandle, SessionRuntime, SteerError},
+        session_runtime::{SessionHandle, SessionRuntime, SteerError},
     },
     config::Config,
 };
@@ -712,7 +712,7 @@ impl Sessions {
         for session in &sessions {
             // The turn stops as one its client lost, so the session keeps
             // what a later daemon resumes (#1661).
-            session.handle.close(Closing::Disconnected);
+            session.handle.close();
         }
         let teardowns = sessions.iter().map(|session| async {
             // Free once the session's turn saved and recorded its end.

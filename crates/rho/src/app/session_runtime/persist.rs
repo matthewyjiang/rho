@@ -39,8 +39,7 @@ use rho_sdk::{
 };
 
 use super::{
-    events::InsertedMessage, left_out::LeftOut, saved_settings::SettingsRecord, SessionHandle,
-    SessionRuntime,
+    events::InsertedMessage, left_out::LeftOut, saved_settings::SettingsRecord, SessionRuntime,
 };
 use crate::{
     added_dirs::AddedDirs,
@@ -200,7 +199,6 @@ impl SessionRuntime {
             stored,
             rollback,
             state: self.durable_state(),
-            handle: self.handle.clone(),
             display: Mutex::new(display),
         }));
         self.built
@@ -226,8 +224,8 @@ impl SessionRuntime {
 
     /// Saves the prompt's `user` message with the display rows `following`
     /// it as one node, and returns the rows a reload replays each message
-    /// as, in order. A replaced or ephemeral runtime saves nothing, so its
-    /// messages are unreplayed.
+    /// as, in order. An ephemeral runtime saves nothing, so its messages are
+    /// unreplayed.
     pub(crate) fn save_prompt_rows<const N: usize>(
         &mut self,
         user: Message,
@@ -239,9 +237,6 @@ impl SessionRuntime {
                 [(); N].map(|()| InsertedMessage::Unreplayed),
             )
         };
-        if self.is_replaced() {
-            return Ok(unreplayed());
-        }
         let rows: Vec<Message> = std::iter::once(user).chain(following).collect();
         let snapshot = self.durable_snapshot();
         let Some(stored) = self.stored()? else {
@@ -265,9 +260,6 @@ impl SessionRuntime {
         checkpoint: &TurnCheckpoint,
         assistant_text: Option<&str>,
     ) -> anyhow::Result<()> {
-        if self.is_replaced() {
-            return Ok(());
-        }
         let snapshot = self.durable_snapshot();
         let Some(stored) = self.stored()?.cloned() else {
             return Ok(());
@@ -295,7 +287,7 @@ impl SessionRuntime {
         outcome: &RunOutcome,
     ) -> anyhow::Result<()> {
         self.persist_turn(checkpoint, Some(outcome.text()))?;
-        if outcome.stop_reason() != rho_sdk::StopReason::Refusal || self.is_replaced() {
+        if outcome.stop_reason() != rho_sdk::StopReason::Refusal {
             return Ok(());
         }
         let history = self.built.session.history();
@@ -344,11 +336,6 @@ impl SessionRuntime {
         }
     }
 
-    /// A replaced runtime must not write over its successor's session file.
-    pub(super) fn is_replaced(&self) -> bool {
-        self.handle.is_replaced()
-    }
-
     /// The session state a later load restores, as it stands now.
     pub(super) fn durable_state(&self) -> DurableState {
         DurableState {
@@ -371,9 +358,6 @@ impl SessionRuntime {
     /// differs from its leaf only by state a load restores, such as its
     /// settings or what it leaves out. A new session's first save writes it.
     pub(crate) fn save_state(&mut self) -> anyhow::Result<()> {
-        if self.is_replaced() {
-            return Ok(());
-        }
         let Some(stored) = self.storage.file() else {
             return Ok(());
         };
@@ -463,8 +447,6 @@ struct CheckpointStore {
     /// The session state as the turn began; only the host changes it, such
     /// as its settings, between turns.
     state: DurableState,
-    /// Tells the store when a successor owns the file.
-    handle: SessionHandle,
     display: Mutex<TurnDisplay>,
 }
 
@@ -475,11 +457,8 @@ impl CheckpointStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Saves `snapshot` to the session file, unless a successor owns it.
+    /// Saves `snapshot` to the session file.
     fn save_now(&self, snapshot: SessionSnapshot) -> anyhow::Result<()> {
-        if self.handle.is_replaced() {
-            return Ok(());
-        }
         let snapshot = self.state.decorate(snapshot);
         if let Some(stored) = &self.stored {
             let mut display = self.lock_display();

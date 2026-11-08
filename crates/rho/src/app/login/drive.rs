@@ -1,6 +1,6 @@
 //! Driving a provider's interactive login, for each host that runs one in
 //! its own process: the daemon's `rho/auth/login` (#1662) and the
-//! in-process `rho login` and `rho acp --login` (`in_process.rs`).
+//! in-process `rho login` where the daemon is unsupported (`in_process.rs`).
 //!
 //! [`approve`] runs the provider's flow until the provider approves it;
 //! dropping its future cancels the login, which closes a browser login's
@@ -55,13 +55,9 @@ pub(in crate::app) async fn approve(
         InteractiveLoginCompletion::Confirm(completion) => {
             completion.await.map(Approval::Confirmed)
         }
-        InteractiveLoginCompletion::Unconfirmed {
-            instruction,
-            authentication,
-        } => Ok(Approval::Unconfirmed {
-            instruction,
-            authentication,
-        }),
+        InteractiveLoginCompletion::Unconfirmed { authentication, .. } => {
+            Ok(Approval::Unconfirmed(authentication))
+        }
     }
 }
 
@@ -69,20 +65,8 @@ pub(in crate::app) async fn approve(
 pub(in crate::app) enum Approval {
     Confirmed(CompletedAuthentication),
     /// The provider sends no confirmation (Ollama Cloud's device key), so
-    /// the login works once the user did what `instruction` says.
-    Unconfirmed {
-        instruction: &'static str,
-        authentication: UnconfirmedAuthentication,
-    },
-}
-
-/// What [`Approval::save`] saved.
-pub(in crate::app) enum Saved {
-    /// A login the provider confirmed, or a key the user entered.
-    Confirmed,
-    /// A login the provider sends no confirmation for, with what the user
-    /// must still do.
-    Unconfirmed { instruction: &'static str },
+    /// the login works once the user did what its prompt says.
+    Unconfirmed(UnconfirmedAuthentication),
 }
 
 impl Approval {
@@ -93,21 +77,11 @@ impl Approval {
         self,
         descriptor: ProviderDescriptor,
         repository: &ConfigRepository,
-    ) -> anyhow::Result<Saved> {
-        let saved = match self {
-            Self::Confirmed(completed) => {
-                completed.save(&AppCredentialStore)?;
-                Saved::Confirmed
-            }
-            Self::Unconfirmed {
-                instruction,
-                authentication,
-            } => {
-                authentication.accept(&AppCredentialStore)?;
-                Saved::Unconfirmed { instruction }
-            }
-        };
-        endpoint_login::record(repository, descriptor)?;
-        Ok(saved)
+    ) -> anyhow::Result<()> {
+        match self {
+            Self::Confirmed(completed) => completed.save(&AppCredentialStore)?,
+            Self::Unconfirmed(authentication) => authentication.accept(&AppCredentialStore)?,
+        }
+        endpoint_login::record(repository, descriptor)
     }
 }

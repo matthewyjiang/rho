@@ -16,7 +16,8 @@ fn summary(auth: &str, label: &str, kind: AuthKind) -> AuthSummary {
 
 fn terminal(auth: &str, label: &str) -> AuthMethod {
     AuthMethod::Terminal(
-        AuthMethodTerminal::new(auth, label).args(vec!["--login".into(), auth.into()]),
+        AuthMethodTerminal::new(auth.to_owned(), label.to_owned())
+            .args(vec!["--login".into(), auth.into()]),
     )
 }
 

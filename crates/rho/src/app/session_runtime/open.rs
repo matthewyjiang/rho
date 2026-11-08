@@ -1,9 +1,7 @@
 //! Opening a session's runtime: a new session, or a saved one reopened.
 //!
 //! A new session writes no file until its first save (see `persist.rs`), so
-//! a session nobody prompts leaves none. That makes "nothing saved under
-//! this id" a session that was opened but never prompted, so reopening it
-//! opens it new again under the same id. A reopened session runs as the
+//! a session nobody prompts leaves none. A reopened session runs as the
 //! agent it was saved as, and its host may show its saved conversation to
 //! its client before the first prompt. A workflow node's session is found
 //! by [`NodeSession::find`] instead, which holds it to the node's agent.
@@ -30,9 +28,7 @@ use crate::{
     },
     config::Config,
     credential_store::AppCredentialStore,
-    session::{
-        tree::ProjectedMessage, NoSessionFound, Session as StoredSession, SessionPersistence,
-    },
+    session::{tree::ProjectedMessage, Session as StoredSession, SessionPersistence},
     tools::mcp::config::McpConfig,
 };
 
@@ -179,26 +175,6 @@ impl SessionRuntime {
             reopen_notice: None,
             credentials,
         }))
-    }
-
-    /// Reopens the session saved as `id` in the opening's workspace, as the
-    /// agent it was saved as and keeping the origin its file records. Its
-    /// host may then show its [`Self::saved_history`].
-    ///
-    /// An `id` nothing was saved under opens new under that id, with no
-    /// saved history: it names a session opened but never prompted.
-    pub(crate) async fn reopen(opening: SessionOpening<'_>, id: &str) -> anyhow::Result<Self> {
-        let stored = match StoredSession::open_by_id_with_histories(opening.cwd, id) {
-            Ok((stored, _)) => stored,
-            Err(error) if error.is::<NoSessionFound>() => {
-                let Ok(id) = SessionId::from_string(id) else {
-                    return Err(error);
-                };
-                return Self::open_new(opening, id, SessionPersistence::Saved).await;
-            }
-            Err(error) => return Err(error),
-        };
-        Self::open_saved(opening, stored).await
     }
 
     /// Opens `stored` as the agent it was saved as and keeping the origin its

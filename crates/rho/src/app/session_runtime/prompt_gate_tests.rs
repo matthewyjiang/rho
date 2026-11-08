@@ -48,9 +48,8 @@ fn cancel_between_turns_of_one_prompt_cancels_the_next_turn() {
 }
 
 // Covers: a prompt's scope that outlives the next prompt's start must stop
-// what it waits on (such as command expansion or a wake wait), keep state
-// the newer prompt resumes, and neither end the newer prompt (a cancel must
-// still reach it) nor arm a run for it
+// what it waits on (such as command expansion), and neither end the newer
+// prompt (a cancel must still reach it) nor arm a run for it
 // Owner: session runtime prompt gate
 #[test]
 fn a_stale_prompt_never_acts_for_the_newer_one() {
@@ -66,12 +65,10 @@ fn a_stale_prompt_never_acts_for_the_newer_one() {
     assert_eq!(
         (
             stale_start.is_cancelled(),
-            gate.continues_elsewhere(stale),
-            gate.continues_elsewhere(current),
             current_run.is_cancelled(),
             stale_run.is_cancelled(),
             gate.is_cancelled(stale),
         ),
-        (true, true, false, true, true, true)
+        (true, true, true, true)
     );
 }

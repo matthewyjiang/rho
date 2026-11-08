@@ -17,7 +17,7 @@ use crate::{
         session_events::test_support::{
             agent, canonical_messages, closed, opened, origin, shell_call, text, updated,
         },
-        session_runtime::{InsertedMessage, RunEnd, SessionEvent, SessionTools},
+        session_runtime::{InsertedMessage, SessionEvent, SessionTools},
     },
     display_transcript::{DisplayRow, DisplayTranscript},
     presentation::{
@@ -119,9 +119,7 @@ fn a_live_turn_streams_its_prompt_text_and_calls() {
         delta("Found a.rs."),
         proposed("call-2", "cat a.rs"),
         started("call-2", ToolMetadata::new()),
-        SessionEvent::RunClosed {
-            ending: RunEnd::Ended,
-        },
+        SessionEvent::RunClosed,
         SessionEvent::RunFinished {
             context: ContextEstimate::from_estimated_tokens(300),
         },
@@ -209,9 +207,7 @@ fn tool_results_open_complete_cards_and_never_reopen() {
                     call_id: call_id("call-1"),
                     progress: ToolProgress::new("late"),
                 }),
-                SessionEvent::RunClosed {
-                    ending: RunEnd::Failed("boom".into()),
-                },
+                SessionEvent::RunClosed,
             ],
             vec![
                 opened("call-1", "ls"),
@@ -381,7 +377,6 @@ fn compactions_always_end() {
             message_count: 4,
         })
     };
-    let closed = |ending| SessionEvent::RunClosed { ending };
     let cancelled = SessionEvent::Run(RunEvent::Cancelled {
         revision: Revision::INITIAL,
     });
@@ -391,20 +386,12 @@ fn compactions_always_end() {
     let cases = [
         (
             "the run ended first",
-            Drive::Run(vec![started(), closed(RunEnd::Ended)]),
-            failed("compaction ended without a result"),
-        ),
-        (
-            "the turn failed, without echoing its unredacted error",
-            Drive::Run(vec![
-                started(),
-                closed(RunEnd::Failed("provider unavailable".into())),
-            ]),
+            Drive::Run(vec![started(), SessionEvent::RunClosed]),
             failed("compaction ended without a result"),
         ),
         (
             "the run was cancelled",
-            Drive::Run(vec![started(), cancelled, closed(RunEnd::Ended)]),
+            Drive::Run(vec![started(), cancelled, SessionEvent::RunClosed]),
             CompactionStatus::Cancelled,
         ),
         (

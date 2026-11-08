@@ -21,9 +21,7 @@ use tokio::{
 use super::{pump, ApprovalSource, EventSource, PumpSources};
 use crate::{
     app::session_runtime::{
-        events::{
-            cancelled_approval, ApprovalId, PlanApprovalId, RunEnd, SessionEvent, TurnControl,
-        },
+        events::{cancelled_approval, ApprovalId, PlanApprovalId, SessionEvent, TurnControl},
         turn::TurnIo,
         QuestionSupport,
     },
@@ -44,7 +42,7 @@ enum Seen {
     QuestionAsked(HostInputId),
     QuestionWithdrawn(HostInputId),
     Notice,
-    RunClosed(RunEnd),
+    RunClosed,
     RunFinished,
 }
 
@@ -63,7 +61,7 @@ fn seen(event: SessionEvent) -> Seen {
         SessionEvent::QuestionAsked { id, .. } => Seen::QuestionAsked(id),
         SessionEvent::QuestionWithdrawn { id } => Seen::QuestionWithdrawn(id),
         SessionEvent::Notice { .. } => Seen::Notice,
-        SessionEvent::RunClosed { ending } => Seen::RunClosed(ending),
+        SessionEvent::RunClosed => Seen::RunClosed,
         SessionEvent::RunFinished { .. } => Seen::RunFinished,
     }
 }
@@ -243,7 +241,7 @@ async fn cancel_settles_every_request_waiting_on_the_host() {
     assert_eq!(late_decision.await.unwrap(), cancelled_approval());
 
     harness.end_run();
-    assert_eq!(harness.next().await, Seen::RunClosed(RunEnd::Ended));
+    assert_eq!(harness.next().await, Seen::RunClosed);
     harness.pump.await.unwrap().unwrap();
     assert!(
         harness.events.recv().await.is_none(),

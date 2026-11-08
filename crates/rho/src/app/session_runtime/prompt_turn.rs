@@ -16,7 +16,6 @@ use rho_sdk::UserInput;
 use super::{PromptScope, SessionRuntime, Turn, TurnIo, TurnOutcome, TurnStart};
 use crate::{
     config::Config,
-    permission::PermissionMode,
     tools::plan_exit::{PlanExitResolution, ProposalTurn},
 };
 
@@ -56,37 +55,26 @@ pub(crate) trait TurnView {
 /// none.
 #[derive(Debug)]
 pub(crate) enum PlanReport {
-    /// The session kept its mode; `notice` says why the answered plan did
-    /// not switch it. The prompt ends with the turn.
-    Kept { notice: String },
-    /// The session is now in `mode`, as `notice` tells the user; the
-    /// implementation turn runs next.
-    Switched {
-        mode: PermissionMode,
-        notice: String,
-    },
+    /// The session kept its mode. The prompt ends with the turn.
+    Kept,
+    /// The session switched modes; the implementation turn runs next.
+    Switched,
 }
 
 /// How a prompt goes on after the turn that may have answered
 /// `exit_plan_mode`.
 enum PlanHandoff {
-    /// The prompt ends as `ended` says, in the mode it had. `ended` is the
-    /// proposing turn's own end, except that a cancel which landed before
-    /// the switch ends it `Ok(TurnOutcome::Cancelled)`; a failed turn stays
-    /// failed. `notice`, for the user, says why an answered
-    /// plan did not switch: it was not approved, the turn did not complete,
-    /// or the switch failed. It is `None` when the turn answered no plan.
-    Ended {
-        notice: Option<String>,
-        ended: anyhow::Result<TurnOutcome>,
-    },
-    /// The session is now in `mode`, as `notice` tells the user.
-    /// `implementation` is the prompt's next turn; its end is the prompt's.
-    Switched {
-        mode: PermissionMode,
-        notice: String,
-        implementation: Turn,
-    },
+    /// The turn answered no plan; the prompt ends as the turn did.
+    Unanswered(anyhow::Result<TurnOutcome>),
+    /// An answered plan did not switch the mode: it was not approved, the
+    /// turn did not complete, or the switch failed. The prompt ends as the
+    /// proposing turn did, in the mode it had, except that a cancel which
+    /// landed before the switch ends it `Ok(TurnOutcome::Cancelled)`; a
+    /// failed turn stays failed.
+    Kept(anyhow::Result<TurnOutcome>),
+    /// The session switched modes. This is the prompt's next turn, whose
+    /// end is the prompt's.
+    Switched(Turn),
 }
 
 impl SessionRuntime {
@@ -110,19 +98,14 @@ impl SessionRuntime {
             .show_turn(view, prompt, turn.into(), process_config)
             .await;
         match self.hand_off_plan(prompt, ended, process_config).await {
-            PlanHandoff::Ended { notice, ended } => {
-                if let Some(notice) = notice {
-                    view.report_plan(self, process_config, PlanReport::Kept { notice })
-                        .await;
-                }
+            PlanHandoff::Unanswered(ended) => ended,
+            PlanHandoff::Kept(ended) => {
+                view.report_plan(self, process_config, PlanReport::Kept)
+                    .await;
                 ended
             }
-            PlanHandoff::Switched {
-                mode,
-                notice,
-                implementation,
-            } => {
-                view.report_plan(self, process_config, PlanReport::Switched { mode, notice })
+            PlanHandoff::Switched(implementation) => {
+                view.report_plan(self, process_config, PlanReport::Switched)
                     .await;
                 self.show_turn(view, prompt, implementation.into(), process_config)
                     .await
@@ -157,10 +140,7 @@ impl SessionRuntime {
         process_config: &Config,
     ) -> PlanHandoff {
         let Some(decision) = self.built.tools.take_plan_exit_decision() else {
-            return PlanHandoff::Ended {
-                notice: None,
-                ended: proposal,
-            };
+            return PlanHandoff::Unanswered(proposal);
         };
         let cancelled = prompt.is_cancelled();
         let turn = match &proposal {
@@ -169,38 +149,28 @@ impl SessionRuntime {
         };
         let target = match decision.resolve(turn, self.permission.mode) {
             PlanExitResolution::Apply(target) => target,
-            PlanExitResolution::Keep(notice) => {
+            PlanExitResolution::Keep(reason) => {
+                // No host shows why yet (#1657).
+                tracing::debug!(reason, "plan handoff kept the permission mode");
                 let ended = if cancelled {
                     proposal.map(|_| TurnOutcome::Cancelled)
                 } else {
                     proposal
                 };
-                return PlanHandoff::Ended {
-                    notice: Some(notice.to_owned()),
-                    ended,
-                };
+                return PlanHandoff::Kept(ended);
             }
         };
         if let Err(error) = self.set_permission_mode(target, process_config).await {
-            return PlanHandoff::Ended {
-                notice: Some(format!("could not execute approved plan: {error}")),
-                ended: proposal,
-            };
+            tracing::warn!("could not execute approved plan: {error:#}");
+            return PlanHandoff::Kept(proposal);
         }
         // A permission prompt carries no feedback, so the decision has none.
         let input = UserInput::text(IMPLEMENT_PLAN);
-        PlanHandoff::Switched {
-            mode: target,
-            notice: format!(
-                "plan approved; permission mode: {}",
-                target.label().to_lowercase()
-            ),
-            implementation: Turn {
-                display: input.clone(),
-                model: input,
-                calls: Vec::new(),
-            },
-        }
+        PlanHandoff::Switched(Turn {
+            display: input.clone(),
+            model: input,
+            calls: Vec::new(),
+        })
     }
 }
 

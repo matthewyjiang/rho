@@ -24,7 +24,7 @@ use tokio::sync::oneshot;
 use super::{
     delegation::OfferedDisplays,
     events::{
-        cancelled_approval, ApprovalId, PlanApprovalId, PlanApprovalRequest, RunEnd, SessionEvent,
+        cancelled_approval, ApprovalId, PlanApprovalId, PlanApprovalRequest, SessionEvent,
         TurnControl,
     },
     persist::TurnCheckpoint,
@@ -201,7 +201,7 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                 let Some(event) = event else {
                     events_open = false;
                     withdraw_questions(&mut pending.questions, io);
-                    io.emit(SessionEvent::RunClosed { ending: RunEnd::Ended });
+                    io.emit(SessionEvent::RunClosed);
                     continue;
                 };
                 if let (RunEvent::BoundaryInputApplied { input, .. }, Some(displays)) =
