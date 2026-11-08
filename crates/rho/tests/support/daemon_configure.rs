@@ -58,7 +58,10 @@ async fn next_event<T>(
 }
 
 /// The options of the next options event.
-async fn next_options(notifications: &mut Notifications, session: &SessionId) -> SessionOptions {
+pub(super) async fn next_options(
+    notifications: &mut Notifications,
+    session: &SessionId,
+) -> SessionOptions {
     next_event(notifications, session, |event| match event {
         SessionEvent::OptionsChanged { options } => Some(options),
         _ => None,

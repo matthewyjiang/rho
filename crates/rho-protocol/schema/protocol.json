@@ -192,7 +192,7 @@
       "type": "object"
     },
     "AuthKeyResponse": {
-      "description": "Result of [`AUTH_KEY`]: the key is saved to the credential store the\ndaemon's config selects. Running sessions on the auth profile use it from\ntheir next prompt; new sessions use it at once.\n\nThe daemon first asks the provider's models endpoint about the key and\nrefuses one the provider refuses with\n[`crate::ErrorCode::KeyRefused`], saving nothing. A key the provider\ncannot be asked about, because rho lists no models for it or the endpoint\ndid not answer, is saved unchecked, as `rho login` saves it.",
+      "description": "Result of [`AUTH_KEY`]: the key is saved to the credential store the\ndaemon's config selects. Running sessions on the auth profile use it from\ntheir next prompt; new sessions use it at once.\n\nThe daemon first asks the provider's models endpoint about the key and\nrefuses one the provider refuses with\n[`crate::ErrorCode::KeyRefused`], saving nothing. A key the provider\ncannot be asked about, because rho lists no models for it, the endpoint\ndid not answer, or the key may not list models, is saved unchecked.",
       "properties": {
         "unchecked": {
           "anyOf": [
@@ -206,6 +206,129 @@
           "description": "Why the key was saved without the provider checking it. Absent when\nthe provider accepted it."
         }
       },
+      "type": "object"
+    },
+    "AuthKind": {
+      "anyOf": [
+        {
+          "const": "api_key",
+          "description": "With an API key, through [`AUTH_KEY`].",
+          "type": "string"
+        },
+        {
+          "const": "login",
+          "description": "With the provider's interactive login, which the daemon runs and\nrelays to the client, through [`crate::methods::AUTH_LOGIN`].",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How a client signs in to an auth profile. Protocol minors may add kinds."
+    },
+    "AuthListParams": {
+      "description": "Params of [`AUTH_LIST`].",
+      "type": "object"
+    },
+    "AuthListResponse": {
+      "description": "Result of [`AUTH_LIST`]: every auth profile that takes a credential, as\nthe TUI's `/login` picker and ACP's auth methods offer them, with the\ncustom providers of the daemon's config. Keyless profiles are left out.",
+      "properties": {
+        "auths": {
+          "items": {
+            "$ref": "#/$defs/AuthSummary"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "auths"
+      ],
+      "type": "object"
+    },
+    "AuthLoginCancelParams": {
+      "description": "Params of [`AUTH_LOGIN_CANCEL`].",
+      "properties": {
+        "login": {
+          "$ref": "#/$defs/LoginId"
+        }
+      },
+      "required": [
+        "login"
+      ],
+      "type": "object"
+    },
+    "AuthLoginCancelResponse": {
+      "description": "Result of [`AUTH_LOGIN_CANCEL`]: the daemon is stopping the login, which\n[`AUTH_LOGIN_FINISHED`] then reports `cancelled`. A login the provider\nalready approved still saves and ends `succeeded`. A login that already\nended, or no login, has the id: refused with\n[`crate::ErrorCode::LoginNotFound`].",
+      "type": "object"
+    },
+    "AuthLoginFinishedParams": {
+      "description": "Params of the [`AUTH_LOGIN_FINISHED`] notification, the last one a login\nsends.",
+      "properties": {
+        "login": {
+          "$ref": "#/$defs/LoginId"
+        },
+        "outcome": {
+          "$ref": "#/$defs/LoginOutcome"
+        }
+      },
+      "required": [
+        "login",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "AuthLoginParams": {
+      "description": "Params of [`AUTH_LOGIN`].",
+      "properties": {
+        "auth": {
+          "description": "The auth profile to sign in to, such as `openai-codex`. It must take\nan interactive login ([`crate::AuthKind::Login`]); an API key goes\nthrough [`crate::methods::AUTH_KEY`].",
+          "type": "string"
+        },
+        "flow": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoginFlow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the user finishes a provider that offers both flows, `browser`\nwhen absent. A provider with one flow ignores it."
+        }
+      },
+      "required": [
+        "auth"
+      ],
+      "type": "object"
+    },
+    "AuthLoginPromptParams": {
+      "description": "Params of the [`AUTH_LOGIN_PROMPT`] notification.",
+      "properties": {
+        "login": {
+          "$ref": "#/$defs/LoginId"
+        },
+        "prompt": {
+          "$ref": "#/$defs/LoginPrompt"
+        }
+      },
+      "required": [
+        "login",
+        "prompt"
+      ],
+      "type": "object"
+    },
+    "AuthLoginResponse": {
+      "description": "Result of [`AUTH_LOGIN`]: the login started. Its prompt and its end\nfollow as notifications on this connection, never before this response.\nA second login to an auth profile with one under way, from any client,\nis refused with [`crate::ErrorCode::LoginBusy`].",
+      "properties": {
+        "login": {
+          "$ref": "#/$defs/LoginId"
+        }
+      },
+      "required": [
+        "login"
+      ],
       "type": "object"
     },
     "AuthLogoutParams": {
@@ -223,6 +346,58 @@
     },
     "AuthLogoutResponse": {
       "description": "Result of [`AUTH_LOGOUT`]: the auth profile's saved credentials are\ndeleted, if it had any. Running sessions on the profile drop them from\ntheir next prompt, which then fails with\n[`crate::TurnErrorKind::Authentication`] until a key is saved again.",
+      "type": "object"
+    },
+    "AuthStatus": {
+      "anyOf": [
+        {
+          "enum": [
+            "signed_out"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "signed_in",
+          "description": "It has a credential: saved, or in the daemon's environment.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Whether the daemon's sessions can use an auth profile now. Protocol\nminors may add values."
+    },
+    "AuthSummary": {
+      "description": "One auth profile a client can sign in to.",
+      "properties": {
+        "auth": {
+          "description": "The profile's id, which the auth methods take, such as\n`openai-codex`.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/AuthKind"
+        },
+        "label": {
+          "description": "What a picker shows for it, such as `ChatGPT Plus/Pro (Codex)`.",
+          "type": "string"
+        },
+        "provider": {
+          "description": "The provider it signs in to, such as `openai`.",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AuthStatus"
+        }
+      },
+      "required": [
+        "auth",
+        "provider",
+        "label",
+        "kind",
+        "status"
+      ],
       "type": "object"
     },
     "Budget": {
@@ -1125,6 +1300,118 @@
       },
       "required": [
         "path"
+      ],
+      "type": "object"
+    },
+    "LoginFlow": {
+      "description": "How the user finishes a login whose provider offers both flows. The\ndaemon reads it, so it has no `Unknown`.",
+      "oneOf": [
+        {
+          "const": "browser",
+          "description": "The provider's page redirects the browser to a callback the daemon\nlistens for on its machine's loopback, so the browser must run on\nthat machine.",
+          "type": "string"
+        },
+        {
+          "const": "device_code",
+          "description": "The user enters a code on any device, as over SSH.",
+          "type": "string"
+        }
+      ]
+    },
+    "LoginId": {
+      "description": "One login the daemon runs, unique across the daemon's life and\nunguessable, so only the client that started it can name it.",
+      "type": "string"
+    },
+    "LoginOutcome": {
+      "anyOf": [
+        {
+          "description": "The provider approved the login, and the daemon saved the\ncredential.",
+          "properties": {
+            "type": {
+              "const": "succeeded",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The login failed; `message` says why, for a person.",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "type": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A client cancelled it ([`AUTH_LOGIN_CANCEL`]).",
+          "properties": {
+            "type": {
+              "const": "cancelled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How a login ended. A login that saved a credential applies to every\nsession the daemon runs, as [`crate::methods::AUTH_KEY`] does: running\nsessions use it from their next prompt, and each attached client gets\nthe sessions' new options.\n\nA provider that sends no confirmation (Ollama Cloud's device key)\nsucceeds as soon as the daemon saved the login: its prompt's\n`instruction` already told the user what to approve."
+    },
+    "LoginPrompt": {
+      "description": "What the user must do to finish a login. The daemon opens no browser:\nthe client opens [`Self::url_with_code`], else [`Self::url`], where it\ncan, and always shows the URL too.\n\n`Debug` hides the device code, which signs in whoever enters it first.",
+      "properties": {
+        "instruction": {
+          "description": "What to do, in words, for a person.",
+          "type": "string"
+        },
+        "url": {
+          "description": "The page to open: the provider's sign-in page, or for a device-code\nflow its verification page.",
+          "type": "string"
+        },
+        "url_with_code": {
+          "description": "The verification page with the code filled in, when the provider\ngives one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "user_code": {
+          "description": "The code to enter on that page, for a device-code flow.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "url",
+        "instruction"
       ],
       "type": "object"
     },
@@ -3093,6 +3380,11 @@
           "type": "string"
         },
         {
+          "const": "forbidden",
+          "description": "The provider's models endpoint answered 403 Forbidden: the key may\nnot list models, as a key restricted to running them may not, so\nthe endpoint says nothing about whether it works.",
+          "type": "string"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "type": "string",
           "x-rho-other": true
@@ -3192,6 +3484,12 @@
     "-32016": {
       "name": "SessionNotLoaded"
     },
+    "-32017": {
+      "name": "LoginBusy"
+    },
+    "-32018": {
+      "name": "LoginNotFound"
+    },
     "-32600": {
       "name": "InvalidRequest"
     },
@@ -3215,6 +3513,30 @@
       },
       "result": {
         "$ref": "#/$defs/AuthKeyResponse"
+      }
+    },
+    "rho/auth/list": {
+      "params": {
+        "$ref": "#/$defs/AuthListParams"
+      },
+      "result": {
+        "$ref": "#/$defs/AuthListResponse"
+      }
+    },
+    "rho/auth/login": {
+      "params": {
+        "$ref": "#/$defs/AuthLoginParams"
+      },
+      "result": {
+        "$ref": "#/$defs/AuthLoginResponse"
+      }
+    },
+    "rho/auth/login_cancel": {
+      "params": {
+        "$ref": "#/$defs/AuthLoginCancelParams"
+      },
+      "result": {
+        "$ref": "#/$defs/AuthLoginCancelResponse"
       }
     },
     "rho/auth/logout": {
@@ -3355,6 +3677,16 @@
     }
   },
   "notifications": {
+    "rho/auth/login_finished": {
+      "params": {
+        "$ref": "#/$defs/AuthLoginFinishedParams"
+      }
+    },
+    "rho/auth/login_prompt": {
+      "params": {
+        "$ref": "#/$defs/AuthLoginPromptParams"
+      }
+    },
     "rho/session/detached": {
       "params": {
         "$ref": "#/$defs/SessionDetachedParams"

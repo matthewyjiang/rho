@@ -9,12 +9,15 @@ use tokio::{
 
 use super::*;
 use crate::{
+    login_relay,
     methods::{
-        DetachReason, JobState, ModelOptions, ModelRef, PermissionMode, PermissionModeOptions,
+        AuthLoginFinishedParams, AuthLoginPromptParams, DetachReason, JobState, LoginId,
+        LoginOutcome, LoginPrompt, ModelOptions, ModelRef, PermissionMode, PermissionModeOptions,
         Replay, Seq, SessionDetachedParams, SessionEvent, SessionEventParams, SessionId,
-        SessionOptions, StreamId, SESSION_DETACHED, SESSION_EVENT,
+        SessionOptions, StreamId, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT, SESSION_DETACHED,
+        SESSION_EVENT,
     },
-    subscription, ProtocolVersion, Published, Publisher, RequestId,
+    subscription, LoginRelay, ProtocolVersion, Published, Publisher, RequestId,
 };
 
 /// Failure bound for each response a test waits for. The tests synchronize
@@ -133,6 +136,17 @@ macro_rules! hosts_no_sessions {
         async fn logout_auth(&self, _: AuthLogoutParams) -> Result<AuthLogoutResponse, RpcError> {
             Err(no_credential_store())
         }
+
+        async fn list_auths(&self) -> Result<AuthListResponse, RpcError> {
+            Err(no_credential_store())
+        }
+
+        async fn cancel_login(
+            &self,
+            _: AuthLoginCancelParams,
+        ) -> Result<AuthLoginCancelResponse, RpcError> {
+            Err(no_credential_store())
+        }
     };
 }
 
@@ -153,6 +167,18 @@ macro_rules! attaches_nothing {
     };
 }
 
+/// The login method of a test service that runs no logins.
+macro_rules! logs_in_nothing {
+    () => {
+        async fn login(
+            &self,
+            _: AuthLoginParams,
+        ) -> Result<(AuthLoginResponse, LoginStream), RpcError> {
+            Err(no_credential_store())
+        }
+    };
+}
+
 /// Answers every request at once.
 struct FakeService;
 
@@ -165,6 +191,7 @@ impl Service for FakeService {
 
     hosts_no_sessions!();
     attaches_nothing!();
+    logs_in_nothing!();
 }
 
 /// Panics in `status`, as a handler bug would.
@@ -183,6 +210,7 @@ impl Service for PanickingService {
 
     hosts_no_sessions!();
     attaches_nothing!();
+    logs_in_nothing!();
 }
 
 /// `status` answers only once the test releases it. `stop` resolves the
@@ -217,6 +245,7 @@ impl Service for GatedService {
 
     hosts_no_sessions!();
     attaches_nothing!();
+    logs_in_nothing!();
 }
 
 fn hello_line(id: i64, protocol: ProtocolVersion) -> String {
@@ -489,6 +518,7 @@ impl Service for AttachService {
     async fn stop(&self) {}
 
     hosts_no_sessions!();
+    logs_in_nothing!();
 
     async fn attach_session(
         &self,
@@ -535,6 +565,8 @@ enum Seen {
     Response(Outcome),
     Event(SessionEventParams),
     Detached(SessionDetachedParams),
+    LoginPrompt(AuthLoginPromptParams),
+    LoginFinished(AuthLoginFinishedParams),
 }
 
 fn answered(id: i64) -> Seen {
@@ -607,6 +639,10 @@ impl Peer {
                 match method.as_str() {
                     SESSION_EVENT => Seen::Event(serde_json::from_value(params).unwrap()),
                     SESSION_DETACHED => Seen::Detached(serde_json::from_value(params).unwrap()),
+                    AUTH_LOGIN_PROMPT => Seen::LoginPrompt(serde_json::from_value(params).unwrap()),
+                    AUTH_LOGIN_FINISHED => {
+                        Seen::LoginFinished(serde_json::from_value(params).unwrap())
+                    }
                     other => panic!("unexpected notification {other}"),
                 }
             }
@@ -826,4 +862,121 @@ async fn a_peer_that_stops_reading_cannot_hold_a_closing_connection_open() {
         matches!(ended, Err(FrameError::Stalled { grace }) if grace == CLOSE_GRACE),
         "{ended:?}"
     );
+}
+
+/// Starts each login with a relay that has already sent its prompt and, with
+/// `finish_early`, its end, before the service answers; hands the relay of
+/// a login it did not finish to the test.
+struct LoginService {
+    finish_early: bool,
+    relays: mpsc::UnboundedSender<LoginRelay>,
+}
+
+fn login_prompt() -> LoginPrompt {
+    LoginPrompt {
+        url: "https://example.test/device".into(),
+        user_code: Some("CODE".into()),
+        url_with_code: None,
+        instruction: "Enter the code.".into(),
+    }
+}
+
+impl Service for LoginService {
+    async fn status(&self) -> DaemonStatus {
+        test_status()
+    }
+
+    async fn stop(&self) {}
+
+    hosts_no_sessions!();
+    attaches_nothing!();
+
+    async fn login(
+        &self,
+        _: AuthLoginParams,
+    ) -> Result<(AuthLoginResponse, LoginStream), RpcError> {
+        let (relay, stream) = login_relay();
+        relay.prompt(login_prompt());
+        if self.finish_early {
+            relay.finish(LoginOutcome::Succeeded);
+        } else {
+            self.relays.send(relay).unwrap();
+        }
+        let response = AuthLoginResponse {
+            login: LoginId::new("l1"),
+        };
+        Ok((response, stream))
+    }
+}
+
+fn login_line(id: i64) -> String {
+    request_with_params(id, AUTH_LOGIN, serde_json::json!({"auth": "xai-oauth"}))
+}
+
+// Covers: a login's response precedes its prompt and end even when the
+// login sent both before the service answered, and the end is the login's
+// last message (#1662).
+// Owner: protocol server forwarding.
+#[tokio::test]
+async fn a_login_answers_then_forwards_its_prompt_and_end() {
+    let (relays, _) = mpsc::unbounded_channel();
+    let service = Arc::new(LoginService {
+        finish_early: true,
+        relays,
+    });
+    let mut peer = Peer::connect(service);
+    peer.send(hello_line(1, PROTOCOL_VERSION)).await;
+    peer.send(login_line(2)).await;
+
+    assert_eq!(
+        peer.take(4).await,
+        vec![
+            answered(1),
+            answered(2),
+            Seen::LoginPrompt(AuthLoginPromptParams {
+                login: LoginId::new("l1"),
+                prompt: login_prompt(),
+            }),
+            Seen::LoginFinished(AuthLoginFinishedParams {
+                login: LoginId::new("l1"),
+                outcome: LoginOutcome::Succeeded,
+            }),
+        ]
+    );
+    peer.close_input().await;
+    assert_eq!(peer.remaining().await, Vec::new());
+}
+
+// Covers: when the client that started a login leaves, the connection
+// drops the login's stream, so the login sees its client gone and the
+// daemon can cancel it (#1662).
+// Owner: protocol server forwarding.
+#[tokio::test]
+async fn leaving_tells_a_login_its_client_is_gone() {
+    let (relays, mut started) = mpsc::unbounded_channel();
+    let service = Arc::new(LoginService {
+        finish_early: false,
+        relays,
+    });
+    let mut peer = Peer::connect(service);
+    peer.send(hello_line(1, PROTOCOL_VERSION)).await;
+    peer.send(login_line(2)).await;
+    let relay = started.recv().await.unwrap();
+    assert_eq!(
+        peer.take(3).await,
+        vec![
+            answered(1),
+            answered(2),
+            Seen::LoginPrompt(AuthLoginPromptParams {
+                login: LoginId::new("l1"),
+                prompt: login_prompt(),
+            }),
+        ]
+    );
+
+    peer.close_input().await;
+    tokio::time::timeout(RESPONSE_DEADLINE, relay.closed())
+        .await
+        .expect("the connection drops the login's stream within RESPONSE_DEADLINE");
+    assert_eq!(peer.remaining().await, Vec::new());
 }

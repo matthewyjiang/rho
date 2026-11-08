@@ -230,41 +230,41 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
             update::run_update(env!("CARGO_PKG_VERSION")).await,
         ));
     }
-    if let Some((provider, device_auth)) = login::command(&cli.command) {
+    if let Some(command) = login::command(&cli.command) {
         // agy owns its sign-in; Rho config and the credential store are not
         // involved.
-        if provider.eq_ignore_ascii_case(crate::antigravity_runtime::ANTIGRAVITY_LABEL_NAME) {
-            if device_auth {
-                anyhow::bail!(
-                    "antigravity login has no device flow; paste the code agy asks for instead"
-                );
+        let antigravity = |provider: &str| {
+            provider.eq_ignore_ascii_case(crate::antigravity_runtime::ANTIGRAVITY_LABEL_NAME)
+        };
+        match command {
+            login::LoginCommand::Cli {
+                provider,
+                device_auth: true,
+            } if antigravity(provider) => anyhow::bail!(
+                "antigravity login has no device flow; paste the code agy asks for instead"
+            ),
+            login::LoginCommand::Cli {
+                provider,
+                device_auth: false,
             }
-            return Ok(EarlyDispatch::Handled(
-                crate::antigravity_runtime::auth::login().await,
-            ));
+            | login::LoginCommand::AcpTerminal { auth: provider }
+                if antigravity(provider) =>
+            {
+                return Ok(EarlyDispatch::Handled(
+                    crate::antigravity_runtime::auth::login().await,
+                ));
+            }
+            login::LoginCommand::Cli { .. } | login::LoginCommand::AcpTerminal { .. } => {}
         }
+        // A daemon login saves under the daemon's config, which reads the
+        // credential store chosen here (#1662).
         let config_repository = ConfigRepository::new(cli.config.clone());
         let mut config = config_repository.load()?;
         config.providers.activate()?;
         let config_path = absolute_config_path(&config_repository)?;
         ensure_cli_credential_store_choice(&mut config, Some(config_path.clone()))?;
-        crate::credential_store::initialize_from_config(&mut config, &config_path)?;
         return Ok(EarlyDispatch::Handled(
-            login::run(provider, device_auth)
-                .await
-                .and_then(|completion| {
-                    if let Some(descriptor) =
-                        rho_providers::model::catalog::login_target_for_provider(provider).and_then(
-                            |target| rho_providers::provider::provider_descriptor(&target.provider),
-                        )
-                    {
-                        super::endpoint_login::record(&config_repository, *descriptor)?;
-                    }
-                    completion.finish(
-                        /*require_confirmation*/
-                        matches!(cli.command, Some(Command::Acp(_))),
-                    )
-                }),
+            login::run(command, &config_repository, &mut config, &config_path).await,
         ));
     }
     Ok(EarlyDispatch::Continue)

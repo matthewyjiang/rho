@@ -1,0 +1,172 @@
+//! `rho login` as a client of the rho daemon (#1662), which it starts when
+//! none runs, as `rho run --detach` does.
+//!
+//! The daemon checks and saves an API key (`rho/auth/key`), or runs the
+//! provider's interactive login (`rho/auth/login`) and relays its prompt
+//! here; this process opens the browser, prints the prompt as the
+//! in-process login does, and waits for the login to finish. Either way
+//! the credential lands in the store the daemon's config selects, and every
+//! session the daemon runs uses it from its next prompt.
+//!
+//! A credential variable set in this shell would override what the daemon
+//! saves, in every rho started here, so `rho login` refuses before asking.
+//!
+//! Interrupting `rho login` ends its connection, and the daemon cancels an
+//! interactive login whose client left, unless the provider already
+//! approved it. A key the daemon already received is saved.
+
+use anyhow::{anyhow, Context};
+use rho_protocol::{
+    methods::{AuthKey, AuthLogin},
+    AuthKeyParams, AuthLoginParams, ClientError, DaemonNotification, ErrorCode, LoginOutcome,
+};
+use rho_providers::auth::browser::{self, BrowserAvailability};
+
+use super::{
+    drive,
+    relay_wire::{flow_to_wire, prompt_from_wire},
+    secret, SignIn, Target,
+};
+use crate::{
+    app::{credential_writes, daemon_cli},
+    daemon::{self, cli_client_info, Connection, ProcessSpawner},
+    login_prompt_print::eprint_login_prompt,
+};
+
+/// Where `rho login` points a person whose daemon it could not use.
+const DAEMON_DOCS: &str = "https://matthewyjiang.github.io/rho/daemon";
+
+/// Signs `target` in through the daemon, with a device-code login when
+/// `device_auth` asks for one.
+pub(super) async fn run(target: Target, device_auth: bool) -> anyhow::Result<()> {
+    let Target { auth, sign_in, .. } = target;
+    refuse_shell_override(&auth, |variable| std::env::var(variable).ok())?;
+    match sign_in {
+        SignIn::ApiKey { entry_label } => save_key(auth, entry_label).await,
+        SignIn::Interactive { provider_label } => log_in(auth, provider_label, device_auth).await,
+    }
+}
+
+/// Refuses `auth` when `environment`, this shell's, holds its credential:
+/// the variable wins over any saved credential in every rho started here,
+/// a daemon `rho login` starts included, so saving one would change
+/// nothing until it is unset.
+fn refuse_shell_override(
+    auth: &str,
+    environment: impl Fn(&str) -> Option<String>,
+) -> anyhow::Result<()> {
+    match credential_writes::environment_override(auth, environment) {
+        Some(variable) => anyhow::bail!(
+            "{variable} is set in this shell and overrides any credential saved for '{auth}', here and in a rho daemon started from here; unset it, then run rho login again"
+        ),
+        None => Ok(()),
+    }
+}
+
+/// Reads the key before reaching the daemon, so a slow start does not hold
+/// up the prompt.
+async fn save_key(auth: String, entry_label: &str) -> anyhow::Result<()> {
+    let key = secret::read(entry_label).await?;
+    let Connection { client, .. } = connect().await?;
+    let saved = client
+        .request::<AuthKey>(&AuthKeyParams {
+            auth: auth.clone(),
+            key,
+        })
+        .await
+        .map_err(|error| refused(error, format!("could not save credentials for {auth}")))?;
+    match saved.unchecked {
+        None => eprintln!("saved credentials for {auth}"),
+        Some(unchecked) => eprintln!(
+            "saved credentials for {auth} without checking them: {}",
+            unchecked.message
+        ),
+    }
+    Ok(())
+}
+
+async fn log_in(auth: String, provider_label: &str, device_auth: bool) -> anyhow::Result<()> {
+    // The browser opens here, so this process's display decides.
+    let availability = BrowserAvailability::from_process();
+    let flow = flow_to_wire(drive::mode(&auth, device_auth, availability));
+    let Connection {
+        client,
+        mut notifications,
+        ..
+    } = connect().await?;
+    let login = client
+        .request::<AuthLogin>(&AuthLoginParams {
+            auth: auth.clone(),
+            flow: Some(flow),
+        })
+        .await
+        .map_err(|error| refused(error, format!("could not start the {provider_label} login")))?
+        .login;
+    loop {
+        let Some(notification) = notifications.recv().await else {
+            anyhow::bail!(
+                "lost the connection to the rho daemon during the {provider_label} login"
+            );
+        };
+        match notification {
+            DaemonNotification::LoginPrompt(params) if params.login == login => {
+                let prompt = prompt_from_wire(params.prompt);
+                let opened = browser::try_open(prompt.copyable_url(), availability);
+                eprint_login_prompt(provider_label, &prompt.with_browser(opened));
+            }
+            DaemonNotification::LoginFinished(params) if params.login == login => {
+                return finished(&auth, params.outcome);
+            }
+            // Nothing else is sent on this connection; the daemon may add
+            // notifications.
+            _ => {}
+        }
+    }
+}
+
+/// What `rho login` reports for a login to `auth` that ended with
+/// `outcome`.
+fn finished(auth: &str, outcome: LoginOutcome) -> anyhow::Result<()> {
+    match outcome {
+        // An Ollama Cloud device key saves before the user approves it, and
+        // the prompt said to approve it, so this claims the save, not the
+        // approval.
+        LoginOutcome::Succeeded => {
+            eprintln!("Saved the {auth} credential");
+            Ok(())
+        }
+        LoginOutcome::Failed { message } => anyhow::bail!("{message}"),
+        LoginOutcome::Cancelled => anyhow::bail!("the login to {auth} was cancelled"),
+        // `Unknown`, or an outcome a newer daemon added.
+        _ => anyhow::bail!(
+            "the login to {auth} ended in a way this rho does not know; is the daemon newer than this rho?"
+        ),
+    }
+}
+
+/// `error`, the daemon's refusal of what `doing` describes; a daemon too
+/// old to know the method gets told how to replace it.
+fn refused(error: ClientError, doing: String) -> anyhow::Error {
+    match error.error_code() {
+        Some(ErrorCode::MethodNotFound) => anyhow!(
+            "{doing}: the running rho daemon is older than this rho and cannot sign in; stop it with `rho daemon stop`, then run rho login again to start this rho's daemon"
+        ),
+        _ => anyhow::Error::new(error).context(doing),
+    }
+}
+
+/// Connects to the daemon, starting it when none runs. The error names what
+/// failed: a socket path over the platform's limit, a daemon that could not
+/// be started or did not accept connections in time (with its log file),
+/// or a daemon whose protocol major differs (with which side to update).
+async fn connect() -> anyhow::Result<Connection> {
+    let paths = daemon_cli::paths()?;
+    let spawner = ProcessSpawner::current_exe().context("could not find the rho executable")?;
+    daemon::connect_or_spawn(&paths, cli_client_info(), &spawner)
+        .await
+        .map_err(|error| anyhow!("could not reach the rho daemon: {error}; see {DAEMON_DOCS}"))
+}
+
+#[cfg(test)]
+#[path = "daemon_client_tests.rs"]
+mod tests;

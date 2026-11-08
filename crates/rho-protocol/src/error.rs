@@ -134,6 +134,13 @@ error_codes! {
         /// changes a loaded session, such as a settings change, needs.
         /// Attach to the session first, which loads it.
         SessionNotLoaded = -32016,
+        /// The daemon is already signing in to that auth profile, for this
+        /// client or another (#1662). Wait for that login to finish, then
+        /// start again.
+        LoginBusy = -32017,
+        /// No login under way has that id: it already ended, or never
+        /// existed (#1662).
+        LoginNotFound = -32018,
     }
 }
 

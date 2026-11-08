@@ -15,8 +15,11 @@ use tokio::{
 use crate::{
     forward::Forwarders,
     jsonrpc,
+    login_relay::LoginStream,
     methods::{
-        AuthKey, AuthKeyParams, AuthKeyResponse, AuthLogout, AuthLogoutParams, AuthLogoutResponse,
+        AuthKey, AuthKeyParams, AuthKeyResponse, AuthList, AuthListParams, AuthListResponse,
+        AuthLogin, AuthLoginCancel, AuthLoginCancelParams, AuthLoginCancelResponse,
+        AuthLoginParams, AuthLoginResponse, AuthLogout, AuthLogoutParams, AuthLogoutResponse,
         Hello, JobList, JobListParams, JobListResponse, Method, SessionAnswer, SessionAnswerParams,
         SessionAnswerResponse, SessionAttach, SessionAttachParams, SessionAttachResponse,
         SessionCancel, SessionCancelParams, SessionCancelResponse, SessionConfigure,
@@ -26,9 +29,10 @@ use crate::{
         SessionListResponse, SessionNew, SessionNewParams, SessionNewResponse, SessionPrompt,
         SessionPromptParams, SessionPromptResponse, SessionRename, SessionRenameParams,
         SessionRenameResponse, SessionSteer, SessionSteerParams, SessionSteerResponse, Status,
-        Stop, AUTH_KEY, AUTH_LOGOUT, DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER,
-        SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH,
-        SESSION_HOLD, SESSION_LIST, SESSION_NEW, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER,
+        Stop, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, DAEMON_STATUS,
+        DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL,
+        SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD, SESSION_LIST, SESSION_NEW,
+        SESSION_PROMPT, SESSION_RENAME, SESSION_STEER,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -167,6 +171,28 @@ pub trait Service: Send + Sync {
         &self,
         params: AuthLogoutParams,
     ) -> impl Future<Output = Result<AuthLogoutResponse, RpcError>> + Send;
+
+    /// Answers `rho/auth/list`: the auth profiles a client can sign in to.
+    fn list_auths(&self) -> impl Future<Output = Result<AuthListResponse, RpcError>> + Send;
+
+    /// Handles `rho/auth/login`: start the auth profile's interactive login
+    /// in a task the service owns, which sends its prompt and end through
+    /// the [`crate::LoginRelay`] whose [`LoginStream`] this returns (see
+    /// [`crate::login_relay()`]). Resolve once the login started, not once
+    /// it ends. The connection sends the response, then forwards the stream
+    /// until the relay is gone or the connection ends, when it drops the
+    /// stream: the login's client left, so the service should cancel it.
+    fn login(
+        &self,
+        params: AuthLoginParams,
+    ) -> impl Future<Output = Result<(AuthLoginResponse, LoginStream), RpcError>> + Send;
+
+    /// Handles `rho/auth/login_cancel`: ask the login to stop, without
+    /// waiting for it to end.
+    fn cancel_login(
+        &self,
+        params: AuthLoginCancelParams,
+    ) -> impl Future<Output = Result<AuthLoginCancelResponse, RpcError>> + Send;
 }
 
 /// What the daemon reports in its `rho/hello` response.
@@ -221,6 +247,11 @@ pub const CLOSE_GRACE: Duration = Duration::from_secs(1);
 /// Requests also *run* concurrently, so a client that needs one request to
 /// take effect before another sends the second only after the first's
 /// response arrives.
+///
+/// `rho/auth/login` likewise answers, then forwards the login's prompt and
+/// end as `rho/auth/login_prompt` and `rho/auth/login_finished`; the
+/// connection's end drops the login's stream, which tells the login its
+/// client left.
 ///
 /// `rho/session/attach` answers, then forwards the session's events as
 /// `rho/session/event` notifications, and `rho/session/detached` when the
@@ -358,6 +389,16 @@ where
                         while calls.try_join_next().is_some() {}
                         continue;
                     }
+                    Ok(Route::Login(params)) => {
+                        let responder = Responder::new(id, &outbox);
+                        let service = Arc::clone(&service);
+                        let forwarders = Arc::clone(forwarders);
+                        calls.spawn(async move {
+                            login(&*service, params, responder, &forwarders).await;
+                        });
+                        while calls.try_join_next().is_some() {}
+                        continue;
+                    }
                     Ok(Route::Detach(SessionDetachParams { session })) => {
                         forwarders.detach(&session);
                         Response {
@@ -431,6 +472,9 @@ enum Route {
     /// `rho/session/detach`: the connection stops that session's forwarder
     /// and answers in place.
     Detach(SessionDetachParams),
+    /// `rho/auth/login`: the service answers it in its own task, then the
+    /// connection forwards the login's prompt and end.
+    Login(AuthLoginParams),
 }
 
 /// A post-handshake request whose params decoded, waiting for the service.
@@ -450,6 +494,8 @@ enum ServiceCall {
     ListJobs,
     SaveAuthKey(AuthKeyParams),
     LogoutAuth(AuthLogoutParams),
+    ListAuths,
+    CancelLogin(AuthLoginCancelParams),
 }
 
 impl Connection {
@@ -492,6 +538,7 @@ impl Connection {
             (Self::Ready, SESSION_DETACH) => {
                 decode_params::<SessionDetach>(params).map(Route::Detach)
             }
+            (Self::Ready, AUTH_LOGIN) => decode_params::<AuthLogin>(params).map(Route::Login),
             (Self::Ready, method) => ServiceCall::decode(method, params).map(Route::Call),
         }
     }
@@ -519,6 +566,8 @@ impl ServiceCall {
             JOB_LIST => decode_params::<JobList>(params).map(|JobListParams {}| Self::ListJobs),
             AUTH_KEY => decode_params::<AuthKey>(params).map(Self::SaveAuthKey),
             AUTH_LOGOUT => decode_params::<AuthLogout>(params).map(Self::LogoutAuth),
+            AUTH_LIST => decode_params::<AuthList>(params).map(|AuthListParams {}| Self::ListAuths),
+            AUTH_LOGIN_CANCEL => decode_params::<AuthLoginCancel>(params).map(Self::CancelLogin),
             method => Err(RpcError::new(
                 ErrorCode::MethodNotFound,
                 format!("unknown method {method}"),
@@ -571,6 +620,10 @@ impl ServiceCall {
             Self::LogoutAuth(params) => {
                 encode_result::<AuthLogout>(&service.logout_auth(params).await?)
             }
+            Self::ListAuths => encode_result::<AuthList>(&service.list_auths().await?),
+            Self::CancelLogin(params) => {
+                encode_result::<AuthLoginCancel>(&service.cancel_login(params).await?)
+            }
         }
     }
 }
@@ -594,6 +647,32 @@ async fn attach<Svc: Service>(
         Ok((result, subscription)) => {
             let outbox = responder.outbox.clone();
             forwarders.attach(session, subscription, outbox, move || {
+                responder.send(Ok(result));
+            });
+        }
+        Err(error) => responder.send(Err(error)),
+    }
+}
+
+/// Answers a login through `responder`, then forwards the login's prompt
+/// and end through `forwarders`.
+async fn login<Svc: Service>(
+    service: &Svc,
+    params: AuthLoginParams,
+    responder: Responder,
+    forwarders: &Arc<Forwarders>,
+) {
+    let started = service.login(params).await.and_then(|(response, stream)| {
+        Ok((
+            response.login.clone(),
+            encode_result::<AuthLogin>(&response)?,
+            stream,
+        ))
+    });
+    match started {
+        Ok((login, result, stream)) => {
+            let outbox = responder.outbox.clone();
+            forwarders.relay_login(login, stream, outbox, move || {
                 responder.send(Ok(result));
             });
         }

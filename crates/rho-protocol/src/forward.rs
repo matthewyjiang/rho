@@ -1,5 +1,6 @@
 //! A connection's forwarders: one task per attached session that writes its
-//! subscription's events as notifications (#1657).
+//! subscription's events as notifications (#1657), and one per login the
+//! connection started that writes its prompt and end (#1662).
 //!
 //! Ordering rests on one rule: a forwarder queues a notification only while
 //! it is still the session's current forwarder, checked under the same lock
@@ -13,6 +14,10 @@
 //! closed, without waiting for more. So a service that closes its
 //! publishers before a connection ends, as the daemon does when it stops,
 //! reaches every attached client.
+//!
+//! A login's forwarder is never replaced or stopped early; it ends with its
+//! login or with the connection, and dropping its stream then tells the
+//! login its client left.
 
 use std::{
     collections::HashMap,
@@ -26,9 +31,11 @@ use tokio::{
 
 use crate::{
     jsonrpc,
+    login_relay::{LoginEvent, LoginStream},
     methods::{
-        Notification, SessionDetachedNotification, SessionDetachedParams, SessionEventNotification,
-        SessionEventParams, SessionId,
+        AuthLoginFinishedNotification, AuthLoginFinishedParams, AuthLoginPromptNotification,
+        AuthLoginPromptParams, LoginId, Notification, SessionDetachedNotification,
+        SessionDetachedParams, SessionEventNotification, SessionEventParams, SessionId,
     },
     server::{Outbox, Outgoing},
     subscription::{Next, Subscription},
@@ -120,6 +127,35 @@ impl Forwarders {
         }
     }
 
+    /// Answers a login with `answer`, then forwards `stream`. Once the
+    /// connection has ended, it only answers and drops the stream, so the
+    /// login sees its client gone.
+    ///
+    /// # Panics
+    ///
+    /// Outside a Tokio runtime.
+    pub(crate) fn relay_login(
+        self: &Arc<Self>,
+        login: LoginId,
+        stream: LoginStream,
+        outbox: Outbox,
+        answer: impl FnOnce(),
+    ) {
+        let mut table = self.lock();
+        answer();
+        if !table.open {
+            return;
+        }
+        while table.tasks.try_join_next().is_some() {}
+        table.tasks.spawn(relay(
+            Arc::clone(self),
+            outbox,
+            login,
+            stream,
+            self.ending.subscribe(),
+        ));
+    }
+
     /// Stops the session's forwarder, if it has one. Nothing it has not
     /// queued yet is sent.
     pub(crate) fn detach(&self, session: &SessionId) {
@@ -159,6 +195,16 @@ impl Forwarders {
         let table = self.lock();
         table.is_current(session, id)
             && outbox.send(Outgoing::Notification(message, permit)).is_ok()
+    }
+
+    /// Queues a login's `message`; false once the writer is gone. A login's
+    /// forwarder is never replaced, so there is no current one to check.
+    async fn send_login(&self, message: jsonrpc::Notification, outbox: &Outbox) -> bool {
+        // Never closed, so acquiring fails only if that changes.
+        let Ok(permit) = Arc::clone(&self.queue).acquire_owned().await else {
+            return false;
+        };
+        outbox.send(Outgoing::Notification(message, permit)).is_ok()
     }
 
     /// Forgets forwarder `id` once it has finished, unless it was replaced.
@@ -245,6 +291,58 @@ async fn forward(
         forwarders.send(&session, id, message, &outbox).await;
     }
     forwarders.finish(&session, id);
+}
+
+/// Forwards one login's prompt and end. Once `ending` is set, it forwards
+/// only what the login already sent, then drops the stream.
+async fn relay(
+    forwarders: Arc<Forwarders>,
+    outbox: Outbox,
+    login: LoginId,
+    mut stream: LoginStream,
+    mut ending: watch::Receiver<bool>,
+) {
+    let send = async |event| {
+        let message = login_notification(&login, event);
+        forwarders.send_login(message, &outbox).await
+    };
+    loop {
+        let next = tokio::select! {
+            next = stream.next() => next,
+            // Never fails: the sender lives as long as `forwarders`.
+            _ = ending.wait_for(|ending| *ending) => break,
+        };
+        let Some(event) = next else {
+            return;
+        };
+        if !send(event).await {
+            return;
+        }
+    }
+    while let Some(event) = stream.try_next() {
+        if !send(event).await {
+            return;
+        }
+    }
+}
+
+/// `event` of login `login` as its notification.
+fn login_notification(login: &LoginId, event: LoginEvent) -> jsonrpc::Notification {
+    let encoded = match event {
+        LoginEvent::Prompt(prompt) => {
+            notification::<AuthLoginPromptNotification>(&AuthLoginPromptParams {
+                login: login.clone(),
+                prompt,
+            })
+        }
+        LoginEvent::Finished(outcome) => {
+            notification::<AuthLoginFinishedNotification>(&AuthLoginFinishedParams {
+                login: login.clone(),
+                outcome,
+            })
+        }
+    };
+    encoded.expect("login notifications hold only strings")
 }
 
 /// Encodes `N` with its params, the type [`crate::Client`] decodes.

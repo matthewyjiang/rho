@@ -1,53 +1,133 @@
+//! `rho login` and `rho acp --login`: signing in from a terminal.
+//!
+//! On unix `rho login` is a client of the rho daemon, which saves the
+//! credential and runs interactive logins for it (#1662), starting the
+//! daemon when none runs (`daemon_client.rs`). `rho acp --login` still signs
+//! in in this process until the ACP adapter becomes a daemon client
+//! (#1670), as does `rho login` where the daemon is unsupported (Windows,
+//! #1665) (`in_process.rs`).
+
+#[cfg(unix)]
+mod daemon_client;
+pub(super) mod drive;
+mod in_process;
+#[cfg(unix)]
+pub(super) mod relay_wire;
 mod secret;
 
-use {
-    crate::cli::Command,
-    crate::credential_store::AppCredentialStore,
-    crate::login_prompt_print::eprint_login_prompt,
-    rho_providers::auth::{
-        browser::BrowserAvailability,
-        login_dispatch::{
-            AuthenticationError, AuthenticationMethod, InteractiveLoginCompletion,
-            InteractiveLoginMode, ProviderAuthentication,
-        },
-    },
-    rho_providers::model::catalog,
+use rho_providers::{
+    auth::login_dispatch::{AuthenticationError, AuthenticationMethod, ProviderAuthentication},
+    model::catalog,
+    provider::{provider_descriptor, ProviderDescriptor},
 };
 
-/// Both CLI entry points share setup; ACP auth bypasses session/model startup.
-pub(super) fn command(command: &Option<Command>) -> Option<(&str, bool)> {
+use self::drive::Saved;
+use super::config_repository::ConfigRepository;
+use crate::{cli::Command, config::Config};
+
+/// A sign-in someone asked for from a terminal.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum LoginCommand<'a> {
+    /// `rho login <provider>`, with `--device-auth`.
+    Cli {
+        provider: &'a str,
+        device_auth: bool,
+    },
+    /// `rho acp --login <auth>`, which an ACP host runs in a terminal and
+    /// whose zero exit status promises a finished sign-in.
+    AcpTerminal { auth: &'a str },
+}
+
+/// The sign-in `command` asks for; `None` for every other command.
+pub(super) fn command(command: &Option<Command>) -> Option<LoginCommand<'_>> {
     match command {
         Some(Command::Login {
             provider,
             device_auth,
-        }) => Some((provider, *device_auth)),
-        Some(Command::Acp(args)) => args.login.as_deref().map(|auth| (auth, false)),
+        }) => Some(LoginCommand::Cli {
+            provider,
+            device_auth: *device_auth,
+        }),
+        Some(Command::Acp(args)) => args
+            .login
+            .as_deref()
+            .map(|auth| LoginCommand::AcpTerminal { auth }),
         _ => None,
     }
 }
 
-#[derive(Debug)]
-pub(super) enum LoginCompletion {
-    Saved,
-    Unconfirmed,
-}
-
-impl LoginCompletion {
-    /// Terminal auth's zero exit status is a promise of completed sign-in.
-    pub(super) fn finish(self, require_confirmation: bool) -> anyhow::Result<()> {
-        match self {
-            Self::Unconfirmed if require_confirmation => {
-                anyhow::bail!("login could not be confirmed; complete the provider's instructions and reconnect")
-            }
-            Self::Saved | Self::Unconfirmed => Ok(()),
-        }
+/// Signs `command` in. `config`, loaded from `repository` at `config_path`
+/// with its credential store chosen, is what an in-process login saves
+/// under; a daemon login uses the daemon's.
+pub(super) async fn run(
+    command: LoginCommand<'_>,
+    repository: &ConfigRepository,
+    config: &mut Config,
+    config_path: &std::path::Path,
+) -> anyhow::Result<()> {
+    match command {
+        #[cfg(unix)]
+        LoginCommand::Cli {
+            provider,
+            device_auth,
+        } => daemon_client::run(target(provider)?, device_auth).await,
+        // A person reads the provider's instructions, so a login it cannot
+        // confirm counts.
+        #[cfg(not(unix))]
+        LoginCommand::Cli {
+            provider,
+            device_auth,
+        } => match in_process::run(
+            target(provider)?,
+            device_auth,
+            repository,
+            config,
+            config_path,
+        )
+        .await?
+        {
+            Saved::Confirmed | Saved::Unconfirmed { .. } => Ok(()),
+        },
+        // The exit status promises a finished sign-in, which a login the
+        // provider cannot confirm is not.
+        LoginCommand::AcpTerminal { auth } => match in_process::run(
+            target(auth)?,
+            /*device_auth*/ false,
+            repository,
+            config,
+            config_path,
+        )
+        .await?
+        {
+            Saved::Confirmed => Ok(()),
+            Saved::Unconfirmed { .. } => anyhow::bail!(
+                "login could not be confirmed; complete the provider's instructions and reconnect"
+            ),
+        },
     }
 }
 
-pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<LoginCompletion> {
-    if rho_providers::provider::provider_descriptor(provider)
-        .is_some_and(|descriptor| descriptor.is_keyless())
-    {
+/// An auth profile that takes a credential.
+struct Target {
+    /// The auth profile's id, such as `openai-codex`.
+    auth: String,
+    /// The provider it signs in to.
+    descriptor: &'static ProviderDescriptor,
+    sign_in: SignIn,
+}
+
+/// How a [`Target`] signs in.
+#[derive(Clone, Copy)]
+enum SignIn {
+    /// With an API key, read hidden from the terminal.
+    ApiKey { entry_label: &'static str },
+    /// With the provider's interactive login.
+    Interactive { provider_label: &'static str },
+}
+
+/// The auth profile `provider`, a provider or auth profile id, signs in to.
+fn target(provider: &str) -> anyhow::Result<Target> {
+    if provider_descriptor(provider).is_some_and(|descriptor| descriptor.is_keyless()) {
         anyhow::bail!("provider '{provider}' does not require login");
     }
     let Some(target) = catalog::login_target_for_provider(provider) else {
@@ -63,44 +143,23 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<Log
             .join(", ");
         anyhow::bail!("unsupported login provider '{provider}'. Use one of: {options}");
     };
-    match ProviderAuthentication::method(&target.auth)? {
+    let sign_in = match ProviderAuthentication::method(&target.auth)? {
         AuthenticationMethod::None => {
             anyhow::bail!("provider '{provider}' does not require login")
         }
-        AuthenticationMethod::ApiKey { entry_label, .. } => {
-            let key = secret::read(entry_label).await?;
-            ProviderAuthentication::save_api_key(&AppCredentialStore, &target.auth, &key)?;
-            eprintln!("saved credentials for {}", target.auth);
-            return Ok(LoginCompletion::Saved);
+        AuthenticationMethod::ApiKey { entry_label } => SignIn::ApiKey { entry_label },
+        AuthenticationMethod::Interactive { provider_label } => {
+            SignIn::Interactive { provider_label }
         }
-        AuthenticationMethod::Interactive { .. } => {}
-    }
-
-    let availability = BrowserAvailability::from_process();
-    let mode = if device_auth {
-        InteractiveLoginMode::Device
-    } else {
-        ProviderAuthentication::preferred_mode(&target.auth, availability)
     };
-    let login =
-        ProviderAuthentication::start_interactive_login(&target.auth, mode, availability).await?;
-    eprint_login_prompt(login.provider_label, &login.prompt);
-
-    match login.completion {
-        InteractiveLoginCompletion::Confirm(completion) => {
-            completion.await?.save(&AppCredentialStore)?;
-            eprintln!("Successfully logged in to {}", target.auth);
-            Ok(LoginCompletion::Saved)
-        }
-        InteractiveLoginCompletion::Unconfirmed {
-            instruction,
-            authentication,
-        } => {
-            authentication.accept(&AppCredentialStore)?;
-            eprintln!("{instruction}");
-            Ok(LoginCompletion::Unconfirmed)
-        }
-    }
+    let Some(descriptor) = provider_descriptor(&target.provider) else {
+        anyhow::bail!("unknown provider '{}'", target.provider);
+    };
+    Ok(Target {
+        auth: target.auth,
+        descriptor,
+        sign_in,
+    })
 }
 
 #[cfg(test)]

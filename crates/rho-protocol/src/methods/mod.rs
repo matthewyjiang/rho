@@ -22,8 +22,11 @@
 //! | [`SESSION_RENAME`] | [`SessionRenameParams`] | [`SessionRenameResponse`] |
 //! | [`SESSION_DELETE`] | [`SessionDeleteParams`] | [`SessionDeleteResponse`] |
 //! | [`JOB_LIST`] | [`JobListParams`] | [`JobListResponse`] |
+//! | [`AUTH_LIST`] | [`AuthListParams`] | [`AuthListResponse`] |
 //! | [`AUTH_KEY`] | [`AuthKeyParams`] | [`AuthKeyResponse`] |
 //! | [`AUTH_LOGOUT`] | [`AuthLogoutParams`] | [`AuthLogoutResponse`] |
+//! | [`AUTH_LOGIN`] | [`AuthLoginParams`] | [`AuthLoginResponse`] |
+//! | [`AUTH_LOGIN_CANCEL`] | [`AuthLoginCancelParams`] | [`AuthLoginCancelResponse`] |
 //!
 //! The daemon sends these notifications; clients send none.
 //!
@@ -31,6 +34,8 @@
 //! |---|---|
 //! | [`SESSION_EVENT`] | [`SessionEventParams`] |
 //! | [`SESSION_DETACHED`] | [`SessionDetachedParams`] |
+//! | [`AUTH_LOGIN_PROMPT`] | [`AuthLoginPromptParams`] |
+//! | [`AUTH_LOGIN_FINISHED`] | [`AuthLoginFinishedParams`] |
 //!
 //! [`crate::schema`] publishes every method and notification as JSON Schema.
 //! Enums that read values they do not know as `Unknown`, so a protocol minor
@@ -48,13 +53,15 @@ mod daemon;
 mod event;
 mod input;
 mod job;
+mod login;
 mod options;
 mod outcome;
 mod session;
 
 pub use auth::{
-    AuthKeyParams, AuthKeyResponse, AuthLogoutParams, AuthLogoutResponse, EnvironmentOverride,
-    UncheckedKey, UncheckedReason, AUTH_KEY, AUTH_LOGOUT,
+    AuthKeyParams, AuthKeyResponse, AuthKind, AuthListParams, AuthListResponse, AuthLogoutParams,
+    AuthLogoutResponse, AuthStatus, AuthSummary, EnvironmentOverride, UncheckedKey,
+    UncheckedReason, AUTH_KEY, AUTH_LIST, AUTH_LOGOUT,
 };
 pub use catalog::{
     SessionDeleteParams, SessionDeleteResponse, SessionListParams, SessionListResponse,
@@ -79,6 +86,11 @@ pub use input::{
 pub use job::{
     Budget, JobId, JobKind, JobListParams, JobListResponse, JobState, JobSummary, QueuePlace,
     JOB_LIST,
+};
+pub use login::{
+    AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginFinishedParams, AuthLoginParams,
+    AuthLoginPromptParams, AuthLoginResponse, LoginFlow, LoginId, LoginOutcome, LoginPrompt,
+    AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT,
 };
 pub use options::{
     CommandKind, FastModeOptions, ModelChoice, ModelOptions, ModelRef, PermissionModeOptions,
@@ -181,11 +193,16 @@ protocol! {
         SessionRename = SESSION_RENAME: SessionRenameParams => SessionRenameResponse,
         SessionDelete = SESSION_DELETE: SessionDeleteParams => SessionDeleteResponse,
         JobList = JOB_LIST: JobListParams => JobListResponse,
+        AuthList = AUTH_LIST: AuthListParams => AuthListResponse,
         AuthKey = AUTH_KEY: AuthKeyParams => AuthKeyResponse,
         AuthLogout = AUTH_LOGOUT: AuthLogoutParams => AuthLogoutResponse,
+        AuthLogin = AUTH_LOGIN: AuthLoginParams => AuthLoginResponse,
+        AuthLoginCancel = AUTH_LOGIN_CANCEL: AuthLoginCancelParams => AuthLoginCancelResponse,
     }
     notifications {
         SessionEventNotification = SESSION_EVENT: SessionEventParams,
         SessionDetachedNotification = SESSION_DETACHED: SessionDetachedParams,
+        AuthLoginPromptNotification = AUTH_LOGIN_PROMPT: AuthLoginPromptParams,
+        AuthLoginFinishedNotification = AUTH_LOGIN_FINISHED: AuthLoginFinishedParams,
     }
 }
