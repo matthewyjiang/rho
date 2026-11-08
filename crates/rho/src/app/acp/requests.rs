@@ -184,8 +184,8 @@ pub(super) fn session_list(page: SessionListResponse) -> ListSessionsResponse {
 }
 
 /// `summary` labelled with its title, else its first user message, with its
-/// last save as an RFC 3339 time. Its directories are those still there,
-/// which `session/load` takes only from its own request.
+/// last save as an RFC 3339 time. Its directories are those it saved that
+/// still exist; a load adds its request's to them.
 fn session_info(summary: SessionSummary) -> SessionInfo {
     let title = summary.title.or(summary.first_user_message);
     let updated_at = i64::try_from(summary.updated_at)

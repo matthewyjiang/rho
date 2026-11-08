@@ -127,7 +127,7 @@ Each file is an ordinary [agent definition](/subagents/definition-schema).
 Agent files must be regular files: Rho skips a symlinked agent file and
 reports it in `rho plugins inspect`.
 Plugin agents appear in `/agents`, the `agent` tool, `--agent`, workflows, and
-`/agent:<id>` in ACP sessions (including T3 Code delegation) like any other
+`/agent:<id>` in ACP sessions like any other
 agent. Their files stay read-only: `/agents` cannot edit or delete them. They
 rank above built-ins and below every agent file you own:
 

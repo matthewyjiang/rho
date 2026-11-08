@@ -2,7 +2,9 @@
 
 Parent: [Agent Client Protocol](/integrations/acp).
 
-What `rho acp` sends and accepts over ACP, for people building or debugging a host. For setup and everyday use, see [Agent Client Protocol](/integrations/acp). For T3 Code's extensions, see [T3 Code](/integrations/acp/t3-code).
+What `rho acp` sends and accepts over ACP, for people building or debugging a host. For setup and everyday use, see [Agent Client Protocol](/integrations/acp). For T3 Code, see [T3 Code](/integrations/acp/t3-code).
+
+`rho acp` is a client of the [rho daemon](/daemon): it maps each ACP session to a daemon session and relays it. The daemon runs the turns, tools, and logins, so where this page says Rho does something in a session, the daemon does it, as the [protocol reference](/protocol) describes. A daemon that cannot be reached or started fails the request with `internal_error` naming the cause.
 
 ## Initialize
 
@@ -25,7 +27,7 @@ Rho advertises:
 | `mcpCapabilities.http` | Host MCP servers over Streamable HTTP. `sse` is not advertised. See [MCP servers](#mcp-servers). |
 | `auth.logout` | `logout`. See [Logout](#logout). |
 
-Rho reads these host capabilities:
+Rho reads these host capabilities. It never sends `fs/*` or `terminal/*` requests, whatever the host advertises: tools run in the daemon, on the files on disk and in its own processes.
 
 | Host capability | Effect |
 | --- | --- |
@@ -33,10 +35,8 @@ Rho reads these host capabilities:
 | `clientCapabilities.session.compaction` | `compaction_update` cards. |
 | `clientCapabilities.session.notices` | Non-conversation information as `notice`. |
 | `clientCapabilities.session.configOptions.boolean` | `fast_mode` as a boolean switch. See [Fast mode](#fast-mode). |
-| `clientCapabilities.elicitation.form` | The `questionnaire` tool and MCP elicitation, and the credential store question before a first sign-in. See [Questions](#questions) and [Authentication](#authentication). |
-| `clientCapabilities.elicitation.url` | OAuth and API-key sign-in through `authenticate`. See [Authentication](#authentication). |
-| `clientCapabilities.fs.readTextFile` and `.writeTextFile` | File text through `fs/*`, when both are advertised. See [Host files](#host-files). |
-| `clientCapabilities.terminal` | `bash` calls in host terminals through `terminal/*`. See [Host terminals](#host-terminals). |
+| `clientCapabilities.elicitation.form` | The `questionnaire` tool and MCP elicitation. See [Questions](#questions). |
+| `clientCapabilities.elicitation.url` | OAuth sign-in through `authenticate`. See [Authentication](#authentication). |
 | `clientInfo.name` `t3-code` | T3 Code's [question form shape](#t3-code-forms). |
 
 ## Protocol v2
@@ -48,100 +48,86 @@ A host that sends `"protocolVersion": 2` gets the [ACP v2 draft](https://agentcl
 - **Resume.** `session/load` is gone. `session/resume` with `replayFrom: {"type": "start"}` replays the conversation as [Load and replay](#load-and-replay) describes, sending each message with empty content (`user_message`, `agent_message`, or `agent_thought`) before its chunks, so a host that still holds the message replaces it instead of appending; without `replayFrom` it replays nothing. Both send `state_update` `idle` before answering. Other replay cursors fail with invalid params.
 - **Setup responses.** `session/new` and `session/resume` answer with `configOptions` (`configId`, `groupId`) and `availableCommands` instead of sending the command list afterwards. There is no `modes` field and no `session/set_mode`; use the `mode` config option.
 - **Updates.** Tool calls are created by their first `tool_call_update`. The checklist is a `plan_update` with `planId` `rho-todos`. Command input hints are tagged `type: "text"`. `current_mode_update` is not sent; mode changes arrive as `config_option_update`.
-- **Diffs.** Each file change is a `changes` entry (`add`, `delete`, or `modify`; a move is a `delete` and an `add`) with a `git_patch` using absolute paths. A path Git would quote gets no patch, which includes every Windows path, since Git quotes `\` separators.
+- **Diffs.** Each file change is a `changes` entry (`add`, `delete`, or `modify`; a move is a `delete` and an `add`) with a `git_patch` using absolute paths. A path Git would quote gets no patch.
 - **Permissions.** The approval's question is the request `title`; the tool call goes in `subject`.
 - **Authentication.** `authenticate` and `logout` are `auth/login` and `auth/logout`.
-- **Host files and terminals.** v2 has no `fs/*` or `terminal/*`, so Rho reads, writes, and runs commands itself.
 
 ## Authentication
 
-Rho advertises one authentication method per provider auth profile. Where it runs depends on the host:
+Rho advertises one authentication method per auth profile the daemon lists. Where it runs depends on the host:
 
-| Auth profile | Host advertises `elicitation.url`, and either a credential store is chosen or the host advertises `elicitation.form` | Otherwise |
+| Auth profile | Host advertises `elicitation.url` | Otherwise |
 | --- | --- | --- |
 | OAuth (Codex, GitHub Copilot, SpaceXAI, Kimi, Meta, OpenRouter) | Agent method, run by `authenticate` | Terminal method, if the host advertises `auth.terminal` |
-| API key | Agent method, run by `authenticate`, unless Rho runs headless or over SSH | Terminal method, if the host advertises `auth.terminal` |
+| API key | Terminal method, if the host advertises `auth.terminal` | Same |
 
-The API-key page is served on the machine running `rho acp`, so when Rho runs headless or over SSH, as it does on a remote host or in a container, the host's browser cannot reach it. API keys are then terminal methods, the same rule `rho login` uses to choose device code over a browser callback. A host that can run neither kind gets no methods. Ollama Cloud device-key setup is never advertised because it cannot confirm browser authorization.
+API keys never travel over ACP, since hosts log their messages, so they are entered only in a terminal. A host that can run neither kind gets no methods, and so does every host when the daemon cannot be reached.
 
 ### Agent methods
 
-An agent method has no `type`, which is ACP's default, and its ID is the auth profile. Rho does not open a browser itself. For each login it sends one URL-mode `elicitation/create` scoped to the `authenticate` request (`requestId`):
+An agent method has no `type`, which is ACP's default, and its ID is the auth profile. `authenticate` starts the profile's login in the daemon, as `rho login <auth-profile>` does: a browser callback where a browser can appear, and device code over SSH or headless. Rho does not open a browser itself. It sends one URL-mode `elicitation/create` scoped to the `authenticate` request (`requestId`). The URL is the authorize URL or, for device code, the verification URL with the code filled in when the provider supplies one. The message names the provider and includes any device code.
 
-- **OAuth.** Rho starts the same login as `rho login <auth-profile>`. That is a browser callback where a browser can appear, and device code over SSH or headless. The URL is the authorize URL or, for device code, the verification URL with the code filled in when the provider supplies one. The message names the provider and includes any device code.
-- **API key.** The URL is a one-time key page Rho serves on `http://127.0.0.1:<port>/<token>`, and the message names the key to enter. The key goes from the browser to Rho, never through ACP. Rho checks it against the provider's models endpoint before saving it. A key the provider refuses (HTTP 400, 401, or 403) is not saved: the page says so and asks again, and `authenticate` keeps waiting. When the provider cannot be asked, because Rho does not list its models (TypeSafe and SpaceXAI), the endpoint fails another way, or it cannot be reached, Rho saves the key unchecked, as the terminal login does, and the page says so. A provider whose models endpoint needs no key accepts any key. A profile whose key is set in its environment variable, such as `OPENAI_API_KEY`, fails with `invalid_request` (`-32600`) naming the variable, since a saved key would not be used.
+When the provider confirms the login, the daemon saves the credentials, Rho sends `elicitation/complete` for that elicitation, and answers `authenticate` with an empty result. A declined or dismissed elicitation, or `$/cancel_request` for `authenticate`, cancels the login in the daemon, and the request fails with `request_cancelled` (`-32800`). A failed login answers `internal_error` with a reason that does not include the credential. If the host rejects the elicitation, the reason names the `rho login <auth-profile>` command to run instead. A host that does not advertise `elicitation.url` gets `invalid_params` naming that command.
 
-The key page answers only on `127.0.0.1`, and only requests whose `Host` header is its own `127.0.0.1:<port>`, which blocks DNS rebinding. Its token is random and opens the page once; reopening the link is refused, so a copy read from host logs is useless once the page is open. The form posts to a second token that is never sent over ACP. The page expires after 15 minutes, which fails `authenticate` with `internal_error`. The key never appears in an ACP message, a log, or an error.
-
-When the provider confirms the login, or accepts the key, Rho saves the credentials, sends `elicitation/complete` for that elicitation, and answers `authenticate` with an empty result. A declined or dismissed elicitation, or `$/cancel_request` for `authenticate`, abandons the login and frees its callback or key page port. The request then fails with `request_cancelled` (`-32800`). A failed login answers `internal_error` with a reason that does not include the credential. If the host rejects the elicitation, the reason names the `rho login <auth-profile>` command to run instead. One login runs at a time: a new `authenticate` cancels one still waiting, which then fails with `request_cancelled`, so a host that leaves sign-in without `$/cancel_request` does not keep a port busy.
-
-A login needs a credential store to save to. When none is chosen through config, `RHO_CREDENTIAL_STORE`, or an earlier login, `authenticate` first asks where to store credentials as a form-mode `elicitation/create` scoped to the `authenticate` request. Its one required property, `store`, offers `os` and `file`, leaving out a store that cannot be opened on this machine; T3 Code gets their labels instead. Rho saves the answer to config as the terminal login does, then runs the login in the same `authenticate` call. Declining or dismissing the form fails with `request_cancelled`. A host that does not advertise `elicitation.form` gets terminal methods until a store is chosen, and none at all without `auth.terminal`. Whether a store is chosen is read when `rho acp` starts.
+One login runs at a time per connection: a new `authenticate` cancels one still waiting, which then fails with `request_cancelled`, so a host that leaves sign-in without `$/cancel_request` does not keep a login running. The daemon runs one login per auth profile, so a login another client already started fails with `invalid_request`, as does a profile whose credential is set in the daemon's environment, such as `OPENAI_API_KEY`.
 
 ### Terminal methods
 
-Each terminal method appends `--login <auth-profile>` to the configured agent invocation; for example, T3 Code launches `rho acp --t3code --login codex` in its sign-in terminal. This runs login instead of the ACP server and needs neither a working model nor a T3 MCP connection. API-key input is hidden, including pasted keys. Browser and device-code methods use the same flows as `rho login <provider>`. Rho asks where to store credentials when no credential backend has been selected. Cancelled, failed, and unconfirmed terminal logins exit nonzero. `authenticate` accepts only auth profiles advertised as agent methods; a terminal method's ID fails with invalid params.
+Each terminal method appends `--login <auth-profile>` to the configured agent invocation; for example, T3 Code launches `rho acp --t3code --login codex` in its sign-in terminal. This signs in through the daemon, as `rho login` does, instead of serving ACP, and needs no working model. API-key input is hidden, including pasted keys. Browser and device-code methods use the same flows as `rho login <provider>`. Cancelled, failed, and unconfirmed terminal logins exit nonzero.
 
-Credentials stay in Rho's configured store, not in ACP messages.
+Credentials stay in the daemon's [credential store](/daemon#credentials), not in ACP messages.
 
-### Startup and credential failures
+### Credential failures
 
-Model discovery and agent binding wait until the host requests a session, so a configured provider with no credentials or cached models can still advertise login. A startup failure is returned to the session request; reconnect after fixing it to retry startup.
+When a prompt's turn fails because the selected provider has no credentials, the credential store cannot read them, or the provider refuses them, `session/prompt` fails with ACP `auth_required` (`-32000`) instead of an internal error. A refusal covers a revoked API key and an OAuth session whose refresh token expired or was revoked, and applies to model turns and `/compact` alike. The message comes from the daemon and names only the provider, the auth profile, and how to log in; it never contains the credential or the provider's raw response. A turn that fails on its configuration fails with `invalid_params`.
 
-Credential failures are the exception. When the selected provider has no credentials, the credential store cannot read them, or the provider refuses them, the request fails with ACP `auth_required` (`-32000`) instead of an internal error. A refusal covers a revoked API key and an OAuth session whose refresh token expired or was revoked. This applies to `session/new` and `session/load`, and to a `session/prompt` turn or `/compact` that the provider rejects mid-session. The error message comes from Rho, such as the provider's missing-credential hint; it never contains the credential or the provider's raw response.
-
-After a successful login, no reconnect is needed, whichever credential store holds it. The next session request runs startup again, and the next prompt in a session whose credentials were refused reloads them for turns and compaction. A sign-in through `authenticate` reaches every live session of the agent, refused or not: each one's next prompt uses the saved credentials.
+After a successful login, no reconnect is needed, however it signed in. The daemon applies a sign-in to every session it runs from that session's next prompt.
 
 ### Logout
 
-`logout` signs out of the auth profile new sessions use: the one the config and launch flags select, which is the one whose missing credentials make `session/new` fail. It deletes that profile's credentials from Rho's credential store, as `/logout <provider>` does in the TUI. The store is the one `authenticate` would save to as configured when `logout` runs; with no store chosen, that is the OS store sessions read by default. Credentials for other auth profiles are kept. The credentials are deleted, not just forgotten by this connection, so the terminal and other Rho processes that share the store must sign in again the next time they load credentials. A process already running keeps the credentials it loaded until then. The result is empty.
+`logout` deletes the saved credentials of the auth profile the workspace config selects, as `/logout <provider>` does in the TUI, through the daemon. With no auth profile selected, it fails with `invalid_request` (`-32600`) and deletes nothing. Credentials for other auth profiles are kept. The credentials are deleted from the daemon's store, so every session the daemon runs, whichever client opened it, and other Rho processes that share the store must sign in again; the daemon's sessions fail with `auth_required` from their next prompt. A profile whose credential is set in the daemon's environment cannot be signed out from ACP: `logout` fails with `invalid_request` naming the variable. A store that cannot be opened or written fails with `internal_error`. The result is empty.
 
-After `logout`, `session/new` and `session/load` fail with `auth_required` until the host signs in again. A profile that needs no credentials, such as a local Ollama, has nothing to delete: `logout` succeeds and sessions keep working.
-
-Live sessions stay open. Each session's next `session/prompt`, including `/compact`, reloads credentials and fails with `auth_required` when its model uses the signed-out profile. A session that switched to another provider's model keeps working. Work already running when `logout` arrives, such as a turn, a delegated agent, or title generation, finishes with the credentials it holds. When such work refreshes an OAuth token, Rho does not save the refreshed token over the deleted sign-in, so the logout holds. Signing in again applies in place, as after any [credential failure](#startup-and-credential-failures).
-
-`logout` and agent-method `authenticate` run one at a time. A `logout` cancels an `authenticate` still waiting, which fails with `request_cancelled` (`-32800`), so that login cannot save after the logout. A later `authenticate` likewise cancels a `logout` that has not deleted anything yet. A terminal login runs in its own process and is not affected.
-
-`logout` waits for deferred startup, since startup resolves the selected auth profile, and for any `session/new`, `session/load`, or `session/close` in progress. If startup found no credentials, nothing is signed in and `logout` succeeds without deleting anything. If startup failed because the stored credentials were refused or unreadable, they are still stored, so `logout` returns that `auth_required` failure; signing in replaces them. Any other startup failure is returned too. A profile whose credential comes from its environment variable, such as `OPENAI_API_KEY`, cannot be signed out from ACP: `logout` fails with `invalid_request` (`-32600`) naming the variable, and deletes nothing. A store that cannot be opened or written fails with `internal_error`.
+`logout` and agent-method `authenticate` run one at a time. A `logout` cancels an `authenticate` still waiting, which fails with `request_cancelled` (`-32800`), so that login cannot save after the logout. A later `authenticate` likewise cancels a `logout` still waiting. A terminal login runs in its own process and is not affected.
 
 ## Sessions
 
-ACP sessions persist under `~/.rho/sessions` and appear in `rho sessions list` and `rho -R`. See [Sessions](/sessions).
+ACP sessions are daemon sessions: they run in the daemon, persist under `~/.rho/sessions`, and appear in `rho sessions list` and `rho -R`. See [Sessions](/sessions). `session/new` opens one in the daemon; `session/load` and `session/resume` attach to a saved or running one, reopening it in the daemon when it is not loaded there.
+
+Any number of clients can attach the same session: another `rho acp` process, [`rho attach`](/automation-cli#attaching-to-a-daemon-session), or another [daemon client](/protocol). A prompt another client sends shows up in the host as a user message followed by its turn. A `session/prompt` while another client's turn runs fails with `invalid_request`.
 
 ### List and delete
 
-Listing and deleting saved history do not start model discovery or require provider credentials, even after a session startup failure.
+Listing and deleting saved history do not start a model or require provider credentials.
 
-- `session/list` returns saved sessions newest first: those of `cwd` when the request names one, else those of every workspace. It lists the same sessions `/resume` offers, so sessions with nothing saved yet are left out, and so are sessions whose workspace directory no longer exists, which `session/load` cannot open. Each entry has the session's `cwd`, its saved [workspace roots](#workspace-roots) as `additionalDirectories` (leaving out roots that no longer exist), its title (or, when untitled, its first message on one line), and `updatedAt`. Pages hold 100 sessions; pass `nextCursor` back as `cursor` for the next page. Every listed `sessionId` opens with `session/load`.
-- `session/delete` deletes a saved session the same way `rho sessions rm` does, including its delegated-agent runs. A session open on the same connection is closed first, as `session/close` would close it, since hosts such as Zed may delete a thread from history without closing it. Deleting is idempotent: an ID with nothing saved, whether never created, already deleted, or open with no prompt yet, succeeds once any open session is closed. It refuses a session another Rho process has open (`invalid_request`, `-32600`), one whose delegated runs are still running, and an ID saved in more than one workspace; such a refusal can come after the session was closed, and `session/load` reopens it.
+- `session/list` returns the daemon's [session list](/protocol#listing-renaming-and-deleting-sessions) newest first: those of `cwd` when the request names one, else those of every workspace. It lists the same sessions `/resume` offers, so sessions with nothing saved yet are left out, and so are sessions whose workspace directory no longer exists. Each entry has the session's `cwd`, its saved [workspace roots](#workspace-roots) as `additionalDirectories` (leaving out roots that no longer exist), its title (or, when untitled, its first message on one line), and `updatedAt`. Pages hold 100 sessions; pass `nextCursor` back as `cursor` for the next page. Every listed `sessionId` opens with `session/load`.
+- `session/delete` deletes a saved session through the daemon, the same way `rho sessions rm` does, including its delegated-agent runs. A session open on this connection is detached first, after its prompt is cancelled and its turn has ended, since hosts such as Zed may delete a thread from history without closing it. Deleting is idempotent: an ID with nothing saved, whether never created or already deleted, succeeds. The daemon refuses a session another Rho process, such as a TUI, has open (`invalid_request`, `-32600`), and one with a turn or background work still running.
 
 ### Load and replay
 
-`session/load` replays the saved conversation as message chunks and tool calls/updates marked with `_meta.isReplay: true`. Hosts that keep their own transcript can skip these notifications; hosts that rebuild the transcript from the replay can ignore the marker.
+`session/load` replays the session as message chunks and tool calls/updates marked with `_meta.isReplay: true`. Hosts that keep their own transcript can skip these notifications; hosts that rebuild the transcript from the replay can ignore the marker.
 
+- The replay is the saved conversation, then the turn under way, if any, whose later events arrive live.
 - Tool cards retain their saved names, arguments, success/failure status, output, and tool-owned images. Background result cards replay too.
-- Replayed `user_message_chunk`, `agent_message_chunk`, and `agent_thought_chunk` updates carry a `messageId` (see [Message IDs](#message-ids)). Replay splits the same way live chunks do, except that text and tool calls from a single model response replay in their saved order, so text after a tool call in that response starts a new message even though it was one message live. Each ID is derived from where the message was saved in the session file, so loading the same session again replays the same IDs, and equal text saved twice, such as a prompt retried after a refusal, gets two IDs. Replayed agent messages and thoughts never match the IDs they had live; on ACP v2 a prompt's user message keeps the `messageId` its prompt was answered with.
-- Each replayed call gets a fresh ACP identity, so provider IDs reused across turns do not collapse distinct cards. Stored and provider-facing IDs stay unchanged.
-- A result updates its replayed tool call. An interrupted or superseded call without a saved result is marked failed rather than left running.
-- Execution metadata that is not saved in history, such as tool kind and affected file locations, is not reconstructed.
-- A stored title is not resent. Hosts get it from `session/list` and from their own thread state.
+- Each saved message replays as one chunk carrying a `messageId` (see [Message IDs](#message-ids)). IDs are derived from where the message was saved, so loading the same session again replays the same IDs.
+- Each replayed call gets an ACP identity of its own, so provider IDs reused across turns do not collapse distinct cards.
+- A call without a saved result, such as an interrupted one, is marked failed rather than left running.
+- The checklist, if any, closes the replay as a `plan`. When the history holds no title update, the session's stored title follows as `session_info_update`.
 
-Nothing beyond the replay is sent while `session/load` is in flight, because hosts such as T3 Code discard live updates for a session until its load completes. Prompts and settings on the replacement wait until its load response and initial command list have been enqueued, so later updates cannot be overwritten by that initial state. A checklist restored by the load, and a model-prompt change notice found at load, go out when the next prompt starts.
+Nothing beyond the replay is sent while `session/load` is in flight, because hosts such as T3 Code discard live updates for a session until its load completes. After the response, Rho sends the command list, then puts any approvals and questions still open in the session to the host.
 
-A session open in another Rho process, such as a terminal TUI or another `rho acp`, fails to load with `invalid_request` (`-32600`) naming the session, because only one process writes a session file at a time. Loading a session already live on this connection replaces it instead (see [Sessions](/sessions#one-process-per-session)). `session/close` releases the session before it responds, so a host that restarts its agent can close a session in the old process and load it in the new one without waiting for the old process to exit.
+A session open in another Rho process that is not a daemon client, such as a terminal TUI or a foreground `rho run`, fails to load with `invalid_request` (`-32600`) naming the session, because only one process writes a session file at a time. Loading a session already open on this connection detaches it and attaches it again.
 
-The load starts from the process default mode, model, reasoning, and fast mode, except that `/agent:` sessions rebind to their agent's prompt, tools, and model, and [per-call model](#per-call-model) children restore their saved selection. History restored on load may still mention a prior switch.
+The session keeps the mode, model, reasoning, and fast mode a client last chose for it, across reloads and daemon restarts; one no client changed takes the configured settings again when the daemon reopens it. `/agent:` sessions rebind to their agent's prompt, tools, and model, and [per-call model](#per-call-model) children restore their saved selection.
 
 ### Resume
 
-`session/resume` opens a saved session the way `session/load` does, for hosts that keep their own transcript. It takes the same `cwd`, `additionalDirectories`, and `mcpServers`, follows the same restore rules, answers with the same modes and config options, and sends the command list after its response. It replays nothing: no `session/update` reaches the host before the response. It refuses a session open in another Rho process the same way. As with `session/load`, an ID with nothing saved resumes as an empty session, so a session from `session/new` that was never prompted survives an agent restart.
-
-A checklist restored by the resume, and a model-prompt change notice found during it, go out when the next prompt starts, as after a load. The checklist is sent whole, so a host that already shows it just sees it again.
+`session/resume` opens a session the way `session/load` does, for hosts that keep their own transcript. It takes the same `cwd`, `additionalDirectories`, and `mcpServers`, follows the same rules, answers with the same modes and config options, and sends the command list after its response. It replays nothing: no `session/update` reaches the host before the response. A session from `session/new` that was never prompted has no file yet; the daemon keeps it loaded, so it resumes until the daemon stops.
 
 ### Close
 
-Hosts such as Zed and T3 Code send `session/close` when a thread closes. Rho cancels the session's prompt as `session/cancel` would, and a prompt waiting behind it also ends `cancelled`. The cancelled turn is saved, then the session's MCP servers, background processes, and the delegated agents Rho runs stop. The saved session stays on disk, so `session/load` can open it again.
+Hosts such as Zed and T3 Code send `session/close` when a thread closes. Rho cancels the prompt this host is running in the session, as `session/cancel` would, then detaches. The session stays in the daemon, with its MCP servers, background processes, and delegated agents, until the daemon [unloads it](/daemon#unloading-idle-sessions); `session/load` can open it again. Closing an ID with no session open on this connection succeeds and does nothing.
 
-Closing an ID with no live session, including one already closed, fails with `resource_not_found` (`-32002`), the same error other session methods return for an unknown ID.
+When the `rho acp` process exits, or the host closes its stdio, every session it has open is closed the same way.
 
 ## Session updates
 
@@ -157,11 +143,11 @@ During a session, Rho sends:
 | `current_mode_update` | After plan approval switches the mode. |
 | `compaction_update` | Each compaction, automatic or `/compact`, when the host advertises `clientCapabilities.session.compaction`. See [Compaction](#compaction). |
 | `session_info_update` | The session's `title` once Rho names it. See [Titles](#titles). |
-| `notice` | Information outside the conversation, when the host advertises `clientCapabilities.session.notices`. Today that is the model-prompt change notice found at load. |
+| `notice` | Information outside the conversation that the daemon reports, when the host advertises `clientCapabilities.session.notices`; other hosts get it as an agent message. |
 
 ### Message IDs
 
-Every `agent_message_chunk` and `agent_thought_chunk` carries a `messageId`. Consecutive chunks of one kind share it. A new message, with a new ID, starts at a chunk of the other kind, at each model step, and after a tool call or compaction update between chunks, so text after a tool call is a new message. The provider stream-reset notice is a thought message of its own. Agent messages sent outside a prompt's run, such as `/compact` results and notices at load, get their own IDs. Live IDs are random; see [Load and replay](#load-and-replay) for replayed ones.
+Every `agent_message_chunk` and `agent_thought_chunk` carries a `messageId`. Consecutive chunks of one kind share it. A new message, with a new ID, starts at a chunk of the other kind, at each model step, and after a tool call or compaction update between chunks, so text after a tool call is a new message. The provider stream-reset notice is a thought message of its own. Message IDs are the daemon's, and a prompt's `/compact` result is a message of its own. Notices sent as agent messages get IDs Rho mints. See [Load and replay](#load-and-replay) for replayed IDs.
 
 ### Tool kinds and locations
 
@@ -191,7 +177,7 @@ A `compaction_update` card opens `in_progress` and ends `completed`, `failed` wi
 
 As in the TUI, Rho asks its title model for a short title after the first turn a session completes, unless the session already has one, and saves it for `session/list`, `/resume`, and `rho sessions`. `session_info_update` goes out once the title model answers, usually after that prompt's response. A failed title sends nothing, and the session stays listed by its first message.
 
-A title that lands after the session was closed, or replaced by a `session/load` of the same ID, is saved but not sent, and none goes out while Rho is loading the session. Rho does not send `updatedAt`; `session/list` reports it.
+A title that lands after this host closed the session is saved but not sent; `session/load` sends it at the end of its replay. Rho does not send `updatedAt`; `session/list` reports it.
 
 ## Config options
 
@@ -204,13 +190,13 @@ A title that lands after the session was closed, or replaced by a `session/load`
 | `thought_level` | `thought_level` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, filtered to the model | The model has configurable reasoning |
 | `fast_mode` | `model_config` | `on` (Fast), `off` (Normal); `true`/`false` on boolean hosts | The model supports fast mode |
 
-Every change applies to later prompts in that ACP session and keeps the conversation. None rewrites `config.toml`. `session/load` starts from the process defaults from config and flags, not values chosen earlier in the session; see [Load and replay](#load-and-replay) for `/agent:` sessions.
+Every change applies to later prompts in the daemon session and keeps the conversation. Every client attached to the session gets the changed options. None rewrites `config.toml`. The session keeps its settings across reloads and daemon restarts; a setting it can no longer take, such as a model whose credentials are gone, falls back to config. See [Load and replay](#load-and-replay) for `/agent:` sessions.
 
 ### Mode
 
-The modes go out twice with the same IDs: as the legacy `modes` field and as the `mode` option. Per ACP, hosts that support config options ignore `modes` and use `mode`; older hosts use `modes`. `session/set_mode` and `session/set_config_option` on `mode` change the same state. The starting mode comes from config and flags.
+The modes go out twice with the same IDs: as the legacy `modes` field and as the `mode` option. Per ACP, hosts that support config options ignore `modes` and use `mode`; older hosts use `modes`. `session/set_mode` and `session/set_config_option` on `mode` change the same state. A new session starts in the configured mode.
 
-Write grants carry over the same way they do in the TUI. Switching to `auto` fails with invalid params unless a classifier model is configured, the same check headless startup applies.
+Write grants carry over the same way they do in the TUI. Switching to `auto` fails with invalid params unless a classifier model is configured.
 
 ### Model
 
@@ -224,7 +210,7 @@ Re-selecting the current value, including an off-catalog current model, is a no-
 
 ### Reasoning
 
-Value IDs are Rho reasoning IDs, filtered to what the current model advertises. Labels are capitalized for display (`xhigh` shows as `Extra high`). Models without configurable reasoning omit the option, so hosts show no control. `--reasoning` and config set the starting value.
+Value IDs are Rho reasoning IDs, filtered to what the current model advertises. Labels are capitalized for display (`xhigh` shows as `Extra high`). Models without configurable reasoning omit the option, so hosts show no control. Config sets the starting value.
 
 ### Fast mode
 
@@ -232,19 +218,21 @@ Value IDs are Rho reasoning IDs, filtered to what the current model advertises. 
 
 Its shape depends on the host, because ACP only allows boolean options for clients that advertise them. A host that advertises `clientCapabilities.session.configOptions.boolean` at `initialize`, such as Zed, gets a `boolean` option and sets it with `"type": "boolean"` and a boolean `value`. Other hosts, such as T3 Code, get a select with values `on` (named Fast) and `off` (named Normal). A value in the other shape is rejected with invalid params.
 
-A model switch keeps the setting, as in the TUI. Switching to a model without fast mode drops `fast_mode` from the list and the tier has no effect there; switching back advertises it again with the same value. `session/load` starts from `fast_mode` in `config.toml`.
+A model switch keeps the setting, as in the TUI. Switching to a model without fast mode drops `fast_mode` from the list and the tier has no effect there; switching back advertises it again with the same value. A new session starts from `fast_mode` in `config.toml`.
 
 ### Settings during a prompt
 
 As ACP allows, hosts can send `session/set_mode` and `session/set_config_option` at any time, including while a prompt runs. A running prompt keeps the mode, model, reasoning, and fast mode it started with.
 
-- A change sent while a prompt is running, or while a cancelled prompt winds down, waits for that prompt to end, then applies and responds. It takes effect from the next prompt.
+- A change sent while a turn is running, this host's or another client's, or while a cancelled turn winds down, waits in the daemon for that turn to end, then applies and responds. It takes effect from the next prompt.
 - Changes apply in the order they arrive, and a `session/prompt` sent after `session/cancel` queues behind them. Hosts that interrupt to send a message with new settings, such as T3 Code, keep those settings this way.
-- A change still waiting when `session/load` replaces the session fails with invalid request instead of applying to the reloaded session. One still waiting when `session/close` closes the session fails with `resource_not_found`.
+- A change the daemon took applies even if the host closes the session before the response.
 
 ## Permissions
 
 When a tool needs approval, Rho sends `session/request_permission`. The host's choices map to allow once, allow for this session, and reject.
+
+The daemon puts each approval and question to every client attached to the session. The first answer wins, and Rho withdraws the request from the other hosts with `$/cancel_request`. A request waits until someone answers it or the turn ends; a host that disconnects leaves it open, and a host that loads the session later is asked again. A host that cancels or fails the request leaves it open too, for another client or `session/cancel`.
 
 ### Leaving plan mode
 
@@ -254,7 +242,6 @@ The options approve into a mode, with mode IDs as option IDs: `allow_edits`, `su
 
 An approval applies when the proposing turn completes. Rho switches the session to the chosen mode, sends `current_mode_update` and the changed `config_option_update`, and runs the implementation turn in the same `session/prompt`, which ends after that turn.
 
-- A host that cancels or fails the permission prompt keeps the session planning.
 - If the proposing turn is cancelled or fails, the approval is dropped with a notice.
 - A `session/cancel` that arrives after the turn ends but before the switch drops it too, and the prompt ends `cancelled`.
 
@@ -262,7 +249,7 @@ To give feedback instead, choose keep planning and reply in the next message.
 
 ## Questions
 
-When the host advertises `clientCapabilities.elicitation.form`, as Zed and T3 Code do, the model gets the `questionnaire` tool and MCP servers may [ask through Rho](/integrations/mcp#questions-from-a-server). Each question goes to the host as a form-mode `elicitation/create` scoped to the session and to the asking tool call. Hosts that do not advertise it get no `questionnaire` tool, and Rho declares no MCP `elicitation` capability, so nothing waits on a form the host cannot draw.
+When the host advertises `clientCapabilities.elicitation.form`, as Zed and T3 Code do, the model gets the `questionnaire` tool and MCP servers may [ask through Rho](/integrations/mcp#questions-from-a-server). Each question goes to the host as a form-mode `elicitation/create` scoped to the session and to the asking tool call. Sessions opened by hosts that do not advertise it get no `questionnaire` tool, and an MCP server's question to them is declined, so nothing waits on a form the host cannot draw.
 
 Each question becomes one property keyed by its ID:
 
@@ -302,40 +289,11 @@ Hosts with several workspace roots, such as a Zed multi-root workspace, send the
 - As with `--add-dir`, a root inside `cwd` or inside another root adds nothing, since it is already in scope.
 - A `null` list counts as empty, but an entry that is not a string, such as `null`, fails the request with invalid params, following the ACP schema.
 
-The roots are saved with the session, so `rho -R` restores them, and `session/list` reports them as `additionalDirectories`. `session/load` and `session/resume` do not restore them: per ACP, the roots a request sends are the session's complete list, and a request that sends none drops roots the session had before. A host opening a session from history keeps its roots by sending back the listed `additionalDirectories`, which include directories passed to `rho acp --add-dir` when the session ran.
-
-## Host files
-
-A host that advertises both `clientCapabilities.fs.readTextFile` and `.writeTextFile`, such as Zed, serves the text of files under the session's `cwd` and its `additionalDirectories`. Rho then reads them with `fs/read_text_file`, so the model sees unsaved edits, and writes them with `fs/write_text_file`, so changes land in the host's buffers and undo history. A host that advertises only one of the two gets neither request: writing without reading would overwrite edits Rho never saw.
-
-- Request paths are spelled under the `cwd` or directory as the host sent it, even when that path goes through a symlink; Rho resolves symlinks only to decide which paths the host serves.
-- `read_file` of a UTF-8 text file asks for the whole file, without `line` or `limit`, and selects the requested rows itself, so the reported line count covers what the host holds. Rho still opens the file on disk first to check that it exists, its kind, and its size, with or without a range; images, PDFs, office documents, and files that are not UTF-8 are read from disk. A file the host holds but has not saved to disk cannot be read, so hosts should save what they write, as Zed does. Text the host returns is held to the same 25 MiB input limit as a file on disk.
-- `str_replace` reads the current text from the host, apply the change, read the text again, and write the result only if it is unchanged. `write` reads the old text from the host for its diff, then writes; a file missing on disk is still asked for, so a file the host holds unsaved is replaced rather than created again. After each write Rho reads the file again, since a host such as Zed may format it as it saves; the model's result, the diff, and any rollback use that text. A missing file is created with `fs/write_text_file`, which ACP requires hosts to accept; Rho creates missing parent directories on disk first. An existing file that is not UTF-8 text is rewritten on disk.
-- `apply_patch` updates a file in place, including one the host holds unsaved, and adds a new file through the host, with the same check before writing; an added path or move destination the host already holds, even unsaved, is refused. ACP has no way to delete or rename, so deletions and moves run on disk, reading the file there. If a later file in the patch fails, Rho restores updated files through the host. ACP cannot remove a file, so a file the patch added through the host stays in place, with any directories created for it, and is reported as unrecovered. A patch cancelled after its writes began still finishes them, rolling back on failure.
-- Other paths are read and written on disk without asking the host. That includes directories added at launch with `--add-dir`, which are not part of the host's project, even when the host sends them back in `additionalDirectories`, and files elsewhere, such as in the home directory.
-- Tools that list or search files, such as `grep`, `glob`, and `list_dir`, and shell commands use the files on disk. Hosts such as Zed save each write, so they see Rho's edits, but not the user's unsaved ones.
-- Permission modes apply as they do on disk: Rho resolves and authorizes each path before sending a request.
-- A failed `fs/*` request fails the tool call with the host's error. Rho does not retry on disk, which could clobber the host's copy.
-- A multi-file `edit` that is cancelled after its writes began still finishes them, rolling back if a later file fails, so cancelling never leaves only some files changed. Rho's later writes to the same path wait for it, then find the file changed instead of being overwritten.
-- Delegated Rho agents read and write through the same host, with their parent session's `sessionId`.
-
-## Host terminals
-
-A host that advertises `clientCapabilities.terminal`, such as Zed, runs each `bash` call in a terminal it shows on the call's card. Approval and permission modes apply first, as for a local command.
-
-- `terminal/create` names `env` with `args` `["-u", NAME, ..., "bash", "-c", script]`, the command's working directory with symlinks resolved, `env` setting `PAGER` and `GIT_PAGER` to `cat`, and `outputByteLimit` set to Rho's tool output budget (`max_output_bytes`, 64,000 bytes by default). The script is a non-login `bash -c`, since hosts such as Zed start commands from the user's shell environment.
-- The command runs as it would locally, though the host gives it a terminal: the script starts with `exec </dev/null`, so a command that prompts for input fails instead of waiting, and pagers print instead of waiting for keys. Locally Rho keeps provider credential variables out of commands; ACP can only add variables, so `env -u` removes them before `bash` starts, where neither its startup files nor the command can see them.
-- From the call's first update after `terminal/create`, its `tool_call_update`s carry `{"type": "terminal", "terminalId": ...}` content instead of text progress, including the final `completed` or `failed` update. A call that fails for a reason the terminal cannot show, such as a timeout, adds that error's first line as text after the terminal.
-- Rho waits with `terminal/wait_for_exit`, then reads `terminal/output`, which becomes the model's result. stdout and stderr arrive interleaved. When the host dropped the oldest output to stay within the limit, the result says so; output that leaves no room for the exit status loses more of its oldest lines, never the newest.
-- When `timeout_seconds` passes, Rho sends `terminal/kill`, reads the output, and fails the call with the timeout and that output. `session/cancel` sends `terminal/kill`, and requests still waiting are withdrawn with `$/cancel_request`. A call that ends before its command exits, for whatever reason, sends `terminal/kill` as it ends.
-- Rho sends `terminal/release` only after the call's final update: when the prompt ends, for every terminal whose call ended. A terminal still running then, such as a delegated agent's, is released when the first prompt after it finishes ends. `session/close` releases every terminal Rho knows of, which stops commands still running. A terminal the host creates after its call was cancelled is released as soon as its `terminal/create` reply arrives.
-- A failed `terminal/create` fails the call with the host's error. A failed `terminal/wait_for_exit` also sends `terminal/kill`. Rho does not run the command itself, which could bypass a sandbox the host applies to its terminals; for the same reason, a `bash` call whose environment policy `env -u` cannot express fails instead of running locally.
-- Delegated Rho agents run their `bash` calls in host terminals too. Their calls are not cards in the session, so the host does not show those terminals.
-- Background commands of the `process` tool and Windows `powershell` calls run locally.
+The roots are saved with the session, so `rho -R` restores them, and `session/list` reports them as `additionalDirectories`, which include directories passed to `rho acp --add-dir` when the session ran. They stay with the session across reloads and daemon restarts. A `session/load` or `session/resume` that reopens the session in the daemon adds the roots it sends to the saved ones that still exist, and one that sends none keeps them. A session the daemon still has loaded keeps the roots it opened with and ignores those the request sends.
 
 ## Background results
 
-ACP v1 gives an agent no way to start a turn, so Rho keeps a prompt open instead of waking an idle session. Under `--t3code` this changes as described in [Wake on background results](/integrations/acp/t3-code#wake-on-background-results).
+ACP v1 gives an agent no way to start a turn, so Rho keeps a prompt open instead of waking an idle session. Background work runs in the daemon, so it outlives the host closing the session.
 
 - A result that arrives while a prompt is running reaches the model at its next step.
 - If the model ends its turn while a delegated agent Rho runs, or a workflow or background process started during that prompt, is still running, the prompt stays open and the model continues in it once that work finishes. Those agents hold the prompt open whichever prompt started them. Processes left over from earlier prompts do not; their results arrive at the next prompt.
@@ -365,12 +323,12 @@ Some providers report a limit or a refusal as a failure instead, and the prompt 
 
 ## Commands
 
-Right after each `session/new` and `session/load` response, Rho sends an `available_commands_update`. Hosts show it as their command menu and send a picked command back as `/name args` prompt text. The commands are listed in [Commands](/integrations/acp#commands).
+Right after each `session/new`, `session/load`, and `session/resume` response, Rho sends an `available_commands_update`. Hosts show it as their command menu and send a picked command back as `/name args` prompt text. The commands are listed in [Commands](/integrations/acp#commands).
 
-Rho checks both menus, commands and skills, before and after each prompt and immediately after an agent rebind. Skills, prompt templates, workflows, and agent definitions added between prompts or by a turn's tools appear on the next check. Unchanged menus are not resent, and Rho does not watch the filesystem while idle.
+The daemon checks both menus, commands and skills, at the end of each turn and after an agent rebind. Skills, prompt templates, workflows, and agent definitions added between prompts or by a turn's tools appear on the next check. Unchanged menus are not resent, and nothing watches the filesystem while the session is idle.
 
-- `/compact` replies with the before and after counts as a compaction card on hosts that advertise compaction, else as an agent message. If the compacted session cannot be saved, later prompts fail until the host loads the session again.
-- `/agent:<name>` is accepted only by a session with no conversation yet; a later one fails with invalid params. Hosts that run subagents themselves, such as T3 Code, start children this way.
+- `/compact` runs no model turn. It shows as a compaction card on hosts that advertise compaction, then the compacted context's fill in `usage_update`, then what it did as an agent message.
+- `/agent:<name>` is accepted only by a session with no conversation yet; a later one fails with invalid params. A host that starts a Rho child session itself can bind it to an agent this way.
 - `/workflow:<name>` ends the prompt without a model turn and adds the run ID to context. Inputs are one JSON object; omitted inputs use their defaults.
 - Other TUI commands fail with invalid params naming the command. Text that names no command, such as `/usr/bin` or an unknown template, reaches the model unchanged.
 
@@ -391,13 +349,14 @@ A turn that mentions known skills as whitespace-delimited `$<name>` tokens loads
 
 ## MCP servers
 
-Rho starts MCP servers from its own config, plus the `mcpServers` the host sends with `session/new` or `session/load`. Host servers belong to that session only. A host server replaces a config server with the same name.
+Rho starts MCP servers from its own config, plus the `mcpServers` the host sends with `session/new`, `session/load`, or `session/resume`. Host servers belong to that session only, and are never saved, since their environment and headers may hold secrets. A load or resume connects them only when it reopens the session in the daemon; a session the daemon still has loaded keeps the servers it opened with. A host server replaces a config server with the same name.
 
 - stdio servers start with the host's command, arguments, and environment.
 - HTTP servers connect over Streamable HTTP with the host's headers. The URL must be HTTPS or a loopback address.
 - SSE servers are skipped with a warning.
 - Host servers cannot request sampling.
 - Servers may ask the user questions only when the host advertises form elicitation; see [Questions](#questions).
-- An entry with an invalid name, empty command, repeated environment variable or header, or unsafe URL is reported as an invalid server instead of connected. An invalid host entry still claims its name: a config server with that name stays disconnected for the session rather than connecting with the config's endpoint and credentials.
+- When an entry names an environment variable or header twice, the last value wins.
+- An entry with an invalid name, empty command, or unsafe URL is left out instead of connected. It still claims its name: a config server with that name stays disconnected for the session rather than connecting with the config's endpoint and credentials.
 
 `rho acp` is not itself an MCP server. See [Model Context Protocol](/integrations/mcp).
