@@ -14,15 +14,15 @@ use agent_client_protocol::{
     Error as AcpError,
 };
 use rho_protocol::{
-    ContentBlock, McpServer, SecretMap, SessionListResponse, SessionPart, SessionSetup,
-    SessionSummary,
+    ChildThreads, ContentBlock, McpServer, SecretMap, SessionListResponse, SessionPart,
+    SessionSetup, SessionSummary,
 };
 
 use super::host_features::Forms;
 use crate::app::prompt_content::fence_context;
 
 /// What `rho acp`'s own flags put in every session it opens or reopens:
-/// `--agent`, `--add-dir`, and the `--no-*` flags.
+/// `--agent`, `--add-dir`, the `--no-*` flags, and `--t3code`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct Launch {
     pub(super) agent: Option<String>,
@@ -30,6 +30,9 @@ pub(super) struct Launch {
     pub(super) added_dirs: Vec<PathBuf>,
     /// What the `--no-*` flags leave out.
     pub(super) without: BTreeSet<SessionPart>,
+    /// Who runs child agents: T3 Code's threads under `--t3code`, else the
+    /// daemon.
+    pub(super) child_threads: ChildThreads,
 }
 
 impl Launch {
@@ -59,6 +62,7 @@ impl Launch {
             additional_directories,
             mcp_servers: protocol_servers(servers),
             without,
+            child_threads: self.child_threads,
         }
     }
 }

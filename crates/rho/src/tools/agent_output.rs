@@ -68,10 +68,20 @@ impl AgentRunView {
     /// already finished. Its result still arrives through normal delivery.
     pub(super) fn started_with_identity(snapshot: &SubagentSnapshot) -> Self {
         Self {
-            id: snapshot.id.clone(),
-            agent_id: snapshot.agent_id.clone(),
             provider: snapshot.status.provider.clone(),
             model: snapshot.status.model.clone(),
+            ..Self::started(snapshot.id.clone(), snapshot.agent_id.clone())
+        }
+    }
+
+    /// A receipt for run `id` of agent `agent_id` whose model only the child
+    /// knows, such as a host thread's.
+    pub(super) fn started(id: String, agent_id: String) -> Self {
+        Self {
+            id,
+            agent_id,
+            provider: None,
+            model: None,
             state: RunState::Starting,
             done: false,
             result: None,

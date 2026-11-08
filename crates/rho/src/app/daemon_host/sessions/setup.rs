@@ -2,10 +2,11 @@
 //! [`SessionSetup`] on top of what a reopened session's file keeps,
 //! checked and converted once (#1661).
 //!
-//! The session owns its added directories and the parts it leaves out but
-//! questions: its file keeps them, and a reopen adds the request's to the
-//! saved ones, so a later client can narrow a session further but never
-//! widen it, and a reopen never drops a saved directory that still exists.
+//! The session owns its added directories, the parts it leaves out but
+//! questions, and host child threads: its file keeps them, and a reopen adds
+//! the request's to the saved ones, so a later client can narrow a session
+//! further but never widen it, a reopen never drops a saved directory that
+//! still exists, and a session whose host ran its children keeps them there.
 //! That holds across daemon reopens only: the TUI keeps an existing record
 //! but does not record its own `--no-*` flags, until it becomes a daemon
 //! client (#1667).
@@ -16,14 +17,14 @@
 
 use std::path::Path;
 
-use rho_protocol::{ErrorCode, RpcError, SessionPart, SessionSetup};
+use rho_protocol::{ChildThreads, ErrorCode, RpcError, SessionPart, SessionSetup};
 
 use super::open_failed;
 use crate::{
     added_dirs::{session_added_dirs, AddedDirs},
     app::{
         host_mcp::host_mcp_config,
-        session_runtime::{LeftOut, QuestionSupport},
+        session_runtime::{ChildAgents, LeftOut, QuestionSupport},
     },
     session::Session as StoredSession,
     tools::mcp::config::McpConfig,
@@ -35,6 +36,9 @@ pub(super) struct Setup {
     pub(super) left_out: LeftOut,
     /// Whether its client shows questions.
     pub(super) questions: QuestionSupport,
+    /// Who runs its children: the host's threads when its file or the
+    /// request says so.
+    pub(super) children: ChildAgents,
     /// The directories it adds: those its file keeps that still exist, and
     /// the request's.
     pub(super) added_dirs: AddedDirs,
@@ -63,7 +67,7 @@ impl Setup {
                 cwd.display()
             ))
         })?;
-        let (saved_left_out, saved_dirs) = match saved {
+        let (saved_left_out, saved_children, saved_dirs) = match saved {
             Some(stored) => {
                 let restored = AddedDirs::from_storage(stored, &root);
                 for dir in &restored.missing {
@@ -73,9 +77,17 @@ impl Setup {
                         "could not restore added directory: not found"
                     );
                 }
-                (LeftOut::saved(stored).map_err(open_failed)?, restored.dirs)
+                (
+                    LeftOut::saved(stored).map_err(open_failed)?,
+                    ChildAgents::saved(stored).map_err(open_failed)?,
+                    restored.dirs,
+                )
             }
-            None => (LeftOut::default(), AddedDirs::default()),
+            None => (
+                LeftOut::default(),
+                ChildAgents::InProcess,
+                AddedDirs::default(),
+            ),
         };
         let mut asked = LeftOut::default();
         let mut questions = QuestionSupport::Available;
@@ -93,13 +105,21 @@ impl Setup {
         }
         let asked_dirs = session_added_dirs(&requested.additional_directories, &root)
             .map_err(|rejected| invalid(rejected.to_string()))?;
+        let asked_children = match requested.child_threads {
+            ChildThreads::Daemon => ChildAgents::InProcess,
+            ChildThreads::Host => ChildAgents::HostThreads,
+        };
         let left_out = saved_left_out.union(asked);
+        let children = saved_children.union(asked_children);
         let added_dirs = saved_dirs.union(&root, &asked_dirs);
         Ok(Self {
             adds_to_saved: saved.is_some()
-                && (left_out != saved_left_out || added_dirs != saved_dirs),
+                && (left_out != saved_left_out
+                    || children != saved_children
+                    || added_dirs != saved_dirs),
             left_out,
             questions,
+            children,
             added_dirs,
             host_mcp: host_mcp_config(&requested.mcp_servers),
         })

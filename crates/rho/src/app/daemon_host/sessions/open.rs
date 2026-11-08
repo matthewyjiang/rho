@@ -14,7 +14,8 @@
 //! parts left out its file keeps (see `setup.rs`). Its host answers
 //! approvals and questions (both reach the daemon as turn events), its
 //! children run in the daemon on the daemon-wide budget, each a child job
-//! of the session's (see `subagents.rs`), and an MCP server's browser login
+//! of the session's (see `subagents.rs`), unless its setup has the client's
+//! host run them as its own threads, and an MCP server's browser login
 //! is refused rather than left waiting for a terminal nobody watches.
 //!
 //! The session's processes, MCP servers, hooks, OpenAPI sources, CLI agents,
@@ -180,6 +181,7 @@ async fn open_runtime(
     let Setup {
         left_out,
         questions,
+        children,
         added_dirs,
         host_mcp,
         adds_to_saved,
@@ -226,6 +228,7 @@ async fn open_runtime(
         },
         host: HostCapabilities {
             questions,
+            children,
             subagent_pool: subagents.pool_for(job.clone()),
             environment: environment.clone(),
             mcp_authorization: McpAuthorizationMode::NonInteractive,

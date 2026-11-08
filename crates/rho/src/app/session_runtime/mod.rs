@@ -45,6 +45,7 @@ use crate::{
 mod agent;
 mod approval_policy;
 mod build;
+mod child_agents;
 mod compact;
 mod credentials;
 mod delegation;
@@ -77,6 +78,7 @@ pub(in crate::app) use build::session_config;
 pub(crate) use build::{
     HostCapabilities, QuestionSupport, RunShape, SessionBuild, SessionLaunch, SessionRole,
 };
+pub(crate) use child_agents::ChildAgents;
 pub(crate) use credentials::CredentialFailure;
 use credentials::SessionCredentials;
 use delegation::HeldNotices;

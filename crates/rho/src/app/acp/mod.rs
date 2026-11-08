@@ -40,7 +40,7 @@ use agent_client_protocol::{
     Agent, Client, ConnectTo, ConnectionTo, Error as AcpError, JsonRpcResponse, Responder, Role,
     Stdio,
 };
-use rho_protocol::{methods::SessionList, SessionListParams, SessionPart};
+use rho_protocol::{methods::SessionList, ChildThreads, SessionListParams, SessionPart};
 use tokio::signal::unix::{signal, Signal, SignalKind};
 
 use super::shutdown_signal::ShutdownSignals;
@@ -151,6 +151,10 @@ impl Adapter {
                 agent: cli.agent.clone(),
                 added_dirs: added_dirs.as_slice().to_vec(),
                 without,
+                child_threads: match &cli.command {
+                    Some(crate::cli::Command::Acp(args)) if args.t3code => ChildThreads::Host,
+                    _ => ChildThreads::Daemon,
+                },
             },
             negotiated: NegotiatedFeatures::default(),
             sessions: Sessions::default(),
@@ -244,11 +248,6 @@ pub(super) async fn run(cli: Cli) -> anyhow::Result<()> {
     // Probe stdin before the transport starts reading it. See
     // `stdin_is_terminal`.
     let _ = crate::stdio::stdin_is_terminal();
-    if matches!(&cli.command, Some(crate::cli::Command::Acp(args)) if args.t3code) {
-        tracing::info!(
-            "rho acp --t3code: T3 child threads and wake-ups are unavailable until #1670 A3"
-        );
-    }
     // Installed before the host can reach this agent, so a stop signal
     // always detaches its sessions.
     let mut stops = ShutdownSignals::install()?;

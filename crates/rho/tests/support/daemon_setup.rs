@@ -1,17 +1,17 @@
 //! What a client chooses for a session the daemon opens for it, through the
 //! real binary and its socket: the agent it runs as and its setup, the
-//! directories, MCP servers, and parts left out that `rho acp` takes per
-//! session and `rho` takes as flags.
+//! directories, MCP servers, parts left out, and host child threads that
+//! `rho acp` takes per session and `rho` takes as flags.
 
 use std::{collections::BTreeSet, path::PathBuf};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{JobList, SessionAttach, SessionDetach, SessionList, SessionNew},
-    Ask, Client, ClientError, DaemonNotification, ErrorCode, JobListParams, JobState, McpServer,
-    Operation, PathScope, SessionAttachParams, SessionDetachParams, SessionEvent,
+    Ask, ChildThreads, Client, ClientError, DaemonNotification, ErrorCode, JobListParams, JobState,
+    McpServer, Operation, PathScope, SessionAttachParams, SessionDetachParams, SessionEvent,
     SessionEventParams, SessionId, SessionListParams, SessionNewParams, SessionPart, SessionSetup,
-    TurnOutcome,
+    ToolCallId, ToolStatus, TurnOutcome,
 };
 use serde_json::Value;
 
@@ -103,6 +103,23 @@ async fn inspected_turn(
     session: &SessionId,
     text: &str,
 ) -> (Value, Vec<SessionEvent>) {
+    match turn(sandbox, client, session, text).await {
+        (TurnOutcome::Answered { text, .. }, events) => {
+            (serde_json::from_str(&text).unwrap(), events)
+        }
+        (outcome, _) => panic!("the turn answers: {outcome:?}"),
+    }
+}
+
+/// How `session`'s turn of `text` ended, with the events it sent before.
+/// It attaches first with no setup, so it reopens a session the daemon
+/// unloaded as a prompt would.
+async fn turn(
+    sandbox: &Sandbox,
+    client: &Client,
+    session: &SessionId,
+    text: &str,
+) -> (TurnOutcome, Vec<SessionEvent>) {
     let (follower, mut notifications) = sandbox.connect_following().await;
     let attached = follower
         .request::<SessionAttach>(&attach(sandbox, session))
@@ -126,12 +143,7 @@ async fn inspected_turn(
             continue;
         }
         if let SessionEvent::TurnEnded { outcome } = event {
-            match outcome {
-                TurnOutcome::Answered { text, .. } => {
-                    return (serde_json::from_str(&text).unwrap(), events)
-                }
-                outcome => panic!("the turn answers: {outcome:?}"),
-            }
+            return (outcome, events);
         }
         events.push(event);
     }
@@ -562,6 +574,58 @@ async fn a_setups_mcp_server_replaces_the_config_server_of_its_name() {
     assert_eq!(
         std::fs::read_to_string(&record).unwrap_or_default(),
         "setup-probe|token-setup\n",
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a session whose setup has its host run its children never runs
+// one in the daemon: without the host's `t3-code` task tools its `agent`
+// call fails, also once the daemon unloaded it and a reopen that brings no
+// setup opened it again, rather than the session falling back to a subagent
+// of its own.
+// Owner: daemon session setup.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_host_threads_session_never_runs_its_children_in_the_daemon() {
+    let sandbox = Sandbox::new();
+    // No approval stands between the call and its result.
+    sandbox.set_permission_mode("bypass");
+    // The fixture makes the call the prompt spells out as JSON.
+    let client = sandbox
+        .start_daemon_with("tool-call", &["--unload-idle-after", "200ms"])
+        .await;
+    let setup = SessionSetup {
+        child_threads: ChildThreads::Host,
+        ..SessionSetup::default()
+    };
+    let session = new_session(&sandbox, &client, None, setup).await.unwrap();
+    let mut statuses = Vec::new();
+    for (unloads, id) in [(0, "spawn-new"), (1, "spawn-reopened")] {
+        if unloads > 0 {
+            settled_job(&sandbox, &client, &session).await;
+            sandbox.wait_unloaded(&session, unloads).await;
+        }
+        let call = serde_json::json!({
+            "id": id,
+            "name": "agent",
+            "arguments": {"agent_id": "worker", "prompt": "inspect the workspace"},
+        });
+        let (_, events) = turn(&sandbox, &client, &session, &call.to_string()).await;
+        let id = ToolCallId::new(id);
+        statuses.push(
+            events
+                .iter()
+                .filter_map(|event| match event {
+                    SessionEvent::ToolCall(update) if update.id == id => update.status,
+                    _ => None,
+                })
+                .last(),
+        );
+    }
+
+    assert_eq!(
+        statuses,
+        [Some(ToolStatus::Failed), Some(ToolStatus::Failed)],
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

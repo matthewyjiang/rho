@@ -433,7 +433,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho` | Start an interactive TUI session in the current working directory. Add `--prompt` to send the first message as the session opens. |
 | `rho run [OPTIONS] [PROMPT]...` | Send one prompt, optionally append stdin, print the final answer, and exit. With `--detach`, start it in the daemon and exit at once; see [Running in the daemon](#running-in-the-daemon). |
 | `rho attach [OPTIONS] <ID>` | Follow a daemon session's turn until it ends, and exit as it ended. See [Attaching to a daemon session](#attaching-to-a-daemon-session). |
-| `rho acp [--t3code]` | Serve Agent Client Protocol over stdio for an editor host, running its sessions in the [daemon](/daemon). Linux and macOS only. `--t3code` is accepted, but T3 Code child threads are not yet available with the daemon ([#1670](https://github.com/matthewyjiang/rho/issues/1670)). See [ACP](/integrations/acp). |
+| `rho acp [--t3code]` | Serve Agent Client Protocol over stdio for an editor host, running its sessions in the [daemon](/daemon). Linux and macOS only. `--t3code` runs subagents as T3 Code child threads. See [ACP](/integrations/acp). |
 | `rho workflow <COMMAND>` | Use `list`, `validate`, `plan`, `run`, `status`, `cancel`, or `resume <RUN_ID>` for a [durable workflow](/workflows). |
 | `rho sessions list [--all-projects] [--search TEXT] [--limit N] [--json]` | List saved sessions for the current workspace, or every workspace with cwd context. |
 | `rho sessions export <ID> [--output PATH] [--format html\|markdown\|json] [--force]` | Export a saved session transcript. Default path is under `$RHO_HOME/exports/` when `RHO_HOME` is set, otherwise `~/.rho/exports/`. |

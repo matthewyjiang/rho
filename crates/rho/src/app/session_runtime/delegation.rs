@@ -9,7 +9,9 @@
 //! them. The wait stays inside the original run, so cancellation and the SDK
 //! step budget still govern parent continuations. Hosts that show a
 //! transcript take [`Delegation::offered_displays`] to render what the model
-//! was given.
+//! was given. Children the host runs as its own threads
+//! ([`super::ChildAgents::HostThreads`]) are not registered here: they
+//! outlive the prompt and report through the host's next prompt instead.
 //!
 //! Children also outlive a cancelled prompt, so the session keeps their
 //! notice binding between prompts with [`Delegation::hold_notices`]. `rho run`

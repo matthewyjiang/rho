@@ -39,7 +39,8 @@ use rho_sdk::{
 };
 
 use super::{
-    events::InsertedMessage, left_out::LeftOut, saved_settings::SettingsRecord, SessionRuntime,
+    child_agents::ChildAgents, events::InsertedMessage, left_out::LeftOut,
+    saved_settings::SettingsRecord, SessionRuntime,
 };
 use crate::{
     added_dirs::AddedDirs,
@@ -344,6 +345,7 @@ impl SessionRuntime {
             code_mode: self.built.tools.code_mode().clone(),
             added_dirs: self.added_dirs.clone(),
             left_out: self.build.launch.left_out,
+            children: self.build.host.children,
             auth: self.auth.clone(),
             settings: self.settings_record(),
         }
@@ -376,6 +378,7 @@ pub(super) struct DurableState {
     pub(super) code_mode: Arc<crate::tools::code_mode::CodeModeSurface>,
     pub(super) added_dirs: AddedDirs,
     pub(super) left_out: LeftOut,
+    pub(super) children: ChildAgents,
     pub(super) auth: String,
     /// The session's settings, once a host kept them.
     pub(super) settings: SettingsRecord,
@@ -390,14 +393,13 @@ impl DurableState {
             code_mode,
             added_dirs,
             left_out,
+            children,
             auth,
             settings,
         } = self;
         let snapshot = todo.decorate(prompt.decorate(code_mode.decorate(snapshot)));
-        settings.decorate(super::agent::decorate_model_override(
-            left_out.decorate(added_dirs.decorate(snapshot)),
-            auth,
-        ))
+        let snapshot = children.decorate(left_out.decorate(added_dirs.decorate(snapshot)));
+        settings.decorate(super::agent::decorate_model_override(snapshot, auth))
     }
 }
 

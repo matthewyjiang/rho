@@ -8,13 +8,39 @@ Parent: [Agent Client Protocol](/integrations/acp).
 rho acp --t3code
 ```
 
-`--t3code` is accepted, but its T3 integration is not yet available with the daemon ([#1670](https://github.com/matthewyjiang/rho/issues/1670)): Rho does not run subagents as T3 child threads, and background results do not wake an idle thread. Rho runs its subagents itself, in the daemon, and background work holds the prompt open, as described in [Background work](/integrations/acp#background-work).
+With `--t3code`, Rho subagents run as [T3 threads](#subagents-run-as-t3-threads). Background results do not wake an idle thread yet ([#1670](https://github.com/matthewyjiang/rho/issues/1670)): background processes and workflows hold the prompt open, as described in [Background work](/integrations/acp#background-work). Without the flag, Rho still works in T3 Code as a plain ACP agent, and its subagents run in the daemon.
 
 Rho negotiates ACP v2 when T3 Code requests it; v1 remains available when a host requests v1. Use an up-to-date T3 Code build: versions predating the October 30, 2026 prompt-echo fix can show the injected `<t3_code_instructions>` as a duplicate user message on v2. Upgrade T3 Code rather than downgrading Rho. Notices use native notice rows instead of assistant reply text.
 
 ## Sign in
 
 T3 Code's sign-in terminal appends `--login <auth-profile>` to the configured command, for example `rho acp --t3code --login codex`, which signs in through the daemon instead of serving ACP. Sign-in works even when the configured provider has no credentials yet. When a prompt finds credentials missing, unreadable, or refused, T3 Code reports that the agent needs terminal authentication. See [Sign in](/integrations/acp#sign-in).
+
+## Subagents run as T3 threads
+
+Under `--t3code`, each subagent the model starts with the `agent` tool becomes a T3 thread. It shows up in T3's subagent panel and keeps running after the parent's prompt ends. When it finishes, T3 delivers its result to the parent as a new turn, so the parent does not wait with its prompt open.
+
+```mermaid
+sequenceDiagram
+    participant M as Parent model
+    participant R as Rho (parent)
+    participant T as T3 Code
+    participant C as Rho (child thread)
+    M->>R: agent tool
+    R->>T: delegate_task with an /agent: prompt
+    T->>C: new thread, first prompt
+    R-->>M: task id, prompt can end
+    C-->>T: finished
+    T->>R: new turn with the child's result
+```
+
+- Rho calls the `delegate_task` tool of T3's `t3-code` MCP server, with `/agent:<name> <task>` as the child's first prompt. The `agents` tool's `status` and `stop` actions map to T3's `task_status` and `task_cancel`. There is no `message` action.
+- A per-call `agent.model` travels in that `/agent:` command and is resolved by the child Rho, never through T3's model picker. If the model cannot be resolved or signed in, the child task fails.
+- Only agents that use Rho's own runtime are offered. Agents that run through Claude Code, Cursor, or Antigravity are rejected; the model can start those with T3's `delegate_task` tool directly.
+- Workflows still run in the daemon.
+- The session remembers that T3 runs its children, across reloads and daemon restarts.
+
+Rho needs T3's `delegate_task`, `task_status`, and `task_cancel` tools. If any of them is missing, the session still starts, but the `agent` tool and the `agents` `status` and `stop` actions fail with an error that names the missing tool. Rho never falls back to running the child in the daemon.
 
 ## How T3 Code shows Rho
 

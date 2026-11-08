@@ -10,9 +10,9 @@ use rho_sdk::{
 };
 
 use super::{
-    credentials::SessionCredentials, ApprovalPolicy, HostCapabilities, LeftOut, OpenedSession,
-    QuestionSupport, RunShape, SessionBuild, SessionLaunch, SessionPermission, SessionRole,
-    SessionRuntime, SessionStorage, UnattendedApprovals,
+    credentials::SessionCredentials, ApprovalPolicy, ChildAgents, HostCapabilities, LeftOut,
+    OpenedSession, QuestionSupport, RunShape, SessionBuild, SessionLaunch, SessionPermission,
+    SessionRole, SessionRuntime, SessionStorage, UnattendedApprovals,
 };
 use crate::{
     agent::{
@@ -196,6 +196,7 @@ pub(in crate::app) fn test_build(config: &Config, workspace_root: &Path) -> Sess
         },
         host: HostCapabilities {
             questions: QuestionSupport::Unavailable,
+            children: ChildAgents::InProcess,
             subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
             environment: Default::default(),
             mcp_authorization: McpAuthorizationMode::NonInteractive,

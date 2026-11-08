@@ -1,9 +1,9 @@
 //! A session's setup: the choices a client makes for a session the daemon
 //! opens for it, the ones `rho acp` takes per session and `rho` takes as
 //! flags: directories outside the workspace, MCP servers of the client's
-//! own, and parts of the session left out. [`super::SessionNewParams`] and
-//! [`super::SessionAttachParams`] carry one; the daemon applies it only when
-//! that request opens the session.
+//! own, parts of the session left out, and who runs its child agents.
+//! [`super::SessionNewParams`] and [`super::SessionAttachParams`] carry one;
+//! the daemon applies it only when that request opens the session.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -16,12 +16,13 @@ use serde::{Deserialize, Serialize};
 
 /// Choices a client makes for a session the daemon opens for it.
 ///
-/// The session owns its directories and the parts it leaves out but
-/// questions: it saves them, and a reopen adds the opening request's to the
-/// saved ones, so a later client can narrow a session, never widen it. The
-/// opening client owns its MCP servers and whether it shows questions: a
-/// reopened session has those its opening request names, and none when a
-/// prompt reopens it.
+/// The session owns its directories, the parts it leaves out but
+/// questions, and host child threads: it saves them, and a reopen adds the
+/// opening request's to the saved ones, so a later client can narrow a
+/// session, never widen it, and a session whose host ran its children
+/// keeps them there. The opening client owns its MCP servers and whether it
+/// shows questions: a reopened session has those its opening request names,
+/// and none when a prompt reopens it.
 ///
 /// That holds across the daemon's reopens. A host that opens the session
 /// file in its own process does not keep it yet: `rho acp`'s
@@ -54,12 +55,43 @@ pub struct SessionSetup {
     /// these.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub without: BTreeSet<SessionPart>,
+    /// Who runs the children the session's `agent` tool starts: the daemon,
+    /// when absent, or the client's host. The session saves
+    /// [`ChildThreads::Host`], and a reopen keeps it whatever the request
+    /// says.
+    #[serde(default, skip_serializing_if = "ChildThreads::is_daemon")]
+    pub child_threads: ChildThreads,
 }
 
 impl SessionSetup {
     /// Whether this asks for nothing, so the wire leaves it out.
     pub fn is_default(&self) -> bool {
         *self == Self::default()
+    }
+}
+
+/// Who runs a session's child agents. The daemon reads it, so it has no
+/// `Unknown`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChildThreads {
+    /// The daemon runs them as subagents of the session.
+    #[default]
+    Daemon,
+    /// The client's host runs them as its own threads, as T3 Code does: the
+    /// session's `agent` and `agents` tools delegate through the
+    /// `delegate_task`, `task_status`, and `task_cancel` tools of the
+    /// host's `t3-code` MCP server, which the setup's
+    /// [`SessionSetup::mcp_servers`] provides. While that server or one of
+    /// its tools is missing, as when a prompt reopens the session, every
+    /// `agent` call fails rather than run the child in the daemon.
+    Host,
+}
+
+impl ChildThreads {
+    /// Whether the daemon runs the children, so the wire leaves it out.
+    pub fn is_daemon(&self) -> bool {
+        *self == Self::Daemon
     }
 }
 

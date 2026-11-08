@@ -31,6 +31,74 @@ fn capabilities(names: &[&str]) -> AgentCapabilities {
     )
 }
 
+// Covers: switching delegation must remove both native entry points without
+// enabling children in sessions that cannot launch them. Owner: app inventory.
+#[test]
+fn delegation_replacement_is_atomic_and_requires_launch_capability() {
+    fn named_tool(name: &str) -> Arc<dyn Tool> {
+        Arc::new(rho_sdk::tool::ScriptedTool::new(
+            rho_sdk::model::ToolSpec {
+                name: name.into(),
+                description: String::new(),
+                input_schema: json!({"type": "object"}),
+            },
+            rho_sdk::tool::ScriptedToolOutcome::Success(rho_sdk::tool::ToolOutput::text("ok")),
+        ))
+    }
+
+    for (initial, expected, replaced) in [
+        (
+            vec!["read_file", "agent", "agents"],
+            vec!["read_file", "agent", "agents"],
+            true,
+        ),
+        (
+            vec!["read_file", "agent"],
+            vec!["read_file", "agent", "agents"],
+            true,
+        ),
+        (
+            vec!["read_file", "agents"],
+            vec!["read_file", "agents"],
+            false,
+        ),
+        (vec!["read_file"], vec!["read_file"], false),
+    ] {
+        let original = initial
+            .iter()
+            .map(|name| named_tool(name))
+            .collect::<Vec<_>>();
+        let mut tools = AppToolSet::disabled();
+        tools.add_bundle(StaticToolBundle::new(original.clone()));
+        let replacements = [named_tool("agent"), named_tool("agents")];
+        assert_eq!(
+            tools.replace_delegation_tools(replacements.clone()),
+            replaced
+        );
+        assert_eq!(tools.unfiltered_names().collect::<Vec<_>>(), expected);
+        assert!(Arc::ptr_eq(
+            &tools.tool_named("read_file").unwrap(),
+            &original[0]
+        ));
+        if replaced {
+            for tool in replacements {
+                assert!(Arc::ptr_eq(
+                    &tools.tool_named(&tool.spec().name).unwrap(),
+                    &tool
+                ));
+            }
+        } else {
+            for tool in original {
+                assert!(Arc::ptr_eq(
+                    &tools.tool_named(&tool.spec().name).unwrap(),
+                    &tool
+                ));
+            }
+        }
+        assert!(tools.tool_named("missing").is_none());
+    }
+}
+
 struct RegistryWorkflowService;
 
 impl super::super::workflow::WorkflowToolService for RegistryWorkflowService {

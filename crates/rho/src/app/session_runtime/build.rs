@@ -7,7 +7,8 @@ use std::{
 use rho_sdk::{hooks::HookHostLabels, provider::ModelProvider, SessionOptions};
 
 use super::{
-    ensure_auto_classifier_model, ApprovalPolicy, LeftOut, SessionPermission, UnattendedApprovals,
+    ensure_auto_classifier_model, ApprovalPolicy, ChildAgents, LeftOut, SessionPermission,
+    UnattendedApprovals,
 };
 use crate::{
     added_dirs::AddedDirs,
@@ -60,15 +61,19 @@ pub(crate) struct SessionLaunch {
     pub(crate) prompt_suffix: Option<&'static str>,
 }
 
-/// What the session's host does for it: whether it asks a person, where its
-/// children take capacity, who answers its approvals, and what it serves its
-/// tools.
+/// What the session's host does for it: whether it asks a person, who runs
+/// its children and where those in process take capacity, who answers its
+/// approvals, and what it serves its tools.
 #[derive(Clone)]
 pub(crate) struct HostCapabilities {
     /// Whether the host can put questions to a person.
     pub(crate) questions: QuestionSupport,
+    /// Who runs the `agent` tool's children. The session's saves record
+    /// it.
+    pub(crate) children: ChildAgents,
     /// Where the session's in-process agent runs take capacity: its
-    /// subagents, and its workflow runs' agent nodes.
+    /// subagents, and its workflow runs' agent nodes, which run in process
+    /// even when the host's threads run its subagents.
     pub(crate) subagent_pool: SubagentPool,
     /// The environment the session's children see, shared by every tool
     /// set the session builds.
@@ -85,10 +90,11 @@ pub(crate) struct HostCapabilities {
 impl HostCapabilities {
     /// A host nobody watches live (`rho run`, Rho subagents, workflow
     /// nodes): it asks nobody, the session decides its approvals with
-    /// `approvals`, and its children take capacity from its own pool.
+    /// `approvals`, and its children run in this process on its own pool.
     pub(crate) fn unattended(approvals: UnattendedApprovals) -> Self {
         Self {
             questions: QuestionSupport::Unavailable,
+            children: ChildAgents::InProcess,
             subagent_pool: SubagentPool::Own,
             environment: Default::default(),
             mcp_authorization: McpAuthorizationMode::from_process(),
@@ -212,6 +218,7 @@ pub(super) async fn build_session(
     // A session request can follow a terminal login another process saved,
     // even when startup itself succeeded without credentials.
     AppCredentialStore::reread_external_logins();
+    let mut host_threads: anyhow::Result<()> = Ok(());
     // A host that cannot ask a person gets neither the questionnaire tool nor
     // the MCP capability, which Rho would then have to decline every time.
     let questions = match build.host.questions {
@@ -256,6 +263,17 @@ pub(super) async fn build_session(
             if let Some(poster) = &build.host.parent_notices {
                 tools.add_bundle(crate::tools::message_parent_bundle(Arc::clone(poster)));
             }
+            // After MCP attach, so the host's task tools are bound.
+            match build.host.children {
+                ChildAgents::InProcess => {}
+                ChildAgents::HostThreads => {
+                    host_threads = crate::tools::agent::install_host_delegation(
+                        &mut tools,
+                        workspace,
+                        config.max_output_bytes,
+                    );
+                }
+            }
             with_plan_exit(tools, build, agent, config)
         },
         system_prompt_suffix: build.launch.prompt_suffix,
@@ -263,6 +281,10 @@ pub(super) async fn build_session(
         session_options,
     })
     .await?;
+    if let Err(error) = host_threads {
+        built.teardown().await;
+        return Err(error);
+    }
     let permission = SessionPermission {
         mode: config.permission_mode,
         writes: session_writes,

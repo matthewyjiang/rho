@@ -7,8 +7,8 @@ use agent_client_protocol::schema::v1::{
 };
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    ContentBlock, McpServer, SessionId, SessionListResponse, SessionPart, SessionSetup,
-    SessionSummary,
+    ChildThreads, ContentBlock, McpServer, SessionId, SessionListResponse, SessionPart,
+    SessionSetup, SessionSummary,
 };
 use serde_json::json;
 
@@ -85,9 +85,10 @@ fn prompt_blocks_become_wire_content() {
     }
 }
 
-// Covers: every session gets the launch flags' directories and parts, the
-// host's directories after them without repeats, its MCP servers but those
-// Rho cannot speak, and no questionnaire when the host draws no forms
+// Covers: every session gets the launch flags' directories, parts, and
+// `--t3code` host child threads, the host's directories after them without
+// repeats, its MCP servers but those Rho cannot speak, and no questionnaire
+// when the host draws no forms
 // Owner: ACP request mapping
 #[test]
 fn launch_flags_and_host_request_make_the_session_setup() {
@@ -95,6 +96,7 @@ fn launch_flags_and_host_request_make_the_session_setup() {
         agent: Some("reviewer".into()),
         added_dirs: vec![PathBuf::from("/shared")],
         without: BTreeSet::from([SessionPart::Tools]),
+        child_threads: ChildThreads::Host,
     };
     let servers = [
         AcpMcpServer::Stdio(
@@ -136,11 +138,15 @@ fn launch_flags_and_host_request_make_the_session_setup() {
                 },
             ],
             without: BTreeSet::from([SessionPart::Tools]),
+            child_threads: ChildThreads::Host,
         }
     );
     assert_eq!(
-        without_forms.without,
-        BTreeSet::from([SessionPart::Tools, SessionPart::Questions])
+        (without_forms.without, without_forms.child_threads),
+        (
+            BTreeSet::from([SessionPart::Tools, SessionPart::Questions]),
+            ChildThreads::Host,
+        )
     );
 }
 
