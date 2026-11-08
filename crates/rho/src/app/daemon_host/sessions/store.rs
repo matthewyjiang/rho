@@ -3,7 +3,7 @@
 
 use rho_protocol::{ErrorCode, RpcError};
 
-use crate::session::{RunNotFinished, SessionInUse, TitleRejected};
+use crate::session::{RunNotFinished, SavedInManyWorkspaces, SessionInUse, TitleRejected};
 
 /// Runs session-store work `work`, which reads SQLite and walks session
 /// directories, off the async runtime; its failure as [`store_failed`]
@@ -23,19 +23,23 @@ pub(super) async fn store_blocking<T: Send + 'static>(
 /// `error`, wherever in its chain the store's refusal is, as a child
 /// session's is under its parent's: a session something else holds is
 /// `SessionInUse`, a run a delete must wait for `SessionBusy`, a refused
-/// title `InvalidParams`, and anything else `InternalError` saying the
-/// daemon could not do `what`.
+/// title or an id saved in more than one workspace `InvalidParams` (the
+/// client chose them), and anything else `InternalError` saying the daemon
+/// could not do `what`.
 pub(super) fn store_failed(what: &str, error: &anyhow::Error) -> RpcError {
-    let in_use = error.chain().any(|cause| cause.is::<SessionInUse>());
-    let run = error
+    let refused = |cause: &&(dyn std::error::Error + 'static)| {
+        cause.is::<TitleRejected>() || cause.is::<SavedInManyWorkspaces>()
+    };
+    if error.chain().any(|cause| cause.is::<SessionInUse>()) {
+        return RpcError::new(ErrorCode::SessionInUse, format!("{error:#}"));
+    }
+    if let Some(run) = error
         .chain()
-        .find_map(|cause| cause.downcast_ref::<RunNotFinished>());
-    let title = error.downcast_ref::<TitleRejected>();
-    match (in_use, run, title) {
-        (true, _, _) => RpcError::new(ErrorCode::SessionInUse, format!("{error:#}")),
+        .find_map(|cause| cause.downcast_ref::<RunNotFinished>())
+    {
         // The store's own wording offers `rho sessions rm --force`, which
         // the socket has no counterpart of.
-        (false, Some(run), _) => RpcError::new(
+        return RpcError::new(
             ErrorCode::SessionBusy,
             format!(
                 "run {} of session {} is still {}; delete the session once the run ends",
@@ -43,9 +47,11 @@ pub(super) fn store_failed(what: &str, error: &anyhow::Error) -> RpcError {
                 run.session(),
                 run.state()
             ),
-        ),
-        (false, None, Some(title)) => RpcError::new(ErrorCode::InvalidParams, title.to_string()),
-        (false, None, None) => RpcError::new(
+        );
+    }
+    match error.chain().find(refused) {
+        Some(cause) => RpcError::new(ErrorCode::InvalidParams, cause.to_string()),
+        None => RpcError::new(
             ErrorCode::InternalError,
             format!("could not {what}: {error:#}"),
         ),
