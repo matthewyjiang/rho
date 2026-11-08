@@ -308,7 +308,14 @@ fn preferred_cached_default(
     cached: &[provider_models::ProviderModel],
 ) -> Option<String> {
     if let Some(preferred) = default_model {
-        if let Some(found) = cached.iter().find(|entry| entry.model == preferred) {
+        // The default may be an alias of the listed row (`-latest`).
+        let listed = cached
+            .first()
+            .map(|entry| provider_models::listed_model_id(&entry.provider, preferred));
+        if let Some(found) = cached
+            .iter()
+            .find(|entry| entry.model == preferred || Some(&entry.model) == listed.as_ref())
+        {
             return Some(found.model.clone());
         }
     }

@@ -11,13 +11,14 @@ use super::{
     ProviderModelSource, ProviderRuntime, ANTHROPIC_API_KEY_ACCOUNT, CODEX_TOKENS_ACCOUNT,
     GITHUB_COPILOT_TOKENS_ACCOUNT, GOOGLE_API_KEY_ACCOUNT, KIMI_CODE_API_BASE, KIMI_TOKENS_ACCOUNT,
     META_API_BASE, META_API_KEY_ACCOUNT, META_MUSE_TOKENS_ACCOUNT, MINIMAX_API_BASE,
-    MINIMAX_API_KEY_ACCOUNT, MOONSHOT_API_BASE, MOONSHOT_API_KEY_ACCOUNT, OLLAMA_API_BASE,
-    OLLAMA_API_KEY_ACCOUNT, OLLAMA_CLOUD_API_BASE, OLLAMA_CLOUD_API_KEY_ACCOUNT,
-    OPENAI_API_KEY_ACCOUNT, OPENCODE_API_BASE, OPENCODE_API_KEY_ACCOUNT, OPENCODE_GO_API_BASE,
-    OPENCODE_GO_API_KEY_ACCOUNT, OPENROUTER_API_BASE, OPENROUTER_API_KEY_ACCOUNT,
-    OPENROUTER_OAUTH_KEY_ACCOUNT, POOLSIDE_API_BASE, POOLSIDE_API_KEY_ACCOUNT,
-    QWEN_TOKEN_PLAN_API_BASE, QWEN_TOKEN_PLAN_API_KEY_ACCOUNT, TYPESAFE_API_BASE,
-    TYPESAFE_API_KEY_ACCOUNT, XAI_API_KEY_ACCOUNT, XAI_TOKENS_ACCOUNT,
+    MINIMAX_API_KEY_ACCOUNT, MISTRAL_API_BASE, MISTRAL_API_KEY_ACCOUNT, MOONSHOT_API_BASE,
+    MOONSHOT_API_KEY_ACCOUNT, OLLAMA_API_BASE, OLLAMA_API_KEY_ACCOUNT, OLLAMA_CLOUD_API_BASE,
+    OLLAMA_CLOUD_API_KEY_ACCOUNT, OPENAI_API_KEY_ACCOUNT, OPENCODE_API_BASE,
+    OPENCODE_API_KEY_ACCOUNT, OPENCODE_GO_API_BASE, OPENCODE_GO_API_KEY_ACCOUNT,
+    OPENROUTER_API_BASE, OPENROUTER_API_KEY_ACCOUNT, OPENROUTER_OAUTH_KEY_ACCOUNT,
+    POOLSIDE_API_BASE, POOLSIDE_API_KEY_ACCOUNT, QWEN_TOKEN_PLAN_API_BASE,
+    QWEN_TOKEN_PLAN_API_KEY_ACCOUNT, TYPESAFE_API_BASE, TYPESAFE_API_KEY_ACCOUNT,
+    XAI_API_KEY_ACCOUNT, XAI_TOKENS_ACCOUNT,
 };
 use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
@@ -514,6 +515,36 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         openai_compatible_api: OpenAiCompatibleApi::AnthropicMessages,
         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
         default_model: Some("MiniMax-M3"),
+    },
+    ProviderDescriptor {
+        id: ProviderId::Mistral,
+        runtime: ProviderRuntime::OpenAiCompatible {
+            dialect: OpenAiCompatibleDialect::Mistral,
+            default_api_base: MISTRAL_API_BASE,
+            catalog_construction: CatalogConstruction::Runtime,
+        },
+        name: "mistral",
+        display_name: "Mistral AI",
+        auth_modes: &[AuthMode {
+            id: "mistral-api-key",
+            login_label: "Mistral API key",
+            auth_kind: ProviderAuthKind::ApiKey {
+                env_var: "MISTRAL_API_KEY",
+                account: MISTRAL_API_KEY_ACCOUNT,
+                entry_label: "Mistral API key",
+                missing_message: "missing Mistral API key; run /login mistral in the TUI or set MISTRAL_API_KEY as a CI/dev override",
+            },
+        }],
+        model_source: ProviderModelSource::CachedProviderModels,
+        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
+        model_id_codec: ModelIdCodec::Plain,
+        metadata_upstream: "mistral",
+        catalog_lookup: CatalogLookupMode::Slug,
+        openai_compatible_api: OpenAiCompatibleApi::ChatCompletions,
+        // models.dev advertises per-model `reasoning_effort` values, and they
+        // differ: Small and Medium take none/high, Large 4 low/medium/high.
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
+        default_model: Some("mistral-medium-latest"),
     },
     // Decision models only (Jev). No static catalog entries and no refresh, so
     // chat model lists never show it.

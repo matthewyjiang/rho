@@ -119,14 +119,16 @@ pub(super) async fn fetch(
     auth: provider::AuthMode,
     api_base: &Url,
     store: &dyn CredentialStore,
-) -> Result<Vec<ProviderModel>, ModelError> {
+) -> Result<Vec<super::ProviderModelRecord>, ModelError> {
     let Some(root) = native_root(api_base) else {
         return super::openai_compatible::fetch(descriptor, auth, api_base, store).await;
     };
     let client = provider_models_client()?;
     let request_auth = super::request_auth::load(auth, store, &client).await?;
     match fetch_tags(&client, &root, &request_auth).await {
-        Ok(models) => Ok(hydrate_models(descriptor, &client, &root, &request_auth, models).await),
+        Ok(models) => Ok(super::records_from_models(
+            hydrate_models(descriptor, &client, &root, &request_auth, models).await,
+        )),
         Err(_) => super::openai_compatible::fetch(descriptor, auth, api_base, store).await,
     }
 }

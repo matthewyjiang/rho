@@ -10,8 +10,9 @@ use crate::{
 };
 
 use super::{
-    kimi_capabilities, provider_models_client, OpenAiModelsResponse, ProviderModel,
-    ProviderModelHealth,
+    aliases::{self, ListedModel},
+    kimi_capabilities, provider_models_client, OpenAiModel, OpenAiModelsResponse, ProviderModel,
+    ProviderModelHealth, ProviderModelRecord,
 };
 
 pub async fn probe_provider_models(
@@ -60,7 +61,7 @@ pub(super) async fn fetch(
     auth: provider::AuthMode,
     api_base: &Url,
     store: &dyn CredentialStore,
-) -> Result<Vec<ProviderModel>, ModelError> {
+) -> Result<Vec<ProviderModelRecord>, ModelError> {
     let muse_env_key = match auth.auth_kind {
         ProviderAuthKind::MetaOAuth { env_var, .. } => env_api_key(env_var),
         _ => None,
@@ -86,10 +87,10 @@ pub(super) async fn fetch_paid(
     auth: provider::AuthMode,
     api_base: &Url,
     store: &dyn CredentialStore,
-) -> Result<Vec<ProviderModel>, ModelError> {
+) -> Result<Vec<ProviderModelRecord>, ModelError> {
     let mut models = fetch(descriptor, auth, api_base, store).await?;
     models_dev::ensure_models_dev_catalog().await;
-    models.retain(|model| {
+    models.retain(|ProviderModelRecord { model, .. }| {
         !model.model.starts_with("jev-")
             && !models_dev::cached_model_metadata(descriptor.name, &model.model)
                 .and_then(|metadata| metadata.cost_default)
@@ -107,7 +108,7 @@ async fn fetch_with_mint(
     store: &dyn CredentialStore,
     mint_url: &str,
     muse_env_key: Option<String>,
-) -> Result<Vec<ProviderModel>, ModelError> {
+) -> Result<Vec<ProviderModelRecord>, ModelError> {
     let client = provider_models_client()?;
     let models_url = Url::parse(&format!(
         "{}/models",
@@ -126,9 +127,10 @@ async fn fetch_with_mint(
             "invalid OpenAI-compatible models response: {error}"
         ))
     })?;
-    let mut models = response
+    let listed = response
         .data
         .into_iter()
+        .filter(OpenAiModel::serves_tool_chat)
         .map(|model| {
             let reasoning_capabilities = if descriptor.name == "kimi-code" {
                 kimi_capabilities::reasoning_capabilities(&model.kimi_reasoning)
@@ -136,18 +138,34 @@ async fn fetch_with_mint(
                 ReasoningCapabilities::Unknown
             };
             let model_id = descriptor.canonicalize_model_id(&model.id);
-            ProviderModel {
-                provider: descriptor.name.into(),
-                display_name: model.display_name.unwrap_or_else(|| model_id.clone()),
-                context_window: model.context_length.filter(|window| *window > 0),
-                model: model_id,
-                max_output_tokens: None,
-                reasoning_capabilities,
+            ListedModel {
+                model: ProviderModel {
+                    provider: descriptor.name.into(),
+                    context_window: model.context_window(),
+                    display_name: model.display_name.unwrap_or_else(|| model_id.clone()),
+                    model: model_id,
+                    max_output_tokens: None,
+                    reasoning_capabilities,
+                },
+                aliases: model
+                    .aliases
+                    .iter()
+                    .flatten()
+                    .map(|alias| descriptor.canonicalize_model_id(alias))
+                    .collect(),
             }
         })
         .collect::<Vec<_>>();
-    models.sort_by(|left, right| left.model.cmp(&right.model));
-    models.dedup_by(|left, right| left.model == right.model);
+    // Picking which alias to keep reads models.dev, so only wait for it when
+    // the host published aliases.
+    if listed.iter().any(|entry| !entry.aliases.is_empty()) {
+        models_dev::ensure_models_dev_catalog().await;
+    }
+    let mut models = aliases::collapse(listed, |model| {
+        models_dev::has_catalog_row(descriptor.name, model)
+    });
+    // `collapse` merges entries that share an id, so no duplicates remain.
+    models.sort_by(|left, right| left.model.model.cmp(&right.model.model));
     Ok(models)
 }
 

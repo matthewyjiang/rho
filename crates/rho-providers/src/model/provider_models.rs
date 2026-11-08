@@ -36,6 +36,8 @@ pub(crate) use anthropic::{
 #[path = "provider_models/google.rs"]
 mod google;
 pub(crate) use google::{thinking_policy, ThinkingPolicy};
+#[path = "provider_models/aliases.rs"]
+mod aliases;
 #[path = "provider_models/kimi_capabilities.rs"]
 mod kimi_capabilities;
 #[path = "provider_models/ollama.rs"]
@@ -44,6 +46,15 @@ pub(super) mod ollama;
 mod openai_compatible;
 #[path = "provider_models/request_auth.rs"]
 mod request_auth;
+pub(crate) use aliases::canonical_model as canonical_model_for_alias;
+
+/// The id `model` is listed under on `provider`: the listed model an alias
+/// names, or `model` itself (canonicalized). Compare ids through this so an
+/// alias in config, pins, or the current selection matches its listed row.
+pub fn listed_model_id(provider: &str, model: &str) -> String {
+    aliases::canonical_model(provider, model)
+        .unwrap_or_else(|| canonicalize_cached_model_id(provider, model))
+}
 pub use openai_compatible::probe_provider_models;
 #[path = "provider_models/cli.rs"]
 mod cli;
@@ -52,9 +63,12 @@ pub use cli::{
     replace_cli_provider_models, CliProviderModel, CliProviderRefreshContext,
 };
 
+#[derive(Debug)]
 pub(super) struct ProviderModelRecord {
     pub model: ProviderModel,
     pub raw_json: Value,
+    /// Other ids the host serves this model under; see [`aliases`].
+    pub aliases: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,18 +106,27 @@ pub struct ProviderModelRefresh {
     pub models: Vec<ProviderModel>,
 }
 
+/// The cached row for `model`, or for the listed model it is an alias of.
+///
+/// An alias keeps the requested id on the returned entry: hosts accept their
+/// own aliases, and a floating `-latest` alias must not be silently pinned to
+/// whatever dated id it names today.
 pub fn cached_provider_model(provider: &str, model: &str) -> Option<ProviderModel> {
     let model = canonicalize_cached_model_id(provider, model);
-    cached_provider_model_exact(provider, &model).or_else(|| {
-        // Anthropic dated snapshots reuse the parent alias row for picker
-        // levels, freshness, and wire mode so the three paths cannot drift.
-        fallback_capability_model(provider, &model).and_then(|parent| {
-            cached_provider_model_exact(provider, parent).map(|mut entry| {
-                entry.model = model.clone();
-                entry
-            })
+    let listed_under = |listed: String| {
+        cached_provider_model_exact(provider, &listed).map(|mut entry| {
+            entry.model = model.clone();
+            entry
         })
-    })
+    };
+    cached_provider_model_exact(provider, &model)
+        .or_else(|| aliases::canonical_model(provider, &model).and_then(listed_under))
+        .or_else(|| {
+            // Anthropic dated snapshots reuse the parent alias row for picker
+            // levels, freshness, and wire mode so the three paths cannot drift.
+            fallback_capability_model(provider, &model)
+                .and_then(|parent| listed_under(parent.to_owned()))
+        })
 }
 
 fn cached_provider_model_exact(provider: &str, model: &str) -> Option<ProviderModel> {
@@ -192,6 +215,7 @@ pub(crate) fn write_cached_provider_model_raw_json_for_tests(
                 reasoning_capabilities,
             },
             raw_json: raw_json.clone(),
+            aliases: Vec::new(),
         }],
     )
 }
@@ -424,19 +448,15 @@ async fn fetch_model_records(
         }
         Some(ProviderModelRefreshKind::Ollama) => {
             let api_base = discovery_api_base(descriptor, endpoint)?;
-            records_from_models(ollama::fetch(descriptor, auth_mode, api_base, store).await?)
+            ollama::fetch(descriptor, auth_mode, api_base, store).await?
         }
         Some(ProviderModelRefreshKind::OpenAiCompatible) => {
             let api_base = discovery_api_base(descriptor, endpoint)?;
-            records_from_models(
-                openai_compatible::fetch(descriptor, auth_mode, api_base, store).await?,
-            )
+            openai_compatible::fetch(descriptor, auth_mode, api_base, store).await?
         }
         Some(ProviderModelRefreshKind::OpenAiCompatiblePaid) => {
             let api_base = discovery_api_base(descriptor, endpoint)?;
-            records_from_models(
-                openai_compatible::fetch_paid(descriptor, auth_mode, api_base, store).await?,
-            )
+            openai_compatible::fetch_paid(descriptor, auth_mode, api_base, store).await?
         }
         Some(ProviderModelRefreshKind::AnthropicCompatible) => {
             let api_base = discovery_api_base(descriptor, endpoint)?;
@@ -466,6 +486,7 @@ fn records_from_models(models: Vec<ProviderModel>) -> Vec<ProviderModelRecord> {
         .map(|model| ProviderModelRecord {
             model,
             raw_json: Value::Null,
+            aliases: Vec::new(),
         })
         .collect()
 }
@@ -521,6 +542,7 @@ fn replace_cached_provider_model_records_with_context(
             )
             .map_err(model_cache_error)?;
         }
+        aliases::replace_in(&tx, provider, records).map_err(model_cache_error)?;
         tx.execute(
             "insert into provider_model_refresh (provider, updated_at, error, context_json)
              values (?1, strftime('%s', 'now'), null, ?2)
@@ -556,6 +578,7 @@ pub fn forget_provider_models(provider: &str) -> Result<(), ModelError> {
             "delete from provider_model_refresh where provider = ?1",
             params![provider],
         )?;
+        aliases::forget_in(&tx, provider)?;
         super::decision_models::forget_in(&tx, provider)?;
         tx.commit()
     })
@@ -584,8 +607,8 @@ async fn fetch_openai_models(
         .filter(|model| is_supported_openai_model(&model.id))
         .map(|model| ProviderModel {
             provider: provider.to_string(),
+            context_window: model.context_window(),
             display_name: model.display_name.unwrap_or_else(|| model.id.clone()),
-            context_window: model.context_length.filter(|window| *window > 0),
             model: model.id,
             max_output_tokens: None,
             reasoning_capabilities: ReasoningCapabilities::Unknown,
@@ -744,8 +767,36 @@ struct OpenAiModel {
     #[serde(alias = "name")]
     display_name: Option<String>,
     context_length: Option<u64>,
+    /// Mistral's name for the context window.
+    max_context_length: Option<u64>,
+    /// Mistral flags each listed model's capabilities, and lists embedding,
+    /// OCR, and moderation models next to chat models.
+    capabilities: Option<serde_json::Value>,
+    /// Other ids for the same model (Mistral, xAI). Optional so `null` from
+    /// other gateways does not fail the whole listing.
+    #[serde(default)]
+    aliases: Option<Vec<String>>,
     #[serde(flatten)]
     kimi_reasoning: kimi_capabilities::KimiReasoningMetadata,
+}
+
+impl OpenAiModel {
+    fn context_window(&self) -> Option<u64> {
+        self.context_length
+            .or(self.max_context_length)
+            .filter(|window| *window > 0)
+    }
+
+    /// False only when the listing says the model cannot chat or call tools.
+    /// Hosts that publish no capability flags keep every model.
+    fn serves_tool_chat(&self) -> bool {
+        let Some(capabilities) = &self.capabilities else {
+            return true;
+        };
+        ["completion_chat", "function_calling"]
+            .iter()
+            .all(|flag| capabilities.get(flag).and_then(serde_json::Value::as_bool) != Some(false))
+    }
 }
 
 pub(super) fn with_provider_models_cache<T>(

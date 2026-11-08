@@ -19,6 +19,7 @@ This index lists every first-party provider Rho ships. Shared concepts such as c
 | `qwen-token-plan` | `qwen-token-plan-api-key` | [Qwen Token Plan](/providers/qwen-token-plan) |
 | `meta` | `meta-api-key`, `meta-muse` | [Meta Model API](/providers/meta) |
 | `minimax` | `minimax-api-key` | [MiniMax](/providers/minimax) |
+| `mistral` | `mistral-api-key` | [Mistral AI](/providers/mistral) |
 | `opencode-go` | `opencode-go-api-key` | [OpenCode Go](/providers/opencode-go) |
 | `opencode` | `opencode-api-key` | [OpenCode Zen](/providers/opencode-zen) |
 | `typesafe` | `typesafe-api-key` | [TypeSafe](/providers/typesafe) |

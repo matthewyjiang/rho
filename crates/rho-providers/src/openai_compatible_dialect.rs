@@ -1,6 +1,9 @@
 use serde_json::Value;
 
-use crate::protocol::openai_chat::{ChatToolCallPolicy, OpenAiTool};
+use crate::protocol::openai_chat::{ChatToolCallPolicy, OpenAiMessage, OpenAiTool};
+
+#[path = "mistral_history.rs"]
+mod mistral_history;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpenAiCompatibleDialect {
@@ -17,6 +20,9 @@ pub enum OpenAiCompatibleDialect {
     OpenRouter,
     Moonshot,
     KimiCode,
+    /// Mistral La Plateforme. It rejects undeclared request fields and carries
+    /// reasoning as `thinking` content chunks instead of `reasoning_content`.
+    Mistral,
 }
 
 impl OpenAiCompatibleDialect {
@@ -28,7 +34,22 @@ impl OpenAiCompatibleDialect {
             | Self::Poolside
             | Self::OpenRouter
             | Self::Moonshot
-            | Self::KimiCode => ChatToolCallPolicy::Strict,
+            | Self::KimiCode
+            | Self::Mistral => ChatToolCallPolicy::Strict,
+        }
+    }
+
+    /// Rewrites converted chat history into the shape this host accepts.
+    pub(crate) fn normalize_messages(self, messages: &mut [OpenAiMessage]) {
+        match self {
+            Self::Mistral => mistral_history::normalize(messages),
+            Self::Standard
+            | Self::Custom
+            | Self::QwenTokenPlan
+            | Self::Poolside
+            | Self::OpenRouter
+            | Self::Moonshot
+            | Self::KimiCode => {}
         }
     }
 
@@ -38,7 +59,8 @@ impl OpenAiCompatibleDialect {
             | Self::Custom
             | Self::QwenTokenPlan
             | Self::Poolside
-            | Self::OpenRouter => tool,
+            | Self::OpenRouter
+            | Self::Mistral => tool,
             Self::Moonshot | Self::KimiCode => {
                 normalize_moonshot_parameters(tool.function.parameters.to_mut());
                 tool

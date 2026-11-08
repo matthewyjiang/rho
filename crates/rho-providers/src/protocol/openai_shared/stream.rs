@@ -1,8 +1,9 @@
 use rho_sdk::model::ModelStopReason;
 
-use crate::model::{ModelError, ModelEvent, ModelResponse};
+use crate::model::{ModelError, ModelEvent, ModelResponse, ProviderReportedErrorKind};
 
 use super::{
+    content_chunks::{content_parts, ContentPart},
     convert::{emit_chat_reasoning_context, finalize_chat_assistant, ChatAssistantFinish},
     tool_calls::{ChatToolCallPolicy, RawChatToolCall},
     usage::{
@@ -24,11 +25,12 @@ const MAX_STREAM_BLOCK_INDEX: usize = 4096;
 /// `handle_line`, then call `into_finish` once to normalize the accumulated
 /// state without emitting side effects.
 ///
-/// Reasoning deltas are retained and replayed to later turns as
-/// `openai_chat_reasoning_content` provider context (Qwen/DeepSeek-style
-/// `reasoning_content`). History conversion only replays that context to the
-/// exact model that produced it, and hosts that do not know the field ignore
-/// it, so emitting it for every OpenAI-chat-style provider stays safe.
+/// Reasoning deltas (Qwen/DeepSeek-style `reasoning_content`, or Mistral-style
+/// `thinking` content chunks) are retained and replayed to later turns as
+/// `openai_chat_reasoning_content` provider context. History conversion only
+/// replays that context to the exact model that produced it. Most hosts ignore
+/// an unknown `reasoning_content` field; a dialect whose host rejects it
+/// rewrites the field in `OpenAiCompatibleDialect::normalize_messages`.
 ///
 /// Usage is not forwarded per chunk: hosts restate usage as running or final
 /// snapshots (sometimes on several chunks, with non-monotonic input totals),
@@ -102,8 +104,19 @@ impl ChatStreamAccumulator {
         else {
             return Ok(true);
         };
-        let stop_reason = match choice.get("finish_reason").and_then(|v| v.as_str()) {
-            Some("length") => Some(ModelStopReason::MaxTokens),
+        let finish_reason = choice.get("finish_reason").and_then(|v| v.as_str());
+        if finish_reason == Some("error") {
+            // Mistral and OpenRouter end a generation that failed upstream
+            // this way. The partial output is not a finished turn.
+            return Err(ModelError::ProviderReported {
+                kind: ProviderReportedErrorKind::Unavailable,
+                error_type: "finish_reason_error".into(),
+                message: "provider stopped the generation with finish_reason \"error\"".into(),
+            });
+        }
+        let stop_reason = match finish_reason {
+            // Mistral reports a context-limited stop as `model_length`.
+            Some("length" | "model_length") => Some(ModelStopReason::MaxTokens),
             Some("content_filter") => Some(ModelStopReason::Refusal),
             _ => None,
         };
@@ -124,13 +137,22 @@ impl ChatStreamAccumulator {
             self.reasoning.push_str(reasoning_delta);
             on_event(ModelEvent::ReasoningDelta(reasoning_delta.to_string()))?;
         }
-        if let Some(content_delta) = delta
+        for part in delta
             .and_then(|v| v.get("content"))
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
+            .map(content_parts)
+            .unwrap_or_default()
         {
-            on_event(ModelEvent::OutputDelta(content_delta.to_string()))?;
-            self.text.push_str(content_delta);
+            match part {
+                ContentPart::Text(text) => {
+                    on_event(ModelEvent::OutputDelta(text.to_string()))?;
+                    self.text.push_str(text);
+                }
+                ContentPart::Thinking(thinking) => {
+                    self.reasoning_delta_streamed = true;
+                    self.reasoning.push_str(&thinking);
+                    on_event(ModelEvent::ReasoningDelta(thinking))?;
+                }
+            }
         }
         let Some(delta_tool_calls) = delta
             .and_then(|v| v.get("tool_calls"))
@@ -162,10 +184,12 @@ impl ChatStreamAccumulator {
                 self.tool_calls.push(RawChatToolCall::default());
             }
             let call = &mut self.tool_calls[index];
+            // Some hosts send the literal string "null" on continuation
+            // fragments; it must not replace the id from the first fragment.
             let id = delta
                 .get("id")
                 .and_then(|v| v.as_str())
-                .filter(|id| !id.is_empty())
+                .filter(|id| !id.is_empty() && *id != "null")
                 .map(str::to_string);
             if let Some(id) = &id {
                 call.id = Some(id.clone());
@@ -238,13 +262,7 @@ impl ChatStreamAccumulator {
 
     /// Fills gaps in the accumulated state from a completed message snapshot.
     fn merge_completed_message(&mut self, message: &serde_json::Value) {
-        if self.text.is_empty() {
-            if let Some(content) = message.get("content").and_then(|v| v.as_str()) {
-                if !content.is_empty() {
-                    self.text.push_str(content);
-                }
-            }
-        }
+        let fill_text = self.text.is_empty();
         if self.reasoning.is_empty() {
             if let Some(reasoning) = message
                 .get("reasoning_content")
@@ -254,6 +272,20 @@ impl ChatStreamAccumulator {
                 .filter(|text| !text.is_empty())
             {
                 self.reasoning.push_str(reasoning);
+            }
+        }
+        let fill_reasoning = self.reasoning.is_empty();
+        for part in message
+            .get("content")
+            .map(content_parts)
+            .unwrap_or_default()
+        {
+            match part {
+                ContentPart::Text(text) if fill_text => self.text.push_str(text),
+                ContentPart::Thinking(thinking) if fill_reasoning => {
+                    self.reasoning.push_str(&thinking);
+                }
+                ContentPart::Text(_) | ContentPart::Thinking(_) => {}
             }
         }
         let Some(completed) = message.get("tool_calls").and_then(|v| v.as_array()) else {

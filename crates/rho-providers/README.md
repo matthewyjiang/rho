@@ -39,6 +39,7 @@ The runtime registry includes:
 - `qwen-token-plan`
 - `meta`
 - `minimax`
+- `mistral`
 - `opencode-go`
 - `opencode`
 - `typesafe`, a decision-model host: it serves the System One API through
