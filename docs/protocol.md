@@ -261,6 +261,7 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 | -32016 | `SessionNotLoaded` | The daemon has not loaded the session, which a settings change needs; attach to it first. |
 | -32017 | `LoginBusy` | The daemon is already signing in to the auth profile; wait for that login to finish. |
 | -32018 | `LoginNotFound` | No login under way has the id: it ended, or never started. |
+| -32019 | `SignInRequired` | The daemon could not open the session because its model's auth profile has no usable credentials: none are saved or set, they could not be read, or the provider refused them. Sign in, then try again. |
 
 ## Versions and compatibility
 

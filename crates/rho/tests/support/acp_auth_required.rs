@@ -81,12 +81,13 @@ fn prompt(session_id: &str, text: &str) -> Value {
     json!({"sessionId": session_id, "prompt": [{"type": "text", "text": text}]})
 }
 
-// Covers: a key the provider revokes mid-session must answer ACP
-// auth_required (not internal_error), for turns and compaction, without
-// echoing the key or the provider's diagnostic, and a sign-in must apply
-// without reconnecting: the daemon session's next prompt reloads the refused
-// credentials for turns and compaction alike, because providers capture them
-// when built.
+// Covers: a missing key, at session/new, and a key the provider revokes
+// mid-session must both answer ACP auth_required (not invalid_params or
+// internal_error), for turns and compaction, without echoing the key or the
+// provider's diagnostic, and each sign-in must apply without reconnecting:
+// the daemon opens the next session, and the daemon session's next prompt
+// reloads the refused credentials for turns and compaction alike, because
+// providers capture them when built.
 // Owner: ACP prompt error mapping over the daemon's turn outcome, and the
 // daemon session's provider lifecycle, over real stdio and HTTP; no fixture
 // provider stands in for the credential path.
@@ -94,8 +95,14 @@ fn prompt(session_id: &str, text: &str) -> Value {
 fn credential_failures_require_auth_and_each_sign_in_applies_in_place() {
     let valid = Arc::new(Mutex::new(FIRST_KEY.to_owned()));
     let fixture = MockProviderHome::new(&valid);
-    fixture.store.set_secret(KEY_ACCOUNT, FIRST_KEY).unwrap();
     let (mut server, _) = fixture.server();
+    assert_auth_required(
+        server.request("session/new", fixture.new_session()).0,
+        "no key is saved yet",
+    );
+
+    // A sign-in saves the key; the same connection opens without reconnecting.
+    fixture.store.set_secret(KEY_ACCOUNT, FIRST_KEY).unwrap();
     let (session, _) = server.request("session/new", fixture.new_session());
     let session_id = session.unwrap()["sessionId"].as_str().unwrap().to_owned();
     assert_eq!(server.prompt(&session_id, "hi"), "answered");
@@ -151,6 +158,10 @@ fn logout_requires_a_new_sign_in_for_new_and_live_sessions() {
             .request("session/prompt", prompt(&session_id, "still there?"))
             .0,
         "the live session no longer holds a sign-in",
+    );
+    assert_auth_required(
+        server.request("session/new", fixture.new_session()).0,
+        "new sessions need a sign-in",
     );
 
     fixture.store.set_secret(KEY_ACCOUNT, FIRST_KEY).unwrap();

@@ -267,6 +267,14 @@ pub(super) fn daemon_error(error: &ClientError) -> AcpError {
     };
     let acp_error = match error.error_code() {
         Some(ErrorCode::InvalidParams | ErrorCode::SessionOpenFailed) => AcpError::invalid_params(),
+        // As a failed turn's: the daemon's message, which names how to sign
+        // in and never quotes a credential, and no data.
+        Some(ErrorCode::SignInRequired) => {
+            return AcpError::new(
+                i32::from(agent_client_protocol::ErrorCode::AuthRequired),
+                message,
+            );
+        }
         Some(ErrorCode::SessionNotFound | ErrorCode::SessionNotLoaded) => {
             AcpError::resource_not_found(None)
         }

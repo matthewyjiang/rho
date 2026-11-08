@@ -412,11 +412,11 @@ fn load_replays_tool_calls_and_results() {
             .unwrap();
         let session_id = created["sessionId"].as_str().unwrap();
         let mut expected = Vec::new();
-        let mut provider_ids = Vec::new();
+        let mut live_ids = Vec::new();
         for text in ["first output", "second output"] {
             std::fs::write(workspace.extra.join("notes.txt"), text).unwrap();
-            // Loading creates a new fixture provider, whose first response
-            // reuses the same ID as the previous process did.
+            // Each daemon builds a new fixture provider, whose first response
+            // reuses the tool-call ID the previous daemon's did.
             let (reply, live) = server.request(
                 "session/prompt",
                 json!({"sessionId": session_id, "prompt": [{"type": "text", "text": "read the shared notes"}]}),
@@ -431,7 +431,7 @@ fn load_replays_tool_calls_and_results() {
                 .find(|u| u["sessionUpdate"] == "tool_call_update" && u["status"] == status)
                 .expect("live terminal result");
             assert_ne!(result["content"], json!([]));
-            provider_ids.push(call["toolCallId"].clone());
+            live_ids.push(call["toolCallId"].clone());
             expected.push(json!({"name": call["name"], "rawInput": call["rawInput"],
                 "status": status, "content": result["content"]}));
             server
@@ -487,9 +487,8 @@ fn load_replays_tool_calls_and_results() {
                 .collect::<Vec<_>>();
             assert_eq!(restored, expected);
         }
-        assert_eq!(
-            provider_ids[0], provider_ids[1],
-            "fixture must reuse the provider ID"
-        );
+        // The session already holds the reused ID, so the second call
+        // gets its own wire ID, live as in replay.
+        assert_ne!(live_ids[0], live_ids[1]);
     }
 }

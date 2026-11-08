@@ -51,7 +51,7 @@ use crate::{
     app::{
         prompt_content,
         session_events::LiveEvents,
-        session_runtime::{SessionHandle, SessionRuntime, SteerError},
+        session_runtime::{CredentialFailure, SessionHandle, SessionRuntime, SteerError},
     },
     config::Config,
 };
@@ -823,11 +823,14 @@ fn writing(job: &JobId, session: &SessionId) -> RpcError {
     )
 }
 
+/// The error for a session the daemon could not open: `SignInRequired`
+/// when signing in can fix it, else `SessionOpenFailed`.
 fn open_failed(error: anyhow::Error) -> RpcError {
-    RpcError::new(
-        ErrorCode::SessionOpenFailed,
-        format!("could not open session: {error:#}"),
-    )
+    let code = match CredentialFailure::find(&error) {
+        Some(_) => ErrorCode::SignInRequired,
+        None => ErrorCode::SessionOpenFailed,
+    };
+    RpcError::new(code, format!("could not open session: {error:#}"))
 }
 
 /// The error a request that needs the session answers while a delete

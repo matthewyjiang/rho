@@ -203,6 +203,12 @@ async fn start(
                 Some(ErrorCode::SessionOpenFailed | ErrorCode::InvalidParams) => {
                     AutomationExit::configuration(message)
                 }
+                // As a turn that failed on its credentials exits.
+                Some(ErrorCode::SignInRequired) => AutomationExit::new(
+                    1,
+                    super::automation_protocol::TerminalReason::Authentication,
+                    message,
+                ),
                 _ => AutomationExit::other(message),
             }
         })?

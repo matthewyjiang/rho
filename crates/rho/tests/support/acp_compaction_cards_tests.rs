@@ -97,8 +97,9 @@ fn agent_text(updates: &[Value]) -> Vec<&str> {
 
 // Covers: `/compact` must report as one compaction card that opens in
 // progress and completes, with no status text posing as the retained
-// summary, when the host advertised compaction, and as the agent message otherwise (ACP forbids the card
-// then), so the capability negotiated at initialize reaches the session.
+// summary, only when the host advertised compaction (ACP forbids the card
+// otherwise), so the capability negotiated at initialize reaches the
+// session. Every host gets what the compaction did as the agent message.
 // Owner: ACP session updates, over the real stdio server
 #[test]
 fn manual_compaction_reports_a_card_only_to_hosts_that_advertise_it() {
@@ -110,7 +111,7 @@ fn manual_compaction_reports_a_card_only_to_hosts_that_advertise_it() {
                 ("in_progress".to_owned(), false),
                 ("completed".to_owned(), false),
             ],
-            0,
+            1,
         ),
         ("baseline host", json!({}), Vec::new(), 1),
     ] {
