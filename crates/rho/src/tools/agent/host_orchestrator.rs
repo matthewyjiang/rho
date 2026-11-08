@@ -63,9 +63,8 @@ pub(super) struct HostRun {
 impl HostOrchestrator {
     /// Binds T3's three task tools from the `t3-code` server. A missing tool
     /// does not fail the session: hosts open sessions without MCP servers too
-    /// (T3's provider status probe does), and a prompt reopens a saved
-    /// session without any. Instead every host operation fails with the
-    /// reason, so the host-threads opt-in never silently falls back to
+    /// (T3's provider status probe does). Instead every host operation fails
+    /// with the reason, so the host-threads opt-in never silently falls back to
     /// in-process subagents.
     pub(super) fn connect(tools: &AppToolSet) -> Self {
         Self {

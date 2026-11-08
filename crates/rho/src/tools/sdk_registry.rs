@@ -490,18 +490,20 @@ impl AppToolSet {
             .map(|(_, tool)| tool.clone())
     }
 
-    /// Replaces delegation only when launch was enabled for this session.
-    /// The native bundle stays alive (with an idle manager) for lifecycle and
-    /// permission updates; replacement tools own their own execution state.
-    pub(crate) fn replace_delegation_tools(&mut self, replacements: [Arc<dyn Tool>; 2]) -> bool {
-        if !self.contains("agent") {
-            return false;
-        }
+    /// Replaces the native `agent` and `agents` tools the session has with
+    /// `agent` and `agents`, adding neither one it lacks. The native bundle
+    /// stays alive (with an idle manager) for lifecycle and permission
+    /// updates; replacement tools own their own execution state.
+    pub(crate) fn replace_delegation_tools(&mut self, agent: Arc<dyn Tool>, agents: Arc<dyn Tool>) {
         self.inventory.mutate(|tools| {
-            tools.retain(|tool| !matches!(tool.spec().name.as_str(), "agent" | "agents"));
-            tools.extend(replacements);
+            for tool in tools.iter_mut() {
+                match tool.spec().name.as_str() {
+                    "agent" => *tool = Arc::clone(&agent),
+                    "agents" => *tool = Arc::clone(&agents),
+                    _ => {}
+                }
+            }
         });
-        true
     }
 
     /// The advisor's session store, present whenever the run may offer the

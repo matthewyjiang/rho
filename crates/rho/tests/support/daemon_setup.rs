@@ -8,10 +8,10 @@ use std::{collections::BTreeSet, path::PathBuf};
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{JobList, SessionAttach, SessionDetach, SessionList, SessionNew},
-    Ask, ChildThreads, Client, ClientError, DaemonNotification, ErrorCode, JobListParams, JobState,
-    McpServer, Operation, PathScope, SessionAttachParams, SessionDetachParams, SessionEvent,
-    SessionEventParams, SessionId, SessionListParams, SessionNewParams, SessionPart, SessionSetup,
-    ToolCallId, ToolStatus, TurnOutcome,
+    Ask, ChildThreads, Client, ClientError, DaemonNotification, ErrorCode, JobKind, JobListParams,
+    JobState, McpServer, Operation, PathScope, SessionAttachParams, SessionDetachParams,
+    SessionEvent, SessionEventParams, SessionId, SessionListParams, SessionNewParams, SessionPart,
+    SessionSetup, ToolCallId, ToolStatus, TurnOutcome,
 };
 use serde_json::Value;
 
@@ -599,7 +599,7 @@ async fn child_threads_follow_the_client_that_opened_the_session() {
         ..SessionSetup::default()
     };
     let session = new_session(&sandbox, &client, None, setup).await.unwrap();
-    let mut statuses = Vec::new();
+    let mut outcomes = Vec::new();
     for (unloads, id) in [(0, "spawn-new"), (1, "spawn-reopened")] {
         if unloads > 0 {
             settled_job(&sandbox, &client, &session).await;
@@ -612,15 +612,26 @@ async fn child_threads_follow_the_client_that_opened_the_session() {
         });
         let (_, events) = turn(&sandbox, &client, &session, &call.to_string()).await;
         let id = ToolCallId::new(id);
-        statuses.push(events.iter().rev().find_map(|event| match event {
+        let status = events.iter().rev().find_map(|event| match event {
             SessionEvent::ToolCall(update) if update.id == id => update.status,
             _ => None,
-        }));
+        });
+        let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
+        let subagents = jobs
+            .jobs
+            .iter()
+            .filter(|job| job.kind == JobKind::Subagent)
+            .count();
+        outcomes.push((status, subagents));
     }
 
+    // The tool's status and the daemon subagent jobs after each turn.
     assert_eq!(
-        statuses,
-        [Some(ToolStatus::Failed), Some(ToolStatus::Completed)],
+        outcomes,
+        [
+            (Some(ToolStatus::Failed), 0),
+            (Some(ToolStatus::Completed), 1)
+        ],
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

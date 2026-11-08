@@ -209,6 +209,8 @@ pub(crate) enum ChildAgents {
     /// --t3code` asks for; see `tools::agent::install_host_delegation`), so
     /// its UI owns them. The agent nodes of the session's workflow runs
     /// still run in this process.
+    // Only the daemon, unix-only so far, opens host-threads sessions (#1665).
+    #[cfg_attr(not(unix), allow(dead_code))]
     HostThreads,
 }
 
@@ -229,7 +231,6 @@ pub(super) async fn build_session(
     // A session request can follow a terminal login another process saved,
     // even when startup itself succeeded without credentials.
     AppCredentialStore::reread_external_logins();
-    let mut host_threads: anyhow::Result<()> = Ok(());
     // A host that cannot ask a person gets neither the questionnaire tool nor
     // the MCP capability, which Rho would then have to decline every time.
     let questions = match build.host.questions {
@@ -277,13 +278,11 @@ pub(super) async fn build_session(
             // After MCP attach, so the host's task tools are bound.
             match build.host.children {
                 ChildAgents::InProcess => {}
-                ChildAgents::HostThreads => {
-                    host_threads = crate::tools::agent::install_host_delegation(
-                        &mut tools,
-                        workspace,
-                        config.max_output_bytes,
-                    );
-                }
+                ChildAgents::HostThreads => crate::tools::agent::install_host_delegation(
+                    &mut tools,
+                    workspace,
+                    config.max_output_bytes,
+                ),
             }
             with_plan_exit(tools, build, agent, config)
         },
@@ -292,10 +291,6 @@ pub(super) async fn build_session(
         session_options,
     })
     .await?;
-    if let Err(error) = host_threads {
-        built.teardown().await;
-        return Err(error);
-    }
     let permission = SessionPermission {
         mode: config.permission_mode,
         writes: session_writes,

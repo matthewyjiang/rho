@@ -31,10 +31,11 @@ fn capabilities(names: &[&str]) -> AgentCapabilities {
     )
 }
 
-// Covers: switching delegation must remove both native entry points without
-// enabling children in sessions that cannot launch them. Owner: app inventory.
+// Covers: switching delegation replaces each native entry point the session
+// has, in place, and adds none it lacks, so a session that may launch but
+// not manage children (or neither) gains no tool. Owner: app inventory.
 #[test]
-fn delegation_replacement_is_atomic_and_requires_launch_capability() {
+fn delegation_replacement_swaps_only_the_entry_points_present() {
     fn named_tool(name: &str) -> Arc<dyn Tool> {
         Arc::new(rho_sdk::tool::ScriptedTool::new(
             rho_sdk::model::ToolSpec {
@@ -46,56 +47,33 @@ fn delegation_replacement_is_atomic_and_requires_launch_capability() {
         ))
     }
 
-    for (initial, expected, replaced) in [
-        (
-            vec!["read_file", "agent", "agents"],
-            vec!["read_file", "agent", "agents"],
-            true,
-        ),
-        (
-            vec!["read_file", "agent"],
-            vec!["read_file", "agent", "agents"],
-            true,
-        ),
-        (
-            vec!["read_file", "agents"],
-            vec!["read_file", "agents"],
-            false,
-        ),
-        (vec!["read_file"], vec!["read_file"], false),
+    for names in [
+        vec!["read_file", "agent", "agents"],
+        vec!["read_file", "agent"],
+        vec!["read_file", "agents"],
+        vec!["read_file"],
     ] {
-        let original = initial
+        let original = names
             .iter()
             .map(|name| named_tool(name))
             .collect::<Vec<_>>();
         let mut tools = AppToolSet::disabled();
         tools.add_bundle(StaticToolBundle::new(original.clone()));
-        let replacements = [named_tool("agent"), named_tool("agents")];
-        assert_eq!(
-            tools.replace_delegation_tools(replacements.clone()),
-            replaced
-        );
-        assert_eq!(tools.unfiltered_names().collect::<Vec<_>>(), expected);
-        assert!(Arc::ptr_eq(
-            &tools.tool_named("read_file").unwrap(),
-            &original[0]
-        ));
-        if replaced {
-            for tool in replacements {
-                assert!(Arc::ptr_eq(
-                    &tools.tool_named(&tool.spec().name).unwrap(),
-                    &tool
-                ));
-            }
-        } else {
-            for tool in original {
-                assert!(Arc::ptr_eq(
-                    &tools.tool_named(&tool.spec().name).unwrap(),
-                    &tool
-                ));
-            }
+        let (agent, agents) = (named_tool("agent"), named_tool("agents"));
+        tools.replace_delegation_tools(Arc::clone(&agent), Arc::clone(&agents));
+
+        assert_eq!(tools.unfiltered_names().collect::<Vec<_>>(), names);
+        for (name, before) in names.iter().zip(&original) {
+            let expected = match *name {
+                "agent" => &agent,
+                "agents" => &agents,
+                _ => before,
+            };
+            assert!(
+                Arc::ptr_eq(&tools.tool_named(name).unwrap(), expected),
+                "{names:?}: {name}"
+            );
         }
-        assert!(tools.tool_named("missing").is_none());
     }
 }
 

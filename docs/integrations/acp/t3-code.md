@@ -38,7 +38,7 @@ sequenceDiagram
 - A per-call `agent.model` travels in that `/agent:` command and is resolved by the child Rho, never through T3's model picker. If the model cannot be resolved or signed in, the child task fails.
 - Only agents that use Rho's own runtime are offered. Agents that run through Claude Code, Cursor, or Antigravity are rejected; the model can start those with T3's `delegate_task` tool directly.
 - Workflows still run in the daemon.
-- The session remembers that T3 runs its children, across reloads and daemon restarts.
+- `rho acp --t3code` asks for T3 threads each time it opens or reloads a session, so they hold across reloads and daemon restarts. The session does not save the choice: a client that reopens it without asking, such as `rho sessions attach`, runs its children in the daemon.
 
 Rho needs T3's `delegate_task`, `task_status`, and `task_cancel` tools. If any of them is missing, the session still starts, but the `agent` tool and the `agents` `status` and `stop` actions fail with an error that names the missing tool. Rho never falls back to running the child in the daemon.
 

@@ -30,19 +30,16 @@ use crate::{
 /// Host-threads hook (`ChildAgents::HostThreads`, which `rho acp --t3code`
 /// asks for), called after MCP attachment: swaps the native `agent`/`agents`
 /// tools for T3-backed ones. A session without the native `agent` tool (a
-/// delegated child, `--no-subagents`) is left unchanged. Missing T3 tools
-/// fail each delegation call, not the session; an unreadable agent catalog
-/// fails the session build.
-pub(crate) fn install_host_delegation(
-    tools: &mut AppToolSet,
-    cwd: &Path,
-    max_output_bytes: usize,
-) -> anyhow::Result<()> {
+/// delegated child, `--no-subagents`) is left unchanged, and one with
+/// `agent` alone gets no `agents`. Missing T3 tools fail each delegation
+/// call, not the session.
+pub(crate) fn install_host_delegation(tools: &mut AppToolSet, cwd: &Path, max_output_bytes: usize) {
     if !tools.contains("agent") {
-        return Ok(());
+        return;
     }
     let orchestrator = Arc::new(HostOrchestrator::connect(tools));
-    let catalog = AgentCatalog::discover(cwd)?;
+    // As the native `agent` tool this replaces, which just read it.
+    let catalog = AgentCatalog::discover(cwd).expect("agent catalog was validated at startup");
     let agent = HostAgentTool::new(
         orchestrator.clone(),
         cwd,
@@ -50,14 +47,13 @@ pub(crate) fn install_host_delegation(
         max_output_bytes,
         tools.checkpoint_tracker().clone(),
     );
-    tools.replace_delegation_tools([
+    tools.replace_delegation_tools(
         Arc::new(agent),
         Arc::new(HostAgentsTool {
             orchestrator,
             max_output_bytes,
         }),
-    ]);
-    Ok(())
+    );
 }
 
 struct HostAgentTool {
