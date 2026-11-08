@@ -10,9 +10,9 @@
 //!   a placeholder card for a call the host never saw.
 //! - A plan approval is `session/request_permission` offering the modes.
 //! - A question is a form-mode `elicitation/create` on hosts that draw
-//!   forms. Hosts without forms are declined at once: the daemon then
-//!   answers the tool or MCP server that asked as declined. (Sessions such
-//!   hosts open have no questionnaire tool.)
+//!   forms. A host without forms leaves it to the other clients: sessions
+//!   it opens ask none (the daemon declines an MCP server's question
+//!   itself), but a session another client opened may.
 
 use std::{
     collections::HashMap,
@@ -22,7 +22,7 @@ use std::{
 use agent_client_protocol::{schema::v1::SessionId as AcpSessionId, Error as AcpError};
 use rho_protocol::{
     methods::{SessionAnswer, SessionHold},
-    Ask, ErrorCode, InputAnswer, InputRequest, InputRequestId, SessionAnswerParams,
+    Ask, ClientError, ErrorCode, InputAnswer, InputRequest, InputRequestId, SessionAnswerParams,
     SessionHoldParams, SessionId,
 };
 use tokio::task::JoinHandle;
@@ -31,7 +31,8 @@ use super::{
     daemon::Daemon,
     elicitation,
     host_features::{Forms, HostFeatures},
-    permission, AcpClientPort,
+    permission::{self, Card},
+    AcpClientPort,
 };
 
 /// What every input task of a session shares.
@@ -94,7 +95,8 @@ impl Drop for Inputs {
 async fn ask(request: InputRequest, context: InputContext) {
     let answer = match host_answer(&request, &context).await {
         Ok(Some(answer)) => answer,
-        // The host cancelled: the turn's cancel withdraws the request.
+        // The host cannot answer, or cancelled: another client may answer,
+        // or the turn's cancel withdraws the request.
         Ok(None) => return,
         Err(error) => {
             tracing::warn!(%error, "could not ask the ACP host for input");
@@ -105,17 +107,20 @@ async fn ask(request: InputRequest, context: InputContext) {
     match send(&context, request.id, answer).await {
         // An answer the daemon finds invalid, such as a choice the question
         // does not offer, declines instead so the tool is not left waiting.
-        Err(Some(ErrorCode::InvalidParams)) if retry => {
-            if let Err(code) = send(&context, request.id, InputAnswer::Decline).await {
-                tracing::warn!(?code, "could not decline an input request");
+        Err(Unsent::Failed(error))
+            if retry && error.error_code() == Some(ErrorCode::InvalidParams) =>
+        {
+            if let Err(unsent) = send(&context, request.id, InputAnswer::Decline).await {
+                tracing::warn!(?unsent, "could not decline an input request");
             }
         }
         Ok(()) => {}
-        Err(code) => tracing::warn!(?code, "could not answer an input request"),
+        Err(unsent) => tracing::warn!(?unsent, "could not answer an input request"),
     }
 }
 
-/// What the host answered, or `None` when it cancelled the prompt.
+/// What the host answered, or `None` when it cannot answer or cancelled
+/// the prompt.
 async fn host_answer(
     request: &InputRequest,
     context: &InputContext,
@@ -129,34 +134,26 @@ async fn host_answer(
     } = context;
     match &request.ask {
         Ask::Approval(ask) => {
-            let placeholder = permission::next_placeholder_tool_call_id(placeholders);
-            let prompt = permission::permission_request(
-                acp_id,
-                ask,
-                request.tool_call.as_ref(),
-                &placeholder,
-            );
+            let card = Card::of(request.tool_call.as_ref(), placeholders);
+            let prompt = permission::permission_request(acp_id, ask, &card);
             let response = port.request_permission(prompt).await?;
             Ok(permission::approval_answer(&response.outcome))
         }
         Ask::PlanApproval(ask) => {
-            let tool_call_id = match &request.tool_call {
-                Some(id) => id.as_str().to_owned(),
-                None => permission::next_placeholder_tool_call_id(placeholders),
-            };
-            let prompt = permission::plan_approval_request(acp_id, ask, &tool_call_id);
+            let card = Card::of(request.tool_call.as_ref(), placeholders);
+            let prompt = permission::plan_approval_request(acp_id, ask, &card);
             let response = port.request_permission(prompt).await?;
             Ok(permission::plan_answer(&response.outcome))
         }
         Ask::Question(ask) => {
             let Forms::Available(dialect) = features.forms else {
-                return Ok(Some(InputAnswer::Decline));
+                return Ok(None);
             };
             // A person may take longer to fill a form than the request's
             // timeout allows; holding it waits for them.
             if request.timeout.is_some() {
-                if let Err(code) = hold(context, request.id).await {
-                    tracing::debug!(?code, "could not hold an input request");
+                if let Err(unsent) = hold(context, request.id).await {
+                    tracing::debug!(?unsent, "could not hold an input request");
                 }
             }
             let form =
@@ -170,36 +167,44 @@ async fn host_answer(
     }
 }
 
+/// Why an answer or hold did not reach the daemon.
+#[derive(Debug)]
+enum Unsent {
+    /// The connection the request came over is gone; a new daemon would
+    /// not have it.
+    Disconnected,
+    /// The daemon refused it, or the connection failed under it.
+    Failed(ClientError),
+}
+
 /// Answers request `id`. A request already resolved elsewhere is not an
 /// error: the first answer wins.
 async fn send(
     context: &InputContext,
     id: InputRequestId,
     answer: InputAnswer,
-) -> Result<(), Option<ErrorCode>> {
+) -> Result<(), Unsent> {
     let params = SessionAnswerParams {
         session: context.session.clone(),
         request: id,
         answer,
     };
-    let link = context.daemon.link().await.map_err(|_| None)?;
+    let link = context.daemon.current().await.ok_or(Unsent::Disconnected)?;
     match link.request::<SessionAnswer>(&params).await {
         Ok(_) => Ok(()),
-        Err(error) => match error.error_code() {
-            Some(ErrorCode::InputNotOpen) => Ok(()),
-            code => Err(code),
-        },
+        Err(error) if error.error_code() == Some(ErrorCode::InputNotOpen) => Ok(()),
+        Err(error) => Err(Unsent::Failed(error)),
     }
 }
 
-async fn hold(context: &InputContext, id: InputRequestId) -> Result<(), Option<ErrorCode>> {
+async fn hold(context: &InputContext, id: InputRequestId) -> Result<(), Unsent> {
     let params = SessionHoldParams {
         session: context.session.clone(),
         request: id,
     };
-    let link = context.daemon.link().await.map_err(|_| None)?;
+    let link = context.daemon.current().await.ok_or(Unsent::Disconnected)?;
     link.request::<SessionHold>(&params)
         .await
         .map(drop)
-        .map_err(|error| error.error_code())
+        .map_err(Unsent::Failed)
 }

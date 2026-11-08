@@ -7,24 +7,26 @@
 //! mints for messages and cards the daemon gives none.
 //!
 //! Events that are not transcript updates map to nothing here; the session
-//! pump handles them (`sessions.rs`): `State` and `TurnEnded` end a prompt,
-//! `Input*` open or close host prompts (`inputs.rs`), and `OptionsChanged`
-//! is diffed against what the host last saw ([`options_changed`]).
+//! pump handles them (`sessions/pump.rs`): `TurnEnded` ends a prompt,
+//! `State` tracks the attachment's job and Herdr, `Input*` open or close host
+//! prompts (`inputs.rs`), and `OptionsChanged` is diffed against what the
+//! host last saw ([`options_changed`]).
 
 use std::collections::HashSet;
 
 use agent_client_protocol::schema::v1::{
-    AvailableCommandsUpdate, ConfigOptionUpdate, ContentBlock, ContentChunk, Cost,
-    CurrentModeUpdate, Diff, EmbeddedResource, EmbeddedResourceResource, ImageContent, MessageId,
-    Notice, NoticeSeverity, Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus, ResourceLink,
-    SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate, TextResourceContents,
-    ToolCall, ToolCallContent, ToolCallId, ToolCallLocation, ToolCallStatus, ToolCallUpdate,
-    ToolCallUpdateFields, ToolKind, UsageUpdate,
+    AvailableCommandsUpdate, CompactionId, CompactionStatus, CompactionUpdate, ConfigOptionUpdate,
+    ContentBlock, ContentChunk, Cost, CurrentModeUpdate, Diff, EmbeddedResource,
+    EmbeddedResourceResource, ImageContent, MessageId, Notice, NoticeSeverity, Plan, PlanEntry,
+    PlanEntryPriority, PlanEntryStatus, ResourceLink, SessionId, SessionInfoUpdate,
+    SessionNotification, SessionUpdate, TextResourceContents, ToolCall, ToolCallContent,
+    ToolCallId, ToolCallLocation, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    UsageUpdate,
 };
 use rho_protocol::{self as wire, SessionEvent};
 use serde_json::Value;
 
-use super::{compaction_card, host_features::HostFeatures, options, permission};
+use super::{host_features::HostFeatures, options, permission};
 use crate::permission::PermissionMode;
 
 /// v1 diffs cannot tell a deleted file from an emptied one, so a deletion
@@ -56,7 +58,7 @@ impl Updates {
         Self::with_nonce(features, uuid::Uuid::new_v4().to_string())
     }
 
-    pub(super) fn with_nonce(features: HostFeatures, nonce: String) -> Self {
+    fn with_nonce(features: HostFeatures, nonce: String) -> Self {
         Self {
             features,
             seen_tools: HashSet::new(),
@@ -98,7 +100,7 @@ impl Updates {
                 SessionInfoUpdate::new().title(title.clone()),
             )],
             SessionEvent::Compaction { id, status } if self.features.compaction => {
-                Vec::from_iter(compaction_card::update(id, status))
+                Vec::from_iter(compaction_update(id, status))
             }
             // A host without cards sees compaction only in `usage_update`.
             SessionEvent::Compaction { .. } => Vec::new(),
@@ -133,7 +135,7 @@ impl Updates {
 
     /// Information for the user that is not part of the conversation: an ACP
     /// `notice` when the host shows them, else an agent message.
-    pub(super) fn notice(&mut self, text: &str) -> SessionUpdate {
+    fn notice(&mut self, text: &str) -> SessionUpdate {
         if self.features.notices {
             return SessionUpdate::Notice(Notice::new(NoticeSeverity::Info, text));
         }
@@ -220,20 +222,30 @@ impl Updates {
     }
 }
 
-/// `update` for `session`, marked as history when `replayed`.
+/// How an update reaches the host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Delivery {
+    /// As it happens.
+    Live,
+    /// As history a loaded session replays, marked so hosts with their own
+    /// transcript skip it.
+    Replay,
+}
+
+/// `update` for `session`, delivered as `delivery` says.
 pub(super) fn notification(
     session: &SessionId,
     update: SessionUpdate,
-    replayed: bool,
+    delivery: Delivery,
 ) -> SessionNotification {
     let notification = SessionNotification::new(session.clone(), update);
-    if !replayed {
-        return notification;
+    match delivery {
+        Delivery::Live => notification,
+        Delivery::Replay => notification.meta(serde_json::Map::from_iter([(
+            REPLAY_META_KEY.to_owned(),
+            Value::Bool(true),
+        )])),
     }
-    notification.meta(serde_json::Map::from_iter([(
-        REPLAY_META_KEY.to_owned(),
-        Value::Bool(true),
-    )]))
 }
 
 /// What the host must hear when the session's options move from `old` to
@@ -263,6 +275,35 @@ pub(super) fn options_changed(
         updates.push(commands_update(&new.commands));
     }
     updates
+}
+
+/// The ACP `compaction_update` card for compaction `id` reaching `status`,
+/// for hosts that advertise `clientCapabilities.session.compaction`;
+/// nothing for a status a newer daemon sends.
+///
+/// A card opens `in_progress` and ends with exactly one terminal update.
+/// Its ID is the daemon's compaction ID, random per compaction: hosts such
+/// as T3 Code keep their transcript across reconnects, so an ID that
+/// restarted per process would patch an earlier card in place. Cards carry
+/// no `summary`: ACP reserves it for retained summary content, not status
+/// text such as the before and after counts, which hosts get from
+/// `usage_update`.
+fn compaction_update(
+    id: &wire::CompactionId,
+    status: &wire::CompactionStatus,
+) -> Option<SessionUpdate> {
+    let id = CompactionId::new(id.as_str());
+    let update = match status {
+        wire::CompactionStatus::Started => CompactionUpdate::new(id, CompactionStatus::InProgress),
+        wire::CompactionStatus::Completed => CompactionUpdate::new(id, CompactionStatus::Completed),
+        wire::CompactionStatus::Cancelled => CompactionUpdate::new(id, CompactionStatus::Cancelled),
+        wire::CompactionStatus::Failed { error } => {
+            CompactionUpdate::new(id, CompactionStatus::Failed).error(error.clone())
+        }
+        // `Unknown`, or a status a newer daemon sends.
+        _ => return None,
+    };
+    Some(SessionUpdate::CompactionUpdate(update))
 }
 
 /// The session's whole command menu.

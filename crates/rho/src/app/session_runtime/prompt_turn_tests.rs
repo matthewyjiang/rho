@@ -112,7 +112,7 @@ impl TurnView for PlanView {
         report: PlanReport,
     ) -> impl Future<Output = ()> + Send {
         self.hosted.push(match report {
-            PlanReport::Kept => Hosted::Kept,
+            PlanReport::Kept { .. } => Hosted::Kept,
             PlanReport::Switched => Hosted::Switched(runtime.permission_mode()),
         });
         std::future::ready(())

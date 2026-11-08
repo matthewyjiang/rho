@@ -1,11 +1,8 @@
-//! Signing in with an API key and signing out, for hosts that act for a
-//! client rather than a person at a terminal: ACP (`authenticate`, `logout`)
-//! and the daemon (`rho/auth/key`, `rho/auth/logout`, and the environment
-//! check of `rho/auth/login`) (#1662).
-//!
-//! Each host keeps how it reaches its user (ACP's local key page, the
-//! daemon's socket); this module owns what a sign-in or sign-out does, so
-//! both behave the same:
+//! Signing in with an API key and signing out, for the daemon, which acts
+//! for a client rather than a person at a terminal (`rho/auth/key`,
+//! `rho/auth/logout`, and the environment check of `rho/auth/login`), and
+//! the shell check of `rho login` (#1662). Unix-only, as the daemon is
+//! (#1665):
 //!
 //! - A request starts with [`load_config_and_store`], so it writes the store
 //!   config selects when it runs, not the one the process opened at start:

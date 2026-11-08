@@ -6,10 +6,7 @@ use agent_client_protocol::schema::v1::{
 use pretty_assertions::assert_eq;
 use rho_protocol::{self as wire, ApprovalAsk, ApprovalSource, InputAnswer, Operation, PathScope};
 
-use super::{
-    approval_answer, mode_id, next_placeholder_tool_call_id, parse_mode_id, permission_request,
-    plan_answer,
-};
+use super::{approval_answer, mode_id, parse_mode_id, permission_request, plan_answer, Card};
 use crate::permission::PermissionMode;
 
 fn session_id() -> SessionId {
@@ -39,7 +36,11 @@ fn selected(option: &str) -> RequestPermissionOutcome {
 // Owner: acp permission mapper
 #[test]
 fn permission_request_offers_three_options_on_the_asking_card() {
-    let placeholder = permission_request(&session_id(), &write_ask("edit file"), None, "pending-1");
+    let placeholder = permission_request(
+        &session_id(),
+        &write_ask("edit file"),
+        &Card::Placeholder("pending-1".into()),
+    );
     let options = placeholder
         .options
         .iter()
@@ -63,12 +64,8 @@ fn permission_request_offers_three_options_on_the_asking_card() {
         card(&placeholder),
         ("pending-1".to_owned(), Some(ToolKind::Edit))
     );
-    let known = permission_request(
-        &session_id(),
-        &write_ask("edit file"),
-        Some(&wire::ToolCallId::new("call-7")),
-        "pending-2",
-    );
+    let call = wire::ToolCallId::new("call-7");
+    let known = permission_request(&session_id(), &write_ask("edit file"), &Card::Call(&call));
     assert_eq!(card(&known), ("call-7".to_owned(), None));
 }
 
@@ -77,10 +74,7 @@ fn permission_request_offers_three_options_on_the_asking_card() {
 #[test]
 fn missing_tool_call_ids_do_not_reuse_a_placeholder() {
     let counter = AtomicU64::new(0);
-    assert_ne!(
-        next_placeholder_tool_call_id(&counter),
-        next_placeholder_tool_call_id(&counter)
-    );
+    assert_ne!(Card::of(None, &counter), Card::of(None, &counter));
 }
 
 // Covers: ACP outcomes must map onto the daemon's answers; a cancelled prompt

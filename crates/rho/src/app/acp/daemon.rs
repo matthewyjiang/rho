@@ -9,7 +9,7 @@
 //! them: a session's events and detach to that session's pump
 //! (`sessions.rs`), a login's prompt and outcome to the login waiting on
 //! them (`auth.rs`). When the daemon closes the connection, every route
-//! hears [`Inbound::Lost`], and the next request connects again.
+//! hears [`Routed::Lost`], and the next request connects again.
 
 use std::{
     collections::HashMap,
@@ -22,26 +22,24 @@ use std::{
 use agent_client_protocol::Error as AcpError;
 use rho_protocol::{
     methods::Method, Client, ClientError, DaemonNotification, DetachReason, ErrorCode, LoginId,
-    LoginOutcome, LoginPrompt, Notifications, SessionEvent, SessionId,
+    LoginOutcome, LoginPrompt, Notifications, Seq, SessionEvent, SessionId,
 };
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{
-    app::daemon_cli,
-    daemon::{self, cli_client_info, Connection, ProcessSpawner},
-};
+use crate::{app::daemon_cli, daemon::Connection};
 
-/// What the router hands a session's pump.
-pub(super) enum Inbound {
+/// What the router reads for a session.
+pub(super) enum Routed {
     /// One event of the session's stream, with its sequence number.
-    Event { seq: u64, event: SessionEvent },
+    Event { seq: Seq, event: SessionEvent },
     /// The daemon ended the session's attachment.
     Detached(DetachReason),
     /// The connection the session was attached on closed.
     Lost,
-    /// Sent by the session itself, not the router; see `sessions.rs`.
-    Session(super::sessions::Control),
 }
+
+/// Where the router hands what it reads for one session, in order.
+pub(super) type SessionRoute = Box<dyn Fn(Routed) + Send>;
 
 /// What the router hands the login in flight.
 pub(super) enum LoginEvent {
@@ -60,7 +58,7 @@ pub(super) enum LoginEvent {
 /// session that reattaches after a reconnect keeps its route.
 #[derive(Default)]
 struct Routes {
-    sessions: HashMap<SessionId, mpsc::UnboundedSender<Inbound>>,
+    sessions: HashMap<SessionId, SessionRoute>,
     login: Option<mpsc::UnboundedSender<LoginEvent>>,
 }
 
@@ -87,15 +85,13 @@ impl Daemon {
         if let Some(link) = current.as_ref().filter(|link| link.is_alive()) {
             return Ok(Arc::clone(link));
         }
-        let paths = daemon_cli::paths().map_err(unreachable_daemon)?;
-        let spawner = ProcessSpawner::current_exe().map_err(unreachable_daemon)?;
         let Connection {
             client,
             notifications,
             ..
-        } = daemon::connect_or_spawn(&paths, cli_client_info(), &spawner)
+        } = daemon_cli::connect()
             .await
-            .map_err(unreachable_daemon)?;
+            .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
         let alive = Arc::new(AtomicBool::new(true));
         let (fences, fence_receiver) = mpsc::unbounded_channel();
         tokio::spawn(tokio::task::unconstrained(route(
@@ -113,6 +109,14 @@ impl Daemon {
         Ok(link)
     }
 
+    /// The open connection, if there is one; never connects. For requests
+    /// that matter only to an attachment that still delivers, such as a
+    /// detach or a cancel: a closed connection already ended it.
+    pub(super) async fn current(&self) -> Option<Arc<Link>> {
+        let current = self.link.lock().await;
+        current.as_ref().filter(|link| link.is_alive()).cloned()
+    }
+
     /// Sends `M` on the open connection, connecting first if needed.
     pub(super) async fn request<M: Method>(
         &self,
@@ -124,10 +128,10 @@ impl Daemon {
             .map_err(|error| daemon_error(&error))
     }
 
-    /// Routes session `session`'s notifications to `sender`, replacing any
+    /// Routes session `session`'s notifications to `route`, replacing any
     /// earlier route.
-    pub(super) fn route(&self, session: &SessionId, sender: mpsc::UnboundedSender<Inbound>) {
-        lock(&self.routes).sessions.insert(session.clone(), sender);
+    pub(super) fn route(&self, session: &SessionId, route: SessionRoute) {
+        lock(&self.routes).sessions.insert(session.clone(), route);
     }
 
     /// Drops session `session`'s route; what the daemon still sends for it
@@ -199,8 +203,8 @@ async fn route(
     }
     alive.store(false, Ordering::Release);
     let Routes { sessions, login } = std::mem::take(&mut *lock(&routes));
-    for sender in sessions.into_values() {
-        let _ = sender.send(Inbound::Lost);
+    for route in sessions.into_values() {
+        route(Routed::Lost);
     }
     if let Some(login) = login {
         let _ = login.send(LoginEvent::Lost);
@@ -209,16 +213,16 @@ async fn route(
 
 fn deliver(routes: &Mutex<Routes>, notification: DaemonNotification) {
     let routes = lock(routes);
-    let (session, inbound) = match notification {
+    let (session, routed) = match notification {
         DaemonNotification::SessionEvent(params) => (
             params.session,
-            Inbound::Event {
-                seq: params.seq.0,
+            Routed::Event {
+                seq: params.seq,
                 event: params.event,
             },
         ),
         DaemonNotification::SessionDetached(params) => {
-            (params.session, Inbound::Detached(params.reason))
+            (params.session, Routed::Detached(params.reason))
         }
         DaemonNotification::LoginPrompt(params) => {
             if let Some(login) = &routes.login {
@@ -244,19 +248,13 @@ fn deliver(routes: &Mutex<Routes>, notification: DaemonNotification) {
             return;
         }
     };
-    if let Some(sender) = routes.sessions.get(&session) {
-        let _ = sender.send(inbound);
+    if let Some(route) = routes.sessions.get(&session) {
+        route(routed);
     }
 }
 
 fn lock(routes: &Mutex<Routes>) -> std::sync::MutexGuard<'_, Routes> {
     routes.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-fn unreachable_daemon(error: impl std::fmt::Display) -> AcpError {
-    AcpError::internal_error().data(format!(
-        "could not reach the rho daemon: {error}; see https://matthewyjiang.github.io/rho/daemon"
-    ))
 }
 
 /// The ACP error for a daemon refusal.

@@ -25,7 +25,6 @@ use crate::{
     diagnostics::RuntimeDiagnostics,
     session::{SessionOrigin, SessionProvenance, SessionTarget},
     tools::{
-        host_io::HostIo,
         mcp::{config::McpConfig, McpAuthorizationMode},
         plan_exit::PlanExitHost,
         sdk_registry::AppToolSet,
@@ -71,9 +70,9 @@ pub(crate) struct HostCapabilities {
     /// Where the session's in-process agent runs take capacity: its
     /// subagents, and its workflow runs' agent nodes.
     pub(crate) subagent_pool: SubagentPool,
-    /// What the session's host does for its tools, shared by every tool set
-    /// the session builds.
-    pub(crate) host_io: HostIo,
+    /// The environment the session's children see, shared by every tool
+    /// set the session builds.
+    pub(crate) environment: crate::session_environment::SessionEnvironment,
     /// Whether an MCP server's browser login may wait for a person.
     pub(crate) mcp_authorization: McpAuthorizationMode,
     /// Who answers the session's approval requests.
@@ -91,7 +90,7 @@ impl HostCapabilities {
         Self {
             questions: QuestionSupport::Unavailable,
             subagent_pool: SubagentPool::Own,
-            host_io: HostIo::default(),
+            environment: Default::default(),
             mcp_authorization: McpAuthorizationMode::from_process(),
             approvals: ApprovalPolicy::Unattended(approvals),
             parent_notices: None,
@@ -251,7 +250,7 @@ pub(super) async fn build_session(
         usage_parent_session_id: role.parent().cloned(),
         hook_host_labels: hook_labels.clone(),
         added_dirs,
-        host_io: build.host.host_io.clone(),
+        environment: build.host.environment.clone(),
         subagent_pool: build.host.subagent_pool.clone(),
         extend_tools: |mut tools: AppToolSet| {
             if let Some(poster) = &build.host.parent_notices {

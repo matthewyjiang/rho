@@ -8,7 +8,6 @@
 //! negotiates ACP v2 is served by translating at its boundary (`v2`).
 
 mod auth;
-mod compaction_card;
 mod daemon;
 mod elicitation;
 mod host_features;
@@ -42,7 +41,9 @@ use agent_client_protocol::{
     Stdio,
 };
 use rho_protocol::{methods::SessionList, SessionListParams, SessionPart};
+use tokio::signal::unix::{signal, Signal, SignalKind};
 
+use super::shutdown_signal::ShutdownSignals;
 use crate::{
     cli::Cli,
     herdr::{HerdrReporter, HerdrSource},
@@ -215,23 +216,27 @@ impl Adapter {
     fn toggles(&self) -> host_features::Toggles {
         self.negotiated.get().toggles
     }
+}
 
-    fn new_session_response(&self, started: &Started) -> NewSessionResponse {
-        NewSessionResponse::new(started.session_id.clone())
-            .config_options(options::config_options(&started.options, self.toggles()))
-            .modes(options::modes(&started.options.permission_mode))
+/// The v1 responses to the requests that open a session, showing its
+/// options as a host with `toggles` draws them.
+impl Started {
+    fn new_session_response(&self, toggles: host_features::Toggles) -> NewSessionResponse {
+        NewSessionResponse::new(self.session_id.clone())
+            .config_options(options::config_options(&self.options, toggles))
+            .modes(options::modes(&self.options.permission_mode))
     }
 
-    fn load_session_response(&self, started: &Started) -> LoadSessionResponse {
+    fn load_session_response(&self, toggles: host_features::Toggles) -> LoadSessionResponse {
         LoadSessionResponse::new()
-            .config_options(options::config_options(&started.options, self.toggles()))
-            .modes(options::modes(&started.options.permission_mode))
+            .config_options(options::config_options(&self.options, toggles))
+            .modes(options::modes(&self.options.permission_mode))
     }
 
-    fn resume_session_response(&self, started: &Started) -> ResumeSessionResponse {
+    fn resume_session_response(&self, toggles: host_features::Toggles) -> ResumeSessionResponse {
         ResumeSessionResponse::new()
-            .config_options(options::config_options(&started.options, self.toggles()))
-            .modes(options::modes(&started.options.permission_mode))
+            .config_options(options::config_options(&self.options, toggles))
+            .modes(options::modes(&self.options.permission_mode))
     }
 }
 
@@ -244,18 +249,40 @@ pub(super) async fn run(cli: Cli) -> anyhow::Result<()> {
             "rho acp --t3code: T3 child threads and wake-ups are unavailable until #1670 A3"
         );
     }
+    // Installed before the host can reach this agent, so a stop signal
+    // always detaches its sessions.
+    let mut stops = ShutdownSignals::install()?;
+    let mut hangup = signal(SignalKind::hangup())?;
     let adapter = Arc::new(Adapter::new(&cli)?);
     // Host integrations do not change protocol negotiation: each connection
     // uses the highest version both sides support.
     let server = Agent
         .protocol_router()
         .with_v1(v1_agent(Arc::clone(&adapter)))
-        .with_v2(v2::agent(adapter))
+        .with_v2(v2::agent(Arc::clone(&adapter)))
         .connect_to(Stdio::new());
-    tokio::spawn(server)
-        .await
-        .map_err(|error| anyhow::anyhow!("ACP server task failed: {error}"))?
-        .map_err(acp_error)
+    let served = tokio::select! {
+        served = tokio::spawn(server) => served
+            .map_err(|error| anyhow::anyhow!("ACP server task failed: {error}"))
+            .and_then(|served| served.map_err(acp_error)),
+        () = stopped(&mut stops, &mut hangup) => Ok(()),
+    };
+    // Cancels this host's prompts and detaches, so no turn of this host's
+    // runs on unwatched; a second signal stops waiting for the daemon.
+    tokio::select! {
+        () = adapter.close_all() => {}
+        () = stopped(&mut stops, &mut hangup) => {}
+    }
+    served
+}
+
+/// Returns once this process is told to stop: SIGINT, SIGTERM, or SIGHUP,
+/// which a host that closes the terminal it ran the agent in sends.
+async fn stopped(stops: &mut ShutdownSignals, hangup: &mut Signal) {
+    tokio::select! {
+        _ = stops.recv() => {}
+        _ = hangup.recv() => {}
+    }
 }
 
 /// The ACP v1 agent for one connection.
@@ -284,8 +311,9 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
                     let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort { cx: cx.clone() });
                     cx.spawn(async move {
                         let started = adapter.new_session(&request).await;
+                        let toggles = adapter.toggles();
                         respond_started(responder, &port, started, |started| {
-                            adapter.new_session_response(started)
+                            started.new_session_response(toggles)
                         })
                         .await
                     })
@@ -301,8 +329,9 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
                     let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort { cx: cx.clone() });
                     cx.spawn(async move {
                         let started = adapter.load_session(&request, Arc::clone(&port)).await;
+                        let toggles = adapter.toggles();
                         respond_started(responder, &port, started, |started| {
-                            adapter.load_session_response(started)
+                            started.load_session_response(toggles)
                         })
                         .await
                     })
@@ -318,8 +347,9 @@ fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
                     let port: Arc<dyn AcpClientPort> = Arc::new(ConnectionPort { cx: cx.clone() });
                     cx.spawn(async move {
                         let started = adapter.resume_session(&request).await;
+                        let toggles = adapter.toggles();
                         respond_started(responder, &port, started, |started| {
-                            adapter.resume_session_response(started)
+                            started.resume_session_response(toggles)
                         })
                         .await
                     })
@@ -468,7 +498,7 @@ async fn respond_started<Resp: JsonRpcResponse>(
     let commands = updates::notification(
         &started.session_id,
         updates::commands_update(&started.options.commands),
-        /*replayed*/ false,
+        updates::Delivery::Live,
     );
     if let Err(error) = port.send_session_notification(commands).await {
         tracing::warn!(%error, "could not advertise ACP commands");

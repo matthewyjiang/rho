@@ -57,6 +57,31 @@ pub(super) fn paths() -> anyhow::Result<DaemonPaths> {
     })?)
 }
 
+/// Why [`connect`] reached no daemon: the socket path is over the
+/// platform's limit, the daemon could not start or did not accept
+/// connections in time (the reason names its log file), or its protocol
+/// major differs (the reason says which side to update).
+#[cfg(unix)]
+#[derive(Debug, thiserror::Error)]
+#[error("could not reach the rho daemon: {reason}; see https://matthewyjiang.github.io/rho/daemon")]
+pub(super) struct Unreachable {
+    reason: String,
+}
+
+/// Connects to this rho home's daemon, starting one when none runs, for
+/// the commands that are its clients: `rho run --detach`, `rho login`, and
+/// `rho acp`.
+#[cfg(unix)]
+pub(super) async fn connect() -> Result<daemon::Connection, Unreachable> {
+    let unreachable = |reason: String| Unreachable { reason };
+    let paths = paths().map_err(|error| unreachable(format!("{error:#}")))?;
+    let spawner = daemon::ProcessSpawner::current_exe()
+        .map_err(|error| unreachable(format!("could not find the rho executable: {error}")))?;
+    daemon::connect_or_spawn(&paths, cli_client_info(), &spawner)
+        .await
+        .map_err(|error| unreachable(error.to_string()))
+}
+
 /// Whether this invocation runs the daemon, which installs its own always-on
 /// subscriber instead of the `RHO_LOG`-gated terminal one.
 pub(super) fn runs_daemon(command: Option<&Command>) -> bool {

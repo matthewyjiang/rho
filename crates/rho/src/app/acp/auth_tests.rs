@@ -3,6 +3,7 @@ use pretty_assertions::assert_eq;
 use rho_protocol::{AuthKind, AuthStatus, AuthSummary};
 
 use super::methods;
+use crate::app::acp::host_features::HostFeatures;
 
 fn summary(auth: &str, label: &str, kind: AuthKind) -> AuthSummary {
     AuthSummary {
@@ -23,8 +24,9 @@ fn terminal(auth: &str, label: &str) -> AuthMethod {
 
 // Covers: an interactive login runs in the host only where it opens URLs,
 // an API key never does (secrets must not travel in ACP messages), the
-// terminal login is offered only to hosts with a terminal, and a kind this
-// rho does not know is not offered at all
+// terminal login is offered only to hosts with a terminal, and neither a
+// kind this rho does not know nor a sign-in whose approval nothing reports
+// (Ollama Cloud's device key) is offered at all
 // Owner: ACP auth advertisement
 #[test]
 fn auth_methods_follow_what_the_host_can_do() {
@@ -32,6 +34,7 @@ fn auth_methods_follow_what_the_host_can_do() {
         summary("openai-codex", "ChatGPT", AuthKind::Login),
         summary("openai", "OpenAI API key", AuthKind::ApiKey),
         summary("future", "Future", AuthKind::Unknown),
+        summary("ollama-cloud-device", "Ollama Cloud", AuthKind::Login),
     ];
     let cases = [
         (
@@ -63,7 +66,12 @@ fn auth_methods_follow_what_the_host_can_do() {
         ),
         ("neither", false, false, vec![]),
     ];
-    for (label, urls, has_terminal, expected) in cases {
-        assert_eq!(methods(&auths, urls, has_terminal), expected, "{label}");
+    for (label, urls, terminal, expected) in cases {
+        let features = HostFeatures {
+            urls,
+            terminal,
+            ..HostFeatures::default()
+        };
+        assert_eq!(methods(&auths, features), expected, "{label}");
     }
 }

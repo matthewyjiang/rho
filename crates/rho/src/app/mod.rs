@@ -18,6 +18,7 @@ mod compaction_eval;
 pub(crate) mod config_repository;
 pub(crate) mod context_report;
 pub(crate) mod conversation_switch;
+#[cfg(unix)]
 mod credential_writes;
 mod daemon_cli;
 #[cfg(unix)]
@@ -55,6 +56,8 @@ mod session_runtime;
 mod sessions_cli;
 mod shutdown_signal;
 pub(crate) mod side_chat;
+#[cfg(unix)]
+mod stream_position;
 pub(crate) mod subagent_host_input;
 pub(crate) mod subagent_manager;
 pub(crate) mod subagent_messaging;

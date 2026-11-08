@@ -1325,7 +1325,7 @@
     "LoginOutcome": {
       "anyOf": [
         {
-          "description": "The provider approved the login, and the daemon saved the\ncredential.",
+          "description": "The daemon saved the credential: once the provider approved the\nlogin, or, for a provider that sends no confirmation, the credential\nits prompt asked the user to approve.",
           "properties": {
             "type": {
               "const": "succeeded",

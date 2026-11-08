@@ -29,31 +29,52 @@ pub(super) fn parse_mode_id(id: &str) -> Option<PermissionMode> {
         .find(|mode| mode.as_str() == id)
 }
 
-/// A fresh card id for a prompt about a call the host never saw.
-pub(super) fn next_placeholder_tool_call_id(counter: &AtomicU64) -> String {
-    format!("pending-{}", counter.fetch_add(1, Ordering::Relaxed) + 1)
+/// The tool call card a permission prompt is drawn on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Card<'a> {
+    /// The card of the call that asked, which the host already holds.
+    Call(&'a wire::ToolCallId),
+    /// A fresh card for a call the host never saw.
+    Placeholder(String),
 }
 
-/// The prompt for one approval. A request for a call the host already saw
-/// reuses that card and keeps the kind it was announced with; only a
-/// placeholder card, which has no kind yet, takes one from the operation.
+impl<'a> Card<'a> {
+    /// The card for a prompt about `tool_call`. A prompt about no call gets
+    /// a placeholder numbered from `counter`, so two never share one.
+    pub(super) fn of(tool_call: Option<&'a wire::ToolCallId>, counter: &AtomicU64) -> Self {
+        match tool_call {
+            Some(id) => Self::Call(id),
+            None => Self::Placeholder(format!(
+                "pending-{}",
+                counter.fetch_add(1, Ordering::Relaxed) + 1
+            )),
+        }
+    }
+
+    fn id(&self) -> ToolCallId {
+        match self {
+            Self::Call(id) => ToolCallId::new(id.as_str()),
+            Self::Placeholder(id) => ToolCallId::new(id.as_str()),
+        }
+    }
+}
+
+/// The prompt for one approval, drawn on `card`. The card of a call the
+/// host already saw keeps the kind it was announced with; only a
+/// placeholder, which has no kind yet, takes one from the operation.
 pub(super) fn permission_request(
     session_id: &SessionId,
     ask: &ApprovalAsk,
-    tool_call: Option<&wire::ToolCallId>,
-    placeholder_tool_call_id: &str,
+    card: &Card<'_>,
 ) -> RequestPermissionRequest {
     let fields = ToolCallUpdateFields::new().title(ask.reason.clone());
-    let (tool_call_id, fields) = match tool_call {
-        Some(id) => (id.as_str(), fields),
-        None => (
-            placeholder_tool_call_id,
-            fields.kind(tool_kind_for_operation(&ask.operation)),
-        ),
+    let fields = match card {
+        Card::Call(_) => fields,
+        Card::Placeholder(_) => fields.kind(tool_kind_for_operation(&ask.operation)),
     };
     RequestPermissionRequest::new(
         session_id.clone(),
-        ToolCallUpdate::new(ToolCallId::new(tool_call_id), fields),
+        ToolCallUpdate::new(card.id(), fields),
         permission_options(),
     )
 }
@@ -113,14 +134,14 @@ fn tool_kind_for_operation(operation: &Operation) -> ToolKind {
     }
 }
 
-/// The plan approval prompt, drawn on the `exit_plan_mode` call's card with
-/// the plan as its content. Each option approves into one mode, by mode id,
+/// The plan approval prompt, drawn on `card`, the `exit_plan_mode` call's,
+/// with the plan as its content. Each option approves into one mode, by mode id,
 /// so hosts show what each choice grants; "keep planning" rejects. A mode
 /// this rho does not know is not offered.
 pub(super) fn plan_approval_request(
     session_id: &SessionId,
     ask: &PlanApprovalAsk,
-    tool_call_id: &str,
+    card: &Card<'_>,
 ) -> RequestPermissionRequest {
     let mut options = ask
         .modes
@@ -147,7 +168,7 @@ pub(super) fn plan_approval_request(
     RequestPermissionRequest::new(
         session_id.clone(),
         ToolCallUpdate::new(
-            ToolCallId::new(tool_call_id),
+            card.id(),
             ToolCallUpdateFields::new()
                 .title("Plan ready. How should Rho continue?")
                 .kind(ToolKind::SwitchMode)

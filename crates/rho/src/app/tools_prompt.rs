@@ -56,8 +56,8 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     /// Whether `process start` advertises `keep_warm`. Only the interactive
     /// host runs the cache warmer that honors it.
     pub(crate) process_keep_warm: crate::tools::process::KeepWarmOffer,
-    /// What the host does in place of local disk, such as serving files.
-    pub(crate) host_io: crate::tools::host_io::HostIo,
+    /// The environment the session's children see.
+    pub(crate) environment: crate::session_environment::SessionEnvironment,
     /// Where delegated agents take capacity, and who else hears of them.
     pub(crate) subagent_pool: crate::app::subagent_pool::SubagentPool,
 }
@@ -183,7 +183,7 @@ pub(crate) async fn assemble_tools_and_prompt(
     };
     // MCP servers and OpenAPI sources take the session's environment as it is
     // when they load (#1659).
-    let ambient = options.host_io.environment.current();
+    let ambient = options.environment.current();
     let mcp_sampling_bridge = crate::tools::mcp::McpSamplingBridge::new();
     let mut mcp_options = crate::tools::mcp::McpSessionOptions::new(
         options.config.max_output_bytes,
@@ -271,7 +271,7 @@ pub(crate) async fn assemble_tools_and_prompt(
     } else {
         let mut tool_options = ToolSetOptions::new(capabilities)
             .process_keep_warm(options.process_keep_warm)
-            .host_io(options.host_io.clone());
+            .environment(options.environment.clone());
         let workflow_tracker = crate::tools::workflow_tracker::WorkflowRunTracker::new();
         tool_options = tool_options.workflow_tracker(workflow_tracker.clone());
         if advisor_capable {
@@ -297,7 +297,7 @@ pub(crate) async fn assemble_tools_and_prompt(
                 Some(options.config_path.clone()),
                 workflow_tracker,
                 options.subagent_pool.clone(),
-                options.host_io.environment.clone(),
+                options.environment.clone(),
             ));
         }
         AppToolSet::new(options.config, options.diagnostics.clone(), tool_options).with_mcp(mcp)

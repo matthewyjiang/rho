@@ -37,10 +37,10 @@ pub(crate) struct AgentExecutor {
     /// The parent session's added workspace directories, inherited by future
     /// Rho runtime launches.
     added_dirs: Arc<std::sync::RwLock<crate::added_dirs::AddedDirs>>,
-    /// The parent's host I/O, shared by Rho runtime launches. CLI runtime
-    /// launches take its environment as it is when they start (#1659); a
-    /// workflow run's handle is its own and never changes.
-    host_io: crate::tools::host_io::HostIo,
+    /// The parent's environment, shared by Rho runtime launches. CLI runtime
+    /// launches take it as it is when they start (#1659); a workflow run's
+    /// handle is its own and never changes.
+    environment: crate::session_environment::SessionEnvironment,
 }
 
 pub(crate) struct AgentLaunchRequest {
@@ -254,14 +254,16 @@ impl AgentExecutor {
             notices,
             approvals: UnattendedApprovals::Alone,
             added_dirs: Arc::default(),
-            host_io: Default::default(),
+            environment: Default::default(),
         }
     }
 
-    /// Rho runtime launches use the parent's host I/O, such as its files,
-    /// and every launch its environment.
-    pub(crate) fn with_host_io(mut self, host_io: crate::tools::host_io::HostIo) -> Self {
-        self.host_io = host_io;
+    /// Every launch runs in the parent's environment.
+    pub(crate) fn with_environment(
+        mut self,
+        environment: crate::session_environment::SessionEnvironment,
+    ) -> Self {
+        self.environment = environment;
         self
     }
 
@@ -441,7 +443,7 @@ impl AgentExecutor {
                 // again just before spawn, on the launch's own `PATH`.
                 Some(frozen_cli_launch(
                     request.agent,
-                    self.host_io.environment.current().path().as_deref(),
+                    self.environment.current().path().as_deref(),
                 )?),
                 ChildSession::New(rho_sdk::SessionId::new()),
             ),
@@ -512,7 +514,7 @@ impl AgentExecutor {
             .clone();
         let config_path = self.config_path.clone();
         let cwd = self.cwd.clone();
-        let host_io = self.host_io.clone();
+        let environment = self.environment.clone();
         let host_input = self.host_input.clone();
         let notices = self.notices.clone();
         let persisted_output = output_file.clone();
@@ -567,8 +569,8 @@ impl AgentExecutor {
                 started_status: Some(started_status),
                 // A CLI agent takes the parent's environment as it is
                 // now, at launch; a Rho child shares the live one
-                // through `host_io` (#1659).
-                environment: host_io.environment.current(),
+                // through `environment` (#1659).
+                environment: environment.current(),
             }) {
                 Launch::ClaudeCli(mut session) => {
                     append_child_communication_contract(&mut session.system_prompt);
@@ -632,7 +634,7 @@ impl AgentExecutor {
                         approvals,
                         session,
                         added_dirs,
-                        host_io,
+                        environment,
                     })
                     .await
                 }

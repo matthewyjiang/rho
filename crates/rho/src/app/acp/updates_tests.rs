@@ -10,7 +10,7 @@ use pretty_assertions::assert_eq;
 use rho_protocol::{self as wire, SessionEvent};
 use serde_json::json;
 
-use super::{notification, options_changed, Updates};
+use super::{notification, options_changed, Delivery, Updates};
 use crate::app::acp::{host_features::HostFeatures, options};
 
 fn features(compaction: bool, notices: bool) -> HostFeatures {
@@ -422,11 +422,11 @@ fn options_changes_send_only_what_moved() {
 fn replayed_updates_are_marked() {
     let update = || SessionUpdate::AgentMessageChunk(message("m1", "hi"));
     let session = SessionId::new("s1");
-    let meta = |replayed| {
-        serde_json::to_value(notification(&session, update(), replayed)).unwrap()["_meta"].clone()
+    let meta = |delivery| {
+        serde_json::to_value(notification(&session, update(), delivery)).unwrap()["_meta"].clone()
     };
     assert_eq!(
-        [meta(/*replayed*/ true), meta(/*replayed*/ false)],
+        [meta(Delivery::Replay), meta(Delivery::Live)],
         [json!({"isReplay": true}), json!(null)]
     );
 }

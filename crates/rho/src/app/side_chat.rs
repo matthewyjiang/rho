@@ -246,7 +246,7 @@ async fn assemble_side_session(launch: &SideChatLaunch) -> anyhow::Result<BuiltS
         usage_parent_session_id: Some(launch.parent_session_id.clone()),
         hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         added_dirs: &launch.added_dirs,
-        host_io: Default::default(),
+        environment: Default::default(),
         subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
         extend_tools: std::convert::identity,
         system_prompt_suffix: None,

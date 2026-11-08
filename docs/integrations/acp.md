@@ -87,7 +87,7 @@ Changes you make in host pickers apply to that session, for every client followi
 
 The host owns approvals. `rho acp` can ask you to approve a tool. Headless `rho run` cannot. An approval or question waits in the daemon until a client answers it, even after the host disconnects.
 
-Closing a thread, or quitting the host, cancels the prompt that host is running and detaches. The session stays in the daemon, and loading it again picks it up.
+Closing a thread, or quitting the host, cancels the prompt that host is running and detaches. The session stays in the daemon, and loading it again picks it up. If `rho acp` is killed outright (`SIGKILL`) or crashes, nothing cancels the prompt: its turn keeps running in the daemon.
 
 ## Commands
 

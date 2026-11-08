@@ -39,25 +39,37 @@ use super::{
     host_features::HostFeatures,
     AcpClientPort, Adapter,
 };
-use crate::app::{
-    config_repository::ConfigRepository,
-    login::{drive, relay_wire},
+use crate::{
+    agent::{AgentCatalog, DEFAULT_AGENT_ID},
+    app::{
+        agent_binding::{root_host_tools, AgentBinder, AgentInvocation, AgentRole, LaunchTools},
+        config_repository::ConfigRepository,
+        login::{self, drive, relay_wire},
+    },
 };
 
-/// The auth methods `initialize` advertises for `auths`: logins in the
-/// host where it opens `urls`, else in its `terminal`, if it has one.
-pub(super) fn methods(auths: &[AuthSummary], urls: bool, terminal: bool) -> Vec<AuthMethod> {
+/// The auth methods `initialize` advertises for `auths` to a host with
+/// `features`: logins in the host where it opens URLs, else in its
+/// terminal, if it has one. A sign-in whose approval nothing reports is
+/// left to `rho login`: a host takes a finished `authenticate` or a zero
+/// `--login` exit as signed in.
+pub(super) fn methods(auths: &[AuthSummary], features: HostFeatures) -> Vec<AuthMethod> {
     auths
         .iter()
+        .filter(|summary| login::confirms_sign_in(&summary.auth))
         .filter_map(|summary| {
             let id = summary.auth.clone();
             let label = summary.label.clone();
             match summary.kind {
-                AuthKind::Login if urls => Some(AuthMethod::Agent(AuthMethodAgent::new(id, label))),
-                AuthKind::Login | AuthKind::ApiKey if terminal => Some(AuthMethod::Terminal(
-                    AuthMethodTerminal::new(id, label)
-                        .args(vec!["--login".into(), summary.auth.clone()]),
-                )),
+                AuthKind::Login if features.urls => {
+                    Some(AuthMethod::Agent(AuthMethodAgent::new(id, label)))
+                }
+                AuthKind::Login | AuthKind::ApiKey if features.terminal => {
+                    Some(AuthMethod::Terminal(
+                        AuthMethodTerminal::new(id, label)
+                            .args(vec!["--login".into(), summary.auth.clone()]),
+                    ))
+                }
                 AuthKind::Login | AuthKind::ApiKey => None,
                 // `Unknown`, or a kind a newer daemon sends: nothing this
                 // rho can sign in to.
@@ -67,16 +79,38 @@ pub(super) fn methods(auths: &[AuthSummary], urls: bool, terminal: bool) -> Vec<
         .collect()
 }
 
+/// The auth profile a new session of agent `agent` (`--agent`, else the
+/// default agent) uses, bound as the daemon binds it: the agent's own when
+/// it pins one, else the one the config selects. The agent is found from
+/// this process's directory, where the daemon looks in the session's `cwd`;
+/// hosts start `rho acp` in the workspace they open sessions in.
+fn session_auth(agent: Option<&str>) -> anyhow::Result<String> {
+    let config = ConfigRepository::new(None).load()?;
+    config.providers.activate()?;
+    let catalog = AgentCatalog::discover(&std::env::current_dir()?)?;
+    let definition = Arc::new(
+        catalog
+            .find(agent.unwrap_or(DEFAULT_AGENT_ID))?
+            .definition
+            .clone(),
+    );
+    let bound = AgentBinder::bind(
+        definition,
+        AgentInvocation {
+            role: AgentRole::InteractiveRoot,
+            available_tools: root_host_tools(&config, LaunchTools::All),
+        },
+        &config,
+    )?;
+    Ok(bound.rho_config().unwrap_or(&config).auth.clone())
+}
+
 impl Adapter {
     /// The auth methods for the host that sent `request`. A daemon that
     /// cannot be reached advertises none; its sessions fail the same way.
     pub(super) async fn auth_methods(&self, request: &InitializeRequest) -> Vec<AuthMethod> {
         match self.daemon.request::<AuthList>(&AuthListParams {}).await {
-            Ok(list) => methods(
-                &list.auths,
-                HostFeatures::from_initialize(request).urls,
-                request.client_capabilities.auth.terminal,
-            ),
+            Ok(list) => methods(&list.auths, HostFeatures::from_initialize(request)),
             Err(error) => {
                 tracing::warn!(%error, "could not list the rho daemon's auth profiles");
                 Vec::new()
@@ -100,19 +134,21 @@ impl Adapter {
         Ok(AuthenticateResponse::new())
     }
 
-    /// `logout`: signs out of the auth profile the workspace config
-    /// selects, which is what sessions started here use.
+    /// `logout`: signs out of the auth profile new sessions of this host
+    /// use (see [`session_auth`]).
     pub(super) async fn logout(&self) -> Result<LogoutResponse, AcpError> {
         self.logins
             .run(async {
-                let config = ConfigRepository::new(None).load().map_err(|error| {
-                    AcpError::internal_error().data(format!("could not load config: {error:#}"))
+                let auth = session_auth(self.launch.agent.as_deref()).map_err(|error| {
+                    AcpError::internal_error().data(format!(
+                        "could not find the auth profile to sign out of: {error:#}"
+                    ))
                 })?;
-                if config.auth.is_empty() {
+                if auth.is_empty() {
                     return Err(AcpError::invalid_request().data("no auth profile is selected"));
                 }
                 self.daemon
-                    .request::<AuthLogout>(&AuthLogoutParams { auth: config.auth })
+                    .request::<AuthLogout>(&AuthLogoutParams { auth })
                     .await?;
                 Ok(LogoutResponse::new())
             })

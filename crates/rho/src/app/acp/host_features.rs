@@ -8,9 +8,10 @@
 //! `clientCapabilities.elicitation.form`, and in URL mode only to clients that
 //! advertise `.url`. Other hosts keep the baseline: `/compact` replies with an
 //! agent message, automatic compaction shows only in `usage_update`, notices
-//! are agent messages, on/off options are two-value selects, Rho offers no
-//! questionnaire tool and declines MCP elicitation, and sign-in runs in a
-//! terminal. Rho asks no host for `fs/*` or `terminal/*`: the daemon runs
+//! are agent messages, on/off options are two-value selects, the sessions
+//! they open offer no questionnaire tool and decline MCP elicitation (a
+//! question in a session another client opened is left to that client),
+//! and sign-in runs in a terminal. Rho asks no host for `fs/*` or `terminal/*`: the daemon runs
 //! the session's tools on its own disk and processes.
 
 use std::sync::{Arc, OnceLock};
@@ -30,9 +31,12 @@ pub(in crate::app) struct HostFeatures {
     pub(super) toggles: Toggles,
     /// Form-mode `elicitation/create`: questions put to the user.
     pub(super) forms: Forms,
-    /// URL-mode `elicitation/create`: links the user opens, such as an OAuth
-    /// sign-in page or Rho's API-key page.
+    /// URL-mode `elicitation/create`: links the user opens, such as a
+    /// provider's sign-in page.
     pub(super) urls: bool,
+    /// Terminal auth methods (`clientCapabilities.auth.terminal`): the host
+    /// runs `rho acp --login <auth>` in a terminal.
+    pub(super) terminal: bool,
 }
 
 /// The shape of an on/off session config option, such as `fast_mode`.
@@ -91,6 +95,7 @@ impl HostFeatures {
             toggles,
             forms,
             urls: elicitation.is_some_and(|elicitation| elicitation.url.is_some()),
+            terminal: capabilities.auth.terminal,
         }
     }
 }

@@ -73,7 +73,9 @@ One login runs at a time per connection: a new `authenticate` cancels one still 
 
 ### Terminal methods
 
-Each terminal method appends `--login <auth-profile>` to the configured agent invocation; for example, T3 Code launches `rho acp --t3code --login codex` in its sign-in terminal. This signs in through the daemon, as `rho login` does, instead of serving ACP, and needs no working model. API-key input is hidden, including pasted keys. Browser and device-code methods use the same flows as `rho login <provider>`. Cancelled, failed, and unconfirmed terminal logins exit nonzero.
+Each terminal method appends `--login <auth-profile>` to the configured agent invocation; for example, T3 Code launches `rho acp --t3code --login codex` in its sign-in terminal. This signs in through the daemon, as `rho login` does, instead of serving ACP, and needs no working model. API-key input is hidden, including pasted keys. Browser and device-code methods use the same flows as `rho login <provider>`. Cancelled and failed terminal logins exit nonzero, so a zero exit means the provider confirmed the login or the key was saved.
+
+Rho advertises no method for a sign-in whose approval the provider never reports, such as Ollama Cloud's device key, and `rho acp --login` refuses one: sign in with `rho login <auth-profile>` instead.
 
 Credentials stay in the daemon's [credential store](/daemon#credentials), not in ACP messages.
 
@@ -127,7 +129,7 @@ The session keeps the mode, model, reasoning, and fast mode a client last chose 
 
 Hosts such as Zed and T3 Code send `session/close` when a thread closes. Rho cancels the prompt this host is running in the session, as `session/cancel` would, then detaches. The session stays in the daemon, with its MCP servers, background processes, and delegated agents, until the daemon [unloads it](/daemon#unloading-idle-sessions); `session/load` can open it again. Closing an ID with no session open on this connection succeeds and does nothing.
 
-When the `rho acp` process exits, or the host closes its stdio, every session it has open is closed the same way.
+When the host closes its stdio, or the `rho acp` process gets `SIGINT`, `SIGTERM`, or `SIGHUP`, every session it has open is closed the same way; a second signal exits without waiting for the daemon. A process killed with `SIGKILL`, or one that crashes, closes nothing: a prompt it was running keeps its turn running in the daemon, where another client can cancel it.
 
 ## Session updates
 
@@ -249,7 +251,7 @@ To give feedback instead, choose keep planning and reply in the next message.
 
 ## Questions
 
-When the host advertises `clientCapabilities.elicitation.form`, as Zed and T3 Code do, the model gets the `questionnaire` tool and MCP servers may [ask through Rho](/integrations/mcp#questions-from-a-server). Each question goes to the host as a form-mode `elicitation/create` scoped to the session and to the asking tool call. Sessions opened by hosts that do not advertise it get no `questionnaire` tool, and an MCP server's question to them is declined, so nothing waits on a form the host cannot draw.
+When the host advertises `clientCapabilities.elicitation.form`, as Zed and T3 Code do, the model gets the `questionnaire` tool and MCP servers may [ask through Rho](/integrations/mcp#questions-from-a-server). Each question goes to the host as a form-mode `elicitation/create` scoped to the session and to the asking tool call. Sessions opened by hosts that do not advertise it get no `questionnaire` tool, and an MCP server's question to them is declined, so nothing waits on a form the host cannot draw. Such a host leaves a question in a session another client opened to that client.
 
 Each question becomes one property keyed by its ID:
 

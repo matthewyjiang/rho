@@ -16,14 +16,17 @@ mod in_process;
 pub(super) mod relay_wire;
 mod secret;
 
+#[cfg(unix)]
+use rho_providers::provider::{resolve_auth_mode, ProviderAuthKind};
 use rho_providers::{
     auth::login_dispatch::{AuthenticationError, AuthenticationMethod, ProviderAuthentication},
     model::catalog,
     provider::provider_descriptor,
 };
 
-use super::config_repository::ConfigRepository;
-use crate::{cli::Command, config::Config};
+use crate::cli::Command;
+#[cfg(not(unix))]
+use {super::config_repository::ConfigRepository, crate::config::Config};
 
 /// A sign-in someone asked for from a terminal.
 #[derive(Clone, Copy, Debug)]
@@ -34,7 +37,10 @@ pub(super) enum LoginCommand<'a> {
         device_auth: bool,
     },
     /// `rho acp --login <auth>`, which an ACP host runs in a terminal and
-    /// whose zero exit status promises a finished sign-in.
+    /// whose zero exit status the host takes as signed in: an API key the
+    /// daemon checked and saved, or a login the provider confirmed. A login
+    /// whose approval nothing reports is refused (see
+    /// [`confirms_sign_in`]).
     AcpTerminal { auth: &'a str },
 }
 
@@ -56,26 +62,38 @@ pub(super) fn command(command: &Option<Command>) -> Option<LoginCommand<'_>> {
     }
 }
 
-/// Signs `command` in. `config`, loaded from `repository` at `config_path`
-/// with its credential store chosen, is what an in-process login saves
-/// under; a daemon login uses the daemon's.
+/// Signs `command` in through the daemon, which saves the credential under
+/// its own config.
+#[cfg(unix)]
+pub(super) async fn run(command: LoginCommand<'_>) -> anyhow::Result<()> {
+    match command {
+        LoginCommand::Cli {
+            provider,
+            device_auth,
+        } => daemon_client::run(target(provider)?, device_auth).await,
+        LoginCommand::AcpTerminal { auth } => {
+            let target = target(auth)?;
+            if !confirms_sign_in(&target.auth) {
+                anyhow::bail!(
+                    "'{auth}' signs in without reporting when the sign-in is approved, so an ACP host cannot run it; run `rho login {auth}` in a terminal instead"
+                );
+            }
+            daemon_client::run(target, /*device_auth*/ false).await
+        }
+    }
+}
+
+/// Signs `command` in in this process. `config`, loaded from `repository`
+/// at `config_path` with its credential store chosen, is what the login
+/// saves under.
+#[cfg(not(unix))]
 pub(super) async fn run(
     command: LoginCommand<'_>,
     repository: &ConfigRepository,
     config: &mut Config,
     config_path: &std::path::Path,
 ) -> anyhow::Result<()> {
-    // A daemon login saves under the daemon's config; only an in-process
-    // login saves under these.
-    #[cfg(unix)]
-    let _ = (repository, config, config_path);
     match command {
-        #[cfg(unix)]
-        LoginCommand::Cli {
-            provider,
-            device_auth,
-        } => daemon_client::run(target(provider)?, device_auth).await,
-        #[cfg(not(unix))]
         LoginCommand::Cli {
             provider,
             device_auth,
@@ -89,15 +107,21 @@ pub(super) async fn run(
             )
             .await
         }
-        // The exit status promises a finished sign-in: the daemon reports
-        // one only once the provider confirmed it, or the key is saved.
-        #[cfg(unix)]
-        LoginCommand::AcpTerminal { auth } => {
-            daemon_client::run(target(auth)?, /*device_auth*/ false).await
-        }
-        #[cfg(not(unix))]
         LoginCommand::AcpTerminal { .. } => anyhow::bail!(super::daemon_cli::UNSUPPORTED),
     }
+}
+
+/// Whether the daemon's sign-in to auth profile `auth` finishes only once
+/// the provider approved it, or a key it checked is saved. An Ollama Cloud
+/// device key is saved as soon as the user is asked to approve it at
+/// ollama.com, and nothing reports the approval, so an ACP host, which
+/// takes a finished sign-in as signed in, does not offer it.
+#[cfg(unix)]
+pub(super) fn confirms_sign_in(auth: &str) -> bool {
+    !matches!(
+        resolve_auth_mode(auth).map(|(_, mode)| mode.auth_kind),
+        Some(ProviderAuthKind::OllamaDeviceKey { .. })
+    )
 }
 
 /// An auth profile that takes a credential.

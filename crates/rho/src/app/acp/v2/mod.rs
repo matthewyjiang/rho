@@ -263,7 +263,7 @@ async fn resume(
 /// The session's state when the attachment began: a turn another client
 /// started may still run.
 fn state(started: &Started) -> v2::StateUpdate {
-    if started.busy {
+    if started.busy() {
         v2::StateUpdate::Running(v2::RunningStateUpdate::new())
     } else {
         v2::StateUpdate::Idle(v2::IdleStateUpdate::new())

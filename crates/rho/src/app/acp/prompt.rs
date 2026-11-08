@@ -22,8 +22,7 @@ use rho_protocol::{
 use tokio::sync::oneshot;
 
 use super::{
-    daemon::{self, Inbound},
-    requests,
+    daemon, requests,
     sessions::{Accept, Control, Waiter},
     Adapter,
 };
@@ -53,19 +52,21 @@ impl Adapter {
             }
         };
         let _cancelled = ClearOnDrop(&live.cancelling);
+        // The host closed the session while this prompt queued behind a
+        // cancelled one.
+        if live.closing.load(Ordering::Acquire) {
+            return Ok(StopReason::Cancelled);
+        }
         let link = self.daemon.link().await?;
-        // Earlier events, such as the end of a turn this host cancelled,
-        // reach the pump before it is armed.
-        link.fence().await;
         let (outcome, ended) = oneshot::channel();
         let accept = Arc::new(Mutex::new(accept));
         let waiter = Waiter {
             outcome,
             accept: Arc::clone(&accept),
         };
-        live.inbound
-            .send(Inbound::Session(Control::Arm(waiter)))
-            .map_err(|_| AcpError::resource_not_found(Some(session_id.0.to_string())))?;
+        // After earlier events, such as the end of a turn this host
+        // cancelled, so they do not end this prompt.
+        live.deliver(&link, Control::Arm(waiter)).await?;
         let params = SessionPromptParams {
             session: live.id.clone(),
             content: requests::prompt_content(content),
@@ -77,13 +78,8 @@ impl Adapter {
             Err(error) => {
                 // What the turn showed before it ended, such as a menu its
                 // end refreshed, reaches the host before this answer.
-                link.fence().await;
                 let (flushed, done) = oneshot::channel();
-                if live
-                    .inbound
-                    .send(Inbound::Session(Control::Flush(flushed)))
-                    .is_ok()
-                {
+                if live.deliver(&link, Control::Flush(flushed)).await.is_ok() {
                     let _ = done.await;
                 }
                 return match error.turn_ended() {

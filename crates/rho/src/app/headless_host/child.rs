@@ -77,7 +77,7 @@ pub(crate) struct ChildRun {
     pub(crate) approvals: UnattendedApprovals,
     pub(crate) session: ChildSession,
     pub(crate) added_dirs: crate::added_dirs::AddedDirs,
-    pub(crate) host_io: crate::tools::host_io::HostIo,
+    pub(crate) environment: crate::session_environment::SessionEnvironment,
 }
 
 /// Runs `run` to its end, reporting it in its status file. Fails only when
@@ -101,7 +101,7 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
         approvals,
         session,
         added_dirs,
-        host_io,
+        environment,
     } = run;
 
     let bound_config = bound
@@ -170,7 +170,7 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
                 Some(_) => QuestionSupport::Available,
                 None => QuestionSupport::Unavailable,
             },
-            host_io,
+            environment,
             parent_notices: notices,
             ..HostCapabilities::unattended(approvals)
         },

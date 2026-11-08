@@ -273,9 +273,11 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
         config.providers.activate()?;
         let config_path = absolute_config_path(&config_repository)?;
         ensure_cli_credential_store_choice(&mut config, Some(config_path.clone()))?;
-        return Ok(EarlyDispatch::Handled(
-            login::run(command, &config_repository, &mut config, &config_path).await,
-        ));
+        #[cfg(unix)]
+        let signed_in = login::run(command).await;
+        #[cfg(not(unix))]
+        let signed_in = login::run(command, &config_repository, &mut config, &config_path).await;
+        return Ok(EarlyDispatch::Handled(signed_in));
     }
     Ok(EarlyDispatch::Continue)
 }

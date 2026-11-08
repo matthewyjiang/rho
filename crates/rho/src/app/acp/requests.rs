@@ -18,6 +18,7 @@ use rho_protocol::{
     SessionSummary,
 };
 
+use super::host_features::Forms;
 use crate::app::prompt_content::fence_context;
 
 /// What `rho acp`'s own flags put in every session it opens or reopens:
@@ -33,13 +34,13 @@ pub(super) struct Launch {
 
 impl Launch {
     /// The setup of a session the host opens with `directories` and
-    /// `servers`. A host that draws no forms gets no questionnaire, since
+    /// `servers`. A host that draws no `forms` gets no questionnaire, since
     /// it could not answer one.
     pub(super) fn setup(
         &self,
         directories: &[PathBuf],
         servers: &[AcpMcpServer],
-        forms: bool,
+        forms: Forms,
     ) -> SessionSetup {
         let mut additional_directories = self.added_dirs.clone();
         for directory in directories {
@@ -48,8 +49,11 @@ impl Launch {
             }
         }
         let mut without = self.without.clone();
-        if !forms {
-            without.insert(SessionPart::Questions);
+        match forms {
+            Forms::Available(_) => {}
+            Forms::Unavailable => {
+                without.insert(SessionPart::Questions);
+            }
         }
         SessionSetup {
             additional_directories,

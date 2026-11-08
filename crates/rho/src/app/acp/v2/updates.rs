@@ -209,7 +209,7 @@ fn tool_call_content(content: v1::ToolCallContent) -> Result<v2::ToolCallContent
             v2::Content::new(bridge::<_, v2::ContentBlock>(&content.content)?).meta(content.meta),
         )),
         v1::ToolCallContent::Diff(diff) => v2::ToolCallContent::Diff(file_diff(&diff)),
-        // Client terminals are v1 only: a v2 host is never offered them.
+        // Rho sends no terminal content; mapped for completeness.
         v1::ToolCallContent::Terminal(terminal) => {
             v2::ToolCallContent::Terminal(bridge(&terminal)?)
         }

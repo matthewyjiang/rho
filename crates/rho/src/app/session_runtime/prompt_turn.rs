@@ -55,8 +55,9 @@ pub(crate) trait TurnView {
 /// none.
 #[derive(Debug)]
 pub(crate) enum PlanReport {
-    /// The session kept its mode. The prompt ends with the turn.
-    Kept,
+    /// The session kept its mode, for the reason `notice` tells the user.
+    /// The prompt ends with the turn.
+    Kept { notice: String },
     /// The session switched modes; the implementation turn runs next.
     Switched,
 }
@@ -67,11 +68,14 @@ enum PlanHandoff {
     /// The turn answered no plan; the prompt ends as the turn did.
     Unanswered(anyhow::Result<TurnOutcome>),
     /// An answered plan did not switch the mode: it was not approved, the
-    /// turn did not complete, or the switch failed. The prompt ends as the
-    /// proposing turn did, in the mode it had, except that a cancel which
-    /// landed before the switch ends it `Ok(TurnOutcome::Cancelled)`; a
-    /// failed turn stays failed.
-    Kept(anyhow::Result<TurnOutcome>),
+    /// turn did not complete, or the switch failed, as `notice` says. The
+    /// prompt ends as the proposing turn did, in the mode it had, except
+    /// that a cancel which landed before the switch ends it
+    /// `Ok(TurnOutcome::Cancelled)`; a failed turn stays failed.
+    Kept {
+        notice: String,
+        ended: anyhow::Result<TurnOutcome>,
+    },
     /// The session switched modes. This is the prompt's next turn, whose
     /// end is the prompt's.
     Switched(Turn),
@@ -99,8 +103,8 @@ impl SessionRuntime {
             .await;
         match self.hand_off_plan(prompt, ended, process_config).await {
             PlanHandoff::Unanswered(ended) => ended,
-            PlanHandoff::Kept(ended) => {
-                view.report_plan(self, process_config, PlanReport::Kept)
+            PlanHandoff::Kept { notice, ended } => {
+                view.report_plan(self, process_config, PlanReport::Kept { notice })
                     .await;
                 ended
             }
@@ -150,19 +154,22 @@ impl SessionRuntime {
         let target = match decision.resolve(turn, self.permission.mode) {
             PlanExitResolution::Apply(target) => target,
             PlanExitResolution::Keep(reason) => {
-                // No host shows why yet (#1657).
-                tracing::debug!(reason, "plan handoff kept the permission mode");
                 let ended = if cancelled {
                     proposal.map(|_| TurnOutcome::Cancelled)
                 } else {
                     proposal
                 };
-                return PlanHandoff::Kept(ended);
+                return PlanHandoff::Kept {
+                    notice: reason.to_owned(),
+                    ended,
+                };
             }
         };
         if let Err(error) = self.set_permission_mode(target, process_config).await {
-            tracing::warn!("could not execute approved plan: {error:#}");
-            return PlanHandoff::Kept(proposal);
+            return PlanHandoff::Kept {
+                notice: format!("could not execute approved plan: {error:#}"),
+                ended: proposal,
+            };
         }
         // A permission prompt carries no feedback, so the decision has none.
         let input = UserInput::text(IMPLEMENT_PLAN);

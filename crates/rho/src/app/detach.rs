@@ -167,7 +167,6 @@ async fn start(
     };
 
     use super::{automation, daemon_cli};
-    use crate::daemon::{self, cli_client_info, ProcessSpawner};
 
     let timeout_ms = timeout
         .map(|timeout| {
@@ -182,15 +181,9 @@ async fn start(
         .transpose()?;
     let text = automation::prompt_from_stdin(parts, read_stdin)?;
     let environment = new.environment.clone();
-    let paths = daemon_cli::paths().map_err(|error| AutomationExit::other(format!("{error:#}")))?;
-    let spawner = ProcessSpawner::current_exe().map_err(|error| {
-        AutomationExit::other(format!("could not find the rho executable: {error}"))
-    })?;
-    let client = daemon::connect_or_spawn(&paths, cli_client_info(), &spawner)
+    let client = daemon_cli::connect()
         .await
-        .map_err(|error| {
-            AutomationExit::other(format!("could not reach the rho daemon: {error:#}"))
-        })?
+        .map_err(|error| AutomationExit::other(error.to_string()))?
         .client;
     let session = client
         .request::<SessionNew>(&new)
@@ -204,11 +197,7 @@ async fn start(
                     AutomationExit::configuration(message)
                 }
                 // As a turn that failed on its credentials exits.
-                Some(ErrorCode::SignInRequired) => AutomationExit::new(
-                    1,
-                    super::automation_protocol::TerminalReason::Authentication,
-                    message,
-                ),
+                Some(ErrorCode::SignInRequired) => AutomationExit::authentication(message),
                 _ => AutomationExit::other(message),
             }
         })?

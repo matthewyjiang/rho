@@ -62,9 +62,6 @@ mod session_titles;
 #[path = "support/acp_stop_reasons_tests.rs"]
 mod stop_reasons;
 
-#[path = "support/acp_t3_wake_tests.rs"]
-mod t3_wake;
-
 #[path = "support/acp_update_metadata_tests.rs"]
 mod update_metadata;
 

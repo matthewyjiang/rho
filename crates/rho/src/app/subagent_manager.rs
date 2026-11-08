@@ -147,11 +147,12 @@ impl SubagentManager {
         }
     }
 
-    /// Delegated Rho agents use the parent's host I/O: they read and edit
-    /// host-served files, so both see the same unsaved text, and run shell
-    /// commands in host terminals.
-    pub(crate) fn with_host_io(mut self, host_io: crate::tools::host_io::HostIo) -> Self {
-        self.executor = self.executor.with_host_io(host_io);
+    /// Delegated agents run in the parent's environment.
+    pub(crate) fn with_environment(
+        mut self,
+        environment: crate::session_environment::SessionEnvironment,
+    ) -> Self {
+        self.executor = self.executor.with_environment(environment);
         self
     }
 

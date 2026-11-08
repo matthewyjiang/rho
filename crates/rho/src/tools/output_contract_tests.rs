@@ -37,7 +37,7 @@ async fn delegated_agent_list_omits_combined_data_over_configured_budget() {
             tools: DelegationToolSelection::Manage,
             config_path: dir.path().join("config.toml"),
             catalog: None,
-            host_io: Default::default(),
+            environment: Default::default(),
             pool: crate::app::subagent_pool::SubagentPool::Own,
         },
         Arc::new(()),

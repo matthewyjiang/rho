@@ -13,7 +13,10 @@ use rho_protocol::{
 use serde_json::json;
 
 use super::{prompt_content, session_list, Launch};
-use crate::app::prompt_content::fence_context;
+use crate::app::{
+    acp::host_features::{FormDialect, Forms},
+    prompt_content::fence_context,
+};
 
 // Covers: each ACP prompt block reaches the daemon as the wire block of its
 // kind, and blocks the wire has no kind for as fenced text the model still
@@ -74,7 +77,11 @@ fn prompt_blocks_become_wire_content() {
         ),
     ];
     for (block, expected) in cases {
-        assert_eq!(prompt_content(&[block.clone()]), [expected], "{block:?}");
+        assert_eq!(
+            prompt_content(std::slice::from_ref(&block)),
+            [expected],
+            "{block:?}"
+        );
     }
 }
 
@@ -102,8 +109,12 @@ fn launch_flags_and_host_request_make_the_session_setup() {
     ];
     let directories = [PathBuf::from("/shared"), PathBuf::from("/docs")];
 
-    let with_forms = launch.setup(&directories, &servers, /*forms*/ true);
-    let without_forms = launch.setup(&[], &[], /*forms*/ false);
+    let with_forms = launch.setup(
+        &directories,
+        &servers,
+        Forms::Available(FormDialect::Standard),
+    );
+    let without_forms = launch.setup(&[], &[], Forms::Unavailable);
 
     assert_eq!(
         with_forms,

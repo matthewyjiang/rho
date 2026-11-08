@@ -197,7 +197,7 @@ pub(in crate::app) fn test_build(config: &Config, workspace_root: &Path) -> Sess
         host: HostCapabilities {
             questions: QuestionSupport::Unavailable,
             subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
-            host_io: Default::default(),
+            environment: Default::default(),
             mcp_authorization: McpAuthorizationMode::NonInteractive,
             approvals: ApprovalPolicy::Host,
             parent_notices: None,

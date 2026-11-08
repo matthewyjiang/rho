@@ -14,8 +14,7 @@ use crate::app::acp::{host_features::Toggles, options as acp_options};
 
 /// `initialize` as v1 would have negotiated it. v2 made notices, compaction
 /// cards, and boolean config options baseline, so the v1 markers for them are
-/// set; v2 has no client `fs` or `terminal`, so Rho keeps file access and
-/// shell commands local.
+/// set.
 pub(super) fn initialize_request(
     request: &v2::InitializeRequest,
 ) -> Result<v1::InitializeRequest, AcpError> {

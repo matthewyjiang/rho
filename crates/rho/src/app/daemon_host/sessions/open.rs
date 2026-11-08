@@ -50,7 +50,7 @@ use crate::{
     config::Config,
     session::{Session as StoredSession, SessionPersistence},
     session_environment::{Ambient, SessionEnvironment},
-    tools::{host_io::HostIo, mcp::McpAuthorizationMode},
+    tools::mcp::McpAuthorizationMode,
 };
 
 /// The directory a session works in: an existing directory, canonicalized.
@@ -227,10 +227,7 @@ async fn open_runtime(
         host: HostCapabilities {
             questions,
             subagent_pool: subagents.pool_for(job.clone()),
-            host_io: HostIo {
-                environment: environment.clone(),
-                ..HostIo::default()
-            },
+            environment: environment.clone(),
             mcp_authorization: McpAuthorizationMode::NonInteractive,
             approvals: ApprovalPolicy::Host,
             parent_notices: None,

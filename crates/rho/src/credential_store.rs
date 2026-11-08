@@ -269,6 +269,7 @@ pub(crate) fn initialize_from_config(
 /// process (see `app::credential_writes`). Unlike [`initialize_from_config`]
 /// it runs no migrations and writes nothing, so it is safe beside startup or
 /// a live session.
+#[cfg(unix)]
 pub(crate) fn activate_for_login(config: &Config, config_path: &Path) -> anyhow::Result<()> {
     remember_config_path(config_path);
     activate(resolve_backend(config.credential_store)?)?;
