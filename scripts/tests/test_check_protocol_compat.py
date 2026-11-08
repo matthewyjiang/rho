@@ -82,7 +82,7 @@ def refuse_unknown_fields(document: dict) -> None:
 
 
 def cap_length(document: dict) -> None:
-    defs(document)["SessionPromptParams"]["properties"]["text"]["maxLength"] = 10
+    defs(document)["SessionSteerParams"]["properties"]["text"]["maxLength"] = 10
 
 
 def reword(document: dict) -> None:
@@ -105,7 +105,7 @@ def reorder_option(document: dict) -> None:
 
 
 def unmodelled_keyword(document: dict) -> None:
-    defs(document)["SessionPromptParams"]["properties"]["text"]["if"] = {"type": "string"}
+    defs(document)["SessionSteerParams"]["properties"]["text"]["if"] = {"type": "string"}
 
 
 def recursive_type(document: dict) -> None:
@@ -121,7 +121,7 @@ def narrow_through_all_of(document: dict) -> None:
 
 
 def cap_twice(document: dict) -> None:
-    text = defs(document)["SessionPromptParams"]["properties"]["text"]
+    text = defs(document)["SessionSteerParams"]["properties"]["text"]
     text["maxLength"] = 10
     text["allOf"] = [{"maxLength": 3}]
 
@@ -201,7 +201,7 @@ class CompatibilityTests(unittest.TestCase):
             (
                 "a constrained field",
                 cap_length,
-                "method rho/session/prompt params.text: string became string (maxLength 10)",
+                "method rho/session/steer params.text: string became string (maxLength 10)",
             ),
         ]:
             with self.subTest(name):
@@ -233,7 +233,7 @@ class CompatibilityTests(unittest.TestCase):
             (
                 "an unmodelled keyword",
                 unmodelled_keyword,
-                "method rho/session/prompt params.text: the check does not model if",
+                "method rho/session/steer params.text: the check does not model if",
             ),
             (
                 "a closed tagged enum",
@@ -249,7 +249,7 @@ class CompatibilityTests(unittest.TestCase):
             (
                 "a constraint given twice",
                 cap_twice,
-                "method rho/session/prompt params.text: the check does not model two values of maxLength",
+                "method rho/session/steer params.text: the check does not model two values of maxLength",
             ),
             (
                 "an open enum's catch-all narrowed",

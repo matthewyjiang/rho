@@ -431,12 +431,6 @@
         {
           "description": "A text resource embedded whole, such as a file the user attached.",
           "properties": {
-            "mime_type": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
             "text": {
               "type": "string"
             },
@@ -464,20 +458,8 @@
                 "null"
               ]
             },
-            "mime_type": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
             "name": {
               "type": "string"
-            },
-            "title": {
-              "type": [
-                "string",
-                "null"
-              ]
             },
             "type": {
               "const": "resource_link",
@@ -509,25 +491,6 @@
         }
       ],
       "description": "One piece of a prompt or a user message."
-    },
-    "Cost": {
-      "description": "An amount of money, in millionths of `currency`'s unit, so it stays\nexact.",
-      "properties": {
-        "amount_micros": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "currency": {
-          "description": "An ISO 4217 code, such as `USD`.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "amount_micros",
-        "currency"
-      ],
-      "type": "object"
     },
     "Cursor": {
       "description": "Where a client is in a session's stream; send it back to resume.",
@@ -1694,6 +1657,13 @@
           "$ref": "#/$defs/StreamId",
           "description": "The stream the events belong to; a cursor names it to resume."
         },
+        "title": {
+          "description": "The session's title when the attachment began; absent until it has\none. Saved transcripts hold no [`super::SessionEvent::TitleChanged`],\nso a reset may not replay the one that set it (#1670).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "workspace": {
           "description": "The directory the session works in: the one it was saved in, for a\nsession the daemon reopened (#1661).",
           "type": "string"
@@ -1879,16 +1849,14 @@
         {
           "description": "How full the model's context is, and what the session has cost.",
           "properties": {
-            "cost": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/Cost"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "The session's whole spend so far, turns before a daemon restart\nincluded. Absent while no request has a price, as when every\nrequest ran on a local model (#1670)."
+            "cost_usd_micros": {
+              "description": "The session's whole spend so far in millionths of a US dollar,\nso it stays exact, turns before a daemon restart included.\nAbsent while no request has a price, as when every request ran\non a local model (#1670).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "type": {
               "const": "usage",
@@ -2180,7 +2148,7 @@
       "description": "Params of [`SESSION_PROMPT`].",
       "properties": {
         "content": {
-          "description": "The user message: at least one block, or the prompt is refused as\n[`crate::ErrorCode::InvalidParams`]. Text and images reach the model\nas written. A resource reaches it as its text, and a resource link as\nits description, else its name, each fenced under its URI (#1670). A\nslash command the message starts with that the session runs, such as\n`/init`, a prompt template, or an MCP prompt, is expanded first, as\n`rho run` expands it.",
+          "description": "The user message: at least one block, or the prompt is refused as\n[`crate::ErrorCode::InvalidParams`], as is one with an image whose\ndata is not a base64 PNG, JPEG, GIF, or WebP of the declared type\nwithin the daemon's image limit. Text and images reach the model as\nwritten. A resource reaches it as its text, and a resource link as\nits description, else its name, each fenced under its URI (#1670). A\nslash command the message starts with that the session runs, such as\n`/init`, a prompt template, or an MCP prompt, is expanded first, as\n`rho run` expands it.",
           "items": {
             "$ref": "#/$defs/ContentBlock"
           },
@@ -2293,9 +2261,6 @@
         },
         "raw_input": {
           "description": "The tool's input, as the model wrote it."
-        },
-        "raw_output": {
-          "description": "The tool's result as the model got it, sent once the call finishes\n(#1670)."
         },
         "status": {
           "anyOf": [
