@@ -137,7 +137,7 @@ impl McpToolSlot {
     }
 }
 
-pub(crate) struct McpTool {
+pub(super) struct McpTool {
     pub(super) slot: Arc<McpToolSlot>,
     pub(super) identity: String,
     pub(super) remote_name: String,

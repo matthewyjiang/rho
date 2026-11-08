@@ -35,7 +35,7 @@ pub(crate) mod result;
 pub(crate) mod roots;
 pub(crate) mod sampling;
 pub(crate) mod session;
-pub(crate) mod tool;
+mod tool;
 pub(crate) mod validate;
 
 pub(crate) use catalog::{
@@ -295,7 +295,7 @@ impl ToolBundle for McpBundle {
 /// finish connecting, so `connect` stays a readable pass over the results.
 struct McpBundleBuilder {
     max_output_bytes: usize,
-    tools: Vec<Arc<McpTool>>,
+    tools: Vec<Arc<dyn Tool>>,
     sessions: Vec<McpSession>,
     maintenance: Vec<tokio::task::JoinHandle<()>>,
     registered_names: HashSet<String>,
@@ -396,11 +396,7 @@ impl McpBundleBuilder {
             return None;
         }
         Some(McpBundle {
-            tools: self
-                .tools
-                .into_iter()
-                .map(|tool| tool as Arc<dyn Tool>)
-                .collect(),
+            tools: self.tools,
             sessions: tokio::sync::Mutex::new(self.sessions),
             maintenance: tokio::sync::Mutex::new(self.maintenance),
         })

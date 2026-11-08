@@ -115,7 +115,7 @@ async fn loaded_tools_follow_the_selected_conversation() {
         interactive.finish_run().await.unwrap();
         match switch {
             Switch::New => {
-                interactive.reset().await.unwrap();
+                interactive.reset().unwrap();
             }
             Switch::Resume => {
                 let other = StoredSession::create_in_root(root.path(), &cwd).unwrap();

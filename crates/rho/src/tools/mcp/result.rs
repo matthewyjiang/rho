@@ -80,7 +80,6 @@ impl ResultExpectation {
 /// Tracks which image bytes this result still keeps for the card.
 #[derive(Default)]
 struct AssetBudget {
-    retained_bytes: usize,
     retained_images: usize,
     assets: Vec<ToolAsset>,
 }
@@ -344,10 +343,10 @@ fn binary_section(
     budget: &mut AssetBudget,
 ) -> String {
     let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
-        return format!("[{label} {media_type}, not valid base64]");
+        return binary_descriptor(label, media_type, None);
     };
     let size = bytes.len();
-    let descriptor = format!("[{label} {media_type}, {}]", byte_size(size));
+    let descriptor = binary_descriptor(label, media_type, Some(size));
     if !media_type.starts_with("image/") {
         return descriptor;
     }
@@ -361,7 +360,6 @@ fn binary_section(
         );
     }
     budget.retained_images += 1;
-    budget.retained_bytes = budget.retained_bytes.saturating_add(size);
     budget
         .assets
         .push(ToolAsset::new(media_type.to_string(), bytes));

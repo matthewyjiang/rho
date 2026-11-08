@@ -38,7 +38,7 @@ impl InteractiveRuntime {
         target_id: &crate::session::tree::NodeId,
     ) -> anyhow::Result<()> {
         let prepared = self.prepare_tree_selection(storage, target_id).await?;
-        self.commit_tree_selection(prepared).await
+        self.commit_tree_selection(prepared)
     }
 
     pub(super) async fn prepare_tree_selection(
@@ -139,7 +139,7 @@ impl InteractiveRuntime {
         })
     }
 
-    pub(super) async fn commit_tree_selection(
+    pub(super) fn commit_tree_selection(
         &mut self,
         mut prepared: PreparedTreeSelection,
     ) -> anyhow::Result<()> {

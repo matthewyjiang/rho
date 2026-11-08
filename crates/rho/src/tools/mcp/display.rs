@@ -63,7 +63,7 @@ pub(crate) fn primary_argument(arguments: &Value) -> Option<(String, String)> {
 }
 
 /// One control-free line within the header budget; `None` when blank.
-pub(crate) fn primary_display(text: &str) -> Option<String> {
+fn primary_display(text: &str) -> Option<String> {
     // Take the first LF-separated line, then flatten leftover controls so a
     // `\r` or tab cannot split the header the same way a second line would.
     let first = one_line(text.lines().next().unwrap_or(""));
@@ -88,7 +88,7 @@ pub(crate) fn primary_display(text: &str) -> Option<String> {
 /// `skip` removes the argument already promoted to the header. Multiline
 /// strings are omitted rather than mangled; nested objects and arrays collapse
 /// to `{…}` / `[…]`. Returns `None` when nothing summarizable remains.
-pub(crate) fn argument_summary(arguments: &Value, skip: Option<&str>) -> Option<String> {
+fn argument_summary(arguments: &Value, skip: Option<&str>) -> Option<String> {
     let object = arguments.as_object()?;
     let mut parts = Vec::new();
     for (key, value) in object {
@@ -113,7 +113,7 @@ pub(crate) fn argument_summary(arguments: &Value, skip: Option<&str>) -> Option<
 }
 
 /// Dim provenance fact text: `mcp · <server>`.
-pub(crate) fn server_fact_text(server: &str) -> String {
+fn server_fact_text(server: &str) -> String {
     format!("mcp · {server}")
 }
 

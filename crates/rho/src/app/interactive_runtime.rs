@@ -489,7 +489,7 @@ impl InteractiveRuntime {
         self.runs.take_last_turn_display_commit()
     }
 
-    pub(crate) async fn reset(&mut self) -> anyhow::Result<()> {
+    pub(crate) fn reset(&mut self) -> anyhow::Result<()> {
         if self.is_session_busy() {
             anyhow::bail!("cannot reset while a run or compaction is active");
         }

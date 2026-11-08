@@ -243,12 +243,14 @@ fn changed_paths(call: &ToolCall) -> Vec<String> {
 fn is_host_context(text: &str) -> bool {
     // Keep in sync with the host notices in `prompt.rs`, `tools/`, and
     // `tui/subagent_questionnaires.rs`.
-    const HEADERS: [&str; 10] = [
+    const HEADERS: [&str; 11] = [
         "[process notification]",
         "[agent notification]",
         "[workflow notification]",
         "[workflow started]",
         "[runtime notifications ",
+        // Saved sessions may hold notices from the removed computer use.
+        "[computer use context]",
         "[conversation model switched ",
         "[advisor model switched ",
         "[advisor mode on]",

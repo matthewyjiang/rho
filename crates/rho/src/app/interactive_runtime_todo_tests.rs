@@ -264,7 +264,7 @@ async fn todo_survives_compaction_resume_clear_and_tree_selection() {
     assert_eq!(interactive.todo_list(), None);
     interactive.resume(reopened).await.unwrap();
     assert_eq!(interactive.todo_list(), Some(expected));
-    interactive.reset().await.unwrap();
+    interactive.reset().unwrap();
     assert_eq!(interactive.todo_list(), None);
     interactive.shutdown().await;
 }

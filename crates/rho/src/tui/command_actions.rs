@@ -183,7 +183,7 @@ impl App {
     ) -> anyhow::Result<()> {
         // Reset refuses to run under compaction, so stop it first.
         self.abort_compact(agent).await;
-        if let Err(error) = agent.reset().await {
+        if let Err(error) = agent.reset() {
             // The old session is still live: report the failure and keep its
             // pending work instead of clearing the UI as though one started.
             self.insert_entry(&Entry::Error(format!(
