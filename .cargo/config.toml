@@ -8,3 +8,12 @@
 # raises values below this floor.
 [env]
 RUST_MIN_STACK = "16777216"
+
+# Tests and `cargo run` keep their data root in this checkout, not the
+# developer's ~/.rho: unit tests write it, and a newer build migrates its
+# session index past what the installed rho reads. rho and rho-providers
+# both resolve RHO_HOME. The OS keyring ignores RHO_HOME (one "rho" service
+# per user), and its D-Bus prompt can block a test forever, so credentials
+# use the file store under RHO_HOME. Exported values are left alone.
+RHO_HOME = { value = "target/rho-home", relative = true }
+RHO_CREDENTIAL_STORE = "file"

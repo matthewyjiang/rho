@@ -16,6 +16,8 @@ cargo run -- run "summarize this repository"
 
 Use the local binary to test the [interactive TUI](/interactive-tui), [automation mode](/automation-cli), [configuration](/configuration), and [tools](/tools-workspace) behavior while developing.
 
+Everything Cargo launches (`cargo run` and every test) keeps its data root (config, sessions, credentials) in `target/rho-home` in the checkout and uses the file credential store, so it never migrates or writes your real data or OS keyring. Global instructions, skills, agents, and prompts still load from `~/.rho`, as they always do. `.cargo/config.toml` sets `RHO_HOME` and `RHO_CREDENTIAL_STORE` only when they are unset, and Rho treats an empty value as unset, so `RHO_HOME= RHO_CREDENTIAL_STORE= cargo run` runs exactly as the installed `rho` does. An exported `RHO_HOME` wins over this, so unset it before running tests. To reset the development home, for example when an older branch refuses a session index a newer build migrated, run `cargo run -- daemon stop` first (a development daemon outlives Cargo and keeps its socket outside the home), then delete `target/rho-home`.
+
 `RHO_FIRST_RUN` opens the setup screen on a machine that already has config. It does not clear history or credentials.
 
 ```bash
