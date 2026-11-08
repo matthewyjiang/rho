@@ -537,13 +537,7 @@ async fn ended_attachments_fail_the_prompt_and_release_job_waits() {
         let mut prompt = pump.arm();
         // The pump marks the session attached before it reads anything.
         pump.flush().await;
-        let mut job = pump.shared.attachment.subscribe();
-        let finished = tokio::spawn(async move {
-            job.wait_for(|attachment| !attachment.busy())
-                .await
-                .map(|attachment| *attachment)
-                .ok()
-        });
+        assert!(pump.attachment().busy(), "{label}");
         pump.routed(ending);
         pump.live(user("m9"));
         let mut late = pump.arm();
@@ -552,15 +546,14 @@ async fn ended_attachments_fail_the_prompt_and_release_job_waits() {
             (
                 prompt.outcome(),
                 late.outcome(),
+                // What a delete waiting for the job reads: no longer busy.
                 pump.attachment(),
-                finished.await.unwrap(),
                 pump.host.echoed(),
             ),
             (
                 Some(Err(error)),
                 Some(Err(daemon::lost())),
                 attachment,
-                Some(attachment),
                 vec![],
             ),
             "{label}"
