@@ -34,14 +34,7 @@ impl Sessions {
         let id = receipt
             .await
             .map_err(|error| refused(SteerError::from_sdk(error), "steer session"))?;
-        {
-            // Publishes under the mapper's lock, so the steer's user message
-            // follows what the mapper showed before it.
-            let mut live = session.live();
-            if let Some(applied) = live.steered(id.clone(), &input) {
-                session.feed.publish([applied]);
-            }
-        }
+        session.live().steered(id.clone(), &input);
         Ok(SessionSteerResponse {
             id: steer_to_wire(&id),
         })

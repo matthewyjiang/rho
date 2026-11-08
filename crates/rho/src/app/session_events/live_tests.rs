@@ -347,7 +347,8 @@ fn tool_calls_carry_the_tui_cards() {
 
 // Covers: a steer the daemon recorded shows as a user message carrying its
 // steer id once the run applies it, even when the apply reaches the mapper
-// before the daemon recorded the steer; a withdrawn steer, or one the run's
+// before the daemon recorded the steer, then ahead of the next event so it
+// keeps the mapper's order; a withdrawn steer, or one the run's
 // end dropped, never shows, nor does an apply the run's end forgot; the
 // provider taking a steer mid-request reports its id.
 // Owner: session event live mapping
@@ -367,6 +368,14 @@ fn steers_show_as_user_messages_once_applied() {
         })))
     };
     let run_closed = || Step::Runtime(Box::new(SessionEvent::RunClosed));
+    let next = || {
+        Step::Runtime(Box::new(SessionEvent::Notice {
+            text: "next".into(),
+        }))
+    };
+    let next_notice = || WireEvent::Notice {
+        text: "next".into(),
+    };
     let steer_message = vec![WireEvent::UserMessage {
         message: MessageId::new("m0"),
         content: vec![ContentBlock::Text {
@@ -381,7 +390,14 @@ fn steers_show_as_user_messages_once_applied() {
         ),
         (
             "applied before it was recorded",
-            vec![(applied(), vec![]), (Step::Steered, steer_message.clone())],
+            vec![
+                (applied(), vec![]),
+                (Step::Steered, vec![]),
+                (
+                    next(),
+                    [steer_message.clone(), vec![next_notice()]].concat(),
+                ),
+            ],
         ),
         (
             "withdrawn",
@@ -419,6 +435,7 @@ fn steers_show_as_user_messages_once_applied() {
                 (applied(), vec![]),
                 (run_closed(), vec![]),
                 (Step::Steered, vec![]),
+                (next(), vec![next_notice()]),
             ],
         ),
     ];
@@ -427,10 +444,10 @@ fn steers_show_as_user_messages_once_applied() {
         let mut live = live(&tool_set);
         for (index, (step, expected)) in steps.into_iter().enumerate() {
             let shown = match step {
-                Step::Steered => live
-                    .steered(id.clone(), &UserInput::text("use tabs"))
-                    .into_iter()
-                    .collect(),
+                Step::Steered => {
+                    live.steered(id.clone(), &UserInput::text("use tabs"));
+                    Vec::new()
+                }
                 Step::Withdrawn => {
                     live.withdrawn(&id);
                     Vec::new()

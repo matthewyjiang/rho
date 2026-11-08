@@ -114,6 +114,9 @@ pub(crate) struct LiveEvents {
     /// receipt and its events reach the daemon apart. The run's end clears
     /// it, so steers the daemon never records do not pile up.
     applied_unseen: HashSet<SteeringId>,
+    /// User messages of steers recorded after they applied, which the next
+    /// [`Self::map`] sends first, so they keep the mapper's order.
+    late_steers: Vec<WireEvent>,
 }
 
 /// How a compaction ended, as [`LiveEvents::compaction_ended`] reports it.
@@ -182,22 +185,20 @@ impl LiveEvents {
             message: None,
             steers: HashMap::new(),
             applied_unseen: HashSet::new(),
+            late_steers: Vec::new(),
         }
     }
 
     /// Notes `input`, steer `id`, which the run accepted, so its
     /// [`RunEvent::SteeringApplied`] shows it as a user message. When that
-    /// already arrived, returns the user message to publish now instead.
-    pub(crate) fn steered(&mut self, id: SteeringId, input: &UserInput) -> Option<WireEvent> {
+    /// already arrived, the next [`Self::map`] sends the message first.
+    pub(crate) fn steered(&mut self, id: SteeringId, input: &UserInput) {
         let content = user_content(input.blocks());
         if self.applied_unseen.remove(&id) {
-            // Published outside [`Self::map`]: a user message ends any
-            // message.
-            self.message = None;
-            return Some(steer_message(&id, content));
+            self.late_steers.push(steer_message(&id, content));
+        } else {
+            self.steers.insert(id, content);
         }
-        self.steers.insert(id, content);
-        None
     }
 
     /// Forgets steer `id`, which was withdrawn before it applied.
@@ -292,6 +293,11 @@ impl LiveEvents {
     /// The wire events for `event`, in order; empty for events the wire does
     /// not carry yet.
     pub(crate) fn map(&mut self, event: &SessionEvent) -> Vec<WireEvent> {
+        let late_steers = std::mem::take(&mut self.late_steers);
+        if !late_steers.is_empty() {
+            // A user message ends any message.
+            self.message = None;
+        }
         let events = match event {
             SessionEvent::MessageInserted(inserted) => {
                 self.user_message(inserted).into_iter().collect()
@@ -325,7 +331,7 @@ impl LiveEvents {
         }) {
             self.message = None;
         }
-        events
+        late_steers.into_iter().chain(events).collect()
     }
 
     /// The prompt as the user message the turn saved. Nothing when no
