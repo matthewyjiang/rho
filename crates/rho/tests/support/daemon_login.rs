@@ -15,7 +15,7 @@ use rho_protocol::{
     methods::{AuthList, AuthLogin, AuthLoginCancel, SessionAttach, SessionNew},
     AuthListParams, AuthLoginCancelParams, AuthLoginFinishedParams, AuthLoginParams, AuthStatus,
     Client, DaemonNotification, ErrorCode, LoginFlow, LoginId, LoginOutcome, LoginPrompt,
-    Notifications, SessionAttachParams, SessionNewParams, SessionOptions,
+    Notifications, SessionAttachParams, SessionNewParams, SessionOptions, SessionSetup,
 };
 use rho_providers::credentials::{CredentialStore, FileCredentialStore};
 use serde_json::Value;
@@ -160,6 +160,8 @@ async fn a_relayed_login_signs_in_a_running_session() {
         .request::<SessionNew>(&SessionNewParams {
             cwd: sandbox.workspace.clone(),
             environment: sandbox.client_environment(),
+            agent: None,
+            setup: SessionSetup::default(),
         })
         .await
         .unwrap();
@@ -170,6 +172,7 @@ async fn a_relayed_login_signs_in_a_running_session() {
             session: session.clone(),
             after: None,
             environment: sandbox.client_environment(),
+            setup: SessionSetup::default(),
         })
         .await
         .unwrap();

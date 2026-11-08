@@ -24,6 +24,7 @@ mod detach;
 mod doctor_cli;
 pub(crate) mod endpoint_login;
 mod headless_host;
+mod host_mcp;
 mod interactive;
 pub(crate) mod interactive_presenter;
 mod interactive_run_controller;

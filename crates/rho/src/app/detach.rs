@@ -4,13 +4,31 @@
 //! client attached, and `rho attach <ID>` follows and answers it.
 //!
 //! The daemon opens the session with the workspace's config, as `rho`
-//! started there would; `cli_config::validate` refuses the flags that would
-//! change it, before anything here runs.
+//! started there would, as the `--agent` given and with the `--add-dir` and
+//! `--no-*` flags as its setup; `cli_config::validate` refuses the flags
+//! that would change the config, before anything here runs.
 
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
+
+use rho_protocol::SessionSetup;
+
+/// The daemon session a detached run asks for, from `rho`'s flags.
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, reason = "only the Unix daemon opens sessions")
+)]
+pub(super) struct DetachedSession {
+    /// The session's workspace: the current directory.
+    pub(super) cwd: PathBuf,
+    /// `--agent`: the agent the session runs as; the default when `None`.
+    pub(super) agent: Option<String>,
+    /// `--add-dir`, resolved, and the parts the `--no-*` flags leave out.
+    pub(super) setup: SessionSetup,
+}
 
 #[cfg(not(unix))]
 pub(super) async fn run(
+    _session: DetachedSession,
     _parts: Vec<String>,
     _read_stdin: bool,
     _timeout: Option<Duration>,
@@ -19,10 +37,11 @@ pub(super) async fn run(
 }
 
 /// Starts the turn of the prompt `rho run` takes from `parts` and, with
-/// `read_stdin`, stdin, in a new daemon session in the current directory,
-/// timed out after `timeout`, and prints the session's id.
+/// `read_stdin`, stdin, in a new daemon session `session` describes, timed
+/// out after `timeout`, and prints the session's id.
 #[cfg(unix)]
 pub(super) async fn run(
+    session: DetachedSession,
     parts: Vec<String>,
     read_stdin: bool,
     timeout: Option<Duration>,
@@ -55,9 +74,7 @@ pub(super) async fn run(
     // The session's processes run with this environment, not the daemon's
     // (#1659).
     let environment = ClientEnvironment::of_this_process();
-    let cwd = std::env::current_dir().map_err(|error| {
-        AutomationExit::other(format!("could not read the current directory: {error}"))
-    })?;
+    let DetachedSession { cwd, agent, setup } = session;
     let paths = daemon_cli::paths().map_err(|error| AutomationExit::other(format!("{error:#}")))?;
     let spawner = ProcessSpawner::current_exe().map_err(|error| {
         AutomationExit::other(format!("could not find the rho executable: {error}"))
@@ -72,12 +89,17 @@ pub(super) async fn run(
         .request::<SessionNew>(&SessionNewParams {
             cwd,
             environment: environment.clone(),
+            agent,
+            setup,
         })
         .await
         .map_err(|error| {
             let message = format!("could not open a daemon session: {error}");
             match error.error_code() {
-                Some(ErrorCode::SessionOpenFailed) => AutomationExit::configuration(message),
+                // An agent or setup the session cannot open with.
+                Some(ErrorCode::SessionOpenFailed | ErrorCode::InvalidParams) => {
+                    AutomationExit::configuration(message)
+                }
                 _ => AutomationExit::other(message),
             }
         })?

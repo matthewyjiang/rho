@@ -1,7 +1,8 @@
 //! `rho daemon` through the real binary. Here: its lifecycle (status,
 //! single instance, and stop), and a dropped test sandbox stopping the
 //! daemon a client in it started. The sessions it hosts are in
-//! [`sessions`], changing their settings in [`configure`], and listing,
+//! [`sessions`], the agent and setup a client opens one with in
+//! [`setup`], changing their settings in [`configure`], and listing,
 //! renaming, and deleting them in [`catalog`],
 //! `rho attach` following them in [`attach`], and `rho run --detach`
 //! starting them in [`detach`]; the tool processes the daemon's stop ends
@@ -22,6 +23,9 @@ use serde_json::Value;
 
 #[path = "support/daemon_sessions.rs"]
 mod sessions;
+
+#[path = "support/daemon_setup.rs"]
+mod setup;
 
 #[path = "support/daemon_configure.rs"]
 mod configure;

@@ -228,9 +228,11 @@ rho attach "$SESSION"
 - `--timeout` is enforced by the daemon: a turn still running then is
   cancelled and ends `timed_out`, which `rho attach` reports with exit 124.
 - The daemon opens the session with the workspace's config, as `rho` started
-  there would. Flags that change it (`--model`, `--provider`, `--agent`,
-  `--permission-mode`, `--add-dir`, `--save`, and the like) are refused with
-  exit 2 rather than dropped; set them in [config](/configuration) instead.
+  there would. Flags that change it (`--model`, `--provider`,
+  `--permission-mode`, `--save`, and the like) are refused with exit 2 rather
+  than dropped; set them in [config](/configuration) instead. `--agent`,
+  `--add-dir`, `--no-tools`, `--no-system-prompt`, and `--no-subagents` apply
+  to the session as they do to a foreground run.
 - Slash commands resolve as they do in a foreground run, except that
   `/agent:<name>` does not run in the daemon yet; like `/compact` and
   `/workflow:<name>`, it fails with exit 2.

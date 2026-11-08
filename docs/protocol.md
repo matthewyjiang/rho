@@ -19,11 +19,11 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/hello` | `protocol` (`{major, minor}`), `client` (`{name, version}`) | The daemon's `protocol`, `daemon` (`{version, pid}`), and `capabilities`. |
 | `rho/daemon/status` | | `pid`, `version`, `protocol`, `started_at`, `uptime_secs`, `jobs` (jobs queued, running, or waiting for input), `socket`. |
 | `rho/daemon/stop` | | `{}`; the daemon then shuts down as [described](/daemon#commands). |
-| `rho/session/new` | `cwd`, `environment` | Opens a new session whose workspace is `cwd`, an absolute path to an existing directory, and returns its `session` id and `options` ([below](#changing-a-session-s-settings)). `environment` is the client's environment variables, an object of strings, which the session's commands run with ([below](#the-client-s-environment)). |
+| `rho/session/new` | `cwd`, `environment`, `agent`?, `setup`? | Opens a new session whose workspace is `cwd`, an absolute path to an existing directory, and returns its `session` id and `options` ([below](#changing-a-session-s-settings)). `environment` is the client's environment variables, an object of strings, which the session's commands run with ([below](#the-client-s-environment)). The session runs as `agent`, the id of one of the workspace's agents, as `rho --agent` takes it, or the default agent; one the workspace does not define gets `SessionOpenFailed`. `setup` holds the client's other choices for it ([below](#a-session-s-setup)). |
 | `rho/session/prompt` | `session`, `content`, optional `timeout_ms`, `environment` | Starts a turn of `content`, a non-empty list of [content blocks](#content-blocks), whose commands and those of later turns run with `environment`, and returns `{}` once the turn has saved the prompt. A session runs one turn at a time; a prompt while a turn is under way gets `SessionBusy`. A prompt that arrives while [settings changes](#changing-a-session-s-settings) wait to apply starts its turn once they have, so the turn runs with them. With `timeout_ms`, the daemon cancels a turn still running that many milliseconds after it took the prompt, and the turn ends `timed_out`. |
 | `rho/session/cancel` | `session` | Cancels the turn under way, if any. The turn ends `cancelled`, or `interrupted` when the daemon is stopping; one already past its `timeout_ms` ends `timed_out`. |
 | `rho/session/steer` | `session`, `text` | Adds `text` to the running turn's next model request. Gets `NotSteerable` when no model request is taking input. |
-| `rho/session/attach` | `session`, `after`?, `environment` | Follows the session's events, reopening an unloaded session with its commands in `environment` ([below](#following-a-session)). Returns its `stream`, its `workspace`, the `replay` that follows (`tail` or `reset`) and how many events it holds (`replay_events`), its job `state`, the input requests open now (`inputs`), its `title`, once it has one, and the session's `options` ([below](#changing-a-session-s-settings)). |
+| `rho/session/attach` | `session`, `after`?, `environment`, `setup`? | Follows the session's events, reopening an unloaded session with its commands in `environment` and with `setup` ([below](#following-a-session)). Returns its `stream`, its `workspace`, the `replay` that follows (`tail` or `reset`) and how many events it holds (`replay_events`), its job `state`, the input requests open now (`inputs`), its `title`, once it has one, and the session's `options` ([below](#changing-a-session-s-settings)). |
 | `rho/session/detach` | `session` | Stops following the session; no event of it arrives after the response. |
 | `rho/session/answer` | `session`, `request`, `answer` | Answers one of the turn's open input requests ([below](#answering-a-turn-s-requests)) and returns `{}` once the daemon has handed the answer to the turn. |
 | `rho/session/configure` | `session`, `change` | Changes one of a loaded session's settings for its later turns and returns its `options` ([below](#changing-a-session-s-settings)). |
@@ -59,6 +59,16 @@ A prompt's `content`, and a `user_message` event's, is a list of blocks, each wi
 | `resource_link` | `uri`, `name`, optional `description` | A resource named but not included: `description`, else `name`, in a code fence labelled with `uri`. |
 
 A prompt with no blocks gets `InvalidParams`, as does one with an image whose `data` is not base64, is over the limit, is not one of those formats, or is not the `mime_type` it declares; the error names the block by its position, from 0. A block of a type the daemon does not know reaches the model as a fenced placeholder. A `user_message` holds the message as saved, so a resource the prompt carried appears as its fenced `text` block, live and on replay.
+
+### A session's setup
+
+`rho/session/new` and `rho/session/attach` take an optional `setup`: the choices `rho acp` takes per session and `rho` takes as flags. The daemon applies it when the request opens the session: a new session, or an attach that reopens a saved one. A session the daemon has loaded keeps its own, as it keeps its environment, and a session a prompt reopens has none, since a prompt carries no setup. Every field is optional:
+
+| Field | What the session gets |
+| --- | --- |
+| `additional_directories` | Directories outside the workspace its tools may use, as `--add-dir` adds them: absolute paths to existing directories. Any other entry gets `InvalidParams`, naming it, and the session does not open. |
+| `mcp_servers` | MCP servers the client provides, connected next to those in config; one replaces a config server of the same name. Each has a `transport`: `stdio`, with `name`, `command`, `args`, and `env`, or `http`, with `name`, `url`, and `headers`; `env` and `headers` are lists of `{name, value}`. The daemon connects plain HTTP only to this machine and never lets these servers sample the model. An entry it cannot connect is left out, and still replaces the config server of its name; when a name repeats, the last entry wins. |
+| `without` | Parts of the session left out: `tools`, `system_prompt`, or `subagents`, as `--no-tools`, `--no-system-prompt`, and `--no-subagents` leave them out, or `questions`, for a client that cannot show questions: the session then has no questionnaire tool and declines an MCP server's question. |
 
 ## Following a session
 
@@ -231,7 +241,7 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 | -32005 | `NotSteerable` | No model request is taking input. |
 | -32006 | `SteerRefused` | The running turn refused the steering input. |
 | -32007 | `DaemonStopping` | The daemon is stopping and starts nothing new. |
-| -32008 | `SessionOpenFailed` | The daemon could not open the session: for example, the config is invalid, the agent a saved session was saved as changed or is gone, or the session is a subagent's or workflow node's, which only its parent continues. |
+| -32008 | `SessionOpenFailed` | The daemon could not open the session: for example, the config is invalid, the workspace does not define the agent a new session asks for, the agent a saved session was saved as changed or is gone, or the session is a subagent's or workflow node's, which only its parent continues. |
 | -32009 | `TurnEnded` | The turn ended before it saved the prompt; `data` is its outcome. |
 | -32011 | `InputNotOpen` | The input request is not open: another client answered it first, it timed out, or the turn withdrew it. |
 | -32012 | `SessionInUse` | Another process, such as a TUI or a foreground `rho run`, has the session open, or, for a delete, a session it started, so the daemon cannot reopen or delete it. |

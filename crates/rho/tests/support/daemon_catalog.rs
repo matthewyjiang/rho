@@ -19,7 +19,7 @@ use rho_protocol::{
     Client, ClientError, DaemonNotification, DetachReason, ErrorCode, Notifications, RpcError,
     SessionAttachParams, SessionCancelParams, SessionDeleteParams, SessionDetachedParams,
     SessionEvent, SessionId, SessionListParams, SessionListResponse, SessionNewParams,
-    SessionRenameParams, SessionRenameResponse, SessionSummary,
+    SessionRenameParams, SessionRenameResponse, SessionSetup, SessionSummary,
 };
 
 use super::sessions::{settled_job, Sandbox, DEADLINE};
@@ -47,6 +47,8 @@ async fn open_session(sandbox: &Sandbox, client: &Client, cwd: PathBuf) -> Sessi
         &SessionNewParams {
             cwd,
             environment: sandbox.client_environment(),
+            agent: None,
+            setup: SessionSetup::default(),
         },
     )
     .await
@@ -105,6 +107,7 @@ async fn follow(sandbox: &Sandbox, session: &SessionId) -> (Client, Notification
             session: session.clone(),
             after: None,
             environment: sandbox.client_environment(),
+            setup: SessionSetup::default(),
         },
     )
     .await
@@ -294,6 +297,7 @@ async fn a_delete_detaches_a_loaded_sessions_clients_and_removes_it() {
             session: deleted.clone(),
             after: None,
             environment: sandbox.client_environment(),
+            setup: SessionSetup::default(),
         },
     )
     .await

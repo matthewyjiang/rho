@@ -221,9 +221,11 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
         ..
     }) = &cli.command
     {
-        return Ok(EarlyDispatch::Handled(
-            super::detach::run(prompt.clone(), *stdin, *timeout).await,
-        ));
+        let run = match cli_config::detached_session(cli) {
+            Ok(session) => super::detach::run(session, prompt.clone(), *stdin, *timeout).await,
+            Err(exit) => Err(exit.into()),
+        };
+        return Ok(EarlyDispatch::Handled(run));
     }
     if matches!(cli.command, Some(Command::Update)) {
         return Ok(EarlyDispatch::Handled(
@@ -302,7 +304,7 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     let absolute_config = absolute_config_path(&config_repository)?;
     crate::credential_store::initialize_from_config(&mut config, &absolute_config)?;
     let cwd = std::env::current_dir()?;
-    let added_dirs = launch_added_dirs(&cli, &cwd)?;
+    let added_dirs = crate::added_dirs::launch_added_dirs(&cli.add_dirs, &cwd)?;
     let automation_prompt = automation::prompt_for_command(&cli.command)?;
     let (output_file, output, max_steps, timeout) = match &cli.command {
         Some(Command::Run {
@@ -406,23 +408,6 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         provider_refresh,
         added_dirs,
     })
-}
-
-/// Resolves `--add-dir` values against the launch directory. A bad path fails
-/// startup instead of silently narrowing the scope the user asked for.
-fn launch_added_dirs(
-    cli: &Cli,
-    cwd: &std::path::Path,
-) -> anyhow::Result<crate::added_dirs::AddedDirs> {
-    let workspace_root = std::fs::canonicalize(cwd)?;
-    let home = crate::paths::home_dir();
-    let mut added = crate::added_dirs::AddedDirs::default();
-    for raw in &cli.add_dirs {
-        let dir = crate::added_dirs::resolve(raw, cwd, home.as_deref())
-            .map_err(|error| anyhow::anyhow!("invalid --add-dir: {error}"))?;
-        added.insert(&workspace_root, dir);
-    }
-    Ok(added)
 }
 
 struct AutomationStartup<'a> {

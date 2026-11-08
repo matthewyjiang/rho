@@ -72,7 +72,6 @@ mod turns;
 mod wake;
 
 use convert::user_input_from_prompt;
-pub(super) use convert::RejectedDirectory;
 pub(super) use open::{History, ReopenRequest, Reopened};
 use turns::AcpTurns;
 

@@ -21,8 +21,8 @@ use rho_protocol::{
     Notifications, Operation, PathScope, Replay, Resolution, Seq, SessionAnswerParams,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionDetachParams,
     SessionDetachedParams, SessionEvent, SessionHoldParams, SessionId, SessionNewParams,
-    SessionPromptParams, StreamId, ToolCallId, ToolContent, ToolStatus, TurnError, TurnErrorKind,
-    TurnOutcome,
+    SessionPromptParams, SessionSetup, StreamId, ToolCallId, ToolContent, ToolStatus, TurnError,
+    TurnErrorKind, TurnOutcome,
 };
 use rho_tui_pty::IsolatedHome;
 use tokio::{
@@ -243,6 +243,8 @@ impl Sandbox {
             .request::<SessionNew>(&SessionNewParams {
                 cwd: self.workspace.clone(),
                 environment,
+                agent: None,
+                setup: SessionSetup::default(),
             })
             .await
             .unwrap()
@@ -941,6 +943,7 @@ async fn a_session_another_process_saved_reopens_once_it_lets_go() {
                 session: session.clone(),
                 after: None,
                 environment: sandbox.client_environment(),
+                setup: SessionSetup::default(),
             })
             .await
             .map(|_| ())
@@ -1093,6 +1096,7 @@ impl Follower {
                 session: session.clone(),
                 after,
                 environment: sandbox.client_environment(),
+                setup: SessionSetup::default(),
             })
             .await
             .unwrap();

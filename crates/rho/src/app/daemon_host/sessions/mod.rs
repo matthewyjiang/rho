@@ -35,8 +35,8 @@ use rho_protocol::{
     DetachReason, ErrorCode, RpcError, SessionAnswerParams, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
     SessionHoldParams, SessionHoldResponse, SessionNewParams, SessionNewResponse,
-    SessionPromptParams, SessionPromptResponse, SessionSteerParams, SessionSteerResponse,
-    Subscription, TurnOutcome,
+    SessionPromptParams, SessionPromptResponse, SessionSetup, SessionSteerParams,
+    SessionSteerResponse, Subscription, TurnOutcome,
 };
 use rho_sdk::{CancellationToken, SessionId, UserInput};
 
@@ -75,7 +75,7 @@ mod unload;
 
 use feed::{Attached, Feed};
 use inputs::Inputs;
-use open::{open_session, session_environment, OpenedSession, Opening, Workspace};
+use open::{open_session, session_environment, OpenWith, OpenedSession, Opening, Workspace};
 use queued::Queued;
 use reopen::ReopenLocks;
 use turn::{PromptStart, TurnLimit, TurnTask};
@@ -436,22 +436,32 @@ impl Sessions {
         }
     }
 
-    /// Opens a new session in `cwd` and registers the job of its turns.
+    /// Opens a new session in `cwd`, as `agent`, with the client's `setup`,
+    /// and registers the job of its turns.
     pub(super) async fn open_new(
         &self,
         params: SessionNewParams,
     ) -> Result<SessionNewResponse, RpcError> {
+        let SessionNewParams {
+            cwd,
+            environment,
+            agent,
+            setup,
+        } = params;
         self.refuse_when_stopping()?;
-        let workspace = Workspace::parse(&params.cwd)?;
+        let workspace = Workspace::parse(&cwd)?;
+        let environment = session_environment(&environment)?;
         let job = JobId::generate();
         let opened = open_session(
-            Opening::New(workspace),
-            session_environment(&params.environment)?,
+            Opening::New { workspace, agent },
+            OpenWith {
+                environment: &environment,
+                setup: &setup,
+            },
             &self.subagents,
             &job,
         )
-        .await
-        .map_err(open_failed)?;
+        .await?;
         let session = opened.runtime.session_id().clone();
         let record = JobRecord::new_session(
             job.clone(),
@@ -517,8 +527,14 @@ impl Sessions {
             )
         })?;
         let environment = session_environment(&params.environment)?;
+        // A prompt carries no setup, so a session it reopens opens without.
+        let setup = SessionSetup::default();
+        let opening = OpenWith {
+            environment: &environment,
+            setup: &setup,
+        };
         let (session, (cancel, runtime)) = self
-            .enter_session(&params.session, &environment, |session, turn| {
+            .enter_session(&params.session, opening, |session, turn| {
                 match turn.hold {
                     // The turn queues on the runtime behind the changes, so
                     // they apply first, the prompt waiting for them.
@@ -652,12 +668,17 @@ impl Sessions {
         // attach never sees the last turn's end once the job list says the
         // next turn runs, and the idle unload never takes a session a client
         // just attached to.
+        let environment = session_environment(&params.environment)?;
+        // Applied only if this attach reopens the session: one the daemon
+        // has loaded keeps the environment and setup it opened with.
+        let opening = OpenWith {
+            environment: &environment,
+            setup: &params.setup,
+        };
         let (session, attached) = self
-            .enter_session(
-                &params.session,
-                &session_environment(&params.environment)?,
-                |session, _turn| Ok(session.feed.attach(params.after.as_ref())),
-            )
+            .enter_session(&params.session, opening, |session, _turn| {
+                Ok(session.feed.attach(params.after.as_ref()))
+            })
             .await?;
         let Attached {
             stream,

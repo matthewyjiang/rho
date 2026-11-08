@@ -654,7 +654,7 @@ fn session_start_error(error: anyhow::Error) -> AcpError {
     if error.is::<crate::session::SessionInUse>() {
         return AcpError::invalid_request().data(error.to_string());
     }
-    match error.downcast::<super::session_host::RejectedDirectory>() {
+    match error.downcast::<crate::added_dirs::RejectedDirectory>() {
         Ok(rejected) => AcpError::invalid_params().data(rejected.to_string()),
         Err(error) => host_error(error),
     }

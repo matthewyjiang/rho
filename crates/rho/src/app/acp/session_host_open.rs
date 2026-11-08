@@ -14,10 +14,11 @@ use agent_client_protocol::schema::v1::{
 
 use super::{
     super::{client_io::ClientIo, host_mcp::host_mcp_config, permission},
-    convert::{session_added_dirs, validate_session_cwd, workspace_cwd},
+    convert::{validate_session_cwd, workspace_cwd},
     send_notification, session_build, EventMapper, HostBuild, SessionHost,
 };
 use crate::{
+    added_dirs::session_added_dirs,
     app::{
         acp::{AcpClientPort, AcpStartup},
         session_runtime::{SavedHistory, SessionOpening, SessionRuntime},

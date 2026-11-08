@@ -57,6 +57,7 @@ mod login;
 mod options;
 mod outcome;
 mod session;
+mod setup;
 
 pub use auth::{
     AuthKeyParams, AuthKeyResponse, AuthKind, AuthListParams, AuthListResponse, AuthLogoutParams,
@@ -106,6 +107,7 @@ pub use session::{
     SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH, SESSION_DETACHED, SESSION_EVENT, SESSION_NEW,
     SESSION_PROMPT, SESSION_STEER,
 };
+pub use setup::{EnvVariable, HttpHeader, McpServer, SessionPart, SessionSetup};
 
 /// A request method with typed params and result.
 ///
