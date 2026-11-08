@@ -217,6 +217,22 @@ impl JobRegistry {
         Ok(record.state.clone())
     }
 
+    /// Forgets job `id` and deletes its record, for a session the daemon
+    /// discarded having saved nothing, which no request could reopen. A
+    /// record that cannot be deleted is logged, and a restarted daemon lists
+    /// the job again.
+    pub(in crate::app::daemon_host) fn remove(&self, id: &JobId) {
+        // Deleted under the lock every write takes, so no write of the job
+        // races the delete and writes its record back.
+        let mut jobs = self.lock();
+        if jobs.remove(id).is_none() {
+            return;
+        }
+        if let Err(error) = self.store.remove(id) {
+            tracing::error!(job = %id, %error, "could not delete job record");
+        }
+    }
+
     /// For the daemon's stop, once its turns saved: records every job
     /// still under way as interrupted, and takes no new job after, so a
     /// run a workflow drive starts during the stop is not left listed as

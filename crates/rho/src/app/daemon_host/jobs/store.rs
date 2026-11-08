@@ -56,6 +56,17 @@ impl JobStore {
         fs::File::open(&self.dir)?.sync_all()
     }
 
+    /// Deletes `id`'s file, if it has one, and flushes the directory, so a
+    /// later daemon does not list the job.
+    pub(in crate::app::daemon_host) fn remove(&self, id: &JobId) -> io::Result<()> {
+        match fs::remove_file(self.path_of(id)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        fs::File::open(&self.dir)?.sync_all()
+    }
+
     /// Every record in the store, in no particular order.
     pub(in crate::app::daemon_host) fn load(&self) -> io::Result<Vec<JobRecord>> {
         let mut records = Vec::new();

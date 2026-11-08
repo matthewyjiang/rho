@@ -595,7 +595,8 @@ pub enum DaemonCommand {
         /// Unload a session once it has sat idle this long: no turn under
         /// way and no client attached. Unloading closes its MCP servers and
         /// lets other rho processes open it; the next prompt or attach
-        /// reopens it. Defaults to 60s; at least 100ms.
+        /// reopens it. A session that saved nothing is discarded instead.
+        /// Defaults to 60s; at least 100ms.
         #[arg(long, value_name = "DURATION", value_parser = parse_unload_idle_after)]
         unload_idle_after: Option<Duration>,
     },

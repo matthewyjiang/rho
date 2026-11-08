@@ -106,8 +106,8 @@ impl DaemonHost {
         self.shutdown.is_cancelled()
     }
 
-    /// Unloads each session once it sat idle for `grace`, until the daemon
-    /// starts stopping (#1661).
+    /// Unloads each session once it sat idle for `grace`, or discards it
+    /// when it saved nothing, until the daemon starts stopping (#1661).
     pub(super) async fn unload_idle_sessions(&self, grace: Duration) {
         self.sessions.unload_idle(grace).await;
     }

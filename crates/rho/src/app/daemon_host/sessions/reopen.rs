@@ -61,8 +61,9 @@ impl Sessions {
     /// Runs `use_session` on the session `id` names, loaded as
     /// [`Self::session`] loads it, under its turn lock and marked in use, so
     /// the idle unload cannot take it meanwhile (#1661). A session the
-    /// unload took after the lookup is looked up again, which reopens it:
-    /// an unloaded session is never in `loaded`.
+    /// unload took after the lookup is looked up again, which reopens it,
+    /// or finds nothing saved for one it discarded: an unloaded session is
+    /// never in `loaded`.
     pub(super) async fn enter_session<T>(
         &self,
         id: &rho_protocol::SessionId,
