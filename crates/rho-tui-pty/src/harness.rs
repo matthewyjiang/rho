@@ -759,20 +759,3 @@ fn redact_env(env: &[(String, String)]) -> Vec<(String, String)> {
         })
         .collect()
 }
-
-/// Convenience: open a matrix-mode Rho harness with isolated HOME.
-pub fn spawn_matrix_rho(
-    binary: &Path,
-    size: PtySize,
-    scenario: &str,
-    artifact_dir: Option<&Path>,
-) -> Result<(crate::env::IsolatedHome, PtyHarness)> {
-    let home = crate::env::IsolatedHome::new()?;
-    let plan = RhoLaunchPlan::matrix(binary, &home, size);
-    let mut harness = PtyHarness::spawn_named(&plan, scenario)
-        .with_context(|| format!("failed to spawn rho for scenario {scenario}"))?;
-    if let Some(dir) = artifact_dir {
-        harness.set_artifact_writer(ArtifactWriter::new(dir));
-    }
-    Ok((home, harness))
-}

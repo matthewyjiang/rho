@@ -361,10 +361,10 @@ async fn a_sessions_cli_agents_and_workflow_commands_see_its_clients_environment
         "probe-1659",
         format!("#!/usr/bin/env sh-1659\n{}\n", record("command.txt")),
     );
-    // A user agent, in the sandbox's `HOME`.
-    std::fs::create_dir_all(root.join(".rho/agents")).unwrap();
+    // A user agent, in the sandbox's rho home.
+    std::fs::create_dir_all(sandbox.rho_home().join("agents")).unwrap();
     std::fs::write(
-        root.join(".rho/agents/claude-env.md"),
+        sandbox.rho_home().join("agents/claude-env.md"),
         "---\nid: claude-env\ndescription: Claude Code agent for the environment test\nruntime: claude-cli\nprompt: replace\n---\nWork.\n",
     )
     .unwrap();
