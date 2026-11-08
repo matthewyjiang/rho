@@ -79,8 +79,8 @@ pub(crate) use build::{
     ChildAgents, HostCapabilities, QuestionSupport, RunShape, SessionBuild, SessionLaunch,
     SessionRole,
 };
+pub(crate) use credentials::CredentialFailure;
 use credentials::SessionCredentials;
-pub(crate) use credentials::{CredentialFailure, Logouts};
 pub(crate) use delegation::BackgroundWait;
 use delegation::HeldNotices;
 pub(crate) use events::{
@@ -143,6 +143,8 @@ struct OpenedSession {
     /// A notice found while reopening, such as a changed model prompt,
     /// reported with the first turn.
     reopen_notice: Option<String>,
+    /// What the session's provider read its credentials at (#1662).
+    credentials: SessionCredentials,
 }
 
 /// One session's runtime: everything a host keeps for a session except how
@@ -177,9 +179,8 @@ pub(crate) struct SessionRuntime {
 }
 
 impl SessionRuntime {
-    /// A runtime for `opened`. `logouts` is the host's logout count; the
-    /// session's provider has just read credentials.
-    fn new(opened: OpenedSession, logouts: &Logouts) -> Self {
+    /// A runtime for `opened`.
+    fn new(opened: OpenedSession) -> Self {
         let OpenedSession {
             build,
             built,
@@ -190,6 +191,7 @@ impl SessionRuntime {
             added_dirs,
             permission,
             reopen_notice,
+            credentials,
         } = opened;
         built.tools.bind_recall(storage.file());
         Self {
@@ -201,7 +203,7 @@ impl SessionRuntime {
             added_dirs,
             permission,
             auth,
-            credentials: SessionCredentials::just_read(logouts),
+            credentials,
             handle: SessionHandle::new(),
             completed_runs: 0,
             title: TitleState::Unasked,

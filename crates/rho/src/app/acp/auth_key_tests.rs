@@ -6,7 +6,10 @@ use agent_client_protocol::schema::v1::{
     RequestPermissionResponse, SessionNotification,
 };
 use pretty_assertions::assert_eq;
-use rho_providers::credentials::{CredentialResult, MemoryCredentialStore};
+use rho_providers::{
+    credentials::{CredentialResult, MemoryCredentialStore},
+    provider::{self, ProviderAuthKind},
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},

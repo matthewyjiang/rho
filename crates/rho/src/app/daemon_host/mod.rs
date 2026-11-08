@@ -5,7 +5,8 @@
 //! requests to, and `app::daemon_cli` wires the two together. The host owns
 //! the job registry (`jobs/`), whose records outlive the daemon, and the
 //! sessions it has loaded (`sessions/`), which own the budget their
-//! subagents share (`subagents.rs`).
+//! subagents share (`subagents.rs`). It also writes the credential store
+//! those sessions read (`auth.rs`).
 
 use std::{
     io,
@@ -15,7 +16,8 @@ use std::{
 };
 
 use rho_protocol::{
-    DaemonStatus, JobListResponse, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
+    AuthKeyParams, AuthKeyResponse, AuthLogoutParams, AuthLogoutResponse, DaemonStatus,
+    JobListResponse, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
     SessionHoldParams, SessionHoldResponse, SessionNewParams, SessionNewResponse,
     SessionPromptParams, SessionPromptResponse, SessionSteerParams, SessionSteerResponse,
@@ -25,6 +27,7 @@ use rho_sdk::CancellationToken;
 
 use crate::daemon::DaemonLock;
 
+mod auth;
 mod jobs;
 mod sessions;
 mod subagents;
@@ -183,5 +186,13 @@ impl Service for DaemonHost {
                 })
                 .collect(),
         }
+    }
+
+    async fn save_auth_key(&self, params: AuthKeyParams) -> Result<AuthKeyResponse, RpcError> {
+        auth::save_key(params).await
+    }
+
+    async fn logout_auth(&self, params: AuthLogoutParams) -> Result<AuthLogoutResponse, RpcError> {
+        auth::logout(params)
     }
 }

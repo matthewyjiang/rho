@@ -24,9 +24,8 @@ use super::{
     session_commands::{self, BuiltInCommand, CommandScope, CommandSet, PromptCommand},
     session_events::outcome,
     session_runtime::{
-        CommandRejected, HostCapabilities, Logouts, PromptScope, RunShape, SessionBuild,
-        SessionLaunch, SessionOpening, SessionRole, SessionRuntime, Turn, TurnOutcome,
-        UnattendedApprovals,
+        CommandRejected, HostCapabilities, PromptScope, RunShape, SessionBuild, SessionLaunch,
+        SessionOpening, SessionRole, SessionRuntime, Turn, TurnOutcome, UnattendedApprovals,
     },
     shutdown_signal::{ShutdownSignal, ShutdownSignals},
 };
@@ -297,14 +296,12 @@ async fn run_session(
             hook_labels: Default::default(),
         },
     };
-    let logouts = Logouts::default();
     let opening = SessionOpening {
         build,
         process_config: startup.config,
         host_mcp: Default::default(),
         cwd: &startup.cwd,
         added_dirs: startup.added_dirs.clone(),
-        logouts: &logouts,
     };
     let mut view = HeadlessView::new();
     if let Some(reporter) = reporter {

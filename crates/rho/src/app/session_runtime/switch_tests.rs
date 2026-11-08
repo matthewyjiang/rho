@@ -108,7 +108,7 @@ async fn model_prompt_switch_rebinds_advisor_with_live_history() {
         .unwrap()
         .build(&PromptModel::from_sdk_identity(&next.identity()))
         .unwrap();
-    let read = runtime.credentials.before_read();
+    let read = crate::credential_store::AppCredentialStore::generation();
     runtime.switch_provider(next, &config, read).unwrap();
     assert_eq!(advisor.system_prompt(), Some(expected.text.clone()));
     assert_eq!(

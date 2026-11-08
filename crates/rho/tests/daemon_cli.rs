@@ -2,7 +2,7 @@
 //! instance, and stop) here, the sessions it hosts in [`sessions`],
 //! `rho attach` following them in [`attach`], and `rho run --detach`
 //! starting them in [`detach`]; the tool processes the daemon's stop ends
-//! are in [`tools`].
+//! are in [`tools`], and signing it in and out over its socket in [`auth`].
 #![cfg(unix)]
 
 use std::{
@@ -27,6 +27,12 @@ mod detach;
 
 #[path = "support/daemon_tools.rs"]
 mod tools;
+
+#[path = "support/daemon_auth.rs"]
+mod auth;
+
+#[path = "support/key_checking_provider.rs"]
+mod key_checking_provider;
 
 use harness::{DaemonProcess, DaemonSandbox};
 

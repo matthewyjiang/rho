@@ -16,15 +16,16 @@ use crate::{
     forward::Forwarders,
     jsonrpc,
     methods::{
+        AuthKey, AuthKeyParams, AuthKeyResponse, AuthLogout, AuthLogoutParams, AuthLogoutResponse,
         Hello, JobList, JobListParams, JobListResponse, Method, SessionAnswer, SessionAnswerParams,
         SessionAnswerResponse, SessionAttach, SessionAttachParams, SessionAttachResponse,
         SessionCancel, SessionCancelParams, SessionCancelResponse, SessionDetach,
         SessionDetachParams, SessionDetachResponse, SessionHold, SessionHoldParams,
         SessionHoldResponse, SessionNew, SessionNewParams, SessionNewResponse, SessionPrompt,
         SessionPromptParams, SessionPromptResponse, SessionSteer, SessionSteerParams,
-        SessionSteerResponse, Status, Stop, DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST,
-        SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH, SESSION_HOLD, SESSION_NEW,
-        SESSION_PROMPT, SESSION_STEER,
+        SessionSteerResponse, Status, Stop, AUTH_KEY, AUTH_LOGOUT, DAEMON_STATUS, DAEMON_STOP,
+        HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH,
+        SESSION_HOLD, SESSION_NEW, SESSION_PROMPT, SESSION_STEER,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -120,6 +121,21 @@ pub trait Service: Send + Sync {
 
     /// Answers `rho/job/list`.
     fn list_jobs(&self) -> impl Future<Output = JobListResponse> + Send;
+
+    /// Handles `rho/auth/key`: check the key with its provider and save it.
+    /// The params hold a secret: never log them, nor an error that may
+    /// quote the key.
+    fn save_auth_key(
+        &self,
+        params: AuthKeyParams,
+    ) -> impl Future<Output = Result<AuthKeyResponse, RpcError>> + Send;
+
+    /// Handles `rho/auth/logout`: delete the auth profile's saved
+    /// credentials.
+    fn logout_auth(
+        &self,
+        params: AuthLogoutParams,
+    ) -> impl Future<Output = Result<AuthLogoutResponse, RpcError>> + Send;
 }
 
 /// What the daemon reports in its `rho/hello` response.
@@ -397,6 +413,8 @@ enum ServiceCall {
     AnswerSession(SessionAnswerParams),
     HoldSession(SessionHoldParams),
     ListJobs,
+    SaveAuthKey(AuthKeyParams),
+    LogoutAuth(AuthLogoutParams),
 }
 
 impl Connection {
@@ -458,6 +476,8 @@ impl ServiceCall {
             SESSION_ANSWER => decode_params::<SessionAnswer>(params).map(Self::AnswerSession),
             SESSION_HOLD => decode_params::<SessionHold>(params).map(Self::HoldSession),
             JOB_LIST => decode_params::<JobList>(params).map(|JobListParams {}| Self::ListJobs),
+            AUTH_KEY => decode_params::<AuthKey>(params).map(Self::SaveAuthKey),
+            AUTH_LOGOUT => decode_params::<AuthLogout>(params).map(Self::LogoutAuth),
             method => Err(RpcError::new(
                 ErrorCode::MethodNotFound,
                 format!("unknown method {method}"),
@@ -492,6 +512,12 @@ impl ServiceCall {
                 encode_result::<SessionHold>(&service.hold_session(params).await?)
             }
             Self::ListJobs => encode_result::<JobList>(&service.list_jobs().await),
+            Self::SaveAuthKey(params) => {
+                encode_result::<AuthKey>(&service.save_auth_key(params).await?)
+            }
+            Self::LogoutAuth(params) => {
+                encode_result::<AuthLogout>(&service.logout_auth(params).await?)
+            }
         }
     }
 }

@@ -26,6 +26,9 @@ mod agent_model_override;
 #[path = "support/acp_auth_required.rs"]
 mod auth_required;
 
+#[path = "support/key_checking_provider.rs"]
+mod key_checking_provider;
+
 // The session cwd is a symlink.
 #[cfg(unix)]
 #[path = "support/acp_client_files_tests.rs"]

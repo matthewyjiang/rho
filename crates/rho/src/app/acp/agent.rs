@@ -120,9 +120,9 @@ pub(super) struct RhoAcpAgent {
     /// Readers are `session/new` and `session/load` for their full
     /// build-and-publish lifecycle, and `session/close` until its host is torn
     /// down. `shutdown_all` takes the write lock so it waits for those
-    /// requests, then sets `closed`; `logout` takes it so no session reads
-    /// credentials while they are deleted. Prompt, cancel, and `publish`
-    /// never take this lock.
+    /// requests, then sets `closed`; `logout` takes it so it runs after the
+    /// session requests in progress. Prompt, cancel, and `publish` never
+    /// take this lock.
     install_gate: tokio::sync::RwLock<()>,
     /// One lock per session ID. Replacements of the same ID stay ordered;
     /// different IDs publish and tear down independently. Generated titles
@@ -481,25 +481,24 @@ impl RhoAcpAgent {
 
     /// `logout` for the auth profile new sessions use, deleting its
     /// credentials from the store found through the `--config` override
-    /// `config` (see `super::auth_logout`). Holding the install gate keeps
-    /// every session build out meanwhile, so each live session's count
-    /// reflects what it read. Running turns are left alone: the credential
-    /// store refuses to save a refresh over credentials a logout deleted.
+    /// `config` (see `super::auth_logout`). It waits for the session opens
+    /// and closes in progress, as the ACP reference promises; live sessions
+    /// pick up the logout from the credential generation it moves (#1662),
+    /// whenever they read their credentials. Running turns are left alone:
+    /// the credential store refuses to save a refresh over credentials a
+    /// logout deleted.
     pub(super) async fn logout(&self, config: Option<std::path::PathBuf>) -> Result<(), AcpError> {
         let _gate = self.install_gate.write().await;
         if self.closed.load(Ordering::Acquire) {
             return Err(agent_stopped());
         }
-        // Synchronous, with no await before `record`: a newer `authenticate`
-        // that supersedes this logout drops it at an await, so it either
-        // deletes and counts, or does neither.
+        // Synchronous: a newer `authenticate` that supersedes this logout
+        // drops it at an await, so it either signs out or does nothing.
         super::auth_logout::sign_out(
             &self.startup.config.provider,
             &self.startup.config.auth,
             config,
-        )?;
-        self.startup.logouts.record();
-        Ok(())
+        )
     }
 
     pub(super) async fn shutdown_all(&self) {

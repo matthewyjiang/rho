@@ -675,7 +675,6 @@ impl SessionHost {
             storage,
             permission,
             startup.config.auth.clone(),
-            &startup.logouts,
         );
         Self::from_runtime(io, startup, runtime, t3_wake)
     }

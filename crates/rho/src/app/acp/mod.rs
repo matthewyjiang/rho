@@ -86,8 +86,6 @@ pub(super) struct AcpStartup {
     pub(super) added_dirs: crate::added_dirs::AddedDirs,
     /// Optional features the host advertised at `initialize`.
     pub(super) host_features: HostFeatures,
-    /// `logout`s so far, which mark sessions' credentials stale.
-    pub(super) logouts: crate::app::session_runtime::Logouts,
     /// The connection `initialize` arrived on, for host-served files and
     /// terminals. `None` until `initialize` runs.
     pub(super) client: Option<Arc<dyn AcpClientPort>>,
@@ -136,7 +134,6 @@ impl AcpStartup {
             herdr: HerdrReporter::default(),
             added_dirs: Default::default(),
             host_features: HostFeatures::default(),
-            logouts: Default::default(),
             client: None,
         }
     }

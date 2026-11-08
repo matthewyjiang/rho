@@ -28,6 +28,8 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/session/answer` | `session`, `request`, `answer` | Answers one of the turn's open input requests ([below](#answering-a-turn-s-requests)) and returns `{}` once the daemon has handed the answer to the turn. |
 | `rho/session/hold` | `session`, `request` | Stops an open input request's timeout, so it waits for an answer ([below](#timeouts)), and returns `{}`. |
 | `rho/job/list` | | `jobs`: every job the daemon knows, including those earlier daemons ran, oldest first. Each has its `id`, `kind` (`session`, `subagent`, or `workflow`), `state`, `workspace`, and timestamps; the `session` it writes, absent for a workflow and for a subagent on another runtime; the `parent` job that started it, for a subagent or workflow; the `workflow_run` it drives, for a workflow; the `error` when it failed; and, usually while it is `queued`, its `queue` place: the `budget` it waits on, that budget's `limit`, and its `position`, 1 for the next to start. |
+| `rho/auth/key` | `auth`, `key` | Checks the API key with the provider of auth profile `auth`, such as `openai-api-key`, and saves it ([below](#signing-in-and-out)). Returns `{}`, or `unchecked` with the reason when the provider could not be asked. |
+| `rho/auth/logout` | `auth` | Deletes auth profile `auth`'s saved credentials ([below](#signing-in-and-out)) and returns `{}`. |
 
 A prompt whose turn ends before it saves the prompt returns an error instead of a result:
 
@@ -109,6 +111,16 @@ Never answer a timeout yourself: an answer sent with `rho/session/answer` counts
 
 Once the user starts on the request, on their first key, paste, or click in it, call `rho/session/hold`. The request is then held for good, with no timeout: every attached client receives `input_held`, the request waits for an answer like any other, and a client that attaches later finds it in `inputs` without a `timeout`. Holding a request that has no timeout, or one already held, changes nothing. The setting applies to sessions opened after it changes.
 
+## Signing in and out
+
+`rho/auth/key` and `rho/auth/logout` change the credential store the daemon's sessions read, as `/login` and `/logout` do in the TUI. The daemon writes the store its config selects when the request arrives. A change applies to every session the daemon runs, whichever client opened it: a running session uses a new key, or drops a deleted one, from its next prompt, and new sessions use it at once. After a logout, a session's next prompt fails with `TurnEnded`, whose outcome is a `failed` turn of kind `authentication`, until a key is saved again.
+
+`rho/auth/key` first asks the provider's models endpoint about the key and refuses one the provider rejects with `KeyRefused`, keeping the key saved before. A key the provider cannot be asked about is saved anyway, as `rho login` saves it, and the result's `unchecked` says why: rho lists no models for the provider, or its endpoint did not answer. Surrounding whitespace is ignored, and `auth` must take an API key; OAuth and other sign-ins stay with `rho login`. `rho/auth/logout` also forgets an Ollama login.
+
+A credential set in the daemon's own environment, such as `OPENAI_API_KEY`, wins over a saved one, so both methods refuse its auth profile with `EnvironmentOverride` before writing anything; its `data.variable` names the variable to unset where the daemon starts. The client's environment plays no part.
+
+The key travels only over the daemon's socket, which only its user can open, and the daemon never logs it, nor the params of any request.
+
 ## The client's environment
 
 A session's commands run with its client's environment, not the daemon's ([#1659](https://github.com/matthewyjiang/rho/issues/1659)). `rho/session/new`, `rho/session/prompt`, and `rho/session/attach` each carry `environment`, the client's environment variables as an object of strings; a client leaves out a variable whose name or value is not UTF-8. A new session's commands start with the opening client's, each prompt replaces it with the prompting client's, and an attach uses its own only when it reopens a session the daemon had unloaded. Processes already running keep the environment they started with. MCP servers, hooks, OpenAPI sources, CLI subagents, a Claude Code advisor, and the workflow runs a session starts read it too, as [Daemon](daemon.md#environment) describes. The daemon leaves provider credentials out of commands' environments, though CLI subagents and the advisor get them, never logs the environment, and never saves it, so a session reopened after a restart takes the reopening client's.
@@ -135,6 +147,9 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 | -32009 | `TurnEnded` | The turn ended before it saved the prompt; `data` is its outcome. |
 | -32011 | `InputNotOpen` | The input request is not open: another client answered it first, it timed out, or the turn withdrew it. |
 | -32012 | `SessionInUse` | Another process, such as a TUI or a foreground `rho run`, has the session open, so the daemon cannot reopen it. |
+| -32013 | `EnvironmentOverride` | A variable in the daemon's environment holds the auth profile's credential, so saving or deleting one would change nothing; `data.variable` names it. |
+| -32014 | `KeyRefused` | The provider rejected the API key, and nothing was saved. |
+| -32015 | `CredentialStoreUnavailable` | The credential store could not be opened, read, or written, as when the OS keyring is locked. |
 
 ## Versions and compatibility
 

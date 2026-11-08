@@ -116,7 +116,6 @@ impl Sessions {
         let opened = open_session(
             Opening::Saved(stored),
             environment.clone(),
-            &self.logouts,
             &self.subagents,
             &job,
         )

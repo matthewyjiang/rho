@@ -36,9 +36,8 @@ use crate::{
         cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
         config_repository::ConfigRepository,
         session_runtime::{
-            ApprovalPolicy, BackgroundWait, ChildAgents, HostCapabilities, Logouts,
-            QuestionSupport, RunShape, SessionBuild, SessionLaunch, SessionOpening, SessionRole,
-            SessionRuntime,
+            ApprovalPolicy, BackgroundWait, ChildAgents, HostCapabilities, QuestionSupport,
+            RunShape, SessionBuild, SessionLaunch, SessionOpening, SessionRole, SessionRuntime,
         },
     },
     config::Config,
@@ -128,7 +127,6 @@ pub(super) fn session_environment(environment: &ClientEnvironment) -> Result<Amb
 pub(super) async fn open_session(
     opening: Opening,
     environment: Ambient,
-    logouts: &Logouts,
     subagents: &Subagents,
     job: &JobId,
 ) -> anyhow::Result<OpenedSession> {
@@ -193,7 +191,6 @@ pub(super) async fn open_session(
         host_mcp: Default::default(),
         cwd,
         added_dirs: AddedDirs::default(),
-        logouts,
     };
     // Opening a session builds a large future; keep it on the heap.
     let runtime = match opening {

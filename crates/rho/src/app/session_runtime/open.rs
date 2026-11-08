@@ -18,7 +18,8 @@ use rho_sdk::{
 use super::{
     agent::loaded_agent,
     build::{build_session, session_config},
-    Logouts, OpenedSession, SessionBuild, SessionRuntime, SessionStorage, SessionTools,
+    credentials::SessionCredentials,
+    OpenedSession, SessionBuild, SessionRuntime, SessionStorage, SessionTools,
 };
 use crate::{
     added_dirs::AddedDirs,
@@ -28,6 +29,7 @@ use crate::{
         interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
     },
     config::Config,
+    credential_store::AppCredentialStore,
     session::{
         tree::ProjectedMessage, NoSessionFound, Session as StoredSession, SessionPersistence,
     },
@@ -47,9 +49,6 @@ pub(crate) struct SessionOpening<'a> {
     pub(crate) cwd: &'a Path,
     /// Launch `--add-dir` values plus the host's own roots.
     pub(crate) added_dirs: AddedDirs,
-    /// The host's logout count; the session's provider reads credentials
-    /// as it opens.
-    pub(crate) logouts: &'a Logouts,
 }
 
 /// What a workflow node's attempt finds under the session id it recorded.
@@ -150,10 +149,12 @@ impl SessionRuntime {
             host_mcp,
             cwd,
             added_dirs,
-            logouts,
         } = opening;
         let config = session_config(process_config, &host_mcp);
         let agent = build.launch.agent.clone();
+        // Taken before the build reads credentials, so a change during the
+        // build still reads as after it.
+        let credentials = SessionCredentials::read_at(AppCredentialStore::generation());
         let (built, permission) = build_session(&build, &agent, &config, cwd, &added_dirs, |_| {
             Ok(session_options_for_id(id))
         })
@@ -168,20 +169,18 @@ impl SessionRuntime {
             ),
             SessionPersistence::Ephemeral => SessionStorage::ephemeral(cwd.to_path_buf()),
         };
-        Ok(Self::new(
-            OpenedSession {
-                build,
-                built,
-                storage,
-                agent,
-                auth: config.auth,
-                host_mcp,
-                added_dirs,
-                permission,
-                reopen_notice: None,
-            },
-            logouts,
-        ))
+        Ok(Self::new(OpenedSession {
+            build,
+            built,
+            storage,
+            agent,
+            auth: config.auth,
+            host_mcp,
+            added_dirs,
+            permission,
+            reopen_notice: None,
+            credentials,
+        }))
     }
 
     /// Reopens the session saved as `id` in the opening's workspace, as the
@@ -216,7 +215,6 @@ impl SessionRuntime {
             host_mcp,
             cwd,
             added_dirs,
-            logouts,
         } = opening;
         let (agent, config) = loaded_agent(
             &build.launch.agent,
@@ -224,6 +222,9 @@ impl SessionRuntime {
             session_config(process_config, &host_mcp),
             || Ok(AgentCatalog::discover(cwd)?),
         )?;
+        // Taken before the build reads credentials, so a change during the
+        // build still reads as after it.
+        let credentials = SessionCredentials::read_at(AppCredentialStore::generation());
         let (built, permission) =
             build_session(&build, &agent, &config, cwd, &added_dirs, |provider| {
                 let snapshot = stored
@@ -243,22 +244,20 @@ impl SessionRuntime {
                 )
             })
             .flatten();
-        Ok(Self::new(
-            OpenedSession {
-                build,
-                built,
-                storage: SessionStorage::saved(stored),
-                agent,
-                // The restored child may use a different auth family than
-                // the process.
-                auth: config.auth,
-                host_mcp,
-                added_dirs,
-                permission,
-                reopen_notice,
-            },
-            logouts,
-        ))
+        Ok(Self::new(OpenedSession {
+            build,
+            built,
+            storage: SessionStorage::saved(stored),
+            agent,
+            // The restored child may use a different auth family than
+            // the process.
+            auth: config.auth,
+            host_mcp,
+            added_dirs,
+            permission,
+            reopen_notice,
+            credentials,
+        }))
     }
 
     /// The session's saved conversation, or `None` while nothing is saved:

@@ -51,7 +51,6 @@ impl SessionHost {
                 host_mcp: host_mcp_config(&request.mcp_servers),
                 cwd,
                 added_dirs,
-                logouts: &startup.logouts,
             },
             sdk_id,
             SessionPersistence::Saved,
@@ -95,7 +94,6 @@ impl SessionHost {
             host_mcp: host_mcp_config(&request.mcp_servers),
             cwd,
             added_dirs,
-            logouts: &startup.logouts,
         };
         let runtime = SessionRuntime::reopen(opening, request.session_id.0.as_ref()).await?;
         let replayed = match (history, runtime.saved_history()) {

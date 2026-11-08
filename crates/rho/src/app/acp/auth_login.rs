@@ -22,13 +22,10 @@ use agent_client_protocol::{
     },
     Error as AcpError,
 };
-use rho_providers::{
-    auth::{
-        browser::BrowserAvailability,
-        login_dispatch::{InteractiveLoginCompletion, ProviderAuthentication},
-        login_prompt::LoginPrompt,
-    },
-    provider,
+use rho_providers::auth::{
+    browser::BrowserAvailability,
+    login_dispatch::{InteractiveLoginCompletion, ProviderAuthentication},
+    login_prompt::LoginPrompt,
 };
 use tokio::sync::watch;
 
@@ -39,9 +36,8 @@ use super::{
     AcpClientPort,
 };
 use crate::{
-    app::{bootstrap, config_repository::ConfigRepository},
-    config::Config,
-    credential_store::{self, AppCredentialStore},
+    app::{config_repository::ConfigRepository, sign_in},
+    credential_store::AppCredentialStore,
 };
 
 /// Signs in to auth profile `auth` for the `authenticate` request
@@ -65,25 +61,17 @@ pub(super) async fn authenticate(
         AgentLogin::ApiKey => Some(KeyLogin::prepare(auth)?),
     };
     super::auth_store::choose_if_unset(config.clone(), forms, &request_id, port).await?;
-    let repository = ConfigRepository::new(config.clone());
-    let config = open_credential_store(config)
-        .map_err(|error| AcpError::internal_error().data(format!("{error:#}")))?;
+    let repository = ConfigRepository::new(config);
+    let config = sign_in::open_credential_store(&repository)
+        .map_err(|error| AcpError::internal_error().data(error.to_string()))?;
     match key_login {
         None => sign_in_with_oauth(auth, request_id, port).await?,
         Some(key_login) => {
-            let descriptor = provider::resolve_auth_mode(auth).map(|(descriptor, _)| descriptor);
-            let endpoint = descriptor
-                .and_then(|descriptor| config.resolved_provider_endpoint(descriptor.name));
+            let endpoint = key_login.endpoint(&config);
             key_login
                 .sign_in(endpoint.as_ref(), &AppCredentialStore, request_id, port)
                 .await?;
-            if let Some(descriptor) = descriptor {
-                crate::app::endpoint_login::record(&repository, *descriptor).map_err(|error| {
-                    AcpError::internal_error().data(format!(
-                        "saved the key, but could not record the login: {error:#}"
-                    ))
-                })?;
-            }
+            key_login.record_login(&repository)?;
         }
     }
     Ok(AuthenticateResponse::new())
@@ -181,17 +169,6 @@ impl LoginFlight {
         drop(running);
         result
     }
-}
-
-/// Activates the credential store as configured now, from the `--config`
-/// override `config`, and returns that config, so the store a login chose
-/// after launch is the one used. With no store chosen that is the OS store,
-/// which sessions read by default.
-pub(super) fn open_credential_store(config: Option<PathBuf>) -> anyhow::Result<Config> {
-    let repository = ConfigRepository::new(config);
-    let config = repository.load()?;
-    credential_store::activate_for_login(&config, &bootstrap::absolute_config_path(&repository)?)?;
-    Ok(config)
 }
 
 /// A started login as the host shows it.
