@@ -83,7 +83,7 @@ impl DaemonSession {
         match *self {}
     }
 
-    pub(in crate::tui) async fn hold(&mut self, _id: rho_protocol::InputRequestId) {
+    pub(in crate::tui) async fn hold(&mut self, _id: rho_protocol::InputRequestId) -> bool {
         match *self {}
     }
 }
@@ -417,10 +417,11 @@ mod unix {
         }
 
         /// Stops input request `id`'s timeout, as once the person starts on
-        /// it. Once this returns, a refusal's error row waits for
-        /// [`Self::take_views`]; a request that already closed needs none,
-        /// since its resolution says how.
-        pub(in crate::tui) async fn hold(&mut self, id: InputRequestId) {
+        /// it, and says whether it needs no more holding: the daemon held
+        /// it, it already closed (its resolution says how), or the
+        /// connection is gone. Once a hold fails, its error row waits for
+        /// [`Self::take_views`].
+        pub(in crate::tui) async fn hold(&mut self, id: InputRequestId) -> bool {
             let params = SessionHoldParams {
                 session: self.id.clone(),
                 request: id,
@@ -428,15 +429,18 @@ mod unix {
             // Without the attached connection there is nothing to hold for:
             // following ends once the TUI reads its loss.
             let Ok(link) = self.attached_link().await else {
-                return;
+                return true;
             };
             match link.request::<SessionHold>(&params).await {
-                Ok(_) => {}
-                Err(error) if error.error_code() == Some(ErrorCode::InputNotOpen) => {}
-                Err(error) => self.pending.push(DaemonView::Error(format!(
-                    "could not hold the request: {:#}",
-                    anyhow::Error::new(error)
-                ))),
+                Ok(_) => true,
+                Err(error) if error.error_code() == Some(ErrorCode::InputNotOpen) => true,
+                Err(error) => {
+                    self.pending.push(DaemonView::Error(format!(
+                        "could not hold the request: {:#}",
+                        anyhow::Error::new(error)
+                    )));
+                    false
+                }
             }
         }
     }

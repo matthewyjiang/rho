@@ -153,7 +153,8 @@ impl App {
                         .await;
                     // Before any cancel: Esc at an approval denies it, then
                     // cancels the turn, in that order, as in process.
-                    self.answer_daemon_input(terminal).await?;
+                    let cancelling = matches!(control, Ok(StreamControl::Interrupt));
+                    self.answer_daemon_input(terminal, cancelling).await?;
                     match control {
                         // Quitting leaves the turn to the daemon.
                         Ok(StreamControl::Interrupt) if self.should_quit => {}

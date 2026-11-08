@@ -144,30 +144,36 @@ impl App {
     }
 
     /// Sends the open prompt's reply to the daemon once the person gave it,
-    /// or holds its request once they started on it; run after each
-    /// terminal event the running turn handles.
+    /// or holds its request once they started on it, then shows the next
+    /// waiting request; run after each terminal event the running turn
+    /// handles. While `cancelling`, as when that event cancels the turn,
+    /// nothing new shows: the turn's end closes what it still asks.
     pub(super) async fn answer_daemon_input(
         &mut self,
         terminal: &mut DefaultTerminal,
+        cancelling: bool,
     ) -> anyhow::Result<()> {
-        let Some((id, reaction)) = self.take_daemon_reaction() else {
-            return self.hold_touched_daemon_input(terminal).await;
-        };
-        match reaction {
-            Reaction::Answer(answer) => {
+        match self.take_daemon_reaction() {
+            None => self.hold_touched_daemon_input(terminal).await?,
+            Some((id, Reaction::Answer(answer))) => {
                 if let Some(session) = self.info.session.daemon.as_mut() {
                     session.answer(id, answer).await;
                 }
                 self.show_taken_daemon_views(terminal).await?;
             }
             // The cancel withdraws the request.
-            Reaction::CancelTurn => {
+            Some((id, Reaction::CancelTurn)) => {
                 self.daemon_answers.cancelled.insert(id);
                 self.cancel_daemon_turn().await;
+                return Ok(());
             }
-            Reaction::Nothing => {}
+            Some((_, Reaction::Nothing)) => {}
         }
-        self.show_next_daemon_input().await;
+        // Run on every event, so requests a failed cancel left waiting
+        // show at the next key.
+        if !cancelling {
+            self.show_next_daemon_input().await;
+        }
         Ok(())
     }
 
@@ -178,18 +184,24 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         let touched = !self.questionnaire_timeout_running();
-        let Some(shown) = self
+        let Some(id) = self
             .daemon_answers
             .shown
-            .as_mut()
+            .as_ref()
             .filter(|shown| shown.times_out && touched)
+            .map(|shown| shown.id)
         else {
             return Ok(());
         };
-        shown.times_out = false;
-        let id = shown.id;
-        if let Some(session) = self.info.session.daemon.as_mut() {
-            session.hold(id).await;
+        let Some(session) = self.info.session.daemon.as_mut() else {
+            return Ok(());
+        };
+        // A failed hold leaves the daemon's deadline running, so the next
+        // touch tries again.
+        if session.hold(id).await {
+            if let Some(shown) = self.daemon_answers.shown.as_mut() {
+                shown.times_out = false;
+            }
         }
         self.show_taken_daemon_views(terminal).await
     }
