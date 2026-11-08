@@ -16,13 +16,12 @@ use serde::{Deserialize, Serialize};
 
 /// Choices a client makes for a session the daemon opens for it.
 ///
-/// The session owns its directories, the parts it leaves out but
-/// questions, and host child threads: it saves them, and a reopen adds the
-/// opening request's to the saved ones, so a later client can narrow a
-/// session, never widen it, and a session whose host ran its children
-/// keeps them there. The opening client owns its MCP servers and whether it
-/// shows questions: a reopened session has those its opening request names,
-/// and none when a prompt reopens it.
+/// The session owns its directories and the parts it leaves out but
+/// questions: it saves them, and a reopen adds the opening request's to the
+/// saved ones, so a later client can narrow a session, never widen it. The
+/// opening client owns its MCP servers, whether it shows questions, and
+/// whether its host runs the session's children: a reopened session has
+/// those its opening request names, and none when a prompt reopens it.
 ///
 /// That holds across the daemon's reopens. A host that opens the session
 /// file in its own process does not keep it yet: `rho acp`'s
@@ -56,9 +55,8 @@ pub struct SessionSetup {
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub without: BTreeSet<SessionPart>,
     /// Who runs the children the session's `agent` tool starts: the daemon,
-    /// when absent, or the client's host. The session saves
-    /// [`ChildThreads::Host`], and a reopen keeps it whatever the request
-    /// says.
+    /// when absent, or the client's host. Like the MCP servers that host
+    /// threads go through, it is the opening client's and never saved.
     #[serde(default, skip_serializing_if = "ChildThreads::is_daemon")]
     pub child_threads: ChildThreads,
 }
@@ -83,8 +81,8 @@ pub enum ChildThreads {
     /// `delegate_task`, `task_status`, and `task_cancel` tools of the
     /// host's `t3-code` MCP server, which the setup's
     /// [`SessionSetup::mcp_servers`] provides. While that server or one of
-    /// its tools is missing, as when a prompt reopens the session, every
-    /// `agent` call fails rather than run the child in the daemon.
+    /// its tools is missing, every `agent` call fails rather than run the
+    /// child in the daemon.
     Host,
 }
 

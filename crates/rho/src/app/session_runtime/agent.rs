@@ -225,7 +225,6 @@ impl SessionRuntime {
                 code_mode: built.tools.code_mode().clone(),
                 added_dirs: self.added_dirs.clone(),
                 left_out: self.build.launch.left_out,
-                children: self.build.host.children,
                 auth: config.auth.clone(),
                 // As before the rebind; the next save records the rebound
                 // session's.

@@ -579,14 +579,14 @@ async fn a_setups_mcp_server_replaces_the_config_server_of_its_name() {
     );
 }
 
-// Covers: a session whose setup has its host run its children never runs
-// one in the daemon: without the host's `t3-code` task tools its `agent`
-// call fails, also once the daemon unloaded it and a reopen that brings no
-// setup opened it again, rather than the session falling back to a subagent
-// of its own.
+// Covers: who runs a session's children follows the client that opened it,
+// as its MCP servers do: a setup whose host runs them never falls back to a
+// daemon subagent (without the host's `t3-code` task tools the `agent` call
+// fails), and once the daemon unloaded it, a reopen that brings no setup
+// runs them in the daemon instead of keeping a host it no longer has.
 // Owner: daemon session setup.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_host_threads_session_never_runs_its_children_in_the_daemon() {
+async fn child_threads_follow_the_client_that_opened_the_session() {
     let sandbox = Sandbox::new();
     // No approval stands between the call and its result.
     sandbox.set_permission_mode("bypass");
@@ -612,20 +612,15 @@ async fn a_host_threads_session_never_runs_its_children_in_the_daemon() {
         });
         let (_, events) = turn(&sandbox, &client, &session, &call.to_string()).await;
         let id = ToolCallId::new(id);
-        statuses.push(
-            events
-                .iter()
-                .filter_map(|event| match event {
-                    SessionEvent::ToolCall(update) if update.id == id => update.status,
-                    _ => None,
-                })
-                .last(),
-        );
+        statuses.push(events.iter().rev().find_map(|event| match event {
+            SessionEvent::ToolCall(update) if update.id == id => update.status,
+            _ => None,
+        }));
     }
 
     assert_eq!(
         statuses,
-        [Some(ToolStatus::Failed), Some(ToolStatus::Failed)],
+        [Some(ToolStatus::Failed), Some(ToolStatus::Completed)],
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

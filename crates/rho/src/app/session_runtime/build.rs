@@ -7,8 +7,7 @@ use std::{
 use rho_sdk::{hooks::HookHostLabels, provider::ModelProvider, SessionOptions};
 
 use super::{
-    ensure_auto_classifier_model, ApprovalPolicy, ChildAgents, LeftOut, SessionPermission,
-    UnattendedApprovals,
+    ensure_auto_classifier_model, ApprovalPolicy, LeftOut, SessionPermission, UnattendedApprovals,
 };
 use crate::{
     added_dirs::AddedDirs,
@@ -68,8 +67,7 @@ pub(crate) struct SessionLaunch {
 pub(crate) struct HostCapabilities {
     /// Whether the host can put questions to a person.
     pub(crate) questions: QuestionSupport,
-    /// Who runs the `agent` tool's children. The session's saves record
-    /// it.
+    /// Who runs the `agent` tool's children.
     pub(crate) children: ChildAgents,
     /// Where the session's in-process agent runs take capacity: its
     /// subagents, and its workflow runs' agent nodes, which run in process
@@ -199,6 +197,19 @@ pub(crate) enum QuestionSupport {
     /// Sessions get neither the questionnaire tool nor the MCP elicitation
     /// capability, and a question that arrives anyway is declined.
     Unavailable,
+}
+
+/// Who runs the children the `agent` tool starts. Like its MCP servers,
+/// the client that opens the session chooses it; nothing is saved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ChildAgents {
+    /// Subagents run in this process.
+    InProcess,
+    /// The host runs them as its own threads (T3 Code's, which `rho acp
+    /// --t3code` asks for; see `tools::agent::install_host_delegation`), so
+    /// its UI owns them. The agent nodes of the session's workflow runs
+    /// still run in this process.
+    HostThreads,
 }
 
 /// Builds a session as `build` says, with the permission state of
