@@ -229,7 +229,8 @@ impl DaemonEvents {
     fn turn_ended(&mut self, outcome: TurnOutcome) -> Vec<DaemonView> {
         match outcome {
             TurnOutcome::Answered { text, .. } | TurnOutcome::MaxSteps { text } => {
-                if self.called_since_reply && text != self.reply {
+                // An empty answer: the last step only called tools.
+                if self.called_since_reply && !text.is_empty() && text != self.reply {
                     return vec![DaemonView::Text {
                         kind: StreamKind::Assistant,
                         text,
