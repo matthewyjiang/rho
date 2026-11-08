@@ -325,7 +325,7 @@ impl SdkEventAdapter {
                 })]
             }
             RunEvent::ToolFinished { call_id, result } => {
-                let (_ok, presented) = self.presenter().finished(&call_id, result);
+                let (_ok, presented) = self.presenter().finished(&call_id, &result);
                 vec![ViewEvent::Update(ViewModelEvent::ToolFinished {
                     call_id,
                     presentation: presented.presentation,

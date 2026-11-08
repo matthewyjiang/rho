@@ -362,7 +362,7 @@ impl LiveEvents {
             }
             RunEvent::ToolFinished { call_id, result } => {
                 self.present_proposal(call_id.as_str());
-                let (_ok, shown) = self.presenter.finished(call_id, result.clone());
+                let (_ok, shown) = self.presenter.finished(call_id, result);
                 let finished = finished_update(result, &self.workspace, shown.presentation);
                 let finished = self.tool_update(call_id, CallState::Finished, finished);
                 // The call may have replaced the checklist, whether it ran

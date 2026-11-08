@@ -97,7 +97,8 @@ fn todo_cards_project_streaming_arguments_and_completion_outcomes() {
     ] {
         let mut presenter = InteractiveToolPresenter::new(PathBuf::from("."), Default::default());
         let _ = presenter.proposed(call.clone());
-        let (_, live) = presenter.finished(&ToolCallId::from_string("todo-1").unwrap(), completion);
+        let (_, live) =
+            presenter.finished(&ToolCallId::from_string("todo-1").unwrap(), &completion);
         let replay = presenter.historical(&call, ok, content);
         for actual in [live.presentation, replay.presentation] {
             pretty_assertions::assert_eq!(actual, Presentation::Card(expected.clone()));
@@ -303,7 +304,7 @@ fn generic_tool_summary_metadata_fills_the_header() {
     );
     let (_, finished) = presenter.finished(
         &ToolCallId::from_string("ok").unwrap(),
-        ToolCompletion::Completed(ToolOutput::text("clicked").metadata(metadata.clone())),
+        &ToolCompletion::Completed(ToolOutput::text("clicked").metadata(metadata.clone())),
     );
     assert_eq!(
         finished.presentation,

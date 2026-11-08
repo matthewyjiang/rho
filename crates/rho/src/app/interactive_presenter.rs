@@ -398,7 +398,7 @@ impl InteractiveToolPresenter {
     pub(crate) fn finished(
         &mut self,
         call_id: &ToolCallId,
-        result: ToolCompletion,
+        result: &ToolCompletion,
     ) -> (bool, FinishedToolPresentation) {
         let mut view = self
             .calls
@@ -409,7 +409,7 @@ impl InteractiveToolPresenter {
                 arguments: serde_json::Value::Object(Default::default()),
                 metadata: ToolMetadata::default(),
             });
-        let (ok, content, data) = match &result {
+        let (ok, content, data) = match result {
             ToolCompletion::Completed(output) => {
                 if output.presentation() != &ToolMetadata::default() {
                     view.metadata = output.presentation().clone();

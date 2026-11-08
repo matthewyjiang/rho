@@ -298,10 +298,10 @@ fn tool_calls_carry_the_tui_cards() {
     let ran_started = start("call-1", "ls");
     let cut_off_started = start("call-3", "sleep 9");
     let ran_progress = Presentation::Card(tui.updated(&call_id("call-1"), &progress).card);
-    let ran_finished = tui.finished(&call_id("call-1"), ran.clone()).1.presentation;
+    let ran_finished = tui.finished(&call_id("call-1"), &ran).1.presentation;
     tui.proposed(shell_call("call-2", "cat b.rs"));
     let unstarted_finished = tui
-        .finished(&call_id("call-2"), ToolCompletion::Unavailable)
+        .finished(&call_id("call-2"), &ToolCompletion::Unavailable)
         .1
         .presentation;
 

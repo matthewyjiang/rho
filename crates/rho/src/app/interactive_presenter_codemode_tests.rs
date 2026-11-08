@@ -61,7 +61,7 @@ fn finished_card_is_the_script() {
     let output = ToolOutput::text("printed line").with_structured_content(json!({"calls": 3}));
     let (ok, live) = presenter.finished(
         &ToolCallId::from_string(call.id.clone()).unwrap(),
-        ToolCompletion::Completed(output),
+        &ToolCompletion::Completed(output),
     );
     assert!(ok);
     let want = expected(ToolCardStatus::Ok, Some("3 calls"), &script);
@@ -77,7 +77,7 @@ fn finished_card_is_the_script() {
         .with_structured_content(json!({"calls": 1, "error": "x"}));
     let (ok, failed) = presenter.finished(
         &ToolCallId::from_string(call.id).unwrap(),
-        ToolCompletion::Completed(failed_output),
+        &ToolCompletion::Completed(failed_output),
     );
     assert!(!ok);
     let mut card = expected(ToolCardStatus::Error, Some("1 call"), &script);
