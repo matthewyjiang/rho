@@ -824,13 +824,22 @@ fn writing(job: &JobId, session: &SessionId) -> RpcError {
 }
 
 /// The error for a session the daemon could not open: `SignInRequired`
-/// when signing in can fix it, else `SessionOpenFailed`.
+/// when signing in can fix it, in Rho's words with the full cause only in
+/// the daemon's log, else `SessionOpenFailed`.
 fn open_failed(error: anyhow::Error) -> RpcError {
-    let code = match CredentialFailure::find(&error) {
-        Some(_) => ErrorCode::SignInRequired,
-        None => ErrorCode::SessionOpenFailed,
-    };
-    RpcError::new(code, format!("could not open session: {error:#}"))
+    match CredentialFailure::find(&error) {
+        Some(failure) => {
+            tracing::warn!(error = format!("{error:#}"), "session needs a sign-in");
+            RpcError::new(
+                ErrorCode::SignInRequired,
+                format!("could not open session: {}", failure.message()),
+            )
+        }
+        None => RpcError::new(
+            ErrorCode::SessionOpenFailed,
+            format!("could not open session: {error:#}"),
+        ),
+    }
 }
 
 /// The error a request that needs the session answers while a delete
@@ -858,3 +867,7 @@ fn ended_early(outcome: &TurnOutcome) -> RpcError {
     let data = serde_json::to_value(outcome).expect("a turn outcome serializes");
     RpcError::new(ErrorCode::TurnEnded, message).with_data(data)
 }
+
+#[cfg(test)]
+#[path = "open_failed_tests.rs"]
+mod open_failed_tests;

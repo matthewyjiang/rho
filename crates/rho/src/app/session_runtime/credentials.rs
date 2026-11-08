@@ -49,6 +49,20 @@ impl CredentialFailure {
         error.chain().find_map(Self::of_cause)
     }
 
+    /// What to tell a client, in Rho's words: provider messages and
+    /// diagnostics may quote the request, so none are passed on.
+    pub(crate) fn message(self) -> &'static str {
+        match self {
+            Self::Missing(message) => message,
+            Self::Unreadable => "could not read the stored credentials; sign in again",
+            // After SDK conversion a 401, a 403 (which can mean the account
+            // lacks access), and a store failure look alike.
+            Self::Refused => {
+                "could not authenticate with the provider; sign in again or check the account's access"
+            }
+        }
+    }
+
     fn of_cause(cause: &(dyn std::error::Error + 'static)) -> Option<Self> {
         if let Some(error) = cause.downcast_ref::<ModelError>() {
             return match error {

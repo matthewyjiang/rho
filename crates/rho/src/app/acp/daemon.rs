@@ -201,8 +201,14 @@ async fn route(
             }
         }
     }
-    alive.store(false, Ordering::Release);
-    let Routes { sessions, login } = std::mem::take(&mut *lock(&routes));
+    // One step under the lock: a route installed after it belongs to the
+    // next connection, which `link` opens only once this one is dead, so
+    // this router never takes it.
+    let Routes { sessions, login } = {
+        let mut routes = lock(&routes);
+        alive.store(false, Ordering::Release);
+        std::mem::take(&mut *routes)
+    };
     for route in sessions.into_values() {
         route(Routed::Lost);
     }
@@ -265,8 +271,9 @@ pub(super) fn daemon_error(error: &ClientError) -> AcpError {
     };
     let acp_error = match error.error_code() {
         Some(ErrorCode::InvalidParams | ErrorCode::SessionOpenFailed) => AcpError::invalid_params(),
-        // As a failed turn's: the daemon's message, which names how to sign
-        // in and never quotes a credential, and no data.
+        // As a failed turn's: the daemon's own message, which names how to
+        // sign in and quotes neither a credential nor the provider, and no
+        // data.
         Some(ErrorCode::SignInRequired) => {
             return AcpError::new(
                 i32::from(agent_client_protocol::ErrorCode::AuthRequired),
