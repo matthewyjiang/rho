@@ -10,20 +10,21 @@
 //! but does not record its own `--no-*` flags, until it becomes a daemon
 //! client (#1667).
 //! The opening client owns its MCP servers, whose `env` and `headers` may
-//! hold secrets, and whether it shows questions: a reopen takes them from
-//! its own request alone, so a prompt, which brings no setup, reopens a
-//! session without them.
+//! hold secrets, whether it shows questions, and whether its own threads
+//! run the session's children, which goes with the MCP server they go
+//! through: a reopen takes them from its own request alone, so a prompt,
+//! which brings no setup, reopens a session without them.
 
 use std::path::Path;
 
-use rho_protocol::{ErrorCode, RpcError, SessionPart, SessionSetup};
+use rho_protocol::{ChildThreads, ErrorCode, RpcError, SessionPart, SessionSetup};
 
 use super::open_failed;
 use crate::{
     added_dirs::{session_added_dirs, AddedDirs},
     app::{
         host_mcp::host_mcp_config,
-        session_runtime::{LeftOut, QuestionSupport},
+        session_runtime::{ChildAgents, LeftOut, QuestionSupport},
     },
     session::Session as StoredSession,
     tools::mcp::config::McpConfig,
@@ -35,6 +36,8 @@ pub(super) struct Setup {
     pub(super) left_out: LeftOut,
     /// Whether its client shows questions.
     pub(super) questions: QuestionSupport,
+    /// Who runs its children: the host's threads when the request says so.
+    pub(super) children: ChildAgents,
     /// The directories it adds: those its file keeps that still exist, and
     /// the request's.
     pub(super) added_dirs: AddedDirs,
@@ -93,6 +96,10 @@ impl Setup {
         }
         let asked_dirs = session_added_dirs(&requested.additional_directories, &root)
             .map_err(|rejected| invalid(rejected.to_string()))?;
+        let children = match requested.child_threads {
+            ChildThreads::Daemon => ChildAgents::InProcess,
+            ChildThreads::Host => ChildAgents::HostThreads,
+        };
         let left_out = saved_left_out.union(asked);
         let added_dirs = saved_dirs.union(&root, &asked_dirs);
         Ok(Self {
@@ -100,6 +107,7 @@ impl Setup {
                 && (left_out != saved_left_out || added_dirs != saved_dirs),
             left_out,
             questions,
+            children,
             added_dirs,
             host_mcp: host_mcp_config(&requested.mcp_servers),
         })

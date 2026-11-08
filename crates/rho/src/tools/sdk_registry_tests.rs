@@ -31,6 +31,52 @@ fn capabilities(names: &[&str]) -> AgentCapabilities {
     )
 }
 
+// Covers: switching delegation replaces each native entry point the session
+// has, in place, and adds none it lacks, so a session that may launch but
+// not manage children (or neither) gains no tool. Owner: app inventory.
+#[test]
+fn delegation_replacement_swaps_only_the_entry_points_present() {
+    fn named_tool(name: &str) -> Arc<dyn Tool> {
+        Arc::new(rho_sdk::tool::ScriptedTool::new(
+            rho_sdk::model::ToolSpec {
+                name: name.into(),
+                description: String::new(),
+                input_schema: json!({"type": "object"}),
+            },
+            rho_sdk::tool::ScriptedToolOutcome::Success(rho_sdk::tool::ToolOutput::text("ok")),
+        ))
+    }
+
+    for names in [
+        vec!["read_file", "agent", "agents"],
+        vec!["read_file", "agent"],
+        vec!["read_file", "agents"],
+        vec!["read_file"],
+    ] {
+        let original = names
+            .iter()
+            .map(|name| named_tool(name))
+            .collect::<Vec<_>>();
+        let mut tools = AppToolSet::disabled();
+        tools.add_bundle(StaticToolBundle::new(original.clone()));
+        let (agent, agents) = (named_tool("agent"), named_tool("agents"));
+        tools.replace_delegation_tools(Arc::clone(&agent), Arc::clone(&agents));
+
+        assert_eq!(tools.unfiltered_names().collect::<Vec<_>>(), names);
+        for (name, before) in names.iter().zip(&original) {
+            let expected = match *name {
+                "agent" => &agent,
+                "agents" => &agents,
+                _ => before,
+            };
+            assert!(
+                Arc::ptr_eq(&tools.tool_named(name).unwrap(), expected),
+                "{names:?}: {name}"
+            );
+        }
+    }
+}
+
 struct RegistryWorkflowService;
 
 impl super::super::workflow::WorkflowToolService for RegistryWorkflowService {

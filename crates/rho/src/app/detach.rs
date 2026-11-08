@@ -13,7 +13,7 @@ use std::{collections::BTreeSet, path::PathBuf, time::Duration};
 
 use rho_protocol::SessionPart;
 #[cfg(unix)]
-use rho_protocol::{SessionNewParams, SessionSetup};
+use rho_protocol::{ChildThreads, SessionNewParams, SessionSetup};
 
 #[cfg(unix)]
 use super::automation::AutomationExit;
@@ -118,6 +118,7 @@ fn session_new(
             additional_directories: added.as_slice().to_vec(),
             mcp_servers: Vec::new(),
             without: passed.without,
+            child_threads: ChildThreads::Daemon,
         },
     })
 }

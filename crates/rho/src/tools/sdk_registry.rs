@@ -490,6 +490,22 @@ impl AppToolSet {
             .map(|(_, tool)| tool.clone())
     }
 
+    /// Replaces the native `agent` and `agents` tools the session has with
+    /// `agent` and `agents`, adding neither one it lacks. The native bundle
+    /// stays alive (with an idle manager) for lifecycle and permission
+    /// updates; replacement tools own their own execution state.
+    pub(crate) fn replace_delegation_tools(&mut self, agent: Arc<dyn Tool>, agents: Arc<dyn Tool>) {
+        self.inventory.mutate(|tools| {
+            for tool in tools.iter_mut() {
+                match tool.spec().name.as_str() {
+                    "agent" => *tool = Arc::clone(&agent),
+                    "agents" => *tool = Arc::clone(&agents),
+                    _ => {}
+                }
+            }
+        });
+    }
+
     /// The advisor's session store, present whenever the run may offer the
     /// advisor, even while advisor mode is off.
     pub fn advisor(&self) -> Option<&AdvisorSessionStore> {
