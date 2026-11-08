@@ -354,8 +354,9 @@ async fn a_sessions_cli_agents_and_workflow_commands_see_its_clients_environment
         ),
     );
     // The command runs through an interpreter only clients have, as a
-    // `#!/usr/bin/env node` script does with mise's `node`.
-    std::fs::copy("/bin/sh", bin.join("sh-1659")).unwrap();
+    // `#!/usr/bin/env node` script does with mise's `node` (a symlink, as
+    // mise's is: a copy of macOS's `/bin/sh` trampoline does not run).
+    std::os::unix::fs::symlink("/bin/sh", bin.join("sh-1659")).unwrap();
     install(
         "probe-1659",
         format!("#!/usr/bin/env sh-1659\n{}\n", record("command.txt")),
