@@ -11,10 +11,7 @@
 use std::sync::Arc;
 
 use base64::Engine;
-use rho_sdk::{
-    model::ImageContent,
-    tool::{ToolAsset, ToolError, ToolErrorKind},
-};
+use rho_sdk::tool::{ToolAsset, ToolError, ToolErrorKind};
 use rmcp::model::{CallToolResult, ContentBlock, ResourceContents};
 
 /// Encoded image bytes one MCP result may retain for card display.
@@ -24,15 +21,6 @@ use rmcp::model::{CallToolResult, ContentBlock, ResourceContents};
 /// generous tripwire for one screenshot while still bounding memory an
 /// untrusted server can force Rho to hold on a single tool result.
 pub(super) const MAX_RETAINED_IMAGE_BYTES: usize = 4 * 1024 * 1024;
-
-/// The host selects whether image observations are delivered to the model.
-/// Presentation retention and model observations are independent outputs.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) enum McpImageDelivery {
-    #[default]
-    PresentationOnly,
-    ModelAndPresentation,
-}
 
 /// Serialized JSON Schema bytes Rho will compile for `outputSchema` validation.
 const MAX_OUTPUT_SCHEMA_BYTES: usize = 64 * 1024;
@@ -95,7 +83,6 @@ struct AssetBudget {
     retained_bytes: usize,
     retained_images: usize,
     assets: Vec<ToolAsset>,
-    images: Vec<ImageContent>,
 }
 
 /// Render a completed successful or failed call. The failure flag keeps the
@@ -105,13 +92,12 @@ pub(super) fn render(
     result: CallToolResult,
     expectation: &ResultExpectation,
     max_output_bytes: usize,
-    image_delivery: McpImageDelivery,
 ) -> Result<Rendered<serde_json::Value>, ToolError> {
     let failed = result.is_error.unwrap_or(false);
     let mut budget = AssetBudget::default();
     let mut sections = Vec::new();
     for block in &result.content {
-        if let Some(section) = render_block(block, &mut budget, image_delivery) {
+        if let Some(section) = render_block(block, &mut budget) {
             sections.push(section);
         }
     }
@@ -154,7 +140,6 @@ pub(super) fn render(
     Ok(rendered
         .failed_if(failed)
         .with_assets(budget.assets)
-        .with_images(budget.images)
         .limit_data_with_size(max_output_bytes, structured_bytes))
 }
 
@@ -172,11 +157,7 @@ pub(super) fn render_prompt_messages(
     let sections = messages
         .iter()
         .filter_map(|message| {
-            let body = render_block(
-                &message.content,
-                &mut budget,
-                McpImageDelivery::PresentationOnly,
-            )?;
+            let body = render_block(&message.content, &mut budget)?;
             Some(match message.role {
                 rmcp::model::Role::User => body,
                 // Anything the server puts in the assistant's mouth is labelled,
@@ -306,11 +287,7 @@ fn mirrors(section: &str, structured: &serde_json::Value) -> bool {
 
 /// Render one block, pushing any renderable binary onto `assets`. Returns the
 /// text this block contributes, if any.
-fn render_block(
-    block: &ContentBlock,
-    budget: &mut AssetBudget,
-    image_delivery: McpImageDelivery,
-) -> Option<String> {
+fn render_block(block: &ContentBlock, budget: &mut AssetBudget) -> Option<String> {
     match block {
         ContentBlock::Text(text) => Some(text.text.clone()),
         ContentBlock::Image(image) => Some(binary_section(
@@ -318,14 +295,12 @@ fn render_block(
             &image.mime_type,
             &image.data,
             budget,
-            image_delivery,
         )),
         ContentBlock::Audio(audio) => Some(binary_section(
             "audio",
             &audio.mime_type,
             &audio.data,
             budget,
-            image_delivery,
         )),
         ContentBlock::Resource(embedded) => Some(match &embedded.resource {
             ResourceContents::TextResourceContents { uri, text, .. } => {
@@ -338,8 +313,7 @@ fn render_block(
                 ..
             } => {
                 let media_type = mime_type.as_deref().unwrap_or("application/octet-stream");
-                let descriptor =
-                    binary_section("resource", media_type, blob, budget, image_delivery);
+                let descriptor = binary_section("resource", media_type, blob, budget);
                 format!("[resource {uri}] {descriptor}")
             }
             // `ResourceContents` is non-exhaustive: a kind from a newer spec
@@ -359,8 +333,7 @@ fn render_block(
     }
 }
 
-/// Interpret binary content once. Opted-in model images keep their original
-/// payload; preview selection independently retains a bounded card asset.
+/// Interpret binary content once, retaining a bounded card asset for images.
 ///
 /// The card shows one image, so only the first image that fits the retained
 /// budget is kept. Later or oversized images stay as descriptors only.
@@ -369,28 +342,14 @@ fn binary_section(
     media_type: &str,
     encoded: &str,
     budget: &mut AssetBudget,
-    image_delivery: McpImageDelivery,
 ) -> String {
     let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
         return format!("[{label} {media_type}, not valid base64]");
     };
     let size = bytes.len();
-    let mut descriptor = format!("[{label} {media_type}, {}]", byte_size(size));
+    let descriptor = format!("[{label} {media_type}, {}]", byte_size(size));
     if !media_type.starts_with("image/") {
         return descriptor;
-    }
-    match image_delivery {
-        McpImageDelivery::PresentationOnly => {}
-        McpImageDelivery::ModelAndPresentation => {
-            if let Some(mime_type) = ImageContent::mime_type_from_bytes(&bytes) {
-                budget.images.push(ImageContent {
-                    data: encoded.into(),
-                    mime_type: mime_type.into(),
-                });
-            } else {
-                descriptor.push_str(" [not delivered to model: unsupported image format]");
-            }
-        }
     }
     if budget.retained_images > 0 {
         return format!("{descriptor} [not shown: card keeps only the first image]");

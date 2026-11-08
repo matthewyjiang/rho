@@ -180,11 +180,6 @@ struct PlanExitTools {
     permission_requests: Option<super::plan_exit::PlanPermissionReceiver>,
 }
 
-struct ComputerTools {
-    session: super::computer_use::ComputerUseSession,
-    registration: HostToolRegistration,
-}
-
 /// Retains ownership independently of whether a host-controlled tool is advertised.
 struct HostToolRegistration {
     tool: Arc<dyn Tool>,
@@ -217,7 +212,6 @@ pub struct AppToolSet {
     inventory: ToolInventory,
     bundles: Vec<Box<dyn ToolBundle>>,
     advisor: Option<AdvisorTools>,
-    computer_use: Option<ComputerTools>,
     plan_exit: Option<PlanExitTools>,
     subagents: Option<SubagentManager>,
     /// The agent catalog the `agent` tool spec advertises, when registered.
@@ -247,7 +241,6 @@ impl AppToolSet {
             advisor: None,
             subagents: None,
             advertised_agents: None,
-            computer_use: None,
             plan_exit: None,
             processes: None,
             workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
@@ -441,35 +434,6 @@ impl AppToolSet {
 
     pub(crate) fn todo_state(&self) -> super::todo::TodoState {
         self.todo.clone()
-    }
-
-    /// Attach the root interactive session's host-controlled desktop grant.
-    pub(crate) fn with_computer_use(
-        mut self,
-        session: super::computer_use::ComputerUseSession,
-    ) -> Self {
-        let connected = session.status() == super::computer_use::ComputerUseStatus::Connected;
-        self.set_computer_use_registered(false);
-        self.computer_use = Some(ComputerTools {
-            registration: HostToolRegistration::new(session.tool()),
-            session,
-        });
-        self.set_computer_use_registered(connected);
-        self
-    }
-
-    pub(crate) fn computer_use(&self) -> Option<&super::computer_use::ComputerUseSession> {
-        self.computer_use.as_ref().map(|computer| &computer.session)
-    }
-
-    /// Advertising is separate from authorization. The runtime reconciles this
-    /// at idle boundaries; retained tool handles enforce the grant themselves.
-    pub(crate) fn set_computer_use_registered(&mut self, registered: bool) -> bool {
-        let Some(computer) = self.computer_use.as_mut() else {
-            return false;
-        };
-        self.inventory
-            .mutate(|tools| computer.registration.set_registered(tools, registered))
     }
 
     /// Prompts and resources connected servers offer the user.
@@ -760,9 +724,6 @@ impl AppToolSet {
     }
 
     pub async fn shutdown(&self) {
-        if let Some(computer) = &self.computer_use {
-            computer.session.disconnect().await;
-        }
         for bundle in &self.bundles {
             bundle.shutdown().await;
         }

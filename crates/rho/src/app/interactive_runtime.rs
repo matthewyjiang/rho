@@ -31,11 +31,6 @@ pub(crate) use cache_warm::{CacheWarmOutcome, PING_OUTPUT_TOKENS};
 mod codemode;
 #[path = "interactive_runtime_compact.rs"]
 mod compact;
-#[path = "interactive_runtime_computer.rs"]
-mod computer;
-pub(crate) use computer::{
-    ComputerNotice, ComputerNoticeState, ComputerUseEligibilityError, ComputerUseUpdate,
-};
 #[path = "interactive_runtime_context.rs"]
 mod context;
 #[path = "interactive_runtime_edit_tool.rs"]
@@ -148,11 +143,6 @@ pub(crate) struct InteractiveRuntime {
     pending_persistence_checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
     /// True after the current provider completes a live turn on the current history.
     live_context_warm: bool,
-    /// Desktop-access state the model last saw; `None` until a notice is written.
-    computer_context: Option<ComputerNoticeState>,
-    /// Registry changes not yet installed in the SDK runtime, including a
-    /// revocation whose intended session replacement failed or is still pending.
-    computer_runtime_dirty: bool,
     /// Advertised tool specs last submitted on a provider request.
     cached_tool_specs: Vec<rho_sdk::model::ToolSpec>,
     /// Sticky until the TUI samples it: the tool list now differs from the last
@@ -264,7 +254,6 @@ impl InteractiveRuntime {
     /// session, a rebuilt runtime, or compaction.
     fn invalidate_live_context(&mut self) {
         self.live_context_warm = false;
-        self.rehydrate_computer_context();
     }
 
     pub(crate) fn take_pending_omission(
@@ -442,9 +431,6 @@ impl InteractiveRuntime {
         // checkpoints before outcome() drains the remaining SDK events unseen.
         while self.next_event().await.is_some() {}
         let finished = self.runs.finish().await;
-        // A boundary acknowledgement may never have been committed (cancellation),
-        // so the run's committed history is the only authority on what the model saw.
-        self.rehydrate_computer_context();
         if let Some(error) = self.pending_persistence_error.take() {
             self.sessions.abandon_turn_display();
             self.tools.checkpoint_tracker().discard_turn();
@@ -511,7 +497,6 @@ impl InteractiveRuntime {
         let workspace = self.workspace_with(&added_dirs)?;
         let prepared_prompt =
             self.prepare_session_prompt(crate::prompt::PromptSession::Different, &added_dirs)?;
-        self.revoke_computer_use();
         self.runtime
             .hooks()
             .session_completed(self.sessions.session().id(), self.completed_runs);
@@ -536,8 +521,6 @@ impl InteractiveRuntime {
         bind_subagent_parent(&self.tools, &session_id, None);
         self.session_writes.clear();
         self.invalidate_live_context();
-        self.restore_computer_preference(computer::ComputerPreferenceSource::NewSession)
-            .await;
         self.refresh_context_usage();
         Ok(())
     }
@@ -581,8 +564,6 @@ impl InteractiveRuntime {
         self.queue_missing_added_dirs_notice(&missing_dirs);
         bind_subagent_parent(&self.tools, self.sessions.session().id(), Some(&storage));
         self.sessions.set_resumed_storage(storage);
-        self.restore_computer_preference(computer::ComputerPreferenceSource::SavedSession)
-            .await;
         self.refresh_context_usage();
         Ok(())
     }
@@ -828,7 +809,6 @@ impl InteractiveRuntime {
             }
         };
         if matches!(lifecycle, ReplacementLifecycle::Started) {
-            self.revoke_computer_use();
             self.runtime
                 .hooks()
                 .session_completed(self.sessions.session().id(), self.completed_runs);
@@ -840,7 +820,6 @@ impl InteractiveRuntime {
         self.diagnostics.clear_compaction();
         self.install_rebuilt_permission(permission.pending);
         self.invalidate_live_context();
-        self.computer_runtime_dirty = false;
         previous_runtime.shutdown();
         if let Some(prompt) = next_prompt {
             self.adopt_prompt(prompt);

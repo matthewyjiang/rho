@@ -27,15 +27,6 @@ impl App {
                     unreachable!("inline choice checked above");
                 };
                 match modal.pending {
-                    InlineChoicePending::ComputerInstall => {
-                        self.confirm_computer_installation("cancel", agent)
-                    }
-                    InlineChoicePending::ComputerUpdate { from, to } => {
-                        self.confirm_computer_update("cancel", &from, &to, agent)
-                    }
-                    InlineChoicePending::ComputerAccess => {
-                        self.confirm_computer_access("cancel", agent)
-                    }
                     InlineChoicePending::CredentialStore { .. } => {
                         if let Some(parent) = modal.parent_picker {
                             self.set_status_quiet(parent.title.clone());
@@ -131,13 +122,6 @@ impl App {
             unreachable!("inline choice checked above");
         };
         match modal.pending {
-            InlineChoicePending::ComputerInstall => {
-                self.confirm_computer_installation(&value, agent)
-            }
-            InlineChoicePending::ComputerUpdate { from, to } => {
-                self.confirm_computer_update(&value, &from, &to, agent)
-            }
-            InlineChoicePending::ComputerAccess => self.confirm_computer_access(&value, agent),
             InlineChoicePending::CredentialStore { next } => {
                 // Resume login with its navigation context, so a subsequent
                 // flow picker can attach to the original provider picker.

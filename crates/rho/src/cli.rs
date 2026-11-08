@@ -325,11 +325,6 @@ Run rho model-prompt edit --help for editor setup, saving, and reload behavior."
         #[command(subcommand)]
         command: McpCommand,
     },
-    /// Inspect computer use powered by Cua Driver. Never grants desktop access.
-    Computer {
-        #[command(subcommand)]
-        command: ComputerCommand,
-    },
     /// List, inspect, install, and activate local Agent Plugin packages.
     Plugins {
         #[command(subcommand)]
@@ -811,17 +806,6 @@ pub enum CredentialStoreCommand {
         #[arg(value_name = "BACKEND", value_parser = parse_credential_store_backend)]
         backend: CredentialStoreBackend,
     },
-}
-
-#[derive(Subcommand, Clone, Debug)]
-pub enum ComputerCommand {
-    /// Detect the driver without starting it or inspecting the desktop.
-    Status {
-        #[arg(long)]
-        json: bool,
-    },
-    /// Explain setup; run /computer setup inside Rho for consent-based installation.
-    Setup,
 }
 
 #[cfg(test)]

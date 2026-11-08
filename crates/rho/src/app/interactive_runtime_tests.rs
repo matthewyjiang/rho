@@ -281,8 +281,6 @@ pub(crate) async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime
         checkpoint_paused_sessions: Default::default(),
         session_writes: Default::default(),
         live_context_warm: false,
-        computer_context: None,
-        computer_runtime_dirty: false,
         cached_tool_specs,
         tool_list_changed: false,
     }

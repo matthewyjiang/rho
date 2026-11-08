@@ -17,7 +17,6 @@ use super::{
 };
 use {
     crate::permission::PermissionMode,
-    crate::tools::computer_use::ComputerUseStatus,
     rho_providers::model::{
         ContextUsage, ContextUsageSource, ModelMetadata, ModelUsage, ReasoningCapabilities,
     },
@@ -82,7 +81,6 @@ pub(super) struct StatusLineState {
     reasoning: ReasoningLevel,
     reasoning_configurable: bool,
     permission_mode: PermissionMode,
-    computer: ComputerUseStatus,
     model_metadata: Option<ModelMetadata>,
     /// Non-main session cost (subagents + advisor) folded into one total.
     extra_cost_usd_micros: u64,
@@ -138,7 +136,6 @@ impl Default for StatusLineState {
             reasoning: ReasoningLevel::default(),
             reasoning_configurable: true,
             permission_mode: PermissionMode::default(),
-            computer: ComputerUseStatus::Off,
             model_metadata: None,
             extra_cost_usd_micros: 0,
             average_generation_rate: None,
@@ -164,7 +161,6 @@ impl StatusLineState {
             reasoning: info.reasoning,
             reasoning_configurable: reasoning_is_configurable(&info.provider, &info.model),
             permission_mode: info.permission_mode,
-            computer: ComputerUseStatus::Off,
             model_metadata: None,
             extra_cost_usd_micros: 0,
             average_generation_rate: None,
@@ -176,13 +172,6 @@ impl StatusLineState {
 }
 
 impl StatusLine {
-    pub(super) fn update_computer(&mut self, status: ComputerUseStatus) {
-        if self.state.computer != status {
-            self.state.computer = status;
-            self.invalidate();
-        }
-    }
-
     pub(super) fn update_not_saved(&mut self, not_saved: bool) {
         if self.state.not_saved != not_saved {
             self.state.not_saved = not_saved;
@@ -386,8 +375,6 @@ const RANK_NOT_SAVED: u8 = RANK_CONTEXT_URGENT;
 const RANK_PERMISSION: u8 = 70;
 /// Signed-out copy outranks permission so the row still names the fix.
 const RANK_SIGNED_OUT: u8 = 80;
-/// Granted desktop access must remain visible even when identity fields drop.
-const RANK_COMPUTER_ACCESS: u8 = RANK_SIGNED_OUT + 10;
 
 /// Identity keys used by pack tests and paint order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -396,7 +383,6 @@ enum FieldKey {
     Cost,
     Rate,
     Permission,
-    Computer,
     Zen,
     Provider,
     Model,
@@ -544,7 +530,7 @@ fn statusline_lines(
 ///
 /// Sides:
 /// - left: `not saved · context · cost · rate`
-/// - right identity: `permission · computer · zen · provider · model · reasoning`
+/// - right identity: `permission · zen · provider · model · reasoning`
 ///
 /// Drop order when width is scarce (first dropped first):
 /// 1. reasoning
@@ -556,11 +542,9 @@ fn statusline_lines(
 /// 7. model id
 /// 8. unsaved-session warning
 /// 9. permission mode
-/// 10. signed-out warning
-/// 11. granted desktop access (kept last, including when signed out)
+/// 10. signed-out warning (kept last)
 ///
 /// Warning and critical fill share the urgent rank; only style differs at 90%.
-/// Inactive computer transitions rank below permission mode.
 fn pack_bottom_status(
     state: &StatusLineState,
     width: usize,
@@ -616,28 +600,6 @@ fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
         state.permission_mode.label(),
         permission_style(state.permission_mode),
     ));
-
-    let computer = match state.computer {
-        ComputerUseStatus::Off => None,
-        ComputerUseStatus::Installing => Some(("computer installing", Theme::dim())),
-        ComputerUseStatus::Connecting => Some(("computer connecting", Theme::dim())),
-        ComputerUseStatus::Connected => Some(("computer on", Theme::warning())),
-        ComputerUseStatus::Closing => Some(("computer off", Theme::dim())),
-    };
-    if let Some((text, style)) = computer {
-        fields.push(field(
-            FieldKey::Computer,
-            Side::Right,
-            if state.computer == ComputerUseStatus::Connected {
-                RANK_COMPUTER_ACCESS
-            } else {
-                RANK_CONTEXT_URGENT
-            },
-            /*order*/ 1,
-            text,
-            style,
-        ));
-    }
 
     if state.zen_mode {
         fields.push(field(

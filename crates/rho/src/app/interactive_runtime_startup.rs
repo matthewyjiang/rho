@@ -121,17 +121,8 @@ pub(super) async fn initialize(
         subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
     })
     .await?;
-    // Desktop authority belongs to this interactive host, not agent definitions
-    // or cloned config. Automation, side chats and subagents never get this handle.
     let tools = if !no_tools && agent.rho_capabilities().is_some() {
-        let computer = crate::tools::computer_use::ComputerUseSession::new(
-            /*driver*/ None,
-            config.max_output_bytes,
-            cwd.clone(),
-        );
-        tools
-            .with_computer_use(computer)
-            .with_plan_exit_host(config, crate::tools::plan_exit::PlanExitHost::Questionnaire)
+        tools.with_plan_exit_host(config, crate::tools::plan_exit::PlanExitHost::Questionnaire)
     } else {
         tools
     };
@@ -229,11 +220,6 @@ pub(super) async fn initialize(
     // freezes the prompt. Always observe completion so the TUI refreshes them.
     let pending_catalog_names = Some(tokio::spawn(catalog_names));
     let cached_tool_specs = tools.specs();
-    let computer_preference_source = if storage.is_some() {
-        super::computer::ComputerPreferenceSource::SavedSession
-    } else {
-        super::computer::ComputerPreferenceSource::NewSession
-    };
     let snapshot = session.snapshot();
     let mut runtime = InteractiveRuntime {
         runtime,
@@ -283,13 +269,10 @@ pub(super) async fn initialize(
         pending_persistence_error: None,
         pending_persistence_checkpoint: None,
         live_context_warm: false,
-        computer_context: None,
-        computer_runtime_dirty: false,
         cached_tool_specs,
         tool_list_changed: false,
         completed_runs: 0,
     };
-    runtime.rehydrate_computer_context();
     runtime.sessions.prompt = prompt;
     runtime.queue_missing_added_dirs_notice(&restored.missing);
     if runtime.prompt_template.is_some() {
@@ -300,9 +283,6 @@ pub(super) async fn initialize(
             runtime.sessions.queue_notice(notice);
         }
     }
-    runtime
-        .restore_computer_preference(computer_preference_source)
-        .await;
     Ok(runtime)
 }
 

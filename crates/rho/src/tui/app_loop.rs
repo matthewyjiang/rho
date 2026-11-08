@@ -186,7 +186,6 @@ impl App {
                 || self.subagent_inbox.has_queued_questionnaires()
                 || self.subagent_inbox.has_parent_action_requests();
             let idle_timeout = if self.tasks.has_pending()
-                || self.computer_lifecycle_pending()
                 || self.prompt_history.load_pending()
                 || self.pending_session_title.is_some()
                 || self.mcp_argument_completions.is_pending()
@@ -286,7 +285,6 @@ impl App {
             needs_redraw |= self.apply_pending_compaction_config(agent)?;
             self.apply_pending_classifier_config(agent);
             needs_redraw |= self.poll_startup_hydrates(agent).await?;
-            needs_redraw |= self.poll_computer_connection(agent).await;
             needs_redraw |= self.poll_compact(agent).await?;
             needs_redraw |= self.apply_pending_permission_mode(agent).await?;
             needs_redraw |= self.release_pending_held_turn(terminal, agent).await?;

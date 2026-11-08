@@ -67,7 +67,7 @@ fn assert_composer_reads(harness: &PtyHarness, composer: &str) -> Result<()> {
 // (never submitting like Enter).
 // Owner: interactive UX (PTY).
 fn click_wheel_then_double_click_command_row(harness: &mut PtyHarness) -> Result<()> {
-    // `/co` shows /codemode, /compact, /computer, /config, /context first.
+    // `/co` shows /codemode, /compact, /config, /context, /copy first.
     let config = click_cell(harness, "/config")?;
     click(harness, config)?;
     harness.wait_for_text("> /config", CLICK)?;
@@ -78,16 +78,16 @@ fn click_wheel_then_double_click_command_row(harness: &mut PtyHarness) -> Result
     harness.wait_for_text("> /context", CLICK)?;
     harness.mouse(MouseButton::WheelUp, column, row, true)?;
     harness.mouse(MouseButton::WheelUp, column, row, true)?;
-    harness.wait_for_text("> /computer", CLICK)?;
+    harness.wait_for_text("> /compact", CLICK)?;
     assert_composer_reads(harness, "> /co")?;
 
-    // /computer completes to `/computer ` and reopens on its argument rows; a
-    // submitted /computer would print its status and clear the composer.
-    let computer = click_cell(harness, "/computer")?;
-    double_click(harness, computer)?;
-    harness.wait_for_text("/computer status", CLICK)?;
+    // /codemode completes to `/codemode ` and reopens on its argument rows; a
+    // submitted /codemode would print its status and clear the composer.
+    let codemode = click_cell(harness, "/codemode")?;
+    double_click(harness, codemode)?;
+    harness.wait_for_text("/codemode status", CLICK)?;
     harness.wait_for_text_gone("/compact", CLICK)?;
-    assert_composer_reads(harness, "> /computer")
+    assert_composer_reads(harness, "> /codemode")
 }
 
 const SLASH_PALETTE_CLICK_STEPS: &[Step] = &[

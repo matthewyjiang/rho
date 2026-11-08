@@ -146,7 +146,6 @@ impl InteractiveRuntime {
         // Only the durable leaf commit can fail here; prompt/snapshot/runtime
         // preparation has already succeeded without touching the live session.
         prepared.storage.set_leaf(&prepared.target_id)?;
-        self.revoke_computer_use();
         let replacement_runtime = prepared
             .runtime
             .take()
@@ -154,7 +153,6 @@ impl InteractiveRuntime {
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions
             .replace_session(prepared.session.clone(), prepared.resume_omission.take());
-        self.computer_runtime_dirty = false;
         self.sessions.set_resumed_storage(prepared.storage.clone());
         self.install_rebuilt_permission(prepared.permission.pending.take());
         if let Some(prompt) = prepared.prompt.take() {
@@ -171,8 +169,6 @@ impl InteractiveRuntime {
         previous_runtime.shutdown();
         self.invalidate_live_context();
         self.refresh_context_usage();
-        self.restore_computer_preference(computer::ComputerPreferenceSource::SavedSession)
-            .await;
         Ok(())
     }
 }

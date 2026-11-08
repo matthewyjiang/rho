@@ -54,7 +54,7 @@ fn notification_display_preserves_ownership() {
 #[test]
 fn tool_result_images_preserve_tool_ownership() {
     let messages = [
-        call("capture", "computer"),
+        call("capture", "screenshot"),
         Message::ToolResult(ToolResult::succeeded("capture", "ok").with_images(vec![
             rho_sdk::model::ImageContent {
                 data: "image-data".into(),
@@ -70,7 +70,7 @@ fn tool_result_images_preserve_tool_ownership() {
     ));
     assert_eq!(
         tool_names(&entries).last().map(String::as_str),
-        Some("computer")
+        Some("screenshot")
     );
 }
 

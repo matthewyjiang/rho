@@ -264,9 +264,6 @@ pub(super) trait PanelBody {
 pub(super) enum PanelKeyOutcome {
     /// Consumed by the panel.
     Handled,
-    /// Consumed; run this app-level action next (the panel cannot reach
-    /// app state through `&mut self`).
-    Run(fn(&mut super::App)),
     /// Fall through to the shared copy, scroll, and close keys.
     Unhandled,
 }

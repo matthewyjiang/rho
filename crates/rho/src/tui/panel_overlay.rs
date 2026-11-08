@@ -28,7 +28,6 @@ impl PanelOverlay {
         match self {
             Self::Limits(overlay) => overlay,
             Self::Doctor(overlay) => overlay,
-            Self::Computer(overlay) => overlay,
             Self::Hooks(overlay) => overlay,
             Self::TextView(overlay) => overlay.as_ref(),
             Self::Info(overlay) => overlay.as_ref(),
@@ -42,7 +41,6 @@ impl PanelOverlay {
         match self {
             Self::Limits(overlay) => overlay,
             Self::Doctor(overlay) => overlay,
-            Self::Computer(overlay) => overlay,
             Self::Hooks(overlay) => overlay,
             Self::TextView(overlay) => overlay.as_mut(),
             Self::Info(overlay) => overlay.as_mut(),
@@ -57,7 +55,6 @@ impl PanelOverlay {
         match self {
             Self::Limits(overlay) => Box::new(overlay),
             Self::Doctor(overlay) => Box::new(overlay),
-            Self::Computer(overlay) => Box::new(overlay),
             Self::Hooks(overlay) => Box::new(overlay),
             Self::TextView(overlay) => overlay,
             Self::Info(overlay) => overlay,
@@ -101,10 +98,6 @@ impl App {
         };
         match panel.body_mut().handle_key(key) {
             PanelKeyOutcome::Handled => return true,
-            PanelKeyOutcome::Run(action) => {
-                action(self);
-                return true;
-            }
             PanelKeyOutcome::Unhandled => {}
         }
         if is_copy_key(key) {

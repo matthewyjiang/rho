@@ -10,9 +10,9 @@ use super::{
     tool_result_for_name, AGENTS_LIST_CALL_ID, ANTIGRAVITY_AGENT_CALL_ID, BACKGROUND_AGENT_CALL_ID,
     BACKGROUND_CLAUDE_AGENT_CALL_ID, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID,
     BACKGROUND_QUESTIONNAIRE_COMPLETION, CLAUDE_AGENT_CALL_ID, CLAUDE_AGENT_ERROR_CALL_ID,
-    CODEMODE_CALL_ID, COMPUTER_CALL_ID, CONCURRENT_FAST_CALL_ID, CONCURRENT_SLOW_CALL_ID,
-    CURSOR_AGENT_CALL_ID, HOVER_TOOL_CALL_ID, PROCESS_RAIL_CALL_ID, PROGRESS_CALL_ID,
-    QUESTIONNAIRE_CALL_ID, SUBAGENT_RAIL_AGENT_CALL_ID, TOOL_CALL_ID,
+    CODEMODE_CALL_ID, CONCURRENT_FAST_CALL_ID, CONCURRENT_SLOW_CALL_ID, CURSOR_AGENT_CALL_ID,
+    HOVER_TOOL_CALL_ID, PROCESS_RAIL_CALL_ID, PROGRESS_CALL_ID, QUESTIONNAIRE_CALL_ID,
+    SUBAGENT_RAIL_AGENT_CALL_ID, TOOL_CALL_ID,
 };
 
 pub(super) fn compaction(
@@ -71,9 +71,6 @@ pub(super) fn intercept(
             "progress tool lifecycle complete with one result: {}",
             result.content
         )));
-    }
-    if tool_result(request, COMPUTER_CALL_ID).is_some() {
-        return Some(completed("computer observation complete"));
     }
     if let Some(result) = tool_result(request, PROCESS_RAIL_CALL_ID) {
         let receipt = result.content.lines().next().unwrap_or_default();
@@ -138,25 +135,6 @@ pub(super) fn intercept(
         return Some(completion);
     }
     let prompt = last_user_text(request).unwrap_or_default();
-    if prompt == "fixture computer context" {
-        let context = request.messages.iter().rev().find_map(|message| {
-            let (Message::User(blocks) | Message::BoundaryInput(blocks)) = message else {
-                return None;
-            };
-            blocks.iter().find_map(|block| match block {
-                ContentBlock::Text(text) => text
-                    .split_once("[computer use context]\n")
-                    .map(|(_, context)| context),
-                _ => None,
-            })
-        });
-        return Some(completed(format!(
-            "computer context: {}",
-            context
-                .and_then(|context| context.lines().next())
-                .unwrap_or("missing")
-        )));
-    }
     if let Some(name) = prompt.strip_prefix("fixture tool available ") {
         let available = request.tools.iter().any(|tool| tool.name == name);
         return Some(completed(format!("tool available {name}: {available}")));

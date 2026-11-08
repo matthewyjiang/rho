@@ -56,12 +56,7 @@ impl App {
         };
         let captured = {
             let _snapshot = crate::app::notification_delivery::lock();
-            let mut batch = self.take_turn_boundary_batch_locked(agent, trigger);
-            // Capability changes inform an already scheduled call, but must not
-            // buy another inference request at the completion checkpoint.
-            if matches!(trigger, BoundaryTrigger::ScheduledTurn) {
-                batch.runtime_context = agent.pending_computer_context();
-            }
+            let batch = self.take_turn_boundary_batch_locked(agent, trigger);
             if batch.is_empty() {
                 self.restore_turn_boundary_batch(agent, batch);
                 // Send synchronously while publishers are excluded so later
@@ -87,9 +82,6 @@ impl App {
         ));
         let model_message = rho_sdk::model::Message::BoundaryInput(input.blocks().to_vec());
         if request.respond(Some(input)).await {
-            if let Some(notice) = &delivery.batch.runtime_context {
-                agent.acknowledge_computer_context(notice.state);
-            }
             let transcript = delivery.transcript;
             agent.record_boundary_display(model_message, transcript.display_message());
             self.subagent_inbox

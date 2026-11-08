@@ -15,10 +15,6 @@ impl InteractiveRuntime {
         if self.permission_mode == mode {
             return Ok(());
         }
-        if mode == PermissionMode::Plan {
-            self.revoke_computer_use();
-        }
-
         let session_writes = self
             .session_writes
             .clone()
@@ -73,7 +69,6 @@ impl InteractiveRuntime {
 
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions.replace_runtime_session(replacement_session);
-        self.computer_runtime_dirty = false;
         self.permission_mode = mode;
         self.config.permission_mode = mode;
         self.session_writes = session_writes;
