@@ -579,6 +579,10 @@ fn model_catalog(
         model: current_model,
         badge: selected_badge,
     } = current;
+    // A current alias (`mistral-small-latest`) marks the row it is listed under.
+    let listed_current =
+        rho_providers::model::provider_models::listed_model_id(current_provider, current_model);
+    let current_model = listed_current.as_str();
     let current = rho_providers::provider::model_reference(current_provider, current_model);
     let favorites = favorites::normalized_favorite_models(favorite_models);
     let mut available = catalog::available_models_for_auths(available_auths);

@@ -294,7 +294,7 @@ pub fn default_model_for_provider(provider: &str) -> Option<String> {
     match descriptor.model_source {
         ProviderModelSource::CachedProviderModels => {
             let cached = provider_models::cached_provider_models(provider);
-            preferred_cached_default(descriptor.default_model, &cached)
+            preferred_cached_default(provider, descriptor.default_model, &cached)
         }
         ProviderModelSource::StaticCatalog => static_catalog_default_model(provider),
     }
@@ -303,13 +303,19 @@ pub fn default_model_for_provider(provider: &str) -> Option<String> {
 /// Prefer the descriptor default when present in cache; else first cached; else bare default.
 ///
 /// Cache order is lexicographic by model id, so "first cached" is not a product preference.
+///
+/// A default that is an alias of a listed row (`mistral-medium-latest`) counts
+/// as present and is returned as written, so a floating alias is not pinned to
+/// the dated id the picker lists.
 fn preferred_cached_default(
+    provider: &str,
     default_model: Option<&str>,
     cached: &[provider_models::ProviderModel],
 ) -> Option<String> {
     if let Some(preferred) = default_model {
-        if let Some(found) = cached.iter().find(|entry| entry.model == preferred) {
-            return Some(found.model.clone());
+        let listed = provider_models::listed_model_id(provider, preferred);
+        if cached.iter().any(|entry| entry.model == listed) {
+            return Some(preferred.to_string());
         }
     }
     if let Some(first) = cached.first() {

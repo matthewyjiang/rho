@@ -42,9 +42,9 @@ impl Default for ReasoningDecision {
 /// Construction is keyed by [`OpenAiCompatibleDialect`], so a provider can
 /// never hold a profile that does not match its dialect.
 pub(super) enum DialectReasoning {
-    /// Metadata-driven `reasoning_effort` for Ollama Cloud and other Standard
-    /// dialect hosts. Ollama auto-enables thinking when the field is omitted,
-    /// so Off must serialize as `"none"`.
+    /// Metadata-driven `reasoning_effort` for Ollama Cloud, Mistral, and other
+    /// Standard dialect hosts. Ollama auto-enables thinking when the field is
+    /// omitted, so Off must serialize as `"none"`.
     Standard(EffortProfile),
     Poolside,
     OpenRouter(EffortProfile),
@@ -62,7 +62,8 @@ impl DialectReasoning {
         match dialect {
             OpenAiCompatibleDialect::Standard
             | OpenAiCompatibleDialect::Custom
-            | OpenAiCompatibleDialect::QwenTokenPlan => {
+            | OpenAiCompatibleDialect::QwenTokenPlan
+            | OpenAiCompatibleDialect::Mistral => {
                 let (metadata, control) = current_reasoning_metadata(provider, model);
                 Self::Standard(standard_effort_profile(provider, metadata).with_control(control))
             }

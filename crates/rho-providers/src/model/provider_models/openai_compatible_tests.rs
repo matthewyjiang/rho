@@ -84,7 +84,10 @@ async fn meta_model_discovery_remints_once_after_unauthorized() {
         None,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .into_iter()
+    .map(|record| record.model)
+    .collect::<Vec<_>>();
 
     pretty_assertions::assert_eq!(
         models,

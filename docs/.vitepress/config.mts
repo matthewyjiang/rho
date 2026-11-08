@@ -64,6 +64,7 @@ const providerItems: DefaultTheme.SidebarItem[] = [
   { text: 'Qwen Token Plan', link: '/providers/qwen-token-plan' },
   { text: 'Meta Model API', link: '/providers/meta' },
   { text: 'MiniMax', link: '/providers/minimax' },
+  { text: 'Mistral AI', link: '/providers/mistral' },
   { text: 'TypeSafe', link: '/providers/typesafe' },
   { text: 'OpenCode Go', link: '/providers/opencode-go' },
   { text: 'OpenCode Zen', link: '/providers/opencode-zen' },

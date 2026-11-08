@@ -54,6 +54,7 @@ pub fn replace_cli_provider_models(
         .map(|entry| ProviderModelRecord {
             model: entry.model,
             raw_json: entry.raw_json,
+            aliases: Vec::new(),
         })
         .collect::<Vec<_>>();
     replace_cached_provider_model_records_with_context(provider, &records, Some(&context_json))

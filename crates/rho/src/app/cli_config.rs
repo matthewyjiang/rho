@@ -627,8 +627,7 @@ async fn refresh_model_list_for_provider(
     let Some(descriptor) = provider::provider_descriptor(provider) else {
         return Ok(false);
     };
-    let needs_model_discovery = catalog::default_model_for_provider(provider).is_none()
-        && (selected_model.is_none() || provider_requires_cached_models(provider));
+    let needs_model_discovery = needs_model_discovery(descriptor, selected_model);
     let needs_capabilities = selected_model
         .is_some_and(|model| provider_model_capabilities_need_refresh(provider, model));
     if !descriptor.supports_model_refresh() || (!needs_model_discovery && !needs_capabilities) {
@@ -652,6 +651,30 @@ fn selected_model_for_refresh(config: &Config, provider: &str) -> Option<String>
         return Some(config.model.clone());
     }
     catalog::default_model_for_provider(provider)
+}
+
+/// Whether startup must fetch `descriptor`'s model list before it can select.
+///
+/// A descriptor default makes `default_model_for_provider` answer even on an
+/// empty cache, so a named model is checked on its own: selection accepts the
+/// descriptor default uncached, and any other model must be listed. Only a
+/// missing or stale list (24h) is refetched for it; a fresh list that lacks
+/// the model (a typo or retired id) fails fast instead of waiting on the
+/// network every run.
+fn needs_model_discovery(
+    descriptor: &provider::ProviderDescriptor,
+    selected_model: Option<&str>,
+) -> bool {
+    let requires_cache = descriptor.model_source == ProviderModelSource::CachedProviderModels;
+    let selected_uncached = requires_cache
+        && !provider_models_are_fresh(descriptor.name)
+        && selected_model.is_some_and(|model| {
+            descriptor.default_model != Some(model)
+                && cached_provider_model(descriptor.name, model).is_none()
+        });
+    selected_uncached
+        || (catalog::default_model_for_provider(descriptor.name).is_none()
+            && (selected_model.is_none() || requires_cache))
 }
 
 fn provider_requires_cached_models(provider: &str) -> bool {

@@ -542,6 +542,7 @@ fn request_body(
         OpenAiCompatibleDialect::Moonshot => "moonshot",
         OpenAiCompatibleDialect::OpenRouter => "openrouter",
         OpenAiCompatibleDialect::KimiCode => "kimi-code",
+        OpenAiCompatibleDialect::Mistral => "mistral",
     };
     // Reasoning profiles read the models.dev cache at construction. Pin an
     // empty one so a host or runner cache cannot change the expected body.
