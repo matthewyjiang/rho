@@ -78,7 +78,10 @@ impl DaemonSession {
 
 #[cfg(unix)]
 mod unix {
-    use std::path::{Path, PathBuf};
+    use std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
 
     use anyhow::Context;
     use rho_protocol::{
@@ -93,7 +96,7 @@ mod unix {
     use tokio::sync::mpsc;
 
     use super::super::daemon_events::{DaemonEvents, DaemonView, Rest, TurnState};
-    use crate::app::daemon_client::{Daemon, Part, Routed, StreamPosition};
+    use crate::app::daemon_client::{Daemon, Link, Part, Routed, StreamPosition};
 
     /// Which session the TUI follows.
     pub(crate) enum DaemonTarget {
@@ -280,6 +283,17 @@ mod unix {
             ]
         }
 
+        /// The connection this session is attached on. A new connection
+        /// would not carry the attachment, so what is sent on it would run
+        /// unseen: a turn, or a steer the TUI then also keeps as a
+        /// follow-up once it reads the connection's loss.
+        async fn attached_link(&self) -> anyhow::Result<Arc<Link>> {
+            match self.daemon.current().await.filter(|_| !self.ended) {
+                Some(link) => Ok(link),
+                None => anyhow::bail!("lost the connection to the rho daemon"),
+            }
+        }
+
         /// Starts a turn of `content`. Once this returns, the views of what
         /// the daemon sent before it answered, such as the turn's start, are
         /// waiting for [`Self::take_views`].
@@ -287,11 +301,7 @@ mod unix {
             &self,
             content: Vec<ContentBlock>,
         ) -> anyhow::Result<()> {
-            // A new connection would not carry this attachment, so a turn
-            // started on it would run unseen.
-            let Some(link) = self.daemon.current().await.filter(|_| !self.ended) else {
-                anyhow::bail!("lost the connection to the rho daemon");
-            };
+            let link = self.attached_link().await?;
             let params = SessionPromptParams {
                 session: self.id.clone(),
                 content,
@@ -320,7 +330,8 @@ mod unix {
         /// the steer's id, which its user message carries once it applies.
         pub(in crate::tui) async fn steer(&self, text: String) -> anyhow::Result<SteeringId> {
             let steered = self
-                .daemon
+                .attached_link()
+                .await?
                 .request::<SessionSteer>(&SessionSteerParams {
                     session: self.id.clone(),
                     text,
@@ -340,7 +351,8 @@ mod unix {
             id: &SteeringId,
         ) -> anyhow::Result<UnsteerOutcome> {
             let withdrawn = self
-                .daemon
+                .attached_link()
+                .await?
                 .request::<SessionUnsteer>(&SessionUnsteerParams {
                     session: self.id.clone(),
                     id: SteerId::new(id.as_str()),
@@ -354,14 +366,8 @@ mod unix {
     }
 
     /// Why a steer, or its withdrawal, was refused, as the TUI says it.
-    fn steer_refused(error: crate::app::daemon_client::DaemonError) -> anyhow::Error {
-        let not_steerable = match &error {
-            crate::app::daemon_client::DaemonError::Request(error) => {
-                error.error_code() == Some(ErrorCode::NotSteerable)
-            }
-            crate::app::daemon_client::DaemonError::Unreachable(_) => false,
-        };
-        if not_steerable {
+    fn steer_refused(error: rho_protocol::ClientError) -> anyhow::Error {
+        if error.error_code() == Some(ErrorCode::NotSteerable) {
             anyhow::anyhow!("no model request is taking input")
         } else {
             anyhow::Error::new(error)
