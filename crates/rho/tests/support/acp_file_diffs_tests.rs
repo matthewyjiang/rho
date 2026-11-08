@@ -91,12 +91,7 @@ fn file_mutations_emit_acp_diffs() {
         for (path, text) in before {
             std::fs::write(workspace.project.join(path), text).unwrap();
         }
-        let mut server = AcpServer::spawn(
-            &workspace.home,
-            &workspace.project,
-            "tool-call",
-            &workspace.project,
-        );
+        let mut server = AcpServer::spawn(&workspace.home, "tool-call", &workspace.project);
         server
             .request("initialize", json!({"protocolVersion": 1}))
             .0

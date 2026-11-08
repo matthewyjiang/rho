@@ -79,7 +79,7 @@ impl Drop for Sleepers {
 async fn the_daemons_stop_ends_the_processes_its_sessions_started() {
     let sandbox = Sandbox::new();
     sandbox.set_permission_mode("bypass");
-    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let client = sandbox.start_daemon("tool-call").await;
     let running_turn = sandbox.new_session(&client).await;
     let bash = json!({
         "id": "foreground",
@@ -123,7 +123,7 @@ async fn the_daemons_stop_ends_the_processes_its_sessions_started() {
         .args(["daemon", "stop"])
         .status()
         .unwrap();
-    assert!(stop.success(), "log:\n{}", sandbox.daemon_log());
+    assert!(stop.success(), "log:\n{}", sandbox.isolated.daemon_log());
     sandbox
         .poll_until("the processes to end", async || {
             (!pids.into_iter().any(running)).then_some(())
@@ -134,7 +134,7 @@ async fn the_daemons_stop_ends_the_processes_its_sessions_started() {
         (cancelled_state, before_stop),
         (JobState::Cancelled, [true, true]),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }
 
@@ -148,7 +148,7 @@ async fn the_daemons_stop_ends_the_processes_its_sessions_started() {
 async fn a_sessions_tools_run_with_the_prompting_clients_environment() {
     let sandbox = Sandbox::new();
     sandbox.set_permission_mode("bypass");
-    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let client = sandbox.start_daemon("tool-call").await;
     let session = sandbox.new_session(&client).await;
     // Login init that resets `PATH`, as some distributions' does, in the
     // home the sandbox's clients send.
@@ -193,7 +193,7 @@ async fn a_sessions_tools_run_with_the_prompting_clients_environment() {
         seen.push(std::fs::read_to_string(sandbox.workspace.join("env.txt")).unwrap());
     }
     let saved = serde_json::to_string(&sandbox.session_records(&session)).unwrap();
-    let log = sandbox.daemon_log();
+    let log = sandbox.isolated.daemon_log();
 
     assert_eq!(
         seen,
@@ -271,7 +271,7 @@ env_from_env = { TOKEN = "PROBE_TOKEN" }
     let hook = record("hook.txt", "${PROBE-unset}")
         + " && printf '{\"version\": 1, \"decision\": \"continue\"}'";
     std::fs::write(
-        sandbox.rho_home().join("hooks.toml"),
+        sandbox.isolated.rho_home().join("hooks.toml"),
         format!(
             r#"version = 1
 
@@ -286,7 +286,7 @@ timeout = "10s"
         ),
     )
     .unwrap();
-    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let client = sandbox.start_daemon("tool-call").await;
     let session = sandbox
         .new_session_with_environment(
             &client,
@@ -311,7 +311,7 @@ timeout = "10s"
             format!("{bin}|first-1659\n{bin}|second-1659\n"),
         ],
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }
 
@@ -362,9 +362,9 @@ async fn a_sessions_cli_agents_and_workflow_commands_see_its_clients_environment
         format!("#!/usr/bin/env sh-1659\n{}\n", record("command.txt")),
     );
     // A user agent, in the sandbox's rho home.
-    std::fs::create_dir_all(sandbox.rho_home().join("agents")).unwrap();
+    std::fs::create_dir_all(sandbox.isolated.rho_home().join("agents")).unwrap();
     std::fs::write(
-        sandbox.rho_home().join("agents/claude-env.md"),
+        sandbox.isolated.rho_home().join("agents/claude-env.md"),
         "---\nid: claude-env\ndescription: Claude Code agent for the environment test\nruntime: claude-cli\nprompt: replace\n---\nWork.\n",
     )
     .unwrap();
@@ -388,7 +388,7 @@ WORKFLOW = define(inputs = {}, build = build)
     .unwrap();
     // Claude Code runs only in modes whose permissions it can enforce.
     sandbox.set_permission_mode("bypass");
-    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let client = sandbox.start_daemon("tool-call").await;
     let session = sandbox.new_session(&client).await;
     let mut calls = vec![(
         "cli.txt",
@@ -427,5 +427,5 @@ WORKFLOW = define(inputs = {}, build = build)
         expected.push(format!("{}|{probe}|{key}\n", bin.display()));
     }
 
-    assert_eq!(seen, expected, "log:\n{}", sandbox.daemon_log());
+    assert_eq!(seen, expected, "log:\n{}", sandbox.isolated.daemon_log());
 }

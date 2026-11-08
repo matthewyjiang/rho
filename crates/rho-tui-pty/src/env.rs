@@ -7,7 +7,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    time::{Duration, Instant},
 };
 
 use anyhow::{bail, Context, Result};
@@ -59,23 +58,6 @@ pub struct HostProfile {
     pub vars: BTreeMap<String, String>,
 }
 
-/// How long [`IsolatedHome::stop_daemon`] waits for the daemon to exit after
-/// SIGTERM, and again after SIGKILL.
-//
-// Tripwire, not a tuning knob. SIGTERM is the daemon's graceful stop: rho
-// measured that exit at max 44 ms with all 24 cores saturated
-// (`DAEMON_STOP_TIMEOUT` in `app::daemon_cli`), plus up to `DRAIN_TIMEOUT`
-// (4 s, `daemon_host::sessions`) while running turns save. 10 s covers both
-// on a loaded CI host running many sandboxes at once; hitting it means
-// shutdown is broken, and SIGKILL still keeps the daemon from outliving the
-// test.
-const DAEMON_TEARDOWN_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Interval between checks while [`IsolatedHome::stop_daemon`] waits. Each
-/// is a `flock` probe or a `waitpid` and a `kill(pid, 0)`; nothing notifies
-/// a process that is not the daemon's parent when it exits.
-const DAEMON_POLL_INTERVAL: Duration = Duration::from_millis(10);
-
 /// Temporary HOME, rho home, and runtime directory that keep a test's rho
 /// processes, its daemon included, off the developer's state. Safe to use
 /// from parallel tests: nothing is shared between two sandboxes.
@@ -101,8 +83,15 @@ const DAEMON_POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// longer than 66 bytes (70 on Linux) fails loud rather than escaping the
 /// sandbox.
 ///
-/// Dropping the sandbox stops its daemon ([`Self::stop_daemon`]) before it
-/// deletes the directory, also while a test panics.
+/// # Teardown and drop order
+///
+/// Dropping the sandbox stops its daemon (SIGTERM, then SIGKILL; see
+/// `daemon.rs`) before it deletes the directory, also while a test panics.
+/// So a process that may start a daemon, such as a TUI or `rho acp`, must
+/// be dropped or killed before the sandbox: one that outlives the teardown
+/// can start a new daemon in a home that is about to be deleted. Declare
+/// such a process before the sandbox in a struct (fields drop in order),
+/// or after it in a function (locals drop in reverse).
 pub struct IsolatedHome {
     pub home: PathBuf,
     pub workspace: PathBuf,
@@ -122,10 +111,11 @@ impl IsolatedHome {
         fs::create_dir_all(&workspace)?;
         fs::create_dir_all(temp.path().join("tmp"))?;
         // Private, as a real XDG_RUNTIME_DIR is.
-        let mut run = fs::DirBuilder::new();
+        let run = temp.path().join("run");
         #[cfg(unix)]
-        std::os::unix::fs::DirBuilderExt::mode(&mut run, 0o700);
-        run.create(temp.path().join("run"))?;
+        std::os::unix::fs::DirBuilderExt::mode(&mut fs::DirBuilder::new(), 0o700).create(&run)?;
+        #[cfg(not(unix))]
+        fs::create_dir(&run)?;
         let config_path = rho_dir.join("config.toml");
         fs::write(
             &config_path,
@@ -198,160 +188,41 @@ credential_store = "file"
         env
     }
 
-    /// `binary` in the workspace with exactly the sandbox's environment
-    /// ([`default_clean_env`] plus [`Self::env`]) and the file credential
-    /// store, for rho processes outside a PTY: the daemon and its clients.
+    /// The whole environment of a rho process outside a PTY, the daemon
+    /// and its clients: [`default_clean_env`], then [`Self::env`], then the
+    /// file credential store and backtraces (later pairs win).
     ///
     /// `RHO_CREDENTIAL_STORE` is set here rather than in [`Self::env`]:
     /// PTY launches leave the store to `config.toml`, so a first-run
     /// scenario can remove it there and reach the store prompt.
+    pub fn command_env(&self) -> Vec<(String, String)> {
+        let mut env = default_clean_env();
+        env.extend(self.env());
+        // Fixture sessions must not query the developer's OS keyring.
+        env.push(("RHO_CREDENTIAL_STORE".into(), "file".into()));
+        // A daemon's panic then logs where it happened.
+        env.push(("RUST_BACKTRACE".into(), "1".into()));
+        env
+    }
+
+    /// `binary` in the workspace with exactly [`Self::command_env`]. rho
+    /// finds the sandbox's `config.toml` through `RHO_HOME`, so it needs
+    /// no `--config`, which `rho login` and `rho run --detach` refuse.
     pub fn command(&self, binary: impl AsRef<OsStr>) -> Command {
         let mut command = Command::new(binary);
         command
             .env_clear()
-            .envs(default_clean_env())
-            .envs(self.env())
-            // Fixture sessions must not query the developer's OS keyring.
-            .env("RHO_CREDENTIAL_STORE", "file")
+            .envs(self.command_env())
             .current_dir(&self.workspace);
         command
-    }
-
-    /// The daemon's log so far, empty before it starts.
-    pub fn daemon_log(&self) -> String {
-        fs::read_to_string(self.rho_home().join("logs/daemon.log")).unwrap_or_default()
-    }
-
-    /// The socket the sandbox's daemon listens on, once one does. It is
-    /// `run/rho/<id>/daemon.sock`, and the sandbox's one rho home has one
-    /// id, which rho derives from the home's canonical path.
-    pub fn daemon_socket(&self) -> Option<PathBuf> {
-        fs::read_dir(self.path().join("run/rho"))
-            .ok()?
-            .flatten()
-            .map(|runtime_dir| runtime_dir.path().join("daemon.sock"))
-            .find(|socket| socket.exists())
-    }
-
-    /// The pid in the daemon's record (`daemon/daemon.json` in the rho
-    /// home), which a daemon writes once its socket is bound. A daemon
-    /// that was killed leaves its record behind.
-    pub fn daemon_pid(&self) -> Option<u32> {
-        #[derive(serde::Deserialize)]
-        struct DaemonRecord {
-            pid: u32,
-        }
-        let record = fs::read(self.rho_home().join("daemon/daemon.json")).ok()?;
-        serde_json::from_slice::<DaemonRecord>(&record)
-            .ok()
-            .map(|record| record.pid)
-    }
-
-    /// Stops the daemon running from this sandbox, if any: SIGTERM, then
-    /// SIGKILL if it outlives `DAEMON_TEARDOWN_TIMEOUT`. SIGTERM comes first
-    /// because the daemon's graceful stop also ends the tool processes its
-    /// sessions started, which SIGKILL would orphan. A daemon this process
-    /// started is reaped, so it is gone, not a zombie, when this returns.
-    ///
-    /// Panics, unless the thread is already panicking, if the daemon
-    /// survives both signals.
-    #[cfg(unix)]
-    pub fn stop_daemon(&self) {
-        let Some(pid) = self.running_daemon_pid() else {
-            return;
-        };
-        for signal in [libc::SIGTERM, libc::SIGKILL] {
-            // SAFETY: `kill` takes no pointers and has no memory-safety
-            // preconditions.
-            unsafe { libc::kill(pid, signal) };
-            if exits_within(pid, DAEMON_TEARDOWN_TIMEOUT) {
-                return;
-            }
-        }
-        fail_teardown(&format!(
-            "rho daemon (pid {pid}) outlived SIGTERM and SIGKILL, waiting DAEMON_TEARDOWN_TIMEOUT ({DAEMON_TEARDOWN_TIMEOUT:?}) after each"
-        ));
-    }
-
-    /// rho runs no daemon off Unix.
-    #[cfg(not(unix))]
-    pub fn stop_daemon(&self) {}
-
-    /// The pid of the daemon that holds the sandbox's daemon lock, waiting
-    /// out one that took the lock but has not written its record yet.
-    /// `None` when no daemon holds the lock: a record a killed daemon left
-    /// names a pid another process may have since been given.
-    #[cfg(unix)]
-    fn running_daemon_pid(&self) -> Option<libc::pid_t> {
-        let lock = self.rho_home().join("daemon/daemon.lock");
-        let started = Instant::now();
-        loop {
-            if !daemon_lock_held(&lock) {
-                return None;
-            }
-            if let Some(pid) = self.daemon_pid() {
-                return libc::pid_t::try_from(pid).ok();
-            }
-            if started.elapsed() >= DAEMON_TEARDOWN_TIMEOUT {
-                fail_teardown(&format!(
-                    "rho daemon held {} for DAEMON_TEARDOWN_TIMEOUT ({DAEMON_TEARDOWN_TIMEOUT:?}) without writing its record",
-                    lock.display()
-                ));
-                return None;
-            }
-            std::thread::sleep(DAEMON_POLL_INTERVAL);
-        }
     }
 }
 
 impl Drop for IsolatedHome {
     fn drop(&mut self) {
-        self.stop_daemon();
-    }
-}
-
-/// Whether a daemon holds `lock`, probed as rho's own `daemon::is_held`
-/// does: with a non-blocking shared `flock` that the daemon's exclusive one
-/// refuses.
-#[cfg(unix)]
-fn daemon_lock_held(lock: &Path) -> bool {
-    use std::os::fd::AsRawFd;
-    let Ok(file) = fs::File::open(lock) else {
-        return false;
-    };
-    // SAFETY: `flock` takes only a descriptor, which `file` keeps open.
-    let probed = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) };
-    probed != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EWOULDBLOCK)
-}
-
-/// Whether `pid` exits within `limit`. A pid that is this process's child
-/// (a daemon a test ran itself) is reaped here: unreaped, it would linger
-/// as a zombie, which `kill(pid, 0)` still finds.
-#[cfg(unix)]
-fn exits_within(pid: libc::pid_t, limit: Duration) -> bool {
-    let started = Instant::now();
-    loop {
-        // SAFETY: a null status pointer is allowed, and WNOHANG never blocks.
-        let reaped = unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) } == pid;
-        // SAFETY: signal 0 only checks that `pid` exists and is ours to signal.
-        if reaped || unsafe { libc::kill(pid, 0) } != 0 {
-            return true;
-        }
-        if started.elapsed() >= limit {
-            return false;
-        }
-        std::thread::sleep(DAEMON_POLL_INTERVAL);
-    }
-}
-
-/// Fails a sandbox teardown loudly, without turning a test that is already
-/// panicking into an abort.
-#[cfg(unix)]
-fn fail_teardown(message: &str) {
-    if std::thread::panicking() {
-        eprintln!("{message}");
-    } else {
-        panic!("{message}");
+        // rho runs no daemon off Unix.
+        #[cfg(unix)]
+        crate::daemon::stop(self);
     }
 }
 
@@ -366,7 +237,9 @@ pub struct RhoLaunchPlan {
 }
 
 impl RhoLaunchPlan {
-    /// Build a matrix-mode launch plan in `home`'s sandbox, with its config.
+    /// Build a matrix-mode launch plan in `home`'s sandbox. rho reads the
+    /// sandbox's `config.toml` through `RHO_HOME`, so the plan passes no
+    /// `--config`.
     pub fn matrix(binary: impl Into<PathBuf>, home: &IsolatedHome, size: PtySize) -> Self {
         let mut env = default_clean_env();
         env.extend(home.env());
@@ -376,7 +249,7 @@ impl RhoLaunchPlan {
         Self {
             binary: binary.into(),
             size,
-            args: vec!["--config".into(), home.config_path.display().to_string()],
+            args: Vec::new(),
             env,
             cwd: home.workspace.clone(),
         }

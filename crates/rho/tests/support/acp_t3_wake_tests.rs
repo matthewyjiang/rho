@@ -42,8 +42,10 @@ const PARENT_ENDED: &str =
 /// A `rho acp --t3code` server with one watcher session waiting on
 /// [`TOKEN`], whose parent lock this holds.
 struct Watcher {
-    workspace: Workspace,
+    /// Before `workspace`, so the server is killed before the sandbox
+    /// tears down (see [`rho_tui_pty::IsolatedHome`]).
     server: AcpServer,
+    workspace: Workspace,
     session_id: String,
     parent_lock: Option<File>,
 }
@@ -154,7 +156,6 @@ impl Watcher {
 fn t3_server(workspace: &Workspace) -> AcpServer {
     let mut command = AcpServer::command(
         &workspace.home,
-        &workspace.project,
         "read-path",
         &workspace.extra.join("notes.txt"),
     );

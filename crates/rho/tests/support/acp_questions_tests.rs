@@ -29,9 +29,7 @@ provider = "disabled"
         ),
     )
     .unwrap();
-    let project = home.home.join("project");
-    std::fs::create_dir_all(&project).unwrap();
-    let server = AcpServer::spawn(&home, &project, "tool-call", &project);
+    let server = AcpServer::spawn(&home, "tool-call", &home.workspace);
     (home, server)
 }
 
@@ -47,7 +45,7 @@ fn start_session(server: &mut AcpServer, client: Value, home: &IsolatedHome) -> 
     let created = server
         .request(
             "session/new",
-            json!({"cwd": home.home.join("project"), "mcpServers": []}),
+            json!({"cwd": home.workspace, "mcpServers": []}),
         )
         .0
         .unwrap();

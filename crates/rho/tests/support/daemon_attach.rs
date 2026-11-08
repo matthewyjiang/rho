@@ -123,7 +123,7 @@ async fn job_of(client: &rho_protocol::Client, session: &SessionId) -> rho_proto
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn attach_reports_how_the_last_turn_ended() {
     let sandbox = Sandbox::new();
-    let (mut daemon, client) = sandbox.start_daemon("fixed").await;
+    let (mut daemon, client) = sandbox.spawn_daemon(sandbox.rho("fixed"), &[]).await;
     let session = sandbox.new_session(&client).await;
     assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
     let job = settled_job(&sandbox, &client, &session).await;
@@ -137,9 +137,9 @@ async fn attach_reports_how_the_last_turn_ended() {
         .args(["daemon", "stop"])
         .status()
         .unwrap();
-    assert!(stop.success(), "log:\n{}", sandbox.daemon_log());
+    assert!(stop.success(), "log:\n{}", sandbox.isolated.daemon_log());
     daemon.wait().unwrap();
-    let (_daemon, _client) = sandbox.start_daemon("fixed").await;
+    let _client = sandbox.start_daemon("fixed").await;
     let (reopened_status, reopened_lines) =
         Attach::spawn(&sandbox, "fixed", &[session.as_str(), "--output", "jsonl"])
             .finish()
@@ -194,7 +194,7 @@ async fn attach_reports_how_the_last_turn_ended() {
             Some(&turn_ended),
         ),
         "{reopened_lines:#?}\nlog:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
     assert_eq!(
         (text.status.code(), String::from_utf8(text.stdout).unwrap(),),
@@ -222,7 +222,7 @@ async fn attach_reports_how_the_last_turn_ended() {
 async fn attach_follows_a_turn_and_detaches_on_ctrl_c() {
     let sandbox = Sandbox::new();
     // The fixture holds the turn until it is cancelled.
-    let (_daemon, client) = sandbox.start_daemon("delay").await;
+    let client = sandbox.start_daemon("delay").await;
     let session = sandbox.new_session(&client).await;
     assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
 
@@ -276,7 +276,7 @@ async fn attach_follows_a_turn_and_detaches_on_ctrl_c() {
             Some(&json!({"type": "turn_ended", "outcome": {"type": "cancelled"}})),
         ),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }
 
@@ -355,7 +355,7 @@ impl Typed {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn attach_answers_an_approval_written_to_stdin() {
     let sandbox = Sandbox::new();
-    let (_daemon, client, session) = prompt_a_supervised_write(&sandbox).await;
+    let (client, session) = prompt_a_supervised_write(&sandbox).await;
     let mut approver = Typed::spawn(&sandbox, "tool-call", &session);
     approver
         .told("  1 allow once · 2 allow for session · 3 deny")
@@ -378,7 +378,7 @@ async fn attach_answers_an_approval_written_to_stdin() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn attach_cancels_the_turn_on_a_cancel_line() {
     let sandbox = Sandbox::new();
-    let (_daemon, client) = sandbox.start_daemon("delay").await;
+    let client = sandbox.start_daemon("delay").await;
     let session = sandbox.new_session(&client).await;
     assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
     let mut canceller = Typed::spawn(&sandbox, "delay", &session);
@@ -390,6 +390,6 @@ async fn attach_cancels_the_turn_on_a_cancel_line() {
         (status, told.last().cloned()),
         (Some(1), Some("Error: the turn was cancelled".to_owned())),
         "{told:#?}\nlog:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }

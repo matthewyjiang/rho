@@ -113,11 +113,9 @@ fn provider_finish_reasons_reach_the_prompt_stop_reason() {
     let requests = Requests::default();
     let address = spawn_provider(Arc::clone(&requests));
     let home = IsolatedHome::new().unwrap();
-    let project = home.home.join("project");
-    std::fs::create_dir_all(&project).unwrap();
-    let config = home.config_path.clone();
+    let project = &home.workspace;
     std::fs::write(
-        &config,
+        &home.config_path,
         format!(
             r#"provider = "mock"
 model = "mock-model"
@@ -137,11 +135,7 @@ provider = "disabled"
     )
     .unwrap();
     let mut command = home.command(env!("CARGO_BIN_EXE_rho"));
-    command
-        .current_dir(&project)
-        .arg("--config")
-        .arg(&config)
-        .args(["--provider", "mock", "acp"]);
+    command.args(["--provider", "mock", "acp"]);
     let mut server = AcpServer::from_command(&mut command);
     server
         .request("initialize", json!({"protocolVersion": 1}))

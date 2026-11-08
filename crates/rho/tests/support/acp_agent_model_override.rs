@@ -6,13 +6,10 @@ use pretty_assertions::assert_eq;
 fn new_session(workspace: &Workspace) -> (AcpServer, String) {
     let mut command = workspace.home.command(env!("CARGO_BIN_EXE_rho"));
     command
-        .current_dir(&workspace.project)
         // Where a test seeds the provider model cache.
         .env("XDG_CACHE_HOME", workspace.home.home.join(".cache"))
         .env("RHO_AUTOMATION_TEST_MODE", "inspect")
         .env("XAI_API_KEY", "fixture-key-not-a-real-credential")
-        .arg("--config")
-        .arg(&workspace.home.config_path)
         .arg("acp");
     let mut server = AcpServer::from_command(&mut command);
     server

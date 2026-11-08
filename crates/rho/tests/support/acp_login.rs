@@ -39,11 +39,7 @@ fn unauthenticated_cold_start_can_discover_login() {
         ids
     };
     let mut command = workspace.home.command(env!("CARGO_BIN_EXE_rho"));
-    command
-        .current_dir(&workspace.project)
-        .arg("--config")
-        .arg(&workspace.home.config_path)
-        .args(["--provider", "github-copilot", "acp", "--t3code"]);
+    command.args(["--provider", "github-copilot", "acp", "--t3code"]);
     let mut server = AcpServer::from_command(&mut command);
     let initialize =
         json!({"protocolVersion": 1, "clientCapabilities": {"auth": {"terminal": true}}});

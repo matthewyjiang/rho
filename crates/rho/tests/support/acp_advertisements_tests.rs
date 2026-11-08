@@ -210,12 +210,7 @@ fn tool_created_commands_are_published_before_prompt_returns() {
     let workspace = Workspace::new();
     let templates = workspace.project.join(".rho/prompts");
     std::fs::create_dir_all(&templates).unwrap();
-    let mut server = AcpServer::spawn(
-        &workspace.home,
-        &workspace.project,
-        "write-path",
-        &templates.join("created.md"),
-    );
+    let mut server = AcpServer::spawn(&workspace.home, "write-path", &templates.join("created.md"));
     server
         .request("initialize", json!({"protocolVersion": 1}))
         .0

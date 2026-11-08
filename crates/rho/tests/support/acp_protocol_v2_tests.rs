@@ -106,13 +106,7 @@ fn t3code_v2_prompt_reports_its_lifecycle_through_state_updates() {
         .replace("permission_mode = \"plan\"", "permission_mode = \"bypass\"");
     std::fs::write(config, settings).unwrap();
     let mut server = AcpServer::from_command(
-        AcpServer::command(
-            &workspace.home,
-            &workspace.project,
-            "tool-call",
-            &workspace.project,
-        )
-        .arg("--t3code"),
+        AcpServer::command(&workspace.home, "tool-call", &workspace.project).arg("--t3code"),
     );
     let initialized = server
         .request("initialize", negotiating_initialize())

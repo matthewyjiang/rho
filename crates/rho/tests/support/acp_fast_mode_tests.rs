@@ -23,9 +23,7 @@ provider = "disabled"
 "#,
     )
     .unwrap();
-    let project = home.home.join("project");
-    std::fs::create_dir_all(&project).unwrap();
-    let server = AcpServer::spawn(&home, &project, "fixed", &project);
+    let server = AcpServer::spawn(&home, "fixed", &home.workspace);
     (home, server)
 }
 
@@ -76,7 +74,7 @@ fn fast_mode_is_a_switch_only_for_hosts_that_advertise_boolean_options() {
         let created = server
             .request(
                 "session/new",
-                json!({"cwd": home.home.join("project"), "mcpServers": []}),
+                json!({"cwd": home.workspace, "mcpServers": []}),
             )
             .0
             .unwrap();

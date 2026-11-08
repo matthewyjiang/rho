@@ -37,7 +37,7 @@ fn bash_runs_in_a_host_terminal_shown_on_its_card() {
         .replace("permission_mode = \"plan\"", "permission_mode = \"bypass\"");
     std::fs::write(config, settings).unwrap();
     let project = workspace.project.clone();
-    let mut server = AcpServer::spawn(&workspace.home, &project, "tool-call", &project);
+    let mut server = AcpServer::spawn(&workspace.home, "tool-call", &project);
     server
         .request(
             "initialize",

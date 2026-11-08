@@ -88,6 +88,7 @@ Do the task.
 /// daemon, also while a test panics. Its clients should share one fixture
 /// mode (see [`IsolatedHome`]).
 pub(super) struct Sandbox {
+    /// The sandbox's home, log, and socket: tests reach them only here.
     pub(super) isolated: IsolatedHome,
     /// The session's workspace, canonicalized as the daemon records it.
     pub(super) workspace: PathBuf,
@@ -119,31 +120,31 @@ impl Sandbox {
     }
 
     /// Starts `rho daemon run` with the fixture in `mode` and connects to
-    /// it once it answers.
-    pub(super) async fn start_daemon(&self, mode: &str) -> (Child, Client) {
+    /// it once it answers. The sandbox stops the daemon when it drops.
+    pub(super) async fn start_daemon(&self, mode: &str) -> Client {
         self.start_daemon_with(mode, &[]).await
     }
 
     /// Starts `rho daemon run` with `args` and the fixture in `mode`, and
     /// connects to it once it answers.
-    pub(super) async fn start_daemon_with(&self, mode: &str, args: &[&str]) -> (Child, Client) {
-        self.spawn_daemon(self.rho(mode), args).await
+    pub(super) async fn start_daemon_with(&self, mode: &str, args: &[&str]) -> Client {
+        self.spawn_daemon(self.rho(mode), args).await.1
     }
 
     /// [`Self::start_daemon`], with the TUI fixture answering the title
     /// agent, whose one-shot provider skips the automation fixture: it
     /// names a session "Fixture session title".
-    async fn start_titling_daemon(&self, mode: &str) -> (Child, Client) {
+    async fn start_titling_daemon(&self, mode: &str) -> Client {
         let mut command = self.rho(mode);
         command.env("RHO_TUI_TEST_MODE", "matrix");
-        self.spawn_daemon(command, &[]).await
+        self.spawn_daemon(command, &[]).await.1
     }
 
     /// Runs `command daemon run args`, and connects once the daemon answers.
     ///
-    /// The sandbox stops the daemon when it drops; the returned process is
-    /// for a test that waits for the daemon's exit or kills it. Dropping it
-    /// does neither.
+    /// The returned process is for a test that waits for the daemon's exit
+    /// or kills it, and must then wait for it. Dropping it does neither:
+    /// the sandbox stops the daemon when it drops, and reaps it.
     pub(super) async fn spawn_daemon(
         &self,
         mut command: Command,
@@ -152,7 +153,7 @@ impl Sandbox {
         // Outside every session's workspace, as a service manager starts it,
         // so nothing a session runs can lean on the daemon's own directory.
         let daemon = command
-            .current_dir(self.rho_home())
+            .current_dir(self.isolated.rho_home())
             .args(["daemon", "run"])
             .args(args)
             .spawn()
@@ -189,10 +190,6 @@ impl Sandbox {
             .map(|(client, notifications, _)| (client, notifications))
     }
 
-    pub(super) fn daemon_log(&self) -> String {
-        self.isolated.daemon_log()
-    }
-
     /// Writes the fixture config with `permission_mode = "<mode>"`, which a
     /// daemon started after reads.
     pub(super) fn set_permission_mode(&self, mode: &str) {
@@ -207,11 +204,6 @@ impl Sandbox {
             format!("permission_mode = \"{mode}\"\n{CONFIG}\n{tables}"),
         )
         .unwrap();
-    }
-
-    /// The daemon's `RHO_HOME`, where user `hooks.toml` lives.
-    pub(super) fn rho_home(&self) -> PathBuf {
-        self.isolated.rho_home()
     }
 
     /// Calls `attempt` every [`POLL_INTERVAL`] until it returns `Some`, and
@@ -229,7 +221,7 @@ impl Sandbox {
             assert!(
                 started.elapsed() < DEADLINE,
                 "timed out after {DEADLINE:?} waiting for {what}; daemon log:\n{}",
-                self.daemon_log()
+                self.isolated.daemon_log()
             );
             tokio::time::sleep(POLL_INTERVAL).await;
         }
@@ -316,27 +308,21 @@ impl Sandbox {
     }
 
     /// The environment a client in the sandbox sends, which its sessions'
-    /// processes run with (#1659): the whole environment
-    /// [`IsolatedHome::command`] gives a child, so nothing a session runs
+    /// processes run with (#1659): [`IsolatedHome::command_env`], the whole
+    /// environment a child of the sandbox gets, so nothing a session runs
     /// reaches the developer's rho home or daemon. It has no fixture mode;
     /// only the daemon does.
     pub(super) fn client_environment(&self) -> ClientEnvironment {
-        // `command` clears the environment, so the variables it sets are
-        // all a child gets.
-        self.isolated
-            .command(env!("CARGO_BIN_EXE_rho"))
-            .get_envs()
-            .filter_map(|(name, value)| {
-                Some((name.to_str()?.to_owned(), value?.to_str()?.to_owned()))
-            })
-            .collect()
+        // Collected in order, so a later pair wins, as it does in a child's
+        // environment.
+        self.isolated.command_env().into_iter().collect()
     }
 
     /// The directory `session` is saved in, once it is: each session is a
     /// directory named for its id, below its workspace's.
     fn session_dir(&self, session: &SessionId) -> Option<PathBuf> {
         let suffix = format!("_{session}");
-        std::fs::read_dir(self.rho_home().join("sessions"))
+        std::fs::read_dir(self.isolated.rho_home().join("sessions"))
             .ok()?
             .flatten()
             .filter_map(|workspace| std::fs::read_dir(workspace.path()).ok())
@@ -424,7 +410,7 @@ async fn settled(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_turn_outlives_the_client_that_prompted_it() {
     let sandbox = Sandbox::new();
-    let (_daemon, client) = sandbox.start_daemon("fixed").await;
+    let client = sandbox.start_daemon("fixed").await;
     let session = sandbox.new_session(&client).await;
     assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
     drop(client);
@@ -455,7 +441,7 @@ async fn a_turn_outlives_the_client_that_prompted_it() {
             Err(Some(ErrorCode::SessionNotFound))
         ),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
     let records = sandbox.session_records(&session);
     assert!(
@@ -506,7 +492,7 @@ async fn a_turn_tells_clients_how_it_ended() {
     ];
     for (mode, outcome, state) in cases {
         let sandbox = Sandbox::new();
-        let (_daemon, client) = sandbox.start_daemon(mode).await;
+        let client = sandbox.start_daemon(mode).await;
         let session = sandbox.new_session(&client).await;
         let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
         // A turn that fails before it saves the prompt answers the prompt
@@ -529,7 +515,7 @@ async fn a_turn_tells_clients_how_it_ended() {
                 SessionEvent::State { state }
             ],
             "{mode}: log:\n{}",
-            sandbox.daemon_log()
+            sandbox.isolated.daemon_log()
         );
         let job = settled_job(&sandbox, &client, &session).await;
         assert_eq!((job.state, job.error), (state, listed), "{mode}: job list");
@@ -548,7 +534,7 @@ async fn a_prompts_image_and_resource_reach_the_model() {
     const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
     let sandbox = Sandbox::new();
     // The fixture answers with the request it got.
-    let (_daemon, client) = sandbox.start_daemon("inspect").await;
+    let client = sandbox.start_daemon("inspect").await;
     let session = sandbox.new_session(&client).await;
     let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
     let refused = [
@@ -617,7 +603,7 @@ async fn a_prompts_image_and_resource_reach_the_model() {
             },
         ]),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
     let answer = watcher.events.iter().find_map(|(_, event)| match event {
         SessionEvent::TurnEnded {
@@ -653,7 +639,7 @@ async fn a_prompts_image_and_resource_reach_the_model() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_answered_session_is_titled_for_its_clients() {
     let sandbox = Sandbox::new();
-    let (_daemon, client) = sandbox.start_titling_daemon("fixed").await;
+    let client = sandbox.start_titling_daemon("fixed").await;
     let session = sandbox.new_session(&client).await;
     let (mut watcher, before) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
     assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
@@ -692,7 +678,7 @@ async fn an_answered_session_is_titled_for_its_clients() {
             Some(serde_json::Value::from(title)),
         ),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }
 
@@ -716,7 +702,7 @@ enum Ending {
 async fn a_subagent_is_a_child_job_of_its_session() {
     let sandbox = Sandbox::new();
     // The fixture makes the call the prompt spells out as JSON.
-    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let client = sandbox.start_daemon("tool-call").await;
     let session = sandbox.new_session(&client).await;
     let call = serde_json::json!({
         "id": "delegate",
@@ -748,7 +734,7 @@ async fn a_subagent_is_a_child_job_of_its_session() {
             None,
         ),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
     let child_session = child.session.expect("a Rho subagent writes a session");
     let records = sandbox.session_records(&child_session);
@@ -776,7 +762,7 @@ async fn a_workflow_run_is_a_child_job_of_its_session() {
     std::fs::create_dir_all(workflows.join("agents")).unwrap();
     std::fs::write(workflows.join("main.star"), WORKFLOW).unwrap();
     std::fs::write(workflows.join("agents/fixture.md"), WORKFLOW_AGENT).unwrap();
-    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let client = sandbox.start_daemon("tool-call").await;
     let session = sandbox.new_session(&client).await;
     let call = serde_json::json!({
         "id": "start",
@@ -794,7 +780,7 @@ async fn a_workflow_run_is_a_child_job_of_its_session() {
         job.parent.as_ref() == Some(&workflow.id)
     })
     .await;
-    let log = sandbox.daemon_log();
+    let log = sandbox.isolated.daemon_log();
     assert_eq!(
         (
             (parent.state, workflow.kind, workflow.state, workflow.error),
@@ -814,7 +800,7 @@ async fn a_workflow_run_is_a_child_job_of_its_session() {
         "log:\n{log}"
     );
     // The run the tool started is the only one under the daemon's home.
-    let runs: Vec<String> = std::fs::read_dir(sandbox.rho_home().join("workflows/runs"))
+    let runs: Vec<String> = std::fs::read_dir(sandbox.isolated.rho_home().join("workflows/runs"))
         .unwrap()
         .map(|run| run.unwrap().file_name().into_string().unwrap())
         .collect();
@@ -839,7 +825,7 @@ async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
     for (ending, expected_state) in cases {
         let sandbox = Sandbox::new();
         // The fixture holds each turn until it is cancelled.
-        let (mut daemon, client) = sandbox.start_daemon("delay").await;
+        let (mut daemon, client) = sandbox.spawn_daemon(sandbox.rho("delay"), &[]).await;
         let session = sandbox.new_session(&client).await;
         assert_eq!(
             sandbox.prompt(&client, &session).await,
@@ -856,7 +842,7 @@ async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
         };
         let job = jobs_of_session(&client).await;
 
-        let (_daemon, client) = match ending {
+        let client = match ending {
             Ending::Cancel => {
                 client
                     .request::<SessionCancel>(&SessionCancelParams {
@@ -864,7 +850,7 @@ async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
                     })
                     .await
                     .unwrap();
-                (daemon, client)
+                client
             }
             Ending::Stop => {
                 drop(client);
@@ -873,13 +859,18 @@ async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
                     .args(["daemon", "stop"])
                     .status()
                     .unwrap();
-                assert!(stop.success(), "{ending:?}: log:\n{}", sandbox.daemon_log());
+                assert!(
+                    stop.success(),
+                    "{ending:?}: log:\n{}",
+                    sandbox.isolated.daemon_log()
+                );
                 daemon.wait().unwrap();
                 sandbox.start_daemon("delay").await
             }
             Ending::Kill => {
                 drop(client);
-                // Reaped, so its lock is free for the next daemon.
+                // The kernel releases its lock when it exits, which the
+                // wait guarantees happened, so the next daemon can take it.
                 daemon.kill().unwrap();
                 daemon.wait().unwrap();
                 sandbox.start_daemon("delay").await
@@ -910,7 +901,7 @@ async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
                 job,
             ),
             "{ending:?}: log:\n{}",
-            sandbox.daemon_log()
+            sandbox.isolated.daemon_log()
         );
     }
 }
@@ -924,7 +915,7 @@ async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_session_another_process_saved_reopens_once_it_lets_go() {
     let sandbox = Sandbox::new();
-    let (_daemon, client) = sandbox.start_daemon("delay").await;
+    let client = sandbox.start_daemon("delay").await;
     // The fixture's model call waits, so the run holds its session open.
     let mut run = tokio::process::Command::from(sandbox.rho("delay"));
     run.args(["run", "--output", "jsonl", "hello"])
@@ -989,7 +980,7 @@ async fn a_session_another_process_saved_reopens_once_it_lets_go() {
             Ok(())
         ),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }
 
@@ -1017,7 +1008,7 @@ async fn a_session_reopens_only_as_the_agent_it_was_saved_as() {
         SessionId::new(started["session"].as_str().unwrap())
     };
     let (kept, edited) = (saved_as_archivist(), saved_as_archivist());
-    let (_daemon, client) = sandbox.start_daemon("fixed").await;
+    let client = sandbox.start_daemon("fixed").await;
 
     let while_unchanged = sandbox.prompt(&client, &kept).await;
     std::fs::write(
@@ -1031,7 +1022,7 @@ async fn a_session_reopens_only_as_the_agent_it_was_saved_as() {
         (while_unchanged, once_changed),
         (Ok(()), Err(Some(ErrorCode::SessionOpenFailed))),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }
 
@@ -1043,7 +1034,7 @@ async fn a_session_reopens_only_as_the_agent_it_was_saved_as() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_idle_session_is_unloaded_and_its_file_let_go() {
     let sandbox = Sandbox::new();
-    let (_daemon, client) = sandbox
+    let client = sandbox
         .start_daemon_with("fixed", &["--unload-idle-after", "200ms"])
         .await;
     // Saved, so another process finds it.
@@ -1073,7 +1064,7 @@ async fn an_idle_session_is_unloaded_and_its_file_let_go() {
         .await;
     let followed_deleted = delete(&followed);
 
-    assert!(!followed_deleted, "log:\n{}", sandbox.daemon_log());
+    assert!(!followed_deleted, "log:\n{}", sandbox.isolated.daemon_log());
 }
 
 /// A client following one session's events on its own connection, as a
@@ -1204,7 +1195,7 @@ fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
 async fn clients_that_leave_and_come_back_see_the_same_turn() {
     let sandbox = Sandbox::new();
     // The fixture holds the turn until it is cancelled.
-    let (_daemon, client) = sandbox.start_daemon("delay").await;
+    let client = sandbox.start_daemon("delay").await;
     let session = sandbox.new_session(&client).await;
     let (mut watcher, watched) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
     let (mut leaver, ..) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
@@ -1249,7 +1240,7 @@ async fn clients_that_leave_and_come_back_see_the_same_turn() {
         leaver.events,
         watcher.events,
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
     assert_eq!(
         conversation(&latecomer.events),
@@ -1275,7 +1266,7 @@ async fn clients_that_leave_and_come_back_see_the_same_turn() {
         .args(["daemon", "stop"])
         .status()
         .unwrap();
-    assert!(stop.success(), "log:\n{}", sandbox.daemon_log());
+    assert!(stop.success(), "log:\n{}", sandbox.isolated.daemon_log());
     assert_eq!(
         watcher.next_notification().await,
         Some(DaemonNotification::SessionDetached(SessionDetachedParams {
@@ -1283,7 +1274,7 @@ async fn clients_that_leave_and_come_back_see_the_same_turn() {
             reason: DetachReason::DaemonStopping,
         })),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }
 
@@ -1310,10 +1301,10 @@ async fn answer(
 
 /// Starts a supervised daemon and prompts a new session's turn to `write`
 /// `note.txt`, which waits for approval with nobody attached.
-pub(super) async fn prompt_a_supervised_write(sandbox: &Sandbox) -> (Child, Client, SessionId) {
+pub(super) async fn prompt_a_supervised_write(sandbox: &Sandbox) -> (Client, SessionId) {
     sandbox.set_permission_mode("supervised");
     // The fixture makes the call the prompt spells out as JSON.
-    let (daemon, client) = sandbox.start_daemon("tool-call").await;
+    let client = sandbox.start_daemon("tool-call").await;
     let session = sandbox.new_session(&client).await;
     let call = serde_json::json!({
         "id": "edit",
@@ -1321,7 +1312,7 @@ pub(super) async fn prompt_a_supervised_write(sandbox: &Sandbox) -> (Child, Clie
         "arguments": {"path": "note.txt", "content": "approved"},
     });
     sandbox.prompt_tool_call(&client, &session, &call).await;
-    (daemon, client, session)
+    (client, session)
 }
 
 // Covers: a supervised turn's approval, asked while no client is attached,
@@ -1333,7 +1324,7 @@ pub(super) async fn prompt_a_supervised_write(sandbox: &Sandbox) -> (Child, Clie
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_approval_waits_for_any_client_to_answer() {
     let sandbox = Sandbox::new();
-    let (_daemon, client, session) = prompt_a_supervised_write(&sandbox).await;
+    let (client, session) = prompt_a_supervised_write(&sandbox).await;
     // Nobody is attached while the turn asks.
     sandbox
         .poll_until("the turn to ask", async || {
@@ -1411,7 +1402,7 @@ async fn an_approval_waits_for_any_client_to_answer() {
             Some("approved".to_owned()),
         ),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }
 
@@ -1422,7 +1413,7 @@ async fn an_approval_waits_for_any_client_to_answer() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_turn_that_asks_tells_the_hooks() {
     let sandbox = Sandbox::new();
-    let home = sandbox.rho_home();
+    let home = sandbox.isolated.rho_home();
     let events = home.join("asked.jsonl");
     let hook = home.join("on-input-requested");
     std::fs::write(&hook, format!("#!/bin/sh\ncat >> '{}'\n", events.display())).unwrap();
@@ -1435,7 +1426,7 @@ async fn a_turn_that_asks_tells_the_hooks() {
         ),
     )
     .unwrap();
-    let (_daemon, _client, session) = prompt_a_supervised_write(&sandbox).await;
+    let (_client, session) = prompt_a_supervised_write(&sandbox).await;
 
     let event: serde_json::Value = sandbox
         .poll_until("the hook to run", async || {
@@ -1460,7 +1451,7 @@ async fn a_turn_that_asks_tells_the_hooks() {
             true,
         ),
         "event: {event:#}\nlog:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }
 
@@ -1556,7 +1547,7 @@ fn resolutions(events: &[(Seq, SessionEvent)]) -> Vec<Resolution> {
 async fn a_question_nobody_answers_times_out_with_its_fallback() {
     // The shortest timeout the config takes.
     let sandbox = sandbox_with_question_timeout(1);
-    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let client = sandbox.start_daemon("tool-call").await;
     let session = sandbox.new_session(&client).await;
     let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
     ask_color_with_fallback(&sandbox, &client, &session).await;
@@ -1582,7 +1573,7 @@ async fn a_question_nobody_answers_times_out_with_its_fallback() {
             JobState::Completed,
         ),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }
 
@@ -1595,7 +1586,7 @@ async fn a_question_nobody_answers_times_out_with_its_fallback() {
 async fn a_held_question_waits_for_the_users_answer() {
     // Far longer than the test, so the hold always comes first.
     let sandbox = sandbox_with_question_timeout(3600);
-    let (_daemon, client) = sandbox.start_daemon("tool-call").await;
+    let client = sandbox.start_daemon("tool-call").await;
     let session = sandbox.new_session(&client).await;
     let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
     ask_color_with_fallback(&sandbox, &client, &session).await;
@@ -1639,6 +1630,6 @@ async fn a_held_question_waits_for_the_users_answer() {
             }),
         ),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }

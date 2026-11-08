@@ -1,8 +1,8 @@
-//! `rho daemon` through the real binary: its lifecycle (status, single
-//! instance, and stop) and the test sandbox stopping it here, the sessions
-//! it hosts in [`sessions`],
-//! changing their settings in [`configure`], and listing, renaming, and
-//! deleting them in [`catalog`],
+//! `rho daemon` through the real binary. Here: its lifecycle (status,
+//! single instance, and stop), and a dropped test sandbox stopping the
+//! daemon a client in it started. The sessions it hosts are in
+//! [`sessions`], changing their settings in [`configure`], and listing,
+//! renaming, and deleting them in [`catalog`],
 //! `rho attach` following them in [`attach`], and `rho run --detach`
 //! starting them in [`detach`]; the tool processes the daemon's stop ends
 //! are in [`tools`], signing it in and out over its socket in [`auth`],
@@ -10,7 +10,12 @@
 //! them, in [`login`].
 #![cfg(unix)]
 
-use std::process::{Output, Stdio};
+use std::{
+    fs::File,
+    os::fd::AsRawFd,
+    panic::AssertUnwindSafe,
+    process::{Output, Stdio},
+};
 
 use pretty_assertions::assert_eq;
 use serde_json::Value;
@@ -121,33 +126,44 @@ async fn daemon_lifecycle_through_the_cli() {
     );
 }
 
-// Covers: a sandbox that drops while its test panics stops the daemon a
-// client in it started, so a failing test leaves no daemon running.
+// Covers: dropping a sandbox stops the daemon a client in it started, so a
+// test that fails, or forgets to stop it, leaves no daemon running.
 // Owner: daemon test sandbox teardown (process).
 #[test]
-fn a_sandbox_dropped_in_a_panic_stops_the_daemon_a_client_started() {
-    let mut pid = None;
-    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let sandbox = Sandbox::new();
-        // `rho run --detach` starts a daemon, which outlives it.
-        let detached = sandbox
-            .rho("fixed")
-            .args(["run", "--detach", "hello"])
-            .status()
-            .unwrap();
-        assert!(detached.success(), "log:\n{}", sandbox.daemon_log());
-        pid = sandbox.isolated.daemon_pid();
-        panic!("the test fails while the daemon runs");
-    }));
-    let Some(pid) = pid else {
-        std::panic::resume_unwind(unwound.expect_err("the test panics"));
-    };
-    let pid = libc::pid_t::try_from(pid).unwrap();
-    // SAFETY: signal 0 only checks that `pid` exists.
-    let alive = unsafe { libc::kill(pid, 0) } == 0;
-    if alive {
-        // SAFETY: as above; the daemon must not outlive a failed check.
-        unsafe { libc::kill(pid, libc::SIGKILL) };
+fn a_dropped_sandbox_stops_the_daemon_a_client_started() {
+    let sandbox = Sandbox::new();
+    // `rho run --detach` starts a daemon, which outlives it.
+    let detached = sandbox
+        .rho("fixed")
+        .args(["run", "--detach", "hello"])
+        .status()
+        .unwrap();
+    assert!(
+        detached.success(),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+    // Kept open, it still probes the daemon's lock once the sandbox's
+    // directory is deleted.
+    let lock = File::open(sandbox.isolated.rho_home().join("daemon/daemon.lock")).unwrap();
+    // Whether a shared lock is granted, which the daemon's exclusive one
+    // refuses until it exits.
+    // SAFETY: `flock` takes only a descriptor, which `lock` keeps open.
+    let free = || unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) == 0 };
+    assert!(!free(), "the daemon holds its lock");
+    let pid = sandbox.isolated.daemon_pid().expect("the daemon's record");
+
+    // Caught so the daemon is killed below if the teardown panics because it
+    // failed to stop it.
+    let teardown = std::panic::catch_unwind(AssertUnwindSafe(|| drop(sandbox)));
+    let released = free();
+    if !released {
+        // SAFETY: `kill` takes no pointers. The daemon must not outlive a
+        // failed test.
+        unsafe { libc::kill(libc::pid_t::try_from(pid).unwrap(), libc::SIGKILL) };
     }
-    assert_eq!((unwound.is_err(), alive), (true, false));
+    if let Err(panic) = teardown {
+        std::panic::resume_unwind(panic);
+    }
+    assert!(released, "the daemon (pid {pid}) still holds its lock");
 }

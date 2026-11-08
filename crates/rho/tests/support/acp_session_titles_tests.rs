@@ -25,9 +25,8 @@ provider = "disabled"
 "#,
     )
     .unwrap();
-    let project = home.home.canonicalize().unwrap().join("project");
-    std::fs::create_dir_all(&project).unwrap();
-    let mut command = AcpServer::command(&home, &project, "fixed", &project);
+    let project = home.workspace.canonicalize().unwrap();
+    let mut command = AcpServer::command(&home, "fixed", &project);
     // The title agent's one-shot provider skips the automation fixture; the
     // TUI fixture answers its request instead.
     command.env("RHO_TUI_TEST_MODE", "matrix");

@@ -91,30 +91,25 @@ struct AcpServer {
 }
 
 impl AcpServer {
-    /// Starts `rho acp` in `home`'s sandbox, in `cwd`, with the fixture
+    /// Starts `rho acp` in `home`'s sandbox and workspace, with the fixture
     /// provider in `mode`; `path` is the file the fixture's tool call
     /// targets.
-    fn spawn(home: &IsolatedHome, cwd: &Path, mode: &str, path: &Path) -> Self {
-        Self::from_command(&mut Self::command(home, cwd, mode, path))
+    fn spawn(home: &IsolatedHome, mode: &str, path: &Path) -> Self {
+        Self::from_command(&mut Self::command(home, mode, path))
     }
 
     /// The command [`Self::spawn`] runs, for tests that add to it.
-    fn command(home: &IsolatedHome, cwd: &Path, mode: &str, path: &Path) -> Command {
+    fn command(home: &IsolatedHome, mode: &str, path: &Path) -> Command {
         let mut command = home.command(env!("CARGO_BIN_EXE_rho"));
         command
-            .current_dir(cwd)
             .env("RHO_AUTOMATION_TEST_MODE", mode)
             .env("RHO_AUTOMATION_TEST_PATH", path)
-            .arg("--config")
-            .arg(&home.config_path)
             .arg("acp");
         command
     }
 
     fn from_command(command: &mut Command) -> Self {
         let mut child = command
-            // A crash then says where in the agent's stderr.
-            .env("RUST_BACKTRACE", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -249,10 +244,11 @@ impl Drop for AcpServer {
     }
 }
 
-/// A sandbox with a plan-mode config, a project in its home, and a
+/// A sandbox with a plan-mode config, its workspace as the project, and a
 /// directory outside the project holding `notes.txt`.
 struct Workspace {
     home: IsolatedHome,
+    /// The sandbox's workspace, canonicalized as rho reports it.
     project: PathBuf,
     extra: PathBuf,
 }
@@ -275,10 +271,8 @@ provider = "disabled"
 "#,
         )
         .unwrap();
-        let root = home.home.canonicalize().unwrap();
-        let project = root.join("project");
-        let extra = root.join("shared-lib");
-        std::fs::create_dir_all(&project).unwrap();
+        let project = home.workspace.canonicalize().unwrap();
+        let extra = home.home.canonicalize().unwrap().join("shared-lib");
         std::fs::create_dir_all(&extra).unwrap();
         std::fs::write(extra.join("notes.txt"), "extra root content").unwrap();
         Self {
@@ -289,12 +283,7 @@ provider = "disabled"
     }
 
     fn server(&self) -> AcpServer {
-        AcpServer::spawn(
-            &self.home,
-            &self.project,
-            "read-path",
-            &self.extra.join("notes.txt"),
-        )
+        AcpServer::spawn(&self.home, "read-path", &self.extra.join("notes.txt"))
     }
 }
 

@@ -1,9 +1,6 @@
 //! Sign-in recovery against a provider that checks its key over real HTTP.
 
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use pretty_assertions::assert_eq;
 use rho_providers::credentials::{CredentialStore, FileCredentialStore};
@@ -20,7 +17,6 @@ const KEY_ACCOUNT: &str = "provider:mock:api-key";
 /// [`spawn_provider`] host, with an empty file credential store.
 struct MockProviderHome {
     home: IsolatedHome,
-    project: PathBuf,
     store: FileCredentialStore,
 }
 
@@ -28,8 +24,6 @@ impl MockProviderHome {
     fn new(valid: &Arc<Mutex<String>>) -> Self {
         let address = spawn_provider(Arc::clone(valid));
         let home = IsolatedHome::new().unwrap();
-        let project = home.home.join("project");
-        std::fs::create_dir_all(&project).unwrap();
         std::fs::write(
             &home.config_path,
             format!(
@@ -52,11 +46,7 @@ provider = "disabled"
         )
         .unwrap();
         let store = FileCredentialStore::with_rho_home(home.rho_home()).unwrap();
-        Self {
-            home,
-            project,
-            store,
-        }
+        Self { home, store }
     }
 
     /// Starts and initializes `rho acp`, returning the `initialize` result.
@@ -68,11 +58,7 @@ provider = "disabled"
 
     fn server_with_args(&self, args: &[&str]) -> (AcpServer, Value) {
         let mut command = self.home.command(env!("CARGO_BIN_EXE_rho"));
-        command
-            .current_dir(&self.project)
-            .arg("--config")
-            .arg(&self.home.config_path)
-            .args(args);
+        command.args(args);
         let mut server = AcpServer::from_command(&mut command);
         let initialized = server
             .request("initialize", json!({"protocolVersion": 1}))
@@ -82,7 +68,7 @@ provider = "disabled"
     }
 
     fn new_session(&self) -> Value {
-        json!({"cwd": self.project, "mcpServers": []})
+        json!({"cwd": self.home.workspace, "mcpServers": []})
     }
 }
 

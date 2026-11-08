@@ -33,9 +33,7 @@ provider = "disabled"
         )
         .unwrap();
     }
-    let project = home.home.join("project");
-    std::fs::create_dir_all(&project).unwrap();
-    let server = AcpServer::spawn(&home, &project, "fixed", &project);
+    let server = AcpServer::spawn(&home, "fixed", &home.workspace);
     (home, server)
 }
 
@@ -117,7 +115,7 @@ fn manual_compaction_reports_a_card_only_to_hosts_that_advertise_it() {
         ("baseline host", json!({}), Vec::new(), 1),
     ] {
         let (home, mut server) = server(None);
-        let cwd = home.home.join("project");
+        let cwd = home.workspace.clone();
         let session_id = start_session(&mut server, capabilities, &cwd);
         prompt(&mut server, &session_id, "hello");
         let updates = prompt(&mut server, &session_id, "/compact");
@@ -135,7 +133,7 @@ fn manual_compaction_reports_a_card_only_to_hosts_that_advertise_it() {
 #[test]
 fn automatic_compaction_reports_a_card() {
     let (home, mut server) = server(Some(1_000));
-    let cwd = home.home.join("project");
+    let cwd = home.workspace.clone();
     let session_id = start_session(&mut server, json!({"session": {"compaction": {}}}), &cwd);
     let mut lifecycles = Vec::new();
     for text in ["hello", "again"] {

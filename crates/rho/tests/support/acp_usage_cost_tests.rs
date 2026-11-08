@@ -25,15 +25,13 @@ provider = "disabled"
 "#,
     )
     .unwrap();
-    std::fs::create_dir_all(home.home.join("project")).unwrap();
     home
 }
 
 /// An initialized server whose responses each cost `cost` USD micros, or
 /// carry no price when `None`.
 fn server(home: &IsolatedHome, cost: Option<&str>) -> AcpServer {
-    let project = home.home.join("project");
-    let mut command = AcpServer::command(home, &project, "fixed", &project);
+    let mut command = AcpServer::command(home, "fixed", &home.workspace);
     if let Some(cost) = cost {
         command.env("RHO_AUTOMATION_TEST_COST_USD_MICROS", cost);
     }
@@ -87,7 +85,7 @@ fn usage_updates_report_cumulative_session_cost_across_load() {
         ("unpriced", None, Value::Null, Value::Null),
     ] {
         let home = home();
-        let project = home.home.join("project");
+        let project = &home.workspace;
         let mut server = server(&home, cost);
         let created = server
             .request("session/new", json!({"cwd": project, "mcpServers": []}))

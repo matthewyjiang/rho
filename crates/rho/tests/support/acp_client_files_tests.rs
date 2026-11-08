@@ -123,7 +123,7 @@ fn host_served_files_route_reads_and_edits_through_the_host() {
     )]));
 
     let mut server = AcpServer::from_command(
-        AcpServer::command(&workspace.home, &project, "tool-call", &project)
+        AcpServer::command(&workspace.home, "tool-call", &project)
             .arg("--add-dir")
             .arg(&workspace.extra),
     );

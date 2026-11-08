@@ -7,7 +7,7 @@
 use std::{
     collections::BTreeSet,
     io::{BufRead, BufReader},
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
 };
 
 use pretty_assertions::assert_eq;
@@ -49,8 +49,8 @@ fn rho(sandbox: &Sandbox) -> Command {
     command
 }
 
-async fn start_daemon(sandbox: &Sandbox) -> (Child, Client) {
-    sandbox.spawn_daemon(rho(sandbox), &[]).await
+async fn start_daemon(sandbox: &Sandbox) -> Client {
+    sandbox.spawn_daemon(rho(sandbox), &[]).await.1
 }
 
 /// Starts a login to [`AUTH`]; its id, or the error code that refused it.
@@ -119,7 +119,7 @@ async fn approve(url: &str) {
 
 /// The access token saved for SpaceXAI in the sandbox's file store.
 fn saved_token(sandbox: &Sandbox) -> Option<String> {
-    let store = FileCredentialStore::with_rho_home(sandbox.rho_home()).unwrap();
+    let store = FileCredentialStore::with_rho_home(sandbox.isolated.rho_home()).unwrap();
     let tokens = store.get_secret(TOKENS_ACCOUNT).unwrap()?;
     let tokens: Value = serde_json::from_str(&tokens).unwrap();
     tokens["access_token"].as_str().map(str::to_owned)
@@ -155,7 +155,7 @@ fn models_gained(before: &SessionOptions, after: &SessionOptions) -> (BTreeSet<S
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_relayed_login_signs_in_a_running_session() {
     let sandbox = Sandbox::new();
-    let (_daemon, client) = start_daemon(&sandbox).await;
+    let client = start_daemon(&sandbox).await;
     let opened = client
         .request::<SessionNew>(&SessionNewParams {
             cwd: sandbox.workspace.clone(),
@@ -203,7 +203,7 @@ async fn a_relayed_login_signs_in_a_running_session() {
             Some(FIXTURE_TOKEN.to_owned()),
         ),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }
 
@@ -214,7 +214,7 @@ async fn a_relayed_login_signs_in_a_running_session() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_login_ends_when_cancelled_or_its_client_leaves() {
     let sandbox = Sandbox::new();
-    let (_daemon, client) = start_daemon(&sandbox).await;
+    let client = start_daemon(&sandbox).await;
     let (first, mut notifications) = sandbox.connect_following().await;
     let login = start_login(&first).await.unwrap();
     next_prompt(&mut notifications, &login).await;
@@ -264,7 +264,7 @@ async fn a_login_ends_when_cancelled_or_its_client_leaves() {
             None,
         ),
         "log:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }
 
@@ -300,7 +300,10 @@ async fn rho_login_signs_in_through_a_daemon_it_starts() {
     // deadline ends a read that would otherwise wait forever.
     let Ok(printed_url) = tokio::time::timeout(DEADLINE, printed_url).await else {
         login.kill().unwrap();
-        panic!("rho login printed no URL\nlog:\n{}", sandbox.daemon_log());
+        panic!(
+            "rho login printed no URL\nlog:\n{}",
+            sandbox.isolated.daemon_log()
+        );
     };
     let (url, mut stderr) = printed_url.unwrap();
     approve(&url).await;
@@ -311,7 +314,10 @@ async fn rho_login_signs_in_through_a_daemon_it_starts() {
     });
     let Ok(rest) = tokio::time::timeout(DEADLINE, rest).await else {
         login.kill().unwrap();
-        panic!("rho login did not exit\nlog:\n{}", sandbox.daemon_log());
+        panic!(
+            "rho login did not exit\nlog:\n{}",
+            sandbox.isolated.daemon_log()
+        );
     };
     let (status, rest) = (login.wait().unwrap(), rest.unwrap());
 
@@ -319,6 +325,6 @@ async fn rho_login_signs_in_through_a_daemon_it_starts() {
         (status.code(), saved_token(&sandbox)),
         (Some(0), Some(FIXTURE_TOKEN.to_owned())),
         "stderr:\n{rest}\nlog:\n{}",
-        sandbox.daemon_log()
+        sandbox.isolated.daemon_log()
     );
 }
