@@ -26,7 +26,8 @@ const IDLE_COMPOSER: &str = "Type a message";
 // Covers: when the daemon restarts in place, the TUI attached to it
 // reconnects without an error, keeps the conversation, and its next prompt
 // runs in the restarted daemon; a TUI whose session had saved nothing yet,
-// which the restarted daemon cannot reopen, goes on in a new session.
+// which the restarted daemon cannot reopen, goes on in a new session that
+// keeps the settings the person changed.
 // Owner: interactive TUI as a daemon client
 pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
     let home = IsolatedHome::new()?;
@@ -84,9 +85,16 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
 
         harness = spawn()?;
         harness.set_phase("restart_unsaved");
-        harness.wait_for_text("gpt-5.5", STARTUP)?;
+        harness.wait_for_text("Bypass ·", STARTUP)?;
+        harness.submit_text("/permissions supervised")?;
+        harness.wait_for_text("Supervised ·", SETTLE)?;
         restart()?;
         harness.wait_for_text("(new session)", STREAM)?;
+        let screen = harness.screen().contents();
+        ensure!(
+            screen.contains("Supervised ·") && !screen.contains("Bypass ·"),
+            "the new session lost the permission mode set before the restart:\n{screen}"
+        );
         harness.submit_text("hello in a new session")?;
         harness.wait_for_text("fixture response: hello in a new session", STREAM)?;
         harness.wait_for_text(IDLE_COMPOSER, SETTLE)?;

@@ -127,13 +127,14 @@ mod unix {
     use rho_protocol::ClientError;
     use rho_protocol::{
         methods::{
-            SessionAnswer, SessionAttach, SessionCancel, SessionHold, SessionNew, SessionSteer,
-            SessionUnsteer,
+            SessionAnswer, SessionAttach, SessionCancel, SessionConfigure, SessionHold, SessionNew,
+            SessionSteer, SessionUnsteer,
         },
         ClientEnvironment, ContentBlock, DetachReason, ErrorCode, InputAnswer, InputRequestId,
         JobState, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
-        SessionCancelParams, SessionHoldParams, SessionId, SessionNewParams, SessionSetup,
-        SessionSteerParams, SessionUnsteerParams, SteerId, UnsteerOutcome,
+        SessionCancelParams, SessionChange, SessionConfigureParams, SessionHoldParams, SessionId,
+        SessionNewParams, SessionOptions, SessionSetup, SessionSteerParams, SessionUnsteerParams,
+        SteerId, UnsteerOutcome,
     };
     use rho_sdk::SteeringId;
     use tokio::sync::{mpsc, oneshot, watch};
@@ -177,8 +178,39 @@ mod unix {
         daemon: Arc<Daemon>,
         /// The attach, after the session's cursor.
         params: SessionAttachParams,
-        /// What opened the session, when it had saved nothing yet.
-        opened: Option<SessionNewParams>,
+        /// What opened the session, when it had saved nothing yet, and
+        /// the options it ran with, which a new session in its place takes.
+        opened: Option<(SessionNewParams, Option<SessionOptions>)>,
+    }
+
+    /// The changes that move a session from the options `from` to `to`, in
+    /// the order they apply: a model first, since it decides which
+    /// reasoning levels and fast mode the others may pick.
+    fn changes_between(from: &SessionOptions, to: &SessionOptions) -> Vec<SessionChange> {
+        let mut changes = Vec::new();
+        if from.model.current != to.model.current {
+            changes.push(SessionChange::Model {
+                model: to.model.current.clone(),
+            });
+        }
+        if let Some(reasoning) = to.reasoning.as_ref().filter(|reasoning| {
+            from.reasoning.as_ref().map(|from| from.current) != Some(reasoning.current)
+        }) {
+            changes.push(SessionChange::Reasoning {
+                level: reasoning.current,
+            });
+        }
+        let fast =
+            |options: &SessionOptions| options.fast_mode.as_ref().is_some_and(|fast| fast.enabled);
+        if fast(from) != fast(to) {
+            changes.push(SessionChange::FastMode { enabled: fast(to) });
+        }
+        if from.permission_mode.current != to.permission_mode.current {
+            changes.push(SessionChange::PermissionMode {
+                mode: to.permission_mode.current,
+            });
+        }
+        changes
     }
 
     impl Relink {
@@ -212,10 +244,27 @@ mod unix {
                     }),
                 }),
                 Err(error) => match opened {
-                    Some(mut opened) if error.error_code() == Some(ErrorCode::SessionNotFound) => {
+                    Some((mut opened, carried))
+                        if error.error_code() == Some(ErrorCode::SessionNotFound) =>
+                    {
                         daemon.unroute(&params.session);
                         opened.environment = ClientEnvironment::of_this_process();
-                        let session = link.request::<SessionNew>(&opened).await?.session;
+                        let created = link.request::<SessionNew>(&opened).await?;
+                        let session = created.session;
+                        // The settings the person changed carry over; one the
+                        // restarted daemon refuses keeps its default.
+                        let changes = carried
+                            .map(|carried| changes_between(&created.options, &carried))
+                            .unwrap_or_default();
+                        for change in changes {
+                            let params = SessionConfigureParams {
+                                session: session.clone(),
+                                change,
+                            };
+                            if let Err(error) = link.request::<SessionConfigure>(&params).await {
+                                tracing::warn!(%error, "could not carry a setting to the new daemon session");
+                            }
+                        }
                         let routed = route(&daemon, &session);
                         let attach = SessionAttachParams {
                             session: session.clone(),
@@ -280,6 +329,8 @@ mod unix {
         routed: mpsc::UnboundedReceiver<Routed>,
         /// Where the session's requests go.
         target: watch::Sender<Target>,
+        /// The session's options as the daemon last reported them.
+        options: Option<SessionOptions>,
         events: DaemonEvents,
         /// Which of the attachment's events are its replay.
         position: StreamPosition,
@@ -347,6 +398,7 @@ mod unix {
                 workspace: response.workspace,
                 routed,
                 target,
+                options: Some(response.options.clone()),
                 events,
                 replay_state,
                 pending,
@@ -436,6 +488,7 @@ mod unix {
                         self.target.send_replace(Target::Attached { link, session });
                     }
                     self.position.reattached(&response);
+                    self.options = Some(response.options.clone());
                     self.saved |= response.title.is_some();
                     self.workspace = response.workspace.clone();
                     let (replay, state) = begin_replay(&mut self.events, &response);
@@ -469,8 +522,12 @@ mod unix {
                 match next {
                     Some(Routed::Event { seq, event }) => {
                         let part = self.position.observe(seq);
-                        if matches!(event, rho_protocol::SessionEvent::TitleChanged { .. }) {
-                            self.saved = true;
+                        match &event {
+                            rho_protocol::SessionEvent::TitleChanged { .. } => self.saved = true,
+                            rho_protocol::SessionEvent::OptionsChanged { options } => {
+                                self.options = Some(options.clone());
+                            }
+                            _ => {}
                         }
                         views.extend(self.events.map(event));
                         if let Part::Replayed { left: 0, .. } = part {
@@ -508,7 +565,11 @@ mod unix {
                             params: self.reattach_params(),
                             // Only a session that saved nothing can be
                             // missing from the restarted daemon.
-                            opened: self.opened.clone().filter(|_| !self.saved),
+                            opened: self
+                                .opened
+                                .clone()
+                                .filter(|_| !self.saved)
+                                .map(|opened| (opened, self.options.clone())),
                         };
                         self.reattach = Some(Box::pin(async move {
                             tokio::time::timeout(DAEMON_RESTART_TIMEOUT, relink.run(old))
@@ -674,7 +735,9 @@ mod unix {
         /// Asks the turn under way, if any, to stop. A closed connection
         /// has already ended what the TUI followed, so it asks nothing.
         pub(in crate::tui) async fn cancel(&self) -> anyhow::Result<()> {
-            let Some(link) = self.daemon.current().await else {
+            // Only on the connection the session is attached on: one the
+            // TUI reconnects on has no turn of its to cancel yet.
+            let Ok(link) = self.attached_link().await else {
                 return Ok(());
             };
             link.request::<SessionCancel>(&SessionCancelParams {
