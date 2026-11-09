@@ -241,7 +241,24 @@ pub(super) fn prepare_turn(session: &LoadedSession, turn: &mut Turn) {
 
 /// Continue the goal after a prompt, retrying failed history rather than
 /// duplicating its prompt or dropping child notices it already consumed.
+///
+/// A cancel that lands between the goal's turns, while it evaluates or waits
+/// to retry, ends the job's turn cancelled, not as the last turn ended.
 pub(super) async fn drive(
+    runtime: &mut SessionRuntime,
+    view: &mut DaemonView,
+    ended: anyhow::Result<Ran>,
+    turn_cancel: &CancellationToken,
+) -> anyhow::Result<Ran> {
+    let had_goal = view.session.has_goal();
+    let ended = drive_goal(runtime, view, ended, turn_cancel).await;
+    if had_goal && turn_cancel.is_cancelled() {
+        return Ok(Ran::Cancelled);
+    }
+    ended
+}
+
+async fn drive_goal(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,
     mut ended: anyhow::Result<Ran>,
