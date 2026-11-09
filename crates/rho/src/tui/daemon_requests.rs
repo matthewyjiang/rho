@@ -47,7 +47,9 @@ enum Control {
 /// of the chain, everything after it is this TUI's own, so the write is
 /// sent against the latest. A change by anyone else breaks the chain: the
 /// next own write that still saves starts a new one, and the daemon
-/// refuses any write made against the older state.
+/// refuses any write made against the older state. Revisions are content
+/// hashes, so another client can land the cache on one the chain holds;
+/// the remapped write is then refused and the chain dropped.
 #[derive(Default)]
 struct OwnWrites(HashMap<ConfigNamespace, OwnChain>);
 
@@ -76,6 +78,12 @@ impl OwnWrites {
         // The cache has seen up to `seen`; nothing before it is needed.
         chain.revisions.drain(..seen);
         chain.revisions.last().cloned().unwrap_or(stamped)
+    }
+
+    /// Drops the chain of a namespace whose write was refused, so a
+    /// stale tip is never sent again.
+    fn forget(&mut self, namespace: &ConfigNamespace) {
+        self.0.remove(namespace);
     }
 
     /// Records that a write sent against `sent` saved `saved`.
@@ -152,8 +160,11 @@ impl DaemonRequests {
                                 continue;
                             }
                             Err(error) if error.error_code() == Some(ErrorCode::ConfigConflict) => {
-                                // Another client's change, or this TUI's own
-                                // write the daemon has not reported back yet.
+                                // Another client's change. Revisions are
+                                // content hashes, so the cache can hold one
+                                // the chain saw without it being this TUI's;
+                                // the retry goes out against the cache.
+                                writes.forget(&params.namespace);
                                 DaemonView::Status("settings changed; try again".into())
                             }
                             Err(error) => {

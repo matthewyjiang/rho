@@ -48,3 +48,21 @@ fn quick_writes_chain_on_the_last_saved_revision() {
         )
     );
 }
+
+// Covers: a write refused as a conflict drops the namespace's chain, so
+// when another client restores values whose revision the chain holds, the
+// retry goes out against the cache instead of the stale tip forever.
+// Owner: daemon settings writes (pure).
+#[test]
+fn a_refused_write_drops_the_chain() {
+    let rev = |text: &str| ConfigRevision::new(text);
+    let agent = ConfigNamespace::Agent;
+    let mut writes = OwnWrites::default();
+    writes.saved(agent.clone(), rev("r0"), rev("r1"));
+    // Another client put the values back, so the daemon and cache hold r0.
+    let refused = writes.revision_for(&agent, rev("r0"));
+    writes.forget(&agent);
+    let retry = writes.revision_for(&agent, rev("r0"));
+
+    assert_eq!((refused, retry), (rev("r1"), rev("r0")));
+}
