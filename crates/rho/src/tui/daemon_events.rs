@@ -26,8 +26,8 @@ use std::collections::HashMap;
 use rho_protocol::{
     display::{Presentation, ToolCard, ToolCardStatus},
     CompactionStatus, ContentBlock, InputRequest, InputRequestId, JobState, MessageId, PlanEntry,
-    PlanStatus, SessionEvent, SteerId, ToolCallId as WireCallId, ToolCallUpdate, ToolStatus,
-    TurnOutcome,
+    PlanStatus, Replay, SessionEvent, SteerId, ToolCallId as WireCallId, ToolCallUpdate,
+    ToolStatus, TurnOutcome,
 };
 use rho_sdk::{SteeringId, ToolCallId};
 
@@ -47,6 +47,8 @@ pub(super) enum DaemonView {
     /// Drop the transcript, live cards, and checklist: a reset replay
     /// starts the session over.
     Clear,
+    /// Drop input prompts before rebuilding them from a tail replay.
+    InputsReset,
     /// A user message, as the transcript shows it.
     User(String),
     /// More of the agent's reply or reasoning. `opens` starts a new
@@ -149,10 +151,16 @@ pub(super) struct DaemonEvents {
 }
 
 impl DaemonEvents {
-    /// Starts over for a reset replay: what came before is gone.
-    pub(super) fn reset(&mut self) -> DaemonView {
-        *self = Self::default();
-        DaemonView::Clear
+    /// A reset starts over; a tail preserves rows and open cards, but
+    /// rebuilds input prompts from the attachment and its replay.
+    pub(super) fn replay(&mut self, replay: Replay) -> DaemonView {
+        match replay {
+            Replay::Reset => {
+                *self = Self::default();
+                DaemonView::Clear
+            }
+            Replay::Tail => DaemonView::InputsReset,
+        }
     }
 
     /// Starts an attachment whose response lists `inputs` as the requests

@@ -1130,6 +1130,14 @@ fn daemon_resume_shows_the_saved_conversation() {
     assert_pass("daemon_resume");
 }
 
+// Covers: quit during a daemon turn leaves it running and prints a usable
+// resume hint for a new saved session, but not an untouched session.
+// Owner: interactive daemon session lifecycle
+#[test]
+fn daemon_detach_preserves_the_turn_and_resume_hint() {
+    assert_pass("daemon_detach");
+}
+
 // Covers: with RHO_TUI_DAEMON=1, a prompt sent from the TUI runs in the
 // daemon: its user row shows once, its tool card and reply stream in, and the
 // composer is idle once the session rests.

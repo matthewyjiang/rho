@@ -109,15 +109,12 @@ pub(super) async fn open(
                 "--agent with --resume or --continue is not supported with RHO_TUI_DAEMON=1"
             )
         }
-        StartupSession::ById(prefix) => {
-            // The same lookup, and errors, as the in-process path: this
-            // workspace's sessions first, then any workspace's.
-            let (session, _histories) = Session::open_by_id_with_histories(cwd, prefix)?;
-            tui::DaemonTarget::Resume {
-                session: SessionId::new(session.id()),
-                setup,
-            }
-        }
+        // Resolve as in process, but never take the writer lease from
+        // the daemon that may still be running this session's turn.
+        StartupSession::ById(prefix) => tui::DaemonTarget::Resume {
+            session: SessionId::new(Session::resolve_id(cwd, prefix)?),
+            setup,
+        },
         StartupSession::Latest(target) => tui::DaemonTarget::Resume {
             session: SessionId::new(target.id.clone()),
             setup,

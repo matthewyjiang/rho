@@ -36,5 +36,9 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     if super::daemon_resume::is_daemon_resume_scenario(name) {
         return super::daemon_resume::run_daemon_resume(runner);
     }
+    #[cfg(unix)]
+    if name == super::daemon_detach::SCENARIO.id {
+        return super::daemon_detach::run(runner);
+    }
     runner.run(scenario)
 }
