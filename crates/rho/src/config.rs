@@ -506,8 +506,10 @@ impl Config {
     }
 
     /// Saves every value of this config that differs from the file, keeping
-    /// the rest of the file as written.
-    pub fn save(&self, path: Option<PathBuf>) -> anyhow::Result<()> {
+    /// the rest of the file as written. Production writers go through
+    /// [`Self::edit`] or `ConfigRepository`.
+    #[cfg(test)]
+    pub(crate) fn save(&self, path: Option<PathBuf>) -> anyhow::Result<()> {
         let path = path.map(Ok).unwrap_or_else(Self::default_path)?;
         Self::edit(&path, |saved| *saved = self.clone())
     }

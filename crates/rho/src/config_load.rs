@@ -252,11 +252,22 @@ pub(super) fn save_diff(
     for table in &FILE_ONLY {
         let new = (table.encode)(after)?;
         let old = (table.encode)(before)?;
-        if old.as_ref().map(ToString::to_string) != new.as_ref().map(ToString::to_string) {
+        if rendered(old.as_ref()) != rendered(new.as_ref()) {
             doc.set_item(table.key, new);
         }
     }
     Ok(())
+}
+
+/// `item` as a file holding it would read. An item's own `Display` leaves
+/// out the sub-tables of an implicit table, which is most of what
+/// `internal_agents` holds, so two different tables could print alike.
+fn rendered(item: Option<&Item>) -> Option<String> {
+    item.map(|item| {
+        let mut doc = toml_edit::DocumentMut::new();
+        doc.insert("table", item.clone());
+        doc.to_string()
+    })
 }
 
 /// On-disk form of one `[internal_agents.<id>]` entry.

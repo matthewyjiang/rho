@@ -211,7 +211,9 @@ fn no_system_prompt_and_no_tools_only_affect_the_current_run() {
     assert_eq!(user_prompt(&output), "hello");
     assert!(inspection["tools"].as_array().unwrap().is_empty());
 
-    let config = std::fs::read_to_string(root.path().join("config.toml")).unwrap();
+    // Reading config never writes it, so a run that saves nothing leaves
+    // no file at all.
+    let config = std::fs::read_to_string(root.path().join("config.toml")).unwrap_or_default();
     assert!(!config.contains("no_system_prompt"));
     assert!(!config.contains("no_tools"));
 }
