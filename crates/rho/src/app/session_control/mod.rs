@@ -4,12 +4,15 @@
 //! tool's control actions are meant to be another (#1714).
 //!
 //! [`SessionControl`] serves seven actions ([`Action`]): `list`, `read`,
-//! `new`, `prompt`, `steer`, `cancel`, and `wait`. Each call carries the
-//! caller's [`Grant`], and the core enforces it: the access the action
-//! needs, the workspaces the grant reaches, the nesting depth
-//! ([`Limits::max_depth`]), and how many sessions each holder may have
-//! running ([`Limits::max_sessions`]). Every refusal names its budget, its
-//! limit, and the value asked for ([`Refusal`]).
+//! `new`, `prompt`, `steer`, `cancel`, and `wait`. Each call carries its
+//! [`Caller`]: the transport's [`Grant`], narrowed by the scope of the
+//! session that calls, and that session's depth (`crate::caller_context`).
+//! The core enforces it: the access the action needs, the workspaces the
+//! grant reaches, the nesting depth ([`Limits::max_depth`]), and how many
+//! sessions each holder may have running ([`Limits::max_sessions`]). Every
+//! refusal names its budget, its limit, and the value asked for
+//! ([`Refusal`]). A session the core starts or prompts runs with the
+//! caller's context one level deeper, so the limits follow it down.
 //!
 //! No action answers a session's approvals or questions, and the core never
 //! sends `rho/session/answer` or `rho/session/hold`: a turn that asks waits
@@ -54,7 +57,7 @@ use params::{
     WaitResult,
 };
 pub(crate) use policy::{
-    Access, Action, Grant, Holder, Limits, Refusal, Workspaces, SESSION_DEPTH_ENV,
+    Access, Action, Caller, CallerContext, Grant, Holder, Limits, Refusal, Workspaces,
 };
 
 /// Why an action failed. Its `Display` is what the caller sees.
@@ -84,17 +87,12 @@ impl From<Unreachable> for ControlError {
     }
 }
 
-/// Where the calling process sits: the nesting depth of the session that
-/// started it, 0 for a person's, and the environment its sessions run with.
-pub(crate) struct Caller {
-    pub(crate) depth: u32,
-    pub(crate) environment: ClientEnvironment,
-}
-
-/// The core. One per process; every grant shares it.
+/// The core. One per process; every caller shares it.
 pub(crate) struct SessionControl {
     daemon: Daemon,
-    caller: Caller,
+    /// The environment the sessions it starts or prompts run with, before
+    /// each caller's context is set in it: this process's.
+    environment: ClientEnvironment,
     limits: Limits,
     /// The sessions each holder started or prompted, which its session cap
     /// counts while their turns run.
@@ -105,10 +103,10 @@ pub(crate) struct SessionControl {
 }
 
 impl SessionControl {
-    pub(crate) fn new(caller: Caller, limits: Limits) -> Self {
+    pub(crate) fn new(environment: ClientEnvironment, limits: Limits) -> Self {
         Self {
             daemon: Daemon::default(),
-            caller,
+            environment,
             limits,
             driven: Mutex::default(),
             admission: tokio::sync::Mutex::default(),
@@ -119,10 +117,10 @@ impl SessionControl {
     /// first.
     pub(crate) async fn list(
         &self,
-        grant: &Grant,
+        caller: &Caller,
         params: ListParams,
     ) -> Result<ListResult, ControlError> {
-        grant.permit(Action::List)?;
+        caller.grant.permit(Action::List)?;
         let limit = params.limit()?;
         let workspace = params.workspace.as_deref().map(canonical).transpose()?;
         let mut sessions: Vec<SessionEntry> = self
@@ -130,7 +128,7 @@ impl SessionControl {
             .await?
             .into_iter()
             .filter(|job| job.kind == JobKind::Session)
-            .filter(|job| grant.workspaces.allows(&job.workspace))
+            .filter(|job| caller.grant.scope.workspaces.allows(&job.workspace))
             .filter(|job| workspace.as_ref().is_none_or(|only| &job.workspace == only))
             .filter(|job| params.state.is_none_or(|state| job.state == state))
             .filter_map(SessionEntry::of_job)
@@ -145,11 +143,11 @@ impl SessionControl {
     /// included.
     pub(crate) async fn read(
         &self,
-        grant: &Grant,
+        caller: &Caller,
         params: ReadParams,
     ) -> Result<ReadResult, ControlError> {
-        grant.permit(Action::Read)?;
-        self.reach_session(grant, &params.session).await?;
+        caller.grant.permit(Action::Read)?;
+        self.reach_session(&caller.grant, &params.session).await?;
         let window = params.window()?;
         let text = follow::transcript(&params.session).await?;
         Ok(ReadResult::window(params.session, &text, window))
@@ -158,19 +156,19 @@ impl SessionControl {
     /// Opens a session in `workspace` and starts its first turn.
     pub(crate) async fn new_session(
         &self,
-        grant: &Grant,
+        caller: &Caller,
         params: NewParams,
     ) -> Result<NewResult, ControlError> {
-        grant.permit(Action::New)?;
+        caller.grant.permit(Action::New)?;
         let workspace = canonical(&params.workspace)?;
-        grant.reach(&workspace)?;
+        caller.grant.reach(&workspace)?;
         let content = prompt_content(params.prompt)?;
-        let _admitted = self.admit(grant, None).await?;
+        let _admitted = self.admit(caller, None).await?;
         let opened = self
             .daemon
             .request::<SessionNew>(&SessionNewParams {
                 cwd: workspace.clone(),
-                environment: self.child_environment(),
+                environment: self.child_environment(caller),
                 agent: params.agent,
                 setup: SessionSetup::default(),
             })
@@ -184,7 +182,7 @@ impl SessionControl {
                 })
                 .await?;
         }
-        self.start_turn(grant, &opened.session, content).await?;
+        self.start_turn(caller, &opened.session, content).await?;
         Ok(NewResult {
             session: opened.session,
             workspace,
@@ -194,14 +192,14 @@ impl SessionControl {
     /// Starts a turn on a session that has none in progress.
     pub(crate) async fn prompt(
         &self,
-        grant: &Grant,
+        caller: &Caller,
         params: PromptParams,
     ) -> Result<PromptResult, ControlError> {
-        grant.permit(Action::Prompt)?;
-        self.reach_session(grant, &params.session).await?;
+        caller.grant.permit(Action::Prompt)?;
+        self.reach_session(&caller.grant, &params.session).await?;
         let content = prompt_content(params.text)?;
-        let _admitted = self.admit(grant, Some(&params.session)).await?;
-        self.start_turn(grant, &params.session, content).await?;
+        let _admitted = self.admit(caller, Some(&params.session)).await?;
+        self.start_turn(caller, &params.session, content).await?;
         Ok(PromptResult {
             session: params.session,
         })
@@ -210,11 +208,11 @@ impl SessionControl {
     /// Stages text for the running turn's next model request.
     pub(crate) async fn steer(
         &self,
-        grant: &Grant,
+        caller: &Caller,
         params: SteerParams,
     ) -> Result<SteerResult, ControlError> {
-        grant.permit(Action::Steer)?;
-        self.reach_session(grant, &params.session).await?;
+        caller.grant.permit(Action::Steer)?;
+        self.reach_session(&caller.grant, &params.session).await?;
         let steered = self
             .daemon
             .request::<SessionSteer>(&SessionSteerParams {
@@ -228,11 +226,11 @@ impl SessionControl {
     /// Cancels the session's turn in progress, if any.
     pub(crate) async fn cancel(
         &self,
-        grant: &Grant,
+        caller: &Caller,
         params: CancelParams,
     ) -> Result<CancelResult, ControlError> {
-        grant.permit(Action::Cancel)?;
-        self.reach_session(grant, &params.session).await?;
+        caller.grant.permit(Action::Cancel)?;
+        self.reach_session(&caller.grant, &params.session).await?;
         self.daemon
             .request::<SessionCancel>(&SessionCancelParams {
                 session: params.session,
@@ -246,11 +244,11 @@ impl SessionControl {
     /// resumes from.
     pub(crate) async fn wait(
         &self,
-        grant: &Grant,
+        caller: &Caller,
         params: WaitParams,
     ) -> Result<WaitResult, ControlError> {
-        grant.permit(Action::Wait)?;
-        self.reach_session(grant, &params.session).await?;
+        caller.grant.permit(Action::Wait)?;
+        self.reach_session(&caller.grant, &params.session).await?;
         let timeout = params.timeout()?;
         let after = params.cursor()?;
         follow::wait(params.session, after, timeout).await
@@ -259,7 +257,7 @@ impl SessionControl {
     /// Prompts `session` and counts it toward the holder's session cap.
     async fn start_turn(
         &self,
-        grant: &Grant,
+        caller: &Caller,
         session: &SessionId,
         content: Vec<ContentBlock>,
     ) -> Result<(), ControlError> {
@@ -268,13 +266,13 @@ impl SessionControl {
                 session: session.clone(),
                 content,
                 timeout_ms: None,
-                environment: self.child_environment(),
+                environment: self.child_environment(caller),
             })
             .await?;
         self.driven
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .entry(grant.holder.clone())
+            .entry(caller.grant.holder.clone())
             .or_default()
             .insert(session.clone());
         Ok(())
@@ -284,10 +282,11 @@ impl SessionControl {
     /// `session`, or on a new one. The guard admits the turn until dropped.
     async fn admit(
         &self,
-        grant: &Grant,
+        caller: &Caller,
         session: Option<&SessionId>,
     ) -> Result<tokio::sync::MutexGuard<'_, ()>, ControlError> {
-        let asked = self.caller.depth.saturating_add(1);
+        let grant = &caller.grant;
+        let asked = caller.depth.saturating_add(1);
         if asked > self.limits.max_depth {
             return Err(Refusal::Depth {
                 limit: self.limits.max_depth,
@@ -325,7 +324,7 @@ impl SessionControl {
     /// Refuses a session outside the grant's workspaces. A grant that
     /// reaches every workspace needs no lookup.
     async fn reach_session(&self, grant: &Grant, session: &SessionId) -> Result<(), ControlError> {
-        if grant.workspaces == Workspaces::Any {
+        if grant.scope.workspaces == Workspaces::Any {
             return Ok(());
         }
         let workspace = self.workspace_of(session).await?;
@@ -370,16 +369,21 @@ impl SessionControl {
             .jobs)
     }
 
-    /// The environment the sessions this process starts or prompts run
-    /// with: its own, one level deeper.
-    fn child_environment(&self) -> ClientEnvironment {
-        let depth = self.caller.depth.saturating_add(1).to_string();
-        self.caller
-            .environment
+    /// The environment a session `caller` starts or prompts runs with:
+    /// this process's, with the caller's context one level deeper in place
+    /// of any this process carries.
+    fn child_environment(&self, caller: &Caller) -> ClientEnvironment {
+        self.environment
             .iter()
-            .filter(|(name, _)| *name != SESSION_DEPTH_ENV)
+            .filter(|(name, _)| !crate::caller_context::ENV_NAMES.contains(name))
             .map(|(name, value)| (name.to_owned(), value.to_owned()))
-            .chain([(SESSION_DEPTH_ENV.to_owned(), depth)])
+            .chain(
+                caller
+                    .child_context()
+                    .env()
+                    .into_iter()
+                    .map(|(name, value)| (name.to_owned(), value)),
+            )
             .collect()
     }
 }

@@ -13,7 +13,10 @@ use rho_providers::credentials::CredentialStore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::app::session_control::{Access, Grant, Holder, Workspaces};
+use crate::{
+    app::session_control::{Grant, Holder},
+    caller_context::{Access, Scope, Workspaces},
+};
 
 /// The credential-store account that holds the token set.
 pub(crate) const ACCOUNT: &str = "mcp-serve-tokens";
@@ -46,8 +49,10 @@ impl TokenRecord {
     pub(crate) fn grant(&self) -> Grant {
         Grant {
             holder: Holder::Token(self.name.clone()),
-            access: self.access,
-            workspaces: Workspaces::Only(self.workspaces.clone()),
+            scope: Scope {
+                access: self.access,
+                workspaces: Workspaces::Only(self.workspaces.clone()),
+            },
         }
     }
 }

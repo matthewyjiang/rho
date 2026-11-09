@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(crate) use crate::child_env::SESSION_DEPTH_ENV;
+pub(crate) use crate::caller_context::{Access, CallerContext, Scope, Workspaces};
 
 /// The deepest a session the core starts or prompts may run by default: a
 /// session at depth 3 may, and asking for depth 4 is refused.
@@ -76,45 +76,6 @@ impl Action {
     }
 }
 
-/// What a grant lets its holder do to sessions.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
-)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Access {
-    /// List, read, and wait for sessions.
-    Read,
-    /// Also start, prompt, steer, and cancel them.
-    Write,
-}
-
-impl Access {
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Read => "read",
-            Self::Write => "write",
-        }
-    }
-}
-
-/// The workspaces a grant reaches.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Workspaces {
-    Any,
-    /// These directories and everything under them, as canonical paths.
-    Only(Vec<PathBuf>),
-}
-
-impl Workspaces {
-    /// Whether `workspace`, a canonical path, is one the grant reaches.
-    pub(crate) fn allows(&self, workspace: &Path) -> bool {
-        match self {
-            Self::Any => true,
-            Self::Only(allowed) => allowed.iter().any(|root| workspace.starts_with(root)),
-        }
-    }
-}
-
 /// Who holds a grant, as refusals and the per-holder session count name it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Holder {
@@ -133,12 +94,11 @@ impl fmt::Display for Holder {
     }
 }
 
-/// What one caller may do: whose it is, its access, and its workspaces.
+/// What one caller may do: whose it is, and its scope.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Grant {
     pub(crate) holder: Holder,
-    pub(crate) access: Access,
-    pub(crate) workspaces: Workspaces,
+    pub(crate) scope: Scope,
 }
 
 impl Grant {
@@ -146,28 +106,27 @@ impl Grant {
     pub(crate) fn local() -> Self {
         Self {
             holder: Holder::Local,
-            access: Access::Write,
-            workspaces: Workspaces::Any,
+            scope: Scope::FULL,
         }
     }
 
     /// Refuses `action` unless the grant's access covers it.
     pub(crate) fn permit(&self, action: Action) -> Result<(), Refusal> {
-        if self.access >= action.needs() {
+        if self.scope.access >= action.needs() {
             return Ok(());
         }
         Err(Refusal::Access {
             holder: self.holder.clone(),
             action,
-            has: self.access,
+            has: self.scope.access,
         })
     }
 
     /// Refuses a session in `workspace`, a canonical path, unless the
     /// grant reaches it.
     pub(crate) fn reach(&self, workspace: &Path) -> Result<(), Refusal> {
-        match &self.workspaces {
-            Workspaces::Only(allowed) if !self.workspaces.allows(workspace) => {
+        match &self.scope.workspaces {
+            Workspaces::Only(allowed) if !self.scope.workspaces.allows(workspace) => {
                 Err(Refusal::Workspace {
                     holder: self.holder.clone(),
                     workspace: workspace.to_path_buf(),
@@ -175,6 +134,38 @@ impl Grant {
                 })
             }
             _ => Ok(()),
+        }
+    }
+}
+
+/// One call's caller (#1765): the grant its transport gave, narrowed by the
+/// scope of the session that calls, and that session's nesting depth.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Caller {
+    pub(crate) grant: Grant,
+    /// The calling session's depth: 0 for a person, or for an outside agent.
+    pub(crate) depth: u32,
+}
+
+impl Caller {
+    /// The caller `grant`'s holder is from `context`: a scope the calling
+    /// session carries can only narrow the grant, never widen it.
+    pub(crate) fn new(grant: Grant, context: &CallerContext) -> Self {
+        Self {
+            grant: Grant {
+                scope: grant.scope.intersect(&context.scope),
+                ..grant
+            },
+            depth: context.depth,
+        }
+    }
+
+    /// The context a session this caller starts or prompts runs with: one
+    /// level deeper, and no more than the caller may do.
+    pub(crate) fn child_context(&self) -> CallerContext {
+        CallerContext {
+            depth: self.depth.saturating_add(1),
+            scope: self.grant.scope.clone(),
         }
     }
 }

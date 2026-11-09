@@ -6,6 +6,7 @@ mod added_dirs;
 mod agent;
 mod antigravity_runtime;
 mod app;
+mod caller_context;
 mod changelog;
 mod child_env;
 mod claude_runtime;
