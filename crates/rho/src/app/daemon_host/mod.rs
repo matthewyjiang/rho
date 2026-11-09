@@ -136,19 +136,15 @@ impl DaemonHost {
     }
 
     /// Claims the daemon idle for an upgrade, unless anything would be cut
-    /// short. Once the job registry is closed no turn starts, so new work
-    /// can only have begun before; checking again after closing it catches
-    /// that, and gives the claim back.
+    /// short; once claimed, the restart follows at once. Closing the job
+    /// registry is the claim: no turn starts after it, and goals,
+    /// background work, and subagents all start in a turn. Only a login or a
+    /// settings change sent between the checks and the close escapes it, and
+    /// the restart then ends it as a stop would.
     fn claim_idle(&self) -> bool {
-        let others_idle = || self.logins.under_way() == 0 && self.sessions.upgrade_blockers() == 0;
-        if !others_idle() || !self.jobs.close_when_idle() {
-            return false;
-        }
-        if !others_idle() {
-            self.jobs.reopen();
-            return false;
-        }
-        true
+        self.logins.under_way() == 0
+            && self.sessions.upgrade_blockers() == 0
+            && self.jobs.close_when_idle()
     }
 
     /// Whether the daemon's stop, or restart, has begun.

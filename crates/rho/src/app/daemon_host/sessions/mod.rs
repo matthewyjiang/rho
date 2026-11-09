@@ -49,7 +49,8 @@ use rho_sdk::{CancellationToken, SessionId};
 
 use super::{
     jobs::{
-        JobEvent, JobId, JobRecord, JobRegistry, JobState, SessionJob, StartTurnError, TurnEnd,
+        JobEvent, JobId, JobRecord, JobRegistry, JobState, RegisterError, SessionJob,
+        StartTurnError, TurnEnd,
     },
     subagents::Subagents,
     wire::{session_to_wire, state_event},
@@ -898,12 +899,16 @@ impl SessionJobRecord {
     /// writing the session while it reopened (#1661).
     fn claim(self, jobs: &JobRegistry, session: &SessionId) -> Result<(), RpcError> {
         match (self, jobs.session_job(session)) {
-            (Self::Register(record), SessionJob::New) => jobs.register(record).map_err(|error| {
-                RpcError::new(
-                    ErrorCode::InternalError,
-                    format!("could not record the session's job: {error}"),
-                )
-            }),
+            (Self::Register(record), SessionJob::New) => {
+                jobs.register(record).map_err(|error| match error {
+                    // Stopping, or restarting for an upgrade.
+                    RegisterError::Closed => stopping(),
+                    RegisterError::Io(error) => RpcError::new(
+                        ErrorCode::InternalError,
+                        format!("could not record the session's job: {error}"),
+                    ),
+                })
+            }
             (Self::Reuse(record), SessionJob::Last(last)) if last.id == record.id => Ok(()),
             (_, SessionJob::Busy(job)) => Err(writing(&job, session)),
             (Self::Register(_) | Self::Reuse(_), SessionJob::New | SessionJob::Last(_)) => {

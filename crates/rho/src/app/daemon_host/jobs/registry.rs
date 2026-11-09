@@ -261,13 +261,6 @@ impl JobRegistry {
         idle
     }
 
-    /// Gives back a [`Self::close_when_idle`] claim the upgrade could not
-    /// use, because other work kept it waiting after all.
-    pub(in crate::app::daemon_host) fn reopen(&self) {
-        let _jobs = self.lock();
-        self.closed.store(false, Ordering::Relaxed);
-    }
-
     /// For the daemon's stop, once its turns saved: records every job
     /// still under way as interrupted, and takes no new job after, so a
     /// run a workflow drive starts during the stop is not left listed as
