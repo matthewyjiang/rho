@@ -41,6 +41,7 @@ fn only_the_turn_that_ended_reports_an_outcome() {
             state: JobState::Running,
         },
     );
+    watching.finish_replay(Replay::Reset, JobState::Running);
     let mut ended = watch(JobState::Running);
     ended.seq = watching.seq;
     ended.push(
@@ -55,6 +56,7 @@ fn only_the_turn_that_ended_reports_an_outcome() {
             state: JobState::Completed,
         },
     );
+    ended.finish_replay(Replay::Tail, JobState::Completed);
 
     assert_eq!(
         (
@@ -82,30 +84,41 @@ fn only_the_turn_that_ended_reports_an_outcome() {
     );
 }
 
-// Covers: a wait ending between TurnEnded and State must not acknowledge
-// an outcome it has not returned; the next wait must replay that outcome.
-// Owner: session-control wait checkpoint.
+// Covers: a live wait or tail replay ending between TurnEnded and State
+// must not acknowledge an outcome it has not returned. A running reset
+// still discards the saved previous turn's outcome.
+// Owner: session-control wait checkpoint and replay reconciliation.
 #[test]
 fn a_wait_boundary_does_not_skip_an_unreturned_outcome() {
-    let mut watching = watch(JobState::Running);
-    watching.seq = Seq(7);
-    watching.push(
-        Seq(8),
-        &SessionEvent::TurnEnded {
-            outcome: answered("final answer"),
-        },
-    );
-    assert_eq!(
-        watching.finish(SessionId::new("s")),
-        WaitResult {
-            session: SessionId::new("s"),
-            state: JobState::Running,
-            done: false,
-            outcome: None,
-            inputs: Vec::new(),
-            cursor: Some("stream:7".into()),
+    for (replay, checkpoint) in [
+        (None, "stream:7"),
+        (Some(Replay::Tail), "stream:7"),
+        (Some(Replay::Reset), "stream:8"),
+    ] {
+        let mut watching = watch(JobState::Running);
+        watching.seq = Seq(7);
+        watching.push(
+            Seq(8),
+            &SessionEvent::TurnEnded {
+                outcome: answered("final answer"),
+            },
+        );
+        if let Some(replay) = replay {
+            watching.finish_replay(replay, JobState::Running);
         }
-    );
+        assert_eq!(
+            watching.finish(SessionId::new("s")),
+            WaitResult {
+                session: SessionId::new("s"),
+                state: JobState::Running,
+                done: false,
+                outcome: None,
+                inputs: Vec::new(),
+                cursor: Some(checkpoint.into()),
+            },
+            "replay: {replay:?}"
+        );
+    }
 }
 
 // Covers: a turn waiting for input stops `wait` with the requests still
