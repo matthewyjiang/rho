@@ -24,12 +24,7 @@ impl App {
     ) -> anyhow::Result<()> {
         for view in views {
             match view {
-                DaemonView::Clear => {
-                    self.set_history_entries(Vec::new());
-                    self.turn.clear_tool_calls();
-                    self.set_todo_list(None);
-                    self.drop_daemon_inputs();
-                }
+                DaemonView::Clear => self.clear_daemon_transcript(),
                 DaemonView::InputsReset => self.drop_daemon_inputs(),
                 DaemonView::User(text) => self.insert_entry(&Entry::User(text)),
                 DaemonView::Text { kind, text, opens } => {
@@ -144,9 +139,25 @@ impl App {
         }
     }
 
-    /// The busy chrome of a turn that started, unless it shows already.
+    /// Empties the transcript for a reset replay. A turn that shows busy
+    /// keeps its chrome and clock, but its rows are gone: the replay's
+    /// running state places its start again, as a first attach does.
+    fn clear_daemon_transcript(&mut self) {
+        self.set_history_entries(Vec::new());
+        self.turn.clear_tool_calls();
+        self.set_todo_list(None);
+        self.drop_daemon_inputs();
+        self.turn.set_current_turn_start(None);
+    }
+
+    /// The busy chrome of a turn that started, unless it shows already. A
+    /// turn already showing whose rows a reset replay rebuilt starts after
+    /// them.
     fn begin_daemon_turn(&mut self) {
         if self.turn.is_provider_turn() {
+            if self.turn.current_turn_start().is_none() {
+                self.turn.set_current_turn_start(Some(self.history.len()));
+            }
             return;
         }
         // After the turn's user row, which the daemon sent first.
@@ -233,3 +244,7 @@ impl App {
         self.report_resting_herdr_state().await;
     }
 }
+
+#[cfg(test)]
+#[path = "daemon_transcript_tests.rs"]
+mod tests;
