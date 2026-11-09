@@ -274,8 +274,9 @@ mod unix {
                         views.extend(replay);
                     }
                     Err(error) => {
-                        tracing::debug!(%error, "could not reattach the daemon session");
-                        views.extend(self.end(detached(DetachReason::Lagged)));
+                        views.extend(self.end(DaemonView::Error(format!(
+                            "could not reattach the daemon session: {error:#}"
+                        ))));
                     }
                 }
                 return views;
@@ -564,10 +565,10 @@ mod unix {
 
     fn detached(reason: DetachReason) -> DaemonView {
         let detail = match reason {
-            DetachReason::Lagged => "this client fell behind; reopen the session to catch up",
             DetachReason::DaemonStopping => "the rho daemon is stopping",
             DetachReason::Deleted => "the session was deleted",
-            // `Unknown`, or a reason a newer daemon sends.
+            // `Unknown`, or a reason a newer daemon sends. `Lagged` never
+            // reaches here: the session reattaches instead.
             _ => "the rho daemon detached this client",
         };
         DaemonView::Error(format!("could not follow the daemon session: {detail}"))
