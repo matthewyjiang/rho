@@ -101,8 +101,9 @@ pub use methods::{
     Applies, ClientName, ConfigCategory, ConfigChangedParams, ConfigError, ConfigGetParams,
     ConfigGetResponse, ConfigLayer, ConfigNamespace, ConfigRegisterParams, ConfigRegisterResponse,
     ConfigRevision, ConfigSchema, ConfigSchemaParams, ConfigSetParams, ConfigSetResponse,
-    FileOnlyTable, IntegerUnit, InvalidClientName, ModelRuntime, ModelSelection, SettingChange,
-    SettingChoice, SettingEntry, SettingKey, SettingKind, SettingSpec, SettingValue, ValueSource,
+    ConfigWriter, FileOnlyTable, IntegerUnit, InvalidClientName, ModelRuntime, ModelSelection,
+    SettingChange, SettingChoice, SettingEntry, SettingKey, SettingKind, SettingSpec, SettingValue,
+    ValueSource,
 };
 pub use methods::{
     AuthChooseStoreParams, AuthChooseStoreResponse, CredentialStoreKind, CredentialStoreStatus,

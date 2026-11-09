@@ -277,6 +277,24 @@ impl ConfigRevision {
     }
 }
 
+/// Names one client instance's settings writes, such as a terminal's, so
+/// they never conflict with each other (see [`ConfigSetParams::writer`]).
+/// Opaque: a client picks one unique to it, such as a random UUID, and
+/// sends it with each write.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct ConfigWriter(String);
+
+impl ConfigWriter {
+    pub fn new(writer: impl Into<String>) -> Self {
+        Self(writer.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Params of [`CONFIG_SCHEMA`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ConfigSchemaParams {}
@@ -385,6 +403,12 @@ pub struct ConfigSetParams {
     /// The revision the changes were made against. A stale one is refused
     /// with [`crate::ErrorCode::ConfigConflict`].
     pub revision: ConfigRevision,
+    /// Who makes the changes. A revision stays good for its writer while
+    /// only the writer's own changes followed it, so a client that sends a
+    /// write before it hears back about its last one is not refused for
+    /// that change. Without one, only the current revision is good.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writer: Option<ConfigWriter>,
     /// Applied in order, so a setting another belongs to, such as an
     /// internal agent's model before its reasoning, comes first.
     pub changes: Vec<SettingChange>,

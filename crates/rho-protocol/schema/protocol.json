@@ -933,6 +933,17 @@
         "revision": {
           "$ref": "#/$defs/ConfigRevision",
           "description": "The revision the changes were made against. A stale one is refused\nwith [`crate::ErrorCode::ConfigConflict`]."
+        },
+        "writer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigWriter"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Who makes the changes. A revision stays good for its writer while\nonly the writer's own changes followed it, so a client that sends a\nwrite before it hears back about its last one is not refused for\nthat change. Without one, only the current revision is good."
         }
       },
       "required": [
@@ -955,6 +966,10 @@
         "revision"
       ],
       "type": "object"
+    },
+    "ConfigWriter": {
+      "description": "Names one client instance's settings writes, such as a terminal's, so\nthey never conflict with each other (see [`ConfigSetParams::writer`]).\nOpaque: a client picks one unique to it, such as a random UUID, and\nsends it with each write.",
+      "type": "string"
     },
     "ContentBlock": {
       "anyOf": [

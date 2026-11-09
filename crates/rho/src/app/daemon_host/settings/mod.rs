@@ -16,6 +16,7 @@
 
 mod clients;
 mod file;
+mod run;
 
 use std::{
     collections::BTreeMap,
@@ -33,6 +34,7 @@ use tokio::sync::watch;
 use self::{
     clients::Clients,
     file::{Edit, Stat},
+    run::WriterRun,
 };
 use crate::{
     app::agent_concurrency::AgentConcurrency,
@@ -46,9 +48,8 @@ use crate::{
 pub(super) struct ConfigStore {
     agent_path: PathBuf,
     schema: ConfigSchema,
-    /// Serializes reads and writes of `config.toml`; holds its `stat` at
-    /// the last read, `None` before the first.
-    agent: tokio::sync::Mutex<Option<Stat>>,
+    /// Serializes reads and writes of `config.toml`.
+    agent: tokio::sync::Mutex<AgentFile>,
     agent_state: watch::Sender<Arc<ConfigGetResponse>>,
     /// The last config that loaded, which sessions open and turn with;
     /// `None` until one has.
@@ -56,6 +57,14 @@ pub(super) struct ConfigStore {
     /// Sized by `behavior.agent_concurrency` as each config is published.
     concurrency: AgentConcurrency,
     clients: Clients,
+}
+
+/// What the store knows of `config.toml` past its published state.
+#[derive(Default)]
+struct AgentFile {
+    /// Its `stat` at the last read, `None` before the first.
+    seen: Option<Stat>,
+    run: WriterRun,
 }
 
 /// Why no session can open: `config.toml` has never loaded.
@@ -73,7 +82,7 @@ impl ConfigStore {
         let store = Self {
             agent_path: rho_home.join("config.toml"),
             schema: agent_schema(),
-            agent: tokio::sync::Mutex::new(None),
+            agent: tokio::sync::Mutex::default(),
             agent_state: watch::Sender::new(Arc::new(ConfigGetResponse {
                 revision: ConfigRevision::new(""),
                 values: Default::default(),
@@ -85,17 +94,18 @@ impl ConfigStore {
         };
         let stat = Stat::of(&store.agent_path);
         store.publish_agent(read_agent(&store.agent_path));
-        *store
+        store
             .agent
             .try_lock()
-            .expect("nothing else holds a new store") = Some(stat);
+            .expect("nothing else holds a new store")
+            .seen = Some(stat);
         store
     }
 
     /// The config a session opens or turns with: the last one that loaded,
     /// after reading `config.toml` again if it changed.
     pub(super) async fn agent_config(&self) -> Result<Arc<Config>, ConfigUnloaded> {
-        self.refresh_agent(&mut *self.agent.lock().await);
+        self.refresh_agent(&mut self.agent.lock().await.seen);
         self.config().clone().ok_or_else(|| ConfigUnloaded {
             path: self.agent_path.display().to_string(),
             errors: self
@@ -133,7 +143,7 @@ impl ConfigStore {
     pub(super) async fn get(&self, params: ConfigGetParams) -> Result<ConfigWatch, RpcError> {
         match params.namespace {
             ConfigNamespace::Agent => {
-                self.refresh_agent(&mut *self.agent.lock().await);
+                self.refresh_agent(&mut self.agent.lock().await.seen);
                 Ok(ConfigWatch::new(self.agent_state.subscribe()))
             }
             ConfigNamespace::Client { name } => self.clients.get(&name).await,
@@ -146,6 +156,7 @@ impl ConfigStore {
             namespace,
             layer,
             revision,
+            writer,
             changes,
         } = params;
         match layer {
@@ -160,17 +171,18 @@ impl ConfigStore {
         match namespace {
             ConfigNamespace::Agent => {}
             ConfigNamespace::Client { name } => {
-                return self.clients.set(&name, &revision, &changes).await;
+                return self.clients.set(&name, &revision, writer, &changes).await;
             }
             _ => return Err(unknown_namespace()),
         }
-        let mut seen = self.agent.lock().await;
+        let mut file = self.agent.lock().await;
         let path = &self.agent_path;
         // Locked before the revision check, so the file the client read is
         // the one changed.
         let mut edit = Edit::open(path)?;
-        self.refresh_agent(&mut seen);
-        check_revision(&self.agent_state.borrow().revision, &revision)?;
+        self.refresh_agent(&mut file.seen);
+        let before = self.agent_state.borrow().revision.clone();
+        file.run.check(&before, &revision, writer.as_ref())?;
         let (config, warnings) =
             apply_agent_changes(&mut edit.doc, &changes).map_err(|error| match error {
                 AgentChangeError::Refused(errors) => refused(errors),
@@ -179,10 +191,11 @@ impl ConfigStore {
                 }
             })?;
         let (stat, doc) = edit.save()?;
-        *seen = Some(stat);
+        file.seen = Some(stat);
         let values = agent_values(&doc, &config);
         log_warnings(path, &warnings);
         let revision = self.publish_agent(Ok((config, values)));
+        file.run.wrote(writer, before, revision.clone());
         Ok(ConfigSetResponse { revision })
     }
 
@@ -273,18 +286,6 @@ pub(super) fn wire_errors(errors: &[ConfigError]) -> Vec<WireError> {
             message: error.message.clone(),
         })
         .collect()
-}
-
-/// `ConfigConflict` unless `sent` is the namespace's `current` revision.
-fn check_revision(current: &ConfigRevision, sent: &ConfigRevision) -> Result<(), RpcError> {
-    if current == sent {
-        Ok(())
-    } else {
-        Err(RpcError::new(
-            ErrorCode::ConfigConflict,
-            "the settings changed since that revision; read them again",
-        ))
-    }
 }
 
 /// A change the daemon refused, naming each problem; nothing was written.
