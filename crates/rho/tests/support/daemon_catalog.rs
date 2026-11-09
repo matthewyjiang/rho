@@ -49,6 +49,7 @@ async fn open_session(sandbox: &Sandbox, client: &Client, cwd: PathBuf) -> Sessi
             environment: sandbox.client_environment(),
             agent: None,
             setup: SessionSetup::default(),
+            parent: None,
         },
     )
     .await

@@ -57,7 +57,13 @@ A session's job state is the state of its current or last turn:
 | `timed_out` | The daemon cancelled the last turn at the time limit its prompt set, as `rho run --detach --timeout` does. |
 | `interrupted` | The daemon stopped, or died, before the last turn ended. |
 
-A new prompt moves a session's job from any state but `running` and `waiting_for_input` back to `running`. `rho daemon status` counts the jobs that are `queued`, `running`, or `waiting_for_input`.
+A new prompt moves a session's job from any state but `queued`, `running`, and `waiting_for_input` back to `running`, or to `queued` for a session [another session started](#sessions-other-sessions-start). `rho daemon status` counts the jobs that are `queued`, `running`, or `waiting_for_input`.
+
+### Sessions other sessions start
+
+A session an agent starts from its own session, as the `sessions` tool's `new` does, is a job of kind `session` whose `parent` is the job writing the starting session, so `rho/job/list` shows who started what. A session started from one the daemon does not run, such as an in-process rho's, has no `parent` to show but is budgeted the same.
+
+Its turns share the [subagents' budget](#subagents): each turn is `queued`, with its `queue` place, until it gets a slot, then `running`. A prompt that has to wait answers once the turn queued; a turn cancelled while it waits ends `cancelled` without running, and a prompt's `timeout_ms` counts the wait. Such a turn can itself wait on others, so it holds its slot only while it runs alone: while it waits for a person's answer, or while sessions or subagents it started are under way, it lends the slot back, and once it runs alone again it takes a slot again in line, working on meanwhile. A slot is only ever held by a turn that waits on no other slot, so a budget of any size cannot deadlock, even when every slot's turn starts work of its own.
 
 ### Subagents
 

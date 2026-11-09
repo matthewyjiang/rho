@@ -42,28 +42,27 @@ use std::{
 use rho_protocol::{
     DetachReason, ErrorCode, RpcError, SessionAnswerParams, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
-    SessionHoldParams, SessionHoldResponse, SessionNewParams, SessionNewResponse,
-    SessionPromptParams, SessionPromptResponse, SessionSetup, Subscription, TurnOutcome,
+    SessionHoldParams, SessionHoldResponse, SessionNewParams, SessionNewResponse, Subscription,
+    TurnOutcome,
 };
 use rho_sdk::{CancellationToken, SessionId};
 
 use super::{
     jobs::{
-        JobEvent, JobId, JobRecord, JobRegistry, JobState, RegisterError, SessionJob,
-        StartTurnError, TurnEnd,
+        Admission, JobEvent, JobId, JobRecord, JobRegistry, RegisterError, SessionJob, TurnEnd,
     },
     subagents::Subagents,
     wire::{session_to_wire, state_event},
 };
 use crate::{
     app::{
-        prompt_content,
         session_events::LiveEvents,
         session_runtime::{CredentialFailure, SessionHandle, SessionRuntime},
     },
     config::Config,
 };
 
+mod budget;
 mod catalog;
 mod configure;
 mod cost;
@@ -77,6 +76,7 @@ mod options;
 mod queued;
 mod reopen;
 mod setup;
+mod start;
 mod steer;
 mod store;
 mod t3_wake;
@@ -92,6 +92,7 @@ use inputs::Inputs;
 use open::{open_session, session_environment, OpenWith, OpenedSession, Opening, Workspace};
 use queued::Queued;
 use reopen::ReopenLocks;
+use start::Entered;
 use t3_wake::{T3Wake, WakeDir};
 use turn::{PromptStart, TurnLimit, TurnTask};
 use unload::Residency;
@@ -201,16 +202,6 @@ enum TurnKind {
     /// sent meanwhile, as T3 Code sends once restarted after its `rho acp`
     /// was killed, cancels the wait and runs once it ended, resuming it.
     WakeWait,
-}
-
-/// How a prompt entered its session.
-enum Entered {
-    /// Its turn started, with the turn's cancel and its place in the queue
-    /// on the session's runtime.
-    Started(CancellationToken, Queued<Option<SessionRuntime>>),
-    /// It cancelled the wake wait under way (see [`TurnKind::WakeWait`]),
-    /// and starts once that wait ended.
-    BehindWakeWait,
 }
 
 /// What holds a session: its queued settings changes or its delete, which
@@ -411,6 +402,14 @@ impl LoadedSession {
         result
     }
 
+    /// Records that the turn, queued for capacity, has its slot: `running`
+    /// from then on. Under the turn lock, as the turn's start and end are
+    /// told (see `Sessions::start_turn`).
+    fn admitted(&self) {
+        let _turn = self.turn();
+        self.record(JobEvent::Admitted);
+    }
+
     /// Applies `event` to the session's job and tells attached clients the
     /// state it left the job in.
     fn record(&self, event: JobEvent) {
@@ -528,9 +527,13 @@ impl Sessions {
             environment,
             agent,
             setup,
+            parent,
         } = params;
         self.refuse_when_stopping()?;
         let workspace = Workspace::parse(&cwd)?;
+        // Resolved before the session opens, so a malformed parent opens
+        // nothing.
+        let started_by = parent.map(|parent| self.job_writing(&parent)).transpose()?;
         let job = JobId::generate();
         let opened = open_session(
             Opening::New { workspace, agent },
@@ -543,17 +546,40 @@ impl Sessions {
         )
         .await?;
         let session = opened.runtime.session_id().clone();
-        let record = JobRecord::new_session(
-            job.clone(),
-            opened.runtime.workspace_root().to_path_buf(),
-            session.clone(),
-        );
+        let record = JobRecord {
+            // A session started from one no daemon job writes still shares
+            // the budget, with no parent to show.
+            admission: match started_by {
+                Some(_) => Admission::SharedBudget,
+                None => Admission::Immediate,
+            },
+            parent: started_by.flatten(),
+            ..JobRecord::new_session(
+                job.clone(),
+                opened.runtime.workspace_root().to_path_buf(),
+                session.clone(),
+            )
+        };
         let added = self.add(SessionJobRecord::Register(record), opened).await?;
         tracing::info!(%session, %job, "opened session");
         Ok(SessionNewResponse {
             session: session_to_wire(session),
             options: added.feed.options(),
         })
+    }
+
+    /// The job writing `session`, a new session's parent (#1714): the one
+    /// under way, as the turn of a session that starts another is, else the
+    /// latest job of its turns. `None` for a session no job of this daemon
+    /// writes, such as one an in-process rho runs.
+    fn job_writing(&self, session: &rho_protocol::SessionId) -> Result<Option<JobId>, RpcError> {
+        Ok(
+            match self.jobs.session_job(&reopen::parse_session(session)?) {
+                SessionJob::Busy(job) => Some(job),
+                SessionJob::Last(record) => Some(record.id),
+                SessionJob::New => None,
+            },
+        )
     }
 
     /// Adds `opened`, whose turns are recorded as `job` says. Checked,
@@ -596,121 +622,6 @@ impl Sessions {
             runtime.shutdown().await;
         }
         Err(refused)
-    }
-
-    /// Starts a turn of the prompt's content on a session and returns once
-    /// the turn began. The turn runs in a daemon task from then on. A
-    /// session busy with a T3 wake wait gives way (see
-    /// [`TurnKind::WakeWait`]).
-    pub(super) async fn prompt(
-        &self,
-        params: SessionPromptParams,
-    ) -> Result<SessionPromptResponse, RpcError> {
-        self.refuse_when_stopping()?;
-        let input = prompt_content::user_input(&params.content).map_err(|error| {
-            RpcError::new(
-                ErrorCode::InvalidParams,
-                format!("could not read the prompt: {error}"),
-            )
-        })?;
-        // A prompt carries no setup, so a session it reopens opens with what
-        // its file keeps alone.
-        let with = OpenWith {
-            environment: session_environment(&params.environment)?,
-            setup: SessionSetup::default(),
-        };
-        let (session, cancel, runtime) = loop {
-            let (session, entered) = self
-                .enter_session(&params.session, &with, |session, turn| {
-                    self.start_turn(session, turn, &with)
-                })
-                .await?;
-            match entered {
-                Entered::Started(cancel, runtime) => break (session, cancel, runtime),
-                // Free once the cancelled wait recorded its end.
-                Entered::BehindWakeWait => drop(session.runtime.lock().await),
-            }
-        };
-        // Spawned before anything awaits, so the turn runs and records its
-        // end apart from this request: the transport joins every request it
-        // read, but this one stops waiting once the daemon stops.
-        let start = TurnTask {
-            session,
-            runtime,
-            stopping: self.stopping.clone(),
-            cancel,
-            limit: params.timeout_ms.map(TurnLimit::starting_now),
-        }
-        .spawn(input);
-        // An answer that is already in wins over the stop, so a prompt the
-        // turn saved is not reported refused. Once the daemon stops, the
-        // turn goes on until the stop drains it.
-        tokio::select! {
-            biased;
-            start = start => match start {
-                Ok(PromptStart::Began) => Ok(SessionPromptResponse {}),
-                Ok(PromptStart::Ended(outcome)) => Err(ended_early(&outcome)),
-                // Only a turn the daemon's stop interrupted, or one whose
-                // task the exiting runtime dropped, sends no answer.
-                Err(_) => Err(stopping()),
-            },
-            () = self.stopping.cancelled() => Err(stopping()),
-        }
-    }
-
-    /// Starts a turn of a prompt sent with `with` on `session`, whose turn
-    /// lock `turn` is held, unless the session is busy or being deleted.
-    fn start_turn(
-        &self,
-        session: &LoadedSession,
-        turn: &mut TurnSlot,
-        with: &OpenWith,
-    ) -> Result<Entered, RpcError> {
-        match turn.hold {
-            // The turn queues on the runtime behind the changes, so they
-            // apply first, the prompt waiting for them.
-            Some(Hold::Configuring(_)) | None => {}
-            Some(Hold::Deleting) => return Err(being_deleted()),
-        }
-        match self.jobs.start_turn(&session.job) {
-            // Told under the turn lock, which the last turn's end is told
-            // under too, so the feed never says `running` before the last
-            // turn's end, nor a turn's end after the next turn began.
-            Ok(()) => session.feed.publish([state_event(&JobState::Running)]),
-            Err(StartTurnError::Busy) => match turn.kind {
-                TurnKind::Prompt => {
-                    return Err(RpcError::new(
-                        ErrorCode::SessionBusy,
-                        "session already has a turn in progress",
-                    ))
-                }
-                TurnKind::WakeWait => {
-                    session.cancel_turn_under(turn);
-                    return Ok(Entered::BehindWakeWait);
-                }
-            },
-            // An upgrade found the daemon idle a moment before.
-            Err(StartTurnError::Closed) => return Err(stopping()),
-            Err(StartTurnError::Unknown(_)) => {
-                return Err(RpcError::new(
-                    ErrorCode::InternalError,
-                    format!("session's job {} is not recorded", session.job),
-                ))
-            }
-        }
-        // The turn's processes and hooks, and later turns' until another
-        // prompt, start in the prompting client's environment.
-        session.environment.replace(with.environment.clone());
-        turn.cancel = CancellationToken::new();
-        turn.kind = TurnKind::Prompt;
-        // Queued on the runtime under the turn lock the turn starts under,
-        // as a change queues under it (see `configure`): a change counted
-        // before this applies before the turn, and one sent once the job
-        // said `running` waits for its end.
-        Ok(Entered::Started(
-            turn.cancel.clone(),
-            Queued::join(&session.runtime),
-        ))
     }
 
     /// Cancels a session's turn, if one is under way, even one that has not

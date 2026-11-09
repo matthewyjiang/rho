@@ -97,6 +97,19 @@ pub(super) enum JobSubject {
     Workflow { workflow_run: RunId },
 }
 
+/// How a session job's turns get under way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Admission {
+    /// At once, as a person's session's do.
+    #[default]
+    Immediate,
+    /// Once they have a slot in the daemon-wide agent budget, which
+    /// subagent runs share, as the turns of a session another session
+    /// started do (#1714).
+    SharedBudget,
+}
+
 /// What the daemon knows about one job, as its record file holds it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct JobRecord {
@@ -109,6 +122,11 @@ pub(super) struct JobRecord {
     /// The job that started this one, such as a subagent run's parent; `None`
     /// for a job a client started.
     pub(super) parent: Option<JobId>,
+    /// How a session job's turns get under way; subagent and workflow jobs
+    /// keep [`Admission::Immediate`], their runs taking capacity as
+    /// `subagents.rs` says.
+    #[serde(default, skip_serializing_if = "Admission::is_immediate")]
+    pub(super) admission: Admission,
     /// Unix time, in seconds, when the job was created.
     pub(super) created_at: u64,
     /// Unix time, in seconds, of the job's last transition.
@@ -177,10 +195,17 @@ impl JobRecord {
             state,
             workspace,
             parent,
+            admission: Admission::Immediate,
             created_at: now,
             updated_at: now,
             outcome: None,
         }
+    }
+}
+
+impl Admission {
+    fn is_immediate(&self) -> bool {
+        *self == Self::Immediate
     }
 }
 
