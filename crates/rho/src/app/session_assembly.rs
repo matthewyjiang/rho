@@ -47,6 +47,8 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub mcp_elicitation: crate::tools::mcp::McpElicitationSupport,
     pub mcp_sampling: McpSamplingSupport,
     pub tool_source_attach: super::tools_prompt::ToolSourceAttach,
+    /// Whether the session starts its workspace's hooks.
+    pub hook_start: HookStart,
     pub mcp_authorization: crate::tools::mcp::McpAuthorizationMode,
     pub diagnostics: &'a RuntimeDiagnostics,
     pub agent: &'a BoundAgent,
@@ -68,6 +70,15 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub approval: Approval,
     /// Chooses the session options once the provider is known.
     pub session_options: Options,
+}
+
+/// Whether an assembled session starts its workspace's hooks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum HookStart {
+    /// Starts them, so they hear the session's events from its start.
+    Start,
+    /// Starts none: the session is only read, so nothing of it runs.
+    Skip,
 }
 
 /// Inputs an approval recipe needs; all are produced during assembly.
@@ -152,6 +163,7 @@ where
         mcp_elicitation,
         mcp_sampling,
         tool_source_attach,
+        hook_start,
         mcp_authorization,
         diagnostics,
         agent,
@@ -240,7 +252,10 @@ where
         usage_recording: usage_recording.clone(),
         session_writes: session_writes.clone(),
     })?;
-    let hooks = crate::hooks::start_for_cwd(&workspace_root, environment);
+    let hooks = match hook_start {
+        HookStart::Start => crate::hooks::start_for_cwd(&workspace_root, environment),
+        HookStart::Skip => None,
+    };
     if let Some(hooks) = hooks.as_ref() {
         diagnostics.attach_hooks(hooks);
     }

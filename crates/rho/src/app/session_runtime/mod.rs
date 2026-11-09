@@ -77,7 +77,7 @@ pub(crate) use approval_policy::{
 pub(in crate::app) use build::session_config;
 pub(crate) use build::{
     ChildAgents, HostCapabilities, QuestionSupport, RunShape, SessionBuild, SessionLaunch,
-    SessionRole,
+    SessionRole, SessionUse,
 };
 pub(crate) use credentials::CredentialFailure;
 use credentials::SessionCredentials;

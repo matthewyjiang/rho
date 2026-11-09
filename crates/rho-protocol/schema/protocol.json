@@ -863,6 +863,11 @@
           "type": "string"
         },
         {
+          "const": "not_loaded",
+          "description": "An observe ([`SESSION_OBSERVE`]) found the session unloaded: the\nreplay was the session as its file keeps it, and nothing follows.\nObserve again to read it again.",
+          "type": "string"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "type": "string",
           "x-rho-other": true
@@ -2444,7 +2449,7 @@
       "type": "object"
     },
     "SessionAttachResponse": {
-      "description": "Result of [`SESSION_ATTACH`]. The session's events then arrive as\n[`SESSION_EVENT`] notifications, never before this response. Attaching\nagain on the same connection replaces the earlier attachment.",
+      "description": "Result of [`SESSION_ATTACH`] and [`SESSION_OBSERVE`]. The session's\nevents then arrive as [`SESSION_EVENT`] notifications, never before this\nresponse. Attaching or observing again on the same connection replaces\nthe earlier attachment.",
       "properties": {
         "inputs": {
           "description": "The input requests open when the attachment began, oldest first:\nwhat a client may answer even when the replay no longer holds the\nevents that opened them (#1660). The replay may repeat some; an\ninput request's id names it.",
@@ -3512,6 +3517,29 @@
       "required": [
         "session",
         "options"
+      ],
+      "type": "object"
+    },
+    "SessionObserveParams": {
+      "description": "Params of [`SESSION_OBSERVE`]. A session the daemon has loaded is\nattached as [`SESSION_ATTACH`] attaches it. A saved session it has not\nloaded stays unloaded: the daemon replays it as its file keeps it, with\nhow its last turn ended, then detaches the client as\n[`DetachReason::NotLoaded`]. Observing starts nothing of the session, no\nMCP server, OpenAPI source, or hook, and so carries no environment or\nsetup. With no MCP server connected, such a replay titles the session's\nMCP tool calls by their names alone.",
+      "properties": {
+        "after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Cursor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The last event this client has, to resume after it, as for\n[`SESSION_ATTACH`]. A session observed unloaded always resets."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session"
       ],
       "type": "object"
     },
@@ -5006,6 +5034,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionNewResponse"
+      }
+    },
+    "rho/session/observe": {
+      "params": {
+        "$ref": "#/$defs/SessionObserveParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionAttachResponse"
       }
     },
     "rho/session/prompt": {

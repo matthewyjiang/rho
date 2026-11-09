@@ -1,7 +1,7 @@
 //! `rho mcp serve` through the real binary: an MCP host drives a daemon
 //! session in another workspace over stdio while a second daemon client
-//! follows it, no tool can answer the session's approvals, and the core's
-//! caps refuse with their budgets.
+//! follows it, reading a session starts nothing of it, no tool can answer
+//! the session's approvals, and the core's caps refuse with their budgets.
 
 use std::{path::PathBuf, process::Stdio};
 
@@ -192,6 +192,132 @@ async fn a_host_drives_a_session_in_another_workspace_over_mcp() {
             Ok(json!({"session": session})),
             json!("completed"),
             Some(true)
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: `read` and `wait` from a shallower host leave a session the daemon
+// unloaded as it is, starting none of its MCP servers or hooks, which would
+// run at the reader's nesting depth rather than the session's, while a
+// prompt still reopens it at the prompter's (#1672).
+// Owner: session-control read and wait over rho/session/observe.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reading_an_unloaded_session_starts_nothing_of_it() {
+    let sandbox = Sandbox::new();
+    let started = sandbox.isolated.home.join("started.txt");
+    // Each records that it started, then exits; the session goes on
+    // without the server's tools.
+    let record = |what: &str| {
+        format!(
+            "echo \"{what} ${{RHO_SESSION_DEPTH-unset}}\" >> {}",
+            started.display()
+        )
+    };
+    sandbox.set_config(
+        "bypass",
+        &format!(
+            "[mcp.servers.probe]\ntransport = \"stdio\"\ncommand = \"/bin/sh\"\nargs = [\"-c\", {:?}]\n",
+            record("mcp")
+        ),
+    );
+    std::fs::write(
+        sandbox.isolated.rho_home().join("hooks.toml"),
+        format!(
+            "version = 1\n\n[[hook]]\nid = \"probe\"\non = \"session_started\"\ncommand = [\"/bin/sh\", \"-c\", {:?}]\ntimeout = \"10s\"\n",
+            record("hook")
+        ),
+    )
+    .unwrap();
+    let _daemon = sandbox
+        .start_daemon_with("tool-call", &["--unload-idle-after", "200ms"])
+        .await;
+    let workspace = elsewhere(&sandbox);
+    let nested = stdio_server(&sandbox, "tool-call", &[], &[("RHO_SESSION_DEPTH", "2")]).await;
+    let outer = stdio_server(&sandbox, "tool-call", &[], &[]).await;
+    // The lines recorded so far, sorted: a hook runs apart from the server.
+    let starts = || {
+        let mut lines: Vec<String> = std::fs::read_to_string(&started)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        lines.sort();
+        lines
+    };
+
+    let opened = call(
+        &nested,
+        "new",
+        json!({"workspace": workspace, "prompt": bash("echo first")}),
+    )
+    .await
+    .unwrap();
+    let session = SessionId::new(opened["session"].as_str().unwrap());
+    call(
+        &nested,
+        "wait",
+        json!({"session": session, "timeout_secs": 50}),
+    )
+    .await
+    .unwrap();
+    sandbox.wait_unloaded(&session, 1).await;
+    let before = starts();
+    let read = call(&outer, "read", json!({"session": session}))
+        .await
+        .unwrap();
+    let waited = call(
+        &outer,
+        "wait",
+        json!({"session": session, "timeout_secs": 0}),
+    )
+    .await
+    .unwrap();
+    let after_reading = starts();
+    let prompted = call(
+        &outer,
+        "prompt",
+        json!({"session": session, "text": bash("echo again")}),
+    )
+    .await;
+    let again = call(
+        &outer,
+        "wait",
+        json!({"session": session, "cursor": waited["cursor"], "timeout_secs": 50}),
+    )
+    .await
+    .unwrap();
+    // An unload drains the hooks the reopen started.
+    sandbox.wait_unloaded(&session, 2).await;
+
+    assert_eq!(
+        (
+            before.clone(),
+            read["text"]
+                .as_str()
+                .map(|text| text.contains("echo first")),
+            waited["state"].clone(),
+            waited["outcome"]["type"].clone(),
+            after_reading,
+            prompted.map(drop),
+            again["state"].clone(),
+            starts(),
+        ),
+        (
+            vec!["hook unset".to_owned(), "mcp 3".to_owned()],
+            Some(true),
+            json!("completed"),
+            json!("answered"),
+            before,
+            Ok(()),
+            json!("completed"),
+            vec![
+                "hook unset".to_owned(),
+                "hook unset".to_owned(),
+                "mcp 1".to_owned(),
+                "mcp 3".to_owned(),
+            ],
         ),
         "log:\n{}",
         sandbox.isolated.daemon_log()

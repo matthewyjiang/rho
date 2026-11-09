@@ -17,7 +17,8 @@
 //! finishes; see [`t3_wake`].
 //!
 //! Clients attach to a loaded session to follow its events (#1657); see
-//! [`feed`]. A client may change the session's settings, which apply
+//! [`feed`]. A client that only reads a session observes it instead, which
+//! never loads it; see [`observe`]. A client may change the session's settings, which apply
 //! between turns, a change sent during a turn once it ends, and which the
 //! session keeps with its file; see [`configure`] and [`options`]. A
 //! session that sits idle, with no turn under way and no client attached,
@@ -68,6 +69,7 @@ mod feed;
 mod goal;
 mod inputs;
 mod mcp;
+mod observe;
 mod open;
 mod options;
 mod queued;
@@ -297,13 +299,45 @@ fn saved_replay(
     }
 }
 
+/// The feed of a session opened as `runtime` with `config`, whose turns are
+/// recorded on `job`, and the mapper that replayed it: the feed begins with
+/// the conversation the session has saved and how the job's last turn
+/// ended, which a new session has neither of, so a client attaching to a
+/// reopened session learns that end (#1661).
+fn opening_feed(
+    job: &JobRecord,
+    runtime: &SessionRuntime,
+    config: &Config,
+    auths: &[String],
+) -> (Feed, LiveEvents) {
+    let mut live = LiveEvents::new(
+        runtime.workspace_root(),
+        runtime.tools(),
+        runtime.configured_context_window(),
+    );
+    // Titles are not saved with the transcript, so the feed starts with the
+    // one the session's file has.
+    let feed = Feed::new(
+        (&job.state).into(),
+        runtime.stored_title(),
+        options::daemon_options(runtime, config, auths),
+    );
+    if let Some(saved) = saved_replay(&mut live, runtime, &job.id) {
+        feed.end_turn(saved);
+    }
+    if let Some(outcome) = job.outcome.clone() {
+        feed.publish([
+            rho_protocol::SessionEvent::TurnEnded { outcome },
+            state_event(&job.state),
+        ]);
+    }
+    (feed, live)
+}
+
 impl LoadedSession {
     /// A session opened as `opened`, whose turns are recorded on `job` in
     /// `jobs`: a new job for a new session, the last one for a reopened one.
-    /// Its feed begins with the conversation the session has saved and how
-    /// the job's last turn ended, which a new session has neither of, so a
-    /// client attaching to a reopened session learns that end (#1661).
-    /// Its T3 wake watchers, when its host wakes it, keep their files in
+    /// Its feed is its [`opening_feed`]. Its T3 wake watchers, when its host wakes it, keep their files in
     /// `wakes`.
     fn new(
         job: &JobRecord,
@@ -317,27 +351,7 @@ impl LoadedSession {
             config,
             environment,
         } = opened;
-        let mut live = LiveEvents::new(
-            runtime.workspace_root(),
-            runtime.tools(),
-            runtime.configured_context_window(),
-        );
-        // Titles are not saved with the transcript, so the feed starts with
-        // the one the session's file has.
-        let feed = Feed::new(
-            (&job.state).into(),
-            runtime.stored_title(),
-            options::daemon_options(&runtime, &config, auths),
-        );
-        if let Some(saved) = saved_replay(&mut live, &runtime, &job.id) {
-            feed.end_turn(saved);
-        }
-        if let Some(outcome) = job.outcome.clone() {
-            feed.publish([
-                rho_protocol::SessionEvent::TurnEnded { outcome },
-                state_event(&job.state),
-            ]);
-        }
+        let (feed, live) = opening_feed(job, &runtime, &config, auths);
         let job = job.id.clone();
         Self {
             id: runtime.session_id().clone(),
@@ -753,27 +767,7 @@ impl Sessions {
                 Ok(session.feed.attach(params.after.as_ref()))
             })
             .await?;
-        let Attached {
-            stream,
-            replay,
-            replay_events,
-            job,
-            inputs,
-            title,
-            options,
-            subscription,
-        } = attached;
-        let response = SessionAttachResponse {
-            stream,
-            workspace: session.workspace.clone(),
-            replay,
-            replay_events,
-            state: job,
-            inputs,
-            title,
-            options,
-        };
-        Ok((response, subscription))
+        Ok(attach_response(&session.workspace, attached))
     }
 
     /// Stops every session for the daemon's exit, beginning the stop if
@@ -848,6 +842,32 @@ impl Sessions {
         // panic cannot leave it half-changed.
         self.loaded.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// The answer to an attach or observe of the session in `workspace`, and
+/// the subscription its events then arrive on.
+fn attach_response(workspace: &Path, attached: Attached) -> (SessionAttachResponse, Subscription) {
+    let Attached {
+        stream,
+        replay,
+        replay_events,
+        job,
+        inputs,
+        title,
+        options,
+        subscription,
+    } = attached;
+    let response = SessionAttachResponse {
+        stream,
+        workspace: workspace.to_path_buf(),
+        replay,
+        replay_events,
+        state: job,
+        inputs,
+        title,
+        options,
+    };
+    (response, subscription)
 }
 
 /// How a session's turns are recorded once it is added.
