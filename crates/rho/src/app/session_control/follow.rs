@@ -1,14 +1,16 @@
-//! `read` and `wait`, which attach to a session on a connection of their
-//! own: the daemon keeps one attachment per session per connection, so a
-//! shared connection would let two calls replace each other's.
+//! `read` and `wait`, which observe a session on a connection of their own:
+//! the daemon keeps one attachment per session per connection, so a shared
+//! connection would let two calls replace each other's. Observing never
+//! loads a session, so neither call starts anything of it, such as its MCP
+//! servers, nor brings it the caller's environment (#1672).
 
 use std::time::Duration;
 
 use rho_protocol::{
-    methods::{SessionAttach, SessionDetach},
-    ClientEnvironment, Cursor, DaemonNotification, InputRequest, JobState, Notifications, Replay,
-    Seq, SessionAttachParams, SessionAttachResponse, SessionDetachParams, SessionEvent, SessionId,
-    SessionSetup, StreamId, TurnOutcome,
+    methods::{SessionDetach, SessionObserve},
+    Cursor, DaemonNotification, InputRequest, JobState, Notifications, Replay, Seq,
+    SessionAttachResponse, SessionDetachParams, SessionEvent, SessionId, SessionObserveParams,
+    StreamId, TurnOutcome,
 };
 
 use super::{
@@ -18,7 +20,7 @@ use super::{
 };
 use crate::{app::daemon_cli, daemon::Connection};
 
-/// An attachment to one session, on its own connection.
+/// An observation of one session, on its own connection.
 struct Attached {
     connection: Connection,
     session: SessionId,
@@ -26,19 +28,13 @@ struct Attached {
 }
 
 impl Attached {
-    async fn open(
-        session: &SessionId,
-        after: Option<Cursor>,
-        environment: ClientEnvironment,
-    ) -> Result<Self, ControlError> {
+    async fn open(session: &SessionId, after: Option<Cursor>) -> Result<Self, ControlError> {
         let connection = daemon_cli::connect().await?;
         let response = connection
             .client
-            .request::<SessionAttach>(&SessionAttachParams {
+            .request::<SessionObserve>(&SessionObserveParams {
                 session: session.clone(),
                 after,
-                environment,
-                setup: SessionSetup::default(),
             })
             .await?;
         Ok(Self {
@@ -85,11 +81,8 @@ impl Attached {
 
 /// The session's transcript as text: its saved turns, then the turn in
 /// progress.
-pub(super) async fn transcript(
-    session: &SessionId,
-    environment: ClientEnvironment,
-) -> Result<String, ControlError> {
-    let mut attached = Attached::open(session, None, environment).await?;
+pub(super) async fn transcript(session: &SessionId) -> Result<String, ControlError> {
+    let mut attached = Attached::open(session, None).await?;
     let mut transcript = Transcript::default();
     for _ in 0..attached.response.replay_events {
         match attached.next().await? {
@@ -107,10 +100,9 @@ pub(super) async fn wait(
     session: SessionId,
     after: Option<Cursor>,
     timeout: Duration,
-    environment: ClientEnvironment,
 ) -> Result<WaitResult, ControlError> {
     let deadline = tokio::time::Instant::now() + timeout;
-    let mut attached = Attached::open(&session, after.clone(), environment).await?;
+    let mut attached = Attached::open(&session, after.clone()).await?;
     let response = &attached.response;
     // A tail resumes the caller's cursor; a reset starts the stream over.
     let resumed = after

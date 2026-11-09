@@ -17,6 +17,7 @@
 //! | [`SESSION_ANSWER`] | [`SessionAnswerParams`] | [`SessionAnswerResponse`] |
 //! | [`SESSION_HOLD`] | [`SessionHoldParams`] | [`SessionHoldResponse`] |
 //! | [`SESSION_ATTACH`] | [`SessionAttachParams`] | [`SessionAttachResponse`] |
+//! | [`SESSION_OBSERVE`] | [`SessionObserveParams`] | [`SessionAttachResponse`] |
 //! | [`SESSION_DETACH`] | [`SessionDetachParams`] | [`SessionDetachResponse`] |
 //! | [`SESSION_MCP`] | [`SessionMcpParams`] | [`SessionMcpInventory`] |
 //! | [`SESSION_CONFIGURE`] | [`SessionConfigureParams`] | [`SessionConfigureResponse`] |
@@ -112,10 +113,10 @@ pub use session::{
     ClientEnvironment, DetachReason, Replay, SessionAttachParams, SessionAttachResponse,
     SessionCancelParams, SessionCancelResponse, SessionDetachParams, SessionDetachResponse,
     SessionDetachedParams, SessionEventParams, SessionId, SessionNewParams, SessionNewResponse,
-    SessionPromptParams, SessionPromptResponse, SessionSteerParams, SessionSteerResponse,
-    SessionUnsteerParams, SessionUnsteerResponse, UnsteerOutcome, SESSION_ATTACH, SESSION_CANCEL,
-    SESSION_DETACH, SESSION_DETACHED, SESSION_EVENT, SESSION_NEW, SESSION_PROMPT, SESSION_STEER,
-    SESSION_UNSTEER,
+    SessionObserveParams, SessionPromptParams, SessionPromptResponse, SessionSteerParams,
+    SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse, UnsteerOutcome,
+    SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH, SESSION_DETACHED, SESSION_EVENT, SESSION_NEW,
+    SESSION_OBSERVE, SESSION_PROMPT, SESSION_STEER, SESSION_UNSTEER,
 };
 pub use setup::{ChildThreads, McpServer, SecretMap, SessionPart, SessionSetup};
 
@@ -200,6 +201,7 @@ protocol! {
         SessionAnswer = SESSION_ANSWER: SessionAnswerParams => SessionAnswerResponse,
         SessionHold = SESSION_HOLD: SessionHoldParams => SessionHoldResponse,
         SessionAttach = SESSION_ATTACH: SessionAttachParams => SessionAttachResponse,
+        SessionObserve = SESSION_OBSERVE: SessionObserveParams => SessionAttachResponse,
         SessionDetach = SESSION_DETACH: SessionDetachParams => SessionDetachResponse,
         SessionConfigure = SESSION_CONFIGURE: SessionConfigureParams => SessionConfigureResponse,
         SessionMcp = SESSION_MCP: SessionMcpParams => SessionMcpInventory,

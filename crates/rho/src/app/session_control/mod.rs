@@ -16,9 +16,10 @@
 //! for a person, and `wait` reports it waiting for input.
 //!
 //! The daemon is reached as any client reaches it, starting it when none
-//! runs. Requests share one connection; `read` and `wait` attach on a
+//! runs. Requests share one connection; `read` and `wait` observe on a
 //! connection of their own, so calls on the same session never replace each
-//! other's attachment.
+//! other's attachment. Observing never loads a session, so reading one
+//! never starts its MCP servers at the reader's nesting depth.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -150,7 +151,7 @@ impl SessionControl {
         grant.permit(Action::Read)?;
         self.reach_session(grant, &params.session).await?;
         let window = params.window()?;
-        let text = follow::transcript(&params.session, self.child_environment()).await?;
+        let text = follow::transcript(&params.session).await?;
         Ok(ReadResult::window(params.session, &text, window))
     }
 
@@ -252,7 +253,7 @@ impl SessionControl {
         self.reach_session(grant, &params.session).await?;
         let timeout = params.timeout()?;
         let after = params.cursor()?;
-        follow::wait(params.session, after, timeout, self.child_environment()).await
+        follow::wait(params.session, after, timeout).await
     }
 
     /// Prompts `session` and counts it toward the holder's session cap.

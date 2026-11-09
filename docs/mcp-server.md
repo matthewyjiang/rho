@@ -58,7 +58,7 @@ To let a session work unattended, give it a [permission mode](/configuration/per
 
 Sessions that start sessions can recurse: an agent driving rho through this server may run a session that drives rho through its own. The server bounds that with two budgets, enforced on every `new` and `prompt`:
 
-- **Session depth.** A session the server starts or prompts runs one level deeper than the server's caller: depth 1 when a person or an outside agent runs the server, depth 2 when a depth-1 session does. A session carries its depth to the processes it starts in `RHO_SESSION_DEPTH`, its MCP servers included, so a `rho mcp serve` it runs knows where it sits. `--max-depth` sets the deepest a session may run, 3 by default.
+- **Session depth.** A session the server starts or prompts runs one level deeper than the server's caller: depth 1 when a person or an outside agent runs the server, depth 2 when a depth-1 session does. A session carries its depth to the processes it starts in `RHO_SESSION_DEPTH`, its MCP servers included, so a `rho mcp serve` it runs knows where it sits. `--max-depth` sets the deepest a session may run, 3 by default. `read` and `wait` never load a session the daemon has unloaded, so reading one starts none of its MCP servers at the reader's depth.
 - **Concurrent sessions.** Each caller may have as many sessions running at once as `--max-sessions`, 10 by default, the same as the daemon's default agent concurrency. Over HTTP each token is a caller of its own. A session counts from when the caller starts or prompts it until its turn ends, a turn waiting for a person included; prompting a session the caller already has running adds none.
 
 A start past either budget is refused with the budget, its limit, and the value asked for:

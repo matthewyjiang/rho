@@ -202,6 +202,7 @@ pub(in crate::app) fn test_build(config: &Config, workspace_root: &Path) -> Sess
             mcp_authorization: McpAuthorizationMode::NonInteractive,
             approvals: ApprovalPolicy::Host,
             parent_notices: None,
+            session_use: super::SessionUse::Run,
         },
         run: RunShape {
             role: SessionRole::Daemon,

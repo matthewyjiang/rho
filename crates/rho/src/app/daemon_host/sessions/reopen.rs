@@ -8,6 +8,9 @@
 //! directories and parts left out its file keeps, plus those of the
 //! request that reopens it (see `setup.rs`).
 //!
+//! An observe never reopens a session: it reads one it finds unloaded and
+//! leaves it so (see `observe.rs`).
+//!
 //! A session another process has open is refused as in use, and a
 //! subagent's or workflow node's session as its parent's to continue.
 
@@ -189,7 +192,7 @@ async fn saved_workspace(id: &SessionId) -> Result<PathBuf, RpcError> {
 }
 
 /// The session saved under `id`, opened in its own workspace.
-async fn saved_session(id: &SessionId) -> Result<StoredSession, RpcError> {
+pub(super) async fn saved_session(id: &SessionId) -> Result<StoredSession, RpcError> {
     let cwd = saved_workspace(id).await?;
     let id = id.clone();
     tokio::task::spawn_blocking(move || open_saved(&cwd, &id))
