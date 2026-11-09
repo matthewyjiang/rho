@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::{
     cli::{Cli, McpCommand},
-    session_environment::SessionEnvironment,
+    session_environment::{Ambient, SessionEnvironment},
     tools::mcp::{
         McpAuthorizationMode, McpCatalog, McpConnectOutcome, McpLoadMode, McpRoots,
         McpServerReport, McpServerStatus, McpSessionOptions, McpSessionPlan, McpSessionReport,
@@ -65,7 +65,7 @@ async fn inventory(view: Inventory<'_>, connect: bool, cli: &Cli) -> anyhow::Res
             McpRoots::for_workspace(&cwd),
             McpAuthorizationMode::NonInteractive,
             // The command runs in the shell that started it (#1659).
-            SessionEnvironment::default(),
+            SessionEnvironment::new(Ambient::ThisProcess),
         ),
     )
     .await;

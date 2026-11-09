@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(crate) use crate::caller_context::{Access, CallerContext, Scope, Workspaces};
+use crate::caller_context::{Access, CallerContext, Scope, Workspaces};
 
 /// The deepest a session the core starts or prompts may run by default: a
 /// session at depth 3 may, and asking for depth 4 is refused.
@@ -225,7 +225,12 @@ pub(crate) enum Refusal {
     },
 }
 
+/// `paths` for a refusal; "no workspace" when a grant narrowed by a calling
+/// session's scope shares none with it.
 fn list_paths(paths: &[PathBuf]) -> String {
+    if paths.is_empty() {
+        return "no workspace".to_owned();
+    }
     paths
         .iter()
         .map(|path| path.display().to_string())

@@ -75,13 +75,13 @@ fn a_context_reads_back_from_the_environment_it_wrote() {
         ],
         [
             Ok(restricted),
-            Ok(CallerContext::default()),
+            Ok(CallerContext::ROOT),
             Err("RHO_SESSION_DEPTH=\"two\" is not a depth".into()),
             Err("RHO_SESSION_SCOPE=\"write\" is not a scope".into()),
         ]
     );
     assert_eq!(
-        CallerContext::default().env(),
+        CallerContext::ROOT.env(),
         vec![(SESSION_DEPTH_ENV, "0".to_owned())]
     );
 }

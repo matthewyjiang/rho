@@ -124,7 +124,7 @@ impl fmt::Debug for Ambient {
 /// The session's [`Ambient`], which its host may replace between turns;
 /// clones share it. A daemon session's is replaced by each prompt with the
 /// prompting client's (#1659).
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct SessionEnvironment {
     ambient: Arc<RwLock<Ambient>>,
     /// `ambient`'s process environment, the handle process tools snapshot.
@@ -162,6 +162,16 @@ impl SessionEnvironment {
         let mut current = self.ambient.write().unwrap_or_else(PoisonError::into_inner);
         self.process.replace(ambient.process_environment());
         *current = ambient;
+    }
+}
+
+/// Shows the current [`Ambient`]'s redacted form, never a variable's value.
+impl fmt::Debug for SessionEnvironment {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SessionEnvironment")
+            .field("ambient", &self.current())
+            .finish_non_exhaustive()
     }
 }
 

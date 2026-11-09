@@ -29,7 +29,8 @@ use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
 };
 
-use super::session_control::{Access, Action, Caller, CallerContext, Grant, SessionControl};
+use super::session_control::{Action, Caller, Grant, SessionControl};
+use crate::caller_context::{Access, CallerContext};
 
 mod http_server;
 pub(crate) mod token_store;
@@ -55,11 +56,9 @@ pub(super) struct SessionTools {
 /// none, come from.
 #[derive(Clone)]
 enum Transport {
-    /// One grant for every call, and the context the process started in.
-    Stdio {
-        grant: Grant,
-        context: CallerContext,
-    },
+    /// The local caller's grant for every call, and the context the process
+    /// started in.
+    Stdio { context: CallerContext },
     /// The grant the HTTP layer put on the request after it checked the
     /// bearer token, which a request without one lacks and is refused.
     Http,
@@ -72,7 +71,7 @@ impl SessionTools {
         let sent = CallerContext::from_meta(&context.meta)
             .map_err(|error| ErrorData::invalid_params(format!("{error:#}"), None))?;
         let (grant, default) = match &self.transport {
-            Transport::Stdio { grant, context } => (grant.clone(), context.clone()),
+            Transport::Stdio { context } => (Grant::local(), context.clone()),
             Transport::Http => {
                 let grant = context
                     .extensions
@@ -82,7 +81,7 @@ impl SessionTools {
                     .ok_or_else(|| {
                         ErrorData::invalid_request("the request carries no token", None)
                     })?;
-                (grant, CallerContext::default())
+                (grant, CallerContext::ROOT)
             }
         };
         Ok(Caller::new(grant, &sent.unwrap_or(default)))
@@ -91,13 +90,9 @@ impl SessionTools {
 
 impl ServerHandler for SessionTools {
     fn get_info(&self) -> ServerConfig {
-        let accepts_caller_context = [(
-            crate::caller_context::ACCEPTS_KEY.to_owned(),
-            serde_json::Map::new(),
-        )];
         let capabilities = ServerCapabilities::builder()
             .enable_tools()
-            .enable_experimental_with(accepts_caller_context.into_iter().collect())
+            .enable_experimental_with(CallerContext::capability())
             .build();
         ServerConfig::new(capabilities)
             .with_server_info(Implementation::new("rho", env!("CARGO_PKG_VERSION")))
@@ -156,10 +151,7 @@ pub(super) async fn serve_stdio(
 ) -> anyhow::Result<()> {
     let tools = SessionTools {
         control,
-        transport: Transport::Stdio {
-            grant: Grant::local(),
-            context,
-        },
+        transport: Transport::Stdio { context },
     };
     let running = tools.serve(rmcp::transport::stdio()).await?;
     running.waiting().await?;

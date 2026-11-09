@@ -306,7 +306,10 @@ fn a_server_reads_its_sessions_environment() {
         ("API_TOKEN", "Bearer client"),
         ("UNRELATED", "value"),
         ("RHO_SESSION_DEPTH", "2"),
-        ("RHO_SESSION_SCOPE", "{}"),
+        (
+            "RHO_SESSION_SCOPE",
+            r#"{"access":"write","workspaces":{"only":["/work"]}}"#,
+        ),
     ]);
 
     let mut command = tokio::process::Command::new("server");
@@ -333,7 +336,10 @@ fn a_server_reads_its_sessions_environment() {
         ("PATH", "/client/bin"),
         ("HOME", "/home/client"),
         ("RHO_SESSION_DEPTH", "2"),
-        ("RHO_SESSION_SCOPE", "{}"),
+        (
+            "RHO_SESSION_SCOPE",
+            r#"{"access":"write","workspaces":{"only":["/work"]}}"#,
+        ),
         ("MODE", "fast"),
         ("GITHUB_PERSONAL_ACCESS_TOKEN", "token"),
     ]

@@ -51,14 +51,13 @@ mod params;
 mod policy;
 mod transcript;
 
+use crate::caller_context::Workspaces;
 use params::{
     CancelParams, CancelResult, ListParams, ListResult, NewParams, NewResult, PromptParams,
     PromptResult, ReadParams, ReadResult, SessionEntry, SteerParams, SteerResult, WaitParams,
     WaitResult,
 };
-pub(crate) use policy::{
-    Access, Action, Caller, CallerContext, Grant, Holder, Limits, Refusal, Workspaces,
-};
+pub(crate) use policy::{Action, Caller, Grant, Holder, Limits, Refusal};
 
 /// Why an action failed. Its `Display` is what the caller sees.
 #[derive(Debug, thiserror::Error)]

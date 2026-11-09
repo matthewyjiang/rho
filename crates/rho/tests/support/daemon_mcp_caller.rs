@@ -199,11 +199,12 @@ async fn delegation_over_http_stops_at_max_depth() {
     );
 }
 
-// Covers: a session a workspace-restricted token starts gets no further
-// through its own stdio `rho mcp serve`, which has local write access: that
-// server refuses a workspace outside the token's. A caller context the
-// request claims cannot widen the token, and a read-only token drives no
-// session at all, so it starts none to reach through (#1765).
+// Covers: a workspace-restricted token gets no further through a session it
+// starts or prompts than its own workspaces: the session's stdio
+// `rho mcp serve`, which has local write access, refuses a workspace outside
+// them, whether it started for that session or was already running for a
+// person's turn with full scope; and a caller context the request claims
+// cannot widen the token (#1765).
 // Owner: caller context scope, HTTP grant to stdio rho mcp serve.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_restricted_token_gains_nothing_through_the_sessions_it_starts() {
@@ -217,33 +218,42 @@ async fn a_restricted_token_gains_nothing_through_the_sessions_it_starts() {
         "writer",
         &["--scope", "write", "--workspace", &allowed],
     );
-    let reader = rotate(&sandbox, "reader", &["--workspace", &allowed]);
     let (_server, url) = http_server(&sandbox, &[], &[]).await;
     let outside = elsewhere(&sandbox);
     let write = http_client(&url, &writer).await;
-    let read_only = http_client(&url, &reader).await;
+    let local = stdio_server(&sandbox, "tool-call", &[], &[]).await;
+    let escape = || delegate(json!({"workspace": outside, "prompt": "hello"}));
+    let refusal = format!(
+        "may not reach workspace {}; it may reach: {allowed}",
+        outside.display()
+    );
 
-    let started = call(
-        &write,
+    // A person's session, whose server starts with full scope.
+    let persons = call(
+        &local,
         "new",
-        json!({
-            "workspace": sandbox.workspace,
-            "prompt": delegate(json!({"workspace": outside, "prompt": "hello"})),
-        }),
+        json!({"workspace": sandbox.workspace, "prompt": "hello"}),
     )
     .await
     .unwrap();
-    let session = SessionId::new(started["session"].as_str().unwrap());
-    let escaped = answer(&write, &session).await;
-    let read_only_prompt = call(
-        &read_only,
+    let persons = SessionId::new(persons["session"].as_str().unwrap());
+    answer(&local, &persons).await;
+    let prompted = call(
+        &write,
         "prompt",
-        json!({
-            "session": session,
-            "text": delegate(json!({"workspace": outside, "prompt": "hello"})),
-        }),
+        json!({"session": persons, "text": escape()}),
     )
     .await;
+    let through_reused = answer(&write, &persons).await;
+    let started = call(
+        &write,
+        "new",
+        json!({"workspace": sandbox.workspace, "prompt": escape()}),
+    )
+    .await
+    .unwrap();
+    let started = SessionId::new(started["session"].as_str().unwrap());
+    let through_started = answer(&write, &started).await;
     let claimed = write
         .call_tool({
             let mut params = CallToolRequestParams::new("new").with_arguments(
@@ -263,33 +273,31 @@ async fn a_restricted_token_gains_nothing_through_the_sessions_it_starts() {
         })
         .await
         .unwrap();
-    let local = stdio_server(&sandbox, "tool-call", &[], &[]).await;
     let listed = call(&local, "list", json!({})).await.unwrap();
+    let server_starts = std::fs::read_to_string(&starts).unwrap().lines().count();
 
     assert_eq!(
         (
-            escaped.contains(&format!(
-                "this server's caller may not reach workspace {}; it may reach: {allowed}",
-                outside.display()
-            )),
+            prompted.map(drop),
+            through_reused.contains(&format!("this server's caller {refusal}")),
+            through_started.contains(&format!("this server's caller {refusal}")),
             claimed
                 .content
                 .first()
                 .and_then(|content| content.as_text())
                 .map(|text| text.text.clone()),
-            read_only_prompt,
             listed["sessions"].as_array().map(Vec::len),
+            server_starts,
         ),
         (
+            Ok(()),
             true,
-            Some(format!(
-                "token \"writer\" may not reach workspace {}; it may reach: {allowed}",
-                outside.display()
-            )),
-            Err("token \"reader\" has read access; `prompt` needs write".into()),
-            Some(1),
+            true,
+            Some(format!("token \"writer\" {refusal}")),
+            Some(2),
+            2,
         ),
-        "escaped: {escaped}\nlog:\n{}",
+        "reused: {through_reused}\nstarted: {through_started}\nlog:\n{}",
         sandbox.isolated.daemon_log()
     );
 }

@@ -7,7 +7,7 @@
 //!   with the caller's scope, and the session's processes inherit it, so a
 //!   `rho mcp serve` a session's shell runs reads it from its environment;
 //! - rho's MCP client sends the calling session's current context with every
-//!   call to a server that accepts it ([`ACCEPTS_KEY`]), so a long-running
+//!   call to a server that accepts it ([`CallerContext::to_send`]), so a long-running
 //!   server, such as a stdio `rho mcp serve` started when the session loaded,
 //!   or one reached over HTTP, answers for the turn that calls it, not for the
 //!   one that was current when it started.
@@ -34,9 +34,10 @@ pub(crate) const ENV_NAMES: [&str; 2] = [SESSION_DEPTH_ENV, SESSION_SCOPE_ENV];
 
 /// The key of the context in a request's `_meta`, and of the experimental
 /// capability a server declares to say it reads it. A client sends the
-/// context only to a server that declares it, so other servers never see a
-/// session's workspaces.
-pub(crate) const ACCEPTS_KEY: &str = "rho/caller";
+/// context in `_meta` only to a server that declares it. The environment
+/// variables still reach every process a session starts, stdio MCP servers
+/// included, since a client cannot tell a rho server before starting it.
+pub(crate) const META_KEY: &str = "rho/caller";
 
 /// What a grant lets its holder do to sessions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -95,8 +96,14 @@ impl Workspaces {
 }
 
 /// The most a caller may do through session control: its access and the
-/// workspaces it reaches.
+/// workspaces it reaches. Only a writer starts or prompts sessions, so the
+/// access a session inherits is write today; it is carried so the contract
+/// stays one scope on both sides.
+///
+/// Unknown fields are refused: a newer rho's narrowing field must fail at an
+/// older server rather than be dropped and widen the caller.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Scope {
     pub(crate) access: Access,
     pub(crate) workspaces: Workspaces,
@@ -118,21 +125,23 @@ impl Scope {
     }
 }
 
-impl Default for Scope {
-    fn default() -> Self {
-        Self::FULL
-    }
-}
-
-/// A calling session's place and scope: depth 0 and [`Scope::FULL`] for a
-/// person, or for a process no session started.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// A calling session's place and scope. There is deliberately no `Default`:
+/// the root context has full scope, and should be asked for by name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CallerContext {
     pub(crate) depth: u32,
     pub(crate) scope: Scope,
 }
 
 impl CallerContext {
+    /// A person's, or an outside agent's, or a process no session started:
+    /// depth 0 and [`Scope::FULL`].
+    pub(crate) const ROOT: Self = Self {
+        depth: 0,
+        scope: Scope::FULL,
+    };
+
     /// The context in an environment, read through `read`: a process's own,
     /// or a session's. A variable that is set but does not parse is an
     /// error, never the unlimited default.
@@ -172,16 +181,15 @@ impl CallerContext {
         variables
     }
 
-    /// The context a request's `_meta` carries under [`ACCEPTS_KEY`], if it
+    /// The context a request's `_meta` carries under [`META_KEY`], if it
     /// carries one.
     pub(crate) fn from_meta(
         meta: &serde_json::Map<String, serde_json::Value>,
     ) -> anyhow::Result<Option<Self>> {
-        meta.get(ACCEPTS_KEY)
+        meta.get(META_KEY)
             .map(|value| {
-                Self::deserialize(value).with_context(|| {
-                    format!("request `_meta.{ACCEPTS_KEY}` is not a caller context")
-                })
+                Self::deserialize(value)
+                    .with_context(|| format!("request `_meta.{META_KEY}` is not a caller context"))
             })
             .transpose()
     }
@@ -190,7 +198,31 @@ impl CallerContext {
     pub(crate) fn to_meta(&self) -> serde_json::Map<String, serde_json::Value> {
         let value =
             serde_json::to_value(self).expect("a caller context is plain data and always encodes");
-        serde_json::Map::from_iter([(ACCEPTS_KEY.to_owned(), value)])
+        serde_json::Map::from_iter([(META_KEY.to_owned(), value)])
+    }
+
+    /// The context to send a server with `capabilities` on a call from a
+    /// session whose environment is now `environment`: `None` unless the
+    /// server declared [`META_KEY`]. A context the environment holds but that
+    /// does not parse is an error, so the call fails rather than going out
+    /// without its limits.
+    pub(crate) fn to_send(
+        capabilities: &rmcp::model::ServerCapabilities,
+        environment: &crate::session_environment::Ambient,
+    ) -> anyhow::Result<Option<Self>> {
+        let accepts = capabilities
+            .experimental
+            .as_ref()
+            .is_some_and(|accepted| accepted.contains_key(META_KEY));
+        if !accepts {
+            return Ok(None);
+        }
+        Self::from_env(|name| environment.read_os(name)).map(Some)
+    }
+
+    /// The experimental capability a server that reads the context declares.
+    pub(crate) fn capability() -> rmcp::model::ExperimentalCapabilities {
+        [(META_KEY.to_owned(), serde_json::Map::new())].into()
     }
 }
 

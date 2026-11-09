@@ -33,8 +33,9 @@ mod unix {
                 tokens::{Rotation, TokenSet},
                 HttpOptions,
             },
-            session_control::{Access, CallerContext, Limits, SessionControl},
+            session_control::{Limits, SessionControl},
         },
+        caller_context::{Access, CallerContext},
         cli::{Cli, McpServeArgs, McpTokenCommand, McpTokenScope},
         credential_store::UntrackedCredentialStore,
     };

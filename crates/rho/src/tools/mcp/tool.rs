@@ -158,31 +158,20 @@ pub(super) struct McpTool {
 
 impl McpTool {
     /// The calling session's context as it is now, for a server that
-    /// declared it reads one; `None` for any other server, which never sees
-    /// it. A context the session's environment holds but that does not parse
-    /// fails the call rather than going out without its limits.
+    /// declared it reads one ([`CallerContext::to_send`]).
     fn caller_context(&self) -> Result<Option<CallerContext>, ToolError> {
-        let accepts = self.peer.peer_info().is_some_and(|info| {
-            info.capabilities
-                .experimental
-                .as_ref()
-                .is_some_and(|accepted| accepted.contains_key(crate::caller_context::ACCEPTS_KEY))
-        });
-        if !accepts {
+        let Some(info) = self.peer.peer_info() else {
             return Ok(None);
-        }
-        let ambient = self.environment.current();
-        CallerContext::from_env(|name| ambient.read_os(name))
-            .map(Some)
-            .map_err(|error| {
-                ToolError::new(
-                    ToolErrorKind::Execution,
-                    format!(
-                        "could not send this session's caller context to MCP server `{}`: {error:#}",
-                        self.identity
-                    ),
-                )
-            })
+        };
+        CallerContext::to_send(&info.capabilities, &self.environment.current()).map_err(|error| {
+            ToolError::new(
+                ToolErrorKind::Execution,
+                format!(
+                    "could not send this session's caller context to MCP server `{}`: {error:#}",
+                    self.identity
+                ),
+            )
+        })
     }
 }
 
