@@ -242,34 +242,59 @@ pub(super) fn prepare_turn(session: &LoadedSession, turn: &mut Turn) {
 /// Continue the goal after a prompt, retrying failed history rather than
 /// duplicating its prompt or dropping child notices it already consumed.
 ///
-/// A cancel that lands between the goal's turns, while it evaluates or waits
-/// to retry, ends the job's turn cancelled, not as the last turn ended.
+/// A cancel or a daemon stop that lands between the goal's turns, while it
+/// evaluates or waits to retry, ends the job's turn cancelled, not as the last
+/// turn ended. Both stop the judge, so the turn saves and frees the runtime
+/// inside the stop's drain window.
 pub(super) async fn drive(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,
     ended: anyhow::Result<Ran>,
-    turn_cancel: &CancellationToken,
+    halt: Halt<'_>,
 ) -> anyhow::Result<Ran> {
     let had_goal = view.session.has_goal();
-    let ended = drive_goal(runtime, view, ended, turn_cancel).await;
-    if had_goal && turn_cancel.is_cancelled() {
+    let ended = drive_goal(runtime, view, ended, halt).await;
+    if had_goal && halt.is_halted() {
         return Ok(Ran::Cancelled);
     }
     ended
+}
+
+/// What ends a goal's job turn from outside: the turn's cancel, or the daemon
+/// stopping. A stop closes the session handle, which cancels nothing between
+/// prompts, so the goal loop watches the stop itself. The goal lives only in
+/// memory, so a stop ends it like a cancel does.
+#[derive(Clone, Copy)]
+pub(super) struct Halt<'a> {
+    pub(super) turn_cancel: &'a CancellationToken,
+    pub(super) stopping: &'a CancellationToken,
+}
+
+impl Halt<'_> {
+    fn is_halted(self) -> bool {
+        self.turn_cancel.is_cancelled() || self.stopping.is_cancelled()
+    }
+
+    async fn halted(self) {
+        tokio::select! {
+            () = self.turn_cancel.cancelled() => {}
+            () = self.stopping.cancelled() => {}
+        }
+    }
 }
 
 async fn drive_goal(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,
     mut ended: anyhow::Result<Ran>,
-    turn_cancel: &CancellationToken,
+    halt: Halt<'_>,
 ) -> anyhow::Result<Ran> {
     let session = Arc::clone(&view.session);
     loop {
         let current = {
             let mut goal = session.goal_control();
             if let Some(state) = &mut goal.state {
-                if matches!(ended, Ok(Ran::Cancelled)) || turn_cancel.is_cancelled() {
+                if matches!(ended, Ok(Ran::Cancelled)) || halt.is_halted() {
                     state.interrupt_verification();
                 } else {
                     state.complete_verification();
@@ -284,7 +309,7 @@ async fn drive_goal(
         let Some((condition, cancel)) = current else {
             return ended;
         };
-        if turn_cancel.is_cancelled() || matches!(ended, Ok(Ran::Cancelled)) {
+        if halt.is_halted() || matches!(ended, Ok(Ran::Cancelled)) {
             session.cancel_goal();
             return ended;
         }
@@ -299,7 +324,7 @@ async fn drive_goal(
                     turn::client_error(runtime, error).message
                 ),
             );
-            if !retry_wait(&cancel, turn_cancel).await {
+            if !retry_wait(&cancel, halt).await {
                 return ended;
             }
             TurnStart::Continue
@@ -312,7 +337,7 @@ async fn drive_goal(
             let judged = tokio::select! {
                 biased;
                 () = cancel.cancelled() => Judged::Stopped,
-                () = turn_cancel.cancelled() => Judged::Stopped,
+                () = halt.halted() => Judged::Stopped,
                 result = &mut evaluation => Judged::Done(result),
                 () = tokio::time::sleep(EVALUATION_TIMEOUT) => Judged::TimedOut,
             };
@@ -338,7 +363,7 @@ async fn drive_goal(
                             "could not evaluate goal: {error}; retrying while goal remains active"
                         ),
                     );
-                    if !retry_wait(&cancel, turn_cancel).await {
+                    if !retry_wait(&cancel, halt).await {
                         return ended;
                     }
                     continue;
@@ -386,26 +411,26 @@ async fn drive_goal(
             })
         };
         // Clear only disarms the next turn; it never cancels a run in progress.
-        if cancel.is_cancelled() || turn_cancel.is_cancelled() {
+        if cancel.is_cancelled() || halt.is_halted() {
             return ended;
         }
-        ended = turn::run_goal_turn(runtime, view, next, &session.config, turn_cancel).await;
+        ended = turn::run_goal_turn(runtime, view, next, &session.config, halt.turn_cancel).await;
     }
 }
 
 /// How waiting for the goal's evaluation ended.
 enum Judged {
     Done(anyhow::Result<GoalEvaluation>),
-    /// The goal was cleared or the turn cancelled.
+    /// The goal was cleared, the turn cancelled, or the daemon began stopping.
     Stopped,
     TimedOut,
 }
 
-async fn retry_wait(cancel: &CancellationToken, turn_cancel: &CancellationToken) -> bool {
+async fn retry_wait(cancel: &CancellationToken, halt: Halt<'_>) -> bool {
     tokio::select! {
         biased;
         () = cancel.cancelled() => false,
-        () = turn_cancel.cancelled() => false,
+        () = halt.halted() => false,
         () = tokio::time::sleep(GOAL_RETRY_DELAY) => true,
     }
 }

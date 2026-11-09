@@ -185,7 +185,16 @@ impl TurnTask {
                                 .await
                             }
                         };
-                        super::goal::drive(runtime, &mut view, ended, &cancel).await
+                        super::goal::drive(
+                            runtime,
+                            &mut view,
+                            ended,
+                            super::goal::Halt {
+                                turn_cancel: &cancel,
+                                stopping: &stopping,
+                            },
+                        )
+                        .await
                     };
                     tokio::pin!(turn);
                     // The deadline first, so a limit already past cancels
