@@ -1,6 +1,6 @@
 # Model Context Protocol
 
-Rho can connect native agents to ordinary [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers. MCP support does not require an Agent Plugin package.
+Rho can connect native agents to ordinary [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers. MCP support does not require an Agent Plugin package. To serve rho's own sessions to another agent over MCP, see [MCP server](/mcp-server).
 
 ## Configuration source and precedence
 

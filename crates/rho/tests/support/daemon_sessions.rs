@@ -1230,18 +1230,18 @@ async fn an_idle_session_is_unloaded_and_its_file_let_go() {
 /// A client following one session's events on its own connection, as a
 /// frontend does: it keeps the events it has, by seq, and skips any it
 /// already has, so a resumed stream continues its view without repeats.
-struct Follower {
+pub(super) struct Follower {
     client: Client,
     notifications: Notifications,
     session: SessionId,
     stream: StreamId,
-    events: Vec<(Seq, SessionEvent)>,
+    pub(super) events: Vec<(Seq, SessionEvent)>,
 }
 
 impl Follower {
     /// Connects and attaches to `session`, resuming after `after` when
     /// given; returns the follower and how the daemon answered the attach.
-    async fn attach(
+    pub(super) async fn attach(
         sandbox: &Sandbox,
         session: &SessionId,
         events: Vec<(Seq, SessionEvent)>,
@@ -1285,7 +1285,7 @@ impl Follower {
     }
 
     /// Reads events until one satisfies `done`.
-    async fn read_until(&mut self, done: impl Fn(&SessionEvent) -> bool) {
+    pub(super) async fn read_until(&mut self, done: impl Fn(&SessionEvent) -> bool) {
         loop {
             let notification = tokio::time::timeout(DEADLINE, self.notifications.recv())
                 .await

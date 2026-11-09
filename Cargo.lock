@@ -3917,6 +3917,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
+name = "pastey"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
+
+[[package]]
 name = "pdf-inspector"
 version = "1.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5032,9 +5038,11 @@ dependencies = [
  "indexmap 2.14.0",
  "libc",
  "oauth2",
+ "pastey",
  "pin-project-lite",
  "process-wrap",
  "reqwest",
+ "schemars 1.2.3",
  "serde",
  "serde_json",
  "sse-stream",
@@ -5044,6 +5052,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -5345,6 +5354,7 @@ version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab508826f74a77ca9d5aba6ff19b522583ee3eaf28a19384ff3d0e5835fadf6e"
 dependencies = [
+ "chrono",
  "dyn-clone",
  "ref-cast",
  "schemars_derive",

@@ -668,8 +668,9 @@ async fn refresh_tools(maintenance: &SessionMaintenance) {
     maintenance.live.record_tool_changes(added, removed);
 }
 
-/// Gives a stdio server the base set from `environment`, then its config's
-/// `env`, then its `env_from_env` read from `environment`.
+/// Gives a stdio server the base set from `environment` and the session's
+/// nesting depth, then its config's `env`, then its `env_from_env` read from
+/// `environment`.
 fn apply_stdio_environment(
     command: &mut tokio::process::Command,
     env: &BTreeMap<String, String>,
@@ -677,6 +678,11 @@ fn apply_stdio_environment(
     environment: &Ambient,
 ) -> anyhow::Result<()> {
     environment.apply_base(command);
+    // A `rho mcp serve` registered as a session's server counts its depth
+    // from the session's, so its caps hold across hops (#1672).
+    if let Some(depth) = environment.read_os(crate::child_env::SESSION_DEPTH_ENV) {
+        command.env(crate::child_env::SESSION_DEPTH_ENV, depth);
+    }
     command.envs(env);
     for (name, variable) in env_from_env {
         let value = environment.read(variable).with_context(|| {

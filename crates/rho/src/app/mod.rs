@@ -40,6 +40,9 @@ mod interactive_session_controller;
 mod interactive_state;
 mod login;
 mod mcp_cli;
+// `rho mcp serve` is a client of the rho daemon, which is unix-only (#1665).
+#[cfg(unix)]
+mod mcp_server;
 mod model_compactor;
 mod model_prompt_cli;
 mod model_prompt_metadata;
@@ -54,6 +57,9 @@ mod runtime_builder;
 pub(crate) mod sdk_config;
 mod session_assembly;
 mod session_commands;
+// Session control through the rho daemon, which is unix-only (#1665).
+#[cfg(unix)]
+mod session_control;
 mod session_events;
 mod session_mcp;
 mod session_options;

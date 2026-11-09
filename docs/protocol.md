@@ -25,6 +25,7 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/session/steer` | `session`, `text` | Adds `text` to the running turn's next model request and returns its `id` once the turn accepted it. The steer applies at that request as a `user_message` whose `steer` is `id`; a turn that ends first drops it, so a client that never saw it apply can send it again. Gets `NotSteerable` when no model request is taking input, or the turn ended before it accepted the input. |
 | `rho/session/unsteer` | `session`, `id` | Withdraws steer `id` before it applies and returns its `outcome`: `withdrawn` when it was removed before it reached the conversation, `delivered` when the provider already took it (it still applies), `applied` when it is already in the conversation, or `not_found` when the running turn never accepted that id, as for another turn's steer or one a turn dropped when it ended. Gets `NotSteerable` when no model request is taking input. |
 | `rho/session/attach` | `session`, `after`?, `environment`, `setup`? | Follows the session's events ([below](#following-a-session)), reopening an unloaded session with its commands in `environment` and with `setup` ([below](#a-session-s-setup)). Returns its `stream`, its `workspace`, the `replay` that follows (`tail` or `reset`) and how many events it holds (`replay_events`), its job `state`, the input requests open now (`inputs`), its `title`, once it has one, and the session's `options` ([below](#changing-a-session-s-settings)). |
+| `rho/session/observe` | `session`, `after`? | Follows the session's events as `rho/session/attach` does, for a client that only reads it, and returns the same response. It never loads a session: one the daemon has loaded is followed as an attach follows it, and a saved one it has not loaded stays unloaded. The daemon replays that one as its file keeps it, with how its last turn ended, without starting its MCP servers, OpenAPI sources, or hooks, then detaches the client with `not_loaded`; with no MCP server connected, that replay titles MCP tool calls by their names alone. It carries no `environment` or `setup`, since it opens nothing that would use them. A daemon from before this method answers `MethodNotFound`. |
 | `rho/session/detach` | `session` | Stops following the session; no event of it arrives after the response. |
 | `rho/session/answer` | `session`, `request`, `answer` | Answers one of the turn's open input requests ([below](#answering-a-turn-s-requests)) and returns `{}` once the daemon has handed the answer to the turn. |
 | `rho/session/configure` | `session`, `change` | Changes one of a loaded session's settings for its later turns and returns its `options` ([below](#changing-a-session-s-settings)). |
@@ -133,8 +134,9 @@ The daemon detaches a client with `rho/session/detached`, after which no event o
 - `lagged`: the client fell 4096 events behind, or the daemon unloaded the session, as a delete that fails after it unloaded the session does. A turn never waits for a client; attach again with the cursor to catch up.
 - `daemon_stopping`: the daemon is stopping.
 - `deleted`: `rho/session/delete` deleted the session.
+- `not_loaded`: `rho/session/observe` found the session unloaded, so its replay was the saved conversation and nothing follows. Observe again to read it again.
 
-Attaching a session the connection already follows replaces the earlier attachment.
+Attaching or observing a session the connection already follows replaces the earlier attachment.
 
 ### Tool cards
 

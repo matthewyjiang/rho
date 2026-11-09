@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     build::{build_session, session_config},
     model_scoped_config, CommandRejected, PromptScope, SessionPermission, SessionRuntime,
+    SessionUse,
 };
 use crate::{
     agent::{AgentCatalog, AgentDefinition},
@@ -96,6 +97,11 @@ impl SessionRuntime {
     /// A host model change replaces a call override even without another turn.
     /// Ordinary roots keep their existing reload policy and deferred files.
     pub(super) fn persist_model_override(&self) -> anyhow::Result<()> {
+        // A session opened only to be read saves nothing, though reopening
+        // switches it to the model its file keeps.
+        if self.build.host.session_use == SessionUse::Read {
+            return Ok(());
+        }
         let Some(stored) = self.storage.file() else {
             return Ok(());
         };

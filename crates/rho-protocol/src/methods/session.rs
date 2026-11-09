@@ -27,6 +27,9 @@ pub const SESSION_STEER: &str = "rho/session/steer";
 pub const SESSION_UNSTEER: &str = "rho/session/unsteer";
 /// Receive a session's events as [`SESSION_EVENT`] notifications.
 pub const SESSION_ATTACH: &str = "rho/session/attach";
+/// Receive a session's events as [`SESSION_ATTACH`] does, without loading
+/// it: for a client that only reads it.
+pub const SESSION_OBSERVE: &str = "rho/session/observe";
 /// Stop receiving a session's events.
 pub const SESSION_DETACH: &str = "rho/session/detach";
 
@@ -272,9 +275,27 @@ pub struct SessionAttachParams {
     pub setup: SessionSetup,
 }
 
-/// Result of [`SESSION_ATTACH`]. The session's events then arrive as
-/// [`SESSION_EVENT`] notifications, never before this response. Attaching
-/// again on the same connection replaces the earlier attachment.
+/// Params of [`SESSION_OBSERVE`]. A session the daemon has loaded is
+/// attached as [`SESSION_ATTACH`] attaches it. A saved session it has not
+/// loaded stays unloaded: the daemon replays it as its file keeps it, with
+/// how its last turn ended, then detaches the client as
+/// [`DetachReason::NotLoaded`]. Observing starts nothing of the session, no
+/// MCP server, OpenAPI source, or hook, and so carries no environment or
+/// setup. With no MCP server connected, such a replay titles the session's
+/// MCP tool calls by their names alone.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionObserveParams {
+    pub session: SessionId,
+    /// The last event this client has, to resume after it, as for
+    /// [`SESSION_ATTACH`]. A session observed unloaded always resets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<Cursor>,
+}
+
+/// Result of [`SESSION_ATTACH`] and [`SESSION_OBSERVE`]. The session's
+/// events then arrive as [`SESSION_EVENT`] notifications, never before this
+/// response. Attaching or observing again on the same connection replaces
+/// the earlier attachment.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionAttachResponse {
     /// The stream the events belong to; a cursor names it to resume.
@@ -367,6 +388,10 @@ pub enum DetachReason {
     DaemonStopping,
     /// The session was deleted ([`super::SESSION_DELETE`]).
     Deleted,
+    /// An observe ([`SESSION_OBSERVE`]) found the session unloaded: the
+    /// replay was the session as its file keeps it, and nothing follows.
+    /// Observe again to read it again.
+    NotLoaded,
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
