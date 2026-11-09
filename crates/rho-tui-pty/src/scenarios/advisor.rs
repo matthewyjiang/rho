@@ -8,16 +8,22 @@ use std::time::{Duration, Instant};
 
 use anyhow::{ensure, Result};
 
-use crate::{env::IsolatedHome, harness::PtyHarness, keys::Key, scenario::Step, WaitTimeout};
+use crate::{
+    env::IsolatedHome,
+    harness::PtyHarness,
+    keys::Key,
+    scenario::{Scenario, Step},
+    WaitTimeout,
+};
 
-use super::{SETTLE, STARTUP, STREAM};
+use super::{DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
 
 /// Makes `xai` an available auth, so model pickers list its static catalog.
-pub(super) const XAI_KEY_ENV: &[(&str, &str)] = &[("XAI_API_KEY", "fixture-xai-key")];
+const XAI_KEY_ENV: &[(&str, &str)] = &[("XAI_API_KEY", "fixture-xai-key")];
 
 /// Adds Poolside, whose fixed Off/Max reasoning gives the reasoning picker a
 /// known, short level set without network metadata.
-pub(super) const XAI_AND_POOLSIDE_KEY_ENV: &[(&str, &str)] = &[
+const XAI_AND_POOLSIDE_KEY_ENV: &[(&str, &str)] = &[
     ("XAI_API_KEY", "fixture-xai-key"),
     ("POOLSIDE_API_KEY", "fixture-poolside-key"),
 ];
@@ -26,12 +32,12 @@ const ADVISOR_MODEL: &str = "xai/grok-4.5";
 
 /// Config a user can reach by hand: the mode is on with no advisor model, so
 /// nothing reviews the session.
-pub(super) fn setup_advisor_without_model(home: &IsolatedHome) -> Result<()> {
+fn setup_advisor_without_model(home: &IsolatedHome) -> Result<()> {
     write_config(home, /*advisor_mode*/ true, /*with_model*/ false)
 }
 
 /// Config with advisor mode on and a model, so the tool is offered from startup.
-pub(super) fn setup_advisor_ready(home: &IsolatedHome) -> Result<()> {
+fn setup_advisor_ready(home: &IsolatedHome) -> Result<()> {
     write_config(home, /*advisor_mode*/ true, /*with_model*/ true)
 }
 
@@ -202,10 +208,53 @@ fn assert_picker_omits_the_conversation_model(harness: &mut PtyHarness) -> Resul
     Ok(())
 }
 
+/// The advisor scenarios, as `ALL_SCENARIOS` lists them.
+pub(super) const ADVISOR_COMMAND_SCENARIO: Scenario = Scenario::new(
+    "advisor_command",
+    "Choose an advisor model, turn the mode off from config, and turn it on again",
+    DEFAULT_SIZE,
+    ADVISOR_COMMAND_STEPS,
+    /*smoke*/ false,
+)
+.with_env(XAI_KEY_ENV);
+
+pub(super) const ADVISOR_MODEL_COMMAND_SCENARIO: Scenario = Scenario {
+    id: "advisor_model_command",
+    description: "Swap the advisor model and pick only supported reasoning levels",
+    size: DEFAULT_SIZE,
+    setup: Some(setup_advisor_ready),
+    env: XAI_AND_POOLSIDE_KEY_ENV,
+    args: &[],
+    steps: ADVISOR_MODEL_COMMAND_STEPS,
+    smoke: false,
+};
+
+pub(super) const ADVISOR_MISSING_MODEL_SCENARIO: Scenario = Scenario {
+    id: "advisor_missing_model",
+    description: "Warn about advisor mode saved without a model and route to a model picker",
+    size: DEFAULT_SIZE,
+    setup: Some(setup_advisor_without_model),
+    env: XAI_KEY_ENV,
+    args: &[],
+    steps: ADVISOR_MISSING_MODEL_STEPS,
+    smoke: false,
+};
+
+pub(super) const ADVISOR_REVIEW_SCENARIO: Scenario = Scenario {
+    id: "advisor_review",
+    description: "Consult the advisor during a turn, then survive an advisor failure",
+    size: DEFAULT_SIZE,
+    setup: Some(setup_advisor_ready),
+    env: XAI_KEY_ENV,
+    args: &[],
+    steps: ADVISOR_REVIEW_STEPS,
+    smoke: false,
+};
+
 // Covers: /advisor on asks for a model, remembers it across off and on, and
 // every surface that shows the mode follows the change.
 // Owner: interactive TUI
-pub(super) const ADVISOR_COMMAND_STEPS: &[Step] = &[
+const ADVISOR_COMMAND_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "gpt-5.5",
@@ -325,7 +374,7 @@ fn assert_reasoning_picker_offers_only_off_and_max(harness: &mut PtyHarness) -> 
 // follows up with a reasoning picker listing only supported levels, and Esc in
 // either picker leaves the saved choice alone.
 // Owner: interactive TUI
-pub(super) const ADVISOR_MODEL_COMMAND_STEPS: &[Step] = &[
+const ADVISOR_MODEL_COMMAND_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "advisor: xai/grok-4.5",
@@ -401,7 +450,7 @@ pub(super) const ADVISOR_MODEL_COMMAND_STEPS: &[Step] = &[
 // Covers: advisor mode saved on with no advisor model must read as unusable and
 // route the user to a model instead of pretending to work.
 // Owner: interactive TUI
-pub(super) const ADVISOR_MISSING_MODEL_STEPS: &[Step] = &[
+const ADVISOR_MISSING_MODEL_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "gpt-5.5",
@@ -470,7 +519,7 @@ pub(super) const ADVISOR_MISSING_MODEL_STEPS: &[Step] = &[
 // guidance back as a tool result, and an advisor failure must stay a tool error
 // rather than end the turn.
 // Owner: interactive TUI
-pub(super) const ADVISOR_REVIEW_STEPS: &[Step] = &[
+const ADVISOR_REVIEW_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "gpt-5.5",

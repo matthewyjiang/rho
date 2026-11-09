@@ -15,8 +15,12 @@
 //! configures options through a background request queue. Quitting closes
 //! the connection, which detaches the session without cancelling its turn.
 //! A lagged attachment resumes after its last cursor, preserving the
-//! transcript for a tail replay or replacing it for a reset. A failed
-//! reattach ends following. The exit receipt offers to resume a session
+//! transcript for a tail replay or replacing it for a reset. One the daemon
+//! detached as restarting, for an upgrade or `rho daemon restart` (#1713),
+//! attaches again on a new connection once the old one closed, which waits
+//! for the restarted daemon, and resets; one that had saved nothing, which
+//! the restarted daemon cannot reopen, is replaced by a new session. A
+//! failed reattach ends following. The exit receipt offers to resume a session
 //! once it is saved: resumed, titled, or past its first prompt.
 //!
 //! Off unix there is no daemon (#1665): the type is uninhabited, so the
@@ -132,18 +136,120 @@ mod unix {
         SessionSteerParams, SessionUnsteerParams, SteerId, UnsteerOutcome,
     };
     use rho_sdk::SteeringId;
-    use tokio::sync::mpsc;
+    use tokio::sync::{mpsc, watch};
 
     use super::super::{
         daemon_events::{DaemonEvents, DaemonView, Rest, TurnState},
         daemon_inputs::AnswerRefusal,
-        daemon_requests::DaemonRequests,
+        daemon_requests::{DaemonRequests, Target},
     };
-    use crate::app::daemon_client::{Daemon, Link, Part, Routed, StreamPosition};
+    use crate::{
+        app::daemon_client::{Daemon, Link, Part, Routed, StreamPosition},
+        daemon::DAEMON_RESTART_TIMEOUT,
+    };
 
     const LOST: &str = "lost the connection to the rho daemon";
 
-    type Reattach = Pin<Box<dyn Future<Output = anyhow::Result<SessionAttachResponse>> + Send>>;
+    /// Shown while the TUI reconnects to a restarting daemon.
+    const RECONNECTING: &str = "rho daemon restarting; reconnecting";
+
+    type Reattach = Pin<Box<dyn Future<Output = anyhow::Result<Reattached>> + Send>>;
+
+    /// What a reattach came back with.
+    struct Reattached {
+        response: SessionAttachResponse,
+        /// After the daemon restarted: where the session attached again.
+        relinked: Option<Relinked>,
+    }
+
+    /// The session's attachment after the daemon restarted.
+    struct Relinked {
+        /// The connection it attached on.
+        link: Arc<Link>,
+        /// The route its events now arrive on.
+        routed: mpsc::UnboundedReceiver<Routed>,
+        /// The session's id: a new one when the old one had saved nothing.
+        session: SessionId,
+    }
+
+    /// Attaching a session again once the daemon restarted.
+    struct Relink {
+        daemon: Arc<Daemon>,
+        /// The attach, after the session's cursor.
+        params: SessionAttachParams,
+        /// What opened the session, when it had saved nothing yet.
+        opened: Option<SessionNewParams>,
+    }
+
+    impl Relink {
+        /// Waits for `old`, the connection the daemon detached the session
+        /// on, to close, then attaches on the next one, which waits for the
+        /// restarted daemon. Once the router handed the session's old route
+        /// `Lost`, a new route belongs to the next connection.
+        async fn run(self, old: Option<Arc<Link>>) -> anyhow::Result<Reattached> {
+            let Self {
+                daemon,
+                params,
+                opened,
+            } = self;
+            if let Some(old) = old {
+                old.closed().await;
+            }
+            let routed = route(&daemon, &params.session);
+            // A daemon that failed to come back resets the connections that
+            // waited for it; the second try starts a new daemon.
+            let link = match daemon.link().await {
+                Ok(link) => link,
+                Err(_) => daemon.link().await?,
+            };
+            match link.request::<SessionAttach>(&params).await {
+                Ok(response) => Ok(Reattached {
+                    response,
+                    relinked: Some(Relinked {
+                        link,
+                        routed,
+                        session: params.session,
+                    }),
+                }),
+                Err(error) => match opened {
+                    Some(mut opened) if error.error_code() == Some(ErrorCode::SessionNotFound) => {
+                        daemon.unroute(&params.session);
+                        opened.environment = ClientEnvironment::of_this_process();
+                        let session = link.request::<SessionNew>(&opened).await?.session;
+                        let routed = route(&daemon, &session);
+                        let attach = SessionAttachParams {
+                            session: session.clone(),
+                            after: None,
+                            ..params
+                        };
+                        let response = link.request::<SessionAttach>(&attach).await?;
+                        Ok(Reattached {
+                            response,
+                            relinked: Some(Relinked {
+                                link,
+                                routed,
+                                session,
+                            }),
+                        })
+                    }
+                    _ => Err(error.into()),
+                },
+            }
+        }
+    }
+
+    /// Routes session `id`'s notifications to the receiver this returns,
+    /// replacing any earlier route.
+    fn route(daemon: &Daemon, id: &SessionId) -> mpsc::UnboundedReceiver<Routed> {
+        let (sender, routed) = mpsc::unbounded_channel();
+        daemon.route(
+            id,
+            Box::new(move |routed| {
+                let _ = sender.send(routed);
+            }),
+        );
+        routed
+    }
 
     /// Which session the TUI follows.
     pub(crate) enum DaemonTarget {
@@ -167,8 +273,13 @@ mod unix {
         /// resume it: it was resumed, has a title, or took a prompt.
         saved: bool,
         setup: SessionSetup,
+        /// What opened the session, while it was opened new: a restarted
+        /// daemon cannot reopen it until it saves, so it opens a new one.
+        opened: Option<SessionNewParams>,
         workspace: PathBuf,
         routed: mpsc::UnboundedReceiver<Routed>,
+        /// Where the session's requests go.
+        target: watch::Sender<Target>,
         events: DaemonEvents,
         /// Which of the attachment's events are its replay.
         position: StreamPosition,
@@ -192,26 +303,19 @@ mod unix {
         /// when none runs.
         pub(crate) async fn open(target: DaemonTarget) -> anyhow::Result<Self> {
             let daemon = Arc::new(Daemon::default());
-            let (id, setup, resumed) = match target {
+            let (id, setup, opened) = match target {
                 DaemonTarget::New(params) => {
-                    let setup = params.setup.clone();
                     let created = daemon
                         .request::<SessionNew>(&params)
                         .await
                         .context("could not open a daemon session")?;
-                    (created.session, setup, false)
+                    (created.session, params.setup.clone(), Some(params))
                 }
-                DaemonTarget::Resume { session, setup } => (session, setup, true),
+                DaemonTarget::Resume { session, setup } => (session, setup, None),
             };
             // Routed before the attach, so the replay that follows its
             // response is not dropped.
-            let (sender, routed) = mpsc::unbounded_channel();
-            daemon.route(
-                &id,
-                Box::new(move |routed| {
-                    let _ = sender.send(routed);
-                }),
-            );
+            let routed = route(&daemon, &id);
             let params = SessionAttachParams {
                 session: id.clone(),
                 after: None,
@@ -226,28 +330,30 @@ mod unix {
                         .context(format!("could not attach to daemon session {id}")));
                 }
             };
+            let link = daemon.current().await.context(LOST)?;
+            let (target, requests) = watch::channel(Target::Attached {
+                link,
+                session: id.clone(),
+            });
             let mut events = DaemonEvents::default();
             let (pending, replay_state) = begin_replay(&mut events, &response);
-            let mut session = Self {
+            Ok(Self {
                 position: StreamPosition::attached(&response),
                 daemon,
                 id,
-                saved: resumed || response.title.is_some(),
+                saved: opened.is_none() || response.title.is_some(),
                 setup: params.setup,
+                opened,
                 workspace: response.workspace,
                 routed,
+                target,
                 events,
                 replay_state,
                 pending,
                 ended: false,
-                requests: None,
+                requests: Some(DaemonRequests::new(requests)),
                 reattach: None,
-            };
-            session.requests = Some(DaemonRequests::new(
-                session.attached_link().await?,
-                session.id.clone(),
-            ));
-            Ok(session)
+            })
         }
 
         /// The session's id, once a resume, saved title, or catalog lookup
@@ -271,25 +377,7 @@ mod unix {
             if self.ended {
                 return std::future::pending().await;
             }
-            if let Some(reattach) = &mut self.reattach {
-                let response = reattach.await;
-                self.reattach = None;
-                let mut views = std::mem::take(&mut self.pending);
-                match response {
-                    Ok(response) => {
-                        self.position.reattached(&response);
-                        self.saved |= response.title.is_some();
-                        self.workspace = response.workspace.clone();
-                        let (replay, state) = begin_replay(&mut self.events, &response);
-                        self.replay_state = state;
-                        views.extend(replay);
-                    }
-                    Err(error) => {
-                        views.extend(self.end(DaemonView::Error(format!(
-                            "could not reattach the daemon session: {error:#}"
-                        ))));
-                    }
-                }
+            if let Some(views) = self.finish_reattach().await {
                 return views;
             }
             let first = tokio::select! {
@@ -321,6 +409,58 @@ mod unix {
             views
         }
 
+        /// Waits for the reattach under way, if any, and takes over the
+        /// attachment it came back with, or ends following when it failed;
+        /// the views to show, `pending` first.
+        async fn finish_reattach(&mut self) -> Option<Vec<DaemonView>> {
+            let reattached = self.reattach.as_mut()?.await;
+            self.reattach = None;
+            let mut views = std::mem::take(&mut self.pending);
+            match reattached {
+                Ok(Reattached { response, relinked }) => {
+                    if let Some(Relinked {
+                        link,
+                        routed,
+                        session,
+                    }) = relinked
+                    {
+                        let status = format!("reconnected to rho daemon {}", link.daemon().version);
+                        views.push(DaemonView::Status(if session == self.id {
+                            status
+                        } else {
+                            // It had saved nothing the restarted daemon could reopen.
+                            format!("{status} (new session)")
+                        }));
+                        self.id = session.clone();
+                        self.routed = routed;
+                        self.target.send_replace(Target::Attached { link, session });
+                    }
+                    self.position.reattached(&response);
+                    self.saved |= response.title.is_some();
+                    self.workspace = response.workspace.clone();
+                    let (replay, state) = begin_replay(&mut self.events, &response);
+                    self.replay_state = state;
+                    views.extend(replay);
+                }
+                Err(error) => {
+                    views.extend(self.end(DaemonView::Error(format!(
+                        "could not reattach the daemon session: {error:#}"
+                    ))));
+                }
+            }
+            Some(views)
+        }
+
+        /// The params that attach the session again after its cursor.
+        fn reattach_params(&self) -> SessionAttachParams {
+            SessionAttachParams {
+                session: self.id.clone(),
+                after: self.position.cursor().cloned(),
+                environment: ClientEnvironment::of_this_process(),
+                setup: self.setup.clone(),
+            }
+        }
+
         /// Maps `first` and everything queued behind it into `views`;
         /// `None` is a closed route.
         fn read(&mut self, first: Option<Routed>, views: &mut Vec<DaemonView>) {
@@ -341,18 +481,45 @@ mod unix {
                     }
                     Some(Routed::Detached(DetachReason::Lagged)) => {
                         let daemon = Arc::clone(&self.daemon);
-                        let params = SessionAttachParams {
-                            session: self.id.clone(),
-                            after: self.position.cursor().cloned(),
-                            environment: ClientEnvironment::of_this_process(),
-                            setup: self.setup.clone(),
-                        };
+                        let params = self.reattach_params();
                         self.reattach = Some(Box::pin(async move {
                             // Lagged ends the subscription, not the connection.
                             // A lost connection still ends following, never sends
                             // prompts or answers on a new unseen attachment.
                             let link = daemon.current().await.context(LOST)?;
-                            Ok(link.request::<SessionAttach>(&params).await?)
+                            let response = link.request::<SessionAttach>(&params).await?;
+                            Ok(Reattached {
+                                response,
+                                relinked: None,
+                            })
+                        }));
+                        return;
+                    }
+                    Some(Routed::Detached(DetachReason::Restarting)) => {
+                        views.push(DaemonView::Status(RECONNECTING.into()));
+                        // The connection the session is attached on, taken
+                        // now: the daemon closes it next.
+                        let old = match self.target.send_replace(Target::Reconnecting) {
+                            Target::Attached { link, .. } => Some(link),
+                            Target::Reconnecting | Target::Ended => None,
+                        };
+                        let relink = Relink {
+                            daemon: Arc::clone(&self.daemon),
+                            params: self.reattach_params(),
+                            // Only a session that saved nothing can be
+                            // missing from the restarted daemon.
+                            opened: self.opened.clone().filter(|_| !self.saved),
+                        };
+                        self.reattach = Some(Box::pin(async move {
+                            tokio::time::timeout(DAEMON_RESTART_TIMEOUT, relink.run(old))
+                                .await
+                                .map_err(|_| {
+                                    anyhow::anyhow!(
+                                        "the rho daemon did not answer within \
+                                         DAEMON_RESTART_TIMEOUT ({DAEMON_RESTART_TIMEOUT:?}) \
+                                         of restarting"
+                                    )
+                                })?
                         }));
                         return;
                     }
@@ -379,6 +546,7 @@ mod unix {
         /// showing a turn it can no longer follow.
         fn end(&mut self, error: DaemonView) -> [DaemonView; 2] {
             self.ended = true;
+            self.target.send_replace(Target::Ended);
             [
                 error,
                 DaemonView::Turn(TurnState::Resting(Rest::Unfollowed)),
@@ -390,9 +558,11 @@ mod unix {
         /// unseen: a turn, or a steer the TUI then also keeps as a
         /// follow-up once it reads the connection's loss.
         async fn attached_link(&self) -> anyhow::Result<Arc<Link>> {
-            match self.daemon.current().await.filter(|_| !self.ended) {
-                Some(link) => Ok(link),
-                None => anyhow::bail!(LOST),
+            match &*self.target.borrow() {
+                Target::Attached { link, .. } if link.is_alive() => Ok(Arc::clone(link)),
+                Target::Attached { .. } | Target::Reconnecting | Target::Ended => {
+                    anyhow::bail!(LOST)
+                }
             }
         }
 
@@ -404,6 +574,11 @@ mod unix {
             &mut self,
             content: Vec<ContentBlock>,
         ) -> anyhow::Result<()> {
+            // A restart the TUI has not caught up with yet: attach again
+            // first, so the prompt reaches the restarted daemon.
+            let mut views = self.take_views();
+            views.extend(self.finish_reattach().await.unwrap_or_default());
+            self.pending.extend(views);
             self.attached_link().await?;
             self.requests
                 .as_ref()
