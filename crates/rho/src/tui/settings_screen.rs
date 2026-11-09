@@ -83,11 +83,13 @@ impl App {
         };
         match page {
             // A page of values opens on the one in force, so Enter keeps it.
-            ConfigPage::SessionModel
-            | ConfigPage::SessionPermissionMode
-            | ConfigPage::Setting { .. }
-            | ConfigPage::AdvisorOn => picker.select_badged(),
-            ConfigPage::Root | ConfigPage::Category { .. } => {}
+            // The session's pages do it themselves, as `/model` and
+            // `/permissions` open them too.
+            ConfigPage::Setting { .. } | ConfigPage::AdvisorOn => picker.select_badged(),
+            ConfigPage::Root
+            | ConfigPage::Category { .. }
+            | ConfigPage::SessionModel
+            | ConfigPage::SessionPermissionMode => {}
         }
         Some(picker.with_config_page(page.clone()))
     }

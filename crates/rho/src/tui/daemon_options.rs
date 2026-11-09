@@ -139,7 +139,8 @@ impl App {
     /// The session's model page, which re-renders as the session's
     /// options change, opened from `/model` or `/config`.
     pub(super) fn daemon_model_picker(&self) -> Option<UiPicker> {
-        let picker = model_picker(self.daemon_options.as_ref()?);
+        let mut picker = model_picker(self.daemon_options.as_ref()?);
+        picker.select_badged();
         Some(picker.with_config_page(ConfigPage::SessionModel))
     }
 
@@ -371,6 +372,7 @@ impl App {
                 }
                 _ => false,
             });
+        picker.select_badged();
         Some(picker.with_config_page(ConfigPage::SessionPermissionMode))
     }
 }
