@@ -67,7 +67,9 @@ pub(crate) use secure_fs_directory::{
     open_verified_directory, open_verified_file_in_directory, opened_directory_names,
 };
 pub(crate) use secure_fs_shebang::ExecutableInterpreterRequest;
-pub(crate) use secure_fs_spawn::{configure_handle_inheritance, verified_handle_path};
+pub(crate) use secure_fs_spawn::{
+    configure_handle_inheritance, verified_handle_path, HandleLaunch,
+};
 
 pub(crate) use service::WorkflowService;
 pub(crate) use starlark::StarlarkPlanner;

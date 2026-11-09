@@ -82,6 +82,10 @@ pub(crate) enum WorkflowError {
     UnknownId(String),
     #[error("workflow store boundary is not a trusted directory: {0}")]
     UntrustedDirectory(PathBuf),
+    /// This target cannot launch a frozen workflow process from verified
+    /// handles; see [`super::HandleLaunch`].
+    #[error("frozen workflow process execution is unavailable on this platform because the OS adapter cannot launch the executable, interpreter, and working directory from verified handles")]
+    UnsupportedPlatform,
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]

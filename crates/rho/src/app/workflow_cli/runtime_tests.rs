@@ -1,6 +1,8 @@
 use pretty_assertions::assert_eq;
 
-use super::{drive_end, effective_permission_mode_for, WorkflowApprovalMode, WorkflowRuntime};
+use super::{
+    drive_end, effective_permission_mode_for, log_drive_end, WorkflowApprovalMode, WorkflowRuntime,
+};
 use crate::{
     app::{subagent_pool::WorkflowEnd, workflow_runtime::RuntimeError},
     permission::PermissionMode,
@@ -160,5 +162,65 @@ fn a_drive_reports_how_its_run_ended() {
     ];
     for (result, expected) in cases {
         assert_eq!(drive_end(&result), expected, "{result:?}");
+    }
+}
+
+/// What `log` emits, rendered in the daemon's journal sink format, one line
+/// per event.
+fn journal_lines(log: impl FnOnce()) -> String {
+    #[derive(Clone, Default)]
+    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let captured = Captured::default();
+    let writer = captured.clone();
+    let subscriber = crate::logging::journal_format(tracing_subscriber::fmt())
+        .with_writer(move || writer.clone())
+        .finish();
+    tracing::subscriber::with_default(subscriber, log);
+    let bytes = captured.0.lock().unwrap().clone();
+    String::from_utf8(bytes).unwrap()
+}
+
+// Covers: the daemon log line for a background run names how it ended; a
+// failed, denied, or blocked run logs as failed with its outcome instead of
+// completed (#1736).
+// Owner: workflow background runs (the daemon's log of a run's end).
+#[test]
+fn a_background_run_logs_its_real_outcome() {
+    let cases = [
+        (
+            WorkflowOutcome::Success,
+            " INFO rho_coding_agent::app::workflow_cli::runtime: background workflow completed",
+            "",
+        ),
+        (
+            WorkflowOutcome::Cancellation,
+            " INFO rho_coding_agent::app::workflow_cli::runtime: background workflow cancelled",
+            "",
+        ),
+        (
+            WorkflowOutcome::Failure,
+            " WARN rho_coding_agent::app::workflow_cli::runtime: background workflow failed",
+            " error=the workflow run ended with failure",
+        ),
+    ];
+    for (outcome, event, reason) in cases {
+        let run = ended_run(RunLifecycle::Completed, Some(outcome));
+        let run_id = run.manifest.run_id;
+        let end = drive_end(&Ok(run));
+
+        assert_eq!(
+            journal_lines(|| log_drive_end(run_id, &end)),
+            format!("{event} run_id={run_id}{reason}\n"),
+            "{outcome:?}"
+        );
     }
 }
