@@ -56,15 +56,13 @@ async fn advisor_rebuild_keeps_the_session_mode_approvals() {
         ..Config::default()
     };
     let mut runtime = idle_runtime(home.path(), &opening).await;
-    runtime.built.tools = crate::tools::sdk_registry::AppToolSet::new(
+    runtime.built.tools = AppToolSet::new(
         &opening,
         runtime.built.diagnostics.clone(),
-        crate::tools::sdk_registry::ToolSetOptions::new(crate::agent::AgentCapabilities::new(
-            [crate::agent::ToolCapability::Advisor]
-                .into_iter()
-                .collect(),
+        ToolSetOptions::new(AgentCapabilities::new(
+            [ToolCapability::Advisor].into_iter().collect(),
         ))
-        .advisor(crate::tools::advisor::AdvisorSessionStore::new()),
+        .advisor(AdvisorSessionStore::new()),
     );
     runtime
         .set_permission_mode(PermissionMode::Supervised, &opening)

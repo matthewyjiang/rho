@@ -34,8 +34,6 @@ fn agent_changes_write_by_setting_or_name_what_they_refuse() {
     let model = "[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n";
     let advisor = "\n[internal_agents.advisor]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\nreasoning = \"high\"\n";
     let before = format!("{head}{model}{advisor}");
-    /// The file after the changes, or each error that refused them.
-    type Written = Result<String, Vec<&'static str>>;
     let cases: Vec<(&str, Vec<SettingChange>, Written)> = vec![
         (
             "a whole number replaces the value and keeps its comment",
@@ -94,10 +92,13 @@ fn agent_changes_write_by_setting_or_name_what_they_refuse() {
     }
 }
 
+/// The file after the changes, or each error that refused them.
+type Written = Result<String, Vec<&'static str>>;
+
 /// The file `before` becomes with `changes`, or each error that refused
 /// them, prefixed `file: ` when the file is to blame; a refused change
 /// must leave the file as it was.
-fn applied(before: &str, changes: &[SettingChange]) -> Result<String, Vec<&'static str>> {
+fn applied(before: &str, changes: &[SettingChange]) -> Written {
     let mut doc = ConfigDocument::parse(before).unwrap();
     let result = apply_agent_changes(&mut doc, changes);
     if result.is_err() {
@@ -135,7 +136,9 @@ fn agent_changes_touch_only_their_keys_and_can_repair_the_file() {
     let aliases = "\n[model.aliases]\nfast = \"openai/gpt-5.5\"\n";
     let judge = "[internal_agents.goal-judge]\nreasoning = \"high\"\n";
     let broken = "[output]\nmax_output_bytes = 0\n";
-    let cases: Vec<(&str, String, Vec<SettingChange>, Result<String, Vec<&str>>)> = vec![
+    /// A case's name, file, changes, and what `applied` returns.
+    type Case = (&'static str, String, Vec<SettingChange>, Written);
+    let cases: Vec<Case> = vec![
         (
             "pinning an alias's model writes the model",
             format!("[model]\nprovider = \"openai\"\nmodel = \"@fast\"\nauth = \"api-key\"\n{aliases}"),
