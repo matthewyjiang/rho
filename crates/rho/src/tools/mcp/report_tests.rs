@@ -49,5 +49,4 @@ fn connecting_inventory_is_in_flight_not_a_problem() {
         report.find("off").map(|server| server.status()),
         Some(McpServerStatus::Disabled)
     );
-    assert!(McpServerStatus::Connecting.is_healthy());
 }

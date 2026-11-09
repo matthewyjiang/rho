@@ -3,7 +3,8 @@
 //! Configure can wait for an active turn (including an approval) to end. Its
 //! response must never own the TUI event loop. Prompts share the queue so a
 //! later prompt cannot overtake a configuration change. Cancel and answers
-//! deliberately bypass this queue, since they may unblock that change.
+//! deliberately bypass this queue, since they may unblock that change. MCP
+//! inventory reads use an independent worker to stay usable during the turn.
 
 use std::sync::Arc;
 
@@ -29,6 +30,8 @@ pub(super) struct DaemonRequests {
     sender: mpsc::UnboundedSender<Request>,
     pub(super) views: mpsc::UnboundedReceiver<DaemonView>,
     task: tokio::task::JoinHandle<()>,
+    inventory: mpsc::UnboundedSender<()>,
+    inventory_task: tokio::task::JoinHandle<()>,
 }
 
 impl DaemonRequests {
@@ -36,6 +39,23 @@ impl DaemonRequests {
     pub(super) fn new(link: Arc<Link>, session: SessionId) -> Self {
         let (sender, mut requests) = mpsc::unbounded_channel();
         let (views, receiver) = mpsc::unbounded_channel();
+        let (inventory, mut inventory_requests) = mpsc::unbounded_channel();
+        let inventory_link = Arc::clone(&link);
+        let inventory_session = session.clone();
+        let inventory_views = views.clone();
+        // Inventory reads bypass configure, which can wait for a turn to end.
+        let inventory_task = tokio::spawn(async move {
+            while inventory_requests.recv().await.is_some() {
+                let result = inventory_link
+                    .request::<rho_protocol::methods::SessionMcp>(&rho_protocol::SessionMcpParams {
+                        session: inventory_session.clone(),
+                    })
+                    .await
+                    .map(Box::new)
+                    .map_err(|error| format!("could not read session MCP inventory: {error}"));
+                let _ = inventory_views.send(DaemonView::McpInventory(result));
+            }
+        });
         let task = tokio::spawn(async move {
             while let Some(request) = requests.recv().await {
                 match request {
@@ -78,7 +98,15 @@ impl DaemonRequests {
             sender,
             views: receiver,
             task,
+            inventory,
+            inventory_task,
         }
+    }
+
+    pub(super) fn request_mcp(&self) -> anyhow::Result<()> {
+        self.inventory
+            .send(())
+            .map_err(|_| anyhow::anyhow!("lost the connection to the rho daemon"))
     }
 
     pub(super) fn configure(&self, change: SessionChange) -> anyhow::Result<()> {
@@ -99,5 +127,6 @@ impl DaemonRequests {
 impl Drop for DaemonRequests {
     fn drop(&mut self) {
         self.task.abort();
+        self.inventory_task.abort();
     }
 }

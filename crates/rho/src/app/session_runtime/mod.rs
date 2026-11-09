@@ -232,6 +232,12 @@ impl SessionRuntime {
         SessionTools::of(&self.built.tools)
     }
 
+    /// The configuration file this session was opened with.
+    #[cfg(unix)]
+    pub(crate) fn config_path(&self) -> &Path {
+        &self.build.launch.config_path
+    }
+
     /// The context window the session's current model is configured with,
     /// when its catalog entry knows one.
     pub(crate) fn configured_context_window(&self) -> Option<u64> {

@@ -28,6 +28,8 @@ mod daemon_approval;
 #[cfg(unix)]
 mod daemon_detach;
 #[cfg(unix)]
+mod daemon_mcp;
+#[cfg(unix)]
 mod daemon_options;
 #[cfg(unix)]
 mod daemon_prompt;
@@ -668,15 +670,11 @@ const ALL_SCENARIOS: &[Scenario] = &[
         /*smoke*/ false,
     ),
     #[cfg(unix)]
-    Scenario::new(
-        daemon_resume::DAEMON_RESUME_ID,
-        "Resume a saved session in the daemon and show its conversation",
-        DEFAULT_SIZE,
-        &[],
-        /*smoke*/ false,
-    ),
+    daemon_resume::SCENARIO,
     #[cfg(unix)]
     daemon_detach::SCENARIO,
+    #[cfg(unix)]
+    daemon_mcp::SCENARIO,
     #[cfg(unix)]
     daemon_prompt::DAEMON_PROMPT_SCENARIO,
     #[cfg(unix)]

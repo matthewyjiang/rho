@@ -14,8 +14,8 @@ use crate::methods::{
     AnswerStop, ApprovalSource, Ask, AuthKind, AuthStatus, Budget, CardTone, CommandKind,
     CompactionStatus, ContentBlock, DefaultStyle, DetachReason, JobKind, JobState, LoginOutcome,
     Operation, PathScope, PermissionMode, PlanStatus, ReasoningLevel, Resolution, Selection,
-    SessionEvent, ToolContent, ToolKind, ToolStatus, TurnErrorKind, TurnOutcome, UncheckedReason,
-    UnsteerOutcome,
+    SessionEvent, SessionMcpMode, SessionMcpStatus, ToolContent, ToolKind, ToolStatus,
+    TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome,
 };
 
 // Covers: the committed schema/protocol.json is what the wire types
@@ -55,7 +55,15 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 40] = [
+    let cases: [(&str, bool); 42] = [
+        (
+            "SessionMcpMode",
+            reads_as(unseen(), SessionMcpMode::Unknown),
+        ),
+        (
+            "SessionMcpStatus",
+            reads_as(unseen(), SessionMcpStatus::Unknown),
+        ),
         ("JobKind", reads_as(unseen(), JobKind::Unknown)),
         ("JobState", reads_as(unseen(), JobState::Unknown)),
         ("Budget", reads_as(unseen(), Budget::Unknown)),

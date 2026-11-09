@@ -30,11 +30,12 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Spend
         | CommandId::Todo
         | CommandId::Config
-        | CommandId::Skills => CommandRoute::Ui,
+        | CommandId::Skills
+        | CommandId::Mcp => CommandRoute::Ui,
         // Session navigation/deletion and title writes need daemon methods;
         // config/provider/auth editors, agents, advisor and goals still own
-        // in-process state. Hubs (/workflow, /attach, /side) and MCP inventory
-        // likewise describe the wrong runtime, even when opened read-only.
+        // in-process state. Hubs (/workflow, /attach, /side) likewise
+        // describe the wrong runtime, even when opened read-only.
         CommandId::AddDir
         | CommandId::Advisor
         | CommandId::New
@@ -56,7 +57,6 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Doctor
         | CommandId::Limits
         | CommandId::Export
-        | CommandId::Mcp
         | CommandId::Title
         | CommandId::Workflow
         | CommandId::Side

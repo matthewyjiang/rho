@@ -1185,3 +1185,11 @@ fn daemon_permission_changes_do_not_block_the_turn() {
 fn daemon_unported_commands_refuse_without_mutating_local_state() {
     assert_pass("daemon_gated_command");
 }
+
+// Covers: MCP inventory belongs to the daemon session even when the new client's
+// config differs, and remains inspectable behind a queued mid-turn configure.
+// Owner: interactive TUI as a daemon client.
+#[test]
+fn daemon_mcp_inventory_uses_the_session_without_waiting_for_the_turn() {
+    assert_pass("daemon_mcp_inventory");
+}

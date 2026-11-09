@@ -108,6 +108,10 @@ pub use methods::{
     SessionRenameParams, SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST,
     SESSION_RENAME,
 };
+pub use methods::{
+    SessionMcpInventory, SessionMcpMode, SessionMcpParams, SessionMcpServer, SessionMcpStatus,
+    SESSION_MCP,
+};
 pub use server::{serve_connection, ServerInfo, Service, CLOSE_GRACE};
 pub use subscription::{subscription, Published, Publisher, Subscription};
 pub use version::{ProtocolVersion, VersionFix, VersionMismatch, PROTOCOL_VERSION};

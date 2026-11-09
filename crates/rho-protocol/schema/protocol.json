@@ -3174,6 +3174,150 @@
       ],
       "type": "object"
     },
+    "SessionMcpInventory": {
+      "description": "Result of [`SESSION_MCP`]: a point-in-time inventory, not a subscription.",
+      "properties": {
+        "config_path": {
+          "description": "The configuration file the session was opened with, not the client's.",
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/SessionMcpMode",
+          "description": "Why the session did or did not load native MCP servers."
+        },
+        "servers": {
+          "description": "Configured servers in inventory order, including disabled and failed ones.",
+          "items": {
+            "$ref": "#/$defs/SessionMcpServer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "config_path",
+        "mode",
+        "servers"
+      ],
+      "type": "object"
+    },
+    "SessionMcpMode": {
+      "anyOf": [
+        {
+          "const": "native",
+          "description": "The session hosts native MCP servers.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported_agent",
+          "description": "The session's agent runtime does not host native MCP tools.",
+          "type": "string"
+        },
+        {
+          "const": "tools_disabled",
+          "description": "The session was opened without tools.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How a session treated its MCP configuration."
+    },
+    "SessionMcpParams": {
+      "description": "Params of [`SESSION_MCP`].",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/SessionId",
+          "description": "The loaded session whose servers to inspect."
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
+    "SessionMcpServer": {
+      "description": "One configured MCP server and its session-owned status.",
+      "properties": {
+        "detail": {
+          "description": "Human-readable transport, errors, exported tools, live changes, prompts\nand resources. Presentation only: clients must not parse this text.",
+          "type": "string"
+        },
+        "enabled": {
+          "description": "Whether the session enabled this server.",
+          "type": "boolean"
+        },
+        "identity": {
+          "description": "Qualified server identity, including its plugin namespace when present.",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/SessionMcpStatus",
+          "description": "Startup status; subsequent reachability changes are described in `detail`."
+        },
+        "tool_count": {
+          "description": "Number of tools exported to this session's model.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "identity",
+        "enabled",
+        "status",
+        "tool_count",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "SessionMcpStatus": {
+      "anyOf": [
+        {
+          "const": "connected",
+          "description": "Connected at startup; see the server's detail for live reachability.",
+          "type": "string"
+        },
+        {
+          "const": "connecting",
+          "description": "Startup has not finished.",
+          "type": "string"
+        },
+        {
+          "const": "disabled",
+          "description": "Disabled by configuration.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_config",
+          "description": "Invalid server configuration.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Startup failed.",
+          "type": "string"
+        },
+        {
+          "const": "timed_out",
+          "description": "Startup exceeded its configured budget.",
+          "type": "string"
+        },
+        {
+          "const": "not_loaded",
+          "description": "Configured but not loaded by this session.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "A server's startup outcome in a session."
+    },
     "SessionNewParams": {
       "description": "Params of [`SESSION_NEW`].",
       "properties": {
@@ -4684,6 +4828,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionListResponse"
+      }
+    },
+    "rho/session/mcp": {
+      "params": {
+        "$ref": "#/$defs/SessionMcpParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionMcpInventory"
       }
     },
     "rho/session/new": {

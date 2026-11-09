@@ -28,6 +28,7 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/session/detach` | `session` | Stops following the session; no event of it arrives after the response. |
 | `rho/session/answer` | `session`, `request`, `answer` | Answers one of the turn's open input requests ([below](#answering-a-turn-s-requests)) and returns `{}` once the daemon has handed the answer to the turn. |
 | `rho/session/configure` | `session`, `change` | Changes one of a loaded session's settings for its later turns and returns its `options` ([below](#changing-a-session-s-settings)). |
+| `rho/session/mcp` | `session` | Reads a loaded session's MCP server inventory without waiting for its active turn ([below](#session-mcp-inventory)). |
 | `rho/session/hold` | `session`, `request` | Stops an open input request's timeout, so it waits for an answer ([below](#timeouts)), and returns `{}`. |
 | `rho/session/list` | `cwd`?, `cursor`?, `limit`? | One page of the saved sessions, newest first: `sessions` and, when more follow, `next_cursor` ([below](#listing-renaming-and-deleting-sessions)). |
 | `rho/session/rename` | `session`, `title` | Saves the session's title and returns `{}`; clients attached to it receive `title_changed`. |
@@ -53,6 +54,16 @@ A prompt that starts with a slash command resolves as it does in [`rho run`](/au
 The TUI's own commands, such as `/model`, do not run in the daemon, and the turn fails as a `configuration` error.
 
 What a session runs, and what its job states mean, is described in [Sessions and jobs](/daemon#sessions-and-jobs).
+
+### Session MCP inventory
+
+`rho/session/mcp` returns a point-in-time `SessionMcpInventory` for the named loaded session, including servers supplied in its setup. It neither loads the session nor changes its settings. An unloaded session gets `SessionNotLoaded`; an unknown id gets `SessionNotFound`.
+
+- `config_path`: the configuration file the daemon opened the session with.
+- `mode`: `native`, `unsupported_agent`, or `tools_disabled`.
+- `servers`: configured servers, including disabled and failed entries. Each has its qualified `identity`, `enabled`, startup `status` (`connected`, `connecting`, `disabled`, `invalid_config`, `failed`, `timed_out`, or `not_loaded`), exported `tool_count`, and human-readable `detail`.
+
+Details include transport, startup errors, exported tools, tools added or withdrawn since startup, the last failed keepalive ping, current MCP prompt commands, and resource counts. Treat `detail` as presentation text, not a machine-readable contract. `status` describes startup; subsequent reachability is reported in the details. Reissue the request for a fresh snapshot; no inventory subscription is created. It reads shared maintenance handles rather than locking the runtime, so a running model turn or a queued configure does not delay it.
 
 ### Content blocks
 

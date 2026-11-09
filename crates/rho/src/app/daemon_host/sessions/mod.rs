@@ -66,6 +66,7 @@ mod configure;
 mod cost;
 mod feed;
 mod inputs;
+mod mcp;
 mod open;
 mod options;
 mod queued;
@@ -151,6 +152,8 @@ struct LoadedSession {
     turn: Mutex<TurnSlot>,
     /// The session's events, as attached clients follow them.
     feed: Feed,
+    /// Shared inventory handles; reads never wait for the active turn.
+    mcp: Mutex<crate::app::session_mcp::SessionMcp>,
     /// Turns the runtime's events into the feed's; only the turn under way
     /// and its steers use it, each briefly and never across an await.
     live: Mutex<LiveEvents>,
@@ -339,6 +342,7 @@ impl LoadedSession {
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),
             live: Mutex::new(live),
+            mcp: Mutex::new(crate::app::session_mcp::SessionMcp::of(&runtime)),
             feed,
             job,
             jobs,
