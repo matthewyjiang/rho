@@ -10,9 +10,9 @@ use rho_protocol::{
     methods::{ConfigGet, ConfigRegister, ConfigSet, SessionAttach},
     Applies, Client, ClientError, ClientName, ConfigChangedParams, ConfigError, ConfigGetParams,
     ConfigGetResponse, ConfigLayer, ConfigNamespace, ConfigRegisterParams, ConfigRevision,
-    ConfigSetParams, DaemonNotification, ErrorCode, ModelSelection, Notifications, RpcError,
-    SessionAttachParams, SessionEvent, SessionId, SessionSetup, SettingChange, SettingEntry,
-    SettingKey, SettingKind, SettingSpec, SettingValue, ValueSource,
+    ConfigSetParams, ConfigWriter, DaemonNotification, ErrorCode, ModelSelection, Notifications,
+    RpcError, SessionAttachParams, SessionEvent, SessionId, SessionSetup, SettingChange,
+    SettingEntry, SettingKey, SettingKind, SettingSpec, SettingValue, ValueSource,
 };
 use serde_json::Value;
 
@@ -25,10 +25,21 @@ async fn get(client: &Client, namespace: ConfigNamespace) -> ConfigGetResponse {
         .unwrap()
 }
 
-/// Sends `changes` against `revision`; the new revision, or the error that
-/// refused them.
+/// Sends `changes` against `revision`, naming no writer; the new revision,
+/// or the error that refused them.
 async fn set(
     client: &Client,
+    namespace: ConfigNamespace,
+    revision: &ConfigRevision,
+    changes: Vec<SettingChange>,
+) -> Result<ConfigRevision, RpcError> {
+    set_by(client, None, namespace, revision, changes).await
+}
+
+/// [`set`] by `writer`.
+async fn set_by(
+    client: &Client,
+    writer: Option<&str>,
     namespace: ConfigNamespace,
     revision: &ConfigRevision,
     changes: Vec<SettingChange>,
@@ -38,6 +49,7 @@ async fn set(
             namespace,
             layer: ConfigLayer::Global,
             revision: revision.clone(),
+            writer: writer.map(ConfigWriter::new),
             changes,
         })
         .await
@@ -260,6 +272,56 @@ async fn a_stale_or_refused_change_writes_nothing() {
     assert_eq!(
         std::fs::read_to_string(&sandbox.isolated.config_path).unwrap(),
         saved
+    );
+}
+
+// Covers: a writer's changes sent before it hears back about its last one,
+// all against the revision it last read, each land, since only its own
+// changes followed that revision; another writer's change against it is
+// refused as a conflict (#1720).
+// Owner: daemon settings store.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_writers_quick_changes_do_not_conflict_with_each_other() {
+    let sandbox = Sandbox::new();
+    let client = sandbox.start_daemon("fixed").await;
+    let read = get(&client, ConfigNamespace::Agent).await.revision;
+
+    let mut sent = Vec::new();
+    for (writer, key) in [
+        ("tui-a", "behavior.rtk"),
+        ("tui-a", "behavior.workspace_rewind"),
+        ("tui-b", "behavior.inline_shell"),
+    ] {
+        let result = set_by(
+            &client,
+            Some(writer),
+            ConfigNamespace::Agent,
+            &read,
+            vec![change(key, SettingValue::Bool(false))],
+        )
+        .await;
+        sent.push(result.map(drop));
+    }
+    let state = get(&client, ConfigNamespace::Agent).await;
+
+    assert_eq!(
+        (
+            sent,
+            value(&state, "behavior.rtk"),
+            value(&state, "behavior.workspace_rewind")
+        ),
+        (
+            vec![
+                Ok(()),
+                Ok(()),
+                Err(RpcError::new(
+                    ErrorCode::ConfigConflict,
+                    "the settings changed since that revision; read them again",
+                )),
+            ],
+            global(SettingValue::Bool(false)),
+            global(SettingValue::Bool(false)),
+        )
     );
 }
 

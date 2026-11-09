@@ -87,9 +87,9 @@ pub use config::{
     Applies, ClientName, ConfigCategory, ConfigChangedParams, ConfigError, ConfigGetParams,
     ConfigGetResponse, ConfigLayer, ConfigNamespace, ConfigRegisterParams, ConfigRegisterResponse,
     ConfigRevision, ConfigSchema, ConfigSchemaParams, ConfigSetParams, ConfigSetResponse,
-    FileOnlyTable, IntegerUnit, InvalidClientName, ModelRuntime, ModelSelection, SettingChange,
-    SettingChoice, SettingEntry, SettingKey, SettingKind, SettingSpec, SettingValue, ValueSource,
-    CONFIG_CHANGED, CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET,
+    ConfigWriter, FileOnlyTable, IntegerUnit, InvalidClientName, ModelRuntime, ModelSelection,
+    SettingChange, SettingChoice, SettingEntry, SettingKey, SettingKind, SettingSpec, SettingValue,
+    ValueSource, CONFIG_CHANGED, CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET,
 };
 pub use daemon::{
     ClientInfo, DaemonInfo, DaemonStatus, HelloParams, HelloResponse, PendingUpgrade,

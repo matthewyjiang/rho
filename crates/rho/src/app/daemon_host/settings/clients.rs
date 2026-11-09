@@ -18,14 +18,15 @@ use std::{
 
 use rho_protocol::{
     ClientName, ConfigError as WireError, ConfigGetResponse, ConfigRegisterParams, ConfigRevision,
-    ConfigSetResponse, ConfigWatch, ErrorCode, RpcError, SettingChange, SettingSpec,
+    ConfigSetResponse, ConfigWatch, ConfigWriter, ErrorCode, RpcError, SettingChange, SettingSpec,
 };
 use tokio::sync::watch;
 
 use super::{
-    check_revision,
     file::{self, Edit, Stat},
-    refused, wire_errors,
+    refused,
+    run::WriterRun,
+    wire_errors,
 };
 use crate::config::{client_specs_problem, spec_values, write_changes, ConfigDocument};
 
@@ -43,6 +44,7 @@ struct Client {
     /// The file as it last read, served while it does not read.
     good: ConfigDocument,
     state: watch::Sender<Arc<ConfigGetResponse>>,
+    run: WriterRun,
 }
 
 impl Clients {
@@ -71,6 +73,7 @@ impl Clients {
                 values: Default::default(),
                 errors: Vec::new(),
             })),
+            run: WriterRun::default(),
         });
         entry.specs = settings;
         entry.seen = None;
@@ -90,6 +93,7 @@ impl Clients {
         &self,
         name: &ClientName,
         revision: &ConfigRevision,
+        writer: Option<ConfigWriter>,
         changes: &[SettingChange],
     ) -> Result<ConfigSetResponse, RpcError> {
         let path = self.path(name);
@@ -98,11 +102,12 @@ impl Clients {
         // Locked before the revision check, so the file the client read is
         // the one changed.
         let mut edit = Edit::open(&path)?;
-        client.refresh(&path);
-        check_revision(&client.state.borrow().revision, revision)?;
+        let before = client.refresh(&path);
+        client.run.check(&before, revision, writer.as_ref())?;
         write_changes(&mut edit.doc, &client.specs, changes).map_err(refused)?;
         let (stat, doc) = edit.save()?;
         let revision = client.publish(stat, Ok(doc), &path);
+        client.run.wrote(writer, before, revision.clone());
         Ok(ConfigSetResponse { revision })
     }
 
