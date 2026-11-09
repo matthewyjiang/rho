@@ -124,8 +124,7 @@ fn delegated_methods(
         .filter(move |method| method.group_id == group_id)
 }
 
-/// Providers that Refresh model lists offers and that "All configured
-/// providers" refreshes: each has a model or decision-model list and an
+/// Providers that `/refresh-models` refreshes: each has a model or decision-model list and an
 /// available auth mode, and none awaits its endpoint login. Built-in Ollama is
 /// skipped until `/login ollama`, so a local server is never probed before that.
 pub(super) fn refreshable_providers(

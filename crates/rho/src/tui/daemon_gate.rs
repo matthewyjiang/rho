@@ -18,8 +18,10 @@ pub(super) enum CommandRoute {
 
 pub(super) fn command_route(command: CommandId) -> CommandRoute {
     match command {
-        // Session state the daemon owns, shown from and changed through
-        // the session's options.
+        // Session state the daemon owns, changed through the session's
+        // options, and settings it saves through `rho/config/set`.
+        // In process, the settings commands say they need the daemon
+        // (`needs_daemon`).
         CommandId::Model
         | CommandId::Permissions
         | CommandId::Fast
@@ -135,6 +137,28 @@ impl App {
         }
         self.daemon_command_unavailable(name);
         true
+    }
+
+    /// `/config` edits the daemon's settings; in process there is no
+    /// daemon to save them (#1720).
+    pub(super) fn execute_config_command(&mut self) {
+        if self.info.session.daemon.is_some() {
+            self.open_daemon_config();
+        } else {
+            self.needs_daemon("config");
+        }
+    }
+
+    /// The mirror of [`Self::daemon_command_unavailable`]: `/name` changes
+    /// settings, which only the daemon saves.
+    pub(super) fn needs_daemon(&mut self, name: &str) {
+        let notice = if cfg!(unix) {
+            format!("/{name} needs the rho daemon: start rho with RHO_TUI_DAEMON=1")
+        } else {
+            format!("/{name} needs the rho daemon, which does not run on this platform yet; edit the settings files instead")
+        };
+        self.insert_entry(&Entry::Notice(notice));
+        self.set_status(format!("/{name} needs the rho daemon"));
     }
 
     pub(super) fn daemon_command_unavailable(&mut self, name: &str) {

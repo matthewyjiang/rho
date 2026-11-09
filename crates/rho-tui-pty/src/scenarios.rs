@@ -507,6 +507,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
         true,
     ),
     config::PERMISSIONS_COMMAND_SCENARIO,
+    #[cfg(unix)]
+    config::SETTINGS_NEED_THE_DAEMON,
     plan_exit::APPROVE_SCENARIO,
     plan_exit::GOAL_SCENARIO,
     plan_exit::IDLE_COMPLETION_SCENARIO,

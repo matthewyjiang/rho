@@ -49,7 +49,7 @@ mod composer_pointer;
 mod composer_undo;
 mod composer_vim;
 mod config_input;
-mod config_picker;
+mod config_row;
 mod context_handoff;
 mod context_overlay;
 mod copy_interaction;

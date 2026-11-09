@@ -109,7 +109,7 @@ The root page lists the session's own options (model, reasoning, fast mode, perm
 
 The credential store is not on this screen: choose it with `rho credential-store set` or at your first login, which check the store first ([Credential store](/authentication-and-models#where-credentials-live)).
 
-A category page shows each setting's value and, in its detail, when a change applies. Space or Enter flips an on/off setting. A choice or model opens a page of its values, with a **Default** row once the file sets it. A number or text opens a line editor; the prompt shows a number's range, and an empty entry removes the setting so its default applies.
+A category page shows each setting's value and, in its detail, when a change applies. Enter flips an on/off setting, as does Space before you type a filter. A choice or model opens a page of its values, with a **Default** row once the file sets it. A number or text opens a line editor; the prompt shows a number's range, and an empty entry removes the setting so its default applies.
 
 Every change goes to the daemon, which writes the file and tells every client; a row shows its new value once the daemon confirms it. If the settings changed elsewhere first, nothing is written and the status says to try again. If a hand edit leaves the file invalid, the daemon keeps the last good settings and the TUI shows the problem.
 

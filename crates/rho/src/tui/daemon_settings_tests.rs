@@ -7,7 +7,8 @@ use rho_protocol::{
     SettingEntry, SettingKey, SettingKind, SettingSpec, SettingValue, ValueSource,
 };
 
-use super::{Applied, DaemonSettings, NamespaceValues, SettingsNamespace, SettingsRow};
+use super::{Applied, DaemonSettings, NamespaceValues, SettingsNamespace};
+use crate::tui::config_row::ConfigRow;
 use crate::tui::{picker::PickerDetail, PickerItem};
 
 fn spec(key: &str, label: &str, kind: SettingKind, applies: Applies) -> SettingSpec {
@@ -185,10 +186,19 @@ fn settings() -> DaemonSettings {
     );
     let tui = values(
         "t1",
-        vec![(
-            "zen_mode",
-            entry(Some(SettingValue::Bool(false)), ValueSource::Default),
-        )],
+        vec![
+            (
+                "zen_mode",
+                entry(Some(SettingValue::Bool(false)), ValueSource::Default),
+            ),
+            (
+                "output_streaming",
+                entry(
+                    Some(SettingValue::Text("live".into())),
+                    ValueSource::Default,
+                ),
+            ),
+        ],
         Vec::new(),
     );
     DaemonSettings::new(schema, vec![zen], agent, tui)
@@ -201,7 +211,7 @@ struct Row {
     label: String,
     badge: Option<String>,
     detail: Option<String>,
-    does: Option<SettingsRow>,
+    does: Option<ConfigRow>,
 }
 
 fn rows(items: Vec<PickerItem>) -> Vec<Row> {
@@ -215,13 +225,13 @@ fn rows(items: Vec<PickerItem>) -> Vec<Row> {
                 Some(PickerDetail::Text(text)) => Some(text),
                 _ => None,
             },
-            does: SettingsRow::parse(&item.value),
+            does: ConfigRow::parse(&item.value),
         })
         .collect()
 }
 
-fn setting(namespace: SettingsNamespace, key: &str) -> Option<SettingsRow> {
-    Some(SettingsRow::Setting {
+fn setting(namespace: SettingsNamespace, key: &str) -> Option<ConfigRow> {
+    Some(ConfigRow::Setting {
         namespace,
         key: SettingKey::new(key),
     })
@@ -235,7 +245,7 @@ fn setting(namespace: SettingsNamespace, key: &str) -> Option<SettingsRow> {
 #[test]
 fn root_rows_list_every_category_with_settings() {
     let category = |namespace, id: &str| {
-        Some(SettingsRow::Category {
+        Some(ConfigRow::Category {
             namespace,
             id: id.into(),
         })
@@ -326,7 +336,7 @@ fn value_rows_offer_each_value_and_a_reset_once_set() {
     let settings = settings();
     let agent = SettingsNamespace::Agent;
     let set = |key: &str, value| {
-        Some(SettingsRow::Set {
+        Some(ConfigRow::Set {
             namespace: agent,
             key: SettingKey::new(key),
             value,
@@ -370,7 +380,7 @@ fn value_rows_offer_each_value_and_a_reset_once_set() {
                 label: "Default (not set)".into(),
                 badge: None,
                 detail: Some("Remove the setting from the file, so its default applies.".into()),
-                does: Some(SettingsRow::Reset {
+                does: Some(ConfigRow::Reset {
                     namespace: agent,
                     key: model_key.clone(),
                 }),
@@ -392,47 +402,9 @@ fn value_rows_offer_each_value_and_a_reset_once_set() {
     assert!(settings.value_rows(agent, &mode, &models()).is_none());
 }
 
-// Covers: a row's value survives encoding for every kind it carries,
-// including a model value whose JSON holds `:`; a row that fails to parse
-// would do nothing when chosen.
-// Owner: daemon settings row values (pure).
-#[test]
-fn row_values_round_trip() {
-    let key = SettingKey::new("internal_agents.advisor");
-    let cases = vec![
-        SettingsRow::Category {
-            namespace: SettingsNamespace::Tui,
-            id: "display".into(),
-        },
-        SettingsRow::Setting {
-            namespace: SettingsNamespace::Agent,
-            key: key.clone(),
-        },
-        SettingsRow::Set {
-            namespace: SettingsNamespace::Agent,
-            key: key.clone(),
-            value: SettingValue::Model(ModelSelection::Rho {
-                provider: "host:8080".into(),
-                model: "a=b".into(),
-            }),
-        },
-        SettingsRow::Set {
-            namespace: SettingsNamespace::Tui,
-            key: SettingKey::new("zen_mode"),
-            value: SettingValue::Bool(true),
-        },
-        SettingsRow::Reset {
-            namespace: SettingsNamespace::Agent,
-            key,
-        },
-    ];
-    for row in cases {
-        assert_eq!(SettingsRow::parse(&row.encode()), Some(row));
-    }
-}
-
 // Covers: a change notification carries only changed entries, so the cache
-// merges them; its problems show once when they change, not on every
+// merges them and hands on just those, leaving a value the TUI changed for
+// itself alone; its problems show once when they change, not on every
 // change after; another client's namespace is ignored.
 // Owner: daemon settings cache (pure).
 #[test]
@@ -467,14 +439,26 @@ fn changes_merge_and_report_new_problems_once() {
         (
             Some(Applied {
                 namespace: SettingsNamespace::Tui,
+                changed: BTreeMap::from([(
+                    SettingKey::new("zen_mode"),
+                    entry(Some(SettingValue::Bool(true)), ValueSource::Global)
+                )]),
                 new_problems: vec![problem],
             }),
             Some(Applied {
                 namespace: SettingsNamespace::Tui,
+                changed: BTreeMap::from([(
+                    SettingKey::new("zen_mode"),
+                    entry(Some(SettingValue::Bool(false)), ValueSource::Global)
+                )]),
                 new_problems: Vec::new(),
             }),
             Some(Applied {
                 namespace: SettingsNamespace::Tui,
+                changed: BTreeMap::from([(
+                    SettingKey::new("zen_mode"),
+                    entry(Some(SettingValue::Bool(true)), ValueSource::Global)
+                )]),
                 new_problems: Vec::new(),
             }),
             None,
@@ -484,10 +468,19 @@ fn changes_merge_and_report_new_problems_once() {
         settings.values(SettingsNamespace::Tui),
         &values(
             "t4",
-            vec![(
-                "zen_mode",
-                entry(Some(SettingValue::Bool(true)), ValueSource::Global)
-            )],
+            vec![
+                (
+                    "zen_mode",
+                    entry(Some(SettingValue::Bool(true)), ValueSource::Global)
+                ),
+                (
+                    "output_streaming",
+                    entry(
+                        Some(SettingValue::Text("live".into())),
+                        ValueSource::Default
+                    )
+                ),
+            ],
             Vec::new(),
         )
     );

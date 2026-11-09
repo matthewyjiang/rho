@@ -7,7 +7,7 @@ use crate::tui::DefaultTerminal;
 use rho_providers::model::catalog;
 
 use super::{
-    config_picker,
+    config_row::ConfigRow,
     login_target::SignInTarget,
     model_picker,
     picker::{ConfigParentRow, DuringTurnSelect, PickerAction, PickerTurn},
@@ -58,14 +58,7 @@ impl App {
             return Ok(());
         };
 
-        let return_picker = self.take_picker_parent_after_selection(&action);
-        // Idle SelectModel restores its config parent inside the model arm,
-        // once the daemon took the model. Every other path restores after
-        // the commit, including during-turn SelectModel.
-        let (idle_model_parent, restore_parent) = match (turn, &action) {
-            (PickerTurn::Idle, PickerAction::SelectModel) => (return_picker, None),
-            _ => (None, return_picker),
-        };
+        let restore_parent = self.take_picker_parent_after_selection(&action);
 
         if let PickerTurn::DuringTurn = turn {
             match action.during_turn_select() {
@@ -94,7 +87,7 @@ impl App {
         }
 
         let result = self
-            .execute_picker_action(action, &value, &mut commit, idle_model_parent)
+            .execute_picker_action(action, &value, &mut commit)
             .await;
         if result.is_ok() {
             let preserve_status = matches!(turn, PickerTurn::Idle);
@@ -108,13 +101,9 @@ impl App {
         action: PickerAction,
         value: &str,
         commit: &mut PickerCommit<'_>,
-        idle_model_parent: Option<(UiPicker, &'static str)>,
     ) -> anyhow::Result<()> {
         match action {
-            PickerAction::SelectModel => {
-                self.commit_select_model(value, commit, idle_model_parent)
-                    .await
-            }
+            PickerAction::SelectModel => self.commit_select_model(value, commit).await,
             PickerAction::SelectInternalAgentModel => {
                 let PickerCommit::Idle { agent, .. } = commit else {
                     unreachable!("internal agent model commit is idle-only");
@@ -247,11 +236,9 @@ impl App {
         &mut self,
         value: &str,
         commit: &mut PickerCommit<'_>,
-        idle_model_parent: Option<(UiPicker, &'static str)>,
     ) -> anyhow::Result<()> {
         if self.info.session.daemon.is_some() {
-            self.select_daemon_model(value)?;
-            return self.restore_config_parent(idle_model_parent, /*preserve_status*/ true);
+            return self.select_daemon_model(value);
         }
         self.refresh_available_auths();
         match self.resolve_model_selection(
@@ -360,7 +347,7 @@ impl App {
     fn take_picker_parent_after_selection(
         &mut self,
         action: &PickerAction,
-    ) -> Option<(UiPicker, &'static str)> {
+    ) -> Option<(UiPicker, String)> {
         let selected_value = config_parent_value(action.config_parent_row()?);
         match self.input_ui.composer_mut() {
             ComposerMode::Picker(picker) => {
@@ -372,7 +359,7 @@ impl App {
 
     fn restore_config_parent(
         &mut self,
-        return_picker: Option<(UiPicker, &'static str)>,
+        return_picker: Option<(UiPicker, String)>,
         preserve_status: bool,
     ) -> anyhow::Result<()> {
         let Some((picker, selected_value)) = return_picker else {
@@ -381,7 +368,7 @@ impl App {
         let feedback = preserve_status.then(|| self.status().to_string());
         let filter = picker.filter.clone();
         let mut parent = self.refreshed_config_page(picker);
-        Self::restore_picker_position(&mut parent, selected_value, filter);
+        Self::restore_picker_position(&mut parent, &selected_value, filter);
         self.input_ui.set_composer(ComposerMode::Picker(parent));
         if let Some(feedback) = feedback.filter(|feedback| !feedback.is_empty()) {
             self.set_status(feedback);
@@ -473,9 +460,11 @@ impl App {
     }
 }
 
-fn config_parent_value(row: ConfigParentRow) -> &'static str {
+/// The row of the `/config` root a child page returns to.
+fn config_parent_value(row: ConfigParentRow) -> String {
     match row {
-        ConfigParentRow::ConversationModel => config_picker::CONVERSATION_MODEL_VALUE,
-        ConfigParentRow::Theme => config_picker::THEME_VALUE,
+        ConfigParentRow::ConversationModel => ConfigRow::SessionModel,
+        ConfigParentRow::Theme => ConfigRow::Theme,
     }
+    .encode()
 }

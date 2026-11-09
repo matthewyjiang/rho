@@ -47,9 +47,9 @@ impl App {
     /// without stacking identical transcript rows.
     pub(super) fn report_missing_cached_provider_models(&mut self) {
         let notice = if self.turn.is_busy() {
-            "no cached provider models. Open /config > Providers > Refresh model lists after the current turn ends."
+            "no cached provider models. Run /refresh-models after the current turn ends."
         } else {
-            "no cached provider models. Open /config > Providers > Refresh model lists."
+            "no cached provider models. Run /refresh-models."
         };
         let last_notice =
             self.streams

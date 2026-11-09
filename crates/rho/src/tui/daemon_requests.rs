@@ -94,7 +94,9 @@ impl DaemonRequests {
                         let view = match control_link.request::<ConfigSet>(&params).await {
                             Ok(_) => continue,
                             Err(error) if error.error_code() == Some(ErrorCode::ConfigConflict) => {
-                                DaemonView::Status("settings changed elsewhere; try again".into())
+                                // Another client's change, or this TUI's own
+                                // write the daemon has not reported back yet.
+                                DaemonView::Status("settings changed; try again".into())
                             }
                             Err(error) => {
                                 DaemonView::Error(format!("could not save {label}: {error}"))

@@ -69,7 +69,7 @@ connection = "api" # api or mcp; missing API credentials do not switch transport
 
 [web_search.firecrawl]
 # api_base_url = "http://localhost:3002" # omit for Firecrawl Cloud
-# Configure keys through /config or environment, not this file.
+# Set keys in the environment (FIRECRAWL_API_KEY, EXA_API_KEY, BRAVE_SEARCH_API_KEY), not this file.
 
 # MCP stays inert while this table has no enabled server entries.
 # See /integrations/mcp for stdio and Streamable HTTP examples.

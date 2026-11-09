@@ -248,7 +248,7 @@ fn auto_requires_configured_permission_classifier_model() {
     let error = ensure_auto_classifier_model(&config).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "permission mode auto requires a configured permission-classifier model (set via /config or config.toml [internal_agents.permission-classifier])"
+        "permission mode auto requires a configured permission-classifier model (set it with /agents, /config in a daemon TUI, or config.toml [internal_agents.permission-classifier])"
     );
 
     config.set_internal_agent_model_config(

@@ -107,6 +107,11 @@ pub(super) enum InlineChoicePending {
         run_id: String,
     },
     ClearPromptHistory,
+    /// Lowering the prompt history limit to `limit` deletes older
+    /// prompts, so it waits for a yes.
+    LowerPromptHistoryLimit {
+        limit: u64,
+    },
 }
 
 impl InlineChoiceModal {

@@ -317,18 +317,24 @@ mod unix {
                 }
                 return views;
             }
-            let first = tokio::select! {
+            // Views already queued, such as the settings first read, go
+            // out before anything that arrives later, so a change never
+            // lands before the settings it changes. Taken only once the
+            // wait below ends, so cancelling it loses nothing.
+            if !self.pending.is_empty() {
+                return std::mem::take(&mut self.pending);
+            }
+            let mut views = Vec::new();
+            tokio::select! {
                 biased;
-                routed = self.routed.recv() => routed,
+                routed = self.routed.recv() => self.read(routed, &mut views),
                 Some(error) = self.requests.as_mut().expect("attached session has requests").views.recv() => {
-                    return vec![error];
+                    views.push(error);
                 }
                 Some(changed) = self.config_changes.recv() => {
-                    return vec![DaemonView::SettingsChanged(Box::new(changed))];
+                    views.push(DaemonView::SettingsChanged(Box::new(changed)));
                 }
-            };
-            let mut views = std::mem::take(&mut self.pending);
-            self.read(first, &mut views);
+            }
             views
         }
 

@@ -137,7 +137,7 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
         entry(
             cycle_streaming,
             "Cycle streaming",
-            "Cycle and save live → paragraph → off → live text display, including during a turn. Also available in /config → Appearance → Output streaming. Switching reveals held text. Only assistant and reasoning text display changes, not generation or tools.",
+            "Cycle live → paragraph → off → live text display for this TUI, including during a turn; set the saved default in /config → Display → Output streaming. Switching reveals held text. Only assistant and reasoning text display changes, not generation or tools.",
         ),
         entry(
             edit_pending,

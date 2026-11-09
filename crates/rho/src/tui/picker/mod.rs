@@ -207,6 +207,10 @@ pub(super) struct PickerItem {
     pub(super) selection_verb: Option<&'static str>,
     /// When false, Tab does not copy this row into the filter.
     pub(super) allow_filter_completion: bool,
+    /// Whether Space, not only Enter, confirms this row while the filter is
+    /// empty, as for an on/off setting. Once a filter is typed, and on
+    /// other rows, Space types into the filter.
+    pub(super) space_confirms: bool,
     /// Hidden terms the filter also matches, such as the labels and values of
     /// choices nested under this row. Never rendered.
     pub(super) search_terms: Vec<String>,
@@ -234,6 +238,7 @@ impl PickerItem {
             value,
             selection_verb: None,
             allow_filter_completion: true,
+            space_confirms: false,
             search_terms: Vec::new(),
         }
     }
@@ -399,7 +404,9 @@ impl UiPicker {
     }
 
     pub(in crate::tui) fn space_confirms_selection(&self) -> bool {
-        self.space_confirms || self.action.space_confirms_selection()
+        self.space_confirms
+            || (self.filter.is_empty()
+                && self.selected_item().is_some_and(|item| item.space_confirms))
     }
 
     pub(in crate::tui) fn restore_status(&self) -> &'static str {
@@ -636,10 +643,8 @@ impl UiPicker {
         } else {
             parts.push(format!("Enter {confirm}"));
         }
-        if self.space_confirms {
+        if self.space_confirms_selection() {
             parts.push(format!("Space {confirm}"));
-        } else if self.action.space_confirms_selection() {
-            parts.push("Space confirm".into());
         }
         if let Some(key) = &self.key_hints.pin_toggle {
             parts.push(format!("{key} pin/unpin"));

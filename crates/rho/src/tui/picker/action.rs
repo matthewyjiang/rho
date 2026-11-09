@@ -70,10 +70,6 @@ pub(in crate::tui) enum DuringTurnSelect {
 }
 
 impl PickerAction {
-    pub(in crate::tui) fn space_confirms_selection(&self) -> bool {
-        matches!(self, PickerAction::Config)
-    }
-
     /// How typed filter text matches rows unless the picker overrides it.
     pub(in crate::tui) fn filter_mode(&self) -> PickerFilterMode {
         match self {

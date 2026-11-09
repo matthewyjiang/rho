@@ -14,7 +14,9 @@ use rho_protocol::{
     SettingKey, SettingKind, SettingSpec, SettingValue,
 };
 
-use super::{picker::PickerDetail, PickerBadge, PickerBadgeTone, PickerItem};
+use super::{
+    config_row::ConfigRow, picker::PickerDetail, PickerBadge, PickerBadgeTone, PickerItem,
+};
 
 /// The `tui` client's namespace name.
 const TUI_CLIENT: &str = "tui";
@@ -26,7 +28,8 @@ const TUI_CLIENT: &str = "tui";
 const CREDENTIAL_STORE_KEY: &str = "behavior.credential_store";
 
 /// The settings namespaces the TUI reads.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(super) enum SettingsNamespace {
     /// `config.toml`, described by the daemon's schema.
     Agent,
@@ -48,19 +51,6 @@ impl SettingsNamespace {
             ConfigNamespace::Client { name } if name.as_str() == TUI_CLIENT => Some(Self::Tui),
             _ => None,
         }
-    }
-
-    fn tag(self) -> &'static str {
-        match self {
-            Self::Agent => "agent",
-            Self::Tui => TUI_CLIENT,
-        }
-    }
-
-    fn from_tag(tag: &str) -> Option<Self> {
-        [Self::Agent, Self::Tui]
-            .into_iter()
-            .find(|namespace| namespace.tag() == tag)
     }
 }
 
@@ -91,6 +81,9 @@ impl From<ConfigGetResponse> for NamespaceValues {
 #[derive(Debug, PartialEq)]
 pub(super) struct Applied {
     pub(super) namespace: SettingsNamespace,
+    /// Only the entries that changed, so a live setting the TUI changed
+    /// for itself, such as Alt+S streaming, survives another's change.
+    pub(super) changed: BTreeMap<SettingKey, SettingEntry>,
     /// The namespace's problems, when they changed; empty otherwise, or
     /// once the file is fixed.
     pub(super) new_problems: Vec<ConfigError>,
@@ -129,7 +122,7 @@ impl DaemonSettings {
         let namespace = SettingsNamespace::of(&changed.namespace)?;
         let current = self.values_mut(namespace);
         current.revision = changed.revision;
-        current.values.extend(changed.values);
+        current.values.extend(changed.values.clone());
         let new_problems = if current.errors == changed.errors {
             Vec::new()
         } else {
@@ -138,6 +131,7 @@ impl DaemonSettings {
         current.errors = changed.errors;
         Some(Applied {
             namespace,
+            changed: changed.values,
             new_problems,
         })
     }
@@ -226,7 +220,7 @@ impl DaemonSettings {
                 Some(PickerItem {
                     section: Some("Settings".into()),
                     detail: Some(PickerDetail::Text(format!("{detail}."))),
-                    ..PickerItem::new(label, SettingsRow::Category { namespace, id }.encode())
+                    ..PickerItem::new(label, ConfigRow::Category { namespace, id }.encode())
                 })
             })
             .collect()
@@ -286,9 +280,10 @@ impl DaemonSettings {
                         SettingKind::Bool => "toggle",
                         _ => "change",
                     }),
+                    space_confirms: matches!(spec.kind, SettingKind::Bool),
                     ..PickerItem::new(
                         spec.label.clone(),
-                        SettingsRow::Setting {
+                        ConfigRow::Setting {
                             namespace,
                             key: spec.key.clone(),
                         }
@@ -310,7 +305,7 @@ impl DaemonSettings {
     ) -> Option<Vec<PickerItem>> {
         let spec = self.spec(namespace, key)?;
         let current = self.value(namespace, key);
-        let set = |value: SettingValue| SettingsRow::Set {
+        let set = |value: SettingValue| ConfigRow::Set {
             namespace,
             key: key.clone(),
             value,
@@ -366,7 +361,7 @@ impl DaemonSettings {
             .values(namespace)
             .values
             .get(key)
-            .is_some_and(|entry| entry.source != rho_protocol::ValueSource::Default);
+            .is_some_and(|entry| entry.source == rho_protocol::ValueSource::Global);
         if from_file {
             let default = display_value(spec, spec.default.as_ref(), models);
             rows.push(PickerItem {
@@ -375,7 +370,7 @@ impl DaemonSettings {
                 )),
                 ..PickerItem::new(
                     format!("Default ({default})"),
-                    SettingsRow::Reset {
+                    ConfigRow::Reset {
                         namespace,
                         key: key.clone(),
                     }
@@ -384,91 +379,6 @@ impl DaemonSettings {
             });
         }
         Some(rows)
-    }
-}
-
-/// What choosing a settings row does, as its picker value encodes it.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) enum SettingsRow {
-    /// Opens category `id`'s page.
-    Category {
-        namespace: SettingsNamespace,
-        id: String,
-    },
-    /// Changes setting `key`: a bool flips, other kinds open an editor.
-    Setting {
-        namespace: SettingsNamespace,
-        key: SettingKey,
-    },
-    /// Writes `value` to `key`.
-    Set {
-        namespace: SettingsNamespace,
-        key: SettingKey,
-        value: SettingValue,
-    },
-    /// Removes `key` from the file.
-    Reset {
-        namespace: SettingsNamespace,
-        key: SettingKey,
-    },
-}
-
-const ROW_PREFIX: &str = "settings:";
-
-impl SettingsRow {
-    /// Keys and category ids hold neither `:` nor `=`, so the value's JSON
-    /// is everything after the first `=`.
-    pub(super) fn encode(&self) -> String {
-        match self {
-            Self::Category { namespace, id } => {
-                format!("{ROW_PREFIX}category:{}:{id}", namespace.tag())
-            }
-            Self::Setting { namespace, key } => {
-                format!("{ROW_PREFIX}setting:{}:{key}", namespace.tag())
-            }
-            Self::Set {
-                namespace,
-                key,
-                value,
-            } => format!(
-                "{ROW_PREFIX}set:{}:{key}={}",
-                namespace.tag(),
-                serde_json::to_string(value).expect("setting values serialize")
-            ),
-            Self::Reset { namespace, key } => {
-                format!("{ROW_PREFIX}reset:{}:{key}", namespace.tag())
-            }
-        }
-    }
-
-    pub(super) fn parse(value: &str) -> Option<Self> {
-        let (op, rest) = value.strip_prefix(ROW_PREFIX)?.split_once(':')?;
-        let (namespace, rest) = rest.split_once(':')?;
-        let namespace = SettingsNamespace::from_tag(namespace)?;
-        let key = || SettingKey::new(rest);
-        Some(match op {
-            "category" => Self::Category {
-                namespace,
-                id: rest.to_owned(),
-            },
-            "setting" => Self::Setting {
-                namespace,
-                key: key(),
-            },
-            "reset" => Self::Reset {
-                namespace,
-                key: key(),
-            },
-            "set" => {
-                let (key, value) = rest.split_once('=')?;
-                Self::Set {
-                    namespace,
-                    key: SettingKey::new(key),
-                    value: serde_json::from_str(value).ok()?,
-                }
-            }
-            _ => return None,
-        })
     }
 }
 

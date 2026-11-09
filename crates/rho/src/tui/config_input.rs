@@ -3,7 +3,7 @@
 use crate::{keybindings::ReservedComposerKey, tui::DefaultTerminal};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{text_input::TextInputTarget, App, ComposerMode, Entry, InteractiveRuntime};
+use super::{text_input::TextInputTarget, App, ComposerMode, InteractiveRuntime};
 
 impl App {
     pub(super) fn handle_interactive_pending_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
@@ -198,23 +198,6 @@ impl App {
         self.cycle_reasoning(agent).await?;
         self.clear_transient_key_state();
         Ok(true)
-    }
-
-    /// `/config` edits the daemon's settings; in process there is no
-    /// daemon to save them (#1720).
-    pub(super) fn execute_config_command(&mut self) {
-        if self.info.session.daemon.is_some() {
-            self.open_daemon_config();
-        } else {
-            self.needs_daemon("config");
-        }
-    }
-
-    /// Says that `/name` changes settings, which only the daemon saves.
-    pub(super) fn needs_daemon(&mut self, name: &str) {
-        let notice = format!("/{name} needs the rho daemon: start rho with RHO_TUI_DAEMON=1");
-        self.insert_entry(&Entry::Notice(notice));
-        self.set_status(format!("/{name} needs the rho daemon"));
     }
 
     fn with_text_input_mut(&mut self, f: impl FnOnce(&mut super::text_input::TextInput)) {

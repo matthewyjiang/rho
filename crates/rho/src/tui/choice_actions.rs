@@ -1,7 +1,7 @@
 use crate::tui::DefaultTerminal;
 
 use super::sessions_hub_tasks::SessionsDelete;
-use super::{app_state::PointerAction, composer_pointer::ChoiceClick};
+use super::{app_state::PointerAction, composer_pointer::ChoiceClick, config_row::ConfigRow};
 use super::{App, ComposerMode, InlineChoiceKeyOutcome, InlineChoicePending, InteractiveRuntime};
 
 impl App {
@@ -61,7 +61,10 @@ impl App {
                         self.open_workflow_hub_or_report();
                     }
                     InlineChoicePending::ClearPromptHistory => {
-                        self.reopen_config_root(super::config_picker::CLEAR_PROMPT_HISTORY_VALUE);
+                        self.reopen_config_root(&ConfigRow::ClearPromptHistory.encode());
+                    }
+                    InlineChoicePending::LowerPromptHistoryLimit { .. } => {
+                        self.restore_choice_parent_picker(modal.parent_picker);
                     }
                 }
             }
@@ -172,6 +175,9 @@ impl App {
             }
             InlineChoicePending::ClearPromptHistory => {
                 self.submit_clear_prompt_history_choice(&value)?;
+            }
+            InlineChoicePending::LowerPromptHistoryLimit { limit } => {
+                self.submit_lower_prompt_history_limit(&value, limit, modal.parent_picker);
             }
         }
         Ok(true)

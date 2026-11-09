@@ -229,7 +229,7 @@ impl App {
         )
         .await?;
         self.set_status(
-            "permission mode set to supervised: no classifier model available; use Config > Refresh model lists",
+            "permission mode set to supervised: no classifier model available; run /refresh-models",
         );
         Ok(())
     }

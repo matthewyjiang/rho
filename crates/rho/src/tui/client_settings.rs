@@ -144,6 +144,9 @@ impl TuiSettings {
     }
 }
 
+/// The `tui` setting whose lowering deletes saved prompts.
+pub(super) const PROMPT_HISTORY_LIMIT_KEY: &str = "prompt_history_limit";
+
 /// The `tui` client's settings, as the TUI registers them with the daemon.
 pub(crate) fn tui_setting_specs() -> Vec<SettingSpec> {
     TUI_SETTINGS.iter().map(|setting| setting.spec()).collect()
@@ -272,7 +275,7 @@ static MAX_TOOL_OUTPUT_LINES: Setting<TuiSettings, u64> = Setting {
 };
 
 static PROMPT_HISTORY_LIMIT: Setting<TuiSettings, u64> = Setting {
-    key: "prompt_history_limit",
+    key: PROMPT_HISTORY_LIMIT_KEY,
     meta: meta(
         "Prompt history limit",
         "Saved composer prompts kept for up-arrow recall across sessions. 0 disables saving.",

@@ -410,8 +410,12 @@ impl App {
                 self.set_status("agent creation is unavailable while a model turn is running");
                 Ok(())
             }
+            // In process, as when idle: only the daemon saves settings.
+            CommandId::Advisor => {
+                self.needs_daemon("advisor");
+                Ok(())
+            }
             CommandId::AddDir
-            | CommandId::Advisor
             | CommandId::Codemode
             | CommandId::Context
             | CommandId::Permissions

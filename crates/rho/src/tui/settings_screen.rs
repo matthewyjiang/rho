@@ -17,7 +17,8 @@ use rho_protocol::{
 };
 
 use super::{
-    daemon_settings::{display_value, DaemonSettings, SettingsNamespace, SettingsRow},
+    config_row::ConfigRow,
+    daemon_settings::{display_value, DaemonSettings, SettingsNamespace},
     text_input::TextInput,
     App, ComposerMode, Entry, PickerItem, TuiSettings, UiPicker,
 };
@@ -27,6 +28,7 @@ use super::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ConfigPage {
     Root,
+    SessionModel,
     SessionPermissionMode,
     Category {
         namespace: SettingsNamespace,
@@ -40,13 +42,6 @@ pub(super) enum ConfigPage {
     /// turns the advisor on.
     AdvisorOn,
 }
-
-const FAST_MODE: &str = "daemon_fast_mode";
-const ADVISOR_MODE_KEY: &str = "behavior.advisor_mode";
-const ADVISOR_MODEL_KEY: &str = "internal_agents.advisor";
-/// A row of the `/advisor on` model page: turn the advisor on with this
-/// model, in one write.
-const ENABLE_ADVISOR_PREFIX: &str = "enable_advisor=";
 
 /// What a settings view changed, as `daemon_transcript` hands it over.
 pub(super) enum SettingsUpdate {
@@ -67,6 +62,7 @@ impl App {
     pub(super) fn config_page_picker(&self, page: &ConfigPage) -> Option<UiPicker> {
         let picker = match page {
             ConfigPage::Root => self.daemon_root_picker()?,
+            ConfigPage::SessionModel => self.daemon_model_picker()?,
             ConfigPage::SessionPermissionMode => self.daemon_permission_picker()?,
             ConfigPage::Category { namespace, id } => {
                 let settings = self.daemon_settings.as_ref()?;
@@ -90,46 +86,40 @@ impl App {
 
     fn daemon_root_picker(&self) -> Option<UiPicker> {
         let options = self.daemon_options.as_ref()?;
-        let session = |label: &str, value: &str| PickerItem {
+        let session = |label: &str, row: ConfigRow| PickerItem {
             section: Some("Session".into()),
-            ..PickerItem::new(label.into(), value.into())
+            ..PickerItem::new(label.into(), row.encode())
         };
-        let mut items = vec![session(
-            "Model",
-            super::config_picker::CONVERSATION_MODEL_VALUE,
-        )];
+        let mut items = vec![session("Model", ConfigRow::SessionModel)];
         if options.reasoning.is_some() {
-            items.push(session("Reasoning", super::config_picker::REASONING_VALUE));
+            items.push(session("Reasoning", ConfigRow::SessionReasoning));
         }
         if options.fast_mode.is_some() {
-            items.push(session("Fast mode", FAST_MODE));
+            items.push(session("Fast mode", ConfigRow::SessionFastMode));
         }
-        items.push(session(
-            "Permission mode",
-            super::config_picker::PERMISSION_MODE_VALUE,
-        ));
+        items.push(session("Permission mode", ConfigRow::SessionPermissionMode));
         if let Some(settings) = &self.daemon_settings {
             items.extend(settings.category_rows());
         }
-        let local = |label: &str, value: &str, detail: &str| PickerItem {
+        let local = |label: &str, row: ConfigRow, detail: &str| PickerItem {
             section: Some("This terminal".into()),
             detail: Some(super::picker::PickerDetail::Text(detail.into())),
-            ..PickerItem::new(label.into(), value.into())
+            ..PickerItem::new(label.into(), row.encode())
         };
         items.push(local(
             "Theme",
-            super::config_picker::THEME_VALUE,
+            ConfigRow::Theme,
             "The color theme, saved in tui.toml.",
         ));
         items.push(local(
             "Clear prompt history",
-            super::config_picker::CLEAR_PROMPT_HISTORY_VALUE,
+            ConfigRow::ClearPromptHistory,
             "Delete every saved composer prompt, after a confirmation.",
         ));
         Some(UiPicker::config("Config · saves automatically", items))
     }
 
-    fn daemon_models(&self) -> &[rho_protocol::ModelChoice] {
+    pub(super) fn daemon_models(&self) -> &[rho_protocol::ModelChoice] {
         self.daemon_options
             .as_ref()
             .map_or(&[], |options| options.model.available.as_slice())
@@ -184,78 +174,59 @@ impl App {
 
     /// Runs a row of a config page.
     pub(super) fn commit_daemon_config(&mut self, value: &str) -> anyhow::Result<()> {
-        use super::config_picker::{
-            CONVERSATION_MODEL_VALUE, PERMISSION_MODE_PREFIX, PERMISSION_MODE_VALUE,
-            REASONING_VALUE, THEME_VALUE,
+        let Some(row) = ConfigRow::parse(value) else {
+            anyhow::bail!("unknown settings row");
         };
-        if let Some(row) = SettingsRow::parse(value) {
-            return self.commit_settings_row(row);
-        }
-        if let Some(model) = value.strip_prefix(ENABLE_ADVISOR_PREFIX) {
-            let model: SettingValue = serde_json::from_str(model)?;
-            self.enable_advisor(model);
-            self.close_value_page();
-            return Ok(());
-        }
-        match value {
-            // Child pages stack on the root page, so Esc returns to it.
-            CONVERSATION_MODEL_VALUE => {
-                if let Some(picker) = self.daemon_model_picker() {
-                    self.open_child_picker(picker);
-                }
-            }
-            REASONING_VALUE => return self.cycle_daemon_reasoning(),
-            FAST_MODE => return self.set_daemon_fast(""),
-            PERMISSION_MODE_VALUE => {
-                if let Some(picker) = self.daemon_permission_picker() {
-                    self.open_child_picker(picker);
-                }
-            }
-            THEME_VALUE => return self.open_theme_picker_from_config(),
-            super::config_picker::CLEAR_PROMPT_HISTORY_VALUE => {
-                return self.prompt_clear_prompt_history()
-            }
-            _ => {
-                if let Some(mode) = value.strip_prefix(PERMISSION_MODE_PREFIX) {
-                    self.set_daemon_permission(mode.parse()?)?;
-                    if !self.pop_picker_level() {
-                        self.input_ui.set_composer(ComposerMode::Input);
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn commit_settings_row(&mut self, row: SettingsRow) -> anyhow::Result<()> {
         match row {
-            SettingsRow::Category { namespace, id } => {
-                if let Some(picker) =
-                    self.config_page_picker(&ConfigPage::Category { namespace, id })
-                {
-                    self.open_child_picker(picker);
-                }
+            // Child pages stack on the page they open from, so Esc returns
+            // to it.
+            ConfigRow::SessionModel => self.open_config_page(ConfigPage::SessionModel),
+            ConfigRow::SessionPermissionMode => {
+                self.open_config_page(ConfigPage::SessionPermissionMode);
             }
-            SettingsRow::Setting { namespace, key } => self.change_setting(namespace, key),
-            SettingsRow::Set {
+            ConfigRow::Category { namespace, id } => {
+                self.open_config_page(ConfigPage::Category { namespace, id });
+            }
+            ConfigRow::SessionReasoning => return self.cycle_daemon_reasoning(),
+            ConfigRow::SessionFastMode => return self.set_daemon_fast(""),
+            ConfigRow::SetPermissionMode { mode } => {
+                self.close_value_page();
+                self.set_daemon_permission(mode)?;
+            }
+            ConfigRow::Theme => return self.open_theme_picker_from_config(),
+            ConfigRow::ClearPromptHistory => return self.prompt_clear_prompt_history(),
+            ConfigRow::Setting { namespace, key } => self.change_setting(namespace, key),
+            ConfigRow::Set {
                 namespace,
                 key,
                 value,
             } => {
+                // Closed first, so the write's status is the one left.
+                self.close_value_page();
                 self.write_setting(namespace, SettingChange::Set { key, value });
-                self.close_value_page();
             }
-            SettingsRow::Reset { namespace, key } => {
-                self.write_setting(namespace, SettingChange::Reset { key });
+            ConfigRow::Reset { namespace, key } => {
                 self.close_value_page();
+                self.write_setting(namespace, SettingChange::Reset { key });
+            }
+            ConfigRow::EnableAdvisor { model } => {
+                self.close_value_page();
+                self.enable_advisor(model);
             }
         }
         Ok(())
     }
 
+    /// Opens `page` over the open one.
+    fn open_config_page(&mut self, page: ConfigPage) {
+        if let Some(picker) = self.config_page_picker(&page) {
+            self.open_child_picker(picker);
+        }
+    }
+
     /// Leaves a value page once a value is chosen: back to the page it
     /// opened from, or to the composer when it opened alone.
-    fn close_value_page(&mut self) {
+    pub(super) fn close_value_page(&mut self) {
         if !self.pop_picker_level() {
             self.input_ui.set_composer(ComposerMode::Input);
         }
@@ -286,11 +257,7 @@ impl App {
                 );
             }
             SettingKind::Choice { .. } | SettingKind::Model { .. } => {
-                if let Some(picker) =
-                    self.config_page_picker(&ConfigPage::Setting { namespace, key })
-                {
-                    self.open_child_picker(picker);
-                }
+                self.open_config_page(ConfigPage::Setting { namespace, key });
             }
             SettingKind::Integer { min, max, unit } => {
                 let range = match max {
@@ -369,6 +336,21 @@ impl App {
             }
         };
         match change {
+            Ok(SettingChange::Set {
+                key,
+                value: SettingValue::Integer(limit),
+            }) if lowers_saved_prompts(
+                namespace,
+                &key,
+                limit,
+                self.info.services.settings.prompt_history_limit,
+            ) =>
+            {
+                self.close_setting_input();
+                if let Err(error) = self.confirm_prompt_history_limit(limit) {
+                    self.insert_entry(&Entry::Error(error.to_string()));
+                }
+            }
             Ok(change) => {
                 self.close_setting_input();
                 self.write_setting(namespace, change);
@@ -397,7 +379,7 @@ impl App {
     }
 
     /// Sends `change` to the daemon and says what it will do.
-    fn write_setting(&mut self, namespace: SettingsNamespace, change: SettingChange) {
+    pub(super) fn write_setting(&mut self, namespace: SettingsNamespace, change: SettingChange) {
         let key = match &change {
             SettingChange::Set { key, .. } | SettingChange::Reset { key } => key.clone(),
         };
@@ -425,7 +407,7 @@ impl App {
     }
 
     /// Sends `changes` as one write; `false` once the TUI cannot.
-    fn send_settings(
+    pub(super) fn send_settings(
         &mut self,
         namespace: SettingsNamespace,
         changes: Vec<SettingChange>,
@@ -454,11 +436,14 @@ impl App {
     /// A file's problems show once each time they change; the daemon keeps
     /// its last good values meanwhile.
     pub(super) fn show_daemon_settings(&mut self, update: SettingsUpdate) {
-        let (tui_changed, problems) = match update {
+        // The `tui` values to apply: all of them once loaded, then only
+        // what each change names.
+        let (tui_values, problems) = match update {
             SettingsUpdate::Loaded(settings) => {
                 let problems = settings.problems();
+                let values = settings.values(SettingsNamespace::Tui).values.clone();
                 self.daemon_settings = Some(*settings);
-                (true, problems)
+                (Some(values), problems)
             }
             SettingsUpdate::Changed(changed) => {
                 let Some(applied) = self
@@ -469,7 +454,7 @@ impl App {
                     return;
                 };
                 (
-                    applied.namespace == SettingsNamespace::Tui,
+                    (applied.namespace == SettingsNamespace::Tui).then_some(applied.changed),
                     applied.new_problems,
                 )
             }
@@ -484,12 +469,9 @@ impl App {
                 "could not use the edited settings, so the last good ones stay: {problems}"
             )));
         }
-        if tui_changed {
-            if let Some(settings) = &self.daemon_settings {
-                let values = &settings.values(SettingsNamespace::Tui).values;
-                let next = self.info.services.settings.with_client_values(values);
-                self.apply_tui_settings(next);
-            }
+        if let Some(values) = tui_values {
+            let next = self.info.services.settings.with_client_values(&values);
+            self.apply_tui_settings(next);
         }
         self.refresh_open_config_page();
     }
@@ -541,113 +523,26 @@ impl App {
             self.apply_prompt_history_limit(prompt_history_limit);
         }
     }
+}
 
-    /// `/advisor [on|off|model]` in a daemon session.
-    pub(super) fn execute_daemon_advisor_command(&mut self, args: &str) {
-        let Some(settings) = &self.daemon_settings else {
-            self.insert_entry(&Entry::Error(
-                "could not change the advisor: the rho settings are not loaded".into(),
-            ));
-            return;
-        };
-        let advisor_on = matches!(
-            settings.value(SettingsNamespace::Agent, &SettingKey::new(ADVISOR_MODE_KEY)),
-            Some(SettingValue::Bool(true))
-        );
-        let has_model = settings
-            .value(
-                SettingsNamespace::Agent,
-                &SettingKey::new(ADVISOR_MODEL_KEY),
-            )
-            .is_some();
-        let requested = match args.trim().to_ascii_lowercase().as_str() {
-            "" => !advisor_on,
-            "on" => true,
-            "off" => false,
-            "model" => {
-                self.open_advisor_model_page(/*enable*/ false);
-                return;
-            }
-            _ => {
-                self.insert_entry(&Entry::Error(super::advisor_command::ADVISOR_USAGE.into()));
-                self.set_status("invalid advisor mode");
-                return;
-            }
-        };
-        // Advisor mode on with no model does nothing, so it asks for one.
-        if requested && !has_model {
-            self.open_advisor_model_page(/*enable*/ true);
-            return;
-        }
-        self.write_setting(
-            SettingsNamespace::Agent,
-            SettingChange::Set {
-                key: SettingKey::new(ADVISOR_MODE_KEY),
-                value: SettingValue::Bool(requested),
-            },
-        );
-    }
-
-    /// Opens the advisor model page alone. With `enable`, choosing a model
-    /// also turns the advisor on, in the same write.
-    fn open_advisor_model_page(&mut self, enable: bool) {
-        let page = if enable {
-            ConfigPage::AdvisorOn
-        } else {
-            ConfigPage::Setting {
-                namespace: SettingsNamespace::Agent,
-                key: SettingKey::new(ADVISOR_MODEL_KEY),
-            }
-        };
-        let Some(picker) = self.config_page_picker(&page) else {
-            return;
-        };
-        self.set_status("select the advisor model");
-        self.input_ui.set_composer(ComposerMode::Picker(picker));
-    }
-
-    /// The advisor model page, each model row turning the advisor on with
-    /// it. No reset row: that would turn the advisor on without a model.
-    fn advisor_on_picker(&self) -> Option<UiPicker> {
-        let settings = self.daemon_settings.as_ref()?;
-        let key = SettingKey::new(ADVISOR_MODEL_KEY);
-        let label = settings.spec(SettingsNamespace::Agent, &key)?.label.clone();
-        let mut items =
-            settings.value_rows(SettingsNamespace::Agent, &key, self.daemon_models())?;
-        items.retain_mut(|item| {
-            let Some(SettingsRow::Set { value, .. }) = SettingsRow::parse(&item.value) else {
-                return false;
-            };
-            item.value = format!(
-                "{ENABLE_ADVISOR_PREFIX}{}",
-                serde_json::to_string(&value).expect("setting values serialize")
-            );
-            true
-        });
-        Some(UiPicker::config(label, items))
-    }
-
-    /// Turns the advisor on with `model`, in one write.
-    fn enable_advisor(&mut self, model: SettingValue) {
-        let changes = vec![
-            SettingChange::Set {
-                key: SettingKey::new(ADVISOR_MODEL_KEY),
-                value: model,
-            },
-            SettingChange::Set {
-                key: SettingKey::new(ADVISOR_MODE_KEY),
-                value: SettingValue::Bool(true),
-            },
-        ];
-        if self.send_settings(SettingsNamespace::Agent, changes, "advisor") {
-            self.set_status("advisor: on; applies next turn");
-        }
-    }
+/// Whether setting the prompt history limit to `limit` deletes saved
+/// prompts: it lowers a limit that keeps some. `0` stops saving and
+/// deletes nothing.
+fn lowers_saved_prompts(
+    namespace: SettingsNamespace,
+    key: &SettingKey,
+    limit: u64,
+    current: usize,
+) -> bool {
+    namespace == SettingsNamespace::Tui
+        && key.as_str() == super::client_settings::PROMPT_HISTORY_LIMIT_KEY
+        && limit > 0
+        && limit < current as u64
 }
 
 /// `label` as status text names it: lowercase, unless its first word is a
 /// name such as `OpenAI` or `RTK`.
-fn status_label(label: &str) -> String {
+pub(super) fn status_label(label: &str) -> String {
     let first = label.split_whitespace().next().unwrap_or_default();
     if first.chars().skip(1).any(char::is_uppercase) {
         return label.to_owned();

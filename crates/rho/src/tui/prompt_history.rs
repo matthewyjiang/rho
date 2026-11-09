@@ -10,8 +10,8 @@ use futures_util::FutureExt;
 use crate::prompt_history::{PromptHistoryError, PromptHistoryLoadHandle, PromptHistoryStore};
 
 use super::{
-    config_picker::CLEAR_PROMPT_HISTORY_VALUE, App, ComposerMode, Entry, InlineChoice,
-    InlineChoiceModal, InlineChoiceOption, InlineChoicePending, UiPicker,
+    config_row::ConfigRow, App, ComposerMode, Entry, InlineChoice, InlineChoiceModal,
+    InlineChoiceOption, InlineChoicePending, UiPicker,
 };
 
 const MAX_PERSISTED_PROMPT_BYTES: usize = 10 * 1024;
@@ -359,9 +359,57 @@ impl App {
         Ok(())
     }
 
+    /// Asks before a lower prompt history limit, sent from `/config`,
+    /// deletes saved prompts beyond the newest `limit`.
+    pub(super) fn confirm_prompt_history_limit(&mut self, limit: u64) -> anyhow::Result<()> {
+        self.prompt_prompt_history_choice(PromptHistoryChoice {
+            title: format!("Keep only the newest {limit} prompts?"),
+            description: format!(
+                "Lowering the limit permanently deletes saved composer prompts beyond the newest {limit}."
+            ),
+            confirm_label: "Lower the limit",
+            confirm_detail: "This cannot be undone",
+            cancel_label: "Keep the current limit",
+            pending: InlineChoicePending::LowerPromptHistoryLimit { limit },
+            status: "confirm prompt history limit",
+        })
+    }
+
+    pub(super) fn submit_lower_prompt_history_limit(
+        &mut self,
+        value: &str,
+        limit: u64,
+        parent: Option<Box<super::UiPicker>>,
+    ) {
+        self.restore_choice_parent_picker(parent);
+        if value == CONFIRM_VALUE {
+            self.write_setting(
+                super::daemon_settings::SettingsNamespace::Tui,
+                rho_protocol::SettingChange::Set {
+                    key: rho_protocol::SettingKey::new(
+                        super::client_settings::PROMPT_HISTORY_LIMIT_KEY,
+                    ),
+                    value: rho_protocol::SettingValue::Integer(limit),
+                },
+            );
+        }
+    }
+
+    /// Back to the page an inline choice opened over, or the composer.
+    pub(super) fn restore_choice_parent_picker(&mut self, parent: Option<Box<super::UiPicker>>) {
+        match parent {
+            Some(parent) => {
+                let parent = self.refreshed_config_page(*parent);
+                self.set_status_quiet(parent.title.clone());
+                self.input_ui.set_composer(ComposerMode::Picker(parent));
+            }
+            None => self.input_ui.set_composer(ComposerMode::Input),
+        }
+    }
+
     pub(super) fn submit_clear_prompt_history_choice(&mut self, value: &str) -> anyhow::Result<()> {
         if value != CONFIRM_VALUE {
-            self.reopen_config_root(CLEAR_PROMPT_HISTORY_VALUE);
+            self.reopen_config_root(&ConfigRow::ClearPromptHistory.encode());
             return Ok(());
         }
         self.clear_prompt_history()
@@ -385,7 +433,7 @@ impl App {
             self.insert_entry(&Entry::Error(
                 "could not clear prompt history: writer is busy".into(),
             ));
-            self.reopen_config_root(CLEAR_PROMPT_HISTORY_VALUE);
+            self.reopen_config_root(&ConfigRow::ClearPromptHistory.encode());
             self.set_status("clear prompt history failed");
             return Ok(());
         }
@@ -416,7 +464,7 @@ impl App {
             }
             (Some(FollowUp::FinishClear), StoreReply::Done(result)) => match result {
                 Ok(()) => {
-                    self.reopen_config_root(CLEAR_PROMPT_HISTORY_VALUE);
+                    self.reopen_config_root(&ConfigRow::ClearPromptHistory.encode());
                     self.set_status("prompt history cleared");
                     Ok(())
                 }
@@ -424,7 +472,7 @@ impl App {
                     self.insert_entry(&Entry::Error(format!(
                         "could not clear prompt history: {error}"
                     )));
-                    self.reopen_config_root(CLEAR_PROMPT_HISTORY_VALUE);
+                    self.reopen_config_root(&ConfigRow::ClearPromptHistory.encode());
                     self.set_status("clear prompt history failed");
                     Ok(())
                 }
@@ -450,7 +498,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not read prompt history: {error}"
                 )));
-                self.reopen_config_root(CLEAR_PROMPT_HISTORY_VALUE);
+                self.reopen_config_root(&ConfigRow::ClearPromptHistory.encode());
                 self.set_status("prompt history unavailable");
                 return Ok(());
             }

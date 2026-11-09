@@ -43,7 +43,7 @@ const USAGE_PURPOSE: &str = "advisor";
 const TOOL_DESCRIPTION: &str = "Consult a stronger reviewer model about this session. Takes NO parameters: your whole conversation history, including the task, every tool call you made, and every result you saw, is forwarded automatically. Returns strategic guidance on what to do next.\n\nDo not call advisor as your first action. Explore first - read the relevant files, reproduce the issue, understand the shape of the task - then consult before committing to an approach.\n\nAlso call advisor:\n- When stuck: errors recurring, approach not converging, results that do not fit.\n- When considering a change of approach.\n- When you believe the task is complete. BEFORE this call, make your deliverable durable: write the file, save the result, commit the change.\n\nOn short reactive tasks where the next action follows from tool output you just read, skip advisor. Do not call it just because it exists.\n\nGive the advice serious weight. If you follow a step and it fails in practice, or you have primary-source evidence that contradicts a specific claim, adapt. If you have already retrieved data pointing one way and the advisor points another, do not switch silently: surface the conflict in one more advisor call.";
 
 const NO_MODEL_MESSAGE: &str =
-    "advisor mode has no advisor model. Choose one with /advisor, then call advisor again.";
+    "advisor mode has no advisor model. Choose one with /agents or /advisor, then call advisor again.";
 
 const NO_SESSION_MESSAGE: &str = "the advisor is not attached to a live session";
 
@@ -335,7 +335,7 @@ async fn consult_advisor(
             .await
             .map_err(|error| {
                 execution_error(format!(
-                    "advisor model {reference} could not start: {error}. Choose another advisor model with /advisor."
+                    "advisor model {reference} could not start: {error}. Choose another advisor model with /agents or /advisor."
                 ))
             })?;
             consult_advisor_with_provider(

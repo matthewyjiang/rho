@@ -48,7 +48,7 @@ Set the model under `/config` → **Agent** → **Permission classifier model**,
 
 ### Screen model
 
-By default the classifier model answers the screen too, at low reasoning, sharing its prompt cache with the review. Another model can answer it instead: a decision model, which is faster, or another text model. Set it as `[internal_agents.permission-classifier-screen]`, or with `/agents`.
+By default the classifier model answers the screen too, at low reasoning, sharing its prompt cache with the review. Another model can answer it instead: a decision model, which is faster, or another text model. Set it as `[internal_agents.permission-classifier-screen]`, or from the picker `/permissions auto` offers after the classifier pick in an in-process TUI; Esc keeps the current screen model.
 
 The picker lists three groups:
 
@@ -56,7 +56,7 @@ The picker lists three groups:
 - **Decision models** discovered on the hosts below.
 - **Text models** from the chat model catalog. A text screen asks the same question as the classifier's screen, at low reasoning, over a transcript fitted to that model's own context window.
 
-Ollama serves a model at the server's `num_ctx`, often far below the window the model advertises, and silently drops the front of a longer prompt. A screen could then allow a request it never read whole. So a text screen on Ollama needs `usable_context_window` set for its model in [local model metadata](/configuration#local-model-metadata), measured against the server. Without it, the screen escalates every request to the review, and the `/config` row and `/doctor` warn. Hosted providers reject an oversize prompt, which also escalates.
+Ollama serves a model at the server's `num_ctx`, often far below the window the model advertises, and silently drops the front of a longer prompt. A screen could then allow a request it never read whole. So a text screen on Ollama needs `usable_context_window` set for its model in [local model metadata](/configuration#local-model-metadata), measured against the server. Without it, the screen escalates every request to the review, and `/doctor` warns. Hosted providers reject an oversize prompt, which also escalates.
 
 The picker saves `kind = "decision"` or `kind = "text"` with the entry, because Ollama serves both. Without `kind`, an entry on Ollama or TypeSafe is a decision model and an entry on any other provider, including OpenAI, is a text model.
 

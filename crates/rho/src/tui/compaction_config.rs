@@ -3,6 +3,10 @@
 
 use super::{App, InteractiveRuntime};
 
+#[cfg(test)]
+#[path = "compaction_config_tests.rs"]
+mod tests;
+
 impl App {
     /// Coalesce edits during a run or compact; apply before the next idle check
     /// or provider start, including queued prompts that bypass the outer loop.

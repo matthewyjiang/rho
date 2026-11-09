@@ -439,3 +439,32 @@ fn rewrite_message_value(value: &mut serde_json::Value) -> bool {
     });
     true
 }
+
+// Covers: an in-process TUI, which has no daemon to save settings, answers
+// `/config` and `/advisor` by saying how to get one, rather than editing
+// local state the next session would not see.
+// Owner: interactive TUI settings commands in process
+pub(super) const SETTINGS_NEED_THE_DAEMON: Scenario = Scenario::new(
+    "settings_need_the_daemon",
+    "Ask for /config and /advisor in process and get told they need the daemon",
+    DEFAULT_SIZE,
+    &[
+        Step::WaitText {
+            text: "Bypass ·",
+            timeout: STARTUP,
+        },
+        Step::SubmitText("/config"),
+        Step::WaitText {
+            text: "/config needs the rho daemon: start rho with RHO_TUI_DAEMON=1",
+            timeout: SETTLE,
+        },
+        Step::SubmitText("/advisor on"),
+        Step::WaitText {
+            text: "/advisor needs the rho daemon: start rho with RHO_TUI_DAEMON=1",
+            timeout: SETTLE,
+        },
+        Step::ExitCommand,
+    ],
+    /*smoke*/ false,
+)
+.with_env(OPENAI_KEY_ENV);

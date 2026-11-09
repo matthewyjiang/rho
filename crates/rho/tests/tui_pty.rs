@@ -1177,16 +1177,26 @@ fn daemon_permission_changes_do_not_block_the_turn() {
     assert_pass("daemon_permission_mode");
 }
 
+// Covers: in process, `/config` and `/advisor` say they need the daemon.
+// Owner: interactive TUI settings commands in process.
+#[test]
+fn settings_commands_need_the_daemon_in_process() {
+    assert_pass("settings_need_the_daemon");
+}
+
 // Covers: `/config` saves through the daemon: a client setting takes effect
-// live and an agent setting shows its saved value and when it applies.
+// live, vim mode turns on and back off from the default row, an agent setting
+// shows its saved value once confirmed and a refused one says why, and
+// lowering the prompt history limit asks first.
 // Owner: interactive TUI settings screen as a daemon client.
 #[test]
 fn daemon_config_changes_settings_through_the_daemon() {
     assert_pass("daemon_config");
 }
 
-// Covers: `/advisor on` without a model asks for one, then the session's next
-// turn takes the advisor. Owner: interactive TUI `/advisor` as a daemon client.
+// Covers: `/advisor on` without a model asks for one, Space filters its page,
+// the session's next turn takes the advisor, and `/advisor off` turns it off.
+// Owner: interactive TUI `/advisor` as a daemon client.
 #[test]
 fn daemon_advisor_reaches_the_next_turn() {
     assert_pass("daemon_advisor");
