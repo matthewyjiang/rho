@@ -450,6 +450,9 @@ impl super::App {
         mode: InlineShellMode,
         command: String,
     ) -> anyhow::Result<()> {
+        if self.refuse_daemon_shell() {
+            return Ok(());
+        }
         if command.is_empty() {
             self.set_status("enter a shell command after ! or !!");
             return Ok(());

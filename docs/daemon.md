@@ -19,6 +19,14 @@ The daemon shuts down gracefully on `rho daemon stop`, `SIGTERM`, or `SIGINT`: i
 
 Stopping the daemon ends every process its sessions' tools started: the command a turn is running and the background processes a session's `process` tool started, each with its whole process group, so their children go too. A process that left its group, for example through `setsid`, keeps running. Unloading an idle session ends none of them, since a session whose background process still runs is never idle. A daemon that crashes, is killed with `SIGKILL`, or is forced to exit by a second signal cannot end them: its tools' processes keep running, as they do when any rho process is killed that way, and the next daemon does not track them.
 
+## Experimental daemon-backed TUI
+
+On Unix, `RHO_TUI_DAEMON=1 rho` opens the interactive TUI as a daemon client. Without that environment variable, the TUI keeps its in-process behavior. The flag is an unfinished migration, not a drop-in replacement yet.
+
+The attached session supplies the current model, reasoning level, fast mode, permission mode, and their available choices. `/model`, `/fast`, `/permissions`, the limited `/config` menu, and the model, reasoning, and permission shortcuts configure that session rather than the unused local runtime. Changes requested during a turn apply after it ends; the TUI remains responsive to approvals and cancellation, and displays the old settings until the daemon confirms the change. Changes are session settings, not edits to the default configuration. Context tokens and cumulative session cost feed the usual context and spend gauges, and title changes update the followed session's title live.
+
+The command menu includes commands the daemon advertises, such as `/init`, `/compact`, prompt templates, MCP prompts, and command workflows. These are resolved by the daemon. Pure UI commands remain local. Unported runtime commands—including goals, advisor controls, session navigation and rewind, login/logout, the MCP and workflow hubs, `/remember`, `/context`, `/add-dir`, and `!`/`!!` shells—are refused with `/<cmd> is not available with RHO_TUI_DAEMON yet`. Full provider and runtime configuration, startup model/reasoning/permission overrides, and reconnection after a lost attachment remain unported. Quitting leaves any running turn in the daemon.
+
 ## Sessions and jobs
 
 A session is a conversation: its saved transcript and, while the daemon has it loaded, its live runtime. Requests name a session by its session id, the id `rho sessions` and `/resume` show. A loaded session's turns run in the daemon, so a turn keeps running when the client that started it disconnects, and another client can follow it later. The daemon tracks every unit of work it runs as a job with its own id: the turns of one session, or one subagent run that a session started.

@@ -3,8 +3,9 @@
 //!
 //! The daemon reads config for the session's workspace itself, so a flag
 //! that overrides this process's config (`--provider`, `--model`, ...) has
-//! nothing to override yet and is refused rather than ignored; T1e brings
-//! them through `rho/session/configure`. `--no-tools`, `--no-system-prompt`,
+//! nothing to override and is refused rather than ignored. Interactive
+//! controls configure the attached session through `rho/session/configure`;
+//! startup overrides remain unported. `--no-tools`, `--no-system-prompt`,
 //! and `--no-subagents` leave the same parts out of the daemon session.
 
 use std::path::Path;

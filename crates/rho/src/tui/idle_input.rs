@@ -236,6 +236,9 @@ impl App {
                 return self.block_pasted_inline_shell();
             }
             self.clear_submitted_input();
+            if self.refuse_daemon_shell() {
+                return Ok(());
+            }
             self.ensure_session(agent)?;
             self.start_inline_shell(mode, command)?;
             return Ok(());
@@ -249,6 +252,22 @@ impl App {
             }
             Ok(None) => {}
             Err(commands::CommandParseError::Unknown(name)) => {
+                if self.info.session.daemon.is_some() {
+                    if !self.daemon_prompt_command_available(&name) {
+                        self.clear_submitted_input();
+                        self.daemon_command_unavailable(&name);
+                        return Ok(());
+                    }
+                    let media = self
+                        .input_ui
+                        .take_ready_media()
+                        .expect("pending attachments block submission");
+                    let paste_segments = self.input_ui.paste_segments().to_vec();
+                    self.clear_submitted_input();
+                    return self
+                        .submit_daemon_turn(turn, media, paste_segments, terminal)
+                        .await;
+                }
                 let trailing_prompt = slash_command_args(&turn.model).trim().to_string();
                 self.clear_submitted_input();
                 if let Some(resolved) = crate::app::workflow_cli::discover::resolve_start_command(

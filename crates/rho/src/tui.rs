@@ -62,9 +62,13 @@ mod daemon_answers;
 mod daemon_asks;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod daemon_events;
+mod daemon_gate;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod daemon_inputs;
+mod daemon_options;
 mod daemon_prompt;
+#[cfg(unix)]
+mod daemon_requests;
 mod daemon_session;
 mod daemon_transcript;
 mod daemon_turn;
@@ -660,6 +664,9 @@ struct App {
     /// Session list or delete running off the event loop.
     pending_sessions_task: Option<sessions_hub_tasks::PendingSessionsTask>,
     pending_session_title: Option<PendingSessionTitle>,
+    daemon_options: Option<rho_protocol::SessionOptions>,
+    daemon_option_requests: std::collections::VecDeque<rho_protocol::SessionChange>,
+    daemon_title: Option<String>,
     /// Set by `/title` so auto-title generation cannot overwrite a manual name.
     session_title_locked: bool,
     /// Latest native checklist, mirrored for commands while a turn is running.

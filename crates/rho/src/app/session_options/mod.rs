@@ -30,7 +30,6 @@ mod reasoning;
 
 pub(crate) use commands::available_commands;
 pub(crate) use models::resolve_model;
-#[cfg(unix)]
 pub(crate) use reasoning::reasoning_from_wire;
 
 /// `runtime`'s options now: the choices `process_config` gives it, the

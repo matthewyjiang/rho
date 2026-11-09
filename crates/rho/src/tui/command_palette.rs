@@ -60,6 +60,9 @@ impl App {
         if let Some(cursor) = self.skill_mention_cursor() {
             return self.skill_mention_choices(&cursor);
         }
+        if self.info.session.daemon.is_some() {
+            return self.daemon_command_choices();
+        }
         let context = self.command_context();
         let argument_choices =
             commands::argument_choices(self.input_ui.text(), self.input_ui.cursor(), &context);
@@ -325,7 +328,8 @@ impl App {
             | CommandChoiceKind::PromptTemplate(_)
             | CommandChoiceKind::Skill
             | CommandChoiceKind::Workflow
-            | CommandChoiceKind::McpPrompt => true,
+            | CommandChoiceKind::McpPrompt
+            | CommandChoiceKind::SessionCommand => true,
             CommandChoiceKind::BuiltinArgument(_) => self.input_ui.command_selection_explicit(),
             CommandChoiceKind::McpPromptArgument { .. } => {
                 self.input_ui.command_selection_explicit()
@@ -393,7 +397,8 @@ impl App {
             // which can happen in this sync path.
             CommandChoiceKind::Skill
             | CommandChoiceKind::McpPrompt
-            | CommandChoiceKind::Workflow => {
+            | CommandChoiceKind::Workflow
+            | CommandChoiceKind::SessionCommand => {
                 self.input_ui
                     .set_submission_mode(super::InputSubmissionMode::ParseCommands);
                 complete_slash_command(self.input_ui.text(), self.input_ui.cursor(), &choice.name)

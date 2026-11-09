@@ -47,9 +47,7 @@ fn reasoning_to_wire(level: ReasoningLevel) -> wire::ReasoningLevel {
 }
 
 /// The level `level` names, or `None` for one this rho does not know, such
-/// as one a newer daemon or client sends. Its readers, the daemon and
-/// `rho acp`, are unix-only (#1665).
-#[cfg(unix)]
+/// as one a newer daemon or client sends. Frontends use this for display.
 pub(crate) fn reasoning_from_wire(level: wire::ReasoningLevel) -> Option<ReasoningLevel> {
     match level {
         wire::ReasoningLevel::Off => Some(ReasoningLevel::Off),

@@ -4,7 +4,7 @@ use {
     crate::permission::PermissionMode,
 };
 
-/// A `/config` page that can be rebuilt from saved config.
+/// A settings page that can be rebuilt from its owning settings source.
 ///
 /// Pages that open child pages carry one, so returning to them shows edits
 /// saved on the child instead of the rows built when the child opened.
@@ -12,6 +12,9 @@ use {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ConfigPage {
     Root,
+    /// The attached session's settings, not saved process defaults.
+    SessionOptions,
+    SessionPermissionMode,
     Category(ConfigCategory),
     WebSearch,
     WebSearchBackend(crate::config::SearchBackend),

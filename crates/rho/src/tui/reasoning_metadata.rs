@@ -125,6 +125,9 @@ impl App {
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            return self.cycle_daemon_reasoning();
+        }
         let capabilities = models_dev::current_reasoning_capabilities(
             &self.info.runtime.provider,
             &self.info.runtime.model,

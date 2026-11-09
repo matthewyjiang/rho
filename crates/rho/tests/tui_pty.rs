@@ -1163,3 +1163,17 @@ fn daemon_approval_allows_the_turns_write() {
 fn daemon_approval_denies_the_turns_write() {
     assert_pass("daemon_approval_deny");
 }
+
+// Covers: daemon permission changes affect tools and mid-turn configure does
+// not block cancellation. Owner: interactive TUI daemon settings.
+#[test]
+fn daemon_permission_changes_do_not_block_the_turn() {
+    assert_pass("daemon_permission_mode");
+}
+
+// Covers: an unported command refuses visibly without changing instructions.
+// Owner: interactive TUI daemon command boundary.
+#[test]
+fn daemon_unported_commands_refuse_without_mutating_local_state() {
+    assert_pass("daemon_gated_command");
+}

@@ -113,6 +113,10 @@ impl App {
     /// opens; committing a change is what a turn blocks, and the config
     /// commit path reports that.
     fn open_permission_mode_picker(&mut self) {
+        if self.info.session.daemon.is_some() {
+            self.open_daemon_permission_picker();
+            return;
+        }
         if let Err(error) = self.open_main_config_picker_selected(PERMISSION_MODE_VALUE) {
             self.set_status(format!("could not open config: {error}"));
             return;

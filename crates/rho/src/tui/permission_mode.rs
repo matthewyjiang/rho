@@ -35,6 +35,10 @@ fn next_cycle_mode(current: PermissionMode, classifier_configured: bool) -> Perm
 
 impl App {
     pub(super) fn queue_permission_mode_cycle(&mut self) {
+        if self.info.session.daemon.is_some() {
+            let _ = self.cycle_daemon_permission();
+            return;
+        }
         let current = self
             .pending_permission_mode
             .unwrap_or(self.info.runtime.permission_mode);
@@ -50,6 +54,9 @@ impl App {
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            return self.cycle_daemon_permission();
+        }
         if agent.is_session_busy() {
             self.queue_permission_mode_cycle();
             return Ok(());
@@ -204,6 +211,9 @@ impl App {
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            return Ok(());
+        }
         if self.pending_auto_classifier_demote {
             self.pending_auto_classifier_demote = false;
             if self.info.runtime.permission_mode == PermissionMode::Auto
