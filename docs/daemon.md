@@ -8,8 +8,9 @@ The rho daemon is one long-lived background process per user and rho home (`~/.r
 | --- | --- |
 | `rho daemon` | Run the daemon in the foreground until it is stopped. Same as `rho daemon run`. `rho daemon run --unload-idle-after <DURATION>` sets how long a session sits idle before it is [unloaded](#unloading-idle-sessions), or discarded if it saved nothing (`60s` by default). |
 | `rho daemon start` | Start the daemon in the background unless one is running, wait until it answers, and print its pid. Run again, it starts no second daemon and still exits 0, so scripts can run it unconditionally. |
-| `rho daemon status` | Show the running daemon's pid, version, protocol, uptime, jobs, socket, and [credential store](#credentials), with why the daemon cannot reach the store when it cannot. Add `--json` for one JSON document. |
+| `rho daemon status` | Show the running daemon's pid, version, protocol, uptime, jobs, a pending [upgrade](#upgrading-in-place), socket, and [credential store](#credentials), with why the daemon cannot reach the store when it cannot. Add `--json` for one JSON document. |
 | `rho daemon stop` | Ask the daemon to shut down and wait for it to exit. |
+| `rho daemon restart` | Restart the daemon [in place](#upgrading-in-place) and wait until it answers again. Turns under way are interrupted and recorded `interrupted`. With no daemon running, it starts one. |
 | `rho mcp serve` | Serve the daemon's sessions as an MCP server, so another agent can start, follow, and steer them. See [MCP server](/mcp-server). |
 | `rho attach <ID>` | Follow a session's turn until it ends, and exit as it ended; answer its requests, steer it, or cancel it from the terminal; Ctrl+C detaches. See [Attaching to a daemon session](/automation-cli#attaching-to-a-daemon-session). |
 
@@ -105,11 +106,23 @@ CLI subagents ([Claude Code](/subagents/claude-cli), [Cursor](/subagents/cursor)
 
 Frontends that use the daemon, such as `rho run --detach` and `rho daemon start`, start it when none is running, so you rarely run `rho daemon` yourself. If several start at once, they agree on a single daemon. A frontend that finds the previous daemon still shutting down waits for it to exit, up to 5 seconds, and then starts the new one; a daemon still holding its lock after that fails the frontend with the limit and the time it waited. The started daemon runs `rho daemon run` from the same `rho` executable in its own process group, so `Ctrl+C` in your terminal does not stop it.
 
+## Upgrading in place
+
+Updating rho replaces its executable, which leaves a running daemon on the old version. The daemon notices on its own, whatever replaced the executable (`rho update`, a package manager, `cargo install`), and upgrades without interrupting work ([#1713](https://github.com/matthewyjiang/rho/issues/1713)):
+
+- **Noticing.** Once a second, the daemon checks the path it was started from: the one a service unit's `ExecStart` names, or, for a daemon a frontend started, that frontend's `rho` executable with symlinks resolved. A new file there is a replacement, which the daemon runs with `--version` first; one that does not print a rho version is never executed, and the log says why. A client of a newer rho that connects makes the daemon check at once.
+- **Waiting.** Until nothing would be cut short, the daemon keeps serving and taking new work. `rho daemon status` shows `upgrade  pending to <version> (<N> in progress)`, as does `upgrade` in `rho/daemon/status`. What keeps it waiting: jobs queued, running, or waiting for input (a job waiting for input is not yet asked again after a restart, [#1661](https://github.com/matthewyjiang/rho/issues/1661)); interactive logins under way; and sessions with work of their own, which are the same ones [unloading](#unloading-idle-sessions) keeps loaded: background processes, subagents, or workflow runs still running or holding a result, a goal, or a settings change being applied. A session a client follows that has saved nothing yet, because it has had no prompt, also keeps it waiting, since a restarted daemon could not reopen it for that client.
+- **Re-executing.** At the first check that finds nothing it would cut short, the daemon detaches its clients with the reason `restarting`, closes their connections, unloads its sessions, and executes the new binary as the same process. It keeps its pid, so a service manager sees the same service, and it hands the new binary its lock and listening socket, so no other daemon can start in between and a client that connects meanwhile waits until the new binary answers rather than finding nothing there. Job records and saved sessions carry over, and sessions reopen on their next prompt or attach.
+
+`rho daemon restart` re-executes at once instead, without waiting: it interrupts the turns under way, which are recorded `interrupted` as a stop records them, and the sessions take prompts again once the daemon is back. It runs whatever executable is at the daemon's path, so it also applies an upgrade the daemon has not checked yet. When the restarted daemon is still older than the `rho` you ran it from, `restart` stops it and starts that `rho` instead. That is an ordinary stop and start, not an in-place restart: the pid changes, and a client that connects in between finds no daemon and waits for the new one, as after any stop. If the turns under way do not stop within 4 seconds, the daemon exits instead of re-executing, as a stop does, and the next connection starts a new daemon.
+
+An installer that puts the new version at another path, such as a versioned directory or a symlink switched to it (mise, Homebrew), leaves a frontend-started daemon's path unchanged, so the daemon cannot upgrade itself; it logs that a newer client connected. Run `rho daemon restart` from the new version, which then starts it in the old daemon's place. Windows has no in-place restart yet ([#1665](https://github.com/matthewyjiang/rho/issues/1665)).
+
 ## Versions
 
 Every connection begins with a handshake that compares protocol versions. A frontend and daemon work together when their protocol major versions match. Otherwise the frontend reports which side to change:
 
-- The daemon is older, for example after you update rho while it keeps running: run `rho daemon stop`, and the next connection starts the new version.
+- The daemon is older, for example after you update rho to a new protocol major while it keeps running: run `rho daemon restart`, which stops the old daemon and starts the new version. Within a major the daemon [upgrades itself](#upgrading-in-place).
 - The frontend is older: update rho.
 
 What each protocol version may change is described in [Versions and compatibility](/protocol#versions-and-compatibility).

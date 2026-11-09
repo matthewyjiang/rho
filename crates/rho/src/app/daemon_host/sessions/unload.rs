@@ -162,7 +162,46 @@ impl Sessions {
     }
 }
 
+impl Sessions {
+    /// How many loaded sessions with no turn under way have work of their
+    /// own a restart would cut short, which keeps an upgrade waiting
+    /// (#1713): background work their prompts started, a goal, a queued
+    /// settings change, or, for one a client follows, nothing saved yet, so
+    /// a restarted daemon could not reopen it for that client. Turns under
+    /// way are the job registry's to count.
+    pub(in crate::app::daemon_host) fn upgrade_blockers(&self) -> usize {
+        // Collected first: the turn lock comes before `loaded`, never after.
+        let loaded: Vec<_> = self
+            .loaded()
+            .iter()
+            .map(|(id, session)| (id.clone(), Arc::clone(session)))
+            .collect();
+        loaded
+            .iter()
+            .filter(|(id, session)| {
+                !matches!(self.jobs.session_job(id), SessionJob::Busy(_))
+                    && session.keeps_upgrade_waiting()
+            })
+            .count()
+    }
+}
+
 impl LoadedSession {
+    /// Whether restarting the daemon would cut short work of the session's
+    /// own; see [`Sessions::upgrade_blockers`].
+    fn keeps_upgrade_waiting(&self) -> bool {
+        if self.has_goal() || self.turn().hold.is_some() {
+            return true;
+        }
+        match self.runtime.try_lock() {
+            Ok(runtime) => runtime.as_ref().is_some_and(|runtime| {
+                runtime.has_background_work() || (!runtime.is_saved() && self.feed.followed())
+            }),
+            // A turn that just ended, or a change, still holds it.
+            Err(_) => true,
+        }
+    }
+
     /// Whether the session's runtime keeps it loaded: background work its
     /// prompts started runs on or holds a result, which a teardown would
     /// stop or drop. So does a runtime a turn that just ended still holds.

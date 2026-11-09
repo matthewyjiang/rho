@@ -193,8 +193,8 @@ class CompatibilityTests(unittest.TestCase):
                 "an open enum closed",
                 close_enum,
                 "notification rho/session/detached params.reason: "
-                'one of "daemon_stopping", "deleted", "lagged", "not_loaded" (open) '
-                'became one of "daemon_stopping", "deleted", "lagged", "not_loaded"',
+                'one of "daemon_stopping", "deleted", "lagged", "not_loaded", "restarting" (open) '
+                'became one of "daemon_stopping", "deleted", "lagged", "not_loaded", "restarting"',
             ),
             (
                 "a retyped tuple value",

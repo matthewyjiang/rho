@@ -9,6 +9,7 @@
 //! | [`HELLO`] | [`HelloParams`] | [`HelloResponse`] |
 //! | [`DAEMON_STATUS`] | [`StatusParams`] | [`DaemonStatus`] |
 //! | [`DAEMON_STOP`] | [`StopParams`] | [`StopResponse`] |
+//! | [`DAEMON_RESTART`] | [`RestartParams`] | [`RestartResponse`] |
 //! | [`SESSION_NEW`] | [`SessionNewParams`] | [`SessionNewResponse`] |
 //! | [`SESSION_PROMPT`] | [`SessionPromptParams`] | [`SessionPromptResponse`] |
 //! | [`SESSION_CANCEL`] | [`SessionCancelParams`] | [`SessionCancelResponse`] |
@@ -91,8 +92,9 @@ pub use config::{
     CONFIG_CHANGED, CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET,
 };
 pub use daemon::{
-    ClientInfo, DaemonInfo, DaemonStatus, HelloParams, HelloResponse, StatusParams, StopParams,
-    StopResponse, DAEMON_STATUS, DAEMON_STOP, HELLO,
+    ClientInfo, DaemonInfo, DaemonStatus, HelloParams, HelloResponse, PendingUpgrade,
+    RestartParams, RestartResponse, StatusParams, StopParams, StopResponse, DAEMON_RESTART,
+    DAEMON_STATUS, DAEMON_STOP, HELLO,
 };
 pub use event::{
     CardTone, CompactionId, CompactionStatus, ContentBlock, Cursor, Location, MessageId, PlanEntry,
@@ -213,6 +215,7 @@ protocol! {
         Hello = HELLO: HelloParams => HelloResponse,
         Status = DAEMON_STATUS: StatusParams => DaemonStatus,
         Stop = DAEMON_STOP: StopParams => StopResponse,
+        Restart = DAEMON_RESTART: RestartParams => RestartResponse,
         SessionNew = SESSION_NEW: SessionNewParams => SessionNewResponse,
         SessionPrompt = SESSION_PROMPT: SessionPromptParams => SessionPromptResponse,
         SessionCancel = SESSION_CANCEL: SessionCancelParams => SessionCancelResponse,

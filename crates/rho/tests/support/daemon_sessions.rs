@@ -4,7 +4,7 @@
 //! the same events.
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
@@ -108,7 +108,12 @@ impl Sandbox {
     /// `rho` in the workspace, in the sandbox, with the fixture provider in
     /// `mode`.
     pub(super) fn rho(&self, mode: &str) -> Command {
-        let mut command = self.isolated.command(env!("CARGO_BIN_EXE_rho"));
+        self.rho_at(Path::new(env!("CARGO_BIN_EXE_rho")), mode)
+    }
+
+    /// [`Self::rho`], run from the executable at `program`.
+    pub(super) fn rho_at(&self, program: &Path, mode: &str) -> Command {
+        let mut command = self.isolated.command(program);
         command
             .current_dir(&self.workspace)
             .env("RHO_AUTOMATION_TEST_MODE", mode)

@@ -589,7 +589,7 @@ pub enum WorkflowCommand {
     },
 }
 
-#[derive(Subcommand, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Subcommand, Clone, Debug, PartialEq, Eq)]
 pub enum DaemonCommand {
     /// Run the daemon in the foreground until stopped. The default.
     Run {
@@ -600,6 +600,10 @@ pub enum DaemonCommand {
         /// Defaults to 60s; at least 100ms.
         #[arg(long, value_name = "DURATION", value_parser = parse_unload_idle_after)]
         unload_idle_after: Option<Duration>,
+        /// The lock and socket descriptors a daemon that re-executes itself
+        /// in place hands the new binary. Only the daemon passes it.
+        #[arg(long, value_name = "LOCK:SOCKET", hide = true)]
+        exec_handoff: Option<String>,
     },
     /// Start the daemon in the background unless it is already running,
     /// and wait until it answers.
@@ -607,7 +611,8 @@ pub enum DaemonCommand {
     /// Exits 0 once a daemon runs, including one that already did. Waits
     /// for a daemon that is stopping to exit before starting a new one.
     Start,
-    /// Show the running daemon's pid, version, uptime, and socket.
+    /// Show the running daemon's pid, version, uptime, socket, and any
+    /// upgrade it waits to run.
     ///
     /// Never starts a daemon. Exits with status 1 when none is running.
     Status {
@@ -619,6 +624,13 @@ pub enum DaemonCommand {
     ///
     /// Exits with status 1 when none is running.
     Stop,
+    /// Restart the running daemon in place and wait until it answers again.
+    ///
+    /// The daemon keeps its pid, socket, and lock, so clients reconnect to
+    /// it rather than start another, and re-executes its executable, which
+    /// runs an installed upgrade at once. Turns under way are interrupted
+    /// and recorded as interrupted. Starts the daemon when none is running.
+    Restart,
 }
 
 #[derive(Subcommand, Clone, Debug)]
