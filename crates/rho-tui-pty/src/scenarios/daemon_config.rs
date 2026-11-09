@@ -110,6 +110,16 @@ fn editing_mode_and_its_default(harness: &mut PtyHarness) -> Result<()> {
     close_config(harness)?;
     harness.wait_for_text(VIM_INSERT, SETTLE)?;
 
+    // The page opens on the value in force, so Enter keeps vim.
+    open_category(harness, "display", "Zen mode")?;
+    harness.type_into_field("editing")?;
+    harness.inject_key(&Key::Enter)?;
+    harness.wait_for_text("Default (Default)", SETTLE)?;
+    harness.inject_key(&Key::Enter)?;
+    harness.wait_for_text("editing mode: Vim", SETTLE)?;
+    close_config(harness)?;
+    harness.wait_for_text(VIM_INSERT, SETTLE)?;
+
     // Once the file sets it, the page offers the default back.
     open_category(harness, "display", "Zen mode")?;
     harness.type_into_field("editing")?;

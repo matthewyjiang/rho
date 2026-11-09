@@ -60,7 +60,7 @@ impl App {
     /// `None` until the session's options arrived, or once its setting is
     /// gone.
     pub(super) fn config_page_picker(&self, page: &ConfigPage) -> Option<UiPicker> {
-        let picker = match page {
+        let mut picker = match page {
             ConfigPage::Root => self.daemon_root_picker()?,
             ConfigPage::SessionModel => self.daemon_model_picker()?,
             ConfigPage::SessionPermissionMode => self.daemon_permission_picker()?,
@@ -81,6 +81,14 @@ impl App {
             }
             ConfigPage::AdvisorOn => self.advisor_on_picker()?,
         };
+        match page {
+            // A page of values opens on the one in force, so Enter keeps it.
+            ConfigPage::SessionModel
+            | ConfigPage::SessionPermissionMode
+            | ConfigPage::Setting { .. }
+            | ConfigPage::AdvisorOn => picker.select_badged(),
+            ConfigPage::Root | ConfigPage::Category { .. } => {}
+        }
         Some(picker.with_config_page(page.clone()))
     }
 

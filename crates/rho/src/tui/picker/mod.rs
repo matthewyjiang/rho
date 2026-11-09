@@ -403,6 +403,18 @@ impl UiPicker {
         self.action.is_model_list()
     }
 
+    /// Selects the first row badged as selected, such as a value page's
+    /// current value; leaves the selection alone when none is.
+    pub(super) fn select_badged(&mut self) {
+        if let Some(index) = self.items.iter().position(|item| {
+            item.badge
+                .as_ref()
+                .is_some_and(|badge| badge.tone == PickerBadgeTone::Selected)
+        }) {
+            self.selected = index;
+        }
+    }
+
     pub(in crate::tui) fn space_confirms_selection(&self) -> bool {
         self.space_confirms
             || (self.filter.is_empty()
