@@ -117,13 +117,16 @@ impl SessionRuntime {
                 // one the model was not told about.
                 store.set_model(previous);
                 self.built.tools.set_advisor_registered(!registered);
-                let _ = self
+                if let Err(undo) = self
                     .rebuild_runtime(
                         &config,
                         self.permission.mode,
                         self.permission.writes.clone(),
                     )
-                    .await;
+                    .await
+                {
+                    tracing::warn!(%undo, "could not restore the tool list after a failed advisor change");
+                }
                 return Err(error);
             }
         };

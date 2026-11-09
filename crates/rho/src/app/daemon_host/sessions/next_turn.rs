@@ -60,6 +60,17 @@ impl LoadedSession {
         let changes = next.take_next_turn_settings(&global);
         let mut notices = Vec::new();
         let mut failed = false;
+        // Compaction first: the advisor's rebuild reads `next`, which must
+        // hold only compaction settings the session took.
+        if changes.compaction {
+            if let Err(error) = runtime.set_compaction(&next) {
+                failed = true;
+                notices.push(format!("could not apply the compaction settings: {error}"));
+                next.auto_compact = current.auto_compact;
+                next.compact_threshold_percent = current.compact_threshold_percent;
+                next.compact_target_percent = current.compact_target_percent;
+            }
+        }
         if changes.advisor {
             let model = advisor_available(&next)
                 .then(|| advisor_model(&next).cloned())
@@ -72,15 +83,6 @@ impl LoadedSession {
                     next.advisor_mode = current.advisor_mode;
                     restore_advisor_model(&mut next, &current);
                 }
-            }
-        }
-        if changes.compaction {
-            if let Err(error) = runtime.set_compaction(&next) {
-                failed = true;
-                notices.push(format!("could not apply the compaction settings: {error}"));
-                next.auto_compact = current.auto_compact;
-                next.compact_threshold_percent = current.compact_threshold_percent;
-                next.compact_target_percent = current.compact_target_percent;
             }
         }
         if !notices.is_empty() {
