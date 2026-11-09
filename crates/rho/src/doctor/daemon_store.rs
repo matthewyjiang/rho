@@ -3,7 +3,7 @@
 //! never starting one, since a daemon a client started from an SSH login
 //! can lack what the OS store needs while this process has it.
 
-use rho_protocol::{CredentialStoreStatus, StoreSelectedBy};
+use rho_protocol::{CredentialStoreKind, CredentialStoreStatus, StoreSelectedBy};
 
 use super::report::{DoctorCheck, DoctorCheckId, DoctorStatus};
 use crate::credential_store::wire;
@@ -51,7 +51,12 @@ pub(crate) fn daemon_store_check(store: &DaemonStore) -> DoctorCheck {
                         ),
                         StoreSelectedBy::Config => (
                             DoctorStatus::Fail,
-                            "choose another with `rho credential-store set file`",
+                            match status.store {
+                                CredentialStoreKind::File => {
+                                    "choose another with `rho credential-store set os`"
+                                }
+                                _ => "choose another with `rho credential-store set file`",
+                            },
                         ),
                         // A newer daemon's selector: this build cannot say
                         // what changes it.

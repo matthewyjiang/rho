@@ -1,7 +1,5 @@
 use pretty_assertions::assert_eq;
 
-use rho_protocol::CredentialStoreKind;
-
 use super::*;
 
 fn reported(
@@ -68,4 +66,27 @@ fn row_severity_follows_the_daemons_store() {
         })
         .collect();
     assert_eq!(actual, expected);
+}
+
+// Covers: when config chose a store the daemon cannot reach, the hint names
+// the other store, never the one that failed.
+// Owner: doctor daemon credential store row (pure)
+#[test]
+fn a_chosen_unreachable_store_points_at_the_other_one() {
+    let hint = |store| {
+        daemon_store_check(&reported(
+            store,
+            StoreSelectedBy::Config,
+            Some("unreachable"),
+        ))
+        .hint
+        .unwrap()
+    };
+    assert_eq!(
+        [
+            hint(CredentialStoreKind::Os).contains("rho credential-store set file"),
+            hint(CredentialStoreKind::File).contains("rho credential-store set os"),
+        ],
+        [true, true]
+    );
 }
