@@ -42,7 +42,8 @@ impl LoadedSession {
     /// with the next-turn settings of the global config as it is now,
     /// applied to `runtime` when they changed since the session's last
     /// turn. Tells the session's clients what the model was told, and what
-    /// could not be applied, which leaves the session as it was.
+    /// could not be applied, which leaves the session as it was until a
+    /// later turn applies it.
     pub(super) async fn config_for_turn(&self, runtime: &mut SessionRuntime) -> Arc<Config> {
         let (current, applied) = {
             let config = self.lock_config();
@@ -58,6 +59,7 @@ impl LoadedSession {
         let mut next = (*current).clone();
         let changes = next.take_next_turn_settings(&global);
         let mut notices = Vec::new();
+        let mut failed = false;
         if changes.advisor {
             let model = advisor_available(&next)
                 .then(|| advisor_model(&next).cloned())
@@ -65,6 +67,7 @@ impl LoadedSession {
             match runtime.set_advisor(model, &next).await {
                 Ok(notice) => notices.extend(notice),
                 Err(error) => {
+                    failed = true;
                     notices.push(format!("could not apply the advisor settings: {error}"));
                     next.advisor_mode = current.advisor_mode;
                     restore_advisor_model(&mut next, &current);
@@ -73,6 +76,7 @@ impl LoadedSession {
         }
         if changes.compaction {
             if let Err(error) = runtime.set_compaction(&next) {
+                failed = true;
                 notices.push(format!("could not apply the compaction settings: {error}"));
                 next.auto_compact = current.auto_compact;
                 next.compact_threshold_percent = current.compact_threshold_percent;
@@ -89,7 +93,9 @@ impl LoadedSession {
         let next = Arc::new(next);
         *self.lock_config() = SessionConfig {
             config: Arc::clone(&next),
-            applied: global,
+            // A change that failed is tried again at the next turn; the
+            // flags only name what still differs from `global`.
+            applied: if failed { applied } else { global },
         };
         next
     }
