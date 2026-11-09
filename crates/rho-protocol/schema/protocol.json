@@ -1168,6 +1168,17 @@
           "minimum": 0,
           "type": "integer"
         },
+        "upgrade": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PendingUpgrade"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set once the daemon's executable was replaced: the daemon re-executes\nthe new one in place as soon as nothing would be cut short."
+        },
         "uptime_secs": {
           "format": "uint64",
           "minimum": 0,
@@ -1240,6 +1251,11 @@
         {
           "const": "daemon_stopping",
           "description": "The daemon is stopping.",
+          "type": "string"
+        },
+        {
+          "const": "restarting",
+          "description": "The daemon is re-executing in place, for an upgrade or a restart, and\ncloses the connection next. Connect again, which waits until the\ndaemon answers, and attach with the client's cursor; the restarted\ndaemon answers with [`Replay::Reset`].",
           "type": "string"
         },
         {
@@ -2502,6 +2518,26 @@
       ],
       "description": "Where a path an operation names lies."
     },
+    "PendingUpgrade": {
+      "description": "A replaced executable the daemon re-executes once it is idle.",
+      "properties": {
+        "version": {
+          "description": "The rho version the replacement reports.",
+          "type": "string"
+        },
+        "waiting_for": {
+          "description": "How many things the upgrade waits for: jobs in progress (queued,\nrunning, or waiting for input), logins under way, and sessions with\nwork of their own, such as a background process.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "waiting_for"
+      ],
+      "type": "object"
+    },
     "PermissionMode": {
       "anyOf": [
         {
@@ -2850,6 +2886,14 @@
         }
       ],
       "description": "How an input request closed, as [`super::SessionEvent::InputResolved`]\ntells every attached client."
+    },
+    "RestartParams": {
+      "description": "Params of [`DAEMON_RESTART`].",
+      "type": "object"
+    },
+    "RestartResponse": {
+      "description": "Result of [`DAEMON_RESTART`]: the daemon has begun restarting. It detaches\nevery attached client as [`crate::DetachReason::Restarting`], finishes\nin-flight responses, closes connections, records the turns it interrupts\nas interrupted, and re-executes its executable as the same process. A\nclient that connects meanwhile waits until the restarted daemon answers.",
+      "type": "object"
     },
     "SecretMap": {
       "additionalProperties": {
@@ -5791,6 +5835,14 @@
       },
       "result": {
         "$ref": "#/$defs/ConfigSetResponse"
+      }
+    },
+    "rho/daemon/restart": {
+      "params": {
+        "$ref": "#/$defs/RestartParams"
+      },
+      "result": {
+        "$ref": "#/$defs/RestartResponse"
       }
     },
     "rho/daemon/status": {

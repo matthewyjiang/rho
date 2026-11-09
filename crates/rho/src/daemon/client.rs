@@ -1,11 +1,23 @@
 //! Connecting to a running daemon.
 
-use std::{io, path::PathBuf};
+use std::{io, path::PathBuf, time::Duration};
 
 use rho_protocol::{Client, ClientError, ClientInfo, HelloResponse, Notifications};
 use tokio::net::UnixStream;
 
 use super::paths::DaemonPaths;
+
+/// How long a client waits, once the daemon began restarting in place, for
+/// the restarted daemon to answer: `rho daemon restart`, and a client
+/// attaching again after the daemon detached it as restarting.
+//
+// Tripwire. The restart first waits up to `DRAIN_TIMEOUT` (4 s, in
+// `daemon_host::sessions`) from the request for the turns under way to save,
+// as a stop does, then re-executes. Measured with the debug binary, all of
+// `rho daemon restart` with no sessions, 150 runs each: 22 ms median (25 ms
+// max) idle, and 78 ms median (306 ms max) with all 12 cores saturated.
+// 10 s covers the drain and a cold page cache for the new binary.
+pub(crate) const DAEMON_RESTART_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ConnectError {

@@ -197,7 +197,9 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
         return Ok(EarlyDispatch::Handled(plugins_cli::run(command, cli)));
     }
     if let Some(Command::Daemon { command }) = &cli.command {
-        return Ok(EarlyDispatch::Handled(daemon_cli::run(*command).await));
+        return Ok(EarlyDispatch::Handled(
+            daemon_cli::run(command.clone()).await,
+        ));
     }
     if let Some(Command::Doctor { json }) = &cli.command {
         return Ok(EarlyDispatch::Handled(doctor_cli::run(*json, cli).await));

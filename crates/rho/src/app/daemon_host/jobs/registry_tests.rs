@@ -126,6 +126,41 @@ fn a_closed_registry_interrupts_its_turns_and_takes_no_new_jobs() {
     assert_eq!(states(store.load().unwrap()), expected);
 }
 
+// Covers: an upgrade closes the registry only while no job is in progress,
+// and not after a turn that ran since it found the daemon idle, which may
+// have left work its other checks missed; once closed, no turn starts, so a
+// prompt that races the upgrade is refused rather than interrupted (#1713).
+// Owner: daemon job registry upgrade.
+#[test]
+fn an_upgrade_closes_the_registry_only_while_idle() {
+    let home = TempDir::new().unwrap();
+    let registry = JobRegistry::open(JobStore::open(home.path()).unwrap());
+    let job = JobRecord::new_session(
+        JobId::generate(),
+        PathBuf::from("/work"),
+        rho_sdk::SessionId::new(),
+    );
+    let id = job.id.clone();
+    registry.register(job).unwrap();
+
+    let before = registry.idle().unwrap();
+    registry.start_turn(&id).unwrap();
+    let while_running = registry.idle();
+    registry
+        .record(&id, JobEvent::TurnEnded(TurnEnd::Completed))
+        .unwrap();
+    // A turn that ran since the daemon was found idle may have left work.
+    let after_a_turn = registry.close_if_still(before);
+    let idle = registry.idle().unwrap();
+    let still_idle = registry.close_if_still(idle);
+    let next_turn = registry.start_turn(&id);
+
+    assert_eq!(
+        (while_running, after_a_turn, still_idle, next_turn),
+        (None, false, true, Err(StartTurnError::Closed))
+    );
+}
+
 // Covers: what a reopen finds for a session (#1661): nothing when no job ran
 // its turns (another session's, or a finished subagent run that wrote it,
 // does not count); the latest of its session jobs otherwise; and the job

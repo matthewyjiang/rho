@@ -9,7 +9,9 @@
 //! are in [`tools`], signing it in and out over its socket in [`auth`],
 //! and the interactive logins it relays to clients, `rho login` among
 //! them, in [`login`]; `rho mcp serve` driving its sessions is in [`mcp`];
-//! reading and changing settings over its socket is in [`config`].
+//! reading and changing settings over its socket is in [`config`];
+//! re-executing the daemon in place, for an upgrade or `rho daemon
+//! restart`, is in [`upgrade`].
 #![cfg(unix)]
 
 use std::{
@@ -54,6 +56,8 @@ mod mcp;
 
 #[path = "support/daemon_config.rs"]
 mod config;
+#[path = "support/daemon_upgrade.rs"]
+mod upgrade;
 
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;

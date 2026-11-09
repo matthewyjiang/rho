@@ -129,7 +129,7 @@ async fn the_stop_answers_a_queued_change() {
     tokio::pin!(configure);
     assert!(futures_util::poll!(configure.as_mut()).is_pending());
 
-    sessions.begin_stop();
+    sessions.begin_stop(rho_protocol::DetachReason::DaemonStopping);
     let answered = timeout(TEST_BUDGET, configure)
         .await
         .expect("the stop answers the change")

@@ -16,17 +16,18 @@ use rho_protocol::{
     SessionRenameParams, SessionRenameResponse, SessionSteerParams, SessionSteerResponse,
     SessionUnsteerParams, SessionUnsteerResponse, StoreSelectedBy, Subscription, PROTOCOL_VERSION,
 };
-use rho_sdk::CancellationToken;
+
+use super::shutdown::{Ending, Shutdown};
 
 /// Answers `status` with [`test_status`] and, like the real host, stops the
-/// daemon on `rho/daemon/stop` by cancelling its shutdown token. It hosts no
+/// daemon on `rho/daemon/stop` by requesting its shutdown. It hosts no
 /// sessions.
 pub(super) struct StubHost {
-    shutdown: CancellationToken,
+    shutdown: Shutdown,
 }
 
 impl StubHost {
-    pub(super) fn new(shutdown: &CancellationToken) -> Arc<Self> {
+    pub(super) fn new(shutdown: &Shutdown) -> Arc<Self> {
         Arc::new(Self {
             shutdown: shutdown.clone(),
         })
@@ -48,16 +49,21 @@ pub(super) fn test_status() -> DaemonStatus {
             selected_by: StoreSelectedBy::Environment,
             unreachable: None,
         },
+        upgrade: None,
     }
 }
 
 impl Service for StubHost {
+    async fn restart(&self) {
+        self.shutdown.request(Ending::Restart, |_| {});
+    }
+
     async fn status(&self) -> DaemonStatus {
         test_status()
     }
 
     async fn stop(&self) {
-        self.shutdown.cancel();
+        self.shutdown.request(Ending::Stop, |_| {});
     }
 
     async fn new_session(&self, _: SessionNewParams) -> Result<SessionNewResponse, RpcError> {

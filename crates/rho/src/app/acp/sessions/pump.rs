@@ -380,6 +380,13 @@ impl Pump {
                 Attachment::Stale,
                 AcpError::internal_error().data("rho daemon is stopping"),
             ),
+            // Re-executing in place: the next request attaches again on a
+            // new connection, which waits for the restarted daemon. Only a
+            // prompt waiting on a turn the restart interrupted hears of it.
+            DetachReason::Restarting => self.end(
+                Attachment::Stale,
+                AcpError::internal_error().data("rho daemon restarted"),
+            ),
             DetachReason::Deleted => {
                 let error = AcpError::resource_not_found(Some(self.context.acp_id.0.to_string()));
                 self.end(Attachment::Deleted, error);

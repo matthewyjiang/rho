@@ -20,25 +20,27 @@ use crate::{
         AuthChooseStore, AuthChooseStoreParams, AuthChooseStoreResponse, AuthKey, AuthKeyParams,
         AuthKeyResponse, AuthList, AuthListParams, AuthListResponse, AuthLogin, AuthLoginCancel,
         AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse,
-        AuthLogout, AuthLogoutParams, AuthLogoutResponse, ConfigGet, ConfigGetParams,
+        AuthLogout, AuthLogoutParams, AuthLogoutResponse, ClientInfo, ConfigGet, ConfigGetParams,
         ConfigRegister, ConfigRegisterParams, ConfigRegisterResponse, ConfigSchema,
         ConfigSchemaMethod, ConfigSchemaParams, ConfigSet, ConfigSetParams, ConfigSetResponse,
-        Hello, JobList, JobListParams, JobListResponse, Method, SessionAnswer, SessionAnswerParams,
-        SessionAnswerResponse, SessionAttach, SessionAttachParams, SessionAttachResponse,
-        SessionCancel, SessionCancelParams, SessionCancelResponse, SessionConfigure,
-        SessionConfigureParams, SessionConfigureResponse, SessionDelete, SessionDeleteParams,
-        SessionDeleteResponse, SessionDetach, SessionDetachParams, SessionDetachResponse,
-        SessionHold, SessionHoldParams, SessionHoldResponse, SessionId, SessionList,
-        SessionListParams, SessionListResponse, SessionMcp, SessionMcpInventory, SessionMcpParams,
-        SessionNew, SessionNewParams, SessionNewResponse, SessionObserve, SessionObserveParams,
-        SessionPrompt, SessionPromptParams, SessionPromptResponse, SessionRename,
-        SessionRenameParams, SessionRenameResponse, SessionSteer, SessionSteerParams,
-        SessionSteerResponse, SessionUnsteer, SessionUnsteerParams, SessionUnsteerResponse, Status,
-        Stop, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT,
-        CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_STATUS, DAEMON_STOP, HELLO,
-        JOB_LIST, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE,
-        SESSION_DELETE, SESSION_DETACH, SESSION_HOLD, SESSION_LIST, SESSION_MCP, SESSION_NEW,
-        SESSION_OBSERVE, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
+        Hello, JobList, JobListParams, JobListResponse, Method, Restart, RestartParams,
+        RestartResponse, SessionAnswer, SessionAnswerParams, SessionAnswerResponse, SessionAttach,
+        SessionAttachParams, SessionAttachResponse, SessionCancel, SessionCancelParams,
+        SessionCancelResponse, SessionConfigure, SessionConfigureParams, SessionConfigureResponse,
+        SessionDelete, SessionDeleteParams, SessionDeleteResponse, SessionDetach,
+        SessionDetachParams, SessionDetachResponse, SessionHold, SessionHoldParams,
+        SessionHoldResponse, SessionId, SessionList, SessionListParams, SessionListResponse,
+        SessionMcp, SessionMcpInventory, SessionMcpParams, SessionNew, SessionNewParams,
+        SessionNewResponse, SessionObserve, SessionObserveParams, SessionPrompt,
+        SessionPromptParams, SessionPromptResponse, SessionRename, SessionRenameParams,
+        SessionRenameResponse, SessionSteer, SessionSteerParams, SessionSteerResponse,
+        SessionUnsteer, SessionUnsteerParams, SessionUnsteerResponse, Status, Stop,
+        AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT,
+        CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART, DAEMON_STATUS,
+        DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL,
+        SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD, SESSION_LIST, SESSION_MCP,
+        SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER,
+        SESSION_UNSTEER,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -69,6 +71,14 @@ use crate::{
 /// dropping that session's [`Subscription`], which the publisher sees as
 /// [`crate::Published::Gone`].
 pub trait Service: Send + Sync {
+    /// Called once a connection's `rho/hello` is accepted, before its answer
+    /// is written, with the client the hello names. It runs in the
+    /// connection's read loop, so it must return without waiting. Does
+    /// nothing unless overridden.
+    fn hello(&self, client: &ClientInfo) {
+        let _ = client;
+    }
+
     /// Answers `rho/daemon/status`.
     fn status(&self) -> impl Future<Output = DaemonStatus> + Send;
 
@@ -77,6 +87,12 @@ pub trait Service: Send + Sync {
     /// acknowledgement is written once this resolves, and that shutdown does
     /// not cancel it.
     fn stop(&self) -> impl Future<Output = ()> + Send;
+
+    /// Handles `rho/daemon/restart`: begin re-executing the daemon in place,
+    /// which, like a stop, resolves the `shutdown` future passed to
+    /// [`serve_connection`]. The acknowledgement is written once this
+    /// resolves, and that shutdown does not cancel it.
+    fn restart(&self) -> impl Future<Output = ()> + Send;
 
     /// Handles `rho/session/new`: open a session and register its job.
     fn new_session(
@@ -437,10 +453,13 @@ where
         let response = match Message::parse(&line) {
             Ok(Message::Request(Request { id, method, params })) => {
                 match connection.route(&method, params, info) {
-                    Ok(Route::Answered(result)) => Response {
-                        id: Some(id),
-                        outcome: Ok(result),
-                    },
+                    Ok(Route::Hello { response, client }) => {
+                        service.hello(&client);
+                        Response {
+                            id: Some(id),
+                            outcome: Ok(response),
+                        }
+                    }
                     Ok(Route::Call(call)) => {
                         let responder = Responder::new(id, &outbox);
                         let service = Arc::clone(&service);
@@ -552,8 +571,9 @@ enum Connection {
 
 /// Where one request's answer comes from.
 enum Route {
-    /// The protocol answered it in place, in read order.
-    Answered(Value),
+    /// The protocol accepted the handshake from `client` and answers it in
+    /// place, once the service heard of it.
+    Hello { response: Value, client: ClientInfo },
     /// The service answers it, in its own task.
     Call(ServiceCall),
     /// `rho/session/attach` or `rho/session/observe`: the service answers
@@ -575,6 +595,7 @@ enum Route {
 enum ServiceCall {
     Status,
     Stop,
+    Restart,
     NewSession(SessionNewParams),
     PromptSession(SessionPromptParams),
     CancelSession(SessionCancelParams),
@@ -622,7 +643,10 @@ impl Connection {
                     capabilities: info.capabilities.clone(),
                 })?;
                 *self = Self::Ready;
-                Ok(Route::Answered(response))
+                Ok(Route::Hello {
+                    response,
+                    client: hello.client,
+                })
             }
             (Self::AwaitingHello, method) => Err(RpcError::new(
                 ErrorCode::HandshakeRequired,
@@ -653,6 +677,9 @@ impl ServiceCall {
         match method {
             DAEMON_STATUS => decode_params::<Status>(params).map(|StatusParams {}| Self::Status),
             DAEMON_STOP => decode_params::<Stop>(params).map(|StopParams {}| Self::Stop),
+            DAEMON_RESTART => {
+                decode_params::<Restart>(params).map(|RestartParams {}| Self::Restart)
+            }
             SESSION_NEW => decode_params::<SessionNew>(params).map(Self::NewSession),
             SESSION_PROMPT => decode_params::<SessionPrompt>(params).map(Self::PromptSession),
             SESSION_CANCEL => decode_params::<SessionCancel>(params).map(Self::CancelSession),
@@ -699,6 +726,7 @@ impl ServiceCall {
             | Self::RenameSession(SessionRenameParams { session, .. }) => Some(session),
             Self::Status
             | Self::Stop
+            | Self::Restart
             | Self::NewSession(_)
             | Self::ListSessions(_)
             | Self::DeleteSession(_)
@@ -721,6 +749,10 @@ impl ServiceCall {
             Self::Stop => {
                 service.stop().await;
                 encode_result::<Stop>(&StopResponse {})
+            }
+            Self::Restart => {
+                service.restart().await;
+                encode_result::<Restart>(&RestartResponse {})
             }
             Self::NewSession(params) => {
                 encode_result::<SessionNew>(&service.new_session(params).await?)

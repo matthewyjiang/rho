@@ -5,7 +5,8 @@
 //! environment (`RHO_HOME`, `XDG_RUNTIME_DIR`, `RHO_LOG`, `JOURNAL_STREAM`);
 //! `crate::daemon` takes the resolved values. `start` is the clients' ensure
 //! running path ([`connect`]) as a command; `status` and `stop` never start a
-//! daemon.
+//! daemon. `restart` re-executes the running daemon in place (#1713), as a
+//! replaced executable does once the daemon is idle.
 
 use crate::cli::{Command, DaemonCommand};
 
@@ -15,12 +16,16 @@ use {
         config_repository::ConfigRepository,
         daemon_host::{DaemonHost, JobRecords, UNLOAD_IDLE_AFTER},
     },
-    crate::daemon::{self, cli_client_info, DaemonPaths},
+    crate::daemon::{
+        self, cli_client_info, DaemonPaths, Ending, Executable, Handoff, Served, Shutdown,
+        DAEMON_RESTART_TIMEOUT,
+    },
     crate::logging::{self, LogSink},
     anyhow::Context,
-    rho_protocol::{methods, ClientError, DaemonStatus, StatusParams, StopParams},
-    rho_sdk::CancellationToken,
-    std::{sync::Arc, time::Duration},
+    rho_protocol::{
+        methods, ClientError, DaemonStatus, PendingUpgrade, RestartParams, StatusParams, StopParams,
+    },
+    std::{ffi::OsString, sync::Arc, time::Duration},
 };
 
 /// Why a daemon command fails on Windows.
@@ -37,14 +42,24 @@ pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
     let paths = paths()?;
     let run = DaemonCommand::Run {
         unload_idle_after: None,
+        exec_handoff: None,
     };
     match command.unwrap_or(run) {
-        DaemonCommand::Run { unload_idle_after } => {
-            run_foreground(&paths, unload_idle_after.unwrap_or(UNLOAD_IDLE_AFTER)).await
+        DaemonCommand::Run {
+            unload_idle_after,
+            exec_handoff,
+        } => {
+            let handoff = exec_handoff
+                .map(|value| value.parse::<Handoff>())
+                .transpose()
+                .map_err(|error| anyhow::anyhow!("invalid --exec-handoff: {error}"))?;
+            let unload_idle_after = unload_idle_after.unwrap_or(UNLOAD_IDLE_AFTER);
+            run_foreground(&paths, unload_idle_after, handoff).await
         }
         DaemonCommand::Start => start().await,
         DaemonCommand::Status { json } => status(&paths, json).await,
         DaemonCommand::Stop => stop(&paths).await,
+        DaemonCommand::Restart => restart(&paths).await,
     }
 }
 
@@ -125,15 +140,27 @@ pub(super) fn runs_daemon(command: Option<&Command>) -> bool {
 // exit with no sessions, 15 runs each: median 20 ms idle, max 44 ms with all
 // 24 cores saturated. A daemon with turns under way also waits up to
 // `DRAIN_TIMEOUT` (4 s, in `daemon_host::sessions`) for them to save, which
-// this covers: that wait runs from the stop request. Draining that lets turns
-// finish (#1713) needs its own budget.
+// this covers: that wait runs from the stop request. An upgrade waits for
+// its turns to finish before it asks to restart, so it needs no budget.
 #[cfg(unix)]
 const DAEMON_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Runs the daemon until it stops, unloading each session once it sat idle
-/// for `unload_idle_after`.
+/// for `unload_idle_after`. A daemon re-executed in place takes over its
+/// predecessor's lock and socket from `handoff`.
 #[cfg(unix)]
-async fn run_foreground(paths: &DaemonPaths, unload_idle_after: Duration) -> anyhow::Result<()> {
+async fn run_foreground(
+    paths: &DaemonPaths,
+    unload_idle_after: Duration,
+    handoff: Option<Handoff>,
+) -> anyhow::Result<()> {
+    // Without it the daemon runs on, only unable to restart in place.
+    let executable = Executable::of_this_process()
+        .inspect_err(|error| {
+            tracing::warn!(%error, "could not find the daemon's executable; it cannot upgrade or restart in place");
+        })
+        .ok()
+        .map(Arc::new);
     paths.prepare_runtime_dir()?;
     // Read once: changing the filter or the sink needs a daemon restart.
     let filter = std::env::var("RHO_LOG")
@@ -166,7 +193,14 @@ async fn run_foreground(paths: &DaemonPaths, unload_idle_after: Duration) -> any
         default_hook(info);
     }));
 
-    let lock = daemon::acquire_lock(paths)?;
+    let (lock, inherited) = match handoff {
+        None => (daemon::acquire_lock(paths)?, None),
+        Some(handoff) => {
+            let (lock, socket) = daemon::take_handoff(paths, handoff)
+                .context("could not take over the restarted daemon's lock and socket")?;
+            (lock, Some(socket))
+        }
+    };
     // Install handlers before the socket exists so an early SIGTERM still
     // shuts down cleanly.
     let mut signals = super::shutdown_signal::ShutdownSignals::install()?;
@@ -179,7 +213,10 @@ async fn run_foreground(paths: &DaemonPaths, unload_idle_after: Duration) -> any
             paths.state_dir.display()
         )
     })?;
-    let bound = daemon::bind(paths, lock)?;
+    let bound = match inherited {
+        None => daemon::bind(paths, lock)?,
+        Some(socket) => daemon::rebind(paths, lock, socket)?,
+    };
     if !journald {
         eprintln!(
             "rho daemon running (pid {}); logs: {}",
@@ -188,7 +225,7 @@ async fn run_foreground(paths: &DaemonPaths, unload_idle_after: Duration) -> any
         );
     }
 
-    let shutdown = CancellationToken::new();
+    let shutdown = Shutdown::default();
     let host = Arc::new(DaemonHost::new(
         jobs,
         &paths.home,
@@ -201,6 +238,10 @@ async fn run_foreground(paths: &DaemonPaths, unload_idle_after: Duration) -> any
         let host = Arc::clone(&host);
         tokio::spawn(async move { host.unload_idle_sessions(unload_idle_after).await })
     };
+    let upgrades = executable.clone().map(|executable| {
+        let host = Arc::clone(&host);
+        tokio::spawn(async move { host.upgrade_when_replaced(&executable).await })
+    });
     let on_signal = Arc::clone(&host);
     // The first signal asks for a graceful shutdown. Shutdown waits for every
     // request already read and for the turns under way to save, so a signal
@@ -225,29 +266,61 @@ async fn run_foreground(paths: &DaemonPaths, unload_idle_after: Duration) -> any
         }
     });
     // `stop_requested` is when the stop was asked for, whether by `rho
-    // daemon stop` or a signal: the turns' drain budget runs from then, not
-    // from when the requests in flight finished.
+    // daemon stop`, `rho daemon restart`, an upgrade, or a signal: the turns'
+    // drain budget runs from then, not from when the requests in flight
+    // finished.
     let (served, stop_requested) = tokio::join!(
         async {
             let served = bound.serve(Arc::clone(&host), shutdown.clone()).await;
-            // Serving ends only once the stop was asked for; cancelling
-            // again is a no-op that keeps the join from hanging if that
-            // ever changes.
-            shutdown.cancel();
+            // Serving ends only once the stop was asked for; asking here
+            // keeps the join from hanging if that ever changes.
+            if !shutdown.is_requested() {
+                shutdown.request(Ending::Stop, |_| {});
+            }
             served
         },
         async {
-            shutdown.cancelled().await;
+            shutdown.requested().await;
             tokio::time::Instant::now()
         },
     );
     // Still holding the lock, so no other daemon starts, and `rho daemon
     // stop` keeps waiting, until the turns are saved and recorded.
     // Also waits for a session the idle unload is tearing down.
-    host.stop_sessions(stop_requested).await;
+    let drained = host.stop_sessions(stop_requested).await;
     unloads.abort();
+    if let Some(upgrades) = upgrades {
+        upgrades.abort();
+    }
     signal_task.abort();
-    Ok(served.release()?)
+    match (served, shutdown.ending(), executable) {
+        (Served::Restarting(restarting), Ending::Restart, Some(executable)) if drained => {
+            let args = |handoff| reexec_args(unload_idle_after, handoff);
+            Err(restarting.reexec(&executable, args)).context("could not re-execute the rho daemon")
+        }
+        // A turn stuck past the drain budget holds processes only exiting
+        // ends, as a stop does; the next client starts a new daemon.
+        (served, ..) => Ok(served.release()?),
+    }
+}
+
+/// The arguments that run `rho daemon run` again in place, as it ran,
+/// handing it the daemon's lock and socket.
+#[cfg(unix)]
+fn reexec_args(unload_idle_after: Duration, handoff: Handoff) -> Vec<OsString> {
+    let unload_idle_after = humantime::format_duration(unload_idle_after).to_string();
+    let handoff = handoff.to_string();
+    [
+        "daemon",
+        "run",
+        "--unload-idle-after",
+        &unload_idle_after,
+        "--exec-handoff",
+        &handoff,
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect()
 }
 
 /// Opens the credential store every session's provider reads, once, as the
@@ -321,16 +394,26 @@ fn status_text(status: &DaemonStatus) -> String {
         jobs,
         socket,
         credential_store,
+        upgrade,
         started_at: _,
     } = status;
     let uptime = humantime::format_duration(Duration::from_secs(*uptime_secs));
+    let upgrade = match upgrade {
+        None => String::new(),
+        Some(PendingUpgrade {
+            version,
+            waiting_for,
+        }) => {
+            format!("\n  upgrade      pending to {version} ({waiting_for} in progress)")
+        }
+    };
     let (store, chosen) = crate::credential_store::wire::words(credential_store);
     let reach = match &credential_store.unreachable {
         None => String::new(),
         Some(reason) => format!("\n  unreachable  {reason}"),
     };
     format!(
-        "rho daemon is running\n  pid          {pid}\n  version      {version}\n  protocol     {protocol}\n  uptime       {uptime}\n  jobs         {jobs}\n  socket       {}\n  credentials  {store} store, chosen {chosen}{reach}\n",
+        "rho daemon is running\n  pid          {pid}\n  version      {version}\n  protocol     {protocol}\n  uptime       {uptime}\n  jobs         {jobs}{upgrade}\n  socket       {}\n  credentials  {store} store, chosen {chosen}{reach}\n",
         socket.display()
     )
 }
@@ -364,3 +447,82 @@ async fn stop(paths: &DaemonPaths) -> anyhow::Result<()> {
         ),
     }
 }
+
+/// `rho daemon restart`: asks the daemon to re-execute in place, then waits
+/// until the restarted daemon answers. A daemon of an incompatible protocol
+/// cannot take the request, so it is stopped and a new one started, as is
+/// one when none runs. So is a restarted daemon older than this `rho`: its
+/// executable is not the one this `rho` was installed as, as when an
+/// installer switched a symlink to a new version's directory.
+#[cfg(unix)]
+async fn restart(paths: &DaemonPaths) -> anyhow::Result<()> {
+    let daemon::Connection {
+        client,
+        mut notifications,
+        hello,
+    } = match daemon::connect(paths, cli_client_info()).await {
+        Ok(connection) => connection,
+        Err(daemon::ConnectError::NotRunning) => {
+            let started = connect().await?;
+            println!(
+                "rho daemon was not running; started it (pid {})",
+                started.hello.daemon.pid
+            );
+            return Ok(());
+        }
+        Err(daemon::ConnectError::Handshake(ClientError::VersionMismatch(_))) => {
+            stop(paths).await?;
+            let started = connect().await?;
+            println!("rho daemon started (pid {})", started.hello.daemon.pid);
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    client
+        .request::<methods::Restart>(&RestartParams {})
+        .await?;
+    let pid = hello.daemon.pid;
+    let restarted = tokio::time::timeout(DAEMON_RESTART_TIMEOUT, async {
+        // The daemon closes this connection as it restarts. The restarted
+        // daemon answers on the same socket, and a connection made before
+        // it does waits in the socket's backlog.
+        while notifications.recv().await.is_some() {}
+        drop(client);
+        daemon::connect(paths, cli_client_info()).await
+    })
+    .await;
+    match restarted {
+        Ok(Ok(restarted)) => {
+            let daemon::Connection { hello, .. } = restarted;
+            let daemon = hello.daemon;
+            if crate::update::version_is_newer(env!("CARGO_PKG_VERSION"), &daemon.version) {
+                stop(paths).await?;
+                let started = connect().await?;
+                println!(
+                    "rho daemon restarted as this rho (pid {}, version {}); it was still {}",
+                    started.hello.daemon.pid,
+                    started.hello.daemon.version,
+                    daemon.version
+                );
+                return Ok(());
+            }
+            println!(
+                "rho daemon restarted (pid {}, version {})",
+                daemon.pid, daemon.version
+            );
+            Ok(())
+        }
+        Ok(Err(error)) => Err(anyhow::Error::new(error).context(format!(
+            "rho daemon (pid {pid}) did not come back after restarting; see {}",
+            paths.log_file.display()
+        ))),
+        Err(_) => anyhow::bail!(
+            "rho daemon (pid {pid}) did not answer within DAEMON_RESTART_TIMEOUT ({DAEMON_RESTART_TIMEOUT:?}) of restarting; see {}",
+            paths.log_file.display()
+        ),
+    }
+}
+
+#[cfg(all(test, unix))]
+#[path = "daemon_cli_tests.rs"]
+mod tests;
