@@ -4,7 +4,7 @@ use std::{
     collections::BTreeMap,
     io,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Mutex, MutexGuard, PoisonError,
     },
 };
@@ -32,6 +32,16 @@ pub(in crate::app::daemon_host) struct JobRegistry {
     /// unfinished jobs, or an upgrade found none in progress; no job is
     /// added and no turn starts after.
     closed: AtomicBool,
+    /// Counts the jobs that went in progress, under the `jobs` lock, so an
+    /// upgrade can tell that none did since it last found the daemon idle.
+    started: AtomicU64,
+}
+
+/// The daemon found idle, as of [`JobRegistry::idle`]: no job was in
+/// progress then.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::app::daemon_host) struct Idle {
+    started: u64,
 }
 
 /// Why a job was not added.
@@ -105,6 +115,7 @@ impl JobRegistry {
                     .collect(),
             ),
             closed: AtomicBool::new(false),
+            started: AtomicU64::new(0),
         };
         registry.interrupt_unfinished(&mut registry.lock());
         registry
@@ -122,6 +133,9 @@ impl JobRegistry {
             return Err(RegisterError::Closed);
         }
         self.store.write(&record)?;
+        if record.state.in_progress() {
+            self.started.fetch_add(1, Ordering::Relaxed);
+        }
         jobs.insert(record.id.clone(), record);
         Ok(())
     }
@@ -212,7 +226,11 @@ impl JobRegistry {
         event: JobEvent,
     ) -> Result<JobState, TransitionError> {
         let record = jobs.get_mut(id).ok_or(UnknownJob)?;
+        let was_in_progress = record.state.in_progress();
         apply(record, event)?;
+        if record.state.in_progress() && !was_in_progress {
+            self.started.fetch_add(1, Ordering::Relaxed);
+        }
         persist(&self.store, record);
         Ok(record.state.clone())
     }
@@ -248,17 +266,27 @@ impl JobRegistry {
         }
     }
 
-    /// For an upgrade: closes the registry, as [`Self::close`] would, but
-    /// only while no job is in progress, so no turn is cut short; whether it
-    /// did. Checked and applied under one lock, so a turn either started
-    /// before, and keeps the upgrade waiting, or is refused after.
-    pub(in crate::app::daemon_host) fn close_when_idle(&self) -> bool {
+    /// For an upgrade: the daemon as idle now, if no job is in progress.
+    pub(in crate::app::daemon_host) fn idle(&self) -> Option<Idle> {
         let jobs = self.lock();
-        let idle = !jobs.values().any(|record| record.state.in_progress());
-        if idle {
+        (!jobs.values().any(|record| record.state.in_progress())).then(|| Idle {
+            started: self.started.load(Ordering::Relaxed),
+        })
+    }
+
+    /// For an upgrade: closes the registry, as [`Self::close`] would, but
+    /// only while it stayed `idle`, no job having gone in progress since;
+    /// whether it did. Checked and applied under one lock, so a turn either
+    /// started before, and keeps the upgrade waiting, or is refused after,
+    /// and the upgrade's checks between `idle` and this saw no turn's
+    /// leftovers appear.
+    pub(in crate::app::daemon_host) fn close_if_still(&self, idle: Idle) -> bool {
+        let _jobs = self.lock();
+        let still = self.started.load(Ordering::Relaxed) == idle.started;
+        if still {
             self.closed.store(true, Ordering::Relaxed);
         }
-        idle
+        still
     }
 
     /// For the daemon's stop, once its turns saved: records every job
