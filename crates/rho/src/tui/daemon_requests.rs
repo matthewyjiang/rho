@@ -40,33 +40,53 @@ enum Control {
     },
 }
 
-/// The revision each namespace's last write of this TUI produced, by the
-/// revision the TUI stamped it with. A quick second write still carries
-/// that stamp, since the daemon's `rho/config/changed` for the first has
-/// not reached the cache yet; it is sent against the first write's result
-/// instead, so it is not refused as a conflict with the TUI's own change.
-/// A change by anyone else still makes the daemon refuse it.
+/// The revisions this TUI's own writes produced in each namespace, so a
+/// write sent before the daemon's `rho/config/changed` for the last one
+/// reached the cache does not repeat a stale revision and get refused as a
+/// conflict with the TUI's own change. While the cache holds any revision
+/// of the chain, everything after it is this TUI's own, so the write is
+/// sent against the latest. A change by anyone else breaks the chain: the
+/// next own write that still saves starts a new one, and the daemon
+/// refuses any write made against the older state.
 #[derive(Default)]
-struct OwnWrites(HashMap<ConfigNamespace, (ConfigRevision, ConfigRevision)>);
+struct OwnWrites(HashMap<ConfigNamespace, OwnChain>);
+
+struct OwnChain {
+    /// Every revision of the chain, oldest first; the last is the latest.
+    revisions: Vec<ConfigRevision>,
+}
 
 impl OwnWrites {
-    fn revision_for(&self, namespace: &ConfigNamespace, stamped: ConfigRevision) -> ConfigRevision {
-        match self.0.get(namespace) {
-            Some((base, saved)) if *base == stamped => saved.clone(),
-            _ => stamped,
-        }
+    /// The revision to send a write the TUI stamped `stamped` against.
+    fn revision_for(
+        &mut self,
+        namespace: &ConfigNamespace,
+        stamped: ConfigRevision,
+    ) -> ConfigRevision {
+        let Some(chain) = self.0.get_mut(namespace) else {
+            return stamped;
+        };
+        let Some(seen) = chain
+            .revisions
+            .iter()
+            .position(|revision| *revision == stamped)
+        else {
+            return stamped;
+        };
+        // The cache has seen up to `seen`; nothing before it is needed.
+        chain.revisions.drain(..seen);
+        chain.revisions.last().cloned().unwrap_or(stamped)
     }
 
-    /// Records that a write stamped `stamped` saved `saved`. A write that
-    /// was itself chained keeps the original stamp, which is what the
-    /// cache still holds.
-    fn saved(
-        &mut self,
-        namespace: ConfigNamespace,
-        stamped: ConfigRevision,
-        saved: ConfigRevision,
-    ) {
-        self.0.insert(namespace, (stamped, saved));
+    /// Records that a write sent against `sent` saved `saved`.
+    fn saved(&mut self, namespace: ConfigNamespace, sent: ConfigRevision, saved: ConfigRevision) {
+        let chain = self.0.entry(namespace).or_insert_with(|| OwnChain {
+            revisions: Vec::new(),
+        });
+        if chain.revisions.last() != Some(&sent) {
+            chain.revisions = vec![sent];
+        }
+        chain.revisions.push(saved);
     }
 }
 
@@ -124,11 +144,11 @@ impl DaemonRequests {
                         // `rho/config/changed`, not this response, updates
                         // what the TUI shows; the response only lets the
                         // next write build on this one.
-                        let base = params.revision.clone();
-                        params.revision = writes.revision_for(&params.namespace, base.clone());
+                        params.revision =
+                            writes.revision_for(&params.namespace, params.revision.clone());
                         let view = match control_link.request::<ConfigSet>(&params).await {
                             Ok(response) => {
-                                writes.saved(params.namespace, base, response.revision);
+                                writes.saved(params.namespace, params.revision, response.revision);
                                 continue;
                             }
                             Err(error) if error.error_code() == Some(ErrorCode::ConfigConflict) => {

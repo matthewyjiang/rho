@@ -6,26 +6,45 @@ use super::OwnWrites;
 // Covers: writes sent faster than the daemon's change notifications each
 // build on the revision the last one saved, rather than repeating the
 // cache's stale stamp and being refused as a conflict with this TUI's own
-// change; once the cache catches up, its stamp is sent as is, and another
-// namespace keeps its own chain.
+// change, also when a notification lands mid-burst and the cache holds a
+// revision between; once the cache holds the latest, or a revision another
+// client made, its stamp goes out unchanged; another namespace keeps its
+// own chain.
 // Owner: daemon settings writes (pure).
 #[test]
 fn quick_writes_chain_on_the_last_saved_revision() {
     let rev = |text: &str| ConfigRevision::new(text);
     let agent = ConfigNamespace::Agent;
     let mut writes = OwnWrites::default();
-    let mut sent = Vec::new();
-    // Three writes stamped with the cache's r0, each saving the next revision.
-    for saved in ["r1", "r2", "r3"] {
-        sent.push(writes.revision_for(&agent, rev("r0")));
-        writes.saved(agent.clone(), rev("r0"), rev(saved));
-    }
-    // The cache caught up to r3: its stamp goes out unchanged.
-    sent.push(writes.revision_for(&agent, rev("r3")));
+    let write = |writes: &mut OwnWrites, stamped: &str, saved: Option<&str>| {
+        let sent = writes.revision_for(&agent, rev(stamped));
+        if let Some(saved) = saved {
+            writes.saved(agent.clone(), sent.clone(), rev(saved));
+        }
+        sent
+    };
+    let sent = vec![
+        // A burst stamped with the cache's r0.
+        write(&mut writes, "r0", Some("r1")),
+        write(&mut writes, "r0", Some("r2")),
+        write(&mut writes, "r0", Some("r3")),
+        // r2's notification landed; the cache is still behind r3.
+        write(&mut writes, "r2", Some("r4")),
+        // The cache holds the latest.
+        write(&mut writes, "r4", None),
+        // Another client's revision is not this TUI's to remap.
+        write(&mut writes, "x1", None),
+    ];
     let tui = ConfigNamespace::Client {
         name: rho_protocol::ClientName::new("tui").unwrap(),
     };
-    sent.push(writes.revision_for(&tui, rev("r0")));
+    let other = writes.revision_for(&tui, rev("r0"));
 
-    assert_eq!(sent, ["r0", "r1", "r2", "r3", "r0"].map(rev).to_vec());
+    assert_eq!(
+        (sent, other),
+        (
+            ["r0", "r1", "r2", "r3", "r4", "x1"].map(rev).to_vec(),
+            rev("r0")
+        )
+    );
 }
