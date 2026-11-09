@@ -30,7 +30,7 @@ mod unix {
         app::{
             config_repository::ConfigRepository,
             mcp_server::{
-                self,
+                self, token_store,
                 tokens::{Rotation, TokenSet},
                 HttpOptions,
             },
@@ -71,25 +71,24 @@ mod unix {
 
     pub(in crate::app) fn token(command: &McpTokenCommand, cli: &Cli) -> anyhow::Result<()> {
         open_credential_store(cli)?;
-        let store = UntrackedCredentialStore;
-        let mut tokens = TokenSet::load(&store)?;
         match command {
             McpTokenCommand::Rotate {
                 name,
                 scope,
                 workspace,
             } => {
-                let secret = tokens.rotate(
-                    name,
-                    Rotation {
-                        access: scope.map(|scope| match scope {
-                            McpTokenScope::Read => Access::Read,
-                            McpTokenScope::Write => Access::Write,
-                        }),
-                        workspaces: workspace.clone(),
-                    },
-                )?;
-                tokens.save(&store)?;
+                let secret = token_store::update(|tokens| {
+                    tokens.rotate(
+                        name,
+                        Rotation {
+                            access: scope.map(|scope| match scope {
+                                McpTokenScope::Read => Access::Read,
+                                McpTokenScope::Write => Access::Write,
+                            }),
+                            workspaces: workspace.clone(),
+                        },
+                    )
+                })?;
                 // The secret alone on stdout, so a script can capture it.
                 println!("{secret}");
                 eprintln!(
@@ -97,6 +96,7 @@ mod unix {
                 );
             }
             McpTokenCommand::List { json } => {
+                let tokens = TokenSet::load(&UntrackedCredentialStore)?;
                 if *json {
                     println!("{}", serde_json::to_string_pretty(&token_list(&tokens))?);
                 } else if tokens.tokens.is_empty() {
@@ -118,10 +118,12 @@ mod unix {
                 }
             }
             McpTokenCommand::Revoke { name } => {
-                if !tokens.revoke(name) {
-                    anyhow::bail!("no MCP server token named {name:?}");
-                }
-                tokens.save(&store)?;
+                token_store::update(|tokens| {
+                    if !tokens.revoke(name) {
+                        anyhow::bail!("no MCP server token named {name:?}");
+                    }
+                    Ok(())
+                })?;
                 println!("revoked token {name:?}");
             }
         }

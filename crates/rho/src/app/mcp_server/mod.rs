@@ -25,6 +25,7 @@ use rmcp::{
 use super::session_control::{Access, Action, Grant, SessionControl};
 
 mod http_server;
+pub(crate) mod token_store;
 pub(crate) mod tokens;
 
 pub(super) use http_server::{serve_http, HttpOptions};
