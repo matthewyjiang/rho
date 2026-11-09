@@ -193,6 +193,11 @@ impl PermissionMode {
                 CapabilityKind::Write | CapabilityKind::Process => PolicyDecision::Deny {
                     reason: "capability is not allowed in plan mode".into(),
                 },
+                // Starting or driving another session is acting, not
+                // planning.
+                CapabilityKind::SessionControl => PolicyDecision::Deny {
+                    reason: "session control is not allowed in plan mode".into(),
+                },
                 CapabilityKind::Read
                 | CapabilityKind::Network
                 | CapabilityKind::Skill
@@ -204,11 +209,11 @@ impl PermissionMode {
             Self::Auto | Self::AllowEdits | Self::Supervised => match kind {
                 // Empty reason: the approval prompt itself is the signal. Keep a
                 // specific reason only when it adds information the chrome lacks.
-                CapabilityKind::Write | CapabilityKind::Process => {
-                    PolicyDecision::RequireApproval {
-                        reason: String::new(),
-                    }
-                }
+                CapabilityKind::Write
+                | CapabilityKind::Process
+                | CapabilityKind::SessionControl => PolicyDecision::RequireApproval {
+                    reason: String::new(),
+                },
                 CapabilityKind::Read
                 | CapabilityKind::Network
                 | CapabilityKind::Skill

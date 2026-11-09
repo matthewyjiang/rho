@@ -82,7 +82,9 @@ fn config_value_parsing_trims_and_rejects_unknown_values() {
 }
 
 // Covers: the per-mode capability table: bypass allows everything, plan
-// denies and supervised/allow-edits/auto ask only for write and process.
+// denies and supervised/allow-edits/auto ask only for write, process, and
+// session control, so watching another session is free and acting on one
+// is gated (#1714).
 // Owner: application permission policy
 #[test]
 fn decision_for_follows_the_mode_table() {
@@ -90,11 +92,18 @@ fn decision_for_follows_the_mode_table() {
         // Boilerplate reasons stay empty; the approval surface is the signal.
         reason: String::new(),
     };
-    let plan_deny = PolicyDecision::Deny {
-        reason: "capability is not allowed in plan mode".into(),
-    };
     for kind in all_capability_kinds() {
-        let gated = matches!(kind, CapabilityKind::Write | CapabilityKind::Process);
+        let plan_deny = PolicyDecision::Deny {
+            reason: match kind {
+                CapabilityKind::SessionControl => "session control is not allowed in plan mode",
+                _ => "capability is not allowed in plan mode",
+            }
+            .into(),
+        };
+        let gated = matches!(
+            kind,
+            CapabilityKind::Write | CapabilityKind::Process | CapabilityKind::SessionControl
+        );
         let gate = |decision: &PolicyDecision| {
             if gated {
                 decision.clone()
@@ -704,7 +713,7 @@ fn human_grants_are_stronger_than_classifier_grants() {
     }
 }
 
-fn all_capability_kinds() -> [CapabilityKind; 6] {
+fn all_capability_kinds() -> [CapabilityKind; 7] {
     [
         CapabilityKind::Read,
         CapabilityKind::Write,
@@ -712,5 +721,6 @@ fn all_capability_kinds() -> [CapabilityKind; 6] {
         CapabilityKind::Network,
         CapabilityKind::Skill,
         CapabilityKind::InstructionDiscovery,
+        CapabilityKind::SessionControl,
     ]
 }

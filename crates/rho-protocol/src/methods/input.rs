@@ -157,10 +157,53 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         path: Option<PathBuf>,
     },
+    /// Act on another agent session: `session` is the session the tool
+    /// acts on, absent for one it starts, `workspace` that session's
+    /// workspace, and `text` what it sends, absent for a cancel.
+    ControlSession {
+        action: SessionControlAction,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session: Option<super::SessionId>,
+        workspace: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+    },
     /// A value a newer daemon sends that this crate does not know.
     #[serde(other)]
     #[schemars(extend("x-rho-other" = true))]
     Unknown,
+}
+
+/// What an [`Operation::ControlSession`] does to the session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SessionControlAction {
+    /// Start a session with a first prompt.
+    New,
+    /// Start a session's next turn.
+    Prompt,
+    /// Give a running turn input for its next model request.
+    Steer,
+    /// Cancel the turn in progress.
+    Cancel,
+    /// A value a newer daemon sends that this crate does not know.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+impl SessionControlAction {
+    /// The action as the wire names it; `unknown` for [`Self::Unknown`].
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::New => "new",
+            Self::Prompt => "prompt",
+            Self::Steer => "steer",
+            Self::Cancel => "cancel",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 /// Where a path an operation names lies.

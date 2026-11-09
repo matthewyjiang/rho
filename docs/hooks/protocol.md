@@ -37,6 +37,12 @@ One bounded JSON document on stdin:
 }
 ```
 
+Other operations are `read_path`, `write_path`, `discover_instructions`,
+`network_access`, `load_skill`, and `control_session`, which names the
+`action` a tool takes on another agent session (`new`, `prompt`, `steer`, or
+`cancel`), the `session`, `null` for one it starts, its `workspace`, and the
+`text` it sends, `null` for a cancel.
+
 `after_tool_use` uses the same capability summary for the first request that
 call passed to authorize. Multi-capability calls still emit one
 `before_tool_use` per request; the after payload reports only the first. The

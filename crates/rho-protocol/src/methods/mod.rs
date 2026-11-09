@@ -92,7 +92,8 @@ pub use input::{
     ApprovalAsk, ApprovalSource, Ask, Choice, DefaultAnswer, DefaultStyle, InputAnswer,
     InputRequest, InputRequestId, InputTimeout, Operation, PathScope, PermissionMode,
     PlanApprovalAsk, Question, QuestionAsk, Resolution, Selection, SessionAnswerParams,
-    SessionAnswerResponse, SessionHoldParams, SessionHoldResponse, SESSION_ANSWER, SESSION_HOLD,
+    SessionAnswerResponse, SessionControlAction, SessionHoldParams, SessionHoldResponse,
+    SESSION_ANSWER, SESSION_HOLD,
 };
 pub use job::{
     Budget, JobId, JobKind, JobListParams, JobListResponse, JobState, JobSummary, QueuePlace,

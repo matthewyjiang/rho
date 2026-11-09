@@ -14,9 +14,9 @@ use crate::methods::{
     AnswerStop, ApprovalSource, Ask, AuthKind, AuthStatus, Budget, CardTone, CommandKind,
     CompactionStatus, ContentBlock, CredentialStoreKind, DefaultStyle, DetachReason, JobKind,
     JobState, LoginOutcome, Operation, PathScope, PermissionMode, PlanStatus, ReasoningLevel,
-    Resolution, Selection, SessionEvent, SessionGoalPhase, SessionMcpMode, SessionMcpStatus,
-    StoreSelectedBy, ToolContent, ToolKind, ToolStatus, TurnErrorKind, TurnOutcome,
-    UncheckedReason, UnsteerOutcome,
+    Resolution, Selection, SessionControlAction, SessionEvent, SessionGoalPhase, SessionMcpMode,
+    SessionMcpStatus, StoreSelectedBy, ToolContent, ToolKind, ToolStatus, TurnErrorKind,
+    TurnOutcome, UncheckedReason, UnsteerOutcome,
 };
 
 // Covers: the committed schema/protocol.json is what the wire types
@@ -56,7 +56,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 45] = [
+    let cases: [(&str, bool); 46] = [
         (
             "SessionGoalPhase",
             reads_as(unseen(), SessionGoalPhase::Unknown),
@@ -89,6 +89,10 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
         ("TurnErrorKind", reads_as(unseen(), TurnErrorKind::Unknown)),
         ("TurnOutcome", reads_as(unseen_tag(), TurnOutcome::Unknown)),
         ("Selection", reads_as(unseen(), Selection::Unknown)),
+        (
+            "SessionControlAction",
+            reads_as(unseen(), SessionControlAction::Unknown),
+        ),
         ("DefaultStyle", reads_as(unseen(), DefaultStyle::Unknown)),
         ("Ask", reads_as(unseen_kind(), Ask::Unknown)),
         (

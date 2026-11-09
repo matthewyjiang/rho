@@ -10,8 +10,8 @@ use rho_protocol::{ApprovalAsk, ApprovalSource, Operation, PathScope as WirePath
 use rho_sdk::{CapabilityKind, PathScope};
 
 use super::render::{
-    format_direct_invocation, format_path_scope, sanitize_controls, title, Actor, ApprovalDetails,
-    ApprovalPrompt,
+    format_direct_invocation, format_path_scope, sanitize_controls, session_control_details, title,
+    Actor, ApprovalDetails, ApprovalPrompt,
 };
 
 impl ApprovalPrompt {
@@ -41,6 +41,7 @@ fn kind(operation: &Operation) -> Option<CapabilityKind> {
         Operation::RunProcess { .. } => Some(CapabilityKind::Process),
         Operation::Network { .. } => Some(CapabilityKind::Network),
         Operation::LoadSkill { .. } => Some(CapabilityKind::Skill),
+        Operation::ControlSession { .. } => Some(CapabilityKind::SessionControl),
         // `Unknown`, or an operation a newer daemon sends.
         _ => None,
     }
@@ -87,6 +88,17 @@ fn details(operation: &Operation) -> ApprovalDetails {
                 .map(|path| format!("path {}", sanitize_controls(&path.to_string_lossy())))
                 .collect(),
         },
+        Operation::ControlSession {
+            action,
+            session,
+            workspace,
+            text,
+        } => session_control_details(
+            action.as_str(),
+            session.as_ref().map(rho_protocol::SessionId::as_str),
+            workspace,
+            text.as_deref(),
+        ),
         // `Unknown`, or an operation a newer daemon sends: the title says
         // this rho cannot name it.
         _ => ApprovalDetails::default(),
@@ -104,3 +116,7 @@ fn path_scope(scope: &WirePathScope) -> String {
     };
     format_path_scope(&scope)
 }
+
+#[cfg(test)]
+#[path = "daemon_ask_tests.rs"]
+mod tests;
