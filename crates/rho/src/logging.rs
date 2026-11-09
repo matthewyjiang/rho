@@ -42,14 +42,32 @@ pub(crate) fn install_from_env() {
 pub(crate) fn install(filter: &str, sink: LogSink) {
     let env_filter = tracing_subscriber::EnvFilter::try_new(filter)
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
-    let builder = tracing_subscriber::fmt().with_env_filter(env_filter);
+    let builder = tracing_subscriber::fmt();
     let _ = match sink {
-        LogSink::Terminal => builder.with_writer(std::io::stderr).try_init(),
-        LogSink::Journal => builder
-            .with_ansi(false)
-            .without_time()
+        LogSink::Terminal => builder
+            .with_env_filter(env_filter)
             .with_writer(std::io::stderr)
             .try_init(),
-        LogSink::File(file) => builder.with_ansi(false).with_writer(file).try_init(),
+        LogSink::Journal => journal_format(builder)
+            .with_env_filter(env_filter)
+            .with_writer(std::io::stderr)
+            .try_init(),
+        LogSink::File(file) => builder
+            .with_env_filter(env_filter)
+            .with_ansi(false)
+            .with_writer(file)
+            .try_init(),
     };
+}
+
+/// The journal sink's line format: plain, without timestamps, since journald
+/// adds its own and does not render colors. Tests render events through it
+/// to check the lines the daemon logs.
+pub(crate) fn journal_format(
+    builder: tracing_subscriber::fmt::SubscriberBuilder,
+) -> tracing_subscriber::fmt::SubscriberBuilder<
+    tracing_subscriber::fmt::format::DefaultFields,
+    tracing_subscriber::fmt::format::Format<tracing_subscriber::fmt::format::Full, ()>,
+> {
+    builder.with_ansi(false).without_time()
 }

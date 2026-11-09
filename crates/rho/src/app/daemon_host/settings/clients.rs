@@ -6,7 +6,9 @@
 //! A schema lives until the daemon stops, and a client registers again
 //! after a restart. A key the file holds that the schema does not list is
 //! left on disk and not served, so an older client cannot drop a newer
-//! one's settings.
+//! one's settings. A file that stops reading keeps its last good values in
+//! force, as `config.toml` does; a value its setting refuses reads as the
+//! default.
 
 use std::{
     collections::HashMap,
@@ -21,9 +23,11 @@ use rho_protocol::{
 use tokio::sync::watch;
 
 use super::{
-    check_revision, file, file::Stat, read_for_change, refused, wire_errors, write_locked,
+    check_revision,
+    file::{self, Edit, Stat},
+    refused, wire_errors,
 };
-use crate::config::{client_specs_problem, spec_values, write_changes};
+use crate::config::{client_specs_problem, spec_values, write_changes, ConfigDocument};
 
 /// Every registered client's namespace.
 pub(super) struct Clients {
@@ -36,6 +40,8 @@ struct Client {
     specs: Vec<SettingSpec>,
     /// The file's `stat` at the last read; `None` before the first.
     seen: Option<Stat>,
+    /// The file as it last read, served while it does not read.
+    good: ConfigDocument,
     state: watch::Sender<Arc<ConfigGetResponse>>,
 }
 
@@ -59,6 +65,7 @@ impl Clients {
         let entry = registered.entry(client).or_insert_with(|| Client {
             specs: Vec::new(),
             seen: None,
+            good: ConfigDocument::default(),
             state: watch::Sender::new(Arc::new(ConfigGetResponse {
                 revision: ConfigRevision::new(""),
                 values: Default::default(),
@@ -88,19 +95,14 @@ impl Clients {
         let path = self.path(name);
         let mut registered = self.registered.lock().await;
         let client = registered.get_mut(name).ok_or_else(|| unregistered(name))?;
+        // Locked before the revision check, so the file the client read is
+        // the one changed.
+        let mut edit = Edit::open(&path)?;
         client.refresh(&path);
         check_revision(&client.state.borrow().revision, revision)?;
-        let mut doc = read_for_change(&path)?;
-        write_changes(&mut doc, &client.specs, changes).map_err(refused)?;
-        std::fs::create_dir_all(&self.dir).map_err(|error| {
-            RpcError::new(
-                ErrorCode::InternalError,
-                format!("could not create {}: {error}", self.dir.display()),
-            )
-        })?;
-        write_locked(&path, &doc)?;
-        client.seen = None;
-        let revision = client.refresh(&path);
+        write_changes(&mut edit.doc, &client.specs, changes).map_err(refused)?;
+        let (stat, doc) = edit.save()?;
+        let revision = client.publish(stat, Ok(doc), &path);
         Ok(ConfigSetResponse { revision })
     }
 
@@ -117,14 +119,27 @@ impl Client {
         if self.seen == Some(stat) {
             return self.state.borrow().revision.clone();
         }
+        self.publish(stat, file::read(path), path)
+    }
+
+    /// Publishes the values of `read`, the file at `path` as of `stat`, or
+    /// its last good values with why it did not read. Returns the revision
+    /// now in force.
+    fn publish(
+        &mut self,
+        stat: Stat,
+        read: Result<ConfigDocument, file::ReadError>,
+        path: &Path,
+    ) -> ConfigRevision {
         self.seen = Some(stat);
-        let (values, errors) = match file::read(path) {
+        let (values, errors) = match read {
             Ok(doc) => {
                 let (values, errors) = spec_values(&doc, &self.specs);
+                self.good = doc;
                 (values, wire_errors(&errors))
             }
             Err(error) => {
-                let (values, _) = spec_values(&Default::default(), &self.specs);
+                let (values, _) = spec_values(&self.good, &self.specs);
                 let error = WireError {
                     key: None,
                     message: error.message(path),

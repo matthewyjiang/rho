@@ -512,7 +512,13 @@ fn node_resolution_reuses_the_authorized_executable_identity() {
         &available_tools,
         &executables,
     );
-    let resolved = super::super::resolve_nodes_with_host(&program, &host).unwrap();
+    let launchable = super::super::plan_host::ensure_program_launchable(
+        &program,
+        &catalog,
+        crate::workflow::HandleLaunch::Supported,
+    )
+    .unwrap();
+    let resolved = super::super::resolve_nodes_with_host(launchable, &host).unwrap();
 
     let crate::workflow::ResolvedNode::Command(command) = &resolved[&node_id] else {
         panic!("command node resolved as an agent");

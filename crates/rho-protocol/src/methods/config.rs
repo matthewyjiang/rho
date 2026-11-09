@@ -385,6 +385,8 @@ pub struct ConfigSetParams {
     /// The revision the changes were made against. A stale one is refused
     /// with [`crate::ErrorCode::ConfigConflict`].
     pub revision: ConfigRevision,
+    /// Applied in order, so a setting another belongs to, such as an
+    /// internal agent's model before its reasoning, comes first.
     pub changes: Vec<SettingChange>,
 }
 
@@ -412,6 +414,15 @@ pub enum SettingChange {
     },
     /// Remove the setting from the file, so its default applies.
     Reset { key: SettingKey },
+}
+
+impl SettingChange {
+    /// The setting the change is to.
+    pub fn key(&self) -> &SettingKey {
+        match self {
+            Self::Set { key, .. } | Self::Reset { key } => key,
+        }
+    }
 }
 
 /// Result of [`CONFIG_SET`].

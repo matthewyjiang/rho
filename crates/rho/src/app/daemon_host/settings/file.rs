@@ -1,12 +1,22 @@
 //! What the settings store needs of a file: whether it changed since the
-//! store last read it, its document, and the revision of what it holds.
+//! store last read it, its document, an edit no other writer can interleave
+//! with, and the revision of what it holds.
 
-use std::{collections::BTreeMap, io, os::unix::fs::MetadataExt, path::Path, time::SystemTime};
+use std::{
+    collections::BTreeMap,
+    io,
+    os::unix::fs::MetadataExt,
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 
-use rho_protocol::{ConfigRevision, SettingEntry, SettingKey};
+use rho_protocol::{ConfigRevision, ErrorCode, RpcError, SettingEntry, SettingKey};
 use sha2::{Digest, Sha256};
 
-use crate::config::ConfigDocument;
+use crate::{
+    config::ConfigDocument,
+    config_writer::edit_lock::{acquire_edit_lock, EditFileLock},
+};
 
 /// A file's state as `stat` reports it. Comparing two tells whether the
 /// file was written in between, including by an editor that saves by
@@ -61,6 +71,64 @@ pub(super) fn read(path: &Path) -> Result<ConfigDocument, ReadError> {
             .map_err(|error| ReadError::Parse(error.to_string().trim_end().to_owned())),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(ConfigDocument::default()),
         Err(error) => Err(ReadError::Io(error)),
+    }
+}
+
+/// A settings file open for a change, under its edit lock, which every
+/// writer of the file outside the daemon takes too: `rho login` recording a
+/// login, choosing a credential store, an agent edit. Nothing else writes
+/// the file between [`Edit::open`]'s read and [`Edit::save`].
+pub(super) struct Edit {
+    _lock: EditFileLock,
+    path: PathBuf,
+    original: String,
+    /// The file as it is now; the change edits it in place.
+    pub(super) doc: ConfigDocument,
+}
+
+impl Edit {
+    /// Locks `path`, creating its directory, and reads it. A lock another
+    /// writer holds is a conflict the client can retry after reading the
+    /// settings again; any other failure is not.
+    pub(super) fn open(path: &Path) -> Result<Self, RpcError> {
+        let lock = acquire_edit_lock(path).map_err(|error| {
+            if error.kind() == io::ErrorKind::WouldBlock {
+                RpcError::new(
+                    ErrorCode::ConfigConflict,
+                    format!(
+                        "{} is being edited; read the settings again",
+                        path.display()
+                    ),
+                )
+            } else {
+                RpcError::new(
+                    ErrorCode::InternalError,
+                    format!("could not lock {}: {error}", path.display()),
+                )
+            }
+        })?;
+        let doc = read(path).map_err(|error| match error {
+            ReadError::Parse(_) => RpcError::new(ErrorCode::ConfigInvalid, error.message(path)),
+            ReadError::Io(_) => RpcError::new(ErrorCode::InternalError, error.message(path)),
+        })?;
+        Ok(Self {
+            _lock: lock,
+            path: path.to_owned(),
+            original: doc.text(),
+            doc,
+        })
+    }
+
+    /// Writes the document if the change altered it, then unlocks. Returns
+    /// the file's `stat` taken under the lock, so the store's next touch
+    /// does not read its own write back, and the document as saved.
+    pub(super) fn save(self) -> Result<(Stat, ConfigDocument), RpcError> {
+        if self.doc.text() != self.original {
+            self.doc
+                .write(&self.path)
+                .map_err(|error| RpcError::new(ErrorCode::InternalError, format!("{error:#}")))?;
+        }
+        Ok((Stat::of(&self.path), self.doc))
     }
 }
 

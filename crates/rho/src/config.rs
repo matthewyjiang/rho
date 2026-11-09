@@ -39,16 +39,16 @@ pub(crate) use setting::{
     SettingMeta,
 };
 
-#[cfg(test)]
-pub(crate) use setting::default_fits_kind;
-
 #[path = "config_registry.rs"]
 mod registry;
 
 #[path = "config_wire.rs"]
 mod wire;
+#[cfg(test)]
+pub(crate) use wire::default_fits_kind;
 pub(crate) use wire::{
-    agent_schema, agent_values, client_specs_problem, spec_values, write_changes,
+    agent_schema, agent_values, apply_agent_changes, client_specs_problem, spec_values,
+    write_changes, AgentChangeError,
 };
 
 #[path = "config_migrate_2x.rs"]

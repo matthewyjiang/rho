@@ -4,7 +4,7 @@ use rho_protocol::{
     SettingValue, ValueSource,
 };
 
-use super::{agent_schema, agent_values, client_specs_problem, write_changes};
+use super::{agent_values, apply_agent_changes, client_specs_problem, AgentChangeError};
 use crate::config::{document::ConfigDocument, load::resolve};
 
 fn set(key: &str, value: SettingValue) -> SettingChange {
@@ -20,27 +20,30 @@ fn reset(key: &str) -> SettingChange {
     }
 }
 
-// Covers: a protocol change lands in `config.toml` by its setting's kind,
-// keeping the rest of the file; a value the kind refuses, or a key no
-// setting has, is an error naming the key, the limit, and the value, and
-// the file is left as it was; a model on another provider takes that
-// provider's default auth.
-// Owner: config wire codec.
+// Covers: a protocol change lands in `config.toml` through its typed
+// setting, keeping the rest of the file; every key no setting has, then
+// every value a setting refuses, is an error naming the key, the limit,
+// and the value, and the file is left as it was; a model on another provider takes
+// that provider's default auth; resetting an internal agent's model drops
+// its whole table, reasoning included, so the agent falls back as a fresh
+// file would; its reasoning cannot be set while it has no model.
+// Owner: config wire changes.
 #[test]
-fn agent_changes_write_by_kind_or_name_what_they_refuse() {
-    let before = "# mine\n[behavior]\nagent_concurrency = 4 # slots\nrtk = true\n\n[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n";
-    /// The file after the changes, or each error that refused them.
-    type Written = Result<&'static str, Vec<&'static str>>;
+fn agent_changes_write_by_setting_or_name_what_they_refuse() {
+    let head = "# mine\n[behavior]\nagent_concurrency = 4 # slots\nrtk = true\n\n";
+    let model = "[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n";
+    let advisor = "\n[internal_agents.advisor]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\nreasoning = \"high\"\n";
+    let before = format!("{head}{model}{advisor}");
     let cases: Vec<(&str, Vec<SettingChange>, Written)> = vec![
         (
             "a whole number replaces the value and keeps its comment",
             vec![set("behavior.agent_concurrency", SettingValue::Integer(8))],
-            Ok("# mine\n[behavior]\nagent_concurrency = 8 # slots\nrtk = true\n\n[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n"),
+            Ok(before.replace("= 4 #", "= 8 #")),
         ),
         (
             "a reset removes the key",
             vec![reset("behavior.rtk")],
-            Ok("# mine\n[behavior]\nagent_concurrency = 4 # slots\n\n[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n"),
+            Ok(before.replace("rtk = true\n", "")),
         ),
         (
             "another provider takes its default auth",
@@ -51,7 +54,22 @@ fn agent_changes_write_by_kind_or_name_what_they_refuse() {
                     model: "claude-opus-4-8".into(),
                 }),
             )],
-            Ok("# mine\n[behavior]\nagent_concurrency = 4 # slots\nrtk = true\n\n[model]\nprovider = \"anthropic\"\nmodel = \"claude-opus-4-8\"\nauth = \"anthropic-api-key\"\n"),
+            Ok(format!("{head}[model]\nprovider = \"anthropic\"\nmodel = \"claude-opus-4-8\"\nauth = \"anthropic-api-key\"\n{advisor}")),
+        ),
+        (
+            "resetting an internal agent's model drops its reasoning too",
+            vec![reset("internal_agents.advisor")],
+            Ok(format!("{head}{model}")),
+        ),
+        (
+            "an internal agent's reasoning needs its model",
+            vec![
+                reset("internal_agents.advisor"),
+                set("internal_agents.advisor.reasoning", SettingValue::Text("low".into())),
+            ],
+            Err(vec![
+                "`internal_agents.advisor.reasoning`: cannot hold that value; set the setting it belongs to first",
+            ]),
         ),
         (
             "every refused change is named",
@@ -62,26 +80,110 @@ fn agent_changes_write_by_kind_or_name_what_they_refuse() {
                 set("display.zen_mode", SettingValue::Bool(true)),
             ],
             Err(vec![
+                "`display.zen_mode`: no such setting",
                 "`behavior.agent_concurrency`: must be at most 64; got 65",
                 "`behavior.permission_mode`: must be one of bypass, auto, allow_edits, plan, supervised; got \"yolo\"",
                 "`behavior.rtk`: takes true or false",
-                "`display.zen_mode`: no such setting",
             ]),
         ),
     ];
-    let specs = agent_schema().settings;
     for (name, changes, expected) in cases {
-        let mut doc = ConfigDocument::parse(before).unwrap();
-        let written = write_changes(&mut doc, &specs, &changes)
-            .map(|()| doc.text())
-            .map_err(|errors| errors.iter().map(ToString::to_string).collect::<Vec<_>>());
-        assert_eq!(
-            written,
-            expected
-                .map(str::to_owned)
-                .map_err(|errors| errors.into_iter().map(str::to_owned).collect()),
-            "{name}"
-        );
+        assert_eq!(applied(&before, &changes), expected, "{name}");
+    }
+}
+
+/// The file after the changes, or each error that refused them.
+type Written = Result<String, Vec<&'static str>>;
+
+/// The file `before` becomes with `changes`, or each error that refused
+/// them, prefixed `file: ` when the file is to blame; a refused change
+/// must leave the file as it was.
+fn applied(before: &str, changes: &[SettingChange]) -> Written {
+    let mut doc = ConfigDocument::parse(before).unwrap();
+    let result = apply_agent_changes(&mut doc, changes);
+    if result.is_err() {
+        assert_eq!(doc.text(), before, "a refused change leaves the file");
+    }
+    result.map(|_| doc.text()).map_err(|error| {
+        let (prefix, errors) = match error {
+            AgentChangeError::Refused(errors) => ("", errors),
+            AgentChangeError::FileInvalid(errors) => ("file: ", errors),
+        };
+        errors
+            .iter()
+            .map(|error| &*format!("{prefix}{error}").leak())
+            .collect()
+    })
+}
+
+fn rho_model(provider: &str, model: &str) -> SettingValue {
+    SettingValue::Model(ModelSelection::Rho {
+        provider: provider.into(),
+        model: model.into(),
+    })
+}
+
+// Covers: a change touches only what it changes: pinning the model an
+// alias names writes the concrete model; setting one internal agent leaves
+// another's entry, which inherits the conversation model, as written; a
+// set to the default value is written, so it outlasts a later default.
+// A hand edit that no longer loads is repaired by a change to the keys it
+// fails on, and refused as the file's fault otherwise. A value above what
+// the file can store, or the credential store, is refused.
+// Owner: config wire changes.
+#[test]
+fn agent_changes_touch_only_their_keys_and_can_repair_the_file() {
+    let aliases = "\n[model.aliases]\nfast = \"openai/gpt-5.5\"\n";
+    let judge = "[internal_agents.goal-judge]\nreasoning = \"high\"\n";
+    let broken = "[output]\nmax_output_bytes = 0\n";
+    /// A case's name, file, changes, and what `applied` returns.
+    type Case = (&'static str, String, Vec<SettingChange>, Written);
+    let cases: Vec<Case> = vec![
+        (
+            "pinning an alias's model writes the model",
+            format!("[model]\nprovider = \"openai\"\nmodel = \"@fast\"\nauth = \"api-key\"\n{aliases}"),
+            vec![set("model", rho_model("openai", "gpt-5.5"))],
+            Ok(format!("[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n{aliases}")),
+        ),
+        (
+            "another internal agent's entry stays as written",
+            judge.to_owned(),
+            vec![set("internal_agents.advisor", rho_model("openai", "gpt-5.5"))],
+            Ok(format!("{judge}\n[internal_agents.advisor]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n")),
+        ),
+        (
+            "a set to the default is written",
+            String::new(),
+            vec![set("behavior.enable_subagents", SettingValue::Bool(true))],
+            Ok("[behavior]\nenable_subagents = true\n".into()),
+        ),
+        (
+            "a change to the broken key repairs the file",
+            broken.to_owned(),
+            vec![set("output.max_output_bytes", SettingValue::Integer(4096))],
+            Ok("[output]\nmax_output_bytes = 4096\n".into()),
+        ),
+        (
+            "a change elsewhere leaves the file to a hand edit",
+            broken.to_owned(),
+            vec![set("behavior.rtk", SettingValue::Bool(false))],
+            Err(vec!["file: `output.max_output_bytes`: must be at least 1; got 0"]),
+        ),
+        (
+            "a value the file cannot store is refused",
+            String::new(),
+            vec![set("output.max_output_bytes", SettingValue::Integer(u64::MAX))],
+            Err(vec!["`output.max_output_bytes`: must be at most 9223372036854775807; got 18446744073709551615"]),
+        ),
+        (
+            "the credential store is chosen elsewhere",
+            String::new(),
+            vec![reset("behavior.credential_store")],
+            Err(vec!["`behavior.credential_store`: change it with rho/auth/choose_store"]),
+        ),
+    ];
+    for (name, before, changes, expected) in cases {
+        assert_eq!(applied(&before, &changes), expected, "{name}");
     }
 }
 

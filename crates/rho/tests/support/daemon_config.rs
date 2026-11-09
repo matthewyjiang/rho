@@ -191,8 +191,9 @@ async fn a_change_is_saved_and_reaches_readers_and_a_loaded_sessions_next_turn()
 }
 
 // Covers: a change against a stale revision is refused as a conflict, and
-// one with a bad value or an unknown key as invalid params naming them;
-// neither touches the file (#1720).
+// one with a bad value or an unknown key as invalid params naming them, as
+// is a credential store change, which must go through
+// `rho/auth/choose_store`'s checks; none touches the file (#1720).
 // Owner: daemon settings store.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_stale_or_refused_change_writes_nothing() {
@@ -229,8 +230,18 @@ async fn a_stale_or_refused_change_writes_nothing() {
         ],
     )
     .await;
+    let store = set(
+        &client,
+        ConfigNamespace::Agent,
+        &revision,
+        vec![change(
+            "behavior.credential_store",
+            SettingValue::Text("file".into()),
+        )],
+    )
+    .await;
     assert_eq!(
-        [stale.map(drop), refused.map(drop)],
+        [stale.map(drop), refused.map(drop), store.map(drop)],
         [
             Err(RpcError::new(
                 ErrorCode::ConfigConflict,
@@ -238,7 +249,11 @@ async fn a_stale_or_refused_change_writes_nothing() {
             )),
             Err(RpcError::new(
                 ErrorCode::InvalidParams,
-                "`compaction.compact_threshold_percent`: must be at most 100; got 101\n`display.zen_mode`: no such setting",
+                "`display.zen_mode`: no such setting\n`compaction.compact_threshold_percent`: must be at most 100; got 101",
+            )),
+            Err(RpcError::new(
+                ErrorCode::InvalidParams,
+                "`behavior.credential_store`: change it with rho/auth/choose_store",
             )),
         ]
     );
@@ -250,7 +265,8 @@ async fn a_stale_or_refused_change_writes_nothing() {
 
 // Covers: a hand edit of `config.toml` is served on the next request; one
 // that no longer loads is reported in `errors` while the last good values
-// stay served and in force, so a new session still opens (#1720).
+// stay served and in force, so a new session still opens; a change to the
+// key it fails on repairs it (#1720).
 // Owner: daemon settings store.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_hand_edit_is_served_and_a_broken_one_keeps_the_last_good_values() {
@@ -282,11 +298,93 @@ async fn a_hand_edit_is_served_and_a_broken_one_keeps_the_last_good_values() {
         )
     );
     sandbox.new_session(&client).await;
+
+    let hand_edit = std::fs::read_to_string(&sandbox.isolated.config_path).unwrap();
+    set(
+        &client,
+        ConfigNamespace::Agent,
+        &broken.revision,
+        vec![change(
+            "output.max_output_bytes",
+            SettingValue::Integer(8192),
+        )],
+    )
+    .await
+    .unwrap();
+    let repaired = get(&client, ConfigNamespace::Agent).await;
+    assert_eq!(
+        (
+            value(&repaired, "output.max_output_bytes"),
+            repaired.errors,
+            std::fs::read_to_string(&sandbox.isolated.config_path).unwrap()
+        ),
+        (
+            global(SettingValue::Integer(8192)),
+            Vec::new(),
+            hand_edit.replace("max_output_bytes = 0", "max_output_bytes = 8192")
+        )
+    );
+}
+
+// Covers: a change waits for no other writer of `config.toml`: while one
+// holds the file's edit lock, as `rho login` does recording a login, the
+// change is a conflict and writes nothing; a change to the value the file
+// already holds leaves the file untouched (#1720).
+// Owner: daemon settings store.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_change_skips_a_held_file_and_a_no_op_writes_nothing() {
+    let sandbox = Sandbox::new();
+    let client = sandbox.start_daemon("fixed").await;
+    let path = &sandbox.isolated.config_path;
+    let state = get(&client, ConfigNamespace::Agent).await;
+    let lock_path = path.with_file_name(".config.toml.rho-edit.lock");
+    let lock = std::fs::File::create(&lock_path).unwrap();
+    fs2::FileExt::try_lock_exclusive(&lock).unwrap();
+    let before = std::fs::read_to_string(path).unwrap();
+
+    let held = set(
+        &client,
+        ConfigNamespace::Agent,
+        &state.revision,
+        vec![change("behavior.rtk", SettingValue::Bool(false))],
+    )
+    .await;
+    assert_eq!(
+        (
+            held.map_err(|error| error.code),
+            std::fs::read_to_string(path).unwrap()
+        ),
+        (Err(ErrorCode::ConfigConflict as i64), before)
+    );
+    drop(lock);
+
+    let revision = set(
+        &client,
+        ConfigNamespace::Agent,
+        &state.revision,
+        vec![change("behavior.rtk", SettingValue::Bool(false))],
+    )
+    .await
+    .unwrap();
+    let written = std::fs::metadata(path).unwrap().modified().unwrap();
+    let again = set(
+        &client,
+        ConfigNamespace::Agent,
+        &revision,
+        vec![change("behavior.rtk", SettingValue::Bool(false))],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        (again, std::fs::metadata(path).unwrap().modified().unwrap()),
+        (revision, written)
+    );
 }
 
 // Covers: a client's registered settings are stored for it and served
-// again by a daemon started later, once the client registers again
-// (#1720).
+// again by a daemon started later, once the client registers again; a
+// client file that stops reading keeps those values served, with the
+// error, as `config.toml` does (#1720).
 // Owner: daemon settings store.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_clients_settings_outlast_the_daemon() {
@@ -336,5 +434,20 @@ async fn a_clients_settings_outlast_the_daemon() {
     assert_eq!(
         value(&get(&client, tui()).await, "zen_mode"),
         global(SettingValue::Bool(true))
+    );
+
+    let path = sandbox
+        .isolated
+        .config_path
+        .with_file_name("clients/tui.toml");
+    std::fs::write(&path, "zen_mode = \n").unwrap();
+    let broken = get(&client, tui()).await;
+    assert_eq!(
+        (
+            value(&broken, "zen_mode"),
+            broken.errors.len(),
+            broken.errors[0].key.clone()
+        ),
+        (global(SettingValue::Bool(true)), 1, None)
     );
 }

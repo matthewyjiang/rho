@@ -32,13 +32,13 @@ use tokio::sync::watch;
 
 use self::{
     clients::Clients,
-    file::{ReadError, Stat},
+    file::{Edit, Stat},
 };
 use crate::{
     app::agent_concurrency::AgentConcurrency,
     config::{
-        agent_schema, agent_values, resolve_document, write_changes, Config, ConfigDocument,
-        ConfigError,
+        agent_schema, agent_values, apply_agent_changes, resolve_document, AgentChangeError,
+        Config, ConfigDocument, ConfigError,
     },
 };
 
@@ -165,16 +165,23 @@ impl ConfigStore {
             _ => return Err(unknown_namespace()),
         }
         let mut seen = self.agent.lock().await;
+        let path = &self.agent_path;
+        // Locked before the revision check, so the file the client read is
+        // the one changed.
+        let mut edit = Edit::open(path)?;
         self.refresh_agent(&mut seen);
         check_revision(&self.agent_state.borrow().revision, &revision)?;
-        let path = &self.agent_path;
-        let mut doc = read_for_change(path)?;
-        write_changes(&mut doc, &self.schema.settings, &changes).map_err(refused)?;
-        let (config, warnings) = resolve_document(&doc).map_err(refused)?;
-        write_locked(path, &doc)?;
-        *seen = Some(Stat::of(path));
-        log_warnings(path, &warnings);
+        let (config, warnings) =
+            apply_agent_changes(&mut edit.doc, &changes).map_err(|error| match error {
+                AgentChangeError::Refused(errors) => refused(errors),
+                AgentChangeError::FileInvalid(errors) => {
+                    RpcError::new(ErrorCode::ConfigInvalid, joined(&errors))
+                }
+            })?;
+        let (stat, doc) = edit.save()?;
+        *seen = Some(stat);
         let values = agent_values(&doc, &config);
+        log_warnings(path, &warnings);
         let revision = self.publish_agent(Ok((config, values)));
         Ok(ConfigSetResponse { revision })
     }
@@ -280,34 +287,18 @@ fn check_revision(current: &ConfigRevision, sent: &ConfigRevision) -> Result<(),
     }
 }
 
-/// The document at `path` to merge a change into.
-fn read_for_change(path: &Path) -> Result<ConfigDocument, RpcError> {
-    file::read(path).map_err(|error| match error {
-        ReadError::Parse(_) => RpcError::new(ErrorCode::ConfigInvalid, error.message(path)),
-        ReadError::Io(_) => RpcError::new(ErrorCode::InternalError, error.message(path)),
-    })
-}
-
 /// A change the daemon refused, naming each problem; nothing was written.
 fn refused(errors: Vec<ConfigError>) -> RpcError {
-    RpcError::new(
-        ErrorCode::InvalidParams,
-        errors
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )
+    RpcError::new(ErrorCode::InvalidParams, joined(&errors))
 }
 
-/// Writes `doc` to `path` under the file's edit lock, which writers outside
-/// the daemon take too.
-fn write_locked(path: &Path, doc: &ConfigDocument) -> Result<(), RpcError> {
-    let failed = |error: String| RpcError::new(ErrorCode::InternalError, error);
-    let _lock = crate::config_writer::edit_lock::acquire_edit_lock(path)
-        .map_err(|error| failed(format!("could not lock {}: {error}", path.display())))?;
-    doc.write(path)
-        .map_err(|error| failed(format!("{error:#}")))
+/// Every error, one per line.
+fn joined(errors: &[ConfigError]) -> String {
+    errors
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn unknown_namespace() -> RpcError {

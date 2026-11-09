@@ -10,12 +10,15 @@
 use std::fmt;
 
 use rho_protocol::{
-    Applies, IntegerUnit, ModelRuntime, SettingChoice, SettingKey, SettingKind, SettingSpec,
-    SettingValue,
+    Applies, IntegerUnit, SettingChoice, SettingKey, SettingKind, SettingSpec, SettingValue,
 };
 use toml_edit::{Item, Value};
 
 use super::document::{shown, ConfigDocument};
+
+#[path = "config_setting_model.rs"]
+mod model;
+pub(crate) use model::{ModelSetting, ModelSpec};
 
 /// When a changed setting takes effect. The protocol's [`Applies`] is
 /// derived from it.
@@ -81,6 +84,19 @@ pub(crate) trait AnySetting<S>: Sync {
     /// The setting's value in `store` as the protocol carries it; `None`
     /// for an unset optional value.
     fn wire_value(&self, store: &S) -> Option<SettingValue>;
+    /// Whether `doc` sets this setting, rather than leaving its default.
+    fn is_set(&self, doc: &ConfigDocument) -> bool;
+    /// Removes the setting from `doc`, so its default applies even where
+    /// the file held a value equal to it.
+    fn remove(&self, doc: &mut ConfigDocument);
+    /// Writes the value `store` holds to `doc`, even when it is the default.
+    fn write(&self, store: &S, doc: &mut ConfigDocument);
+    /// Sets the setting in `store` to the protocol `value`, or to its
+    /// default for `None`, through the same setter a typed edit uses. The
+    /// error names the problem, not the key: a value the setting does not
+    /// take, or one it cannot hold yet, such as an internal agent's
+    /// reasoning while the agent has no model.
+    fn change(&self, store: &mut S, value: Option<&SettingValue>) -> Result<(), String>;
     #[cfg(test)]
     fn applies(&self) -> Apply;
     /// Whether `a` and `b` hold different values.
@@ -129,6 +145,32 @@ impl<S: Default + 'static, T: SettingType> AnySetting<S> for Setting<S, T> {
 
     fn wire_value(&self, store: &S) -> Option<SettingValue> {
         (self.get)(store).to_wire()
+    }
+
+    fn is_set(&self, doc: &ConfigDocument) -> bool {
+        T::read(doc, self.key, &self.spec).is_ok_and(|value| value.is_some())
+    }
+
+    fn remove(&self, doc: &mut ConfigDocument) {
+        T::remove(doc, self.key);
+    }
+
+    fn write(&self, store: &S, doc: &mut ConfigDocument) {
+        (self.get)(store).write(doc, self.key);
+    }
+
+    fn change(&self, store: &mut S, value: Option<&SettingValue>) -> Result<(), String> {
+        let next = match value {
+            Some(value) => T::from_wire(value, &self.spec, &(self.get)(store))?,
+            None => (self.get)(&S::default()),
+        };
+        (self.validate)(&next)?;
+        let wanted = next.to_wire();
+        (self.set)(store, next);
+        if self.wire_value(store) != wanted {
+            return Err("cannot hold that value; set the setting it belongs to first".into());
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -227,12 +269,47 @@ pub(crate) trait SettingType: Sized + PartialEq + Clone + 'static {
     /// The value at `key`, or `None` when the file leaves it unset.
     fn read(doc: &ConfigDocument, key: &str, spec: &Self::Spec) -> Result<Option<Self>, String>;
     fn write(&self, doc: &mut ConfigDocument, key: &str);
+    /// Removes what this setting at `key` reads from `doc`, so its default
+    /// applies.
+    fn remove(doc: &mut ConfigDocument, key: &str) {
+        doc.remove(key);
+    }
     /// Whether `path` is a key this setting at `key` reads.
     fn owns(key: &str, path: &[String]) -> bool {
         path.len() == key.split('.').count() && path_starts_with(path, key)
     }
     /// `None` for an unset optional value.
     fn to_wire(&self) -> Option<SettingValue>;
+    /// The protocol `value` as this type, if `spec` takes it. `current` is
+    /// the value it replaces, which a model's auth may follow.
+    fn from_wire(value: &SettingValue, spec: &Self::Spec, current: &Self) -> Result<Self, String>;
+}
+
+/// Why a protocol value was refused: it is not the kind `takes` names.
+fn takes<T>(kind: &str) -> Result<T, String> {
+    Err(format!("takes {kind}"))
+}
+
+fn integer_in(value: &SettingValue, spec: &IntegerSpec) -> Result<u64, String> {
+    let SettingValue::Integer(number) = value else {
+        return takes("a whole number");
+    };
+    if *number < spec.min {
+        return Err(format!("must be at least {}; got {number}", spec.min));
+    }
+    // The file stores integers as i64.
+    let max = spec.max.unwrap_or(i64::MAX as u64);
+    if *number > max {
+        return Err(format!("must be at most {max}; got {number}"));
+    }
+    Ok(*number)
+}
+
+fn text_of(value: &SettingValue) -> Result<String, String> {
+    match value {
+        SettingValue::Text(text) => Ok(text.clone()),
+        _ => takes("text"),
+    }
 }
 
 /// The range of an integer setting. Limits name their receipts where the
@@ -241,11 +318,6 @@ pub(crate) struct IntegerSpec {
     pub(crate) min: u64,
     pub(crate) max: Option<u64>,
     pub(crate) unit: Option<IntegerUnit>,
-}
-
-/// The runtimes a model setting may pick.
-pub(crate) struct ModelSpec {
-    pub(crate) runtimes: &'static [ModelRuntime],
 }
 
 fn read_value<'a>(doc: &'a ConfigDocument, key: &str) -> Result<Option<&'a Value>, String> {
@@ -315,6 +387,12 @@ impl SettingType for bool {
     fn to_wire(&self) -> Option<SettingValue> {
         Some(SettingValue::Bool(*self))
     }
+    fn from_wire(value: &SettingValue, _: &(), _: &Self) -> Result<Self, String> {
+        match value {
+            SettingValue::Bool(flag) => Ok(*flag),
+            _ => takes("true or false"),
+        }
+    }
 }
 
 impl SettingType for u64 {
@@ -330,6 +408,9 @@ impl SettingType for u64 {
     }
     fn to_wire(&self) -> Option<SettingValue> {
         Some(SettingValue::Integer(*self))
+    }
+    fn from_wire(value: &SettingValue, spec: &IntegerSpec, _: &Self) -> Result<Self, String> {
+        integer_in(value, spec)
     }
 }
 
@@ -350,6 +431,9 @@ impl SettingType for Option<u64> {
     }
     fn to_wire(&self) -> Option<SettingValue> {
         self.map(SettingValue::Integer)
+    }
+    fn from_wire(value: &SettingValue, spec: &IntegerSpec, _: &Self) -> Result<Self, String> {
+        integer_in(value, spec).map(Some)
     }
 }
 
@@ -375,6 +459,9 @@ impl SettingType for String {
     fn to_wire(&self) -> Option<SettingValue> {
         Some(SettingValue::Text(self.clone()))
     }
+    fn from_wire(value: &SettingValue, _: &(), _: &Self) -> Result<Self, String> {
+        text_of(value)
+    }
 }
 
 /// Text that is unset until set, such as an endpoint override.
@@ -394,6 +481,9 @@ impl SettingType for Option<String> {
     }
     fn to_wire(&self) -> Option<SettingValue> {
         self.clone().map(SettingValue::Text)
+    }
+    fn from_wire(value: &SettingValue, _: &(), _: &Self) -> Result<Self, String> {
+        text_of(value).map(Some)
     }
 }
 
@@ -441,6 +531,23 @@ fn read_choice<T: Choice>(doc: &ConfigDocument, key: &str) -> Result<Option<T>, 
         })
 }
 
+fn choice_from_wire<T: Choice>(value: &SettingValue) -> Result<T, String> {
+    let text = text_of(value).or_else(|_| takes("one of its choices"))?;
+    let choices = T::choices();
+    choices
+        .iter()
+        .copied()
+        .find(|choice| choice.choice_value() == text)
+        .ok_or_else(|| {
+            let expected = choices
+                .iter()
+                .map(|choice| choice.choice_value())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("must be one of {expected}; got \"{text}\"")
+        })
+}
+
 /// Implements [`SettingType`] for [`Choice`] types and for their optional
 /// (unset until chosen) form.
 macro_rules! choice_setting_types {
@@ -458,6 +565,9 @@ macro_rules! choice_setting_types {
             }
             fn to_wire(&self) -> Option<SettingValue> {
                 Some(SettingValue::Text(self.choice_value().into()))
+            }
+            fn from_wire(value: &SettingValue, _: &(), _: &Self) -> Result<Self, String> {
+                choice_from_wire(value)
             }
         }
 
@@ -478,6 +588,9 @@ macro_rules! choice_setting_types {
             fn to_wire(&self) -> Option<SettingValue> {
                 self.map(|choice| SettingValue::Text(choice.choice_value().into()))
             }
+            fn from_wire(value: &SettingValue, _: &(), _: &Self) -> Result<Self, String> {
+                choice_from_wire(value).map(Some)
+            }
         }
     )+};
 }
@@ -495,173 +608,6 @@ choice_setting_types!(
     super::StreamingMode,
     crate::keybindings::EditingMode,
 );
-
-/// The model a model setting holds: the `runtime`, `provider`, `model`, and
-/// `auth` leaves of its table.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ModelSetting {
-    Rho {
-        provider: String,
-        /// A concrete model id, or `@alias`.
-        model: String,
-        auth: String,
-    },
-    ClaudeCli {
-        model: Option<String>,
-    },
-}
-
-const MODEL_LEAVES: [&str; 4] = ["runtime", "provider", "model", "auth"];
-
-fn read_model(
-    doc: &ConfigDocument,
-    key: &str,
-    spec: &ModelSpec,
-) -> Result<Option<ModelSetting>, String> {
-    if doc.get(key).is_some_and(|item| !item.is_table_like()) {
-        return Err("must be a table with provider and model keys".into());
-    }
-    let leaf = |name: &str| read_string(doc, &format!("{key}.{name}"));
-    let (runtime, provider, model, auth) = (
-        leaf("runtime")?,
-        leaf("provider")?,
-        leaf("model")?,
-        leaf("auth")?,
-    );
-    if runtime.is_none() && provider.is_none() && model.is_none() && auth.is_none() {
-        return Ok(None);
-    }
-    let runtime_allowed = |runtime: ModelRuntime| spec.runtimes.contains(&runtime);
-    match runtime.as_deref().unwrap_or(super::RHO_RUNTIME_KEY) {
-        super::RHO_RUNTIME_KEY if runtime_allowed(ModelRuntime::Rho) => {
-            Ok(Some(ModelSetting::Rho {
-                provider: provider.unwrap_or_else(|| super::DEFAULT_PROVIDER.into()),
-                model: model.unwrap_or_else(|| super::DEFAULT_MODEL.into()),
-                auth: auth.unwrap_or_else(|| super::DEFAULT_AUTH.into()),
-            }))
-        }
-        super::CLAUDE_CLI_RUNTIME_KEY if runtime_allowed(ModelRuntime::ClaudeCli) => {
-            if provider.is_some() || auth.is_some() {
-                return Err(format!(
-                    "runtime {} takes no provider or auth",
-                    super::CLAUDE_CLI_RUNTIME_KEY
-                ));
-            }
-            Ok(Some(ModelSetting::ClaudeCli { model }))
-        }
-        other => {
-            let expected = spec
-                .runtimes
-                .iter()
-                .filter_map(|runtime| match runtime {
-                    ModelRuntime::Rho => Some(super::RHO_RUNTIME_KEY),
-                    ModelRuntime::ClaudeCli => Some(super::CLAUDE_CLI_RUNTIME_KEY),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            Err(format!(
-                "runtime must be one of {expected}; got \"{other}\""
-            ))
-        }
-    }
-}
-
-fn write_model(model: &ModelSetting, doc: &mut ConfigDocument, key: &str) {
-    match model {
-        ModelSetting::Rho {
-            provider,
-            model,
-            auth,
-        } => {
-            doc.remove(&format!("{key}.runtime"));
-            doc.set_value(&format!("{key}.provider"), Value::from(provider.as_str()));
-            doc.set_value(&format!("{key}.model"), Value::from(model.as_str()));
-            doc.set_value(&format!("{key}.auth"), Value::from(auth.as_str()));
-        }
-        ModelSetting::ClaudeCli { model } => {
-            doc.set_value(
-                &format!("{key}.runtime"),
-                Value::from(super::CLAUDE_CLI_RUNTIME_KEY),
-            );
-            doc.remove(&format!("{key}.provider"));
-            doc.remove(&format!("{key}.auth"));
-            match model {
-                Some(model) => doc.set_value(&format!("{key}.model"), Value::from(model.as_str())),
-                None => doc.remove(&format!("{key}.model")),
-            }
-        }
-    }
-}
-
-fn model_wire(model: &ModelSetting) -> SettingValue {
-    SettingValue::Model(match model {
-        ModelSetting::Rho {
-            provider, model, ..
-        } => rho_protocol::ModelSelection::Rho {
-            provider: provider.clone(),
-            model: model.clone(),
-        },
-        ModelSetting::ClaudeCli { model } => rho_protocol::ModelSelection::ClaudeCli {
-            model: model.clone(),
-        },
-    })
-}
-
-fn owns_model_leaf(key: &str, path: &[String]) -> bool {
-    let depth = key.split('.').count();
-    path_starts_with(path, key)
-        && (path.len() == depth
-            || (path.len() == depth + 1 && MODEL_LEAVES.contains(&path[depth].as_str())))
-}
-
-impl SettingType for ModelSetting {
-    type Spec = ModelSpec;
-    fn kind(spec: &ModelSpec) -> SettingKind {
-        SettingKind::Model {
-            runtimes: spec.runtimes.to_vec(),
-        }
-    }
-    fn read(doc: &ConfigDocument, key: &str, spec: &ModelSpec) -> Result<Option<Self>, String> {
-        read_model(doc, key, spec)
-    }
-    fn write(&self, doc: &mut ConfigDocument, key: &str) {
-        write_model(self, doc, key);
-    }
-    fn owns(key: &str, path: &[String]) -> bool {
-        owns_model_leaf(key, path)
-    }
-    fn to_wire(&self) -> Option<SettingValue> {
-        Some(model_wire(self))
-    }
-}
-
-/// A model that is unset until chosen, such as an internal agent's.
-impl SettingType for Option<ModelSetting> {
-    type Spec = ModelSpec;
-    fn kind(spec: &ModelSpec) -> SettingKind {
-        ModelSetting::kind(spec)
-    }
-    fn read(doc: &ConfigDocument, key: &str, spec: &ModelSpec) -> Result<Option<Self>, String> {
-        Ok(read_model(doc, key, spec)?.map(Some))
-    }
-    fn write(&self, doc: &mut ConfigDocument, key: &str) {
-        match self {
-            Some(model) => write_model(model, doc, key),
-            None => {
-                for leaf in MODEL_LEAVES {
-                    doc.remove(&format!("{key}.{leaf}"));
-                }
-            }
-        }
-    }
-    fn owns(key: &str, path: &[String]) -> bool {
-        owns_model_leaf(key, path)
-    }
-    fn to_wire(&self) -> Option<SettingValue> {
-        self.as_ref().map(model_wire)
-    }
-}
 
 impl Choice for crate::permission::PermissionMode {
     fn choices() -> Vec<Self> {
@@ -827,28 +773,6 @@ impl Choice for crate::keybindings::EditingMode {
             Self::Default => "Default",
             Self::Vim => "Vim",
         }
-    }
-}
-
-/// Whether a spec's default is a value its own kind accepts, so a declared
-/// range or choice list cannot reject the setting's own default.
-pub(crate) fn default_fits_kind(spec: &SettingSpec) -> bool {
-    match (&spec.kind, &spec.default) {
-        (_, None) => true,
-        (SettingKind::Bool, Some(SettingValue::Bool(_)))
-        | (SettingKind::Text, Some(SettingValue::Text(_))) => true,
-        (SettingKind::Integer { min, max, .. }, Some(SettingValue::Integer(value))) => {
-            value >= min && max.is_none_or(|max| *value <= max)
-        }
-        (SettingKind::Choice { choices }, Some(SettingValue::Text(value))) => {
-            choices.iter().any(|choice| &choice.value == value)
-        }
-        (SettingKind::Model { runtimes }, Some(SettingValue::Model(selection))) => runtimes
-            .contains(&match selection {
-                rho_protocol::ModelSelection::Rho { .. } => ModelRuntime::Rho,
-                rho_protocol::ModelSelection::ClaudeCli { .. } => ModelRuntime::ClaudeCli,
-            }),
-        _ => false,
     }
 }
 

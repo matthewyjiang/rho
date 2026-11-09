@@ -613,6 +613,7 @@ fn diagnostic_for_error_for(error: &anyhow::Error, audience: DiagnosticAudience)
             WorkflowError::LiveRun { .. } => "live_run",
             WorkflowError::AmbiguousId { .. } => "ambiguous_id",
             WorkflowError::UnknownId(_) => "unknown_id",
+            WorkflowError::UnsupportedPlatform => "unsupported_platform",
             WorkflowError::UntrustedDirectory(_) => "untrusted_directory",
             WorkflowError::Io(_) => "io",
             WorkflowError::Json(_) => "json",
@@ -677,7 +678,8 @@ fn workflow_error_message(error: &WorkflowError, audience: DiagnosticAudience) -
             | WorkflowError::MissingWorkflow
             | WorkflowError::UnsupportedVersion { .. }
             | WorkflowError::LiveRun { .. }
-            | WorkflowError::UnsupportedRecord { .. } => error.to_string(),
+            | WorkflowError::UnsupportedRecord { .. }
+            | WorkflowError::UnsupportedPlatform => error.to_string(),
             WorkflowError::Starlark(_) => "workflow evaluation failed".to_owned(),
             // Keep these cases opaque. Their strings can contain source text,
             // lower-level diagnostics, or local paths.

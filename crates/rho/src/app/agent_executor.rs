@@ -712,6 +712,7 @@ fn frozen_cli_launch(
     agent: crate::workflow::ResolvedAgent,
     search_path: Option<&std::ffi::OsStr>,
 ) -> anyhow::Result<FrozenCliLaunch> {
+    crate::workflow::HandleLaunch::CURRENT.ensure()?;
     let identity = agent
         .executable_identity
         .as_ref()
