@@ -33,7 +33,7 @@ mod unix {
                 tokens::{Rotation, TokenSet},
                 HttpOptions,
             },
-            session_control::{Limits, SessionControl},
+            session_control::{Limits, Reach, SessionControl},
         },
         caller_context::{Access, CallerContext},
         cli::{Cli, McpServeArgs, McpTokenCommand, McpTokenScope},
@@ -46,14 +46,12 @@ mod unix {
             max_depth: args.max_depth.unwrap_or(defaults.max_depth),
             max_sessions: args.max_sessions.unwrap_or(defaults.max_sessions),
         };
-        let control = Arc::new(SessionControl::new(
-            ClientEnvironment::of_this_process(),
-            limits,
-        ));
+        let control = Arc::new(SessionControl::new(limits, Reach::StartIfNeeded));
+        let environment = ClientEnvironment::of_this_process();
         match args.http {
             None => {
                 let context = CallerContext::from_env(|name| std::env::var_os(name))?;
-                mcp_server::serve_stdio(control, context).await
+                mcp_server::serve_stdio(control, context, environment).await
             }
             Some(address) => {
                 // The tokens live in the credential store.
@@ -65,6 +63,7 @@ mod unix {
                         allowed_hosts: args.allow_host.clone(),
                         allowed_origins: args.allow_origin.clone(),
                     },
+                    environment,
                 )
                 .await
             }

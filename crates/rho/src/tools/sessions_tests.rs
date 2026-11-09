@@ -26,6 +26,7 @@ async fn archive_access_is_authorized_before_search_execution() {
             binding: binding.clone(),
             recall: Default::default(),
             max_output_bytes: rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
+            environment: Default::default(),
             root: Ok(root.path().to_path_buf()),
         };
         let provider = ScriptedProvider::new(
@@ -84,4 +85,26 @@ async fn archive_access_is_authorized_before_search_execution() {
         assert_eq!(std::fs::read(prior.path()).unwrap(), original);
         runtime.shutdown();
     }
+}
+
+// Covers: the core's argument schemas merge into the tool's as standalone
+// schemas: an argument whose type the core defines once, such as `list`'s
+// `state`, carries that definition instead of a `$ref` to a `$defs` the
+// merged schema does not have, which providers reject (#1714).
+// Owner: sessions tool schema, generated from the session-control core.
+#[cfg(unix)]
+#[test]
+fn control_arguments_carry_their_definitions() {
+    let schema = input_schema();
+    let state = &schema["properties"]["state"];
+
+    assert_eq!(
+        (
+            schema.to_string().contains("$ref"),
+            // The job states, as `enum` or `oneOf` of `const`s.
+            state.to_string().contains(r#""waiting_for_input""#),
+        ),
+        (false, true),
+        "state: {state}"
+    );
 }

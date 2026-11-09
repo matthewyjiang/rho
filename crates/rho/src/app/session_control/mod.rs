@@ -1,7 +1,7 @@
 //! The session-control core: what an agent may do to the daemon's sessions,
 //! under one policy, whichever front end asks. `rho mcp serve`
-//! (`app::mcp_server`) is a thin adapter over it, and the native `sessions`
-//! tool's control actions are meant to be another (#1714).
+//! (`app::mcp_server`) and the native `sessions` tool's control actions
+//! (`tools::sessions::control`) are thin adapters over it (#1714).
 //!
 //! [`SessionControl`] serves seven actions ([`Action`]): `list`, `read`,
 //! `new`, `prompt`, `steer`, `cancel`, and `wait`. Each call carries its
@@ -12,14 +12,19 @@
 //! sessions each holder may have running ([`Limits::max_sessions`]). Every
 //! refusal names its budget, its limit, and the value asked for
 //! ([`Refusal`]). A session the core starts or prompts runs with the
-//! caller's context one level deeper, so the limits follow it down.
+//! caller's context one level deeper, so the limits follow it down. A
+//! session a caller starts from a session of its own, as the native
+//! `sessions` tool's callers do, records the job writing that session as its
+//! parent, and its turns wait for capacity in the daemon-wide agent budget
+//! as subagent runs do (#1714).
 //!
 //! No action answers a session's approvals or questions, and the core never
 //! sends `rho/session/answer` or `rho/session/hold`: a turn that asks waits
 //! for a person, and `wait` reports it waiting for input.
 //!
-//! The daemon is reached as any client reaches it, starting it when none
-//! runs. Requests share one connection; `read` and `wait` observe on a
+//! The daemon is reached as [`Reach`] allows: `rho mcp serve` starts it
+//! when none runs, as any client does, and the native tool reaches only one
+//! already running. Requests share one connection; `read` and `wait` observe on a
 //! connection of their own, so calls on the same session never replace each
 //! other's attachment. Observing never loads a session, so reading one
 //! never starts its MCP servers at the reader's nesting depth.
@@ -27,7 +32,7 @@
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::{Mutex, PoisonError},
+    sync::{Arc, Mutex, PoisonError},
 };
 
 use rho_protocol::{
@@ -35,23 +40,28 @@ use rho_protocol::{
         JobList, SessionCancel, SessionConfigure, SessionList, SessionNew, SessionPrompt,
         SessionSteer,
     },
-    ClientEnvironment, ClientError, ContentBlock, JobKind, JobListParams, JobState, JobSummary,
-    ModelRef, SessionCancelParams, SessionChange, SessionConfigureParams, SessionId,
+    ClientEnvironment, ClientError, ContentBlock, JobId, JobKind, JobListParams, JobState,
+    JobSummary, ModelRef, SessionCancelParams, SessionChange, SessionConfigureParams, SessionId,
     SessionListParams, SessionNewParams, SessionPromptParams, SessionSetup, SessionSteerParams,
 };
+use serde_json::Value;
 
 use super::{
     daemon_cli::Unreachable,
     daemon_client::{Daemon, DaemonError},
 };
 
+mod check;
 mod dispatch;
 mod follow;
 mod params;
 mod policy;
 mod transcript;
 
-use crate::caller_context::Workspaces;
+pub(crate) use super::daemon_cli::Reach;
+use check::CheckedCall;
+pub(crate) use check::{Checked, Target};
+use dispatch::json;
 use params::{
     CancelParams, CancelResult, ListParams, ListResult, NewParams, NewResult, PromptParams,
     PromptResult, ReadParams, ReadResult, SessionEntry, SteerParams, SteerResult, WaitParams,
@@ -89,48 +99,67 @@ impl From<Unreachable> for ControlError {
 /// The core. One per process; every caller shares it.
 pub(crate) struct SessionControl {
     daemon: Daemon,
-    /// The environment the sessions it starts or prompts run with, before
-    /// each caller's context is set in it: this process's.
-    environment: ClientEnvironment,
+    /// How `daemon`, and the connections `read` and `wait` open, reach it.
+    reach: Reach,
     limits: Limits,
     /// The sessions each holder started or prompted, which its session cap
     /// counts while their turns run.
     driven: Mutex<HashMap<Holder, HashSet<SessionId>>>,
-    /// Held from a cap's check until the turn it admits started, so two
-    /// calls cannot both take the last slot.
-    admission: tokio::sync::Mutex<()>,
+    /// Each holder's admission lock, held from its cap's check until the
+    /// turn it admits started, so two of its calls cannot both take its
+    /// last slot. Holders do not wait on each other.
+    admission: Mutex<HashMap<Holder, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl SessionControl {
-    pub(crate) fn new(environment: ClientEnvironment, limits: Limits) -> Self {
+    /// A core that reaches the daemon as `reach` allows.
+    pub(crate) fn new(limits: Limits, reach: Reach) -> Self {
         Self {
-            daemon: Daemon::default(),
-            environment,
+            daemon: Daemon::reaching(reach),
+            reach,
             limits,
             driven: Mutex::default(),
-            admission: tokio::sync::Mutex::default(),
+            admission: Mutex::default(),
+        }
+    }
+
+    /// Runs a checked call: admits a start or prompt under the per-holder
+    /// session cap, then acts, and returns its result as JSON.
+    pub(crate) async fn run(
+        &self,
+        caller: &Caller,
+        checked: Checked,
+    ) -> Result<Value, ControlError> {
+        match checked.call {
+            CheckedCall::List(params) => json(self.list(caller, params).await?),
+            CheckedCall::Read(params) => json(self.read(params).await?),
+            CheckedCall::New { params, workspace } => {
+                json(self.new_session(caller, params, workspace).await?)
+            }
+            CheckedCall::Prompt(params) => json(self.prompt(caller, params).await?),
+            CheckedCall::Steer(params) => json(self.steer(params).await?),
+            CheckedCall::Cancel(params) => json(self.cancel(params).await?),
+            CheckedCall::Wait(params) => json(self.wait(params).await?),
         }
     }
 
     /// The daemon's sessions the grant reaches, the most recently changed
     /// first.
-    pub(crate) async fn list(
-        &self,
-        caller: &Caller,
-        params: ListParams,
-    ) -> Result<ListResult, ControlError> {
-        caller.grant.permit(Action::List)?;
+    async fn list(&self, caller: &Caller, params: ListParams) -> Result<ListResult, ControlError> {
         let limit = params.limit()?;
         let workspace = params.workspace.as_deref().map(canonical).transpose()?;
-        let mut sessions: Vec<SessionEntry> = self
-            .jobs()
-            .await?
+        let jobs = self.jobs().await?;
+        let writers: HashMap<JobId, SessionId> = jobs
+            .iter()
+            .filter_map(|job| Some((job.id.clone(), job.session.clone()?)))
+            .collect();
+        let mut sessions: Vec<SessionEntry> = jobs
             .into_iter()
             .filter(|job| job.kind == JobKind::Session)
             .filter(|job| caller.grant.scope.workspaces.allows(&job.workspace))
             .filter(|job| workspace.as_ref().is_none_or(|only| &job.workspace == only))
             .filter(|job| params.state.is_none_or(|state| job.state == state))
-            .filter_map(SessionEntry::of_job)
+            .filter_map(|job| SessionEntry::of_job(job, &writers))
             .collect();
         sessions.sort_by_key(|entry| std::cmp::Reverse(entry.updated_at));
         let more = sessions.len() > limit;
@@ -140,37 +169,30 @@ impl SessionControl {
 
     /// A window of the session's transcript as text, its turn in progress
     /// included.
-    pub(crate) async fn read(
-        &self,
-        caller: &Caller,
-        params: ReadParams,
-    ) -> Result<ReadResult, ControlError> {
-        caller.grant.permit(Action::Read)?;
-        self.reach_session(&caller.grant, &params.session).await?;
+    async fn read(&self, params: ReadParams) -> Result<ReadResult, ControlError> {
         let window = params.window()?;
-        let text = follow::transcript(&params.session).await?;
+        let text = follow::transcript(self.reach, &params.session).await?;
         Ok(ReadResult::window(params.session, &text, window))
     }
 
-    /// Opens a session in `workspace` and starts its first turn.
-    pub(crate) async fn new_session(
+    /// Opens a session in `workspace`, the params' canonical, and starts
+    /// its first turn.
+    async fn new_session(
         &self,
         caller: &Caller,
         params: NewParams,
+        workspace: PathBuf,
     ) -> Result<NewResult, ControlError> {
-        caller.grant.permit(Action::New)?;
-        let workspace = canonical(&params.workspace)?;
-        caller.grant.reach(&workspace)?;
-        let content = prompt_content(params.prompt)?;
+        let content = prompt_content(&params.prompt)?;
         let _admitted = self.admit(caller, None).await?;
         let opened = self
             .daemon
             .request::<SessionNew>(&SessionNewParams {
                 cwd: workspace.clone(),
-                environment: self.child_environment(caller),
+                environment: Self::child_environment(caller),
                 agent: params.agent,
                 setup: SessionSetup::default(),
-                parent: None,
+                parent: caller.session.clone(),
             })
             .await?;
         if let Some(model) = params.model {
@@ -190,14 +212,12 @@ impl SessionControl {
     }
 
     /// Starts a turn on a session that has none in progress.
-    pub(crate) async fn prompt(
+    async fn prompt(
         &self,
         caller: &Caller,
         params: PromptParams,
     ) -> Result<PromptResult, ControlError> {
-        caller.grant.permit(Action::Prompt)?;
-        self.reach_session(&caller.grant, &params.session).await?;
-        let content = prompt_content(params.text)?;
+        let content = prompt_content(&params.text)?;
         let _admitted = self.admit(caller, Some(&params.session)).await?;
         self.start_turn(caller, &params.session, content).await?;
         Ok(PromptResult {
@@ -206,13 +226,7 @@ impl SessionControl {
     }
 
     /// Stages text for the running turn's next model request.
-    pub(crate) async fn steer(
-        &self,
-        caller: &Caller,
-        params: SteerParams,
-    ) -> Result<SteerResult, ControlError> {
-        caller.grant.permit(Action::Steer)?;
-        self.reach_session(&caller.grant, &params.session).await?;
+    async fn steer(&self, params: SteerParams) -> Result<SteerResult, ControlError> {
         let steered = self
             .daemon
             .request::<SessionSteer>(&SessionSteerParams {
@@ -224,13 +238,7 @@ impl SessionControl {
     }
 
     /// Cancels the session's turn in progress, if any.
-    pub(crate) async fn cancel(
-        &self,
-        caller: &Caller,
-        params: CancelParams,
-    ) -> Result<CancelResult, ControlError> {
-        caller.grant.permit(Action::Cancel)?;
-        self.reach_session(&caller.grant, &params.session).await?;
+    async fn cancel(&self, params: CancelParams) -> Result<CancelResult, ControlError> {
         self.daemon
             .request::<SessionCancel>(&SessionCancelParams {
                 session: params.session,
@@ -242,16 +250,10 @@ impl SessionControl {
     /// Waits up to the call's timeout for the session's turn to end or ask
     /// for input, then reports where it is, with a cursor the next `wait`
     /// resumes from.
-    pub(crate) async fn wait(
-        &self,
-        caller: &Caller,
-        params: WaitParams,
-    ) -> Result<WaitResult, ControlError> {
-        caller.grant.permit(Action::Wait)?;
-        self.reach_session(&caller.grant, &params.session).await?;
+    async fn wait(&self, params: WaitParams) -> Result<WaitResult, ControlError> {
         let timeout = params.timeout()?;
         let after = params.cursor()?;
-        follow::wait(params.session, after, timeout).await
+        follow::wait(self.reach, params.session, after, timeout).await
     }
 
     /// Prompts `session` and counts it toward the holder's session cap.
@@ -266,7 +268,7 @@ impl SessionControl {
                 session: session.clone(),
                 content,
                 timeout_ms: None,
-                environment: self.child_environment(caller),
+                environment: Self::child_environment(caller),
             })
             .await?;
         self.driven
@@ -278,23 +280,25 @@ impl SessionControl {
         Ok(())
     }
 
-    /// Checks the depth and session caps for a turn the holder starts on
-    /// `session`, or on a new one. The guard admits the turn until dropped.
+    /// Checks the session cap for a turn the holder starts on `session`, or
+    /// on a new one. The guard admits the turn until dropped: the holder's
+    /// other starts wait for it, so two cannot both take its last slot.
     async fn admit(
         &self,
         caller: &Caller,
         session: Option<&SessionId>,
-    ) -> Result<tokio::sync::MutexGuard<'_, ()>, ControlError> {
-        let grant = &caller.grant;
-        let asked = caller.depth.saturating_add(1);
-        if asked > self.limits.max_depth {
-            return Err(Refusal::Depth {
-                limit: self.limits.max_depth,
-                asked,
-            }
-            .into());
-        }
-        let admitted = self.admission.lock().await;
+    ) -> Result<tokio::sync::OwnedMutexGuard<()>, ControlError> {
+        let holder = &caller.grant.holder;
+        let lock = {
+            let mut admission = self
+                .admission
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            // A lock only this map holds guards nothing.
+            admission.retain(|_, lock| Arc::strong_count(lock) > 1);
+            Arc::clone(admission.entry(holder.clone()).or_default())
+        };
+        let admitted = lock.lock_owned().await;
         let jobs = self.jobs().await?;
         let running: HashSet<&SessionId> = jobs
             .iter()
@@ -302,17 +306,20 @@ impl SessionControl {
             .filter_map(|job| job.session.as_ref())
             .collect();
         let mut driven = self.driven.lock().unwrap_or_else(PoisonError::into_inner);
-        let mine = driven.entry(grant.holder.clone()).or_default();
-        mine.retain(|session| running.contains(session));
+        for sessions in driven.values_mut() {
+            sessions.retain(|session| running.contains(session));
+        }
+        driven.retain(|_, sessions| !sessions.is_empty());
+        let mine = driven.get(holder);
         // A session whose turn already runs starts no new one: the daemon
         // refuses that prompt itself.
-        let adds = session.is_none_or(|session| !mine.contains(session));
-        let asked = u32::try_from(mine.len())
+        let adds = session.is_none_or(|session| mine.is_none_or(|mine| !mine.contains(session)));
+        let asked = u32::try_from(mine.map_or(0, HashSet::len))
             .unwrap_or(u32::MAX)
             .saturating_add(u32::from(adds));
         if adds && asked > self.limits.max_sessions {
             return Err(Refusal::Sessions {
-                holder: grant.holder.clone(),
+                holder: holder.clone(),
                 limit: self.limits.max_sessions,
                 asked,
             }
@@ -321,14 +328,16 @@ impl SessionControl {
         Ok(admitted)
     }
 
-    /// Refuses a session outside the grant's workspaces. A grant that
-    /// reaches every workspace needs no lookup.
-    async fn reach_session(&self, grant: &Grant, session: &SessionId) -> Result<(), ControlError> {
-        if grant.scope.workspaces == Workspaces::Any {
-            return Ok(());
-        }
+    /// The workspace of `session`, which must be one the daemon knows,
+    /// in the caller's grant's workspaces.
+    async fn reach_session(
+        &self,
+        caller: &Caller,
+        session: &SessionId,
+    ) -> Result<PathBuf, ControlError> {
         let workspace = self.workspace_of(session).await?;
-        Ok(grant.reach(&workspace)?)
+        caller.grant.reach(&workspace)?;
+        Ok(workspace)
     }
 
     /// The workspace of `session`: its job's, or, for a saved session no
@@ -369,11 +378,12 @@ impl SessionControl {
             .jobs)
     }
 
-    /// The environment a session `caller` starts or prompts runs with:
-    /// this process's, with the caller's context one level deeper in place
-    /// of any this process carries.
-    fn child_environment(&self, caller: &Caller) -> ClientEnvironment {
-        self.environment
+    /// The environment a session `caller` starts or prompts runs with: the
+    /// caller's, with its context one level deeper in place of any the
+    /// caller's environment carries.
+    fn child_environment(caller: &Caller) -> ClientEnvironment {
+        caller
+            .environment
             .iter()
             .filter(|(name, _)| !crate::caller_context::ENV_NAMES.contains(name))
             .map(|(name, value)| (name.to_owned(), value.to_owned()))
@@ -422,11 +432,13 @@ fn canonical(path: &Path) -> Result<PathBuf, ControlError> {
     }
 }
 
-fn prompt_content(text: String) -> Result<Vec<ContentBlock>, ControlError> {
+fn prompt_content(text: &str) -> Result<Vec<ContentBlock>, ControlError> {
     if text.trim().is_empty() {
         return Err(ControlError::Invalid("the prompt is empty".into()));
     }
-    Ok(vec![ContentBlock::Text { text }])
+    Ok(vec![ContentBlock::Text {
+        text: text.to_owned(),
+    }])
 }
 
 /// The model `wanted` names among those the session offers: `provider/model`,

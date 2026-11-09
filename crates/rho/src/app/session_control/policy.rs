@@ -8,6 +8,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use rho_protocol::ClientEnvironment;
+
 use crate::caller_context::{Access, CallerContext, Scope, Workspaces};
 
 /// The deepest a session the core starts or prompts may run by default: a
@@ -83,6 +85,8 @@ pub(crate) enum Holder {
     Local,
     /// The holder of an MCP server token, by its name.
     Token(String),
+    /// A session's agent, through the native `sessions` tool.
+    Session(rho_protocol::SessionId),
 }
 
 impl fmt::Display for Holder {
@@ -90,6 +94,7 @@ impl fmt::Display for Holder {
         match self {
             Self::Local => formatter.write_str("this server's caller"),
             Self::Token(name) => write!(formatter, "token {name:?}"),
+            Self::Session(session) => write!(formatter, "session {session}"),
         }
     }
 }
@@ -145,18 +150,50 @@ pub(crate) struct Caller {
     pub(crate) grant: Grant,
     /// The calling session's depth: 0 for a person, or for an outside agent.
     pub(crate) depth: u32,
+    /// The calling session, when the front end knows it, as the native
+    /// `sessions` tool does: a session it starts records the job writing it
+    /// as its parent and shares the daemon-wide agent budget (#1714).
+    pub(crate) session: Option<rho_protocol::SessionId>,
+    /// The environment of the process or session that calls, which the
+    /// sessions it starts or prompts run with, its context set in it.
+    pub(crate) environment: ClientEnvironment,
 }
 
 impl Caller {
-    /// The caller `grant`'s holder is from `context`: a scope the calling
-    /// session carries can only narrow the grant, never widen it.
-    pub(crate) fn new(grant: Grant, context: &CallerContext) -> Self {
+    /// The caller `grant`'s holder is from `context`, in `environment`: a
+    /// scope the calling session carries can only narrow the grant, never
+    /// widen it.
+    pub(crate) fn new(
+        grant: Grant,
+        context: &CallerContext,
+        environment: ClientEnvironment,
+    ) -> Self {
         Self {
             grant: Grant {
                 scope: grant.scope.intersect(&context.scope),
                 ..grant
             },
             depth: context.depth,
+            session: None,
+            environment,
+        }
+    }
+
+    /// The agent of `session`, at the depth and scope of its `context`,
+    /// in the session's `environment`: it holds a full grant of its own,
+    /// which only its context narrows.
+    pub(crate) fn session(
+        session: rho_protocol::SessionId,
+        context: &CallerContext,
+        environment: ClientEnvironment,
+    ) -> Self {
+        let grant = Grant {
+            holder: Holder::Session(session.clone()),
+            scope: Scope::FULL,
+        };
+        Self {
+            session: Some(session),
+            ..Self::new(grant, context, environment)
         }
     }
 
