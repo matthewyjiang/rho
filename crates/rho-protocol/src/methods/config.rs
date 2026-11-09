@@ -414,6 +414,15 @@ pub enum SettingChange {
     Reset { key: SettingKey },
 }
 
+impl SettingChange {
+    /// The setting the change is to.
+    pub fn key(&self) -> &SettingKey {
+        match self {
+            Self::Set { key, .. } | Self::Reset { key } => key,
+        }
+    }
+}
+
 /// Result of [`CONFIG_SET`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ConfigSetResponse {

@@ -191,8 +191,9 @@ async fn a_change_is_saved_and_reaches_readers_and_a_loaded_sessions_next_turn()
 }
 
 // Covers: a change against a stale revision is refused as a conflict, and
-// one with a bad value or an unknown key as invalid params naming them;
-// neither touches the file (#1720).
+// one with a bad value or an unknown key as invalid params naming them, as
+// is a credential store change, which must go through
+// `rho/auth/choose_store`'s checks; none touches the file (#1720).
 // Owner: daemon settings store.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_stale_or_refused_change_writes_nothing() {
@@ -229,8 +230,18 @@ async fn a_stale_or_refused_change_writes_nothing() {
         ],
     )
     .await;
+    let store = set(
+        &client,
+        ConfigNamespace::Agent,
+        &revision,
+        vec![change(
+            "behavior.credential_store",
+            SettingValue::Text("file".into()),
+        )],
+    )
+    .await;
     assert_eq!(
-        [stale.map(drop), refused.map(drop)],
+        [stale.map(drop), refused.map(drop), store.map(drop)],
         [
             Err(RpcError::new(
                 ErrorCode::ConfigConflict,
@@ -239,6 +250,10 @@ async fn a_stale_or_refused_change_writes_nothing() {
             Err(RpcError::new(
                 ErrorCode::InvalidParams,
                 "`compaction.compact_threshold_percent`: must be at most 100; got 101\n`display.zen_mode`: no such setting",
+            )),
+            Err(RpcError::new(
+                ErrorCode::InvalidParams,
+                "`behavior.credential_store`: change it with rho/auth/choose_store",
             )),
         ]
     );
@@ -285,8 +300,9 @@ async fn a_hand_edit_is_served_and_a_broken_one_keeps_the_last_good_values() {
 }
 
 // Covers: a client's registered settings are stored for it and served
-// again by a daemon started later, once the client registers again
-// (#1720).
+// again by a daemon started later, once the client registers again; a
+// client file that stops reading keeps those values served, with the
+// error, as `config.toml` does (#1720).
 // Owner: daemon settings store.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_clients_settings_outlast_the_daemon() {
@@ -336,5 +352,20 @@ async fn a_clients_settings_outlast_the_daemon() {
     assert_eq!(
         value(&get(&client, tui()).await, "zen_mode"),
         global(SettingValue::Bool(true))
+    );
+
+    let path = sandbox
+        .isolated
+        .config_path
+        .with_file_name("clients/tui.toml");
+    std::fs::write(&path, "zen_mode = \n").unwrap();
+    let broken = get(&client, tui()).await;
+    assert_eq!(
+        (
+            value(&broken, "zen_mode"),
+            broken.errors.len(),
+            broken.errors[0].key.clone()
+        ),
+        (global(SettingValue::Bool(true)), 1, None)
     );
 }

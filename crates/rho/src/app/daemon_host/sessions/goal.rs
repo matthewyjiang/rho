@@ -414,7 +414,10 @@ async fn drive_goal(
         if cancel.is_cancelled() || halt.is_halted() {
             return ended;
         }
-        ended = turn::run_goal_turn(runtime, view, next, &session.config(), halt.turn_cancel).await;
+        // A goal is one long run of turns; each takes the global settings
+        // that changed since the last, as an ordinary turn does.
+        let config = session.config_for_turn(runtime).await;
+        ended = turn::run_goal_turn(runtime, view, next, &config, halt.turn_cancel).await;
     }
 }
 

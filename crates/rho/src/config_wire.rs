@@ -1,10 +1,11 @@
 //! Settings as the daemon protocol serves them: the agent schema, the values
 //! a document holds, and changes written into a document.
 //!
-//! The codec reads and writes a value by its [`SettingKind`] alone, so it
-//! also stores the settings a client registers, which have no Rust type in
-//! the daemon. A change to the agent's file is checked again by loading the
-//! edited document through the registry, which runs every typed check.
+//! An agent change goes through the registry's typed setters, as an edit in
+//! Rust would, then the edited config is saved as a diff and loaded again,
+//! which runs every check across settings. A client's settings have no Rust
+//! type in the daemon, so a small codec reads and writes them by their
+//! [`SettingKind`] alone; clients register only plain values.
 
 use std::collections::BTreeMap;
 
@@ -16,10 +17,10 @@ use toml_edit::Value;
 
 use super::{
     document::{shown, ConfigDocument},
-    inferred_provider_auth, load,
+    load,
     registry::AGENT_SETTINGS,
-    setting::ConfigError,
-    Config, CLAUDE_CLI_RUNTIME_KEY, DEFAULT_AUTH, DEFAULT_MODEL, DEFAULT_PROVIDER,
+    setting::{AnySetting, ConfigError},
+    Config, ConfigWarning,
 };
 
 /// The agent's settings pages, in display order. Every registry row names
@@ -60,11 +61,10 @@ pub(crate) fn agent_values(
     AGENT_SETTINGS
         .iter()
         .map(|setting| {
-            let SettingSpec { key, kind, .. } = setting.spec();
-            let set = read(doc, key.as_str(), &kind).is_ok_and(|value| value.is_some());
+            let key = SettingKey::new(setting.key());
             let entry = SettingEntry {
                 value: setting.wire_value(config),
-                source: if set {
+                source: if setting.is_set(doc) {
                     ValueSource::Global
                 } else {
                     ValueSource::Default
@@ -73,6 +73,57 @@ pub(crate) fn agent_values(
             (key, entry)
         })
         .collect()
+}
+
+/// Applies protocol `changes` to the agent settings `doc` holds: each
+/// through its registry setter, then the edited config saved into `doc` as
+/// a diff, keeping the rest of the file. Returns the config `doc` now loads
+/// as, or every problem, with `doc` left as it was: a change a setting
+/// refuses, an unknown key, a file that did not load before, or one that
+/// would not load after, such as a compaction target above its threshold.
+pub(crate) fn apply_agent_changes(
+    doc: &mut ConfigDocument,
+    changes: &[SettingChange],
+) -> Result<(Config, Vec<ConfigWarning>), Vec<ConfigError>> {
+    let (before, _) = load::resolve(doc)?;
+    let mut after = before.clone();
+    let mut errors = Vec::new();
+    // The settings whose last change is a reset.
+    let mut resets: Vec<&dyn AnySetting<Config>> = Vec::new();
+    for change in changes {
+        let (key, value) = match change {
+            SettingChange::Set { key, value } => (key, Some(value)),
+            SettingChange::Reset { key } => (key, None),
+        };
+        let Some(setting) = AGENT_SETTINGS
+            .iter()
+            .find(|setting| setting.key() == key.as_str())
+        else {
+            errors.push(ConfigError::at(key.as_str(), "no such setting"));
+            continue;
+        };
+        if let Err(message) = setting.change(&mut after, value) {
+            errors.push(ConfigError::at(key.as_str(), message));
+        }
+        resets.retain(|reset| reset.key() != setting.key());
+        if value.is_none() {
+            resets.push(*setting);
+        }
+    }
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    let mut edited = doc.clone();
+    load::save_diff(&before, &after, &mut edited)
+        .map_err(|error| vec![ConfigError::at_file(format!("{error:#}"))])?;
+    // A reset removes the key even where the file held the default, which
+    // the diff sees as no change.
+    for setting in resets {
+        setting.remove(&mut edited);
+    }
+    let resolved = load::resolve(&edited)?;
+    *doc = edited;
+    Ok(resolved)
 }
 
 /// The values `doc` holds for `specs`, defaults for the ones it leaves
@@ -110,9 +161,9 @@ fn default_entry(spec: &SettingSpec) -> SettingEntry {
     }
 }
 
-/// Writes every change into `doc`, each by its setting in `specs`, or
-/// reports every change it refuses: an unknown key, or a value its setting
-/// does not take.
+/// Writes every change into a client's `doc`, each by its setting in
+/// `specs`, or reports every change it refuses: an unknown key, or a value
+/// its setting does not take.
 pub(crate) fn write_changes(
     doc: &mut ConfigDocument,
     specs: &[SettingSpec],
@@ -120,9 +171,7 @@ pub(crate) fn write_changes(
 ) -> Result<(), Vec<ConfigError>> {
     let mut errors = Vec::new();
     for change in changes {
-        let key = match change {
-            SettingChange::Set { key, .. } | SettingChange::Reset { key } => key,
-        };
+        let key = change.key();
         let Some(spec) = specs.iter().find(|spec| &spec.key == key) else {
             errors.push(ConfigError::at(key.as_str(), "no such setting"));
             continue;
@@ -133,7 +182,7 @@ pub(crate) fn write_changes(
                     errors.push(ConfigError::at(key.as_str(), message));
                 }
             }
-            SettingChange::Reset { .. } => remove(doc, key.as_str(), &spec.kind),
+            SettingChange::Reset { .. } => doc.remove(key.as_str()),
         }
     }
     if errors.is_empty() {
@@ -165,7 +214,7 @@ pub(crate) fn client_specs_problem(specs: &[SettingSpec]) -> Option<String> {
                 "setting `{key}` must be a bool, choice, integer, or text setting"
             ));
         }
-        if !super::setting::default_fits_kind(spec) {
+        if !default_fits_kind(spec) {
             return Some(format!("setting `{key}` has a default its kind refuses"));
         }
         let overlaps = |other: &SettingSpec| {
@@ -187,9 +236,6 @@ fn read(
     key: &str,
     kind: &SettingKind,
 ) -> Result<Option<SettingValue>, String> {
-    if let SettingKind::Model { .. } = kind {
-        return read_model(doc, key);
-    }
     let Some(item) = doc.get(key) else {
         return Ok(None);
     };
@@ -279,79 +325,19 @@ fn write(
             key,
             Value::from(i64::try_from(number).expect("check bounds integers to i64")),
         ),
-        SettingValue::Model(selection) => write_model(doc, key, &selection),
+        // Clients register no model settings, and agent changes take the
+        // typed path.
+        SettingValue::Model(_) => return Err("takes a plain value, not a model".into()),
     }
     Ok(())
 }
 
-/// Removes the setting at `key`, so its default applies.
-fn remove(doc: &mut ConfigDocument, key: &str, kind: &SettingKind) {
-    match kind {
-        SettingKind::Model { .. } => {
-            for leaf in MODEL_LEAVES {
-                doc.remove(&format!("{key}.{leaf}"));
-            }
-        }
-        _ => doc.remove(key),
-    }
-}
-
-const MODEL_LEAVES: [&str; 4] = ["runtime", "provider", "model", "auth"];
-
-fn leaf(doc: &ConfigDocument, key: &str, leaf: &str) -> Option<String> {
-    doc.get(&format!("{key}.{leaf}"))?
-        .as_str()
-        .map(str::to_owned)
-}
-
-/// The model the leaves of the table at `key` select; `None` when it has
-/// none. The registry's loader checks the leaves' types.
-fn read_model(doc: &ConfigDocument, key: &str) -> Result<Option<SettingValue>, String> {
-    if MODEL_LEAVES
-        .iter()
-        .all(|name| doc.get(&format!("{key}.{name}")).is_none())
-    {
-        return Ok(None);
-    }
-    let model = leaf(doc, key, "model");
-    Ok(Some(SettingValue::Model(
-        match leaf(doc, key, "runtime").as_deref() {
-            Some(CLAUDE_CLI_RUNTIME_KEY) => ModelSelection::ClaudeCli { model },
-            _ => ModelSelection::Rho {
-                provider: leaf(doc, key, "provider").unwrap_or_else(|| DEFAULT_PROVIDER.into()),
-                model: model.unwrap_or_else(|| DEFAULT_MODEL.into()),
-            },
-        },
-    )))
-}
-
-/// Writes `selection` into the leaves of the table at `key`. A Rho model
-/// keeps the table's auth while its provider stays, else takes the new
-/// provider's default auth.
-fn write_model(doc: &mut ConfigDocument, key: &str, selection: &ModelSelection) {
-    let path = |leaf: &str| format!("{key}.{leaf}");
-    match selection {
-        ModelSelection::Rho { provider, model } => {
-            let auth = inferred_provider_auth(
-                provider,
-                &leaf(doc, key, "provider").unwrap_or_else(|| DEFAULT_PROVIDER.into()),
-                &leaf(doc, key, "auth").unwrap_or_else(|| DEFAULT_AUTH.into()),
-            );
-            doc.remove(&path("runtime"));
-            doc.set_value(&path("provider"), Value::from(provider.as_str()));
-            doc.set_value(&path("model"), Value::from(model.as_str()));
-            doc.set_value(&path("auth"), Value::from(auth));
-        }
-        ModelSelection::ClaudeCli { model } => {
-            doc.set_value(&path("runtime"), Value::from(CLAUDE_CLI_RUNTIME_KEY));
-            doc.remove(&path("provider"));
-            doc.remove(&path("auth"));
-            match model {
-                Some(model) => doc.set_value(&path("model"), Value::from(model.as_str())),
-                None => doc.remove(&path("model")),
-            }
-        }
-    }
+/// Whether a spec's default is a value its own kind accepts, so a declared
+/// range or choice list cannot reject the setting's own default.
+pub(crate) fn default_fits_kind(spec: &SettingSpec) -> bool {
+    spec.default
+        .as_ref()
+        .is_none_or(|value| check(&spec.kind, value).is_ok())
 }
 
 #[cfg(test)]

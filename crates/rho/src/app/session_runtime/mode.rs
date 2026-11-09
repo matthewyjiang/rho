@@ -76,7 +76,8 @@ impl SessionRuntime {
     }
 
     /// Rebuilds the SDK runtime around the live conversation and the tool
-    /// set as it stands, with `mode`'s policy and approvals over `writes`,
+    /// set as it stands, with `mode`'s policy and approvals over `writes`
+    /// whatever mode `config` names,
     /// keeping the session's run shape. The live runtime is replaced only
     /// once the new one holds the session, so on error the session keeps
     /// its runtime. Callers that change the tool list keep the system prompt
@@ -87,6 +88,11 @@ impl SessionRuntime {
         mode: PermissionMode,
         writes: SessionWriteLog,
     ) -> Result<(), SettingChangeError> {
+        // Approvals follow `config`'s mode, which a caller passing the
+        // session's opening config may not have kept current.
+        let mut config = config.clone();
+        config.permission_mode = mode;
+        let config = &config;
         let approval = self.build.host.approvals.wire(ApprovalInputs {
             config: config.clone(),
             workspace_root: self.permission.workspace_root.clone(),

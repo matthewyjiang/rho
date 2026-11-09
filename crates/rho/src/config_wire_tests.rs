@@ -4,7 +4,7 @@ use rho_protocol::{
     SettingValue, ValueSource,
 };
 
-use super::{agent_schema, agent_values, client_specs_problem, write_changes};
+use super::{agent_values, apply_agent_changes, client_specs_problem};
 use crate::config::{document::ConfigDocument, load::resolve};
 
 fn set(key: &str, value: SettingValue) -> SettingChange {
@@ -20,27 +20,32 @@ fn reset(key: &str) -> SettingChange {
     }
 }
 
-// Covers: a protocol change lands in `config.toml` by its setting's kind,
-// keeping the rest of the file; a value the kind refuses, or a key no
-// setting has, is an error naming the key, the limit, and the value, and
-// the file is left as it was; a model on another provider takes that
-// provider's default auth.
-// Owner: config wire codec.
+// Covers: a protocol change lands in `config.toml` through its typed
+// setting, keeping the rest of the file; a value the setting refuses, or a
+// key no setting has, is an error naming the key, the limit, and the
+// value, and the file is left as it was; a model on another provider takes
+// that provider's default auth; resetting an internal agent's model drops
+// its whole table, reasoning included, so the agent falls back as a fresh
+// file would; its reasoning cannot be set while it has no model.
+// Owner: config wire changes.
 #[test]
-fn agent_changes_write_by_kind_or_name_what_they_refuse() {
-    let before = "# mine\n[behavior]\nagent_concurrency = 4 # slots\nrtk = true\n\n[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n";
+fn agent_changes_write_by_setting_or_name_what_they_refuse() {
+    let head = "# mine\n[behavior]\nagent_concurrency = 4 # slots\nrtk = true\n\n";
+    let model = "[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n";
+    let advisor = "\n[internal_agents.advisor]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\nreasoning = \"high\"\n";
+    let before = format!("{head}{model}{advisor}");
     /// The file after the changes, or each error that refused them.
-    type Written = Result<&'static str, Vec<&'static str>>;
+    type Written = Result<String, Vec<&'static str>>;
     let cases: Vec<(&str, Vec<SettingChange>, Written)> = vec![
         (
             "a whole number replaces the value and keeps its comment",
             vec![set("behavior.agent_concurrency", SettingValue::Integer(8))],
-            Ok("# mine\n[behavior]\nagent_concurrency = 8 # slots\nrtk = true\n\n[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n"),
+            Ok(before.replace("= 4 #", "= 8 #")),
         ),
         (
             "a reset removes the key",
             vec![reset("behavior.rtk")],
-            Ok("# mine\n[behavior]\nagent_concurrency = 4 # slots\n\n[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n"),
+            Ok(before.replace("rtk = true\n", "")),
         ),
         (
             "another provider takes its default auth",
@@ -51,7 +56,22 @@ fn agent_changes_write_by_kind_or_name_what_they_refuse() {
                     model: "claude-opus-4-8".into(),
                 }),
             )],
-            Ok("# mine\n[behavior]\nagent_concurrency = 4 # slots\nrtk = true\n\n[model]\nprovider = \"anthropic\"\nmodel = \"claude-opus-4-8\"\nauth = \"anthropic-api-key\"\n"),
+            Ok(format!("{head}[model]\nprovider = \"anthropic\"\nmodel = \"claude-opus-4-8\"\nauth = \"anthropic-api-key\"\n{advisor}")),
+        ),
+        (
+            "resetting an internal agent's model drops its reasoning too",
+            vec![reset("internal_agents.advisor")],
+            Ok(format!("{head}{model}")),
+        ),
+        (
+            "an internal agent's reasoning needs its model",
+            vec![
+                reset("internal_agents.advisor"),
+                set("internal_agents.advisor.reasoning", SettingValue::Text("low".into())),
+            ],
+            Err(vec![
+                "`internal_agents.advisor.reasoning`: cannot hold a value until the setting it belongs to is set",
+            ]),
         ),
         (
             "every refused change is named",
@@ -69,19 +89,19 @@ fn agent_changes_write_by_kind_or_name_what_they_refuse() {
             ]),
         ),
     ];
-    let specs = agent_schema().settings;
     for (name, changes, expected) in cases {
-        let mut doc = ConfigDocument::parse(before).unwrap();
-        let written = write_changes(&mut doc, &specs, &changes)
-            .map(|()| doc.text())
+        let mut doc = ConfigDocument::parse(&before).unwrap();
+        let written = apply_agent_changes(&mut doc, &changes)
+            .map(|_| doc.text())
             .map_err(|errors| errors.iter().map(ToString::to_string).collect::<Vec<_>>());
         assert_eq!(
             written,
-            expected
-                .map(str::to_owned)
-                .map_err(|errors| errors.into_iter().map(str::to_owned).collect()),
+            expected.map_err(|errors| errors.into_iter().map(str::to_owned).collect()),
             "{name}"
         );
+        if written.is_err() {
+            assert_eq!(doc.text(), before, "{name} leaves the file as it was");
+        }
     }
 }
 
