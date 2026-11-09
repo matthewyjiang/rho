@@ -38,6 +38,9 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         if let Err(error) = self.request_daemon_turn(&turn, &media).await {
+            // Why the prompt found no attachment, such as a failed reattach
+            // after a daemon restart, shows first.
+            self.show_taken_daemon_views(terminal).await?;
             self.insert_entry(&Entry::Error(format!(
                 "could not send the prompt: {error:#}"
             )));
@@ -75,6 +78,7 @@ impl App {
         self.select_pending_recall_target();
         let turn = TurnPrompt::standard(prompt.prompt.clone(), prompt.display_prompt.clone());
         if let Err(error) = self.request_daemon_turn(&turn, &prompt.media).await {
+            self.show_taken_daemon_views(terminal).await?;
             self.pending.push_follow_up_front(prompt);
             self.pending_input_changed();
             self.insert_entry(&Entry::Error(format!(
@@ -88,7 +92,8 @@ impl App {
 
     /// Starts a daemon turn of `turn` with `media`. Once this returns, what
     /// the daemon sent before it answered, such as the turn's start, waits
-    /// for [`Self::show_taken_daemon_views`].
+    /// for [`Self::show_taken_daemon_views`], as does, on an error, what
+    /// ended the attachment, such as a failed reattach.
     async fn request_daemon_turn(
         &mut self,
         turn: &TurnPrompt,
