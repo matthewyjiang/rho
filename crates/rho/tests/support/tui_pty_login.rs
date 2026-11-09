@@ -550,7 +550,7 @@ fn rho_login_without_a_session_bus_falls_back_to_the_file_store_it_offers() {
     // The key check reaches the discard port, so the key saves unchecked.
     std::fs::write(
         &home.config_path,
-        "provider = \"mock\"\nmodel = \"mock-model\"\nauth = \"mock-api-key\"\ncheck_for_updates = false\n\n[providers.custom.mock]\nbase_url = \"http://127.0.0.1:9/v1\"\n",
+        "[model]\nprovider = \"mock\"\nmodel = \"mock-model\"\nauth = \"mock-api-key\"\n\n[providers.custom.mock]\nbase_url = \"http://127.0.0.1:9/v1\"\n",
     )
     .unwrap();
     let plan = RhoLaunchPlan::matrix(
