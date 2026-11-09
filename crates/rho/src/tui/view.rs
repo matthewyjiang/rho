@@ -903,6 +903,11 @@ impl App {
     }
 
     fn goal_status(&self) -> Option<GoalStatus> {
+        if self.info.session.daemon.is_some() {
+            return self
+                .daemon_goal()
+                .map(super::daemon_goal::daemon_goal_status);
+        }
         self.goal.as_ref().map(|goal| GoalStatus {
             turns: goal.turns,
             elapsed: goal.elapsed(),

@@ -28,7 +28,9 @@
 //! [`Seq`] in the session's [`StreamId`]. A client that reattaches with its
 //! [`Cursor`] resumes after the last event it saw, or is reset to the
 //! session's saved transcript when the daemon no longer buffers that point
-//! (#1657). A tool call's events carry the card Rho's TUI draws for it, in
+//! (#1657). A client that only reads a session observes it instead
+//! ([`methods::SESSION_OBSERVE`]), which follows a loaded session the same
+//! way but never loads one. A tool call's events carry the card Rho's TUI draws for it, in
 //! the types of [`display`].
 //!
 //! A client signs the daemon in with a provider's interactive login through
@@ -85,8 +87,9 @@ pub use methods::{
     PlanEntry, PlanStatus, Question, QuestionAsk, QueuePlace, Replay, Resolution, Selection, Seq,
     SessionAnswerParams, SessionAnswerResponse, SessionAttachParams, SessionAttachResponse,
     SessionCancelParams, SessionCancelResponse, SessionDetachParams, SessionDetachResponse,
-    SessionDetachedParams, SessionEvent, SessionEventParams, SessionHoldParams,
-    SessionHoldResponse, SessionId, SessionNewParams, SessionNewResponse, SessionPromptParams,
+    SessionDetachedParams, SessionEvent, SessionEventParams, SessionGoal, SessionGoalAction,
+    SessionGoalPhase, SessionGoalStep, SessionHoldParams, SessionHoldResponse, SessionId,
+    SessionNewParams, SessionNewResponse, SessionObserveParams, SessionPromptParams,
     SessionPromptResponse, SessionSteerParams, SessionSteerResponse, SessionUnsteerParams,
     SessionUnsteerResponse, StatusParams, SteerId, StopParams, StopResponse, StreamId, ToolCallId,
     ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
@@ -111,6 +114,10 @@ pub use methods::{
     SessionDeleteParams, SessionDeleteResponse, SessionListParams, SessionListResponse,
     SessionRenameParams, SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST,
     SESSION_RENAME,
+};
+pub use methods::{
+    SessionMcpInventory, SessionMcpMode, SessionMcpParams, SessionMcpServer, SessionMcpStatus,
+    SESSION_MCP,
 };
 pub use server::{serve_connection, ServerInfo, Service, CLOSE_GRACE};
 pub use subscription::{subscription, Published, Publisher, Subscription};

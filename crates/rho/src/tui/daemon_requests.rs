@@ -3,14 +3,17 @@
 //! Configure can wait for an active turn (including an approval) to end. Its
 //! response must never own the TUI event loop. Prompts share the queue so a
 //! later prompt cannot overtake a configuration change. Cancel and answers
-//! deliberately bypass this queue, since they may unblock that change.
+//! deliberately bypass this queue, since they may unblock that change. MCP
+//! inventory reads and goal actions use an independent control worker to stay
+//! usable during the turn: a goal runs as one long turn, which a queued
+//! change would otherwise hold `/goal clear` behind.
 
 use std::sync::Arc;
 
 use rho_protocol::{
-    methods::{SessionConfigure, SessionPrompt},
-    ClientEnvironment, ContentBlock, SessionChange, SessionConfigureParams, SessionId,
-    SessionPromptParams,
+    methods::{SessionConfigure, SessionMcp, SessionPrompt},
+    ClientEnvironment, ContentBlock, SessionChange, SessionConfigureParams, SessionGoalAction,
+    SessionId, SessionMcpParams, SessionPromptParams,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -25,10 +28,18 @@ enum Request {
     },
 }
 
+/// A request that must not wait behind a queued change.
+enum Control {
+    Mcp,
+    Goal(SessionGoalAction),
+}
+
 pub(super) struct DaemonRequests {
     sender: mpsc::UnboundedSender<Request>,
     pub(super) views: mpsc::UnboundedReceiver<DaemonView>,
     task: tokio::task::JoinHandle<()>,
+    control: mpsc::UnboundedSender<Control>,
+    control_task: tokio::task::JoinHandle<()>,
 }
 
 impl DaemonRequests {
@@ -36,6 +47,45 @@ impl DaemonRequests {
     pub(super) fn new(link: Arc<Link>, session: SessionId) -> Self {
         let (sender, mut requests) = mpsc::unbounded_channel();
         let (views, receiver) = mpsc::unbounded_channel();
+        let (control, mut control_requests) = mpsc::unbounded_channel();
+        let control_link = Arc::clone(&link);
+        let control_session = session.clone();
+        let control_views = views.clone();
+        // Control requests bypass configure, which can wait for a turn to end.
+        let control_task = tokio::spawn(async move {
+            while let Some(request) = control_requests.recv().await {
+                match request {
+                    Control::Mcp => {
+                        let result = control_link
+                            .request::<SessionMcp>(&SessionMcpParams {
+                                session: control_session.clone(),
+                            })
+                            .await
+                            .map(Box::new)
+                            .map_err(|error| {
+                                format!("could not read session MCP inventory: {error}")
+                            });
+                        let _ = control_views.send(DaemonView::McpInventory(result));
+                    }
+                    Control::Goal(action) => {
+                        let verb = goal_verb(&action);
+                        let response = control_link
+                            .request::<SessionConfigure>(&SessionConfigureParams {
+                                session: control_session.clone(),
+                                change: SessionChange::Goal { action },
+                            })
+                            .await;
+                        // The goal's OptionsChanged, not this response, is
+                        // authoritative.
+                        if let Err(error) = response {
+                            let _ = control_views.send(DaemonView::Error(format!(
+                                "could not {verb} the goal: {error}"
+                            )));
+                        }
+                    }
+                }
+            }
+        });
         let task = tokio::spawn(async move {
             while let Some(request) = requests.recv().await {
                 match request {
@@ -78,7 +128,21 @@ impl DaemonRequests {
             sender,
             views: receiver,
             task,
+            control,
+            control_task,
         }
+    }
+
+    pub(super) fn request_mcp(&self) -> anyhow::Result<()> {
+        self.control
+            .send(Control::Mcp)
+            .map_err(|_| anyhow::anyhow!("lost the connection to the rho daemon"))
+    }
+
+    pub(super) fn goal(&self, action: SessionGoalAction) -> anyhow::Result<()> {
+        self.control
+            .send(Control::Goal(action))
+            .map_err(|_| anyhow::anyhow!("lost the connection to the rho daemon"))
     }
 
     pub(super) fn configure(&self, change: SessionChange) -> anyhow::Result<()> {
@@ -99,5 +163,16 @@ impl DaemonRequests {
 impl Drop for DaemonRequests {
     fn drop(&mut self) {
         self.task.abort();
+        self.control_task.abort();
+    }
+}
+
+/// The verb a refused goal action's error says, as in `could not set the goal`.
+fn goal_verb(action: &SessionGoalAction) -> &'static str {
+    match action {
+        SessionGoalAction::Set { .. } => "set",
+        SessionGoalAction::Clear => "clear",
+        SessionGoalAction::Resume => "resume",
+        _ => "change",
     }
 }

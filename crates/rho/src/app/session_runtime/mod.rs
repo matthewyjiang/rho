@@ -49,6 +49,7 @@ mod compact;
 mod credentials;
 mod delegation;
 mod events;
+mod goal;
 mod handle;
 mod left_out;
 mod mode;
@@ -76,7 +77,7 @@ pub(crate) use approval_policy::{
 pub(in crate::app) use build::session_config;
 pub(crate) use build::{
     ChildAgents, HostCapabilities, QuestionSupport, RunShape, SessionBuild, SessionLaunch,
-    SessionRole,
+    SessionRole, SessionUse,
 };
 pub(crate) use credentials::CredentialFailure;
 use credentials::SessionCredentials;
@@ -230,6 +231,12 @@ impl SessionRuntime {
     /// A read-only view of the session's tools; see [`SessionTools`].
     pub(crate) fn tools(&self) -> SessionTools<'_> {
         SessionTools::of(&self.built.tools)
+    }
+
+    /// The configuration file this session was opened with.
+    #[cfg(unix)]
+    pub(crate) fn config_path(&self) -> &Path {
+        &self.build.launch.config_path
     }
 
     /// The context window the session's current model is configured with,

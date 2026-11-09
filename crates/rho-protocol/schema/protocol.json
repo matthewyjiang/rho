@@ -863,6 +863,11 @@
           "type": "string"
         },
         {
+          "const": "not_loaded",
+          "description": "An observe ([`SESSION_OBSERVE`]) found the session unloaded: the\nreplay was the session as its file keeps it, and nothing follows.\nObserve again to read it again.",
+          "type": "string"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "type": "string",
           "x-rho-other": true
@@ -2444,7 +2449,7 @@
       "type": "object"
     },
     "SessionAttachResponse": {
-      "description": "Result of [`SESSION_ATTACH`]. The session's events then arrive as\n[`SESSION_EVENT`] notifications, never before this response. Attaching\nagain on the same connection replaces the earlier attachment.",
+      "description": "Result of [`SESSION_ATTACH`] and [`SESSION_OBSERVE`]. The session's\nevents then arrive as [`SESSION_EVENT`] notifications, never before this\nresponse. Attaching or observing again on the same connection replaces\nthe earlier attachment.",
       "properties": {
         "inputs": {
           "description": "The input requests open when the attachment began, oldest first:\nwhat a client may answer even when the replay no longer holds the\nevents that opened them (#1660). The replay may repeat some; an\ninput request's id names it.",
@@ -2581,6 +2586,23 @@
           "required": [
             "kind",
             "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Control the loaded session's goal without waiting for its turn.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/SessionGoalAction"
+            },
+            "kind": {
+              "const": "goal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "action"
           ],
           "type": "object"
         }
@@ -3099,6 +3121,140 @@
       ],
       "type": "object"
     },
+    "SessionGoal": {
+      "description": "A goal the loaded session keeps working on, independently of clients.",
+      "properties": {
+        "condition": {
+          "description": "The user's completion condition.",
+          "type": "string"
+        },
+        "evaluated_turns": {
+          "description": "Evaluations completed, not provider calls or SDK steps.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "human_steps": {
+          "description": "Remaining human-only work; empty while active.",
+          "items": {
+            "$ref": "#/$defs/SessionGoalStep"
+          },
+          "type": "array"
+        },
+        "last_reason": {
+          "description": "Why the last evaluation found the goal unmet or blocked.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phase": {
+          "$ref": "#/$defs/SessionGoalPhase",
+          "description": "Whether the goal is working or waiting for the user."
+        },
+        "set_at": {
+          "description": "Unix time, in seconds, when the goal was set. Clients count the\ngoal's elapsed time from it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "condition",
+        "phase",
+        "evaluated_turns",
+        "set_at",
+        "human_steps"
+      ],
+      "type": "object"
+    },
+    "SessionGoalAction": {
+      "description": "A goal lifecycle change, sent through `rho/session/configure`. Unlike\nmodel settings, these actions do not queue behind a running goal.",
+      "oneOf": [
+        {
+          "description": "Set a nonempty condition and start working. Refused while a turn runs.",
+          "properties": {
+            "condition": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "set",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "condition"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Disarm the loop immediately, cancelling evaluation or retry waits,\nbut not a model turn already running. Idempotent when no goal exists.",
+          "properties": {
+            "kind": {
+              "const": "clear",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Verify a blocked goal's human steps, or continue an active goal.\nRefused while a turn runs or when there is no goal.",
+          "properties": {
+            "kind": {
+              "const": "resume",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SessionGoalPhase": {
+      "anyOf": [
+        {
+          "enum": [
+            "active"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "blocked",
+          "description": "Resume or a new user prompt verifies the previously blocked steps.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Whether the goal is working or waiting for external human-only steps."
+    },
+    "SessionGoalStep": {
+      "description": "One step the evaluator found outside the session's authority or capabilities.",
+      "properties": {
+        "action": {
+          "description": "What the user has to do.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why the session cannot do it itself.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "reason"
+      ],
+      "type": "object"
+    },
     "SessionHoldParams": {
       "description": "Params of [`SESSION_HOLD`].",
       "properties": {
@@ -3174,6 +3330,150 @@
       ],
       "type": "object"
     },
+    "SessionMcpInventory": {
+      "description": "Result of [`SESSION_MCP`]: a point-in-time inventory, not a subscription.",
+      "properties": {
+        "config_path": {
+          "description": "The configuration file the session was opened with, not the client's.",
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/SessionMcpMode",
+          "description": "Why the session did or did not load native MCP servers."
+        },
+        "servers": {
+          "description": "Configured servers in inventory order, including disabled and failed ones.",
+          "items": {
+            "$ref": "#/$defs/SessionMcpServer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "config_path",
+        "mode",
+        "servers"
+      ],
+      "type": "object"
+    },
+    "SessionMcpMode": {
+      "anyOf": [
+        {
+          "const": "native",
+          "description": "The session hosts native MCP servers.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported_agent",
+          "description": "The session's agent runtime does not host native MCP tools.",
+          "type": "string"
+        },
+        {
+          "const": "tools_disabled",
+          "description": "The session was opened without tools.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "How a session treated its MCP configuration."
+    },
+    "SessionMcpParams": {
+      "description": "Params of [`SESSION_MCP`].",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/SessionId",
+          "description": "The loaded session whose servers to inspect."
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
+    "SessionMcpServer": {
+      "description": "One configured MCP server and its session-owned status.",
+      "properties": {
+        "detail": {
+          "description": "Human-readable transport, errors, exported tools, live changes, prompts\nand resources. Presentation only: clients must not parse this text.",
+          "type": "string"
+        },
+        "enabled": {
+          "description": "Whether the session enabled this server.",
+          "type": "boolean"
+        },
+        "identity": {
+          "description": "Qualified server identity, including its plugin namespace when present.",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/SessionMcpStatus",
+          "description": "Startup status; subsequent reachability changes are described in `detail`."
+        },
+        "tool_count": {
+          "description": "Number of tools exported to this session's model.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "identity",
+        "enabled",
+        "status",
+        "tool_count",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "SessionMcpStatus": {
+      "anyOf": [
+        {
+          "const": "connected",
+          "description": "Connected at startup; see the server's detail for live reachability.",
+          "type": "string"
+        },
+        {
+          "const": "connecting",
+          "description": "Startup has not finished.",
+          "type": "string"
+        },
+        {
+          "const": "disabled",
+          "description": "Disabled by configuration.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_config",
+          "description": "Invalid server configuration.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Startup failed.",
+          "type": "string"
+        },
+        {
+          "const": "timed_out",
+          "description": "Startup exceeded its configured budget.",
+          "type": "string"
+        },
+        {
+          "const": "not_loaded",
+          "description": "Configured but not loaded by this session.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "A server's startup outcome in a session."
+    },
     "SessionNewParams": {
       "description": "Params of [`SESSION_NEW`].",
       "properties": {
@@ -3220,6 +3520,29 @@
       ],
       "type": "object"
     },
+    "SessionObserveParams": {
+      "description": "Params of [`SESSION_OBSERVE`]. A session the daemon has loaded is\nattached as [`SESSION_ATTACH`] attaches it. A saved session it has not\nloaded stays unloaded: the daemon replays it as its file keeps it, with\nhow its last turn ended, then detaches the client as\n[`DetachReason::NotLoaded`]. Observing starts nothing of the session, no\nMCP server, OpenAPI source, or hook, and so carries no environment or\nsetup. With no MCP server connected, such a replay titles the session's\nMCP tool calls by their names alone.",
+      "properties": {
+        "after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Cursor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The last event this client has, to resume after it, as for\n[`SESSION_ATTACH`]. A session observed unloaded always resets."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
     "SessionOptions": {
       "description": "What a session runs with now, and what a client may change it to.",
       "properties": {
@@ -3240,6 +3563,17 @@
             }
           ],
           "description": "Absent when the current model has no fast mode."
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionGoal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The daemon-owned goal, absent after completion, clear, or cancel.\nKept while the session is loaded, not across daemon restarts."
         },
         "model": {
           "$ref": "#/$defs/ModelOptions"
@@ -4686,12 +5020,28 @@
         "$ref": "#/$defs/SessionListResponse"
       }
     },
+    "rho/session/mcp": {
+      "params": {
+        "$ref": "#/$defs/SessionMcpParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionMcpInventory"
+      }
+    },
     "rho/session/new": {
       "params": {
         "$ref": "#/$defs/SessionNewParams"
       },
       "result": {
         "$ref": "#/$defs/SessionNewResponse"
+      }
+    },
+    "rho/session/observe": {
+      "params": {
+        "$ref": "#/$defs/SessionObserveParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionAttachResponse"
       }
     },
     "rho/session/prompt": {

@@ -14,7 +14,7 @@ use rho_providers::credentials::{
 use crate::config::Config;
 
 mod startup_notice;
-pub(crate) use startup_notice::StartupKeyringNotice;
+pub(crate) use startup_notice::{notifying_store, StartupKeyringNotice};
 
 const LEGACY_POLICY_FILE: &str = "credential-store";
 const ENV_BACKEND: &str = "RHO_CREDENTIAL_STORE";
@@ -145,6 +145,10 @@ impl CredentialStore for AppCredentialStore {
         selected_store()?.get_secret(account)
     }
 
+    fn get_secret_fresh(&self, account: &str) -> CredentialResult<Option<String>> {
+        selected_store()?.get_secret_fresh(account)
+    }
+
     fn set_secret(&self, account: &str, secret: &str) -> CredentialResult<()> {
         let saved = selected_store()?.set_secret(account, secret);
         // A failed write may still have changed the store, as an OS store
@@ -175,6 +179,10 @@ pub(crate) struct UntrackedCredentialStore;
 impl CredentialStore for UntrackedCredentialStore {
     fn get_secret(&self, account: &str) -> CredentialResult<Option<String>> {
         selected_store()?.get_secret(account)
+    }
+
+    fn get_secret_fresh(&self, account: &str) -> CredentialResult<Option<String>> {
+        selected_store()?.get_secret_fresh(account)
     }
 
     fn set_secret(&self, account: &str, secret: &str) -> CredentialResult<()> {
@@ -361,10 +369,7 @@ fn resolve_backend(
 }
 
 fn activate(backend: CredentialStoreBackend) -> CredentialResult<()> {
-    let store = Arc::new(startup_notice::NotifyingCredentialStore {
-        inner: open_credential_store(backend)?,
-        backend,
-    });
+    let store = notifying_store(open_credential_store(backend)?, backend);
     let mut guard = process_state()
         .lock()
         .unwrap_or_else(|error| error.into_inner());

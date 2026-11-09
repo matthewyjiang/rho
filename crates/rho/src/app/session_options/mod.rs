@@ -91,6 +91,7 @@ fn build(
             available: PermissionMode::ALL.into_iter().map(Into::into).collect(),
         },
         commands,
+        goal: None,
     }
 }
 

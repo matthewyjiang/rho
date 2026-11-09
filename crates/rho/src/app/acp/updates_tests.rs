@@ -362,6 +362,7 @@ fn session_options(mode: wire::PermissionMode, fast: bool) -> wire::SessionOptio
             available: vec![wire::PermissionMode::Plan, wire::PermissionMode::Auto],
         },
         commands: Vec::new(),
+        goal: None,
     }
 }
 

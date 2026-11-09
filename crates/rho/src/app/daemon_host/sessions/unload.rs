@@ -106,6 +106,7 @@ impl Sessions {
         let idle_since = {
             let mut turn = session.turn();
             let busy = matches!(self.jobs.session_job(id), SessionJob::Busy(_))
+                || session.has_goal()
                 || turn.hold.is_some()
                 || session.feed.followed()
                 || session.runtime_keeps_loaded();

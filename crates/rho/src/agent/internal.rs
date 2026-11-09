@@ -54,7 +54,7 @@ static INTERNAL_AGENTS: LazyLock<Vec<InternalAgent>> = LazyLock::new(|| {
                 id: AgentId::new(GOAL_JUDGE_AGENT_ID).expect("valid internal agent ID"),
                 description: "Internal agent that evaluates goal completion. Reserved; cannot be overridden or delegated."
                     .to_string(),
-                prompt: PromptPolicy::Replace(crate::tui::GOAL_JUDGE_PROMPT.into()),
+                prompt: PromptPolicy::Replace(crate::goal::GOAL_JUDGE_PROMPT.into()),
                 runtime: AgentRuntimeSpec::Rho {
                     tools: ToolPolicy::Allow(BTreeSet::new()),
                     model: ModelPolicy::Inherit,

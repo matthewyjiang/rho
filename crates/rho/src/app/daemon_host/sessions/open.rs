@@ -45,7 +45,7 @@ use crate::{
         config_repository::ConfigRepository,
         session_runtime::{
             ApprovalPolicy, HostCapabilities, RunShape, SessionBuild, SessionLaunch,
-            SessionOpening, SessionRole, SessionRuntime,
+            SessionOpening, SessionRole, SessionRuntime, SessionUse,
         },
     },
     config::Config,
@@ -163,16 +163,46 @@ pub(super) async fn open_session(
         Opening::Saved(stored) => Some(stored),
     };
     let setup = Setup::resolve(&with.setup, opening.cwd(), saved)?;
-    open_runtime(opening, &with.environment, setup, subagents, job)
-        .await
-        .map_err(open_failed)
+    open_runtime(
+        opening,
+        &with.environment,
+        setup,
+        SessionUse::Run,
+        subagents,
+        job,
+    )
+    .await
+    .map_err(open_failed)
 }
 
-/// [`open_session`] once its setup resolved.
+/// Opens `stored` only to read what it saved, its turns recorded on job
+/// `job`: it starts none of its MCP servers, OpenAPI sources, or hooks, sees
+/// no client's environment, and takes no setup but what its file keeps.
+/// Fails as [`open_session`] does.
+pub(super) async fn open_to_read(
+    stored: StoredSession,
+    subagents: &Subagents,
+    job: &JobId,
+) -> Result<OpenedSession, RpcError> {
+    let setup = Setup::resolve(&SessionSetup::default(), stored.cwd(), Some(&stored))?;
+    open_runtime(
+        Opening::Saved(stored),
+        &Ambient::Client(Arc::default()),
+        setup,
+        SessionUse::Read,
+        subagents,
+        job,
+    )
+    .await
+    .map_err(open_failed)
+}
+
+/// [`open_session`] and [`open_to_read`] once the setup resolved.
 async fn open_runtime(
     opening: Opening,
     environment: &Ambient,
     setup: Setup,
+    session_use: SessionUse,
     subagents: &Subagents,
     job: &JobId,
 ) -> anyhow::Result<OpenedSession> {
@@ -234,6 +264,7 @@ async fn open_runtime(
             mcp_authorization: McpAuthorizationMode::NonInteractive,
             approvals: ApprovalPolicy::Host,
             parent_notices: None,
+            session_use,
         },
         run: RunShape {
             role: SessionRole::Daemon,

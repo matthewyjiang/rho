@@ -14,6 +14,13 @@ use crate::{
 use super::{config, STARTUP, STREAM};
 
 pub(super) const DAEMON_RESUME_ID: &str = "daemon_resume";
+pub(super) const SCENARIO: crate::scenario::Scenario = crate::scenario::Scenario::new(
+    DAEMON_RESUME_ID,
+    "Resume a saved session in the daemon and show its conversation",
+    super::DEFAULT_SIZE,
+    &[],
+    /*smoke*/ false,
+);
 
 const SIZE: PtySize = PtySize {
     rows: 28,

@@ -276,9 +276,9 @@ async fn refreshed_output_schema_replaces_validator_atomically() {
 }
 
 // Covers: a server takes what it reads from the environment from its
-// session's, such as a daemon client's (#1659): a stdio server's base set and
-// `env_from_env` on top of its config `env`, nothing else of it, and a remote
-// server's `headers_from_env`.
+// session's, such as a daemon client's (#1659): a stdio server's base set,
+// nesting depth (#1672), and `env_from_env` on top of its config `env`,
+// nothing else of it, and a remote server's `headers_from_env`.
 // Owner: MCP server environment
 #[cfg(unix)]
 #[test]
@@ -304,6 +304,7 @@ fn a_server_reads_its_sessions_environment() {
         ("GITHUB_TOKEN", "token"),
         ("API_TOKEN", "Bearer client"),
         ("UNRELATED", "value"),
+        ("RHO_SESSION_DEPTH", "2"),
     ]);
 
     let mut command = tokio::process::Command::new("server");
@@ -329,6 +330,7 @@ fn a_server_reads_its_sessions_environment() {
     let expected_environment = [
         ("PATH", "/client/bin"),
         ("HOME", "/home/client"),
+        ("RHO_SESSION_DEPTH", "2"),
         ("MODE", "fast"),
         ("GITHUB_PERSONAL_ACCESS_TOKEN", "token"),
     ]

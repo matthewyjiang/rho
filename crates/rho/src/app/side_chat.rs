@@ -11,7 +11,8 @@ use tokio::sync::mpsc;
 use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundAgent},
     session_assembly::{
-        assemble_session, ApprovalInputs, BuiltSession, SessionApproval, SessionAssemblyOptions,
+        assemble_session, ApprovalInputs, BuiltSession, HookStart, SessionApproval,
+        SessionAssemblyOptions,
     },
     tools_prompt::{McpSamplingSupport, ToolSourceAttach},
 };
@@ -238,6 +239,7 @@ async fn assemble_side_session(launch: &SideChatLaunch) -> anyhow::Result<BuiltS
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
         mcp_sampling: McpSamplingSupport::Unavailable,
         tool_source_attach: ToolSourceAttach::None,
+        hook_start: HookStart::Start,
         mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
         diagnostics: &diagnostics,
         agent: &agent,

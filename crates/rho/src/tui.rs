@@ -64,6 +64,7 @@ mod daemon_asks;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod daemon_events;
 mod daemon_gate;
+mod daemon_goal;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod daemon_inputs;
 mod daemon_options;
@@ -108,7 +109,6 @@ fn plural_suffix(count: usize) -> &'static str {
 
 pub(crate) use client_settings::TuiSettings;
 pub(crate) use first_run::SetupEntry;
-pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod antigravity_login;
 mod changelog_command;
 mod chat_media;

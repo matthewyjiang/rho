@@ -8,7 +8,7 @@
 //! starting them in [`detach`]; the tool processes the daemon's stop ends
 //! are in [`tools`], signing it in and out over its socket in [`auth`],
 //! and the interactive logins it relays to clients, `rho login` among
-//! them, in [`login`].
+//! them, in [`login`]; `rho mcp serve` driving its sessions is in [`mcp`].
 #![cfg(unix)]
 
 use std::{
@@ -47,6 +47,9 @@ mod auth;
 
 #[path = "support/daemon_login.rs"]
 mod login;
+
+#[path = "support/daemon_mcp.rs"]
+mod mcp;
 
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;
@@ -127,6 +130,45 @@ async fn daemon_lifecycle_through_the_cli() {
         sandbox.isolated.daemon_socket(),
         None,
         "socket removed on stop"
+    );
+}
+
+// Covers: `rho daemon start` starts a daemon when none runs and exits once
+// it answers; run again, it exits 0 and leaves that daemon the only one
+// (#1730).
+// Owner: CLI process (daemon lifecycle).
+#[test]
+fn daemon_start_is_idempotent() {
+    let sandbox = Sandbox::new();
+    let start = || {
+        let output = sandbox
+            .rho("fixed")
+            .args(["daemon", "start"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+        let pid = sandbox.isolated.daemon_pid();
+        (
+            output.status.code(),
+            String::from_utf8(output.stdout).unwrap(),
+            pid,
+        )
+    };
+
+    let first = start();
+    let pid = first.2.expect("the started daemon's record");
+    let second = start();
+
+    let running = format!("rho daemon is running (pid {pid})\n");
+    assert_eq!(
+        (first, second),
+        (
+            (Some(0), running.clone(), Some(pid)),
+            (Some(0), running, Some(pid)),
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
     );
 }
 

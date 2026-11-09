@@ -7,8 +7,10 @@ The rho daemon is one long-lived background process per user and rho home (`~/.r
 | Command | What it does |
 | --- | --- |
 | `rho daemon` | Run the daemon in the foreground until it is stopped. Same as `rho daemon run`. `rho daemon run --unload-idle-after <DURATION>` sets how long a session sits idle before it is [unloaded](#unloading-idle-sessions), or discarded if it saved nothing (`60s` by default). |
+| `rho daemon start` | Start the daemon in the background unless one is running, wait until it answers, and print its pid. Run again, it starts no second daemon and still exits 0, so scripts can run it unconditionally. |
 | `rho daemon status` | Show the running daemon's pid, version, protocol, uptime, jobs, and socket. Add `--json` for one JSON document. |
 | `rho daemon stop` | Ask the daemon to shut down and wait for it to exit. |
+| `rho mcp serve` | Serve the daemon's sessions as an MCP server, so another agent can start, follow, and steer them. See [MCP server](/mcp-server). |
 | `rho attach <ID>` | Follow a session's turn until it ends, and exit as it ended; answer its requests, steer it, or cancel it from the terminal; Ctrl+C detaches. See [Attaching to a daemon session](/automation-cli#attaching-to-a-daemon-session). |
 
 `status`, `stop`, and `attach` never start a daemon. With none running, they print `rho daemon is not running` and exit with status 1.
@@ -25,7 +27,9 @@ On Unix, `RHO_TUI_DAEMON=1 rho` opens the interactive TUI as a daemon client. Wi
 
 The attached session supplies the current model, reasoning level, fast mode, permission mode, and their available choices. `/model`, `/fast`, `/permissions`, the limited `/config` menu, and the model, reasoning, and permission shortcuts configure that session rather than the unused local runtime. Changes requested during a turn apply after it ends; the TUI remains responsive to approvals and cancellation, and displays the old settings until the daemon confirms the change. Changes are session settings, not edits to the default configuration. Context tokens and cumulative session cost feed the usual context and spend gauges, and title changes update the followed session's title live.
 
-The command menu includes commands the daemon advertises, such as `/init`, `/compact`, prompt templates, MCP prompts, and command workflows. These are resolved by the daemon. Pure UI commands remain local. Unported runtime commands—including goals, advisor controls, session navigation and rewind, login/logout, the MCP and workflow hubs, `/remember`, `/context`, `/add-dir`, and `!`/`!!` shells—are refused with `/<cmd> is not available with RHO_TUI_DAEMON yet`. Full provider and runtime configuration, startup model/reasoning/permission overrides, and reconnection after a lost connection remain unported.
+The command menu includes commands the daemon advertises, such as `/init`, `/compact`, prompt templates, MCP prompts, and command workflows. These are resolved by the daemon. Pure UI commands remain local. `/goal` runs its loop in the daemon, so a goal keeps working after the TUI quits; see [Goals](/protocol#goals). Unported runtime commands—including advisor controls, session navigation and rewind, login/logout, the agents and workflow hubs, `/remember`, `/context`, `/add-dir`, and `!`/`!!` shells—are refused with `/<cmd> is not available with RHO_TUI_DAEMON yet`. Full provider and runtime configuration, startup model/reasoning/permission overrides, and reconnection after a lost connection remain unported.
+
+`/mcp` opens the existing inventory overlay using the attached daemon session's servers, not the unused local runtime or a freshly read client configuration. It includes disabled and failed servers, exported tools, live tool changes and keepalive details, and current prompt/resource inventory. Each opening requests a fresh snapshot with `rho/session/mcp`; it remains usable during a turn even when a settings change is waiting to apply. Close and reopen the overlay to refresh it.
 
 Quitting detaches and leaves any running turn in the daemon. The exit receipt shows `rho --resume <short id>` once a new session has a saved prompt; quitting an untouched session shows no resume hint. Reopening with `RHO_TUI_DAEMON=1 rho --resume <id>` catches up with the turn, including a reply completed while the TUI was closed.
 
@@ -72,7 +76,7 @@ A session's turn that asks for approval, a plan approval, or answers to question
 
 Any number of clients can follow a session with `rho/session/attach`: they receive its conversation as events, live, and a client that comes back resumes where it left off, or gets the saved conversation again when the daemon no longer buffers what it missed. See [Following a session](/protocol#following-a-session) in the protocol reference. From a terminal, [`rho run --detach`](/automation-cli#running-in-the-daemon) starts one and [`rho attach`](/automation-cli#attaching-to-a-daemon-session) follows it. Editors and desktop apps open, load, and follow sessions through [`rho acp`](/integrations/acp), which starts the daemon when none runs; closing a thread there detaches, and the session stays in the daemon.
 
-Each job's record is a JSON file in `~/.rho/daemon/jobs/` (`$RHO_HOME/daemon/jobs/` with `RHO_HOME`), rewritten on every state change. Records are kept, even when their session is deleted, so a daemon lists the jobs earlier daemons ran; only the job of a session the daemon [discards unsaved](#unloading-idle-sessions) goes. A prompt or an attach for a saved session the daemon has not loaded, such as one an earlier daemon ran or one the TUI saved, reopens it in its own workspace, whatever workspace the client is in. It runs as the agent it was saved as, and one `/agent:<name>` rebound runs as that agent again under the tools of the agent it was rebound from, never more; if either agent's definition changed or is gone, the reopen fails with `SessionOpenFailed` (-32008), as the TUI's resume does, rather than run the session as another agent. It keeps the directories and parts left out it was saved with, adding those of the attach that reopens it, and takes MCP servers and whether its client shows questions from that attach alone, so a prompt reopens it without them ([protocol](/protocol#a-session-s-setup)). Its next turns are recorded on its last session job, so a session keeps one job across daemons; a session no daemon ran gets a new one. Cancel, steer, unsteer, answer, hold, and `rho/session/configure` never reopen a session, since one that is not loaded has no turn to act on; a client attaches before it changes a session's settings.
+Each job's record is a JSON file in `~/.rho/daemon/jobs/` (`$RHO_HOME/daemon/jobs/` with `RHO_HOME`), rewritten on every state change. Records are kept, even when their session is deleted, so a daemon lists the jobs earlier daemons ran; only the job of a session the daemon [discards unsaved](#unloading-idle-sessions) goes. A prompt or an attach for a saved session the daemon has not loaded, such as one an earlier daemon ran or one the TUI saved, reopens it in its own workspace, whatever workspace the client is in. It runs as the agent it was saved as, and one `/agent:<name>` rebound runs as that agent again under the tools of the agent it was rebound from, never more; if either agent's definition changed or is gone, the reopen fails with `SessionOpenFailed` (-32008), as the TUI's resume does, rather than run the session as another agent. It keeps the directories and parts left out it was saved with, adding those of the attach that reopens it, and takes MCP servers and whether its client shows questions from that attach alone, so a prompt reopens it without them ([protocol](/protocol#a-session-s-setup)). Its next turns are recorded on its last session job, so a session keeps one job across daemons; a session no daemon ran gets a new one. Cancel, steer, unsteer, answer, hold, and `rho/session/configure` never reopen a session, since one that is not loaded has no turn to act on; a client attaches before it changes a session's settings. Nor does `rho/session/observe`, which a client that only reads a session uses: it replays an unloaded session from its file and leaves it unloaded, starting none of its MCP servers, OpenAPI sources, or hooks.
 
 A reopen is refused when:
 
@@ -99,7 +103,7 @@ CLI subagents ([Claude Code](/subagents/claude-cli), [Cursor](/subagents/cursor)
 
 ## Starting automatically
 
-Frontends that use the daemon, such as `rho run --detach`, start it when none is running, so you rarely run `rho daemon` yourself. If several start at once, they agree on a single daemon. A frontend that starts one while the previous daemon is still shutting down can time out waiting for it; [#1657](https://github.com/matthewyjiang/rho/issues/1657) tracks waiting for the old daemon instead. The started daemon runs `rho daemon run` from the same `rho` executable in its own process group, so `Ctrl+C` in your terminal does not stop it.
+Frontends that use the daemon, such as `rho run --detach` and `rho daemon start`, start it when none is running, so you rarely run `rho daemon` yourself. If several start at once, they agree on a single daemon. A frontend that finds the previous daemon still shutting down waits for it to exit, up to 5 seconds, and then starts the new one; a daemon still holding its lock after that fails the frontend with the limit and the time it waited. The started daemon runs `rho daemon run` from the same `rho` executable in its own process group, so `Ctrl+C` in your terminal does not stop it.
 
 ## Versions
 
@@ -158,4 +162,88 @@ The daemon reads [configuration](/configuration) when it opens a session, so edi
 
 ## Running as a service
 
-systemd user units and launchd agents for the daemon are planned ([#1663](https://github.com/matthewyjiang/rho/issues/1663), [#1664](https://github.com/matthewyjiang/rho/issues/1664)).
+The daemon needs no service of its own: every frontend starts it on demand. Only a process that has to listen before any client shows up needs a service manager, and today that is [`rho mcp serve --http`](/mcp-server#over-http). It is a daemon client like any other, so its first tool call starts the daemon from inside its service, and its unit is all the always-on setup there is. Use `rho daemon start` in a script that wants the daemon running before anything connects.
+
+Both examples below make the same three choices:
+
+- **Stopping the service leaves the daemon running.** The daemon the server starts runs in a process group of its own, but systemd stops every process in a service's control group by default, and a new process group does not leave it: restarting or stopping the MCP server would stop the daemon and every turn it runs. `KillMode=process` makes systemd stop only the server. launchd kills what is left of a job's process group when the job exits; the daemon is not in the server's group, and `AbandonProcessGroup` keeps launchd from killing anything the server leaves behind all the same. Stop the daemon itself with `rho daemon stop`.
+- **`PATH` is set.** A service starts with the service manager's bare environment, not your shell's, and the sessions the server starts run with the server's environment: their tools, [MCP servers](/integrations/mcp), and [CLI subagents](/subagents) find executables on its `PATH` (see [Environment](#environment)). Set it to the directories your tools live in, and add any variable sessions need that your shell would give them, such as a provider key.
+- **The server listens on loopback.** Reach it from elsewhere through a tunnel, as [Over HTTP](/mcp-server#over-http) describes.
+
+### systemd
+
+Save as `~/.config/systemd/user/rho-mcp.service`, changing `ExecStart` to where `rho` is installed and `PATH` to your own:
+
+```ini
+[Unit]
+Description=rho MCP server
+After=network.target
+
+[Service]
+ExecStart=%h/.local/bin/rho mcp serve --http 127.0.0.1:8765
+# The sessions this server starts look up executables on this PATH.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Stop only the server: the daemon it started keeps running its turns.
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Then start it, and keep it running across logins:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now rho-mcp
+loginctl enable-linger "$USER"   # optional: keep it running while you are logged out
+```
+
+`systemctl --user restart rho-mcp` restarts the server and leaves the daemon and its running turns alone. The server logs to the journal (`journalctl --user -u rho-mcp`); the daemon it starts writes its own log to `~/.rho/logs/daemon.log`, as [Logs](#logs) describes.
+
+### launchd
+
+Save as `~/Library/LaunchAgents/dev.rho.mcp.plist`, changing the `rho` path, `PATH`, and the log path to your own:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.rho.mcp</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/rho</string>
+    <string>mcp</string>
+    <string>serve</string>
+    <string>--http</string>
+    <string>127.0.0.1:8765</string>
+  </array>
+  <!-- The sessions this server starts look up executables on this PATH. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <!-- Stop only the server: the daemon it started keeps running its turns. -->
+  <key>AbandonProcessGroup</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>/Users/you/Library/Logs/rho-mcp.log</string>
+</dict>
+</plist>
+```
+
+Then load it:
+
+```bash
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/dev.rho.mcp.plist
+launchctl kickstart -k "gui/$(id -u)/dev.rho.mcp"   # restart the server
+```
+
+The server logs to `StandardErrorPath`; the daemon it starts writes its own log to `~/.rho/logs/daemon.log`, as [Logs](#logs) describes.

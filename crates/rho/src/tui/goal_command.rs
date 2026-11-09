@@ -2,7 +2,9 @@ use rho_sdk::CancellationToken;
 
 use super::*;
 
-const GOAL_RETRY_DELAY: Duration = Duration::from_secs(3);
+use crate::goal::{
+    blocked_goal_resumption_prompt, format_human_steps, initial_goal_prompt, GOAL_RETRY_DELAY,
+};
 
 pub(super) fn should_resume_goal_after_turn(
     outcome: TurnOutcomeKind,
@@ -601,34 +603,6 @@ impl App {
     }
 }
 
-fn initial_goal_prompt(condition: &str) -> String {
-    format!(
-        "The user invoked Rho's `/goal` command to set the following completion goal. Treat this as a goal-setting action, not as an ordinary conversational message or a claim that the goal is already complete.\n\nGoal:\n{condition}\n\nBegin working toward the goal now. Make concrete progress, use tools as needed, and verify the completion condition before stopping."
-    )
-}
-
-fn blocked_goal_resumption_prompt(
-    condition: &str,
-    pending_steps: &[goal::HumanStep],
-    user_message: Option<&str>,
-) -> String {
-    let user_message = user_message
-        .map(|message| format!("\n\nThe user's new message is:\n{message}"))
-        .unwrap_or_default();
-    format!(
-        "Resume the following goal after it was blocked on steps requiring the user:\n\n{condition}\n\nPreviously blocked steps:\n{}\n\nFirst verify whether each relevant external condition has changed. Do not repeat implementation work unless verification shows that more agent-actionable work is needed.{user_message}",
-        format_human_steps(pending_steps)
-    )
-}
-
-fn format_human_steps(steps: &[goal::HumanStep]) -> String {
-    steps
-        .iter()
-        .map(|step| format!("- {}: {}", step.action, step.reason))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 pub(super) fn is_goal_clear_alias(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
@@ -636,7 +610,7 @@ pub(super) fn is_goal_clear_alias(value: &str) -> bool {
     )
 }
 
-fn is_goal_resume_alias(value: &str) -> bool {
+pub(super) fn is_goal_resume_alias(value: &str) -> bool {
     value.trim().eq_ignore_ascii_case("resume")
 }
 

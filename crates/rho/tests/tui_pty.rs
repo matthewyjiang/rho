@@ -1139,6 +1139,14 @@ fn daemon_detach_preserves_the_turn_and_resume_hint() {
     assert_pass("daemon_detach");
 }
 
+// Covers: a goal set from the TUI lives in the daemon session: a TUI that
+// reopens the session after quitting sees it blocked and resumes it.
+// Owner: daemon goal controller and the TUI as its client (#1667)
+#[test]
+fn daemon_goal_outlives_the_tui_that_set_it() {
+    assert_pass("daemon_goal");
+}
+
 // Covers: with RHO_TUI_DAEMON=1, a prompt sent from the TUI runs in the
 // daemon: its user row shows once, its tool card and reply stream in, and the
 // composer is idle once the session rests.
@@ -1185,4 +1193,12 @@ fn daemon_permission_changes_do_not_block_the_turn() {
 #[test]
 fn daemon_unported_commands_refuse_without_mutating_local_state() {
     assert_pass("daemon_gated_command");
+}
+
+// Covers: MCP inventory belongs to the daemon session even when the new client's
+// config differs, and remains inspectable behind a queued mid-turn configure.
+// Owner: interactive TUI as a daemon client.
+#[test]
+fn daemon_mcp_inventory_uses_the_session_without_waiting_for_the_turn() {
+    assert_pass("daemon_mcp_inventory");
 }

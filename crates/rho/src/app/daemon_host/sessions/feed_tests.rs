@@ -38,6 +38,7 @@ fn options(mode: wire::PermissionMode) -> wire::SessionOptions {
             available: vec![wire::PermissionMode::Bypass, wire::PermissionMode::Plan],
         },
         commands: Vec::new(),
+        goal: None,
     }
 }
 

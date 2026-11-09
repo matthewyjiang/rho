@@ -2418,6 +2418,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
+name = "httpdate"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
+
+[[package]]
 name = "humantime"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2446,6 +2452,7 @@ dependencies = [
  "http",
  "http-body",
  "httparse",
+ "httpdate",
  "itoa",
  "pin-project-lite",
  "smallvec",
@@ -3917,6 +3924,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
+name = "pastey"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
+
+[[package]]
 name = "pdf-inspector"
 version = "1.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4858,6 +4871,7 @@ dependencies = [
  "arboard",
  "async-trait",
  "base64 0.23.1",
+ "bytes",
  "chrono",
  "clap",
  "crossterm",
@@ -4866,7 +4880,10 @@ dependencies = [
  "futures-util",
  "hex",
  "http",
+ "http-body-util",
  "humantime",
+ "hyper",
+ "hyper-util",
  "image",
  "jsonschema",
  "katex-rs",
@@ -5030,12 +5047,17 @@ dependencies = [
  "chrono",
  "futures",
  "http",
+ "http-body",
+ "http-body-util",
  "indexmap 2.14.0",
  "libc",
  "oauth2",
+ "pastey",
  "pin-project-lite",
  "process-wrap",
+ "rand 0.10.3",
  "reqwest",
+ "schemars 1.2.3",
  "serde",
  "serde_json",
  "sse-stream",
@@ -5043,8 +5065,10 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "tower-service",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -5346,6 +5370,7 @@ version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab508826f74a77ca9d5aba6ff19b522583ee3eaf28a19384ff3d0e5835fadf6e"
 dependencies = [
+ "chrono",
  "dyn-clone",
  "ref-cast",
  "schemars_derive",

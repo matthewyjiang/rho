@@ -48,6 +48,17 @@ impl DaemonSession {
         match *self {}
     }
 
+    pub(in crate::tui) fn request_mcp(&self) -> anyhow::Result<()> {
+        match *self {}
+    }
+
+    pub(in crate::tui) fn goal(
+        &self,
+        _action: rho_protocol::SessionGoalAction,
+    ) -> anyhow::Result<()> {
+        match *self {}
+    }
+
     pub(crate) fn saved_id(&self) -> Option<&str> {
         match *self {}
     }
@@ -401,6 +412,31 @@ mod unix {
                 .await?;
             self.saved = true;
             Ok(())
+        }
+
+        /// Request live inventory without waiting for the active turn.
+        pub(in crate::tui) fn request_mcp(&self) -> anyhow::Result<()> {
+            if self.ended {
+                anyhow::bail!(LOST);
+            }
+            self.requests
+                .as_ref()
+                .expect("attached session has requests")
+                .request_mcp()
+        }
+
+        /// Send a goal action without waiting for the active turn.
+        pub(in crate::tui) fn goal(
+            &self,
+            action: rho_protocol::SessionGoalAction,
+        ) -> anyhow::Result<()> {
+            if self.ended {
+                anyhow::bail!(LOST);
+            }
+            self.requests
+                .as_ref()
+                .expect("attached session has requests")
+                .goal(action)
         }
 
         /// Queue a change without waiting for the active turn to release it.

@@ -24,9 +24,9 @@ use rho_protocol::{
     SessionCancelParams, SessionCancelResponse, SessionConfigureParams, SessionConfigureResponse,
     SessionDeleteParams, SessionDeleteResponse, SessionHoldParams, SessionHoldResponse,
     SessionListParams, SessionListResponse, SessionNewParams, SessionNewResponse,
-    SessionPromptParams, SessionPromptResponse, SessionRenameParams, SessionRenameResponse,
-    SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
-    Subscription, PROTOCOL_VERSION,
+    SessionObserveParams, SessionPromptParams, SessionPromptResponse, SessionRenameParams,
+    SessionRenameResponse, SessionSteerParams, SessionSteerResponse, SessionUnsteerParams,
+    SessionUnsteerResponse, Subscription, PROTOCOL_VERSION,
 };
 use rho_sdk::CancellationToken;
 
@@ -187,6 +187,13 @@ impl Service for DaemonHost {
         self.sessions.hold(params).await
     }
 
+    async fn session_mcp(
+        &self,
+        params: rho_protocol::SessionMcpParams,
+    ) -> Result<rho_protocol::SessionMcpInventory, RpcError> {
+        self.sessions.mcp(params).await
+    }
+
     async fn configure_session(
         &self,
         params: SessionConfigureParams,
@@ -199,6 +206,13 @@ impl Service for DaemonHost {
         params: SessionAttachParams,
     ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
         self.sessions.attach(params).await
+    }
+
+    async fn observe_session(
+        &self,
+        params: SessionObserveParams,
+    ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
+        self.sessions.observe(params).await
     }
 
     async fn list_sessions(

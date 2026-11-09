@@ -95,9 +95,17 @@ fn access_with_notice<T>(
     result
 }
 
-pub(super) struct NotifyingCredentialStore {
-    pub(super) inner: Arc<dyn CredentialStore>,
-    pub(super) backend: CredentialStoreBackend,
+/// Decorates a selected backend without changing credential access semantics.
+pub(crate) fn notifying_store(
+    inner: Arc<dyn CredentialStore>,
+    backend: CredentialStoreBackend,
+) -> Arc<dyn CredentialStore> {
+    Arc::new(NotifyingCredentialStore { inner, backend })
+}
+
+struct NotifyingCredentialStore {
+    inner: Arc<dyn CredentialStore>,
+    backend: CredentialStoreBackend,
 }
 
 impl NotifyingCredentialStore {
@@ -114,6 +122,10 @@ impl NotifyingCredentialStore {
 impl CredentialStore for NotifyingCredentialStore {
     fn get_secret(&self, account: &str) -> CredentialResult<Option<String>> {
         self.notify_if_slow(|| self.inner.get_secret(account))
+    }
+
+    fn get_secret_fresh(&self, account: &str) -> CredentialResult<Option<String>> {
+        self.notify_if_slow(|| self.inner.get_secret_fresh(account))
     }
 
     fn set_secret(&self, account: &str, secret: &str) -> CredentialResult<()> {

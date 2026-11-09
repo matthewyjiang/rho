@@ -14,11 +14,12 @@ use crate::{
     app::{
         agent_binding::BoundAgent,
         session_assembly::{
-            assemble_session, ApprovalInputs, BuiltSession, SessionAssembly, SessionAssemblyOptions,
+            assemble_session, ApprovalInputs, BuiltSession, HookStart, SessionAssembly,
+            SessionAssemblyOptions,
         },
         subagent_messaging::NoticePoster,
         subagent_pool::SubagentPool,
-        tools_prompt::McpSamplingSupport,
+        tools_prompt::{McpSamplingSupport, ToolSourceAttach},
     },
     config::Config,
     credential_store::AppCredentialStore,
@@ -83,6 +84,20 @@ pub(crate) struct HostCapabilities {
     /// The parent a delegated child posts notices to, which gives the
     /// session the `message_parent` tools.
     pub(crate) parent_notices: Option<Arc<dyn NoticePoster>>,
+    /// Whether the host runs the session or only reads what it saved.
+    pub(crate) session_use: SessionUse,
+}
+
+/// Whether a host runs a session or only reads what it saved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SessionUse {
+    /// The host runs its turns: the session connects its MCP servers and
+    /// OpenAPI sources and starts its workspace's hooks as it opens.
+    Run,
+    /// The host reads what the session saved, then shuts it down without a
+    /// turn: nothing of the session starts, neither tool sources nor hooks,
+    /// and opening it saves nothing to its file.
+    Read,
 }
 
 impl HostCapabilities {
@@ -98,6 +113,7 @@ impl HostCapabilities {
             mcp_authorization: McpAuthorizationMode::from_process(),
             approvals: ApprovalPolicy::Unattended(approvals),
             parent_notices: None,
+            session_use: SessionUse::Run,
         }
     }
 }
@@ -260,7 +276,14 @@ pub(super) async fn build_session(
             crate::tools::mcp::McpElicitationSupport::Unavailable
         },
         mcp_sampling: McpSamplingSupport::Unavailable,
-        tool_source_attach: crate::app::tools_prompt::ToolSourceAttach::Connect,
+        tool_source_attach: match build.host.session_use {
+            SessionUse::Run => ToolSourceAttach::Connect,
+            SessionUse::Read => ToolSourceAttach::None,
+        },
+        hook_start: match build.host.session_use {
+            SessionUse::Run => HookStart::Start,
+            SessionUse::Read => HookStart::Skip,
+        },
         mcp_authorization: build.host.mcp_authorization,
         diagnostics: &build.launch.diagnostics,
         agent,

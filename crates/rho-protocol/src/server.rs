@@ -26,14 +26,16 @@ use crate::{
         SessionConfigureParams, SessionConfigureResponse, SessionDelete, SessionDeleteParams,
         SessionDeleteResponse, SessionDetach, SessionDetachParams, SessionDetachResponse,
         SessionHold, SessionHoldParams, SessionHoldResponse, SessionId, SessionList,
-        SessionListParams, SessionListResponse, SessionNew, SessionNewParams, SessionNewResponse,
+        SessionListParams, SessionListResponse, SessionMcp, SessionMcpInventory, SessionMcpParams,
+        SessionNew, SessionNewParams, SessionNewResponse, SessionObserve, SessionObserveParams,
         SessionPrompt, SessionPromptParams, SessionPromptResponse, SessionRename,
         SessionRenameParams, SessionRenameResponse, SessionSteer, SessionSteerParams,
         SessionSteerResponse, SessionUnsteer, SessionUnsteerParams, SessionUnsteerResponse, Status,
         Stop, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, DAEMON_STATUS,
         DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL,
-        SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD, SESSION_LIST, SESSION_NEW,
-        SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
+        SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD, SESSION_LIST, SESSION_MCP,
+        SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER,
+        SESSION_UNSTEER,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -132,6 +134,12 @@ pub trait Service: Send + Sync {
         params: SessionConfigureParams,
     ) -> impl Future<Output = Result<SessionConfigureResponse, RpcError>> + Send;
 
+    /// Read the loaded session's MCP inventory without waiting for a turn.
+    fn session_mcp(
+        &self,
+        params: SessionMcpParams,
+    ) -> impl Future<Output = Result<SessionMcpInventory, RpcError>> + Send;
+
     /// Handles `rho/session/attach`: subscribe this connection to the
     /// session's events (see [`crate::subscription()`]). The connection sends
     /// the response, then forwards the subscription's events until the
@@ -142,6 +150,22 @@ pub trait Service: Send + Sync {
         &self,
         params: SessionAttachParams,
     ) -> impl Future<Output = Result<(SessionAttachResponse, Subscription), RpcError>> + Send;
+
+    /// Handles `rho/session/observe`: subscribe this connection to the
+    /// session's events as [`Self::attach_session`] does, without loading a
+    /// session that is not loaded; the connection forwards them the same
+    /// way. A service that does not serve it answers `MethodNotFound`, as a
+    /// daemon from before the method does.
+    fn observe_session(
+        &self,
+        params: SessionObserveParams,
+    ) -> impl Future<Output = Result<(SessionAttachResponse, Subscription), RpcError>> + Send {
+        let _ = params;
+        std::future::ready(Err(RpcError::new(
+            ErrorCode::MethodNotFound,
+            format!("{SESSION_OBSERVE} is not served"),
+        )))
+    }
 
     /// Answers `rho/session/list`: a page of the saved sessions a person
     /// can resume.
@@ -263,11 +287,12 @@ pub const CLOSE_GRACE: Duration = Duration::from_secs(1);
 /// connection's end drops the login's stream, which tells the login its
 /// client left.
 ///
-/// `rho/session/attach` answers, then forwards the session's events as
-/// `rho/session/event` notifications, and `rho/session/detached` when the
-/// publisher closes with a reason. Attaching a session again replaces its
-/// forwarder; `rho/session/detach` stops it. Events a forwarder queued come
-/// before the response that replaced or stopped it, and none come after.
+/// `rho/session/attach` and `rho/session/observe` answer, then forward the
+/// session's events as `rho/session/event` notifications, and
+/// `rho/session/detached` when the publisher closes with a reason. Attaching
+/// or observing a session again replaces its forwarder; `rho/session/detach`
+/// stops it. Events a forwarder queued come before the response that
+/// replaced or stopped it, and none come after.
 ///
 /// When the peer stops sending, a write fails, or `shutdown` resolves, the
 /// connection stops reading, lets every request it has already read run to
@@ -399,12 +424,12 @@ where
                         while calls.try_join_next().is_some() {}
                         continue;
                     }
-                    Ok(Route::Attach(params)) => {
+                    Ok(Route::Attach(request)) => {
                         let responder = Responder::new(id, &outbox);
                         let service = Arc::clone(&service);
                         let forwarders = Arc::clone(forwarders);
                         calls.spawn(async move {
-                            attach(&*service, params, responder, &forwarders).await;
+                            attach(&*service, request, responder, &forwarders).await;
                         });
                         while calls.try_join_next().is_some() {}
                         continue;
@@ -486,9 +511,10 @@ enum Route {
     Answered(Value),
     /// The service answers it, in its own task.
     Call(ServiceCall),
-    /// `rho/session/attach`: the service answers it in its own task, then
-    /// the connection forwards the session's events.
-    Attach(SessionAttachParams),
+    /// `rho/session/attach` or `rho/session/observe`: the service answers
+    /// it in its own task, then the connection forwards the session's
+    /// events.
+    Attach(AttachRequest),
     /// `rho/session/detach`: the connection stops that session's forwarder
     /// and answers in place.
     Detach(SessionDetachParams),
@@ -509,6 +535,7 @@ enum ServiceCall {
     AnswerSession(SessionAnswerParams),
     HoldSession(SessionHoldParams),
     ConfigureSession(SessionConfigureParams),
+    SessionMcp(SessionMcpParams),
     ListSessions(SessionListParams),
     RenameSession(SessionRenameParams),
     DeleteSession(SessionDeleteParams),
@@ -553,9 +580,10 @@ impl Connection {
                 ErrorCode::InvalidRequest,
                 format!("{HELLO} was already accepted on this connection"),
             )),
-            (Self::Ready, SESSION_ATTACH) => {
-                decode_params::<SessionAttach>(params).map(Route::Attach)
-            }
+            (Self::Ready, SESSION_ATTACH) => decode_params::<SessionAttach>(params)
+                .map(|params| Route::Attach(AttachRequest::Attach(params))),
+            (Self::Ready, SESSION_OBSERVE) => decode_params::<SessionObserve>(params)
+                .map(|params| Route::Attach(AttachRequest::Observe(params))),
             (Self::Ready, SESSION_DETACH) => {
                 decode_params::<SessionDetach>(params).map(Route::Detach)
             }
@@ -582,6 +610,7 @@ impl ServiceCall {
             SESSION_CONFIGURE => {
                 decode_params::<SessionConfigure>(params).map(Self::ConfigureSession)
             }
+            SESSION_MCP => decode_params::<SessionMcp>(params).map(Self::SessionMcp),
             SESSION_LIST => decode_params::<SessionList>(params).map(Self::ListSessions),
             SESSION_RENAME => decode_params::<SessionRename>(params).map(Self::RenameSession),
             SESSION_DELETE => decode_params::<SessionDelete>(params).map(Self::DeleteSession),
@@ -607,6 +636,7 @@ impl ServiceCall {
             | Self::UnsteerSession(SessionUnsteerParams { session, .. })
             | Self::AnswerSession(SessionAnswerParams { session, .. })
             | Self::HoldSession(SessionHoldParams { session, .. })
+            | Self::SessionMcp(SessionMcpParams { session, .. })
             | Self::ConfigureSession(SessionConfigureParams { session, .. })
             | Self::RenameSession(SessionRenameParams { session, .. }) => Some(session),
             Self::Status
@@ -654,6 +684,9 @@ impl ServiceCall {
             Self::ConfigureSession(params) => {
                 encode_result::<SessionConfigure>(&service.configure_session(params).await?)
             }
+            Self::SessionMcp(params) => {
+                encode_result::<SessionMcp>(&service.session_mcp(params).await?)
+            }
             Self::ListSessions(params) => {
                 encode_result::<SessionList>(&service.list_sessions(params).await?)
             }
@@ -678,21 +711,33 @@ impl ServiceCall {
     }
 }
 
-/// Answers an attach through `responder`, then forwards the session's events
-/// through `forwarders`.
+/// A request that subscribes the connection to a session's events.
+enum AttachRequest {
+    Attach(SessionAttachParams),
+    Observe(SessionObserveParams),
+}
+
+/// Answers an attach or observe through `responder`, then forwards the
+/// session's events through `forwarders`.
 async fn attach<Svc: Service>(
     service: &Svc,
-    params: SessionAttachParams,
+    request: AttachRequest,
     responder: Responder,
     forwarders: &Arc<Forwarders>,
 ) {
-    let session = params.session.clone();
-    let attached = service
-        .attach_session(params)
-        .await
-        .and_then(|(response, subscription)| {
-            Ok((encode_result::<SessionAttach>(&response)?, subscription))
-        });
+    let (session, attached) = match request {
+        AttachRequest::Attach(params) => {
+            (params.session.clone(), service.attach_session(params).await)
+        }
+        AttachRequest::Observe(params) => (
+            params.session.clone(),
+            service.observe_session(params).await,
+        ),
+    };
+    // Both answer with an attach's response.
+    let attached = attached.and_then(|(response, subscription)| {
+        Ok((encode_result::<SessionAttach>(&response)?, subscription))
+    });
     match attached {
         Ok((result, subscription)) => {
             let outbox = responder.outbox.clone();

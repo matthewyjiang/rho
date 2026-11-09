@@ -25,9 +25,11 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/session/steer` | `session`, `text` | Adds `text` to the running turn's next model request and returns its `id` once the turn accepted it. The steer applies at that request as a `user_message` whose `steer` is `id`; a turn that ends first drops it, so a client that never saw it apply can send it again. Gets `NotSteerable` when no model request is taking input, or the turn ended before it accepted the input. |
 | `rho/session/unsteer` | `session`, `id` | Withdraws steer `id` before it applies and returns its `outcome`: `withdrawn` when it was removed before it reached the conversation, `delivered` when the provider already took it (it still applies), `applied` when it is already in the conversation, or `not_found` when the running turn never accepted that id, as for another turn's steer or one a turn dropped when it ended. Gets `NotSteerable` when no model request is taking input. |
 | `rho/session/attach` | `session`, `after`?, `environment`, `setup`? | Follows the session's events ([below](#following-a-session)), reopening an unloaded session with its commands in `environment` and with `setup` ([below](#a-session-s-setup)). Returns its `stream`, its `workspace`, the `replay` that follows (`tail` or `reset`) and how many events it holds (`replay_events`), its job `state`, the input requests open now (`inputs`), its `title`, once it has one, and the session's `options` ([below](#changing-a-session-s-settings)). |
+| `rho/session/observe` | `session`, `after`? | Follows the session's events as `rho/session/attach` does, for a client that only reads it, and returns the same response. It never loads a session: one the daemon has loaded is followed as an attach follows it, and a saved one it has not loaded stays unloaded. The daemon replays that one as its file keeps it, with how its last turn ended, without starting its MCP servers, OpenAPI sources, or hooks, then detaches the client with `not_loaded`; with no MCP server connected, that replay titles MCP tool calls by their names alone. It carries no `environment` or `setup`, since it opens nothing that would use them. A daemon from before this method answers `MethodNotFound`. |
 | `rho/session/detach` | `session` | Stops following the session; no event of it arrives after the response. |
 | `rho/session/answer` | `session`, `request`, `answer` | Answers one of the turn's open input requests ([below](#answering-a-turn-s-requests)) and returns `{}` once the daemon has handed the answer to the turn. |
 | `rho/session/configure` | `session`, `change` | Changes one of a loaded session's settings for its later turns and returns its `options` ([below](#changing-a-session-s-settings)). |
+| `rho/session/mcp` | `session` | Reads a loaded session's MCP server inventory without waiting for its active turn ([below](#session-mcp-inventory)). |
 | `rho/session/hold` | `session`, `request` | Stops an open input request's timeout, so it waits for an answer ([below](#timeouts)), and returns `{}`. |
 | `rho/session/list` | `cwd`?, `cursor`?, `limit`? | One page of the saved sessions, newest first: `sessions` and, when more follow, `next_cursor` ([below](#listing-renaming-and-deleting-sessions)). |
 | `rho/session/rename` | `session`, `title` | Saves the session's title and returns `{}`; clients attached to it receive `title_changed`. |
@@ -53,6 +55,16 @@ A prompt that starts with a slash command resolves as it does in [`rho run`](/au
 The TUI's own commands, such as `/model`, do not run in the daemon, and the turn fails as a `configuration` error.
 
 What a session runs, and what its job states mean, is described in [Sessions and jobs](/daemon#sessions-and-jobs).
+
+### Session MCP inventory
+
+`rho/session/mcp` returns a point-in-time `SessionMcpInventory` for the named loaded session, including servers supplied in its setup. It neither loads the session nor changes its settings. An unloaded session gets `SessionNotLoaded`; an unknown id gets `SessionNotFound`.
+
+- `config_path`: the configuration file the daemon opened the session with.
+- `mode`: `native`, `unsupported_agent`, or `tools_disabled`.
+- `servers`: configured servers, including disabled and failed entries. Each has its qualified `identity`, `enabled`, startup `status` (`connected`, `connecting`, `disabled`, `invalid_config`, `failed`, `timed_out`, or `not_loaded`), exported `tool_count`, and human-readable `detail`.
+
+Details include transport, startup errors, exported tools, tools added or withdrawn since startup, the last failed keepalive ping, current MCP prompt commands, and resource counts. Treat `detail` as presentation text, not a machine-readable contract. `status` describes startup; subsequent reachability is reported in the details. Reissue the request for a fresh snapshot; no inventory subscription is created. It reads shared maintenance handles rather than locking the runtime, so a running model turn or a queued configure does not delay it.
 
 ### Content blocks
 
@@ -122,8 +134,9 @@ The daemon detaches a client with `rho/session/detached`, after which no event o
 - `lagged`: the client fell 4096 events behind, or the daemon unloaded the session, as a delete that fails after it unloaded the session does. A turn never waits for a client; attach again with the cursor to catch up.
 - `daemon_stopping`: the daemon is stopping.
 - `deleted`: `rho/session/delete` deleted the session.
+- `not_loaded`: `rho/session/observe` found the session unloaded, so its replay was the saved conversation and nothing follows. Observe again to read it again.
 
-Attaching a session the connection already follows replaces the earlier attachment.
+Attaching or observing a session the connection already follows replaces the earlier attachment.
 
 ### Tool cards
 
@@ -182,6 +195,7 @@ A session's `options` are what a frontend shows as its settings and command menu
 | `fast_mode` | Whether fast mode is `enabled`: faster responses at a higher credit rate. Absent when the model has no fast mode. |
 | `permission_mode` | The `current` permission mode and every mode (`available`): `bypass`, `auto`, `allow_edits`, `plan`, `supervised`. |
 | `commands` | The commands a prompt may run, in menu order: each `name`, `kind`, `description`, and `input_hint`, what to type after the name, absent when it takes nothing. A `slash` command starts the prompt as `/<name>`; a `skill` is mentioned anywhere as `$<name>`. `/workflow:<name>` commands are listed when the session has the `workflow` tool, and `/agent:<name>` ones for every workspace agent that runs on Rho. |
+| `goal` | The session's [goal](#goals), absent when it has none: its `condition`, `phase` (`active` or `blocked`), `evaluated_turns`, `set_at` (Unix seconds), the `last_reason` its evaluator gave, and, while blocked, the `human_steps` left to the user, each an `action` and a `reason`. |
 
 `rho/session/configure` applies one `change`, tagged by `kind`, and answers with the session's `options` as they are now:
 
@@ -191,10 +205,25 @@ A session's `options` are what a frontend shows as its settings and command menu
 | `reasoning` | `level` | Spends one of `reasoning.available` on later turns. |
 | `fast_mode` | `enabled` | Turns fast mode on, for a model that has it, or off. |
 | `permission_mode` | `mode` | Gates later turns' tool calls with `mode`. |
+| `goal` | `action` | Sets, clears, or resumes the session's [goal](#goals). Unlike the settings above, it never waits for a turn. |
 
 A change the session cannot take, such as a model no saved credential serves or fast mode on a model without it, gets `InvalidParams` naming why, and the session keeps its setting. A change that fails as it applies, such as a model switch whose provider could not be built, gets `InternalError`; the session's `options` then report what it runs with, which `options_changed` carries if that changed. A change sent while the session's turn is under way, waiting for input included, waits for the turn to end, then applies and answers, so a frontend can send settings whenever its user picks them. Changes and turns take the session one at a time, in the order the daemon took their requests: a change applies after the turn of every prompt taken before it, and a prompt's turn runs after every change taken before it, so a change sent once the job reports `running` waits for that turn's end. A change the daemon took applies even if its client disconnects before the answer; while the daemon is stopping, one still waiting gets `DaemonStopping` and does not apply. Only a session the daemon has loaded takes a change; any other gets `SessionNotLoaded`, so attach first.
 
 Settings persist with the session: from its first change on, the session keeps its model, reasoning level, fast mode, and permission mode with its file, as they stand at each save, a plan approval's mode switch included. A session the daemon [unloads](/daemon#unloading-idle-sessions) and reopens, or one a later daemon reopens, runs with them, and its `options` say so. A setting it can no longer take, such as a model whose credentials are gone, falls back to the config's.
+
+### Goals
+
+A goal keeps a session working until an evaluator finds its completion condition met, as `/goal` does in the TUI. The daemon owns the loop: after each turn it evaluates the condition against the session's history, continues with another turn while the goal is unmet, retries a turn that failed, and pauses when only the user can do what is left. The whole loop runs as one turn of the session's job, so it goes on with no client attached, and an unloaded session keeps no goal: a session with a goal stays loaded. A goal lasts while the daemon runs, not across a daemon restart. Its progress reaches clients as `notice` events, and its state as `options_changed`.
+
+`rho/session/configure` with `{"kind": "goal", "action": …}` changes it; `action` is tagged by `kind`:
+
+| `kind` | Fields | Change |
+| --- | --- | --- |
+| `set` | `condition` | Sets the goal and starts its first turn. The condition, trimmed, takes 1 to 4000 characters. |
+| `clear` | | Drops the goal at once, cancelling an evaluation or retry wait, but not a model turn already running. |
+| `resume` | | Verifies a blocked goal's remaining steps, or continues an active one. |
+
+`set` and `resume` start a turn, so a session already in one gets `SessionBusy`; `resume` without a goal and a `set` condition out of range get `InvalidParams`. `rho/session/cancel` ends the loop with the turn: an active goal is dropped, while a blocked goal whose verification it interrupts keeps its steps for a later `resume`. A prompt sent while the goal is blocked verifies its steps, with the prompt as the user's message.
 
 ## Listing, renaming, and deleting sessions
 
