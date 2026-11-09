@@ -84,7 +84,7 @@ impl SessionRuntime {
         // After the rebuild, so a failed one leaves the store as it was, and
         // before the notice, so it names the model the tool consults.
         store.set_model(model);
-        let notice = if registered {
+        let told = if registered {
             let spec = self
                 .built
                 .tools
@@ -92,38 +92,41 @@ impl SessionRuntime {
                 .into_iter()
                 .find(|spec| spec.name == crate::tools::advisor::TOOL_NAME);
             match (spec, store.model()) {
-                (Some(spec), Some(reviewer)) => crate::prompt::advisor_enabled_context(
+                (Some(spec), Some(reviewer)) => Ok(crate::prompt::advisor_enabled_context(
                     &spec,
                     &PromptModel::from_internal_agent(&reviewer),
-                ),
-                _ => {
-                    return Err(SettingChangeError::Apply(anyhow::anyhow!(
-                        "the advisor tool is missing after it was registered"
-                    )))
-                }
+                )),
+                _ => Err(SettingChangeError::Apply(anyhow::anyhow!(
+                    "the advisor tool is missing after it was registered"
+                ))),
             }
         } else {
-            crate::prompt::advisor_disabled_context()
-        };
-        let (context, display) = notice;
-        if let Err(error) = self
-            .built
-            .session
-            .append_message(Message::user_text(context))
-        {
-            // Put the old tool list back so the session never advertises
-            // one the model was not told about.
-            store.set_model(previous);
-            self.built.tools.set_advisor_registered(!registered);
-            let _ = self
-                .rebuild_runtime(
-                    &config,
-                    self.permission.mode,
-                    self.permission.writes.clone(),
-                )
-                .await;
-            return Err(error.into());
+            Ok(crate::prompt::advisor_disabled_context())
         }
+        .and_then(|(context, display)| {
+            self.built
+                .session
+                .append_message(Message::user_text(context))
+                .map(|_| display)
+                .map_err(Into::into)
+        });
+        let display = match told {
+            Ok(display) => display,
+            Err(error) => {
+                // Put the old tool list back so the session never advertises
+                // one the model was not told about.
+                store.set_model(previous);
+                self.built.tools.set_advisor_registered(!registered);
+                let _ = self
+                    .rebuild_runtime(
+                        &config,
+                        self.permission.mode,
+                        self.permission.writes.clone(),
+                    )
+                    .await;
+                return Err(error);
+            }
+        };
         Ok(Some(display))
     }
 
