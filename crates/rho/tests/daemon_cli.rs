@@ -172,6 +172,39 @@ fn daemon_start_is_idempotent() {
     );
 }
 
+// Covers: a client whose environment sets an unknown RHO_CREDENTIAL_STORE
+// refuses to start a daemon, which would inherit it and stop, naming the
+// variable at once instead of waiting out the start timeout; with a daemon
+// already running, which never sees the client's environment, it connects.
+// Owner: CLI process (daemon ensure-running path).
+#[test]
+fn an_unknown_credential_store_stops_only_a_daemon_start() {
+    let sandbox = Sandbox::new();
+    let start = |store: &str| {
+        let output = sandbox
+            .rho("fixed")
+            .env("RHO_CREDENTIAL_STORE", store)
+            .args(["daemon", "start"])
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+        (output.status.code(), stderr(&output))
+    };
+
+    let (code, refused) = start("fiel");
+    assert_eq!(
+        (
+            code,
+            refused.contains("RHO_CREDENTIAL_STORE"),
+            sandbox.isolated.daemon_pid()
+        ),
+        (Some(1), true, None),
+        "{refused}"
+    );
+    assert_eq!(start("file").0, Some(0));
+    assert_eq!(start("fiel"), (Some(0), String::new()));
+}
+
 // Covers: dropping a sandbox stops the daemon a client in it started, so a
 // test that fails, or forgets to stop it, leaves no daemon running.
 // Owner: daemon test sandbox teardown (process).

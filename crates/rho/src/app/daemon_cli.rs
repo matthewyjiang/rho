@@ -76,16 +76,35 @@ pub(crate) struct Unreachable {
 #[cfg(unix)]
 pub(super) async fn connect() -> Result<daemon::Connection, Unreachable> {
     let unreachable = |reason: String| Unreachable { reason };
-    // A daemon started here inherits the variable and would refuse it, so
-    // say why now rather than after waiting for a daemon that stopped.
-    crate::credential_store::environment_backend()
-        .map_err(|error| unreachable(format!("RHO_CREDENTIAL_STORE: {error}")))?;
     let paths = paths().map_err(|error| unreachable(format!("{error:#}")))?;
     let spawner = daemon::ProcessSpawner::current_exe()
         .map_err(|error| unreachable(format!("could not find the rho executable: {error}")))?;
-    daemon::connect_or_spawn(&paths, cli_client_info(), &spawner)
+    daemon::connect_or_spawn(&paths, cli_client_info(), &CheckedSpawner(spawner))
         .await
         .map_err(|error| unreachable(error.to_string()))
+}
+
+/// Starts the daemon once this process's environment, which it inherits,
+/// passes the checks the daemon makes at startup, so a daemon that would
+/// refuse to start is reported now rather than after the start timeout. A
+/// daemon already running never sees this environment, so only a spawn
+/// checks it.
+#[cfg(unix)]
+struct CheckedSpawner(daemon::ProcessSpawner);
+
+#[cfg(unix)]
+impl daemon::DaemonSpawner for CheckedSpawner {
+    fn spawn(&self, paths: &DaemonPaths) -> std::io::Result<()> {
+        crate::credential_store::environment_backend().map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "RHO_CREDENTIAL_STORE in this environment, which it would inherit: {error}"
+                ),
+            )
+        })?;
+        self.0.spawn(paths)
+    }
 }
 
 /// Whether this invocation runs the daemon, which installs its own always-on

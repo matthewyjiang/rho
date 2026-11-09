@@ -29,4 +29,4 @@ pub(crate) use lock::{
 };
 pub(crate) use paths::{real_home, DaemonPaths};
 pub(crate) use server::bind;
-pub(crate) use spawn::{connect_or_spawn, ProcessSpawner};
+pub(crate) use spawn::{connect_or_spawn, DaemonSpawner, ProcessSpawner};
