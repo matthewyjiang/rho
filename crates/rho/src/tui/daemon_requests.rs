@@ -12,12 +12,12 @@
 //! usable during the turn: a goal runs as one long turn, which a queued
 //! change would otherwise hold `/goal clear` behind.
 
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 
 use rho_protocol::{
     methods::{SessionConfigure, SessionMcp, SessionPrompt},
-    ClientEnvironment, ContentBlock, SessionChange, SessionConfigureParams, SessionGoalAction,
-    SessionId, SessionMcpParams, SessionPromptParams,
+    ClientEnvironment, ClientError, ContentBlock, ErrorCode, SessionChange, SessionConfigureParams,
+    SessionGoalAction, SessionId, SessionMcpParams, SessionPromptParams,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -46,15 +46,54 @@ pub(super) enum Target {
 const LOST: &str = "lost the connection to the rho daemon";
 
 /// The connection and session the next request goes to, once the session
-/// is attached; `None` once following ended.
+/// is attached on a connection that is still open; `None` once following
+/// ended. An attachment whose connection closed waits for what the session
+/// makes of that: a reattach after a restart, or the end of following.
 async fn attached(target: &mut watch::Receiver<Target>) -> Option<(Arc<Link>, SessionId)> {
     let current = target
-        .wait_for(|target| !matches!(target, Target::Reconnecting))
+        .wait_for(|target| match target {
+            Target::Attached { link, .. } => link.is_alive(),
+            Target::Reconnecting => false,
+            Target::Ended => true,
+        })
         .await
         .ok()?;
     match &*current {
         Target::Attached { link, session } => Some((Arc::clone(link), session.clone())),
         Target::Reconnecting | Target::Ended => None,
+    }
+}
+
+/// Sends a request with `send` on the session's attachment, and returns the
+/// connection it went on with the answer; `None` once following ended. The
+/// daemon refuses a request as stopping, and applies none of it, once its
+/// restart began, which the session hears of only after its detach is read:
+/// such a request waits until the session moved off that connection and is
+/// sent again, so it applies on the restarted daemon. After a stop, the
+/// session's following ends instead.
+async fn on_attachment<T, F, Fut>(
+    target: &mut watch::Receiver<Target>,
+    mut send: F,
+) -> Option<(Arc<Link>, Result<T, ClientError>)>
+where
+    F: FnMut(Arc<Link>, SessionId) -> Fut,
+    Fut: Future<Output = Result<T, ClientError>>,
+{
+    loop {
+        let (link, session) = attached(target).await?;
+        let answer = send(Arc::clone(&link), session).await;
+        match &answer {
+            Err(error) if error.error_code() == Some(ErrorCode::DaemonStopping) => {
+                target
+                    .wait_for(|target| match target {
+                        Target::Attached { link: current, .. } => !Arc::ptr_eq(current, &link),
+                        Target::Reconnecting | Target::Ended => true,
+                    })
+                    .await
+                    .ok()?;
+            }
+            _ => return Some((link, answer)),
+        }
     }
 }
 
@@ -85,69 +124,74 @@ impl DaemonRequests {
         // Control requests bypass configure, which can wait for a turn to end.
         let control_task = tokio::spawn(async move {
             while let Some(request) = control_requests.recv().await {
-                let Some((control_link, control_session)) = attached(&mut control_target).await
-                else {
-                    let _ = control_views.send(DaemonView::Error(LOST.to_owned()));
-                    continue;
-                };
                 match request {
                     Control::Mcp => {
-                        let result = control_link
-                            .request::<SessionMcp>(&SessionMcpParams {
-                                session: control_session.clone(),
+                        let answer =
+                            on_attachment(&mut control_target, |link, session| async move {
+                                link.request::<SessionMcp>(&SessionMcpParams { session })
+                                    .await
                             })
-                            .await
-                            .map(Box::new)
-                            .map_err(|error| {
+                            .await;
+                        let result = match answer {
+                            Some((_, answer)) => answer.map(Box::new).map_err(|error| {
                                 format!("could not read session MCP inventory: {error}")
-                            });
+                            }),
+                            None => Err(LOST.to_owned()),
+                        };
                         let _ = control_views.send(DaemonView::McpInventory(result));
                     }
                     Control::Goal(action) => {
                         let verb = goal_verb(&action);
-                        let response = control_link
-                            .request::<SessionConfigure>(&SessionConfigureParams {
-                                session: control_session.clone(),
-                                change: SessionChange::Goal { action },
-                            })
-                            .await;
+                        let answer = on_attachment(&mut control_target, |link, session| {
+                            let action = action.clone();
+                            async move {
+                                link.request::<SessionConfigure>(&SessionConfigureParams {
+                                    session,
+                                    change: SessionChange::Goal { action },
+                                })
+                                .await
+                            }
+                        })
+                        .await;
                         // The goal's OptionsChanged, not this response, is
                         // authoritative.
-                        if let Err(error) = response {
-                            let _ = control_views.send(DaemonView::Error(format!(
-                                "could not {verb} the goal: {error}"
-                            )));
-                        }
+                        let error = match answer {
+                            Some((_, Ok(_))) => continue,
+                            Some((_, Err(error))) => error.to_string(),
+                            None => LOST.to_owned(),
+                        };
+                        let _ = control_views.send(DaemonView::Error(format!(
+                            "could not {verb} the goal: {error}"
+                        )));
                     }
                 }
             }
         });
         let task = tokio::spawn(async move {
             while let Some(request) = requests.recv().await {
-                let Some((link, session)) = attached(&mut target).await else {
-                    match request {
-                        Request::Configure(_) => {
-                            let _ = views.send(DaemonView::ConfigureFinished);
-                            let _ = views.send(DaemonView::Error(LOST.to_owned()));
-                        }
-                        Request::Prompt { result, .. } => {
-                            let _ = result.send(Err(anyhow::anyhow!(LOST)));
-                        }
-                    }
-                    continue;
-                };
                 match request {
                     Request::Configure(change) => {
                         let setting = setting_name(&change);
-                        let response = link
-                            .request::<SessionConfigure>(&SessionConfigureParams {
-                                session: session.clone(),
-                                change,
-                            })
-                            .await;
-                        link.fence().await;
+                        let answer = on_attachment(&mut target, |link, session| {
+                            let change = change.clone();
+                            async move {
+                                link.request::<SessionConfigure>(&SessionConfigureParams {
+                                    session,
+                                    change,
+                                })
+                                .await
+                            }
+                        })
+                        .await;
+                        let error = match answer {
+                            Some((link, answer)) => {
+                                link.fence().await;
+                                answer.err().map(|error| error.to_string())
+                            }
+                            None => Some(LOST.to_owned()),
+                        };
                         let _ = views.send(DaemonView::ConfigureFinished);
-                        if let Err(error) = response {
+                        if let Some(error) = error {
                             let _ = views.send(DaemonView::Error(format!(
                                 "could not change the {setting}: {error}"
                             )));
@@ -156,17 +200,26 @@ impl DaemonRequests {
                         // authoritative. The response describes the same change.
                     }
                     Request::Prompt { content, result } => {
-                        let response = link
-                            .request::<SessionPrompt>(&SessionPromptParams {
-                                session: session.clone(),
-                                content,
-                                timeout_ms: None,
-                                environment: ClientEnvironment::of_this_process(),
-                            })
-                            .await
-                            .map(|_| ())
-                            .map_err(anyhow::Error::new);
-                        link.fence().await;
+                        let answer = on_attachment(&mut target, |link, session| {
+                            let content = content.clone();
+                            async move {
+                                link.request::<SessionPrompt>(&SessionPromptParams {
+                                    session,
+                                    content,
+                                    timeout_ms: None,
+                                    environment: ClientEnvironment::of_this_process(),
+                                })
+                                .await
+                            }
+                        })
+                        .await;
+                        let response = match answer {
+                            Some((link, answer)) => {
+                                link.fence().await;
+                                answer.map(|_| ()).map_err(anyhow::Error::new)
+                            }
+                            None => Err(anyhow::anyhow!(LOST)),
+                        };
                         let _ = result.send(response);
                     }
                 }
