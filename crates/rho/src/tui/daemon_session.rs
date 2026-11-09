@@ -574,34 +574,24 @@ mod unix {
             &mut self,
             content: Vec<ContentBlock>,
         ) -> anyhow::Result<()> {
-            // At most twice: a prompt the daemon refused as stopping, which
-            // it applied none of, goes again once the TUI caught up with a
-            // restart that began meanwhile.
-            let mut resent = false;
-            loop {
-                // A restart the TUI has not caught up with yet: attach again
-                // first, so the prompt reaches the restarted daemon. The
-                // daemon sends a session's detach before it answers a
-                // request for it, so a refusal's detach is already read.
-                let mut views = self.take_views();
-                views.extend(self.finish_reattach().await.unwrap_or_default());
-                self.pending.extend(views);
-                self.attached_link().await?;
-                let answer = self
-                    .requests
-                    .as_ref()
-                    .expect("attached session has requests")
-                    .prompt(content.clone())?;
-                let sent = self.await_answer(answer).await;
-                match sent {
-                    Err(error) if !resent && refused_as_stopping(&error) => resent = true,
-                    sent => {
-                        sent?;
-                        self.saved = true;
-                        return Ok(());
-                    }
-                }
-            }
+            // A restart the TUI has not caught up with yet: attach again
+            // first, so the prompt reaches the restarted daemon.
+            let mut views = self.take_views();
+            views.extend(self.finish_reattach().await.unwrap_or_default());
+            self.pending.extend(views);
+            self.attached_link().await?;
+            let answer = self
+                .requests
+                .as_ref()
+                .expect("attached session has requests")
+                .prompt(content)?;
+            // Never sent again: a daemon that began stopping may answer
+            // `DaemonStopping` after its turn already saved the prompt. The
+            // TUI gives the prompt back, and the reattach's replay shows
+            // whether it was saved.
+            self.await_answer(answer).await?;
+            self.saved = true;
+            Ok(())
         }
 
         /// Waits for a prompt's `answer` while reading what the daemon sends
@@ -810,14 +800,6 @@ mod unix {
             Some(response.state)
         };
         (views, state)
-    }
-
-    /// Whether the daemon refused a request because it is stopping, or
-    /// restarting, which applies none of it.
-    fn refused_as_stopping(error: &anyhow::Error) -> bool {
-        error
-            .downcast_ref::<ClientError>()
-            .is_some_and(|error| error.error_code() == Some(ErrorCode::DaemonStopping))
     }
 
     /// Why a steer, or its withdrawal, was refused, as the TUI says it.

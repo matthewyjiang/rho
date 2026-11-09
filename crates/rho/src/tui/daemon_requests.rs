@@ -199,8 +199,8 @@ impl DaemonRequests {
                         // OptionsChanged, not an optimistic local update, is
                         // authoritative. The response describes the same change.
                     }
-                    // Sent once: `DaemonSession::prompt` resends one the
-                    // daemon refused, once it read the session's detach.
+                    // Sent once, never resent: a stopping daemon may refuse
+                    // a prompt its turn already saved.
                     Request::Prompt { content, result } => {
                         let response = match attached(&mut target).await {
                             Some((link, session)) => {
