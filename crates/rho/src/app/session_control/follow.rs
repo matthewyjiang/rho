@@ -138,12 +138,7 @@ pub(super) async fn wait(
             }
         }
     }
-    watch.state = attached.response.state;
-    if turn_runs(watch.state) {
-        // A reset replays the last turn's end until the next turn saves.
-        watch.outcome = None;
-        watch.outcome_checkpoint = None;
-    }
+    watch.finish_replay(attached.response.replay, attached.response.state);
     while !detached && turn_runs(watch.state) {
         match tokio::time::timeout_at(deadline, attached.next()).await {
             Err(_elapsed) => break,
@@ -179,6 +174,17 @@ struct Watch {
 }
 
 impl Watch {
+    /// Reconciles replayed events with the attach's authoritative snapshot.
+    fn finish_replay(&mut self, replay: Replay, state: JobState) {
+        self.state = state;
+        if replay == Replay::Reset && turn_runs(state) {
+            // Only a reset can replay the saved previous turn's outcome.
+            // A tail's pending outcome must retain its checkpoint until State.
+            self.outcome = None;
+            self.outcome_checkpoint = None;
+        }
+    }
+
     fn push(&mut self, seq: Seq, event: &SessionEvent) {
         let before = self.seq;
         self.seq = self.seq.max(seq);
