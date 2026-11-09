@@ -918,6 +918,7 @@
       "description": "Params of [`CONFIG_SET`]. Every change lands, or none does: a change the\ndaemon refuses leaves the file as it was.",
       "properties": {
         "changes": {
+          "description": "Applied in order, so a setting another belongs to, such as an\ninternal agent's model before its reasoning, comes first.",
           "items": {
             "$ref": "#/$defs/SettingChange"
           },

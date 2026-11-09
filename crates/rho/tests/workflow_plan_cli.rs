@@ -6,7 +6,8 @@ use std::process::{Command, Stdio};
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-const CONFIG: &str = r#"provider = "xai"
+const CONFIG: &str = r#"[model]
+provider = "xai"
 model = "grok-fixture"
 auth = "xai-oauth"
 "#;
