@@ -315,6 +315,7 @@ mod unix {
                         ))));
                     }
                 }
+                self.take_settings_changes(&mut views);
                 return views;
             }
             // Views already queued, such as the settings first read, go
@@ -322,7 +323,9 @@ mod unix {
             // lands before the settings it changes. Taken only once the
             // wait below ends, so cancelling it loses nothing.
             if !self.pending.is_empty() {
-                return std::mem::take(&mut self.pending);
+                let mut views = std::mem::take(&mut self.pending);
+                self.take_settings_changes(&mut views);
+                return views;
             }
             let mut views = Vec::new();
             tokio::select! {
@@ -335,7 +338,17 @@ mod unix {
                     views.push(DaemonView::SettingsChanged(Box::new(changed)));
                 }
             }
+            // A settings change that arrived meanwhile rides along, so a
+            // streaming turn's events never hold it back.
+            self.take_settings_changes(&mut views);
             views
+        }
+
+        /// Appends every settings change already received, after `views`.
+        fn take_settings_changes(&mut self, views: &mut Vec<DaemonView>) {
+            while let Ok(changed) = self.config_changes.try_recv() {
+                views.push(DaemonView::SettingsChanged(Box::new(changed)));
+            }
         }
 
         /// What the daemon sent since the last call, mapped, without
@@ -347,9 +360,7 @@ mod unix {
                     views.push(error);
                 }
             }
-            while let Ok(changed) = self.config_changes.try_recv() {
-                views.push(DaemonView::SettingsChanged(Box::new(changed)));
-            }
+            self.take_settings_changes(&mut views);
             if !self.ended && self.reattach.is_none() {
                 if let Ok(first) = self.routed.try_recv() {
                     self.read(Some(first), &mut views);
