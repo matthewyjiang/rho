@@ -190,7 +190,12 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
                             pending = Some(response);
                             ending
                         }
-                        DetachReason::DaemonStopping => Some(Ending::Interrupted),
+                        // A restart interrupts the turn as a stop does; an
+                        // upgrade waits for it to end first, by when this
+                        // has ended too.
+                        DetachReason::DaemonStopping | DetachReason::Restarting => {
+                            Some(Ending::Interrupted)
+                        }
                         DetachReason::Deleted => {
                             return Err(AutomationExit::other("the session was deleted"))
                         }

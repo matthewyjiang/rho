@@ -13,7 +13,10 @@
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
-    os::unix::fs::OpenOptionsExt,
+    os::{
+        fd::{AsFd, BorrowedFd},
+        unix::fs::{MetadataExt, OpenOptionsExt},
+    },
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -28,7 +31,7 @@ use super::paths::{DaemonPathError, DaemonPaths};
 /// Dropping it releases the lock.
 #[derive(Debug)]
 pub(crate) struct DaemonLock {
-    _file: File,
+    file: File,
 }
 
 /// The contents of [`DaemonPaths::info_file`]: who holds the lock.
@@ -76,7 +79,7 @@ pub(crate) fn acquire(paths: &DaemonPaths) -> Result<DaemonLock, LockError> {
     paths.prepare_state_dir()?;
     let file = open_lock_file(&paths.lock)?;
     match FileExt::try_lock_exclusive(&file) {
-        Ok(()) => Ok(DaemonLock { _file: file }),
+        Ok(()) => Ok(DaemonLock { file }),
         Err(error) if error.kind() == io::ErrorKind::WouldBlock => Err(LockError::AlreadyRunning {
             record: read_record(paths),
         }),
@@ -84,6 +87,32 @@ pub(crate) fn acquire(paths: &DaemonPaths) -> Result<DaemonLock, LockError> {
             path: paths.lock.clone(),
             source,
         }),
+    }
+}
+
+/// Takes over the lock the daemon this process re-executed from handed it
+/// as `file` (see `handoff`), once `file` proves to be this home's lock
+/// file, still locked.
+pub(super) fn adopt(paths: &DaemonPaths, file: File) -> io::Result<DaemonLock> {
+    let inherited = file.metadata()?;
+    let on_disk = fs::symlink_metadata(&paths.lock)?;
+    if (inherited.dev(), inherited.ino()) != (on_disk.dev(), on_disk.ino()) {
+        return Err(io::Error::other(format!(
+            "the inherited lock is not the daemon lock {}",
+            paths.lock.display()
+        )));
+    }
+    // The lock belongs to the open file description, which the exec kept,
+    // so locking it again succeeds at once; it would block only if another
+    // daemon had taken the lock meanwhile.
+    FileExt::try_lock_exclusive(&file)?;
+    Ok(DaemonLock { file })
+}
+
+/// The lock's descriptor, which `handoff` keeps open across the exec.
+impl AsFd for DaemonLock {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.file.as_fd()
     }
 }
 

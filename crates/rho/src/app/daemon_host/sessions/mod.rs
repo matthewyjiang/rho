@@ -26,9 +26,10 @@
 //! nothing yet; see [`unload`]. Clients list, rename, and delete saved
 //! sessions, loaded or not; see [`catalog`].
 //!
-//! Once the daemon starts stopping, it refuses new sessions and prompts and
-//! detaches every client; then it stops the turns under way, waits for them
-//! to save, and records them interrupted.
+//! Once the daemon starts stopping, or restarting in place (#1713), it
+//! refuses new sessions and prompts and detaches every client, telling it
+//! which; then it stops the turns under way, waits for them to save, and
+//! records them interrupted.
 
 use std::{
     collections::HashMap,
@@ -48,7 +49,8 @@ use rho_sdk::{CancellationToken, SessionId};
 
 use super::{
     jobs::{
-        JobEvent, JobId, JobRecord, JobRegistry, JobState, SessionJob, StartTurnError, TurnEnd,
+        JobEvent, JobId, JobRecord, JobRegistry, JobState, RegisterError, SessionJob,
+        StartTurnError, TurnEnd,
     },
     subagents::Subagents,
     wire::{session_to_wire, state_event},
@@ -102,7 +104,8 @@ pub(in crate::app) use unload::UNLOAD_IDLE_AFTER;
 // fires only on a turn stuck in a tool that ignores the cancel. It runs from
 // the stop request and stays under `DAEMON_STOP_TIMEOUT` (5 s) with room for
 // the rest of the exit (44 ms max measured), so `rho daemon stop` still sees
-// the daemon go. Draining that waits for turns to finish is #1713's to size.
+// the daemon go. `rho daemon restart` drains the same way; an upgrade waits
+// for the daemon to be idle first, so it has nothing to drain.
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// Every session the daemon has loaded, and the job registry that records
@@ -498,18 +501,19 @@ impl Sessions {
         &self.subagents
     }
 
-    /// Starts the daemon's stop: from now on no session opens, no turn
-    /// starts, no client attaches, and every client attached to a session,
-    /// even by an attach that raced the stop, is detached as
-    /// `daemon_stopping`. Call before the transport closes the connections,
-    /// so each client learns why. Calling again does nothing.
-    pub(super) fn begin_stop(&self) {
+    /// Starts the daemon's stop, or its restart: from now on no session
+    /// opens, no turn starts, no client attaches, and every client attached
+    /// to a session, even by an attach that raced the stop, is detached as
+    /// `told`, `daemon_stopping` or `restarting`. Call before the transport
+    /// closes the connections, so each client learns why. Calling again
+    /// keeps what the first call told.
+    pub(super) fn begin_stop(&self, told: DetachReason) {
         // Under the lock `add` checks `stopping` under, so no session is
         // added after this with its feed open.
         let loaded = self.loaded();
         self.stopping.cancel();
         for session in loaded.values() {
-            session.feed.close(DetachReason::DaemonStopping);
+            session.feed.close(told);
         }
     }
 
@@ -685,6 +689,8 @@ impl Sessions {
                     return Ok(Entered::BehindWakeWait);
                 }
             },
+            // An upgrade found the daemon idle a moment before.
+            Err(StartTurnError::Closed) => return Err(stopping()),
             Err(StartTurnError::Unknown(_)) => {
                 return Err(RpcError::new(
                     ErrorCode::InternalError,
@@ -774,9 +780,10 @@ impl Sessions {
     /// [`Self::begin_stop`] has not. Stops each turn, waits until
     /// [`DRAIN_TIMEOUT`] after `stop_requested` for the turns to save and
     /// the runtimes to tear down, the idle unload's included, and records
-    /// every job still under way as interrupted.
-    pub(super) async fn stop(&self, stop_requested: tokio::time::Instant) {
-        self.begin_stop();
+    /// every job still under way as interrupted. Returns whether every turn
+    /// saved and every runtime was torn down in time.
+    pub(super) async fn stop(&self, stop_requested: tokio::time::Instant) -> bool {
+        self.begin_stop(DetachReason::DaemonStopping);
         let sessions: Vec<_> = self.loaded().drain().map(|(_, session)| session).collect();
         for session in &sessions {
             // The turn stops as one its client lost, so the session keeps
@@ -807,6 +814,7 @@ impl Sessions {
             );
         }
         self.jobs.close();
+        drained.is_ok()
     }
 
     fn refuse_when_stopping(&self) -> Result<(), RpcError> {
@@ -891,12 +899,16 @@ impl SessionJobRecord {
     /// writing the session while it reopened (#1661).
     fn claim(self, jobs: &JobRegistry, session: &SessionId) -> Result<(), RpcError> {
         match (self, jobs.session_job(session)) {
-            (Self::Register(record), SessionJob::New) => jobs.register(record).map_err(|error| {
-                RpcError::new(
-                    ErrorCode::InternalError,
-                    format!("could not record the session's job: {error}"),
-                )
-            }),
+            (Self::Register(record), SessionJob::New) => {
+                jobs.register(record).map_err(|error| match error {
+                    // Stopping, or restarting for an upgrade.
+                    RegisterError::Closed => stopping(),
+                    RegisterError::Io(error) => RpcError::new(
+                        ErrorCode::InternalError,
+                        format!("could not record the session's job: {error}"),
+                    ),
+                })
+            }
             (Self::Reuse(record), SessionJob::Last(last)) if last.id == record.id => Ok(()),
             (_, SessionJob::Busy(job)) => Err(writing(&job, session)),
             (Self::Register(_) | Self::Reuse(_), SessionJob::New | SessionJob::Last(_)) => {

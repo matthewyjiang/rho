@@ -489,6 +489,13 @@ async fn ended_attachments_fail_the_prompt_and_release_job_waits() {
             Attachment::Stale,
         ),
         (
+            "daemon restarting",
+            Routed::Detached(DetachReason::Restarting),
+            None,
+            AcpError::internal_error().data("rho daemon restarted"),
+            Attachment::Stale,
+        ),
+        (
             "deleted",
             Routed::Detached(DetachReason::Deleted),
             None,

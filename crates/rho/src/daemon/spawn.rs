@@ -36,8 +36,8 @@ const START_POLL_INTERVAL: Duration = Duration::from_millis(10);
 // lock until its turns save, at most `DRAIN_TIMEOUT` (4 s, in
 // `daemon_host::sessions`) after the stop request, then exits in tens of
 // milliseconds. 5 s matches `DAEMON_STOP_TIMEOUT`, which bounds the same
-// wait for `rho daemon stop`. Draining that lets turns finish before an
-// upgrade (#1713) needs its own budget.
+// wait for `rho daemon stop`. A daemon restarting in place (#1713) keeps its
+// socket, so a client waits in its backlog instead and never comes here.
 const DRAIN_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Starts a daemon process for [`connect_or_spawn`].
@@ -147,8 +147,8 @@ pub(crate) enum SpawnError {
 /// Concurrent callers serialize on the spawn lock: the first starts the
 /// daemon, and the rest connect to it once they get the lock.
 ///
-/// A daemon that is draining, for a stop or an upgrade (#1713), has already
-/// removed its socket but still holds the daemon lock. A daemon spawned then
+/// A daemon that is draining for a stop has already removed its socket but
+/// still holds the daemon lock. A daemon spawned then
 /// would exit as already running, so this waits for the old one to let go of
 /// the lock first, up to [`DRAIN_WAIT_TIMEOUT`].
 pub(crate) async fn connect_or_spawn(

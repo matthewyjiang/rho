@@ -7,12 +7,16 @@ use std::{
 };
 
 use pretty_assertions::assert_eq;
-use rho_sdk::CancellationToken;
 use tempfile::TempDir;
 use tokio::task::JoinHandle;
 
 use super::*;
-use crate::daemon::{client::cli_client_info, lock, server, test_support::StubHost};
+use crate::daemon::{
+    client::cli_client_info,
+    lock, server,
+    shutdown::{Ending, Shutdown},
+    test_support::StubHost,
+};
 
 /// Failure bound for every racing caller to connect.
 const RACE_DEADLINE: Duration = Duration::from_secs(30);
@@ -20,7 +24,7 @@ const RACE_DEADLINE: Duration = Duration::from_secs(30);
 /// Starts the daemon inside the test process and counts how often it is asked.
 struct InProcessSpawner {
     spawns: AtomicUsize,
-    shutdown: CancellationToken,
+    shutdown: Shutdown,
     servers: Mutex<Vec<JoinHandle<io::Result<()>>>>,
 }
 
@@ -46,7 +50,7 @@ async fn racing_clients_spawn_one_daemon_and_all_connect() {
     let paths = DaemonPaths::resolve(root.path(), |_| None).unwrap();
     let spawner = Arc::new(InProcessSpawner {
         spawns: AtomicUsize::new(0),
-        shutdown: CancellationToken::new(),
+        shutdown: Shutdown::default(),
         servers: Mutex::new(Vec::new()),
     });
 
@@ -69,7 +73,7 @@ async fn racing_clients_spawn_one_daemon_and_all_connect() {
         assert_eq!(pid.unwrap().unwrap(), std::process::id());
     }
     assert_eq!(spawner.spawns.load(Ordering::SeqCst), 1);
-    spawner.shutdown.cancel();
+    spawner.shutdown.request(Ending::Stop, |_| {});
     let servers = std::mem::take(&mut *spawner.servers.lock().unwrap());
     for served in servers {
         served.await.unwrap().unwrap();
@@ -87,7 +91,7 @@ async fn a_client_waits_for_a_draining_daemon_to_let_go_of_the_lock() {
     let paths = DaemonPaths::resolve(root.path(), |_| None).unwrap();
     let spawner = Arc::new(InProcessSpawner {
         spawns: AtomicUsize::new(0),
-        shutdown: CancellationToken::new(),
+        shutdown: Shutdown::default(),
         servers: Mutex::new(Vec::new()),
     });
     // The draining daemon: it holds the lock and removed its socket.
@@ -124,7 +128,7 @@ async fn a_client_waits_for_a_draining_daemon_to_let_go_of_the_lock() {
         (waited, pid, spawner.spawns.load(Ordering::SeqCst)),
         ((false, 0), std::process::id(), 1)
     );
-    spawner.shutdown.cancel();
+    spawner.shutdown.request(Ending::Stop, |_| {});
     let servers = std::mem::take(&mut *spawner.servers.lock().unwrap());
     for served in servers {
         served.await.unwrap().unwrap();
@@ -142,7 +146,7 @@ async fn a_client_on_another_socket_is_told_where_the_daemon_listens() {
     let paths = DaemonPaths::resolve(root.path(), |_| None).unwrap();
     let spawner = InProcessSpawner {
         spawns: AtomicUsize::new(0),
-        shutdown: CancellationToken::new(),
+        shutdown: Shutdown::default(),
         servers: Mutex::new(Vec::new()),
     };
     let _running = lock::acquire(&paths).unwrap();

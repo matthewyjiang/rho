@@ -8,7 +8,9 @@
 //! starting them in [`detach`]; the tool processes the daemon's stop ends
 //! are in [`tools`], signing it in and out over its socket in [`auth`],
 //! and the interactive logins it relays to clients, `rho login` among
-//! them, in [`login`]; `rho mcp serve` driving its sessions is in [`mcp`].
+//! them, in [`login`]; `rho mcp serve` driving its sessions is in [`mcp`];
+//! re-executing the daemon in place, for an upgrade or `rho daemon
+//! restart`, is in [`upgrade`].
 #![cfg(unix)]
 
 use std::{
@@ -50,6 +52,9 @@ mod login;
 
 #[path = "support/daemon_mcp.rs"]
 mod mcp;
+
+#[path = "support/daemon_upgrade.rs"]
+mod upgrade;
 
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;

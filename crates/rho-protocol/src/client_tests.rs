@@ -33,6 +33,7 @@ fn fake_status() -> DaemonStatus {
             selected_by: crate::StoreSelectedBy::Default,
             unreachable: Some("no session D-Bus".into()),
         },
+        upgrade: None,
     }
 }
 

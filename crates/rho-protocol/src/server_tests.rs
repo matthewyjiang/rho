@@ -40,6 +40,7 @@ fn test_status() -> DaemonStatus {
             selected_by: StoreSelectedBy::Config,
             unreachable: None,
         },
+        upgrade: None,
     }
 }
 
@@ -62,6 +63,8 @@ fn no_such_session() -> RpcError {
 /// sessions.
 macro_rules! hosts_no_sessions {
     () => {
+        async fn restart(&self) {}
+
         async fn new_session(&self, _: SessionNewParams) -> Result<SessionNewResponse, RpcError> {
             Err(no_such_session())
         }

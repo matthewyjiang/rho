@@ -386,6 +386,11 @@ pub enum DetachReason {
     Lagged,
     /// The daemon is stopping.
     DaemonStopping,
+    /// The daemon is re-executing in place, for an upgrade or a restart, and
+    /// closes the connection next. Connect again, which waits until the
+    /// daemon answers, and attach with the client's cursor; the restarted
+    /// daemon answers with [`Replay::Reset`].
+    Restarting,
     /// The session was deleted ([`super::SESSION_DELETE`]).
     Deleted,
     /// An observe ([`SESSION_OBSERVE`]) found the session unloaded: the
