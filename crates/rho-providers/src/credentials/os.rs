@@ -316,12 +316,16 @@ impl CredentialStore for OsCredentialStore {
             return Ok(secret);
         }
 
-        let secret = match Self::load_chunked_secret(account)? {
-            Some(secret) => Some(secret),
-            None => Self::get_entry_secret(account)?,
-        };
+        let secret = self.get_secret_fresh(account)?;
         Self::remember_secret(account, secret.clone());
         Ok(secret)
+    }
+
+    fn get_secret_fresh(&self, account: &str) -> CredentialResult<Option<String>> {
+        match Self::load_chunked_secret(account)? {
+            Some(secret) => Ok(Some(secret)),
+            None => Self::get_entry_secret(account),
+        }
     }
 
     fn set_secret(&self, account: &str, secret: &str) -> CredentialResult<()> {

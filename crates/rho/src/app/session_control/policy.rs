@@ -102,13 +102,6 @@ impl Access {
 pub(crate) enum Workspaces {
     Any,
     /// These directories and everything under them, as canonical paths.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "`rho mcp serve --http` tokens hold grants (#1672)"
-        )
-    )]
     Only(Vec<PathBuf>),
 }
 
@@ -128,13 +121,6 @@ pub(crate) enum Holder {
     /// The process's own caller, as on stdio: whoever started it.
     Local,
     /// The holder of an MCP server token, by its name.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "`rho mcp serve --http` tokens hold grants (#1672)"
-        )
-    )]
     Token(String),
 }
 

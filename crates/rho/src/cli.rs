@@ -712,23 +712,86 @@ pub enum McpCommand {
         #[arg(long)]
         connect: bool,
     },
-    /// Serve the rho daemon's sessions as an MCP server over stdio: list,
-    /// read, start, prompt, steer, cancel, and wait for them. No tool
-    /// answers a session's approvals or questions.
+    /// Serve the rho daemon's sessions as an MCP server: list, read, start,
+    /// prompt, steer, cancel, and wait for them.
+    ///
+    /// Over stdio by default, for a host that starts it as a command. With
+    /// `--http`, over streamable HTTP on a loopback address, for hosts that
+    /// reach MCP servers by URL through a tunnel; every request then needs
+    /// a bearer token from `rho mcp token rotate`. No tool answers a
+    /// session's approvals or questions.
     Serve(McpServeArgs),
+    /// Manage the bearer tokens `rho mcp serve --http` accepts.
+    Token {
+        #[command(subcommand)]
+        command: McpTokenCommand,
+    },
 }
 
 #[derive(clap::Args, Clone, Debug)]
 pub struct McpServeArgs {
+    /// Serve streamable HTTP on this loopback address, such as
+    /// 127.0.0.1:8765, instead of stdio.
+    #[arg(long, value_name = "ADDR")]
+    pub http: Option<std::net::SocketAddr>,
+    /// With `--http`, also accept this `Host` header, such as the tunnel's
+    /// public hostname. May be repeated.
+    #[arg(long, value_name = "HOST", requires = "http")]
+    pub allow_host: Vec<String>,
+    /// With `--http`, accept requests from this browser origin, such as
+    /// https://app.example.com. Any other `Origin` is refused. May be
+    /// repeated.
+    #[arg(long, value_name = "ORIGIN", requires = "http")]
+    pub allow_origin: Vec<String>,
     /// The deepest a session this server starts or prompts may run: 1 for
     /// a session started by a person's or an outside agent's call, one more
     /// for each session in between. Defaults to 3.
     #[arg(long, value_name = "N")]
     pub max_depth: Option<u32>,
-    /// How many sessions the server's caller may have running at once.
-    /// Defaults to 10.
+    /// How many sessions each caller (each token, over HTTP) may have
+    /// running at once. Defaults to 10.
     #[arg(long, value_name = "N")]
     pub max_sessions: Option<u32>,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum McpTokenCommand {
+    /// Create token NAME, or give it a new secret, and print the secret
+    /// once. The old secret stops working at once.
+    Rotate {
+        /// The token's name, which refusals and `list` show.
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// What the token may do: `read` lists, reads, and waits for
+        /// sessions; `write` also starts, prompts, steers, and cancels
+        /// them. A new token defaults to `read`; rotating keeps the
+        /// token's scope unless given.
+        #[arg(long, value_enum)]
+        scope: Option<McpTokenScope>,
+        /// A directory whose sessions, and those of everything under it,
+        /// the token may reach. May be repeated; a new token needs at least
+        /// one, and rotating keeps the token's list unless given.
+        #[arg(long, value_name = "DIR")]
+        workspace: Vec<PathBuf>,
+    },
+    /// List the tokens: their names, scopes, and workspaces.
+    List {
+        /// Print one JSON document instead of text rows.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete token NAME; requests with it are refused at once.
+    Revoke {
+        #[arg(value_name = "NAME")]
+        name: String,
+    },
+}
+
+/// What an MCP server token may do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum McpTokenScope {
+    Read,
+    Write,
 }
 
 /// Target scope for plugin install and link.

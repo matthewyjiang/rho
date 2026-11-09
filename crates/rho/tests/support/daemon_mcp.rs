@@ -1,17 +1,25 @@
 //! `rho mcp serve` through the real binary: an MCP host drives a daemon
 //! session in another workspace over stdio while a second daemon client
 //! follows it, reading a session starts nothing of it, no tool can answer
-//! the session's approvals, and the core's caps refuse with their budgets.
+//! the session's approvals, the core's caps refuse with their budgets, and
+//! the HTTP transport refuses requests its tokens and origin rules do not
+//! allow.
 
 use std::{path::PathBuf, process::Stdio};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{methods::JobList, JobListParams, JobState, SessionEvent, SessionId};
 use rmcp::{
-    model::CallToolRequestParams, service::RunningService, transport::TokioChildProcess,
+    model::CallToolRequestParams,
+    service::RunningService,
+    transport::{
+        streamable_http_client::StreamableHttpClientTransportConfig, StreamableHttpClientTransport,
+        TokioChildProcess,
+    },
     RoleClient, ServiceExt,
 };
 use serde_json::{json, Value};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 use super::sessions::{Follower, Sandbox, DEADLINE};
 
@@ -459,5 +467,250 @@ async fn the_caps_refuse_starts_past_their_limits() {
         ),
         "log:\n{}",
         sandbox.isolated.daemon_log()
+    );
+}
+
+/// `rho mcp serve --http` on a free loopback port; returns the process and
+/// its endpoint URL once it listens.
+async fn http_server(sandbox: &Sandbox) -> (tokio::process::Child, String) {
+    let mut command = tokio::process::Command::from(sandbox.rho("tool-call"));
+    command
+        .args(["mcp", "serve", "--http", "127.0.0.1:0"])
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let mut server = command.spawn().unwrap();
+    let mut lines = BufReader::new(server.stderr.take().unwrap()).lines();
+    let line = tokio::time::timeout(DEADLINE, lines.next_line())
+        .await
+        .expect("the server listens")
+        .unwrap()
+        .expect("the server says where it listens");
+    let url = line
+        .strip_prefix("rho mcp serve listening on ")
+        .unwrap_or_else(|| panic!("unexpected first line: {line}"))
+        .to_owned();
+    (server, url)
+}
+
+/// Creates token `name` with `args` and returns its secret.
+fn rotate(sandbox: &Sandbox, name: &str, args: &[&str]) -> String {
+    let output = sandbox
+        .rho("tool-call")
+        .args(["mcp", "token", "rotate", name])
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// Sends a request without consuming its potentially unbounded SSE body.
+async fn http_request(
+    url: &str,
+    method: reqwest::Method,
+    headers: &[(&str, &str)],
+    body: &str,
+) -> reqwest::Response {
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(DEADLINE)
+        .build()
+        .unwrap();
+    let mut request = client
+        .request(method, url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2025-06-18")
+        .body(body.to_owned());
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    request.send().await.expect("the server answers")
+}
+
+/// Initializes a transport session, returning its status and session header.
+async fn initialize(url: &str, headers: &[(&str, &str)]) -> reqwest::Response {
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "raw", "version": "0"},
+        },
+    })
+    .to_string();
+    http_request(url, reqwest::Method::POST, headers, &body).await
+}
+
+// Covers: a known MCP transport session is private to its token principal for
+// requests, notifications, streams/resume, and deletion; unknown and deleted IDs
+// are indistinguishable from another token's session.
+// Owner: rho mcp serve --http session authorization, through the actual binary.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn http_sessions_belong_to_the_token_that_initialized_them() {
+    use reqwest::Method;
+
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let sandbox = Sandbox::new();
+    let allowed = sandbox.workspace.display().to_string();
+    let owner = format!(
+        "Bearer {}",
+        rotate(&sandbox, "owner", &["--workspace", &allowed])
+    );
+    let other = format!(
+        "Bearer {}",
+        rotate(&sandbox, "other", &["--workspace", &allowed])
+    );
+    let (_server, url) = http_server(&sandbox).await;
+    let response = initialize(&url, &[("Authorization", &owner)]).await;
+    assert_eq!(response.status().as_u16(), 200);
+    let session = response.headers()["mcp-session-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    drop(response);
+    let initialized = http_request(
+        &url,
+        Method::POST,
+        &[("Authorization", &owner), ("Mcp-Session-Id", &session)],
+        &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}).to_string(),
+    )
+    .await;
+    assert_eq!(initialized.status().as_u16(), 202);
+
+    let ping = json!({"jsonrpc": "2.0", "id": 2, "method": "ping"}).to_string();
+    let notification = json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/cancelled",
+        "params": {"requestId": 999},
+    })
+    .to_string();
+    let cases = [
+        (Method::GET, None, "", 200),
+        (Method::GET, Some("0"), "", 200),
+        (Method::POST, None, ping.as_str(), 200),
+        (Method::POST, None, notification.as_str(), 202),
+        // Deletion runs last so preceding refusals cannot terminate the owner's session.
+        (Method::DELETE, None, "", 202),
+    ];
+    for (method, last_event, body, success) in &cases {
+        let mut statuses = Vec::new();
+        for (token, id) in [
+            (&other, session.as_str()),
+            (&owner, "unknown-session"),
+            (&other, "unknown-session"),
+            (&owner, session.as_str()),
+        ] {
+            let mut headers = vec![("Authorization", token.as_str()), ("Mcp-Session-Id", id)];
+            if let Some(event) = last_event {
+                headers.push(("Last-Event-ID", event));
+            }
+            statuses.push(
+                http_request(&url, method.clone(), &headers, body)
+                    .await
+                    .status()
+                    .as_u16(),
+            );
+        }
+        assert_eq!(
+            statuses,
+            vec![404, 404, 404, *success],
+            "{method} resume={last_event:?}"
+        );
+    }
+    // A successful DELETE removes the authorization binding as well as the session.
+    for (method, last_event, body, _) in &cases {
+        for token in [&owner, &other] {
+            let mut headers = vec![
+                ("Authorization", token.as_str()),
+                ("Mcp-Session-Id", &session),
+            ];
+            if let Some(event) = last_event {
+                headers.push(("Last-Event-ID", event));
+            }
+            assert_eq!(
+                http_request(&url, method.clone(), &headers, body)
+                    .await
+                    .status()
+                    .as_u16(),
+                404,
+                "deleted session: {method} resume={last_event:?}",
+            );
+        }
+    }
+}
+
+/// An MCP client of the HTTP server at `url` with `token`.
+async fn http_client(url: &str, token: &str) -> McpClient {
+    let transport = StreamableHttpClientTransport::from_config(
+        StreamableHttpClientTransportConfig::with_uri(url.to_owned()).auth_header(token.to_owned()),
+    );
+    ().serve(transport).await.expect("the client initializes")
+}
+
+// Covers: the HTTP transport refuses a missing or wrong bearer token and a
+// browser origin it does not allow, and the core refuses a read-only token's
+// write and a workspace outside a token's list, naming that list (#1672).
+// Owner: rho mcp serve --http auth.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn http_refuses_what_its_tokens_do_not_allow() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let sandbox = Sandbox::new();
+    let allowed = sandbox.workspace.display().to_string();
+    let reader = rotate(&sandbox, "reader", &["--workspace", &allowed]);
+    let writer = rotate(
+        &sandbox,
+        "writer",
+        &["--scope", "write", "--workspace", &allowed],
+    );
+    let (_server, url) = http_server(&sandbox).await;
+    let bearer = |token: &str| format!("Bearer {token}");
+
+    let statuses = [
+        initialize(&url, &[]).await,
+        initialize(&url, &[("Authorization", "Bearer rho_mcp_wrong")]).await,
+        initialize(
+            &url,
+            &[
+                ("Authorization", &bearer(&reader)),
+                ("Origin", "https://evil.example"),
+            ],
+        )
+        .await,
+        initialize(&url, &[("Authorization", &bearer(&reader))]).await,
+    ]
+    .map(|response| response.status().as_u16());
+    let read_only = http_client(&url, &reader).await;
+    let listed = call(&read_only, "list", json!({})).await;
+    let read_only_new = call(
+        &read_only,
+        "new",
+        json!({"workspace": sandbox.workspace, "prompt": "hello"}),
+    )
+    .await;
+    let outside = elsewhere(&sandbox);
+    let write = http_client(&url, &writer).await;
+    let outside_new = call(
+        &write,
+        "new",
+        json!({"workspace": outside, "prompt": "hello"}),
+    )
+    .await;
+
+    assert_eq!(
+        (statuses, listed, read_only_new, outside_new),
+        (
+            [401, 401, 403, 200],
+            Ok(json!({"sessions": [], "more": false})),
+            Err("token \"reader\" has read access; `new` needs write".into()),
+            Err(format!(
+                "token \"writer\" may not reach workspace {}; it may reach: {allowed}",
+                outside.display()
+            )),
+        )
     );
 }
