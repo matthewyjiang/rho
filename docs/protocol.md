@@ -10,15 +10,16 @@ The first request must be `rho/hello`. Any other request before it gets `Handsha
 
 After the handshake the daemon runs a connection's requests concurrently and answers each one when it finishes, so responses can arrive out of order; pair them with their requests by id. Send a request that depends on another only after that one's response arrives.
 
-When the client stops sending, the daemon answers every request it has already read, then closes the connection. When the daemon stops, it first sends `rho/session/detached` for every session the client follows, then answers the requests it has read and closes. A client that has stopped reading while the daemon closes its connection is dropped once a message has waited 1 second.
+When the client stops sending, the daemon answers every request it has already read, then closes the connection. When the daemon stops or restarts, it first sends `rho/session/detached` for every session the client follows, then answers the requests it has read and closes. A restarting daemon keeps its socket, so a client that connects again waits until the restarted daemon answers its `rho/hello`. A client that has stopped reading while the daemon closes its connection is dropped once a message has waited 1 second.
 
 ## Methods
 
 | Method | Params | Result |
 | --- | --- | --- |
 | `rho/hello` | `protocol` (`{major, minor}`), `client` (`{name, version}`) | The daemon's `protocol`, `daemon` (`{version, pid}`), and `capabilities`. |
-| `rho/daemon/status` | | `pid`, `version`, `protocol`, `started_at`, `uptime_secs`, `jobs` (jobs queued, running, or waiting for input), `socket`, and `credential_store`: the [credential store](#credential-store) the daemon keeps provider credentials in. |
+| `rho/daemon/status` | | `pid`, `version`, `protocol`, `started_at`, `uptime_secs`, `jobs` (jobs queued, running, or waiting for input), `socket`, `credential_store`: the [credential store](#credential-store) the daemon keeps provider credentials in, and `upgrade`, present once the daemon's executable was replaced: the replacement's `version` and `waiting_for`, the jobs in progress the [upgrade](/daemon#upgrading-in-place) waits for. |
 | `rho/daemon/stop` | | `{}`; the daemon then shuts down as [described](/daemon#commands). |
+| `rho/daemon/restart` | | `{}`; the daemon then [re-executes in place](/daemon#upgrading-in-place), interrupting the turns under way. |
 | `rho/session/new` | `cwd`, `environment`, `agent`?, `setup`? | Opens a new session whose workspace is `cwd`, an absolute path to an existing directory, and returns its `session` id and `options` ([below](#changing-a-session-s-settings)). `environment` is the client's environment variables, an object of strings, which the session's commands run with ([below](#the-client-s-environment)). The session runs as `agent`, the id of one of the workspace's agents, as `rho --agent` takes it, or the default agent; one the workspace does not define gets `SessionOpenFailed`. `setup` holds the client's other choices for it ([below](#a-session-s-setup)). |
 | `rho/session/prompt` | `session`, `content`, optional `timeout_ms`, `environment` | Starts a turn of `content`, a non-empty list of [content blocks](#content-blocks), whose commands and those of later turns run with `environment`, and returns `{}` once the turn began: it saved its prompt, or, for `/compact`, its compaction started. A session runs one turn at a time; a prompt while a turn is under way gets `SessionBusy`. A prompt that arrives while [settings changes](#changing-a-session-s-settings) wait to apply starts its turn once they have, so the turn runs with them. With `timeout_ms`, the daemon cancels a turn still running that many milliseconds after it took the prompt, and the turn ends `timed_out`. |
 | `rho/session/cancel` | `session` | Cancels the turn under way, if any. The turn ends `cancelled`, or `interrupted` when the daemon is stopping; one already past its `timeout_ms` ends `timed_out`. |
@@ -134,6 +135,7 @@ The daemon detaches a client with `rho/session/detached`, after which no event o
 
 - `lagged`: the client fell 4096 events behind, or the daemon unloaded the session, as a delete that fails after it unloaded the session does. A turn never waits for a client; attach again with the cursor to catch up.
 - `daemon_stopping`: the daemon is stopping.
+- `restarting`: the daemon is re-executing in place, for an upgrade or `rho/daemon/restart`, and closes the connection next. Connect again and attach with the cursor; the restarted daemon answers with a `reset` replay.
 - `deleted`: `rho/session/delete` deleted the session.
 - `not_loaded`: `rho/session/observe` found the session unloaded, so its replay was the saved conversation and nothing follows. Observe again to read it again.
 
@@ -151,7 +153,7 @@ A call's start and each progress update carry a `card` that replaces the last on
 
 ### How a turn ends
 
-A turn that ends sends one `turn_ended` event; the `state` that records the job's end follows, unless the daemon could not record it. A turn the daemon's stop cuts short sends none: the stop first detaches every client with `daemon_stopping`, and `rho/job/list` shows the job `interrupted`, as it does for a turn whose daemon died. The `outcome` has a `type`:
+A turn that ends sends one `turn_ended` event; the `state` that records the job's end follows, unless the daemon could not record it. A turn the daemon's stop or restart cuts short sends none: the stop first detaches every client with `daemon_stopping`, or `restarting`, and `rho/job/list` shows the job `interrupted`, as it does for a turn whose daemon died. The `outcome` has a `type`:
 
 | Outcome | Job state | What it carries |
 | --- | --- | --- |
@@ -299,7 +301,7 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 | -32004 | `SessionBusy` | The session already has a turn under way (for a prompt or a delete), a settings change waiting or applying (for a delete), a delete under way, or, for a delete, background work running or a run it started unfinished; or another job, such as a subagent run, writes the saved session a prompt, an attach, or a delete would touch. |
 | -32005 | `NotSteerable` | No model request is taking input. |
 | -32006 | `SteerRefused` | The running turn refused the steering input, or a request to withdraw a steer. |
-| -32007 | `DaemonStopping` | The daemon is stopping and starts nothing new. |
+| -32007 | `DaemonStopping` | The daemon is stopping, or restarting in place, and starts nothing new. |
 | -32008 | `SessionOpenFailed` | The daemon could not open the session: for example, the config is invalid, the workspace does not define the agent a new session asks for, the agent a saved session was saved as, or the one `/agent:<name>` rebound it from, changed or is gone, or the session is a subagent's or workflow node's, which only its parent continues. |
 | -32009 | `TurnEnded` | The turn ended before it began; `data` is its outcome. |
 | -32011 | `InputNotOpen` | The input request is not open: another client answered it first, it timed out, or the turn withdrew it. |

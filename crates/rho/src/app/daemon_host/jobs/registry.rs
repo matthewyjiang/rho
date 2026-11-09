@@ -29,7 +29,8 @@ pub(in crate::app::daemon_host) struct JobRegistry {
     store: JobStore,
     jobs: Mutex<BTreeMap<JobId, JobRecord>>,
     /// Set, under the `jobs` lock, once the daemon's stop recorded its
-    /// unfinished jobs; no job is added after.
+    /// unfinished jobs, or an upgrade found none in progress; no job is
+    /// added and no turn starts after.
     closed: AtomicBool,
 }
 
@@ -57,6 +58,9 @@ pub(in crate::app::daemon_host) enum StartTurnError {
     /// A turn is already running or waiting for input.
     #[error("a turn is already in progress")]
     Busy,
+    /// The daemon is stopping or restarting, and starts no turn.
+    #[error("the daemon is stopping")]
+    Closed,
 }
 
 /// What the registry knows of a session, for reopening it (#1661).
@@ -178,7 +182,11 @@ impl JobRegistry {
     /// Checked and applied under one lock, so of two prompts that race only
     /// one starts a turn.
     pub(in crate::app::daemon_host) fn start_turn(&self, id: &JobId) -> Result<(), StartTurnError> {
-        match self.record(id, JobEvent::TurnStarted) {
+        let mut jobs = self.lock();
+        if self.closed.load(Ordering::Relaxed) {
+            return Err(StartTurnError::Closed);
+        }
+        match self.record_under(&mut jobs, id, JobEvent::TurnStarted) {
             Ok(_) => Ok(()),
             Err(TransitionError::Unknown(unknown)) => Err(unknown.into()),
             // A turn starts from every state but the two of a turn under way.
@@ -193,7 +201,16 @@ impl JobRegistry {
         id: &JobId,
         event: JobEvent,
     ) -> Result<JobState, TransitionError> {
-        let mut jobs = self.lock();
+        self.record_under(&mut self.lock(), id, event)
+    }
+
+    /// [`Self::record`], with the `jobs` lock held.
+    fn record_under(
+        &self,
+        jobs: &mut BTreeMap<JobId, JobRecord>,
+        id: &JobId,
+        event: JobEvent,
+    ) -> Result<JobState, TransitionError> {
         let record = jobs.get_mut(id).ok_or(UnknownJob)?;
         apply(record, event)?;
         persist(&self.store, record);
@@ -229,6 +246,26 @@ impl JobRegistry {
         if let Err(error) = self.store.remove(id) {
             tracing::error!(job = %id, %error, "could not delete job record");
         }
+    }
+
+    /// For an upgrade: closes the registry, as [`Self::close`] would, but
+    /// only while no job is in progress, so no turn is cut short; whether it
+    /// did. Checked and applied under one lock, so a turn either started
+    /// before, and keeps the upgrade waiting, or is refused after.
+    pub(in crate::app::daemon_host) fn close_when_idle(&self) -> bool {
+        let jobs = self.lock();
+        let idle = !jobs.values().any(|record| record.state.in_progress());
+        if idle {
+            self.closed.store(true, Ordering::Relaxed);
+        }
+        idle
+    }
+
+    /// Gives back a [`Self::close_when_idle`] claim the upgrade could not
+    /// use, because other work kept it waiting after all.
+    pub(in crate::app::daemon_host) fn reopen(&self) {
+        let _jobs = self.lock();
+        self.closed.store(false, Ordering::Relaxed);
     }
 
     /// For the daemon's stop, once its turns saved: records every job

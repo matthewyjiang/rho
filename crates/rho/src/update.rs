@@ -460,7 +460,7 @@ pub(crate) fn release_tag_to_version(tag: &str) -> Option<String> {
         .then(|| version.to_string())
 }
 
-fn version_is_newer(candidate: &str, current: &str) -> bool {
+pub(crate) fn version_is_newer(candidate: &str, current: &str) -> bool {
     let Some(candidate) = parse_version(candidate) else {
         return false;
     };

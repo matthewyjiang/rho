@@ -7,6 +7,7 @@ use tempfile::TempDir;
 use super::*;
 use crate::daemon::{
     client, lock,
+    shutdown::Shutdown,
     test_support::{test_status, StubHost},
 };
 
@@ -31,7 +32,7 @@ async fn daemon_serves_status_and_cleans_up_on_stop() {
     let paths = prepared_paths(root.path());
     fs::write(&paths.socket, "left by a crashed daemon").unwrap();
     let bound = bind(&paths, lock::acquire(&paths).unwrap()).unwrap();
-    let shutdown = CancellationToken::new();
+    let shutdown = Shutdown::default();
     let server = tokio::spawn(async move {
         bound
             .serve(StubHost::new(&shutdown), shutdown)

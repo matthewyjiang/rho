@@ -90,6 +90,12 @@ impl Logins {
         Ok((AuthLoginResponse { login }, stream))
     }
 
+    /// How many logins are under way, which keep an upgrade waiting: the
+    /// restart would end them.
+    pub(super) fn under_way(&self) -> usize {
+        self.lock().len()
+    }
+
     /// Asks login `params.login` to stop; its task tells its client how it
     /// ended.
     pub(super) fn cancel(

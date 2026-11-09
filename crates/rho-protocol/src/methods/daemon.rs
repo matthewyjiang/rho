@@ -1,4 +1,4 @@
-//! The connection handshake and the daemon's own status and stop.
+//! The connection handshake and the daemon's own status, stop, and restart.
 
 use std::path::PathBuf;
 
@@ -13,6 +13,9 @@ pub const HELLO: &str = "rho/hello";
 pub const DAEMON_STATUS: &str = "rho/daemon/status";
 /// Acknowledge, then shut the daemon down gracefully.
 pub const DAEMON_STOP: &str = "rho/daemon/stop";
+/// Acknowledge, then re-execute the daemon in place, interrupting the turns
+/// under way.
+pub const DAEMON_RESTART: &str = "rho/daemon/restart";
 
 /// Who is connecting. Logged by the daemon; never used for authorization.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -72,6 +75,21 @@ pub struct DaemonStatus {
     /// The credential store the daemon keeps provider credentials in, what
     /// chose it, and whether the daemon can reach it.
     pub credential_store: CredentialStoreStatus,
+    /// Set once the daemon's executable was replaced: the daemon re-executes
+    /// the new one in place as soon as nothing would be cut short.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upgrade: Option<PendingUpgrade>,
+}
+
+/// A replaced executable the daemon re-executes once it is idle.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PendingUpgrade {
+    /// The rho version the replacement reports.
+    pub version: String,
+    /// How many things the upgrade waits for: jobs in progress (queued,
+    /// running, or waiting for input), logins under way, and sessions with
+    /// work of their own, such as a background process.
+    pub waiting_for: u64,
 }
 
 /// Params of [`DAEMON_STOP`].
@@ -83,3 +101,15 @@ pub struct StopParams {}
 /// exits.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct StopResponse {}
+
+/// Params of [`DAEMON_RESTART`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RestartParams {}
+
+/// Result of [`DAEMON_RESTART`]: the daemon has begun restarting. It detaches
+/// every attached client as [`crate::DetachReason::Restarting`], finishes
+/// in-flight responses, closes connections, records the turns it interrupts
+/// as interrupted, and re-executes its executable as the same process. A
+/// client that connects meanwhile waits until the restarted daemon answers.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RestartResponse {}

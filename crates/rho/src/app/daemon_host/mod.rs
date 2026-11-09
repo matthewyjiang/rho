@@ -8,7 +8,9 @@
 //! subagents share (`subagents.rs`). It also writes the credential store
 //! those sessions read (`auth.rs`), reports and chooses that store
 //! (`store.rs`), and runs the interactive logins clients start, relaying
-//! each to its client (`logins.rs`).
+//! each to its client (`logins.rs`). It re-executes the daemon in place on
+//! `rho/daemon/restart` and once a replaced executable finds it idle
+//! (`upgrade.rs`, #1713).
 
 use std::{
     io,
@@ -20,20 +22,19 @@ use std::{
 use rho_protocol::{
     AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse,
     AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
-    AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, DaemonStatus, JobListResponse,
-    LoginStream, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
-    SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
-    SessionConfigureParams, SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse,
-    SessionHoldParams, SessionHoldResponse, SessionListParams, SessionListResponse,
-    SessionNewParams, SessionNewResponse, SessionObserveParams, SessionPromptParams,
-    SessionPromptResponse, SessionRenameParams, SessionRenameResponse, SessionSteerParams,
-    SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse, Subscription,
-    PROTOCOL_VERSION,
+    AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, ClientInfo, DaemonStatus,
+    DetachReason, JobListResponse, LoginStream, PendingUpgrade, RpcError, Service,
+    SessionAnswerParams, SessionAnswerResponse, SessionAttachParams, SessionAttachResponse,
+    SessionCancelParams, SessionCancelResponse, SessionConfigureParams, SessionConfigureResponse,
+    SessionDeleteParams, SessionDeleteResponse, SessionHoldParams, SessionHoldResponse,
+    SessionListParams, SessionListResponse, SessionNewParams, SessionNewResponse,
+    SessionObserveParams, SessionPromptParams, SessionPromptResponse, SessionRenameParams,
+    SessionRenameResponse, SessionSteerParams, SessionSteerResponse, SessionUnsteerParams,
+    SessionUnsteerResponse, Subscription, PROTOCOL_VERSION,
 };
 use rho_providers::credentials::CredentialStoreBackend;
-use rho_sdk::CancellationToken;
 
-use crate::daemon::DaemonLock;
+use crate::daemon::{DaemonLock, Ending, Executable, Shutdown};
 
 mod auth;
 mod jobs;
@@ -41,12 +42,15 @@ mod logins;
 mod sessions;
 mod store;
 mod subagents;
+mod upgrade;
 mod wire;
 
 use jobs::{JobRegistry, JobStore};
 use logins::Logins;
 use sessions::Sessions;
 pub(super) use sessions::UNLOAD_IDLE_AFTER;
+use upgrade::UPGRADE_CHECK_INTERVAL;
+use upgrade::{Check, Upgrades, Watch};
 
 /// The daemon's job records, opened before the daemon binds its socket, so
 /// a daemon that cannot keep records stops before any client reaches it.
@@ -67,12 +71,13 @@ pub(super) struct DaemonHost {
     socket: PathBuf,
     started_at: u64,
     started: Instant,
-    shutdown: CancellationToken,
+    shutdown: Shutdown,
     jobs: Arc<JobRegistry>,
     /// Shared with the logins, which refresh the sessions' options once
     /// they saved a credential.
     sessions: Arc<Sessions>,
     logins: Arc<Logins>,
+    upgrades: Upgrades,
     /// `RHO_CREDENTIAL_STORE` in the daemon's environment, parsed once at
     /// startup, which refuses a value it does not know.
     store_environment: Option<CredentialStoreBackend>,
@@ -82,15 +87,15 @@ impl DaemonHost {
     /// A host for the daemon of `rho_home` listening on `socket` since
     /// `started_at` (Unix seconds), keeping its jobs in `jobs`, with
     /// `store_environment` its parsed `RHO_CREDENTIAL_STORE`.
-    /// `rho/daemon/stop` calls [`Self::begin_stop`], which cancels
-    /// `shutdown`, the transport's; once the transport stopped serving, call
-    /// [`Self::stop_sessions`].
+    /// `rho/daemon/stop` calls [`Self::begin_stop`], and `rho/daemon/restart`
+    /// [`Self::begin_restart`], which request `shutdown`, the transport's;
+    /// once the transport stopped serving, call [`Self::stop_sessions`].
     pub(super) fn new(
         JobRecords(jobs): JobRecords,
         rho_home: &Path,
         socket: PathBuf,
         started_at: u64,
-        shutdown: CancellationToken,
+        shutdown: Shutdown,
         store_environment: Option<CredentialStoreBackend>,
     ) -> Self {
         Self {
@@ -99,6 +104,7 @@ impl DaemonHost {
             started: Instant::now(),
             sessions: Arc::new(Sessions::new(Arc::clone(&jobs), rho_home)),
             logins: Arc::new(Logins::new()),
+            upgrades: Upgrades::default(),
             shutdown,
             jobs,
             store_environment,
@@ -106,17 +112,70 @@ impl DaemonHost {
     }
 
     /// Starts the daemon's stop: refuses new sessions and prompts, detaches
-    /// every attached client as `daemon_stopping`, then cancels the
+    /// every attached client as `daemon_stopping`, then requests the
     /// transport's `shutdown`, which closes the connections. How every stop
     /// begins, from `rho/daemon/stop` or a signal.
     pub(super) fn begin_stop(&self) {
-        self.sessions.begin_stop();
-        self.shutdown.cancel();
+        self.begin(Ending::Stop);
     }
 
-    /// Whether the daemon's stop has begun.
+    /// Starts the daemon's restart, as [`Self::begin_stop`] starts its stop
+    /// but telling clients `restarting`; the caller re-executes the daemon
+    /// once its turns are stopped.
+    pub(super) fn begin_restart(&self) {
+        self.begin(Ending::Restart);
+    }
+
+    fn begin(&self, ending: Ending) {
+        self.shutdown.request(ending, |ending| {
+            self.sessions.begin_stop(match ending {
+                Ending::Stop => DetachReason::DaemonStopping,
+                Ending::Restart => DetachReason::Restarting,
+            });
+        });
+    }
+
+    /// Claims the daemon idle for an upgrade, unless anything would be cut
+    /// short. Once the job registry is closed no turn starts, so new work
+    /// can only have begun before; checking again after closing it catches
+    /// that, and gives the claim back.
+    fn claim_idle(&self) -> bool {
+        let others_idle = || self.logins.under_way() == 0 && self.sessions.upgrade_blockers() == 0;
+        if !others_idle() || !self.jobs.close_when_idle() {
+            return false;
+        }
+        if !others_idle() {
+            self.jobs.reopen();
+            return false;
+        }
+        true
+    }
+
+    /// Whether the daemon's stop, or restart, has begun.
     pub(super) fn stopping(&self) -> bool {
-        self.shutdown.is_cancelled()
+        self.shutdown.is_requested()
+    }
+
+    /// Restarts the daemon once `executable` was replaced and nothing would
+    /// be cut short, checking every [`UPGRADE_CHECK_INTERVAL`]; ends once
+    /// the daemon stops.
+    pub(super) async fn upgrade_when_replaced(&self, executable: &Executable) {
+        let mut checks = tokio::time::interval(UPGRADE_CHECK_INTERVAL);
+        checks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut watch = Watch::default();
+        loop {
+            tokio::select! {
+                () = self.upgrades.next_check(&mut checks) => {}
+                () = self.shutdown.requested() => return,
+            }
+            if self.upgrades.check(executable, &mut watch).await == Check::Upgrade
+                && self.claim_idle()
+            {
+                tracing::info!("upgrading in place");
+                self.begin_restart();
+                return;
+            }
+        }
     }
 
     /// Unloads each session once it sat idle for `grace`, or discards it
@@ -128,28 +187,48 @@ impl DaemonHost {
     /// Stops the turns under way, waits for them to save, and records
     /// them interrupted; the wait's budget runs from `stop_requested`. Call
     /// once the transport stopped serving, before releasing the daemon lock.
-    pub(super) async fn stop_sessions(&self, stop_requested: tokio::time::Instant) {
-        self.sessions.stop(stop_requested).await;
+    /// Returns whether all of it finished in time: a turn stuck past the
+    /// budget still holds processes only exiting ends.
+    pub(super) async fn stop_sessions(&self, stop_requested: tokio::time::Instant) -> bool {
+        self.sessions.stop(stop_requested).await
     }
 }
 
 impl Service for DaemonHost {
     async fn status(&self) -> DaemonStatus {
+        let in_progress = self.jobs.in_progress();
         DaemonStatus {
             pid: std::process::id(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
             protocol: PROTOCOL_VERSION,
             started_at: self.started_at,
             uptime_secs: self.started.elapsed().as_secs(),
-            jobs: u64::try_from(self.jobs.in_progress()).unwrap_or(u64::MAX),
+            jobs: u64::try_from(in_progress).unwrap_or(u64::MAX),
             socket: self.socket.clone(),
             credential_store: store::status(self.store_environment).await,
+            upgrade: self.upgrades.pending().map(|version| {
+                let waiting_for =
+                    in_progress + self.logins.under_way() + self.sessions.upgrade_blockers();
+                PendingUpgrade {
+                    version,
+                    waiting_for: u64::try_from(waiting_for).unwrap_or(u64::MAX),
+                }
+            }),
         }
+    }
+
+    fn hello(&self, client: &ClientInfo) {
+        self.upgrades.heard(client);
     }
 
     async fn stop(&self) {
         tracing::info!("stop requested");
         self.begin_stop();
+    }
+
+    async fn restart(&self) {
+        tracing::info!("restart requested");
+        self.begin_restart();
     }
 
     async fn new_session(&self, params: SessionNewParams) -> Result<SessionNewResponse, RpcError> {
