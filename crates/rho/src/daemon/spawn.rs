@@ -156,6 +156,17 @@ pub(crate) async fn connect_or_spawn(
     client: ClientInfo,
     spawner: &dyn DaemonSpawner,
 ) -> Result<Connection, SpawnError> {
+    connect_or_spawn_observing(paths, client, spawner, || {}).await
+}
+
+/// The ensure path with an observer at the held-lock boundary, so lifecycle
+/// tests can release a draining daemon only after a client encounters it.
+async fn connect_or_spawn_observing(
+    paths: &DaemonPaths,
+    client: ClientInfo,
+    spawner: &dyn DaemonSpawner,
+    on_held: impl FnMut(),
+) -> Result<Connection, SpawnError> {
     match connect(paths, client.clone()).await {
         Err(ConnectError::NotRunning) => {}
         connected => return Ok(connected?),
@@ -164,7 +175,7 @@ pub(crate) async fn connect_or_spawn(
     // Serializes clients that race to start a daemon.
     let _spawn_lock = lock_spawn(&paths.runtime_dir.join("spawn.lock")).await?;
     // Another caller may have started the daemon while this one waited.
-    if let Some(connection) = wait_while_held(paths, &client).await? {
+    if let Some(connection) = wait_while_held(paths, &client, on_held).await? {
         return Ok(connection);
     }
     spawner.spawn(paths).map_err(SpawnError::Spawn)?;
@@ -195,6 +206,7 @@ pub(crate) async fn connect_or_spawn(
 async fn wait_while_held(
     paths: &DaemonPaths,
     client: &ClientInfo,
+    mut on_held: impl FnMut(),
 ) -> Result<Option<Connection>, SpawnError> {
     let started = Instant::now();
     loop {
@@ -216,6 +228,7 @@ async fn wait_while_held(
                 expected: paths.socket.clone(),
             });
         }
+        on_held();
         let elapsed = started.elapsed();
         if elapsed >= DRAIN_WAIT_TIMEOUT {
             return Err(SpawnError::StillStopping {

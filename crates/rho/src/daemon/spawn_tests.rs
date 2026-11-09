@@ -92,19 +92,26 @@ async fn a_client_waits_for_a_draining_daemon_to_let_go_of_the_lock() {
     });
     // The draining daemon: it holds the lock and removed its socket.
     let draining = lock::acquire(&paths).unwrap();
+    let (observed, held) = tokio::sync::oneshot::channel();
 
     let caller = {
         let paths = paths.clone();
         let spawner = Arc::clone(&spawner);
         tokio::spawn(async move {
-            connect_or_spawn(&paths, cli_client_info(), spawner.as_ref())
-                .await
-                .map(|connection| connection.hello.daemon.pid)
+            let mut observed = Some(observed);
+            connect_or_spawn_observing(&paths, cli_client_info(), spawner.as_ref(), || {
+                if let Some(observed) = observed.take() {
+                    let _ = observed.send(());
+                }
+            })
+            .await
+            .map(|connection| connection.hello.daemon.pid)
         })
     };
-    // Starting a daemon now fails at once, so a caller that did would have
-    // finished well within this.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::timeout(RACE_DEADLINE, held)
+        .await
+        .expect("the caller reaches the held-lock wait")
+        .expect("the caller observes the draining daemon");
     let waited = (caller.is_finished(), spawner.spawns.load(Ordering::SeqCst));
     drop(draining);
     let pid = tokio::time::timeout(RACE_DEADLINE, caller)

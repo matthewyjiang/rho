@@ -9,6 +9,7 @@ fn watch(state: JobState) -> Watch {
         seq: Seq(0),
         state,
         outcome: None,
+        outcome_checkpoint: None,
         inputs: Vec::new(),
     }
 }
@@ -78,6 +79,32 @@ fn only_the_turn_that_ended_reports_an_outcome() {
                 cursor: Some("stream:9".into()),
             },
         )
+    );
+}
+
+// Covers: a wait ending between TurnEnded and State must not acknowledge
+// an outcome it has not returned; the next wait must replay that outcome.
+// Owner: session-control wait checkpoint.
+#[test]
+fn a_wait_boundary_does_not_skip_an_unreturned_outcome() {
+    let mut watching = watch(JobState::Running);
+    watching.seq = Seq(7);
+    watching.push(
+        Seq(8),
+        &SessionEvent::TurnEnded {
+            outcome: answered("final answer"),
+        },
+    );
+    assert_eq!(
+        watching.finish(SessionId::new("s")),
+        WaitResult {
+            session: SessionId::new("s"),
+            state: JobState::Running,
+            done: false,
+            outcome: None,
+            inputs: Vec::new(),
+            cursor: Some("stream:7".into()),
+        }
     );
 }
 

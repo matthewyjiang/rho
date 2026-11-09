@@ -121,6 +121,7 @@ pub(super) async fn wait(
         seq: resumed,
         state: response.state,
         outcome: None,
+        outcome_checkpoint: None,
         inputs: response.inputs.clone(),
     };
     // The replay arrives at once and ends in the state the attach reported;
@@ -141,6 +142,7 @@ pub(super) async fn wait(
     if turn_runs(watch.state) {
         // A reset replays the last turn's end until the next turn saves.
         watch.outcome = None;
+        watch.outcome_checkpoint = None;
     }
     while !detached && turn_runs(watch.state) {
         match tokio::time::timeout_at(deadline, attached.next()).await {
@@ -171,20 +173,27 @@ struct Watch {
     state: JobState,
     /// How the last turn ended, until another starts.
     outcome: Option<TurnOutcome>,
+    /// The checkpoint before an outcome we cannot return until State arrives.
+    outcome_checkpoint: Option<Seq>,
     inputs: Vec<InputRequest>,
 }
 
 impl Watch {
     fn push(&mut self, seq: Seq, event: &SessionEvent) {
+        let before = self.seq;
         self.seq = self.seq.max(seq);
         match event {
             SessionEvent::State { state } => {
                 self.state = *state;
                 if turn_runs(*state) {
                     self.outcome = None;
+                    self.outcome_checkpoint = None;
                 }
             }
-            SessionEvent::TurnEnded { outcome } => self.outcome = Some(outcome.clone()),
+            SessionEvent::TurnEnded { outcome } => {
+                self.outcome = Some(outcome.clone());
+                self.outcome_checkpoint = Some(before);
+            }
             SessionEvent::InputRequested { request } => {
                 if !self.inputs.iter().any(|open| open.id == request.id) {
                     self.inputs.push((**request).clone());
@@ -198,6 +207,13 @@ impl Watch {
     fn finish(self, session: SessionId) -> WaitResult {
         let done = !turn_runs(self.state);
         let ended = done && self.state != JobState::WaitingForInput;
+        // A deadline or detach may split TurnEnded from its terminal State.
+        // Replay the outcome next time rather than acknowledging and losing it.
+        let checkpoint = if ended {
+            self.seq
+        } else {
+            self.outcome_checkpoint.unwrap_or(self.seq)
+        };
         WaitResult {
             session,
             state: self.state,
@@ -209,10 +225,10 @@ impl Watch {
                 Vec::new()
             },
             // Seq 0 is no position: a cursor at it always resets.
-            cursor: (self.seq > Seq(0)).then(|| {
+            cursor: (checkpoint > Seq(0)).then(|| {
                 format_cursor(&Cursor {
                     stream: self.stream,
-                    seq: self.seq,
+                    seq: checkpoint,
                 })
             }),
         }
