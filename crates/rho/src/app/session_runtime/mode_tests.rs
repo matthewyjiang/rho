@@ -2,9 +2,14 @@ use pretty_assertions::assert_eq;
 
 use super::SettingChangeError;
 use crate::{
+    agent::{AgentCapabilities, ToolCapability},
     app::session_runtime::test_support::idle_runtime,
     config::{Config, InternalAgentModelConfig},
     permission::PermissionMode,
+    tools::{
+        advisor::AdvisorSessionStore,
+        sdk_registry::{AppToolSet, ToolSetOptions},
+    },
 };
 
 // Covers: auto without a configured classifier model must be refused as a

@@ -26,7 +26,7 @@ use std::{
 use rho_protocol::{
     ConfigError as WireError, ConfigGetParams, ConfigGetResponse, ConfigLayer, ConfigNamespace,
     ConfigRegisterParams, ConfigRegisterResponse, ConfigRevision, ConfigSchema, ConfigSetParams,
-    ConfigSetResponse, ConfigWatch, ErrorCode, RpcError, SettingChange, SettingEntry, SettingKey,
+    ConfigSetResponse, ConfigWatch, ErrorCode, RpcError, SettingEntry, SettingKey,
 };
 use tokio::sync::watch;
 
@@ -37,14 +37,10 @@ use self::{
 use crate::{
     app::agent_concurrency::AgentConcurrency,
     config::{
-        agent_schema, agent_values, apply_agent_changes, resolve_document, Config, ConfigDocument,
-        ConfigError,
+        agent_schema, agent_values, apply_agent_changes, resolve_document, AgentChangeError,
+        Config, ConfigDocument, ConfigError,
     },
 };
-
-/// The agent setting a client changes with `rho/auth/choose_store`, which
-/// checks the store is reachable and moves nothing it cannot read.
-const CREDENTIAL_STORE_KEY: &str = "behavior.credential_store";
 
 /// The daemon's settings, shared by its requests and its sessions.
 pub(super) struct ConfigStore {
@@ -168,16 +164,6 @@ impl ConfigStore {
             }
             _ => return Err(unknown_namespace()),
         }
-        if let Some(key) = changes
-            .iter()
-            .map(SettingChange::key)
-            .find(|key| key.as_str() == CREDENTIAL_STORE_KEY)
-        {
-            return Err(RpcError::new(
-                ErrorCode::InvalidParams,
-                format!("`{key}`: change it with rho/auth/choose_store"),
-            ));
-        }
         let mut seen = self.agent.lock().await;
         let path = &self.agent_path;
         // Locked before the revision check, so the file the client read is
@@ -185,9 +171,16 @@ impl ConfigStore {
         let mut edit = Edit::open(path)?;
         self.refresh_agent(&mut seen);
         check_revision(&self.agent_state.borrow().revision, &revision)?;
-        let (config, warnings) = apply_agent_changes(&mut edit.doc, &changes).map_err(refused)?;
-        let values = agent_values(&edit.doc, &config);
-        *seen = Some(edit.save()?);
+        let (config, warnings) =
+            apply_agent_changes(&mut edit.doc, &changes).map_err(|error| match error {
+                AgentChangeError::Refused(errors) => refused(errors),
+                AgentChangeError::FileInvalid(errors) => {
+                    RpcError::new(ErrorCode::ConfigInvalid, joined(&errors))
+                }
+            })?;
+        let (stat, doc) = edit.save()?;
+        *seen = Some(stat);
+        let values = agent_values(&doc, &config);
         log_warnings(path, &warnings);
         let revision = self.publish_agent(Ok((config, values)));
         Ok(ConfigSetResponse { revision })
@@ -296,14 +289,16 @@ fn check_revision(current: &ConfigRevision, sent: &ConfigRevision) -> Result<(),
 
 /// A change the daemon refused, naming each problem; nothing was written.
 fn refused(errors: Vec<ConfigError>) -> RpcError {
-    RpcError::new(
-        ErrorCode::InvalidParams,
-        errors
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )
+    RpcError::new(ErrorCode::InvalidParams, joined(&errors))
+}
+
+/// Every error, one per line.
+fn joined(errors: &[ConfigError]) -> String {
+    errors
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn unknown_namespace() -> RpcError {

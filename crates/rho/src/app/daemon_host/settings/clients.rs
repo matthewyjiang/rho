@@ -101,8 +101,7 @@ impl Clients {
         client.refresh(&path);
         check_revision(&client.state.borrow().revision, revision)?;
         write_changes(&mut edit.doc, &client.specs, changes).map_err(refused)?;
-        let doc = edit.doc.clone();
-        let stat = edit.save()?;
+        let (stat, doc) = edit.save()?;
         let revision = client.publish(stat, Ok(doc), &path);
         Ok(ConfigSetResponse { revision })
     }

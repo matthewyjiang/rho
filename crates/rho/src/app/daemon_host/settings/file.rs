@@ -89,16 +89,23 @@ pub(super) struct Edit {
 impl Edit {
     /// Locks `path`, creating its directory, and reads it. A lock another
     /// writer holds is a conflict the client can retry after reading the
-    /// settings again.
+    /// settings again; any other failure is not.
     pub(super) fn open(path: &Path) -> Result<Self, RpcError> {
         let lock = acquire_edit_lock(path).map_err(|error| {
-            RpcError::new(
-                ErrorCode::ConfigConflict,
-                format!(
-                    "{} is being edited; read the settings again: {error}",
-                    path.display()
-                ),
-            )
+            if error.kind() == io::ErrorKind::WouldBlock {
+                RpcError::new(
+                    ErrorCode::ConfigConflict,
+                    format!(
+                        "{} is being edited; read the settings again",
+                        path.display()
+                    ),
+                )
+            } else {
+                RpcError::new(
+                    ErrorCode::InternalError,
+                    format!("could not lock {}: {error}", path.display()),
+                )
+            }
         })?;
         let doc = read(path).map_err(|error| match error {
             ReadError::Parse(_) => RpcError::new(ErrorCode::ConfigInvalid, error.message(path)),
@@ -114,14 +121,14 @@ impl Edit {
 
     /// Writes the document if the change altered it, then unlocks. Returns
     /// the file's `stat` taken under the lock, so the store's next touch
-    /// does not read its own write back.
-    pub(super) fn save(self) -> Result<Stat, RpcError> {
+    /// does not read its own write back, and the document as saved.
+    pub(super) fn save(self) -> Result<(Stat, ConfigDocument), RpcError> {
         if self.doc.text() != self.original {
             self.doc
                 .write(&self.path)
                 .map_err(|error| RpcError::new(ErrorCode::InternalError, format!("{error:#}")))?;
         }
-        Ok(Stat::of(&self.path))
+        Ok((Stat::of(&self.path), self.doc))
     }
 }
 

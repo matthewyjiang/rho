@@ -128,6 +128,9 @@ static MODEL: Setting<Config, ModelSetting> = Setting {
             config.provider = provider;
             config.model = model;
             config.auth = auth;
+            // A chosen model replaces the alias it was resolved from;
+            // loading resolves an `@alias` model again.
+            config.model_alias = None;
         }
         // RHO_ONLY keeps the reader from producing one.
         ModelSetting::ClaudeCli { .. } => {}
@@ -622,7 +625,9 @@ static XAI_IMAGE_GENERATION: Setting<Config, bool> = Setting {
     validate: any_value,
 };
 
-static CREDENTIAL_STORE: Setting<Config, Option<CredentialStoreBackend>> = Setting {
+/// Changed only through `rho/auth/choose_store`, which checks the store
+/// can be reached; `rho/config/set` refuses it.
+pub(super) static CREDENTIAL_STORE: Setting<Config, Option<CredentialStoreBackend>> = Setting {
     key: "behavior.credential_store",
     meta: daemon_wide(meta(
         "providers",

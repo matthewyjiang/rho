@@ -18,8 +18,8 @@ use toml_edit::Value;
 use super::{
     document::{shown, ConfigDocument},
     load,
-    registry::AGENT_SETTINGS,
-    setting::{AnySetting, ConfigError},
+    registry::{AGENT_SETTINGS, CREDENTIAL_STORE},
+    setting::{save_settings, AnySetting, ConfigError},
     Config, ConfigWarning,
 };
 
@@ -75,55 +75,97 @@ pub(crate) fn agent_values(
         .collect()
 }
 
-/// Applies protocol `changes` to the agent settings `doc` holds: each
-/// through its registry setter, then the edited config saved into `doc` as
-/// a diff, keeping the rest of the file. Returns the config `doc` now loads
-/// as, or every problem, with `doc` left as it was: a change a setting
-/// refuses, an unknown key, a file that did not load before, or one that
-/// would not load after, such as a compaction target above its threshold.
+/// Why agent changes were not applied; `doc` is left as it was.
+#[derive(Debug, PartialEq)]
+pub(crate) enum AgentChangeError {
+    /// A change a setting refuses, an unknown key, or a result that would
+    /// not load, such as a compaction target above its threshold.
+    Refused(Vec<ConfigError>),
+    /// The file does not load for keys the changes leave alone; a hand
+    /// edit must fix it.
+    FileInvalid(Vec<ConfigError>),
+}
+
+/// Applies protocol `changes`, in order, to the agent settings `doc`
+/// holds: each through its registry setter, as a typed edit would, then
+/// every setting that changed written back leaf by leaf, keeping the rest
+/// of the file. A set writes its value even when it is the default; a reset
+/// removes the key. A file that does not load is repaired when the changes
+/// replace every key it fails on. Returns the config `doc` now loads as.
 pub(crate) fn apply_agent_changes(
     doc: &mut ConfigDocument,
     changes: &[SettingChange],
-) -> Result<(Config, Vec<ConfigWarning>), Vec<ConfigError>> {
-    let (before, _) = load::resolve(doc)?;
-    let mut after = before.clone();
+) -> Result<(Config, Vec<ConfigWarning>), AgentChangeError> {
+    let mut changed = Vec::new();
     let mut errors = Vec::new();
-    // The settings whose last change is a reset.
-    let mut resets: Vec<&dyn AnySetting<Config>> = Vec::new();
     for change in changes {
-        let (key, value) = match change {
-            SettingChange::Set { key, value } => (key, Some(value)),
-            SettingChange::Reset { key } => (key, None),
-        };
-        let Some(setting) = AGENT_SETTINGS
+        let key = change.key();
+        match AGENT_SETTINGS
             .iter()
             .find(|setting| setting.key() == key.as_str())
-        else {
-            errors.push(ConfigError::at(key.as_str(), "no such setting"));
-            continue;
+        {
+            None => errors.push(ConfigError::at(key.as_str(), "no such setting")),
+            Some(setting) if setting.key() == CREDENTIAL_STORE.key => errors.push(ConfigError::at(
+                key.as_str(),
+                "change it with rho/auth/choose_store",
+            )),
+            Some(setting) => changed.push((*setting, change)),
+        }
+    }
+    let mut edited = loadable_base(doc, &changed)?;
+    let (before, _) = load::resolve(&edited).map_err(AgentChangeError::FileInvalid)?;
+    let mut after = before.clone();
+    for (setting, change) in &changed {
+        let value = match change {
+            SettingChange::Set { value, .. } => Some(value),
+            SettingChange::Reset { .. } => None,
         };
         if let Err(message) = setting.change(&mut after, value) {
-            errors.push(ConfigError::at(key.as_str(), message));
-        }
-        resets.retain(|reset| reset.key() != setting.key());
-        if value.is_none() {
-            resets.push(*setting);
+            errors.push(ConfigError::at(setting.key(), message));
         }
     }
     if !errors.is_empty() {
-        return Err(errors);
+        return Err(AgentChangeError::Refused(errors));
     }
-    let mut edited = doc.clone();
-    load::save_diff(&before, &after, &mut edited)
-        .map_err(|error| vec![ConfigError::at_file(format!("{error:#}"))])?;
-    // A reset removes the key even where the file held the default, which
-    // the diff sees as no change.
-    for setting in resets {
-        setting.remove(&mut edited);
+    // Setters reach past their own setting, such as a model change moving
+    // its auth, so every setting that differs is saved; internal agents
+    // by their own rows, leaving the rest of `[internal_agents]` as written.
+    save_settings(AGENT_SETTINGS, &before, &after, &mut edited);
+    for (setting, change) in &changed {
+        match change {
+            SettingChange::Set { .. } => setting.write(&after, &mut edited),
+            SettingChange::Reset { .. } => setting.remove(&mut edited),
+        }
     }
-    let resolved = load::resolve(&edited)?;
+    let resolved = load::resolve(&edited).map_err(AgentChangeError::Refused)?;
     *doc = edited;
     Ok(resolved)
+}
+
+/// `doc`, or a copy without the values it fails to load on when `changed`
+/// replaces every one of them, so a change can repair a hand edit.
+fn loadable_base(
+    doc: &ConfigDocument,
+    changed: &[(&dyn AnySetting<Config>, &SettingChange)],
+) -> Result<ConfigDocument, AgentChangeError> {
+    let Err(errors) = load::resolve(doc) else {
+        return Ok(doc.clone());
+    };
+    let replaced = |error: &ConfigError| {
+        let key = error.key.as_deref()?;
+        changed
+            .iter()
+            .map(|(setting, _)| *setting)
+            .find(|setting| key == setting.key() || key.starts_with(&format!("{}.", setting.key())))
+    };
+    let mut base = doc.clone();
+    for error in &errors {
+        let Some(setting) = replaced(error) else {
+            return Err(AgentChangeError::FileInvalid(errors));
+        };
+        setting.remove(&mut base);
+    }
+    Ok(base)
 }
 
 /// The values `doc` holds for `specs`, defaults for the ones it leaves

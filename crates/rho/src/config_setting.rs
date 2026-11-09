@@ -89,6 +89,8 @@ pub(crate) trait AnySetting<S>: Sync {
     /// Removes the setting from `doc`, so its default applies even where
     /// the file held a value equal to it.
     fn remove(&self, doc: &mut ConfigDocument);
+    /// Writes the value `store` holds to `doc`, even when it is the default.
+    fn write(&self, store: &S, doc: &mut ConfigDocument);
     /// Sets the setting in `store` to the protocol `value`, or to its
     /// default for `None`, through the same setter a typed edit uses. The
     /// error names the problem, not the key: a value the setting does not
@@ -153,6 +155,10 @@ impl<S: Default + 'static, T: SettingType> AnySetting<S> for Setting<S, T> {
         T::remove(doc, self.key);
     }
 
+    fn write(&self, store: &S, doc: &mut ConfigDocument) {
+        (self.get)(store).write(doc, self.key);
+    }
+
     fn change(&self, store: &mut S, value: Option<&SettingValue>) -> Result<(), String> {
         let next = match value {
             Some(value) => T::from_wire(value, &self.spec, &(self.get)(store))?,
@@ -162,7 +168,7 @@ impl<S: Default + 'static, T: SettingType> AnySetting<S> for Setting<S, T> {
         let wanted = next.to_wire();
         (self.set)(store, next);
         if self.wire_value(store) != wanted {
-            return Err("cannot hold a value until the setting it belongs to is set".into());
+            return Err("cannot hold that value; set the setting it belongs to first".into());
         }
         Ok(())
     }
@@ -189,14 +195,6 @@ impl ConfigError {
     pub(crate) fn at(key: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             key: Some(key.into()),
-            message: message.into(),
-        }
-    }
-
-    /// A problem with the file as a whole, not one key.
-    pub(crate) fn at_file(message: impl Into<String>) -> Self {
-        Self {
-            key: None,
             message: message.into(),
         }
     }
@@ -299,7 +297,9 @@ fn integer_in(value: &SettingValue, spec: &IntegerSpec) -> Result<u64, String> {
     if *number < spec.min {
         return Err(format!("must be at least {}; got {number}", spec.min));
     }
-    if let Some(max) = spec.max.filter(|max| number > max) {
+    // The file stores integers as i64.
+    let max = spec.max.unwrap_or(i64::MAX as u64);
+    if *number > max {
         return Err(format!("must be at most {max}; got {number}"));
     }
     Ok(*number)

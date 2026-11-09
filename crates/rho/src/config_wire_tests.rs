@@ -4,7 +4,7 @@ use rho_protocol::{
     SettingValue, ValueSource,
 };
 
-use super::{agent_values, apply_agent_changes, client_specs_problem};
+use super::{agent_values, apply_agent_changes, client_specs_problem, AgentChangeError};
 use crate::config::{document::ConfigDocument, load::resolve};
 
 fn set(key: &str, value: SettingValue) -> SettingChange {
@@ -21,9 +21,9 @@ fn reset(key: &str) -> SettingChange {
 }
 
 // Covers: a protocol change lands in `config.toml` through its typed
-// setting, keeping the rest of the file; a value the setting refuses, or a
-// key no setting has, is an error naming the key, the limit, and the
-// value, and the file is left as it was; a model on another provider takes
+// setting, keeping the rest of the file; every key no setting has, then
+// every value a setting refuses, is an error naming the key, the limit,
+// and the value, and the file is left as it was; a model on another provider takes
 // that provider's default auth; resetting an internal agent's model drops
 // its whole table, reasoning included, so the agent falls back as a fresh
 // file would; its reasoning cannot be set while it has no model.
@@ -70,7 +70,7 @@ fn agent_changes_write_by_setting_or_name_what_they_refuse() {
                 set("internal_agents.advisor.reasoning", SettingValue::Text("low".into())),
             ],
             Err(vec![
-                "`internal_agents.advisor.reasoning`: cannot hold a value until the setting it belongs to is set",
+                "`internal_agents.advisor.reasoning`: cannot hold that value; set the setting it belongs to first",
             ]),
         ),
         (
@@ -82,26 +82,105 @@ fn agent_changes_write_by_setting_or_name_what_they_refuse() {
                 set("display.zen_mode", SettingValue::Bool(true)),
             ],
             Err(vec![
+                "`display.zen_mode`: no such setting",
                 "`behavior.agent_concurrency`: must be at most 64; got 65",
                 "`behavior.permission_mode`: must be one of bypass, auto, allow_edits, plan, supervised; got \"yolo\"",
                 "`behavior.rtk`: takes true or false",
-                "`display.zen_mode`: no such setting",
             ]),
         ),
     ];
     for (name, changes, expected) in cases {
-        let mut doc = ConfigDocument::parse(&before).unwrap();
-        let written = apply_agent_changes(&mut doc, &changes)
-            .map(|_| doc.text())
-            .map_err(|errors| errors.iter().map(ToString::to_string).collect::<Vec<_>>());
-        assert_eq!(
-            written,
-            expected.map_err(|errors| errors.into_iter().map(str::to_owned).collect()),
-            "{name}"
-        );
-        if written.is_err() {
-            assert_eq!(doc.text(), before, "{name} leaves the file as it was");
-        }
+        assert_eq!(applied(&before, &changes), expected, "{name}");
+    }
+}
+
+/// The file `before` becomes with `changes`, or each error that refused
+/// them, prefixed `file: ` when the file is to blame; a refused change
+/// must leave the file as it was.
+fn applied(before: &str, changes: &[SettingChange]) -> Result<String, Vec<&'static str>> {
+    let mut doc = ConfigDocument::parse(before).unwrap();
+    let result = apply_agent_changes(&mut doc, changes);
+    if result.is_err() {
+        assert_eq!(doc.text(), before, "a refused change leaves the file");
+    }
+    result.map(|_| doc.text()).map_err(|error| {
+        let (prefix, errors) = match error {
+            AgentChangeError::Refused(errors) => ("", errors),
+            AgentChangeError::FileInvalid(errors) => ("file: ", errors),
+        };
+        errors
+            .iter()
+            .map(|error| &*format!("{prefix}{error}").leak())
+            .collect()
+    })
+}
+
+fn rho_model(provider: &str, model: &str) -> SettingValue {
+    SettingValue::Model(ModelSelection::Rho {
+        provider: provider.into(),
+        model: model.into(),
+    })
+}
+
+// Covers: a change touches only what it changes: pinning the model an
+// alias names writes the concrete model; setting one internal agent leaves
+// another's entry, which inherits the conversation model, as written; a
+// set to the default value is written, so it outlasts a later default.
+// A hand edit that no longer loads is repaired by a change to the keys it
+// fails on, and refused as the file's fault otherwise. A value above what
+// the file can store, or the credential store, is refused.
+// Owner: config wire changes.
+#[test]
+fn agent_changes_touch_only_their_keys_and_can_repair_the_file() {
+    let aliases = "\n[model.aliases]\nfast = \"openai/gpt-5.5\"\n";
+    let judge = "[internal_agents.goal-judge]\nreasoning = \"high\"\n";
+    let broken = "[output]\nmax_output_bytes = 0\n";
+    let cases: Vec<(&str, String, Vec<SettingChange>, Result<String, Vec<&str>>)> = vec![
+        (
+            "pinning an alias's model writes the model",
+            format!("[model]\nprovider = \"openai\"\nmodel = \"@fast\"\nauth = \"api-key\"\n{aliases}"),
+            vec![set("model", rho_model("openai", "gpt-5.5"))],
+            Ok(format!("[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n{aliases}")),
+        ),
+        (
+            "another internal agent's entry stays as written",
+            judge.to_owned(),
+            vec![set("internal_agents.advisor", rho_model("openai", "gpt-5.5"))],
+            Ok(format!("{judge}\n[internal_agents.advisor]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n")),
+        ),
+        (
+            "a set to the default is written",
+            String::new(),
+            vec![set("behavior.enable_subagents", SettingValue::Bool(true))],
+            Ok("[behavior]\nenable_subagents = true\n".into()),
+        ),
+        (
+            "a change to the broken key repairs the file",
+            broken.to_owned(),
+            vec![set("output.max_output_bytes", SettingValue::Integer(4096))],
+            Ok("[output]\nmax_output_bytes = 4096\n".into()),
+        ),
+        (
+            "a change elsewhere leaves the file to a hand edit",
+            broken.to_owned(),
+            vec![set("behavior.rtk", SettingValue::Bool(false))],
+            Err(vec!["file: `output.max_output_bytes`: must be at least 1; got 0"]),
+        ),
+        (
+            "a value the file cannot store is refused",
+            String::new(),
+            vec![set("output.max_output_bytes", SettingValue::Integer(u64::MAX))],
+            Err(vec!["`output.max_output_bytes`: must be at most 9223372036854775807; got 18446744073709551615"]),
+        ),
+        (
+            "the credential store is chosen elsewhere",
+            String::new(),
+            vec![reset("behavior.credential_store")],
+            Err(vec!["`behavior.credential_store`: change it with rho/auth/choose_store"]),
+        ),
+    ];
+    for (name, before, changes, expected) in cases {
+        assert_eq!(applied(&before, &changes), expected, "{name}");
     }
 }
 

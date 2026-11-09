@@ -385,6 +385,8 @@ pub struct ConfigSetParams {
     /// The revision the changes were made against. A stale one is refused
     /// with [`crate::ErrorCode::ConfigConflict`].
     pub revision: ConfigRevision,
+    /// Applied in order, so a setting another belongs to, such as an
+    /// internal agent's model before its reasoning, comes first.
     pub changes: Vec<SettingChange>,
 }
 
