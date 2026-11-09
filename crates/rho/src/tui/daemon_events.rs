@@ -79,6 +79,8 @@ pub(super) enum DaemonView {
     Spend(Option<u64>),
     Title(String),
     Options(Box<rho_protocol::SessionOptions>),
+    /// On-demand inventory response; ignored if the person closed the picker.
+    McpInventory(Result<Box<rho_protocol::SessionMcpInventory>, String>),
     /// One background configure request finished, successfully or otherwise.
     ConfigureFinished,
     /// Whether a turn runs, as the job's state says.

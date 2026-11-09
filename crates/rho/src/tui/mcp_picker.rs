@@ -1,30 +1,26 @@
-//! `/mcp` inventory picker.
+//! `/mcp` inventory picker, shared by in-process and daemon sessions.
 
-use crate::tools::mcp::{McpCatalog, McpServerReport, McpServerStatus, McpSessionReport};
+use rho_protocol::{SessionMcpInventory, SessionMcpMode, SessionMcpServer, SessionMcpStatus};
 
 use super::{
     picker::OverlayChrome, PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, UiPicker,
 };
 
-pub(super) struct McpPickerContext<'a> {
-    pub(super) report: &'a McpSessionReport,
-    /// Prompts and resources are session state rather than config, so they come
-    /// from the live catalog rather than the startup report.
-    pub(super) catalog: &'a McpCatalog,
-    pub(super) config_path: &'a std::path::Path,
+pub(super) fn picker(inventory: &SessionMcpInventory) -> UiPicker {
+    let mut items = Vec::with_capacity(inventory.servers.len().saturating_add(1));
+    items.push(mode_item(inventory));
+    items.extend(inventory.servers.iter().map(server_item));
+    inventory_picker(items)
 }
 
-pub(super) fn picker(context: McpPickerContext<'_>) -> UiPicker {
-    let mut items = Vec::with_capacity(context.report.servers.len().saturating_add(1));
-    items.push(mode_item(context.report, context.config_path));
-    items.extend(
-        context
-            .report
-            .servers
-            .iter()
-            .map(|server| server_item(server, context.catalog)),
-    );
+pub(super) fn loading() -> UiPicker {
+    inventory_picker(vec![PickerItem::new(
+        "Loading session inventory…".into(),
+        "loading".into(),
+    )])
+}
 
+fn inventory_picker(items: Vec<PickerItem>) -> UiPicker {
     UiPicker::view_mcp("MCP servers", items)
         .with_layout(PickerLayout::Overlay)
         .with_badge_placement(super::PickerBadgePlacement::Detail)
@@ -36,64 +32,69 @@ pub(super) fn picker(context: McpPickerContext<'_>) -> UiPicker {
         .with_confirm_verb("close")
 }
 
-fn mode_item(report: &McpSessionReport, config_path: &std::path::Path) -> PickerItem {
-    use crate::tools::mcp::McpLoadMode;
-
-    let config = crate::paths::display(config_path);
-    let summary = report.summary();
-    let (status, healthy, detail) = if !summary.configured {
+fn mode_item(inventory: &SessionMcpInventory) -> PickerItem {
+    let config = crate::paths::display(&inventory.config_path);
+    let connected = inventory
+        .servers
+        .iter()
+        .filter(|server| server.status == SessionMcpStatus::Connected)
+        .count();
+    let connecting = inventory
+        .servers
+        .iter()
+        .filter(|server| server.status == SessionMcpStatus::Connecting)
+        .count();
+    let problems = inventory
+        .servers
+        .iter()
+        .filter(|server| {
+            !matches!(
+                server.status,
+                SessionMcpStatus::Connected
+                    | SessionMcpStatus::Connecting
+                    | SessionMcpStatus::Disabled
+                    | SessionMcpStatus::NotLoaded
+            )
+        })
+        .count();
+    let enabled = inventory
+        .servers
+        .iter()
+        .filter(|server| server.enabled)
+        .count();
+    let exported_tools = inventory.servers.iter().fold(0_u64, |total, server| {
+        total.saturating_add(server.tool_count)
+    });
+    let (status, healthy, detail) = if inventory.servers.is_empty() {
         (
             "not configured".into(),
             true,
             format!("No MCP servers in {config}. Add entries under [mcp.servers]."),
         )
     } else {
-        match summary.mode {
-            McpLoadMode::Native if summary.connecting > 0 => (
-                if summary.connected == 0 {
-                    "connecting".into()
-                } else {
-                    format!(
-                        "{} connected, {} connecting",
-                        summary.connected, summary.connecting
-                    )
-                },
-                summary.problems == 0,
+        match inventory.mode {
+            SessionMcpMode::Native => (
+                if connecting == 0 { format!("{connected} connected") }
+                else if connected == 0 { "connecting".into() }
+                else { format!("{connected} connected, {connecting} connecting") },
+                problems == 0,
                 format!(
-                    "{} enabled, {} exported tool{}, {} problem{}. Config: {config}.",
-                    summary.enabled,
-                    summary.exported_tools,
-                    super::plural_suffix(summary.exported_tools),
-                    summary.problems,
-                    super::plural_suffix(summary.problems),
+                    "{enabled} enabled, {exported_tools} exported tool{}, {problems} problem{}. Config: {config}.",
+                    if exported_tools == 1 { "" } else { "s" },
+                    super::plural_suffix(problems),
                 ),
             ),
-            McpLoadMode::Native => (
-                format!("{} connected", summary.connected),
-                summary.problems == 0,
-                format!(
-                    "{} enabled, {} exported tool{}, {} problem{}. Config: {config}.",
-                    summary.enabled,
-                    summary.exported_tools,
-                    super::plural_suffix(summary.exported_tools),
-                    summary.problems,
-                    super::plural_suffix(summary.problems),
-                ),
-            ),
-            McpLoadMode::UnsupportedAgent => (
+            SessionMcpMode::UnsupportedAgent => (
                 "unsupported agent".into(),
-                summary.enabled == 0 && summary.problems == 0,
-                format!(
-                    "Native MCP loads only for Rho agents. The active agent does not host MCP tools. Config: {config}."
-                ),
+                enabled == 0 && problems == 0,
+                format!("Native MCP loads only for Rho agents. The active agent does not host MCP tools. Config: {config}."),
             ),
-            McpLoadMode::ToolsDisabled => (
+            SessionMcpMode::ToolsDisabled => (
                 "tools disabled".into(),
                 true,
-                format!(
-                    "This session started with tools disabled, so MCP was not connected. Config: {config}."
-                ),
+                format!("This session started with tools disabled, so MCP was not connected. Config: {config}."),
             ),
+            _ => ("unknown".into(), false, format!("Unknown MCP load mode. Config: {config}.")),
         }
     };
     PickerItem {
@@ -111,54 +112,23 @@ fn mode_item(report: &McpSessionReport, config_path: &std::path::Path) -> Picker
     }
 }
 
-/// What this server offers beyond tools. Named so a user can tell what to type
-/// next: a prompt is a slash command, a resource is an `@` mention.
-fn catalog_lines(identity: &str, catalog: &McpCatalog) -> Vec<String> {
-    let prompts = catalog
-        .prompts()
-        .into_iter()
-        .filter(|prompt| prompt.server == identity)
-        .map(|prompt| format!("/{}", prompt.command_name()))
-        .collect::<Vec<_>>();
-    let resources = catalog
-        .resources()
-        .into_iter()
-        .filter(|resource| resource.server == identity)
-        .count();
-    let mut lines = Vec::new();
-    if !prompts.is_empty() {
-        lines.push(format!(
-            "{} prompt(s): {}",
-            prompts.len(),
-            prompts.join(", ")
-        ));
-    }
-    if resources > 0 {
-        lines.push(format!("{resources} resource(s), available with @"));
-    }
-    lines
-}
-
-fn server_item(server: &McpServerReport, catalog: &McpCatalog) -> PickerItem {
-    let mut detail = server.detail_text();
-    for line in catalog_lines(&server.identity, catalog) {
-        detail.push('\n');
-        detail.push_str(&line);
-    }
+fn server_item(server: &SessionMcpServer) -> PickerItem {
+    let (status, tone) = match server.status {
+        SessionMcpStatus::Connected => ("connected", PickerBadgeTone::Healthy),
+        SessionMcpStatus::Connecting => ("connecting", PickerBadgeTone::Internal),
+        SessionMcpStatus::Disabled => ("disabled", PickerBadgeTone::Internal),
+        SessionMcpStatus::NotLoaded => ("not loaded", PickerBadgeTone::Internal),
+        SessionMcpStatus::InvalidConfig => ("invalid", PickerBadgeTone::Warning),
+        SessionMcpStatus::Failed => ("failed", PickerBadgeTone::Warning),
+        SessionMcpStatus::TimedOut => ("timeout", PickerBadgeTone::Warning),
+        _ => ("unknown", PickerBadgeTone::Warning),
+    };
     PickerItem {
         section: Some("SERVERS".into()),
-        detail: Some(detail.into()),
+        detail: Some(server.detail.clone().into()),
         badge: Some(PickerBadge {
-            text: server.status().as_str().into(),
-            tone: if server.status().is_healthy() {
-                if server.status() == McpServerStatus::Connected {
-                    PickerBadgeTone::Healthy
-                } else {
-                    PickerBadgeTone::Internal
-                }
-            } else {
-                PickerBadgeTone::Warning
-            },
+            text: status.into(),
+            tone,
         }),
         ..PickerItem::new(server.identity.clone(), server.identity.clone())
     }

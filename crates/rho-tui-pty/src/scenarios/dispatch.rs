@@ -40,5 +40,13 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     if name == super::daemon_detach::SCENARIO.id {
         return super::daemon_detach::run(runner);
     }
+    #[cfg(unix)]
+    if name == super::daemon_goal::SCENARIO.id {
+        return super::daemon_goal::run(runner);
+    }
+    #[cfg(unix)]
+    if name == super::daemon_mcp::SCENARIO.id {
+        return super::daemon_mcp::run(runner);
+    }
     runner.run(scenario)
 }

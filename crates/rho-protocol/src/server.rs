@@ -26,14 +26,15 @@ use crate::{
         SessionConfigureParams, SessionConfigureResponse, SessionDelete, SessionDeleteParams,
         SessionDeleteResponse, SessionDetach, SessionDetachParams, SessionDetachResponse,
         SessionHold, SessionHoldParams, SessionHoldResponse, SessionId, SessionList,
-        SessionListParams, SessionListResponse, SessionNew, SessionNewParams, SessionNewResponse,
-        SessionPrompt, SessionPromptParams, SessionPromptResponse, SessionRename,
-        SessionRenameParams, SessionRenameResponse, SessionSteer, SessionSteerParams,
-        SessionSteerResponse, SessionUnsteer, SessionUnsteerParams, SessionUnsteerResponse, Status,
-        Stop, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, DAEMON_STATUS,
-        DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL,
-        SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD, SESSION_LIST, SESSION_NEW,
-        SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
+        SessionListParams, SessionListResponse, SessionMcp, SessionMcpInventory, SessionMcpParams,
+        SessionNew, SessionNewParams, SessionNewResponse, SessionPrompt, SessionPromptParams,
+        SessionPromptResponse, SessionRename, SessionRenameParams, SessionRenameResponse,
+        SessionSteer, SessionSteerParams, SessionSteerResponse, SessionUnsteer,
+        SessionUnsteerParams, SessionUnsteerResponse, Status, Stop, AUTH_KEY, AUTH_LIST,
+        AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST,
+        SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE,
+        SESSION_DETACH, SESSION_HOLD, SESSION_LIST, SESSION_MCP, SESSION_NEW, SESSION_PROMPT,
+        SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -131,6 +132,12 @@ pub trait Service: Send + Sync {
         &self,
         params: SessionConfigureParams,
     ) -> impl Future<Output = Result<SessionConfigureResponse, RpcError>> + Send;
+
+    /// Read the loaded session's MCP inventory without waiting for a turn.
+    fn session_mcp(
+        &self,
+        params: SessionMcpParams,
+    ) -> impl Future<Output = Result<SessionMcpInventory, RpcError>> + Send;
 
     /// Handles `rho/session/attach`: subscribe this connection to the
     /// session's events (see [`crate::subscription()`]). The connection sends
@@ -509,6 +516,7 @@ enum ServiceCall {
     AnswerSession(SessionAnswerParams),
     HoldSession(SessionHoldParams),
     ConfigureSession(SessionConfigureParams),
+    SessionMcp(SessionMcpParams),
     ListSessions(SessionListParams),
     RenameSession(SessionRenameParams),
     DeleteSession(SessionDeleteParams),
@@ -582,6 +590,7 @@ impl ServiceCall {
             SESSION_CONFIGURE => {
                 decode_params::<SessionConfigure>(params).map(Self::ConfigureSession)
             }
+            SESSION_MCP => decode_params::<SessionMcp>(params).map(Self::SessionMcp),
             SESSION_LIST => decode_params::<SessionList>(params).map(Self::ListSessions),
             SESSION_RENAME => decode_params::<SessionRename>(params).map(Self::RenameSession),
             SESSION_DELETE => decode_params::<SessionDelete>(params).map(Self::DeleteSession),
@@ -607,6 +616,7 @@ impl ServiceCall {
             | Self::UnsteerSession(SessionUnsteerParams { session, .. })
             | Self::AnswerSession(SessionAnswerParams { session, .. })
             | Self::HoldSession(SessionHoldParams { session, .. })
+            | Self::SessionMcp(SessionMcpParams { session, .. })
             | Self::ConfigureSession(SessionConfigureParams { session, .. })
             | Self::RenameSession(SessionRenameParams { session, .. }) => Some(session),
             Self::Status
@@ -653,6 +663,9 @@ impl ServiceCall {
             }
             Self::ConfigureSession(params) => {
                 encode_result::<SessionConfigure>(&service.configure_session(params).await?)
+            }
+            Self::SessionMcp(params) => {
+                encode_result::<SessionMcp>(&service.session_mcp(params).await?)
             }
             Self::ListSessions(params) => {
                 encode_result::<SessionList>(&service.list_sessions(params).await?)

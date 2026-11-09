@@ -101,6 +101,10 @@ macro_rules! hosts_no_sessions {
             Err(no_such_session())
         }
 
+        async fn session_mcp(&self, _: SessionMcpParams) -> Result<SessionMcpInventory, RpcError> {
+            Err(no_such_session())
+        }
+
         async fn configure_session(
             &self,
             _: SessionConfigureParams,
@@ -560,6 +564,7 @@ impl Service for AttachService {
                     available: Vec::new(),
                 },
                 commands: Vec::new(),
+                goal: None,
             },
         };
         Ok((response, subscription))

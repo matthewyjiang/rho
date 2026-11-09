@@ -85,12 +85,13 @@ pub use methods::{
     PlanEntry, PlanStatus, Question, QuestionAsk, QueuePlace, Replay, Resolution, Selection, Seq,
     SessionAnswerParams, SessionAnswerResponse, SessionAttachParams, SessionAttachResponse,
     SessionCancelParams, SessionCancelResponse, SessionDetachParams, SessionDetachResponse,
-    SessionDetachedParams, SessionEvent, SessionEventParams, SessionHoldParams,
-    SessionHoldResponse, SessionId, SessionNewParams, SessionNewResponse, SessionPromptParams,
-    SessionPromptResponse, SessionSteerParams, SessionSteerResponse, SessionUnsteerParams,
-    SessionUnsteerResponse, StatusParams, SteerId, StopParams, StopResponse, StreamId, ToolCallId,
-    ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
-    UncheckedKey, UncheckedReason, UnsteerOutcome, SESSION_ANSWER, SESSION_HOLD,
+    SessionDetachedParams, SessionEvent, SessionEventParams, SessionGoal, SessionGoalAction,
+    SessionGoalPhase, SessionGoalStep, SessionHoldParams, SessionHoldResponse, SessionId,
+    SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
+    SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
+    StatusParams, SteerId, StopParams, StopResponse, StreamId, ToolCallId, ToolCallUpdate,
+    ToolContent, ToolKind, ToolStatus, TurnError, TurnErrorKind, TurnOutcome, UncheckedKey,
+    UncheckedReason, UnsteerOutcome, SESSION_ANSWER, SESSION_HOLD,
 };
 pub use methods::{
     AuthKind, AuthListParams, AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse,
@@ -107,6 +108,10 @@ pub use methods::{
     SessionDeleteParams, SessionDeleteResponse, SessionListParams, SessionListResponse,
     SessionRenameParams, SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST,
     SESSION_RENAME,
+};
+pub use methods::{
+    SessionMcpInventory, SessionMcpMode, SessionMcpParams, SessionMcpServer, SessionMcpStatus,
+    SESSION_MCP,
 };
 pub use server::{serve_connection, ServerInfo, Service, CLOSE_GRACE};
 pub use subscription::{subscription, Published, Publisher, Subscription};

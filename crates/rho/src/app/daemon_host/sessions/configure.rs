@@ -49,6 +49,9 @@ impl Sessions {
         params: SessionConfigureParams,
     ) -> Result<SessionConfigureResponse, RpcError> {
         self.refuse_when_stopping()?;
+        if let wire::SessionChange::Goal { action } = params.change {
+            return self.configure_goal(params.session, action).await;
+        }
         let change = Change::parse(params.change)?;
         let not_loaded = || {
             RpcError::new(

@@ -93,6 +93,13 @@ impl Service for StubHost {
         Err(no_sessions())
     }
 
+    async fn session_mcp(
+        &self,
+        _: rho_protocol::SessionMcpParams,
+    ) -> Result<rho_protocol::SessionMcpInventory, RpcError> {
+        Err(no_sessions())
+    }
+
     async fn configure_session(
         &self,
         _: SessionConfigureParams,

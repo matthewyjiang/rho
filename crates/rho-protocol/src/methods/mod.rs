@@ -18,6 +18,7 @@
 //! | [`SESSION_HOLD`] | [`SessionHoldParams`] | [`SessionHoldResponse`] |
 //! | [`SESSION_ATTACH`] | [`SessionAttachParams`] | [`SessionAttachResponse`] |
 //! | [`SESSION_DETACH`] | [`SessionDetachParams`] | [`SessionDetachResponse`] |
+//! | [`SESSION_MCP`] | [`SessionMcpParams`] | [`SessionMcpInventory`] |
 //! | [`SESSION_CONFIGURE`] | [`SessionConfigureParams`] | [`SessionConfigureResponse`] |
 //! | [`SESSION_LIST`] | [`SessionListParams`] | [`SessionListResponse`] |
 //! | [`SESSION_RENAME`] | [`SessionRenameParams`] | [`SessionRenameResponse`] |
@@ -52,9 +53,11 @@ mod auth;
 mod catalog;
 mod daemon;
 mod event;
+mod goal;
 mod input;
 mod job;
 mod login;
+mod mcp;
 mod options;
 mod outcome;
 mod session;
@@ -79,6 +82,7 @@ pub use event::{
     PlanStatus, Seq, SessionEvent, SteerId, StreamId, ToolCallId, ToolCallUpdate, ToolContent,
     ToolKind, ToolStatus,
 };
+pub use goal::{SessionGoal, SessionGoalAction, SessionGoalPhase, SessionGoalStep};
 pub use input::{
     ApprovalAsk, ApprovalSource, Ask, Choice, DefaultAnswer, DefaultStyle, InputAnswer,
     InputRequest, InputRequestId, InputTimeout, Operation, PathScope, PermissionMode,
@@ -93,6 +97,10 @@ pub use login::{
     AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginFinishedParams, AuthLoginParams,
     AuthLoginPromptParams, AuthLoginResponse, LoginFlow, LoginId, LoginOutcome, LoginPrompt,
     AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT,
+};
+pub use mcp::{
+    SessionMcpInventory, SessionMcpMode, SessionMcpParams, SessionMcpServer, SessionMcpStatus,
+    SESSION_MCP,
 };
 pub use options::{
     CommandKind, FastModeOptions, ModelChoice, ModelOptions, ModelRef, PermissionModeOptions,
@@ -194,6 +202,7 @@ protocol! {
         SessionAttach = SESSION_ATTACH: SessionAttachParams => SessionAttachResponse,
         SessionDetach = SESSION_DETACH: SessionDetachParams => SessionDetachResponse,
         SessionConfigure = SESSION_CONFIGURE: SessionConfigureParams => SessionConfigureResponse,
+        SessionMcp = SESSION_MCP: SessionMcpParams => SessionMcpInventory,
         SessionList = SESSION_LIST: SessionListParams => SessionListResponse,
         SessionRename = SESSION_RENAME: SessionRenameParams => SessionRenameResponse,
         SessionDelete = SESSION_DELETE: SessionDeleteParams => SessionDeleteResponse,

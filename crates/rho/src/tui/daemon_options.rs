@@ -317,6 +317,10 @@ impl App {
                 }
             }
             CommandId::Fast => self.set_daemon_fast(invocation.args.trim()),
+            CommandId::Goal => {
+                self.execute_daemon_goal_command(&invocation.args);
+                Ok(())
+            }
             _ => unreachable!("only daemon option commands reach option dispatch"),
         }
     }

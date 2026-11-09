@@ -99,13 +99,6 @@ impl McpServerStatus {
             Self::NotLoaded => "not loaded",
         }
     }
-
-    pub(crate) const fn is_healthy(self) -> bool {
-        matches!(
-            self,
-            Self::Connected | Self::Connecting | Self::Disabled | Self::NotLoaded
-        )
-    }
 }
 
 /// Transport facts safe to show in UI and CLI output.
