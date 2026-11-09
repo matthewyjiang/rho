@@ -127,8 +127,9 @@ fn a_closed_registry_interrupts_its_turns_and_takes_no_new_jobs() {
 }
 
 // Covers: an upgrade closes the registry only while no job is in progress,
-// so it never cuts a turn short; once closed, no turn starts, so a prompt
-// that races the upgrade is refused rather than interrupted (#1713).
+// and not after a turn that ran since it found the daemon idle, which may
+// have left work its other checks missed; once closed, no turn starts, so a
+// prompt that races the upgrade is refused rather than interrupted (#1713).
 // Owner: daemon job registry upgrade.
 #[test]
 fn an_upgrade_closes_the_registry_only_while_idle() {
@@ -142,17 +143,21 @@ fn an_upgrade_closes_the_registry_only_while_idle() {
     let id = job.id.clone();
     registry.register(job).unwrap();
 
+    let before = registry.idle().unwrap();
     registry.start_turn(&id).unwrap();
-    let while_running = registry.close_when_idle();
+    let while_running = registry.idle();
     registry
         .record(&id, JobEvent::TurnEnded(TurnEnd::Completed))
         .unwrap();
-    let once_ended = registry.close_when_idle();
+    // A turn that ran since the daemon was found idle may have left work.
+    let after_a_turn = registry.close_if_still(before);
+    let idle = registry.idle().unwrap();
+    let still_idle = registry.close_if_still(idle);
     let next_turn = registry.start_turn(&id);
 
     assert_eq!(
-        (while_running, once_ended, next_turn),
-        (false, true, Err(StartTurnError::Closed))
+        (while_running, after_a_turn, still_idle, next_turn),
+        (None, false, true, Err(StartTurnError::Closed))
     );
 }
 
