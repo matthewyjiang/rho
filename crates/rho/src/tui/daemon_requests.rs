@@ -199,22 +199,19 @@ impl DaemonRequests {
                         // OptionsChanged, not an optimistic local update, is
                         // authoritative. The response describes the same change.
                     }
+                    // Sent once: `DaemonSession::prompt` resends one the
+                    // daemon refused, once it read the session's detach.
                     Request::Prompt { content, result } => {
-                        let answer = on_attachment(&mut target, |link, session| {
-                            let content = content.clone();
-                            async move {
-                                link.request::<SessionPrompt>(&SessionPromptParams {
-                                    session,
-                                    content,
-                                    timeout_ms: None,
-                                    environment: ClientEnvironment::of_this_process(),
-                                })
-                                .await
-                            }
-                        })
-                        .await;
-                        let response = match answer {
-                            Some((link, answer)) => {
+                        let response = match attached(&mut target).await {
+                            Some((link, session)) => {
+                                let answer = link
+                                    .request::<SessionPrompt>(&SessionPromptParams {
+                                        session,
+                                        content,
+                                        timeout_ms: None,
+                                        environment: ClientEnvironment::of_this_process(),
+                                    })
+                                    .await;
                                 link.fence().await;
                                 answer.map(|_| ()).map_err(anyhow::Error::new)
                             }
@@ -252,12 +249,18 @@ impl DaemonRequests {
             .map_err(|_| anyhow::anyhow!(LOST))
     }
 
-    pub(super) async fn prompt(&self, content: Vec<ContentBlock>) -> anyhow::Result<()> {
+    /// Queues a prompt; its answer arrives on the receiver. Whoever waits
+    /// on it must keep reading the session's detaches meanwhile: the prompt
+    /// may wait behind a change that waits for the session to reattach.
+    pub(super) fn prompt(
+        &self,
+        content: Vec<ContentBlock>,
+    ) -> anyhow::Result<oneshot::Receiver<anyhow::Result<()>>> {
         let (result, response) = oneshot::channel();
         self.sender
             .send(Request::Prompt { content, result })
             .map_err(|_| anyhow::anyhow!(LOST))?;
-        response.await?
+        Ok(response)
     }
 }
 
