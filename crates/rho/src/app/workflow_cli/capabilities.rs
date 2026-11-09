@@ -179,7 +179,7 @@ impl AppWorkflowToolService {
     /// (#1659).
     pub(super) async fn authorize_node_resolution_reads(
         &self,
-        program: &crate::workflow::WorkflowProgram,
+        program: crate::app::workflow_cli::plan_host::LaunchableProgram<'_>,
         catalog: &crate::agent::AgentCatalog,
         search_path: Option<&OsStr>,
         context: &ToolContext,
@@ -187,7 +187,7 @@ impl AppWorkflowToolService {
     {
         let mut executables = BTreeSet::new();
         let mut directories = BTreeSet::new();
-        for node in program.root.nodes.values() {
+        for node in program.program().root.nodes.values() {
             match &node.execution {
                 crate::workflow::NodeExecution::Command(command) => {
                     let (executable, cwd) = match command {
