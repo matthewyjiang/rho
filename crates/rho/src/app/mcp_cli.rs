@@ -1,5 +1,5 @@
 //! CLI handlers for `rho mcp`: `list` and `show` inspect the MCP servers
-//! rho connects to; `serve` serves rho's sessions as one
+//! rho connects to; `serve` and `token` run rho's sessions as one
 //! (`app::mcp_server`).
 
 use serde::Serialize;
@@ -27,7 +27,8 @@ pub(super) async fn run(command: &McpCommand, cli: &Cli) -> anyhow::Result<()> {
         McpCommand::Show { id, json, connect } => {
             inventory(Inventory::Show { id, json: *json }, *connect, cli).await
         }
-        McpCommand::Serve(args) => serve::serve(args).await,
+        McpCommand::Serve(args) => serve::serve(args, cli).await,
+        McpCommand::Token { command } => serve::token(command, cli),
     }
 }
 

@@ -1,17 +1,27 @@
 //! `rho mcp serve` through the real binary: an MCP host drives a daemon
 //! session in another workspace over stdio while a second daemon client
-//! follows it, no tool can answer the session's approvals, and the core's
-//! caps refuse with their budgets.
+//! follows it, no tool can answer the session's approvals, the core's caps
+//! refuse with their budgets, and the HTTP transport refuses requests its
+//! tokens and origin rules do not allow.
 
 use std::{path::PathBuf, process::Stdio};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{methods::JobList, JobListParams, JobState, SessionEvent, SessionId};
 use rmcp::{
-    model::CallToolRequestParams, service::RunningService, transport::TokioChildProcess,
+    model::CallToolRequestParams,
+    service::RunningService,
+    transport::{
+        streamable_http_client::StreamableHttpClientTransportConfig, StreamableHttpClientTransport,
+        TokioChildProcess,
+    },
     RoleClient, ServiceExt,
 };
 use serde_json::{json, Value};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    net::TcpStream,
+};
 
 use super::sessions::{Follower, Sandbox, DEADLINE};
 
@@ -333,5 +343,154 @@ async fn the_caps_refuse_starts_past_their_limits() {
         ),
         "log:\n{}",
         sandbox.isolated.daemon_log()
+    );
+}
+
+/// `rho mcp serve --http` on a free loopback port; returns the process and
+/// its endpoint URL once it listens.
+async fn http_server(sandbox: &Sandbox) -> (tokio::process::Child, String) {
+    let mut command = tokio::process::Command::from(sandbox.rho("tool-call"));
+    command
+        .args(["mcp", "serve", "--http", "127.0.0.1:0"])
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let mut server = command.spawn().unwrap();
+    let mut lines = BufReader::new(server.stderr.take().unwrap()).lines();
+    let line = tokio::time::timeout(DEADLINE, lines.next_line())
+        .await
+        .expect("the server listens")
+        .unwrap()
+        .expect("the server says where it listens");
+    let url = line
+        .strip_prefix("rho mcp serve listening on ")
+        .unwrap_or_else(|| panic!("unexpected first line: {line}"))
+        .to_owned();
+    (server, url)
+}
+
+/// Creates token `name` with `args` and returns its secret.
+fn rotate(sandbox: &Sandbox, name: &str, args: &[&str]) -> String {
+    let output = sandbox
+        .rho("tool-call")
+        .args(["mcp", "token", "rotate", name])
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// The status a raw `initialize` POST to `url` gets with these headers.
+async fn initialize_status(url: &str, headers: &[(&str, &str)]) -> u16 {
+    let address = url
+        .strip_prefix("http://")
+        .and_then(|rest| rest.strip_suffix("/mcp"))
+        .unwrap();
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "raw", "version": "0"},
+        },
+    })
+    .to_string();
+    let mut request = format!(
+        "POST /mcp HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n",
+        body.len()
+    );
+    for (name, value) in headers {
+        request.push_str(&format!("{name}: {value}\r\n"));
+    }
+    request.push_str("\r\n");
+    request.push_str(&body);
+    let mut stream = TcpStream::connect(address).await.unwrap();
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 512];
+    // The status line is all this needs; an event stream may stay open.
+    while !response.windows(2).any(|window| window == b"\r\n") {
+        let read = tokio::time::timeout(DEADLINE, stream.read(&mut buffer))
+            .await
+            .expect("the server answers")
+            .unwrap();
+        assert!(read > 0, "the server closed before answering");
+        response.extend_from_slice(&buffer[..read]);
+    }
+    let status = String::from_utf8_lossy(&response);
+    status.split(' ').nth(1).unwrap().parse().unwrap()
+}
+
+/// An MCP client of the HTTP server at `url` with `token`.
+async fn http_client(url: &str, token: &str) -> McpClient {
+    let transport = StreamableHttpClientTransport::from_config(
+        StreamableHttpClientTransportConfig::with_uri(url.to_owned()).auth_header(token.to_owned()),
+    );
+    ().serve(transport).await.expect("the client initializes")
+}
+
+// Covers: the HTTP transport refuses a missing or wrong bearer token and a
+// browser origin it does not allow, and the core refuses a read-only token's
+// write and a workspace outside a token's list, naming that list (#1672).
+// Owner: rho mcp serve --http auth.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn http_refuses_what_its_tokens_do_not_allow() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let sandbox = Sandbox::new();
+    let allowed = sandbox.workspace.display().to_string();
+    let reader = rotate(&sandbox, "reader", &["--workspace", &allowed]);
+    let writer = rotate(
+        &sandbox,
+        "writer",
+        &["--scope", "write", "--workspace", &allowed],
+    );
+    let (_server, url) = http_server(&sandbox).await;
+    let bearer = |token: &str| format!("Bearer {token}");
+
+    let statuses = [
+        initialize_status(&url, &[]).await,
+        initialize_status(&url, &[("Authorization", "Bearer rho_mcp_wrong")]).await,
+        initialize_status(
+            &url,
+            &[
+                ("Authorization", &bearer(&reader)),
+                ("Origin", "https://evil.example"),
+            ],
+        )
+        .await,
+        initialize_status(&url, &[("Authorization", &bearer(&reader))]).await,
+    ];
+    let read_only = http_client(&url, &reader).await;
+    let listed = call(&read_only, "list", json!({})).await;
+    let read_only_new = call(
+        &read_only,
+        "new",
+        json!({"workspace": sandbox.workspace, "prompt": "hello"}),
+    )
+    .await;
+    let outside = elsewhere(&sandbox);
+    let write = http_client(&url, &writer).await;
+    let outside_new = call(
+        &write,
+        "new",
+        json!({"workspace": outside, "prompt": "hello"}),
+    )
+    .await;
+
+    assert_eq!(
+        (statuses, listed, read_only_new, outside_new),
+        (
+            [401, 401, 403, 200],
+            Ok(json!({"sessions": [], "more": false})),
+            Err("token \"reader\" has read access; `new` needs write".into()),
+            Err(format!(
+                "token \"writer\" may not reach workspace {}; it may reach: {allowed}",
+                outside.display()
+            )),
+        )
     );
 }

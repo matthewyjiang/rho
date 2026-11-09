@@ -162,4 +162,88 @@ The daemon reads [configuration](/configuration) when it opens a session, so edi
 
 ## Running as a service
 
-systemd user units and launchd agents for the daemon are planned ([#1663](https://github.com/matthewyjiang/rho/issues/1663), [#1664](https://github.com/matthewyjiang/rho/issues/1664)).
+The daemon needs no service of its own: every frontend starts it on demand. Only a process that has to listen before any client shows up needs a service manager, and today that is [`rho mcp serve --http`](/mcp-server#over-http). It is a daemon client like any other, so its first tool call starts the daemon from inside its service, and its unit is all the always-on setup there is. Use `rho daemon start` in a script that wants the daemon running before anything connects.
+
+Both examples below make the same three choices:
+
+- **Stopping the service leaves the daemon running.** The daemon the server starts runs in a process group of its own, but systemd stops every process in a service's control group by default, and a new process group does not leave it: restarting or stopping the MCP server would stop the daemon and every turn it runs. `KillMode=process` makes systemd stop only the server. launchd kills what is left of a job's process group when the job exits; the daemon is not in the server's group, and `AbandonProcessGroup` keeps launchd from killing anything the server leaves behind all the same. Stop the daemon itself with `rho daemon stop`.
+- **`PATH` is set.** A service starts with the service manager's bare environment, not your shell's, and the sessions the server starts run with the server's environment: their tools, [MCP servers](/integrations/mcp), and [CLI subagents](/subagents) find executables on its `PATH` (see [Environment](#environment)). Set it to the directories your tools live in, and add any variable sessions need that your shell would give them, such as a provider key.
+- **The server listens on loopback.** Reach it from elsewhere through a tunnel, as [Over HTTP](/mcp-server#over-http) describes.
+
+### systemd
+
+Save as `~/.config/systemd/user/rho-mcp.service`, changing `ExecStart` to where `rho` is installed and `PATH` to your own:
+
+```ini
+[Unit]
+Description=rho MCP server
+After=network.target
+
+[Service]
+ExecStart=%h/.local/bin/rho mcp serve --http 127.0.0.1:8765
+# The sessions this server starts look up executables on this PATH.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Stop only the server: the daemon it started keeps running its turns.
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Then start it, and keep it running across logins:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now rho-mcp
+loginctl enable-linger "$USER"   # optional: keep it running while you are logged out
+```
+
+`systemctl --user restart rho-mcp` restarts the server and leaves the daemon and its running turns alone. The server logs to the journal (`journalctl --user -u rho-mcp`); the daemon it starts writes its own log to `~/.rho/logs/daemon.log`, as [Logs](#logs) describes.
+
+### launchd
+
+Save as `~/Library/LaunchAgents/dev.rho.mcp.plist`, changing the `rho` path, `PATH`, and the log path to your own:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.rho.mcp</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/rho</string>
+    <string>mcp</string>
+    <string>serve</string>
+    <string>--http</string>
+    <string>127.0.0.1:8765</string>
+  </array>
+  <!-- The sessions this server starts look up executables on this PATH. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <!-- Stop only the server: the daemon it started keeps running its turns. -->
+  <key>AbandonProcessGroup</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>/Users/you/Library/Logs/rho-mcp.log</string>
+</dict>
+</plist>
+```
+
+Then load it:
+
+```bash
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/dev.rho.mcp.plist
+launchctl kickstart -k "gui/$(id -u)/dev.rho.mcp"   # restart the server
+```
+
+The server logs to `StandardErrorPath`; the daemon it starts writes its own log to `~/.rho/logs/daemon.log`, as [Logs](#logs) describes.

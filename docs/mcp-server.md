@@ -2,21 +2,23 @@
 
 `rho mcp serve` serves the [daemon](/daemon)'s sessions as a [Model Context Protocol](https://modelcontextprotocol.io/) server, so another agent, such as Claude Code, Codex, or a rho session, can start rho sessions in any workspace, follow their turns, and read what they answered. It is a daemon client like `rho attach`, and it starts the daemon on its first tool call when none is running.
 
-It serves over stdio, for a host that starts it as a command.
+It serves over stdio by default, for a host that starts it as a command. `rho mcp serve --http` serves streamable HTTP on a loopback address instead, for hosts that reach MCP servers by URL; see [Over HTTP](#over-http).
 
 The daemon, and so this server, is not supported on Windows yet ([#1665](https://github.com/matthewyjiang/rho/issues/1665)).
 
 ## Tools
 
-| Tool | What it does |
-| --- | --- |
-| `list` | The daemon's sessions, most recently changed first: each one's id, workspace, state, and when it last changed. Filter by `workspace` or `state`; `limit` is 20 by default and at most 1000. |
-| `read` | A session's transcript as text: who said what, and the tools it called. Pages by characters: `start` (0 by default) and `chars` (4096 by default, at most 64000); pass the result's `next_start` to read on. |
-| `new` | Starts a session in `workspace`, an absolute path to an existing directory, with a first `prompt`. `agent` picks one of the workspace's agents by id and `model` one of its models, as `provider/model` or a model id only one provider offers; both default to the workspace's. |
-| `prompt` | Starts a session's next turn with `text`. |
-| `steer` | Gives the running turn `text` for its next model request. |
-| `cancel` | Stops the session's turn in progress, if any. |
-| `wait` | Waits for the session's turn to end or ask for input, up to `timeout_secs`, then reports where it is. See [Following a turn](#following-a-turn). |
+| Tool | What it does | Needs |
+| --- | --- | --- |
+| `list` | The daemon's sessions, most recently changed first: each one's id, workspace, state, and when it last changed. Filter by `workspace` or `state`; `limit` is 20 by default and at most 1000. | read |
+| `read` | A session's transcript as text: who said what, and the tools it called. Pages by characters: `start` (0 by default) and `chars` (4096 by default, at most 64000); pass the result's `next_start` to read on. | read |
+| `new` | Starts a session in `workspace`, an absolute path to an existing directory, with a first `prompt`. `agent` picks one of the workspace's agents by id and `model` one of its models, as `provider/model` or a model id only one provider offers; both default to the workspace's. | write |
+| `prompt` | Starts a session's next turn with `text`. | write |
+| `steer` | Gives the running turn `text` for its next model request. | write |
+| `cancel` | Stops the session's turn in progress, if any. | write |
+| `wait` | Waits for the session's turn to end or ask for input, up to `timeout_secs`, then reports where it is. See [Following a turn](#following-a-turn). | read |
+
+The "Needs" column matters only [over HTTP](#over-http), where each token has read or write access. Over stdio every tool is available.
 
 ## Following a turn
 
@@ -57,13 +59,13 @@ To let a session work unattended, give it a [permission mode](/configuration/per
 Sessions that start sessions can recurse: an agent driving rho through this server may run a session that drives rho through its own. The server bounds that with two budgets, enforced on every `new` and `prompt`:
 
 - **Session depth.** A session the server starts or prompts runs one level deeper than the server's caller: depth 1 when a person or an outside agent runs the server, depth 2 when a depth-1 session does. A session carries its depth to the processes it starts in `RHO_SESSION_DEPTH`, its MCP servers included, so a `rho mcp serve` it runs knows where it sits. `--max-depth` sets the deepest a session may run, 3 by default.
-- **Concurrent sessions.** The server's caller may have as many sessions running at once as `--max-sessions`, 10 by default, the same as the daemon's default agent concurrency. A session counts from when the caller starts or prompts it until its turn ends, a turn waiting for a person included; prompting a session the caller already has running adds none.
+- **Concurrent sessions.** Each caller may have as many sessions running at once as `--max-sessions`, 10 by default, the same as the daemon's default agent concurrency. Over HTTP each token is a caller of its own. A session counts from when the caller starts or prompts it until its turn ends, a turn waiting for a person included; prompting a session the caller already has running adds none.
 
 A start past either budget is refused with the budget, its limit, and the value asked for:
 
 ```text
 session depth budget: limit 3, asked 4; a session at depth 3 may not start or prompt another
-concurrent sessions budget for this server's caller: limit 10, asked 11
+concurrent sessions budget for token "ci": limit 10, asked 11
 ```
 
 The depth guards against runaway recursion, not against a session's own tools: a session with a shell can still reach the daemon's socket directly.
@@ -72,7 +74,7 @@ An argument past its limit, such as a `wait` longer than 50 seconds, is refused 
 
 ## Sessions' environment
 
-Sessions run with the server's environment, as if you had started them from the shell that runs the server: their tools, MCP servers, and [CLI subagents](/subagents) look up executables on its `PATH` and read its variables. See [Environment](/daemon#environment).
+Sessions run with the server's environment, as if you had started them from the shell that runs the server: their tools, MCP servers, and [CLI subagents](/subagents) look up executables on its `PATH` and read its variables. See [Environment](/daemon#environment). Under a service manager, that environment is the service's; [Running as a service](/daemon#running-as-a-service) shows how to set it.
 
 ## Registering over stdio
 
@@ -104,3 +106,76 @@ args = ["mcp", "serve"]
 A rho session starts its stdio servers with a [sanitized environment](/integrations/mcp#stdio-servers), so the sessions such a server starts get that environment too. List the variables their tools need in the server's `env_from_env`.
 
 Pass `--max-depth` and `--max-sessions` after `serve` to change the [limits](#limits).
+
+## Over HTTP
+
+```bash
+rho mcp serve --http 127.0.0.1:8765
+```
+
+The server prints where it listens, `rho mcp serve listening on http://127.0.0.1:8765/mcp`, and serves MCP's streamable HTTP transport at `/mcp`. Port `0` picks a free port.
+
+It binds a loopback address only and refuses any other, so nothing off the machine reaches it unless you set up a tunnel, such as an SSH forward or a tunnel service, to that address. Run it under a service manager to keep it listening; [Running as a service](/daemon#running-as-a-service) has a systemd unit and a launchd agent.
+
+### Tokens
+
+Every request needs a bearer token. Create one with the workspaces it may reach:
+
+```bash
+rho mcp token rotate laptop --scope write --workspace ~/src/app --workspace ~/src/lib
+```
+
+`rotate` prints the token's secret on stdout, alone, once; rho keeps only its SHA-256 hash, in the [credential store](/authentication-and-models#where-credentials-live) the config selects. Send it as `Authorization: Bearer <secret>`.
+
+- `--scope read` (the default for a new token) lets the token `list`, `read`, and `wait`; `--scope write` also lets it `new`, `prompt`, `steer`, and `cancel`.
+- `--workspace` names a directory whose sessions the token may reach, and those of every directory under it. A new token needs at least one. The token sees only those sessions in `list`, and every other tool refuses a session elsewhere, naming the directories the token may reach.
+- Running `rotate` on an existing token gives it a new secret and keeps its scope and workspaces unless you pass them.
+
+```bash
+rho mcp token list           # names, scopes, and workspaces; --json for one document
+rho mcp token revoke laptop  # the token stops working at once
+```
+
+The server reads the tokens on every request, so a rotation or a revoke applies to a running server without a restart.
+
+A request without a token, or with one rho does not know, gets `401 Unauthorized`. A token's scope or workspaces refusing a tool is the tool's error, which the model reads, not an HTTP error.
+
+### Hosts and origins
+
+The server accepts requests whose `Host` is `localhost`, `127.0.0.1`, or `::1`. Behind a tunnel that keeps the public hostname, allow it with `--allow-host`:
+
+```bash
+rho mcp serve --http 127.0.0.1:8765 --allow-host mcp.example.com
+```
+
+A request that carries an `Origin` header, which a browser adds, is refused with `403 Forbidden` unless the origin is one `--allow-origin` names, so a web page you visit cannot drive the server. Hosts that are not browsers send no `Origin` and need no `--allow-origin`. Both flags may be repeated.
+
+### Registering by URL
+
+With the token's secret in `RHO_MCP_TOKEN`:
+
+Claude Code:
+
+```bash
+claude mcp add --transport http rho https://mcp.example.com/mcp \
+  --header "Authorization: Bearer $RHO_MCP_TOKEN"
+```
+
+Codex, in `~/.codex/config.toml`, reading the secret from the environment it runs in:
+
+```toml
+[mcp_servers.rho]
+url = "https://mcp.example.com/mcp"
+bearer_token_env_var = "RHO_MCP_TOKEN"
+```
+
+Rho, in `~/.rho/config.toml`; see [Streamable HTTP servers](/integrations/mcp#streamable-http-servers):
+
+```toml
+[mcp.servers.rho]
+transport = "streamable_http"
+url = "https://mcp.example.com/mcp"
+headers_from_env = { Authorization = "RHO_MCP_AUTHORIZATION" }
+```
+
+with `RHO_MCP_AUTHORIZATION="Bearer <secret>"` in rho's environment.
