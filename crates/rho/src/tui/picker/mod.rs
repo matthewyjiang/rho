@@ -189,7 +189,7 @@ pub(super) struct UiPicker {
     pub(super) label_overflow: LabelOverflow,
     /// Config page this picker shows. Returning to it from a child rebuilds
     /// its rows from saved config; see [`crate::tui::App::pop_picker_level`].
-    config_page: Option<crate::tui::config_picker::ConfigPage>,
+    config_page: Option<crate::tui::settings_screen::ConfigPage>,
     parent: Option<Box<UiPicker>>,
     matches: RefCell<PickerMatchCache>,
     detail_wrap_cache: RefCell<DetailWrapCache>,
@@ -358,12 +358,9 @@ impl UiPicker {
     picker_ctors! {
         models => SelectModel,
         internal_agent_models => SelectInternalAgentModel,
-        advisor_reasoning => SelectAdvisorReasoning,
         login_group => LoginGroup,
         login_provider => LoginProvider,
         logout_provider => LogoutProvider,
-        switch_auth_mode => SwitchAuthMode,
-        refresh_model_list => RefreshModelList,
         insert_skill => InsertSkillCommand,
         prompt_history => RecallPrompt,
         view_agent => ViewAgent,
@@ -384,7 +381,6 @@ impl UiPicker {
     }
 
     picker_is! {
-        is_config => Config,
         is_theme => SelectTheme,
         is_mcp_inventory => ViewMcpServers,
         is_edit_agent => EditAgent,
@@ -392,7 +388,6 @@ impl UiPicker {
         is_attach_subagent => AttachSubagent,
         is_conversation_model => SelectModel,
         is_internal_agent_model => SelectInternalAgentModel,
-        is_advisor_reasoning => SelectAdvisorReasoning,
         is_manage_sessions => ManageSessions,
         is_resume_session => ResumeSession,
         is_workflow => Workflow,
@@ -720,13 +715,16 @@ impl UiPicker {
         self
     }
 
-    pub(super) fn with_config_page(mut self, page: crate::tui::config_picker::ConfigPage) -> Self {
+    pub(super) fn with_config_page(
+        mut self,
+        page: crate::tui::settings_screen::ConfigPage,
+    ) -> Self {
         self.config_page = Some(page);
         self
     }
 
-    pub(super) fn config_page(&self) -> Option<crate::tui::config_picker::ConfigPage> {
-        self.config_page
+    pub(super) fn config_page(&self) -> Option<crate::tui::settings_screen::ConfigPage> {
+        self.config_page.clone()
     }
 
     pub(super) fn has_parent(&self) -> bool {

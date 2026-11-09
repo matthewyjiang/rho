@@ -8,7 +8,6 @@ use super::{
     command_palette::{slash_command_args, CommandPaletteKeyOutcome},
     commands,
     composer_buffer::ComposerEditKey,
-    config_row::ConfigCommitCtx,
     goal_command,
     send_confirm::{SendAuthorization, SendPayload, SendSubmission},
     skill_actions, ActivityPhase, App, ChatMedia, ComposerMode, GoalState, InputSubmissionMode,
@@ -74,11 +73,7 @@ impl App {
             }
             ComposerMode::Questionnaire(_) => self.handle_questionnaire_key(key),
             ComposerMode::SecretInput(_) => self.handle_secret_key(key, terminal, agent).await,
-            ComposerMode::ConfigNumberInput(_) => self.handle_config_number_key(key, terminal),
-            ComposerMode::TextInput(_) => {
-                self.handle_text_input_key(key, ConfigCommitCtx::Idle { agent, terminal })
-                    .await
-            }
+            ComposerMode::TextInput(_) => self.handle_text_input_key(key),
             ComposerMode::Picker(_) => self.handle_picker_key(key, terminal, agent).await,
             ComposerMode::Panel(_) => Ok(self.handle_panel_overlay_key(key, terminal)),
             ComposerMode::Side => Ok(self.handle_side_chat_key(key, terminal)),

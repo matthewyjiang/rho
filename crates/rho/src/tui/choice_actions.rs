@@ -60,18 +60,8 @@ impl App {
                     | InlineChoicePending::DeleteWorkflowRun { .. } => {
                         self.open_workflow_hub_or_report();
                     }
-                    InlineChoicePending::PromptHistoryLimit { .. } => {
-                        self.open_main_config_picker_selected(
-                            super::config_picker::PROMPT_HISTORY_LIMIT_VALUE,
-                        )?;
-                    }
                     InlineChoicePending::ClearPromptHistory => {
-                        self.open_main_config_picker_selected(
-                            super::config_picker::CLEAR_PROMPT_HISTORY_VALUE,
-                        )?;
-                    }
-                    InlineChoicePending::TestWebSearch => {
-                        self.submit_web_search_test_choice("cancel", modal.parent_picker)?;
+                        self.reopen_config_root(super::config_picker::CLEAR_PROMPT_HISTORY_VALUE);
                     }
                 }
             }
@@ -180,14 +170,8 @@ impl App {
             InlineChoicePending::DeleteWorkflowRun { run_id } => {
                 self.submit_delete_workflow_run_choice(&value, &run_id)?;
             }
-            InlineChoicePending::PromptHistoryLimit { new_limit } => {
-                self.submit_prompt_history_limit_choice(&value, new_limit)?;
-            }
             InlineChoicePending::ClearPromptHistory => {
                 self.submit_clear_prompt_history_choice(&value)?;
-            }
-            InlineChoicePending::TestWebSearch => {
-                self.submit_web_search_test_choice(&value, modal.parent_picker)?;
             }
         }
         Ok(true)

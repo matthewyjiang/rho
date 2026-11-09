@@ -102,7 +102,6 @@ impl App {
             ComposerMode::Picker(picker) => !picker.is_overlay(),
             ComposerMode::Input
             | ComposerMode::SecretInput(_)
-            | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
             | ComposerMode::TranscriptSearch(_)
             | ComposerMode::InteractivePending(_) => false,

@@ -47,15 +47,6 @@ impl AdvisorStatus {
         }
     }
 
-    /// Config-picker badge for the advisor row.
-    pub(super) fn badge(&self) -> String {
-        match self {
-            Self::Off => "off".into(),
-            Self::Reviewing { model } => format!("on · {model}"),
-            Self::MissingModel => "on · no model".into(),
-        }
-    }
-
     /// `/info` value for the advisor field.
     pub(super) fn detail(&self) -> String {
         match self {

@@ -81,6 +81,10 @@ pub(super) enum DaemonView {
     Options(Box<rho_protocol::SessionOptions>),
     /// On-demand inventory response; ignored if the person closed the picker.
     McpInventory(Result<Box<rho_protocol::SessionMcpInventory>, String>),
+    /// The daemon's settings, read once the session attached.
+    SettingsLoaded(Box<super::daemon_settings::DaemonSettings>),
+    /// Settings of a namespace the TUI read changed.
+    SettingsChanged(Box<rho_protocol::ConfigChangedParams>),
     /// One background configure request finished, successfully or otherwise.
     ConfigureFinished,
     /// Whether a turn runs, as the job's state says.

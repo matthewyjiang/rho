@@ -2,7 +2,7 @@
 
 Parent: [Configuration](/configuration).
 
-`auto_compact` summarizes older conversation history when the estimated context approaches the model's effective window. It is on by default. Change it under `/config` → **Context & limits**, or in `[compaction]`. To opt out, set:
+`auto_compact` summarizes older conversation history when the estimated context approaches the model's effective window. It is on by default. Change it under `/config` → **Context**, or in `[compaction]`. To opt out, set:
 
 ```toml
 [compaction]
@@ -17,7 +17,7 @@ If the provider rejects a request as larger than the model's context window, Rho
 
 While background tool jobs run, automatic compaction and overflow recovery summarize only the history before the earliest running tool call. That call and everything after it stay as they are, so the job's result still lines up with its call when it arrives. Compaction is skipped when nothing new sits before that call: the job started in the conversation's first reply, or that history was already compacted while the same jobs ran.
 
-`/config` changes apply when the session is idle, before the next automatic check or model turn. Edits during a model turn or compaction wait for that operation to finish. Applying settings keeps the current provider-calibrated context estimate. External file edits require a restart.
+Changes saved through the daemon, from `/config` or a hand edit of `config.toml`, reach every loaded session before its next model turn. Edits during a model turn or compaction wait for that operation to finish. Applying settings keeps the current provider-calibrated context estimate.
 
 ## What the status line counts
 

@@ -1,4 +1,4 @@
-//! Streaming preferences share one setting across the menu and shortcut.
+//! The streaming shortcut changes how held output is revealed mid-turn.
 
 use anyhow::{ensure, Result};
 
@@ -13,11 +13,11 @@ use super::{DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
 
 // Covers: off leaks partial output, paragraph leaks its unfinished suffix, or
 // switching modes finalizes a split Markdown fence and corrupts continued output.
-// Also covers the startup client setting and menu/shortcut changes in one turn.
+// Also covers the startup client setting and shortcut changes in one turn.
 // Owner: interactive TUI. Ordered usage receipts synchronize hidden-output checks.
 pub(super) const STREAMING_CONTROLS_SCENARIO: Scenario = Scenario::new(
     "streaming_controls",
-    "Hold output by mode and preserve split Markdown across menu and shortcut changes",
+    "Hold output by mode and preserve split Markdown across shortcut changes",
     DEFAULT_SIZE,
     &[
         Step::WaitText {
@@ -38,23 +38,10 @@ fn setup(home: &IsolatedHome) -> Result<()> {
     Ok(())
 }
 
-fn cycle_in_menu(harness: &mut PtyHarness, mode: &str) -> Result<()> {
-    harness.submit_text("/config")?;
-    harness.wait_for_text("Config · saves automatically", SETTLE)?;
-    harness.inject_key(&Key::Down)?;
-    harness.inject_key(&Key::Enter)?;
-    harness.wait_for_text("Config / Appearance", SETTLE)?;
-    // Theme, Zen mode, Cache miss notices, then Output streaming.
-    harness.inject_key(&Key::Down)?;
-    harness.inject_key(&Key::Down)?;
-    harness.inject_key(&Key::Down)?;
-    harness.inject_key(&Key::Enter)?;
-    harness.wait_for_text(&format!("output streaming: {mode}"), SETTLE)?;
-    harness.inject_key(&Key::Esc)?;
-    harness.wait_for_text("Agent behavior", SETTLE)?;
-    harness.inject_key(&Key::Esc)?;
-    harness.wait_for_text_gone("Config · saves automatically", SETTLE)?;
-    Ok(())
+/// Presses the streaming shortcut once; `mode` is the one it moves to.
+fn cycle_shortcut(harness: &mut PtyHarness, mode: &str) -> Result<()> {
+    harness.inject_key(&Key::Alt('s'))?;
+    harness.wait_for_text(&format!("output streaming: {mode}"), SETTLE)
 }
 
 fn exercise_controls(harness: &mut PtyHarness) -> Result<()> {
@@ -72,7 +59,7 @@ fn exercise_controls(harness: &mut PtyHarness) -> Result<()> {
     harness.wait_for_text("Hidden off prefix", SETTLE)?;
 
     harness.set_phase("paragraph_boundary");
-    cycle_in_menu(harness, "paragraph")?;
+    cycle_shortcut(harness, "paragraph")?;
     super::release_fixture(harness, ".rho-fixture-release-streaming-controls")?;
     harness.wait_for_text("$2.000", STREAM)?;
     harness.wait_for_text("Paragraph checkpoint visible.", SETTLE)?;
@@ -118,9 +105,9 @@ fn exercise_controls(harness: &mut PtyHarness) -> Result<()> {
         "switching modes corrupted the fence state or rendered the prose preview as code"
     );
 
-    // The menu resumes from the shortcut's setting; completion flushes off mode.
-    cycle_in_menu(harness, "paragraph")?;
-    cycle_in_menu(harness, "off")?;
+    // Completion flushes off mode.
+    cycle_shortcut(harness, "paragraph")?;
+    cycle_shortcut(harness, "off")?;
     harness.set_phase("finish_buffered_response");
     super::release_fixture(harness, ".rho-fixture-release-streaming-controls")?;
     harness.wait_for_text("Buffered completion delivered.", STREAM)?;

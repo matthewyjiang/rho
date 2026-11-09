@@ -15,7 +15,6 @@ use tokio::sync::oneshot;
 mod activity;
 mod add_dir_command;
 mod advisor_command;
-mod advisor_reasoning;
 mod advisor_status;
 mod agent_creator_command;
 mod agent_delete;
@@ -49,11 +48,8 @@ mod composer_history;
 mod composer_pointer;
 mod composer_undo;
 mod composer_vim;
-mod config_actions;
-mod config_editor;
 mod config_input;
 mod config_picker;
-mod config_row;
 mod context_handoff;
 mod context_overlay;
 mod copy_interaction;
@@ -72,6 +68,8 @@ mod daemon_prompt;
 #[cfg(unix)]
 mod daemon_requests;
 mod daemon_session;
+#[cfg_attr(not(unix), allow(dead_code))]
+mod daemon_settings;
 mod daemon_transcript;
 mod daemon_turn;
 mod diff_pane;
@@ -97,7 +95,6 @@ mod subagent_inbox;
 mod subagent_questionnaires;
 mod text_input;
 mod text_view_overlay;
-mod web_search_config;
 
 fn plural_suffix(count: usize) -> &'static str {
     if count == 1 {
@@ -271,6 +268,7 @@ mod workflow_hub;
 mod workflow_panel;
 // Separate full-screen mode for an active workflow run. The chat hub hands off
 // through terminal suspend when starting or resuming a run.
+mod settings_screen;
 pub(crate) mod workflow;
 mod workspace;
 mod zen_tool_run;
@@ -285,10 +283,6 @@ use chat_media::{
     ChatMedia, ChatTextDocument, ComposerAttachment, MediaAttachId, PendingAttachmentSource,
 };
 use clipboard::Clipboard;
-use config_editor::{
-    config_number_input_frame, resolve_web_search_editor_value, ConfigNumberInput, ConfigNumberKey,
-    ConfigToggle,
-};
 use copy_interaction::CodeBlockCopyTarget;
 use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
 use feed_image::FeedImage;
@@ -632,7 +626,6 @@ struct App {
     >,
     /// Open `/diff` popup state; dropped once its picker closes.
     diff_viewer: Option<diff_viewer::DiffViewer>,
-    web_search_reload_pending: bool,
     compaction_reload_pending: bool,
     /// Set when classifier settings were saved without the agent at hand;
     /// see [`App::apply_pending_classifier_config`].
@@ -669,6 +662,8 @@ struct App {
     daemon_options: Option<rho_protocol::SessionOptions>,
     daemon_option_requests: std::collections::VecDeque<rho_protocol::SessionChange>,
     daemon_title: Option<String>,
+    /// The daemon's settings, once read; `None` in process.
+    daemon_settings: Option<daemon_settings::DaemonSettings>,
     /// Set by `/title` so auto-title generation cannot overwrite a manual name.
     session_title_locked: bool,
     /// Latest native checklist, mirrored for commands while a turn is running.

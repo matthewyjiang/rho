@@ -4,16 +4,16 @@
 //! response must never own the TUI event loop. Prompts share the queue so a
 //! later prompt cannot overtake a configuration change. Cancel and answers
 //! deliberately bypass this queue, since they may unblock that change. MCP
-//! inventory reads and goal actions use an independent control worker to stay
-//! usable during the turn: a goal runs as one long turn, which a queued
-//! change would otherwise hold `/goal clear` behind.
+//! inventory reads, goal actions, and settings writes use an independent
+//! control worker to stay usable during the turn: a goal runs as one long
+//! turn, which a queued change would otherwise hold `/goal clear` behind.
 
 use std::sync::Arc;
 
 use rho_protocol::{
-    methods::{SessionConfigure, SessionMcp, SessionPrompt},
-    ClientEnvironment, ContentBlock, SessionChange, SessionConfigureParams, SessionGoalAction,
-    SessionId, SessionMcpParams, SessionPromptParams,
+    methods::{ConfigSet, SessionConfigure, SessionMcp, SessionPrompt},
+    ClientEnvironment, ConfigSetParams, ContentBlock, ErrorCode, SessionChange,
+    SessionConfigureParams, SessionGoalAction, SessionId, SessionMcpParams, SessionPromptParams,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -32,6 +32,11 @@ enum Request {
 enum Control {
     Mcp,
     Goal(SessionGoalAction),
+    /// A settings write; `label` names it in a refusal.
+    SetConfig {
+        params: ConfigSetParams,
+        label: String,
+    },
 }
 
 pub(super) struct DaemonRequests {
@@ -82,6 +87,20 @@ impl DaemonRequests {
                                 "could not {verb} the goal: {error}"
                             )));
                         }
+                    }
+                    Control::SetConfig { params, label } => {
+                        // `rho/config/changed`, not this response, updates
+                        // what the TUI shows.
+                        let view = match control_link.request::<ConfigSet>(&params).await {
+                            Ok(_) => continue,
+                            Err(error) if error.error_code() == Some(ErrorCode::ConfigConflict) => {
+                                DaemonView::Status("settings changed elsewhere; try again".into())
+                            }
+                            Err(error) => {
+                                DaemonView::Error(format!("could not save {label}: {error}"))
+                            }
+                        };
+                        let _ = control_views.send(view);
                     }
                 }
             }
@@ -142,6 +161,13 @@ impl DaemonRequests {
     pub(super) fn goal(&self, action: SessionGoalAction) -> anyhow::Result<()> {
         self.control
             .send(Control::Goal(action))
+            .map_err(|_| anyhow::anyhow!("lost the connection to the rho daemon"))
+    }
+
+    /// Writes settings without waiting for the active turn.
+    pub(super) fn set_config(&self, params: ConfigSetParams, label: String) -> anyhow::Result<()> {
+        self.control
+            .send(Control::SetConfig { params, label })
             .map_err(|_| anyhow::anyhow!("lost the connection to the rho daemon"))
     }
 

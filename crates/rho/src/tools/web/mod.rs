@@ -52,24 +52,6 @@ pub(super) fn sdk_web_search(
         .then(|| SdkWebSearch::new(tool, max_output_bytes))
 }
 
-pub(crate) const WEB_SEARCH_TOOL_NAME: &str = "web_search";
-
-/// Hits the selected backend with a fixed query, independent of mode.
-pub(crate) async fn test_search_backend(
-    config: &crate::config::Config,
-) -> Result<usize, rho_tools::tool::ToolError> {
-    let items = search::run_search_query(
-        &util::http_client(),
-        "rho web search connection test",
-        1,
-        None,
-        None,
-        &search::SearchBackendConfig::from_config(config),
-    )
-    .await?;
-    Ok(items.len())
-}
-
 #[cfg(test)]
 pub(crate) fn access_tools(config: &crate::config::Config) -> WebSearch {
     access_tools_with_store(config, WebAccessStore::new())

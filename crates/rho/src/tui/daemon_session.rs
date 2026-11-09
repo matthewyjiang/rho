@@ -12,7 +12,10 @@
 //!
 //! The TUI prompts, cancels, steers, and withdraws steers through it
 //! (`daemon_turn`), and answers and holds input requests (`daemon_answers`);
-//! configures options through a background request queue. Quitting closes
+//! configures options through a background request queue. Once attached,
+//! it registers the `tui` client's settings and reads the daemon's
+//! (`daemon_settings`), whose changes then arrive with the session's views;
+//! settings writes bypass that queue. Quitting closes
 //! the connection, which detaches the session without cancelling its turn.
 //! A lagged attachment resumes after its last cursor, preserving the
 //! transcript for a tail replay or replacing it for a reset. A failed
@@ -55,6 +58,14 @@ impl DaemonSession {
     pub(in crate::tui) fn goal(
         &self,
         _action: rho_protocol::SessionGoalAction,
+    ) -> anyhow::Result<()> {
+        match *self {}
+    }
+
+    pub(in crate::tui) fn set_config(
+        &self,
+        _params: rho_protocol::ConfigSetParams,
+        _label: String,
     ) -> anyhow::Result<()> {
         match *self {}
     }
@@ -123,11 +134,12 @@ mod unix {
     use rho_protocol::ClientError;
     use rho_protocol::{
         methods::{
-            SessionAnswer, SessionAttach, SessionCancel, SessionHold, SessionNew, SessionSteer,
-            SessionUnsteer,
+            ConfigGet, ConfigRegister, ConfigSchemaMethod, SessionAnswer, SessionAttach,
+            SessionCancel, SessionHold, SessionNew, SessionSteer, SessionUnsteer,
         },
-        ClientEnvironment, ContentBlock, DetachReason, ErrorCode, InputAnswer, InputRequestId,
-        JobState, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
+        ClientEnvironment, ConfigChangedParams, ConfigGetParams, ConfigRegisterParams,
+        ConfigSchemaParams, ConfigSetParams, ContentBlock, DetachReason, ErrorCode, InputAnswer,
+        InputRequestId, JobState, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
         SessionCancelParams, SessionHoldParams, SessionId, SessionNewParams, SessionSetup,
         SessionSteerParams, SessionUnsteerParams, SteerId, UnsteerOutcome,
     };
@@ -138,6 +150,7 @@ mod unix {
         daemon_events::{DaemonEvents, DaemonView, Rest, TurnState},
         daemon_inputs::AnswerRefusal,
         daemon_requests::DaemonRequests,
+        daemon_settings::{tui_client, DaemonSettings, SettingsNamespace},
     };
     use crate::app::daemon_client::{Daemon, Link, Part, Routed, StreamPosition};
 
@@ -169,6 +182,8 @@ mod unix {
         setup: SessionSetup,
         workspace: PathBuf,
         routed: mpsc::UnboundedReceiver<Routed>,
+        /// `rho/config/changed` for the settings read at attach.
+        config_changes: mpsc::UnboundedReceiver<ConfigChangedParams>,
         events: DaemonEvents,
         /// Which of the attachment's events are its replay.
         position: StreamPosition,
@@ -228,6 +243,9 @@ mod unix {
             };
             let mut events = DaemonEvents::default();
             let (pending, replay_state) = begin_replay(&mut events, &response);
+            // Routed before the reads, so no change after them is dropped.
+            let (config_sender, config_changes) = mpsc::unbounded_channel();
+            daemon.route_config(config_sender);
             let mut session = Self {
                 position: StreamPosition::attached(&response),
                 daemon,
@@ -236,6 +254,7 @@ mod unix {
                 setup: params.setup,
                 workspace: response.workspace,
                 routed,
+                config_changes,
                 events,
                 replay_state,
                 pending,
@@ -243,10 +262,16 @@ mod unix {
                 requests: None,
                 reattach: None,
             };
-            session.requests = Some(DaemonRequests::new(
-                session.attached_link().await?,
-                session.id.clone(),
-            ));
+            let link = session.attached_link().await?;
+            // Settings that cannot be read leave `/config` with the
+            // session's own options; the session still opens.
+            session.pending.push(match load_settings(&link).await {
+                Ok(settings) => DaemonView::SettingsLoaded(Box::new(settings)),
+                Err(error) => {
+                    DaemonView::Error(format!("could not read the rho settings: {error:#}"))
+                }
+            });
+            session.requests = Some(DaemonRequests::new(link, session.id.clone()));
             Ok(session)
         }
 
@@ -298,6 +323,9 @@ mod unix {
                 Some(error) = self.requests.as_mut().expect("attached session has requests").views.recv() => {
                     return vec![error];
                 }
+                Some(changed) = self.config_changes.recv() => {
+                    return vec![DaemonView::SettingsChanged(Box::new(changed))];
+                }
             };
             let mut views = std::mem::take(&mut self.pending);
             self.read(first, &mut views);
@@ -312,6 +340,9 @@ mod unix {
                 while let Ok(error) = requests.views.try_recv() {
                     views.push(error);
                 }
+            }
+            while let Ok(changed) = self.config_changes.try_recv() {
+                views.push(DaemonView::SettingsChanged(Box::new(changed)));
             }
             if !self.ended && self.reattach.is_none() {
                 if let Ok(first) = self.routed.try_recv() {
@@ -439,6 +470,22 @@ mod unix {
                 .goal(action)
         }
 
+        /// Writes settings without waiting for the active turn; a refusal
+        /// arrives as a view, and the change itself as `SettingsChanged`.
+        pub(in crate::tui) fn set_config(
+            &self,
+            params: ConfigSetParams,
+            label: String,
+        ) -> anyhow::Result<()> {
+            if self.ended {
+                anyhow::bail!(LOST);
+            }
+            self.requests
+                .as_ref()
+                .expect("attached session has requests")
+                .set_config(params, label)
+        }
+
         /// Queue a change without waiting for the active turn to release it.
         pub(in crate::tui) fn configure(
             &self,
@@ -561,6 +608,37 @@ mod unix {
                 }
             }
         }
+    }
+
+    /// Registers the `tui` client's settings, then reads the agent schema
+    /// and both namespaces' values, which subscribes this connection to
+    /// their changes.
+    async fn load_settings(link: &Link) -> anyhow::Result<DaemonSettings> {
+        let tui_specs = crate::tui::client_settings::tui_setting_specs();
+        link.request::<ConfigRegister>(&ConfigRegisterParams {
+            client: tui_client(),
+            settings: tui_specs.clone(),
+        })
+        .await?;
+        let schema = link
+            .request::<ConfigSchemaMethod>(&ConfigSchemaParams {})
+            .await?;
+        let agent = link
+            .request::<ConfigGet>(&ConfigGetParams {
+                namespace: SettingsNamespace::Agent.wire(),
+            })
+            .await?;
+        let tui = link
+            .request::<ConfigGet>(&ConfigGetParams {
+                namespace: SettingsNamespace::Tui.wire(),
+            })
+            .await?;
+        Ok(DaemonSettings::new(
+            schema,
+            tui_specs,
+            agent.into(),
+            tui.into(),
+        ))
     }
 
     /// A tail keeps message/card state, but open prompts are rebuilt from

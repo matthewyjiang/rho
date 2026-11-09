@@ -7,7 +7,8 @@
 //!
 //! One task per connection drains its notifications in order and routes
 //! them: a session's events and detach to that session's route, a login's
-//! prompt and outcome to the login waiting on them. When the daemon closes
+//! prompt and outcome to the login waiting on them, and settings changes to
+//! the settings route. When the daemon closes
 //! the connection, every route hears [`Routed::Lost`], and the next request
 //! connects again.
 
@@ -20,8 +21,8 @@ use std::{
 };
 
 use rho_protocol::{
-    methods::Method, Client, ClientError, DaemonNotification, DetachReason, LoginId, LoginOutcome,
-    LoginPrompt, Notifications, Seq, SessionEvent, SessionId,
+    methods::Method, Client, ClientError, ConfigChangedParams, DaemonNotification, DetachReason,
+    LoginId, LoginOutcome, LoginPrompt, Notifications, Seq, SessionEvent, SessionId,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -73,6 +74,8 @@ pub(crate) enum LoginEvent {
 struct Routes {
     sessions: HashMap<SessionId, SessionRoute>,
     login: Option<mpsc::UnboundedSender<LoginEvent>>,
+    /// Where `rho/config/changed` goes, for the settings this process read.
+    config: Option<mpsc::UnboundedSender<ConfigChangedParams>>,
 }
 
 /// The daemon as this process reaches it.
@@ -158,6 +161,11 @@ impl Daemon {
     pub(crate) fn unroute_login(&self) {
         lock(&self.routes).login = None;
     }
+
+    /// Routes settings changes to `sender`, replacing an earlier route.
+    pub(crate) fn route_config(&self, sender: mpsc::UnboundedSender<ConfigChangedParams>) {
+        lock(&self.routes).config = Some(sender);
+    }
 }
 
 impl Link {
@@ -213,7 +221,9 @@ async fn route(
     // One step under the lock: a route installed after it belongs to the
     // next connection, which `link` opens only once this one is dead, so
     // this router never takes it.
-    let Routes { sessions, login } = {
+    let Routes {
+        sessions, login, ..
+    } = {
         let mut routes = lock(&routes);
         alive.store(false, Ordering::Release);
         std::mem::take(&mut *routes)
@@ -254,6 +264,12 @@ fn deliver(routes: &Mutex<Routes>, notification: DaemonNotification) {
                     login: params.login,
                     outcome: params.outcome,
                 });
+            }
+            return;
+        }
+        DaemonNotification::ConfigChanged(params) => {
+            if let Some(config) = &routes.config {
+                let _ = config.send(params);
             }
             return;
         }

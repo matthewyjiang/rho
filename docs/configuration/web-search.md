@@ -2,7 +2,7 @@
 
 Parent: [Configuration](/configuration). Tool behavior: [Web access](/tools-workspace/web-access).
 
-Choose **Tools → Web search** in `/config`. Mode, backend, and connection settings open a picker. Backend pages stay available in every mode. OpenAI and Exa pages show settings for both connections. Editing a backend does not select it. Changes during a turn apply to the next turn.
+Change these under `/config` → **Tools**, in the **Web search** section: the mode, the backend, each connection, and each endpoint. Editing a backend's endpoint does not select it. Changes apply to sessions opened afterwards.
 
 | Mode | Routing |
 | --- | --- |

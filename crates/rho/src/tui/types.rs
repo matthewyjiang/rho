@@ -6,7 +6,6 @@ use super::{
     approval::ApprovalComposer,
     chat_media::ChatMedia,
     commands::{self, CommandSpec},
-    config_editor::ConfigNumberInput,
     doctor_overlay,
     feed_image::FeedImage,
     inline_choice::InlineChoiceModal,
@@ -223,7 +222,6 @@ pub(super) enum ComposerMode {
     Input,
     Picker(UiPicker),
     SecretInput(SecretInput),
-    ConfigNumberInput(ConfigNumberInput),
     TextInput(super::text_input::TextInput),
     InteractivePending(PendingLoginComposer),
     InlineChoice(InlineChoiceModal),
@@ -260,7 +258,6 @@ impl ComposerMode {
             Self::Input => false,
             Self::Picker(_)
             | Self::SecretInput(_)
-            | Self::ConfigNumberInput(_)
             | Self::TextInput(_)
             | Self::InteractivePending(_)
             | Self::InlineChoice(_)
@@ -285,7 +282,6 @@ impl ComposerMode {
         match self {
             Self::Input | Self::Picker(_) => true,
             Self::SecretInput(_)
-            | Self::ConfigNumberInput(_)
             | Self::TextInput(_)
             | Self::InteractivePending(_)
             | Self::InlineChoice(_)

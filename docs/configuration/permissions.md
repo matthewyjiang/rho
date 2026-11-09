@@ -2,7 +2,7 @@
 
 Parent: [Configuration](/configuration).
 
-`permission_mode` decides whether Rho allows, classifies, denies, or asks before a security-sensitive tool capability. Set it with `/permissions`, `/config` → **Agent behavior**, or `[behavior].permission_mode`.
+`permission_mode` decides whether Rho allows, classifies, denies, or asks before a security-sensitive tool capability. Set it with `/permissions`, `/config` → **Agent** → **Permission mode** (the default for new sessions), or `[behavior].permission_mode`.
 
 Allowed values are `bypass`, `auto`, `allow_edits`, `plan`, and `supervised`. A missing value defaults to `bypass`. An unrecognized value is a configuration error. `allow-edits` is an alias for `allow_edits`.
 
@@ -38,17 +38,17 @@ The classifier has two stages. A fast low-reasoning screen answers `allow` or `e
 
 A denial returns a tool error with the chosen option's fixed reason, so the classifier model cannot pass its own text to the agent, and the run continues. After three consecutive denials, or twenty total, Rho opens the human approval prompt in the TUI, or fails closed in a headless run. A human decision clears both counts.
 
-Auto needs a classifier model. Rho does not pick one. `/config` and interactive startup open the picker when none is set. Headless `rho run` fails at startup without one. Escaping the startup picker falls back to Supervised.
+Auto needs a classifier model. Rho does not pick one. Interactive startup opens the picker when none is set; in `/config`, set **Permission classifier model** first. Headless `rho run` fails at startup without one. Escaping the startup picker falls back to Supervised.
 
 The classifier sees completed questionnaire answers next to the questions. Approving an action there covers that action, not unrelated ones. You do not need to repeat it in chat. Unanswered questions and defaults are not consent. Ordinary tool output stays out of the classifier transcript.
 
 Earlier tool calls appear in the transcript with each string argument cut to 500 characters. The call being classified stays whole. When the model catalog knows the classifier model's context window and the transcript still does not fit, the oldest earlier tool calls are left out first. User messages, questionnaire answers, and the pending request are never left out. If they alone do not fit, the classifier denies the request and reports the estimated tokens and the limit. When the served limit is smaller than the catalog window, such as a local Ollama `num_ctx`, set `usable_context_window` in [local model metadata](/configuration#local-model-metadata).
 
-Set the model under **Agent behavior** in `/config`, or as `[internal_agents.permission-classifier]`.
+Set the model under `/config` → **Agent** → **Permission classifier model**, or as `[internal_agents.permission-classifier]`.
 
 ### Screen model
 
-By default the classifier model answers the screen too, at low reasoning, sharing its prompt cache with the review. Another model can answer it instead: a decision model, which is faster, or another text model. Set it under **Agent behavior > Permission screen model** in `/config`, or as `[internal_agents.permission-classifier-screen]`. Turning on Auto from `/config` or `/permissions auto` offers the same picker after the classifier pick; Esc keeps the current screen model.
+By default the classifier model answers the screen too, at low reasoning, sharing its prompt cache with the review. Another model can answer it instead: a decision model, which is faster, or another text model. Set it as `[internal_agents.permission-classifier-screen]`, or with `/agents`.
 
 The picker lists three groups:
 
@@ -75,15 +75,15 @@ A decision model such as Cloudflare's Clef or TypeSafe's Jev answers a fixed que
 - **[TypeSafe](/providers/typesafe)**, which hosts Jev over the System One API. Sign in with `/login typesafe`.
 - **[OpenAI](/providers/openai)**, over the [Decisions API](https://developers.openai.com/api/docs/guides/decisions) at `/v1/decisions`, with the `openai` provider's API key. OpenAI's model list does not mark decision models, so the picker offers `gpt-6-luna`, the only one OpenAI serves today. The entry needs `kind = "decision"`, because an OpenAI entry without it is a text model.
 
-Rho discovers decision models after login and from **Refresh model lists** in `/config`, and caches them with the chat model lists. Cloudflare Workers AI also serves Clef, but it truncates every state to its first 2,048 tokens, which would cut off the pending request, so Rho does not use it.
+Rho discovers decision models after login and from `/refresh-models`, and caches them with the chat model lists. Cloudflare Workers AI also serves Clef, but it truncates every state to its first 2,048 tokens, which would cut off the pending request, so Rho does not use it.
 
-The `/config` row and `/doctor` warn when an entry's kind does not fit: a decision entry on a provider other than Ollama, TypeSafe, or OpenAI, a decision entry on a model its host did not list, or a text entry on a listed decision model that is not also listed as a chat model. Rho does not warn about a host that listed no decision models, since it has nothing to judge by. The picker lists decision models only on hosts with usable credentials, and a text entry without credentials for its auth stops headless `rho run` like any unusable entry.
+`/doctor` warns when an entry's kind does not fit: a decision entry on a provider other than Ollama, TypeSafe, or OpenAI, a decision entry on a model its host did not list, or a text entry on a listed decision model that is not also listed as a chat model. Rho does not warn about a host that listed no decision models, since it has nothing to judge by. The picker lists decision models only on hosts with usable credentials, and a text entry without credentials for its auth stops headless `rho run` like any unusable entry.
 
 The screen allows only when the model picks `allow` with probability at least its allow threshold, 95% by default. Anything else goes to the classifier model's review as before, including errors, so the decision model can skip a review but never deny. The hosts reject input over the model's context instead of truncating it: 16,384 tokens for Clef at Ollama's default `num_ctx`, about 32,500 on TypeSafe, and 922,000 for `gpt-6-luna` on OpenAI. So the screen reads its own transcript, fitted to about 10,500 estimated tokens on Ollama, 20,500 on TypeSafe, or 613,000 on OpenAI: the oldest earlier tool calls are left out first. A screen allow on that shorter transcript skips the review; user messages, questionnaire answers, and the pending request, which carry the user's intent, are never left out. When the screen escalates, the review reads the left-out calls, subject to its own transcript budget. If the user messages, questionnaire answers, and pending request alone do not fit, or the request body would pass Ollama's 64 KiB limit, the screen is skipped and the review decides. Run with `RHO_LOG=rho=warn` to log why.
 
 #### Allow threshold
 
-Set the threshold under **Agent behavior > Screen allow threshold** in `/config`, which appears when the screen is a decision model, or as `allow_threshold_percent`, a whole percent from 50 to 100. The screen asks two options, so a chosen `allow` is already at least 50%. A lower threshold skips more reviews; a higher one sends more requests to the review. A text screen reports no probabilities and ignores the setting. Changing the screen model keeps the threshold. `/doctor` reports the threshold in effect.
+Set the threshold as `allow_threshold_percent` in the screen model's table, a whole percent from 50 to 100. The screen asks two options, so a chosen `allow` is already at least 50%. A lower threshold skips more reviews; a higher one sends more requests to the review. A text screen reports no probabilities and ignores the setting. Changing the screen model keeps the threshold. `/doctor` reports the threshold in effect.
 
 ```toml
 [internal_agents.permission-classifier-screen]

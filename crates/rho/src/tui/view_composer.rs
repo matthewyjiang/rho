@@ -12,7 +12,6 @@ use super::{
     composer_layout::{content_width, prompt_width, PROMPT_PREFIX},
     composer_pointer::{ComposerChoice, ComposerHit},
     composer_vim::{normal_cursor, VimMode},
-    config_number_input_frame,
     copy_interaction::CopyHit,
     display_width,
     divider::{labeled_divider_line, DividerCaption},
@@ -88,7 +87,6 @@ impl App {
         };
         match self.input_ui.composer_mut() {
             ComposerMode::SecretInput(input) => input.editor.retain_window(window),
-            ComposerMode::ConfigNumberInput(input) => input.editor.retain_window(window),
             ComposerMode::TextInput(input) => input.editor.retain_window(window),
             ComposerMode::TranscriptSearch(search) => search.editor.retain_window(window),
             ComposerMode::Input
@@ -114,7 +112,6 @@ impl App {
             | ComposerMode::InlineChoice(_)
             | ComposerMode::TranscriptSearch(_) => Theme::input_prompt(),
             ComposerMode::SecretInput(_)
-            | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
             | ComposerMode::InteractivePending(_) => Theme::dim(),
         };
@@ -239,7 +236,6 @@ impl App {
                 }
             }
             ComposerMode::SecretInput(secret) => secret_input_frame(secret, width),
-            ComposerMode::ConfigNumberInput(input) => config_number_input_frame(input, width),
             ComposerMode::TextInput(input) => text_input_frame(input, width),
             ComposerMode::TranscriptSearch(search) => transcript_search_frame(search, width),
             ComposerMode::InteractivePending(pending) => {

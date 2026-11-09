@@ -106,11 +106,7 @@ pub(super) enum InlineChoicePending {
     DeleteWorkflowRun {
         run_id: String,
     },
-    PromptHistoryLimit {
-        new_limit: usize,
-    },
     ClearPromptHistory,
-    TestWebSearch,
 }
 
 impl InlineChoiceModal {

@@ -7,12 +7,10 @@ use rho_protocol::{ModelRef, SessionChange, SessionOptions};
 use rho_providers::model::favorites::CycleDirection;
 
 use super::{
-    config_picker, App, CommandId, CommandInvocation, ComposerMode, Entry, PickerBadge,
-    PickerBadgeTone, PickerItem, UiPicker,
+    config_picker, settings_screen::ConfigPage, App, CommandId, CommandInvocation, ComposerMode,
+    Entry, PickerBadge, PickerBadgeTone, PickerItem, UiPicker,
 };
 use crate::{app::reasoning_from_wire, permission::PermissionMode};
-
-const FAST_MODE: &str = "daemon_fast_mode";
 
 /// Resolve only advertised identities (or their unique labels). Local aliases,
 /// credentials and catalog capabilities are not the daemon's choices.
@@ -110,8 +108,7 @@ impl App {
         .map(|(metadata, _)| metadata);
         self.daemon_options = Some(options);
         let refresh = matches!(self.input_ui.composer(), ComposerMode::Picker(picker)
-            if picker.is_conversation_model() || matches!(picker.config_page(),
-                Some(config_picker::ConfigPage::SessionOptions | config_picker::ConfigPage::SessionPermissionMode)));
+            if picker.is_conversation_model() || picker.config_page().is_some());
         if refresh {
             let ComposerMode::Picker(mut stale) = self.input_ui.take_composer() else {
                 unreachable!();
@@ -321,11 +318,15 @@ impl App {
                 self.execute_daemon_goal_command(&invocation.args);
                 Ok(())
             }
+            CommandId::Advisor => {
+                self.execute_daemon_advisor_command(&invocation.args);
+                Ok(())
+            }
             _ => unreachable!("only daemon option commands reach option dispatch"),
         }
     }
 
-    fn set_daemon_permission(&mut self, mode: PermissionMode) -> anyhow::Result<()> {
+    pub(super) fn set_daemon_permission(&mut self, mode: PermissionMode) -> anyhow::Result<()> {
         if self
             .daemon_options
             .as_ref()
@@ -341,7 +342,7 @@ impl App {
         }
     }
 
-    fn set_daemon_fast(&mut self, args: &str) -> anyhow::Result<()> {
+    pub(super) fn set_daemon_fast(&mut self, args: &str) -> anyhow::Result<()> {
         let current = self
             .daemon_options
             .as_ref()
@@ -388,72 +389,7 @@ impl App {
                 .and_then(|mode| mode.parse::<PermissionMode>().ok())
                 .is_some_and(|mode| options.permission_mode.available.contains(&mode.into()))
         });
-        Some(picker.with_config_page(config_picker::ConfigPage::SessionPermissionMode))
-    }
-
-    pub(super) fn open_daemon_config(&mut self) {
-        if let Some(picker) = self.daemon_config_picker() {
-            self.input_ui.set_composer(ComposerMode::Picker(picker));
-        }
-    }
-
-    pub(super) fn daemon_config_picker(&self) -> Option<UiPicker> {
-        let options = self.daemon_options.as_ref()?;
-        let mut items = vec![PickerItem::new(
-            "Model".into(),
-            config_picker::CONVERSATION_MODEL_VALUE.into(),
-        )];
-        if options.reasoning.is_some() {
-            items.push(PickerItem::new(
-                "Reasoning".into(),
-                config_picker::REASONING_VALUE.into(),
-            ));
-        }
-        if options.fast_mode.is_some() {
-            items.push(PickerItem::new("Fast mode".into(), FAST_MODE.into()));
-        }
-        items.push(PickerItem::new(
-            "Permission mode".into(),
-            config_picker::PERMISSION_MODE_VALUE.into(),
-        ));
-        items.push(PickerItem::new(
-            "Theme".into(),
-            config_picker::THEME_VALUE.into(),
-        ));
-        Some(
-            UiPicker::config("Session options", items)
-                .with_config_page(config_picker::ConfigPage::SessionOptions),
-        )
-    }
-
-    pub(super) fn commit_daemon_config(&mut self, value: &str) -> anyhow::Result<()> {
-        match value {
-            // Child pages stack on the settings page, so Esc returns to it.
-            config_picker::CONVERSATION_MODEL_VALUE => {
-                if let Some(picker) = self.daemon_model_picker() {
-                    self.open_child_picker(picker);
-                }
-            }
-            config_picker::REASONING_VALUE => return self.cycle_daemon_reasoning(),
-            FAST_MODE => return self.set_daemon_fast(""),
-            config_picker::PERMISSION_MODE_VALUE => {
-                if let Some(picker) = self.daemon_permission_picker() {
-                    self.open_child_picker(picker);
-                }
-            }
-            config_picker::THEME_VALUE => return self.open_theme_picker_from_config(),
-            _ => {
-                if let Some(mode) = value.strip_prefix(config_picker::PERMISSION_MODE_PREFIX) {
-                    self.set_daemon_permission(mode.parse()?)?;
-                    if !self.pop_picker_level() {
-                        self.input_ui.set_composer(ComposerMode::Input);
-                    }
-                } else {
-                    self.daemon_command_unavailable("config");
-                }
-            }
-        }
-        Ok(())
+        Some(picker.with_config_page(ConfigPage::SessionPermissionMode))
     }
 }
 

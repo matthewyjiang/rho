@@ -8,14 +8,10 @@
 pub(in crate::tui) enum PickerAction {
     SelectModel,
     SelectInternalAgentModel,
-    /// Advisor reasoning level, offered after `/advisor model` picks a model.
-    SelectAdvisorReasoning,
     LoginGroup,
     LoginProvider,
     LoginFlow(Box<crate::tui::login_flow::LoginFlowTarget>),
     LogoutProvider,
-    SwitchAuthMode,
-    RefreshModelList,
     InsertSkillCommand,
     /// Prompt history search; confirming recalls the prompt into the composer.
     RecallPrompt,
@@ -63,9 +59,6 @@ pub(in crate::tui) enum PickerTurn {
 pub(in crate::tui) enum ConfigParentRow {
     ConversationModel,
     Theme,
-    LogoutProvider,
-    SwitchAuthMode,
-    RefreshModelList,
 }
 
 /// What confirming a row does while a model turn is running.
@@ -90,13 +83,10 @@ impl PickerAction {
             // Prompts are prose and code: `vec.push(` must search, not fail
             // as a regex, and recency order must survive filtering.
             PickerAction::RecallPrompt => PickerFilterMode::Literal,
-            PickerAction::SelectAdvisorReasoning
-            | PickerAction::LoginGroup
+            PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LoginFlow(_)
             | PickerAction::LogoutProvider
-            | PickerAction::SwitchAuthMode
-            | PickerAction::RefreshModelList
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
             | PickerAction::ViewMcpServers
@@ -122,17 +112,14 @@ impl PickerAction {
             | PickerAction::ViewMcpServers
             | PickerAction::ViewAgent
             | PickerAction::ViewDiff => "close",
-            PickerAction::RefreshModelList => "refresh",
             PickerAction::CopyOutput => "copy",
             PickerAction::SelectModel
             | PickerAction::SelectInternalAgentModel
-            | PickerAction::SelectAdvisorReasoning
             | PickerAction::SelectTheme
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LoginFlow(_)
             | PickerAction::LogoutProvider
-            | PickerAction::SwitchAuthMode
             | PickerAction::InsertSkillCommand
             | PickerAction::RecallPrompt
             | PickerAction::ResumeSession
@@ -189,9 +176,6 @@ impl PickerAction {
                     "agent editing is unavailable while a model turn is running",
                 )
             }
-            PickerAction::SelectAdvisorReasoning => DuringTurnSelect::Unavailable(
-                "advisor reasoning cannot change while a model turn is running",
-            ),
             PickerAction::ResumeSession
             | PickerAction::ManageSessions
             | PickerAction::SelectTreeNode
@@ -203,9 +187,7 @@ impl PickerAction {
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LoginFlow(_)
-            | PickerAction::LogoutProvider
-            | PickerAction::SwitchAuthMode
-            | PickerAction::RefreshModelList => DuringTurnSelect::Unavailable(
+            | PickerAction::LogoutProvider => DuringTurnSelect::Unavailable(
                 "that picker action is unavailable while a model turn is running",
             ),
         }
@@ -215,11 +197,8 @@ impl PickerAction {
         match self {
             PickerAction::SelectModel => Some(ConfigParentRow::ConversationModel),
             PickerAction::SelectTheme => Some(ConfigParentRow::Theme),
-            PickerAction::LogoutProvider => Some(ConfigParentRow::LogoutProvider),
-            PickerAction::SwitchAuthMode => Some(ConfigParentRow::SwitchAuthMode),
-            PickerAction::RefreshModelList => Some(ConfigParentRow::RefreshModelList),
-            PickerAction::SelectInternalAgentModel
-            | PickerAction::SelectAdvisorReasoning
+            PickerAction::LogoutProvider
+            | PickerAction::SelectInternalAgentModel
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LoginFlow(_)

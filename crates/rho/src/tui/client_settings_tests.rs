@@ -142,3 +142,46 @@ fn editor_and_jump_shortcut_conflict_policy() {
         );
     }
 }
+
+// Covers: the values a daemon serves for the `tui` client become the TUI's
+// settings through the same codec as the file; the local theme stays, and a
+// value of the wrong kind keeps the current setting instead of a default.
+// Owner: TUI settings
+#[test]
+fn served_client_values_replace_client_settings() {
+    use rho_protocol::{SettingEntry, SettingKey, SettingValue, ValueSource};
+
+    let current = TuiSettings {
+        theme: "nord".into(),
+        max_tool_output_lines: 25,
+        ..TuiSettings::default()
+    };
+    let served = |value| SettingEntry {
+        value: Some(value),
+        source: ValueSource::Global,
+    };
+    let values = [
+        ("zen_mode", served(SettingValue::Bool(true))),
+        (
+            "output_streaming",
+            served(SettingValue::Text("paragraph".into())),
+        ),
+        ("editing_mode", served(SettingValue::Text("vim".into()))),
+        ("prompt_history_limit", served(SettingValue::Integer(7))),
+        // The wrong kind for an integer.
+        (
+            "max_tool_output_lines",
+            served(SettingValue::Text("many".into())),
+        ),
+    ]
+    .into_iter()
+    .map(|(key, entry)| (SettingKey::new(key), entry))
+    .collect();
+
+    let mut expected = current.clone();
+    expected.zen_mode = true;
+    expected.output_streaming = StreamingMode::Paragraph;
+    expected.keybindings.editing_mode = EditingMode::Vim;
+    expected.prompt_history_limit = 7;
+    assert_eq!(current.with_client_values(&values), expected);
+}

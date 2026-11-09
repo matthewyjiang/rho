@@ -10,7 +10,7 @@ use futures_util::FutureExt;
 use crate::prompt_history::{PromptHistoryError, PromptHistoryLoadHandle, PromptHistoryStore};
 
 use super::{
-    config_picker, App, ComposerMode, ConfigNumberInput, ConfigNumberKey, Entry, InlineChoice,
+    config_picker::CLEAR_PROMPT_HISTORY_VALUE, App, ComposerMode, Entry, InlineChoice,
     InlineChoiceModal, InlineChoiceOption, InlineChoicePending, UiPicker,
 };
 
@@ -41,8 +41,7 @@ enum StoreReply {
 }
 
 enum FollowUp {
-    ProposeLimit { new_limit: usize },
-    FinishLimit { new_limit: usize },
+    FinishLimit,
     PromptClear,
     FinishClear,
 }
@@ -319,26 +318,6 @@ impl App {
         }
     }
 
-    pub(super) fn open_prompt_history_limit_editor(&mut self) -> anyhow::Result<()> {
-        self.input_ui
-            .set_composer(ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
-                ConfigNumberKey::PromptHistoryLimit,
-                self.info.services.settings.prompt_history_limit,
-            )));
-        self.set_status("edit prompt history limit");
-        Ok(())
-    }
-
-    pub(super) fn propose_prompt_history_limit(&mut self, new_limit: usize) -> anyhow::Result<()> {
-        if !self.prompt_history.request_count() {
-            self.set_status("prompt history is busy");
-            return Ok(());
-        }
-        self.prompt_history.follow_up = Some(FollowUp::ProposeLimit { new_limit });
-        self.set_status("reading prompt history");
-        Ok(())
-    }
-
     pub(super) fn prompt_clear_prompt_history(&mut self) -> anyhow::Result<()> {
         if !self.prompt_history.request_count() {
             self.set_status("prompt history is busy");
@@ -380,49 +359,24 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn submit_prompt_history_limit_choice(
-        &mut self,
-        value: &str,
-        new_limit: usize,
-    ) -> anyhow::Result<()> {
-        if value != CONFIRM_VALUE {
-            return self
-                .open_main_config_picker_selected(config_picker::PROMPT_HISTORY_LIMIT_VALUE);
-        }
-        self.apply_prompt_history_limit(new_limit)
-    }
-
     pub(super) fn submit_clear_prompt_history_choice(&mut self, value: &str) -> anyhow::Result<()> {
         if value != CONFIRM_VALUE {
-            return self
-                .open_main_config_picker_selected(config_picker::CLEAR_PROMPT_HISTORY_VALUE);
+            self.reopen_config_root(CLEAR_PROMPT_HISTORY_VALUE);
+            return Ok(());
         }
         self.clear_prompt_history()
     }
 
-    fn apply_prompt_history_limit(&mut self, new_limit: usize) -> anyhow::Result<()> {
-        // Lasts until Rho exits; `clients/tui.toml` is not written.
-        self.info.services.settings.prompt_history_limit = new_limit;
+    /// Keeps at most `new_limit` prompts, as the `tui` client setting
+    /// says; `0` stops saving them.
+    pub(super) fn apply_prompt_history_limit(&mut self, new_limit: usize) {
         self.prompt_history.set_limit(new_limit);
         if new_limit > 0 {
             self.input_ui.truncate_history_to_newest(new_limit);
             if self.prompt_history.request_enforce(new_limit) {
-                self.prompt_history.follow_up = Some(FollowUp::FinishLimit { new_limit });
-                self.set_status("updating prompt history");
-                return Ok(());
+                self.prompt_history.follow_up = Some(FollowUp::FinishLimit);
             }
         }
-        self.finish_prompt_history_limit(new_limit)
-    }
-
-    fn finish_prompt_history_limit(&mut self, new_limit: usize) -> anyhow::Result<()> {
-        self.open_main_config_picker_selected(config_picker::PROMPT_HISTORY_LIMIT_VALUE)?;
-        self.set_status(if new_limit == 0 {
-            "prompt history saving disabled".into()
-        } else {
-            format!("prompt history limit set to {new_limit}")
-        });
-        Ok(())
     }
 
     fn clear_prompt_history(&mut self) -> anyhow::Result<()> {
@@ -431,7 +385,7 @@ impl App {
             self.insert_entry(&Entry::Error(
                 "could not clear prompt history: writer is busy".into(),
             ));
-            self.open_main_config_picker_selected(config_picker::CLEAR_PROMPT_HISTORY_VALUE)?;
+            self.reopen_config_root(CLEAR_PROMPT_HISTORY_VALUE);
             self.set_status("clear prompt history failed");
             return Ok(());
         }
@@ -449,37 +403,30 @@ impl App {
         }
         let follow_up = self.prompt_history.follow_up.take();
         let result = match (follow_up, reply) {
-            (Some(FollowUp::ProposeLimit { new_limit }), StoreReply::Count(result)) => {
-                self.finish_propose_prompt_history_limit(new_limit, result)
-            }
             (Some(FollowUp::PromptClear), StoreReply::Count(result)) => {
                 self.finish_prompt_clear_prompt_history(result)
             }
-            (Some(FollowUp::FinishLimit { new_limit }), StoreReply::Done(result)) => {
+            (Some(FollowUp::FinishLimit), StoreReply::Done(result)) => {
                 if let Err(error) = result {
                     self.insert_entry(&Entry::Error(format!(
                         "could not trim prompt history: {error}"
                     )));
                 }
-                self.finish_prompt_history_limit(new_limit)
+                Ok(())
             }
             (Some(FollowUp::FinishClear), StoreReply::Done(result)) => match result {
                 Ok(()) => {
-                    let done = self.open_main_config_picker_selected(
-                        config_picker::CLEAR_PROMPT_HISTORY_VALUE,
-                    );
+                    self.reopen_config_root(CLEAR_PROMPT_HISTORY_VALUE);
                     self.set_status("prompt history cleared");
-                    done
+                    Ok(())
                 }
                 Err(error) => {
                     self.insert_entry(&Entry::Error(format!(
                         "could not clear prompt history: {error}"
                     )));
-                    let done = self.open_main_config_picker_selected(
-                        config_picker::CLEAR_PROMPT_HISTORY_VALUE,
-                    );
+                    self.reopen_config_root(CLEAR_PROMPT_HISTORY_VALUE);
                     self.set_status("clear prompt history failed");
-                    done
+                    Ok(())
                 }
             },
             (_, _) => {
@@ -493,53 +440,6 @@ impl App {
         true
     }
 
-    fn finish_propose_prompt_history_limit(
-        &mut self,
-        new_limit: usize,
-        stored: Result<usize, PromptHistoryError>,
-    ) -> anyhow::Result<()> {
-        let stored = match stored {
-            Ok(count) => count,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not read prompt history: {error}"
-                )));
-                self.open_main_config_picker_selected(config_picker::PROMPT_HISTORY_LIMIT_VALUE)?;
-                self.set_status("prompt history unavailable");
-                return Ok(());
-            }
-        };
-        if new_limit > 0 && stored > new_limit {
-            let dropped = stored - new_limit;
-            self.prompt_prompt_history_choice(PromptHistoryChoice {
-                title: format!("Keep only {new_limit} prompts?"),
-                description: format!(
-                    "This permanently deletes {dropped} older saved prompt{}.",
-                    if dropped == 1 { "" } else { "s" }
-                ),
-                confirm_label: "Delete older prompts",
-                confirm_detail: "This cannot be undone",
-                cancel_label: "Keep the current saved history",
-                pending: InlineChoicePending::PromptHistoryLimit { new_limit },
-                status: "confirm prompt history limit",
-            })
-        } else if new_limit == 0 && stored > 0 {
-            self.prompt_prompt_history_choice(PromptHistoryChoice {
-                title: "Stop saving prompt history?".into(),
-                description:
-                    "New prompts will not be stored. Existing history is kept until you clear it."
-                        .into(),
-                confirm_label: "Disable saving",
-                confirm_detail: "Existing prompts stay on disk",
-                cancel_label: "Keep saving prompts",
-                pending: InlineChoicePending::PromptHistoryLimit { new_limit },
-                status: "confirm disable prompt history",
-            })
-        } else {
-            self.apply_prompt_history_limit(new_limit)
-        }
-    }
-
     fn finish_prompt_clear_prompt_history(
         &mut self,
         stored: Result<usize, PromptHistoryError>,
@@ -550,7 +450,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not read prompt history: {error}"
                 )));
-                self.open_main_config_picker_selected(config_picker::CLEAR_PROMPT_HISTORY_VALUE)?;
+                self.reopen_config_root(CLEAR_PROMPT_HISTORY_VALUE);
                 self.set_status("prompt history unavailable");
                 return Ok(());
             }

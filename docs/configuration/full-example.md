@@ -117,7 +117,7 @@ The interactive TUI keeps its own settings at the top level of `~/.rho/clients/t
 ```toml
 show_reasoning_output = true
 zen_mode = false
-output_streaming = "live" # live, paragraph, off; /config → Appearance → Output streaming
+output_streaming = "live" # live, paragraph, off; /config → Display → Output streaming
 max_tool_output_lines = 10
 prompt_history_limit = 1000 # 0 disables saving; at most 10000
 cache_miss_notices = false

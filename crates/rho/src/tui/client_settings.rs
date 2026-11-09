@@ -1,18 +1,22 @@
-//! Settings the interactive TUI owns, read once at startup.
+//! Settings the interactive TUI owns.
 //!
 //! `~/.rho/clients/tui.toml` holds the `tui` client's settings, declared in
-//! [`TUI_SETTINGS`] with the same mechanics as the agent registry.
-//! `~/.rho/tui.toml` holds the theme and `[keybindings]` chords, which stay
-//! hand-edited. Missing files are the defaults; neither is written here, so
-//! a toggle made in a running TUI lasts until it exits.
+//! [`TUI_SETTINGS`] with the same mechanics as the agent registry. Following
+//! a daemon session, the TUI registers them with the daemon, which stores
+//! them there and serves them back (see `daemon_settings`); in process, the
+//! file is read once at startup and never written. `~/.rho/tui.toml` holds
+//! the theme and `[keybindings]` chords, which stay hand-edited. Missing
+//! files are the defaults.
 
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
+
+use rho_protocol::{SettingChange, SettingEntry, SettingKey, SettingSpec};
 
 use serde::Deserialize;
 
 use crate::config::{
-    any_value, load_settings, unknown_keys, AnySetting, Apply, ConfigDocument, ConfigError,
-    IntegerSpec, Setting, SettingMeta, StreamingMode,
+    any_value, load_settings, unknown_keys, write_changes, AnySetting, Apply, ConfigDocument,
+    ConfigError, IntegerSpec, Setting, SettingMeta, StreamingMode,
 };
 use crate::keybindings::{EditingMode, Keybindings};
 
@@ -114,6 +118,35 @@ impl TuiSettings {
         }
         Ok(settings)
     }
+}
+
+impl TuiSettings {
+    /// These settings with every `tui` client setting taken from `values`,
+    /// as the daemon serves them; the theme and chords stay. A value the
+    /// codec refuses keeps this one's.
+    pub(crate) fn with_client_values(&self, values: &BTreeMap<SettingKey, SettingEntry>) -> Self {
+        let changes = values
+            .iter()
+            .filter_map(|(key, entry)| {
+                Some(SettingChange::Set {
+                    key: key.clone(),
+                    value: entry.value.clone()?,
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut doc = ConfigDocument::default();
+        // A refused change leaves its key out of `doc`, so it keeps this
+        // one's value below.
+        let _ = write_changes(&mut doc, &tui_setting_specs(), &changes);
+        let mut settings = self.clone();
+        load_settings(TUI_SETTINGS, &doc, &mut settings, &mut Vec::new());
+        settings
+    }
+}
+
+/// The `tui` client's settings, as the TUI registers them with the daemon.
+pub(crate) fn tui_setting_specs() -> Vec<SettingSpec> {
+    TUI_SETTINGS.iter().map(|setting| setting.spec()).collect()
 }
 
 /// `~/.rho/tui.toml`.

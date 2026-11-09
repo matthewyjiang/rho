@@ -1,10 +1,7 @@
-//! Apply saved compaction settings without replacing an in-flight compactor.
+//! Apply saved compaction settings without replacing an in-flight compactor,
+//! once `/agents` changes the compaction model.
 
 use super::{App, InteractiveRuntime};
-
-#[cfg(test)]
-#[path = "compaction_config_tests.rs"]
-mod tests;
 
 impl App {
     /// Coalesce edits during a run or compact; apply before the next idle check
