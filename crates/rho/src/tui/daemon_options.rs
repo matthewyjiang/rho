@@ -12,8 +12,6 @@ use super::{
 };
 use crate::{app::reasoning_from_wire, permission::PermissionMode};
 
-use super::daemon_requests::setting_name;
-
 const FAST_MODE: &str = "daemon_fast_mode";
 
 /// Resolve only advertised identities (or their unique labels). Local aliases,
@@ -35,6 +33,18 @@ fn model_choice(options: &rho_protocol::ModelOptions, reference: &str) -> anyhow
         [choice] => Ok(choice.model.clone()),
         [] => anyhow::bail!("model '{reference}' is not offered by the daemon session"),
         _ => anyhow::bail!("model '{reference}' is ambiguous; use provider/model"),
+    }
+}
+
+/// The setting `change` changes, as an error names it.
+pub(super) fn setting_name(change: &SessionChange) -> &'static str {
+    match change {
+        SessionChange::Model { .. } => "model",
+        SessionChange::Reasoning { .. } => "reasoning level",
+        SessionChange::FastMode { .. } => "fast mode",
+        SessionChange::PermissionMode { .. } => "permission mode",
+        // `SessionChange` is non-exhaustive; the TUI sends only the above.
+        _ => "session setting",
     }
 }
 

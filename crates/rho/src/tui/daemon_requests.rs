@@ -14,20 +14,8 @@ use rho_protocol::{
 };
 use tokio::sync::{mpsc, oneshot};
 
-use super::daemon_events::DaemonView;
+use super::{daemon_events::DaemonView, daemon_options::setting_name};
 use crate::app::daemon_client::Link;
-
-/// The setting `change` changes, as an error names it.
-pub(super) fn setting_name(change: &SessionChange) -> &'static str {
-    match change {
-        SessionChange::Model { .. } => "model",
-        SessionChange::Reasoning { .. } => "reasoning level",
-        SessionChange::FastMode { .. } => "fast mode",
-        SessionChange::PermissionMode { .. } => "permission mode",
-        // `SessionChange` is non-exhaustive; the TUI sends only the above.
-        _ => "session setting",
-    }
-}
 
 enum Request {
     Configure(SessionChange),
