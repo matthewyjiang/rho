@@ -17,7 +17,7 @@ fn number_inputs_clamp_to_named_max() {
         (
             ConfigNumberKey::PromptHistoryLimit,
             "50000",
-            crate::config::MAX_PROMPT_HISTORY_LIMIT,
+            crate::tui::client_settings::MAX_PROMPT_HISTORY_LIMIT,
         ),
     ] {
         let mut input = ConfigNumberInput::new(key, 1);
@@ -70,12 +70,13 @@ fn editor_cursor_navigation_is_unicode_safe() {
     assert_eq!(editor.cursor, 3);
 }
 
-// Covers: toggling a config flag must persist the flipped value for the next session.
+// Covers: toggling an agent setting must persist the flipped value for the
+// next session, while a client setting changes only the running TUI.
 // Owner: config editor
 #[test]
-fn toggles_persist_for_the_next_session() {
+fn toggles_persist_agent_settings_and_keep_client_settings_live() {
     type ReadFlag = fn(&crate::config::Config) -> bool;
-    let cases: [(&str, ConfigToggle, bool, ReadFlag); 8] = [
+    let agent_cases: [(&str, ConfigToggle, bool, ReadFlag); 3] = [
         (
             "workspace rewind",
             ConfigToggle::WorkspaceRewind,
@@ -89,54 +90,65 @@ fn toggles_persist_for_the_next_session() {
             |config| config.enable_subagents,
         ),
         (
-            "cache miss notices",
-            ConfigToggle::CacheMissNotices,
-            true,
-            |config| config.cache_miss_notices,
-        ),
-        (
-            "header hints",
-            ConfigToggle::ShowHeaderHints,
-            false,
-            |config| config.show_header_hints,
-        ),
-        (
-            "notifications",
-            ConfigToggle::Notifications,
-            false,
-            |config| config.notifications,
-        ),
-        ("zen mode", ConfigToggle::ZenMode, true, |config| {
-            config.zen_mode
-        }),
-        (
             "xai image generation",
             ConfigToggle::XaiImageGeneration,
             false,
             |config| config.xai_image_generation,
         ),
-        ("vim mode", ConfigToggle::VimMode, true, |config| {
-            config.keybindings.editing_mode == crate::keybindings::EditingMode::Vim
-        }),
     ];
-    for (case, key, expected, persisted) in cases {
+    for (case, key, expected, persisted) in agent_cases {
         let dir = tempfile::tempdir().unwrap();
         let repository = ConfigRepository::new(Some(dir.path().join("config.toml")));
+        let mut settings = TuiSettings::default();
 
-        assert_eq!(toggle(&repository, key).unwrap(), expected, "{case}");
+        assert_eq!(
+            toggle(&repository, &mut settings, key).unwrap(),
+            expected,
+            "{case}"
+        );
         assert_eq!(persisted(&repository.load().unwrap()), expected, "{case}");
+        assert_eq!(settings, TuiSettings::default(), "{case}");
     }
-}
 
-#[test]
-fn editor_preserves_legacy_web_search_key_when_store_is_unavailable() {
-    let store_error = rho_providers::credentials::CredentialError::StoreUnavailable("test".into());
+    type ReadClient = fn(&TuiSettings) -> bool;
+    let client_cases: [(&str, ConfigToggle, bool, ReadClient); 5] = [
+        (
+            "cache miss notices",
+            ConfigToggle::CacheMissNotices,
+            true,
+            |settings| settings.cache_miss_notices,
+        ),
+        (
+            "header hints",
+            ConfigToggle::ShowHeaderHints,
+            false,
+            |settings| settings.show_header_hints,
+        ),
+        (
+            "notifications",
+            ConfigToggle::Notifications,
+            false,
+            |settings| settings.notifications,
+        ),
+        ("zen mode", ConfigToggle::ZenMode, true, |settings| {
+            settings.zen_mode
+        }),
+        ("vim mode", ConfigToggle::VimMode, true, |settings| {
+            settings.keybindings.editing_mode == crate::keybindings::EditingMode::Vim
+        }),
+    ];
+    for (case, key, expected, live) in client_cases {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let repository = ConfigRepository::new(Some(path.clone()));
+        let mut settings = TuiSettings::default();
 
-    let (value, error) = resolve_web_search_editor_value(Err(store_error), Some("legacy-key"));
-
-    assert_eq!(value.as_deref(), Some("legacy-key"));
-    assert!(matches!(
-        error,
-        Some(rho_providers::credentials::CredentialError::StoreUnavailable(message)) if message == "test"
-    ));
+        assert_eq!(
+            toggle(&repository, &mut settings, key).unwrap(),
+            expected,
+            "{case}"
+        );
+        assert_eq!(live(&settings), expected, "{case}");
+        assert!(!path.exists(), "{case}");
+    }
 }

@@ -234,7 +234,7 @@ Scenarios launch Rho with:
 - temporary `HOME` and `--config`
 - `RHO_TUI_TEST_MODE=matrix` (debug builds only)
 - host terminal markers stripped (`TMUX`, `TERM_PROGRAM`, Herdr vars, editor markers, and related identity env)
-- `check_for_updates = false` and `web_search_provider = "disabled"` in the isolated config
+- `web_search.mode = "off"` in the isolated `config.toml` and `check_for_updates = false` in its `clients/tui.toml`
 
 ### When to use Herdr instead
 

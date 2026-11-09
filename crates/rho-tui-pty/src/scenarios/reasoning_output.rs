@@ -49,8 +49,10 @@ pub(super) const REASONING_OUTPUT_RETROACTIVE_SCENARIO: Scenario = Scenario::new
 
 fn setup_hidden_reasoning(home: &IsolatedHome) -> Result<()> {
     writeln!(
-        OpenOptions::new().append(true).open(&home.config_path)?,
-        "\n[display]\nshow_reasoning_output = false\nzen_mode = false"
+        OpenOptions::new()
+            .append(true)
+            .open(&home.client_settings_path)?,
+        "show_reasoning_output = false\nzen_mode = false"
     )?;
     Ok(())
 }

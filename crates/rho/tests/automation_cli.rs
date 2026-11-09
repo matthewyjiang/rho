@@ -39,14 +39,14 @@ fn applies_runtime_configuration_tools_and_workspace_instructions() {
     std::fs::write(root.path().join("AGENTS.md"), "project automation rules").unwrap();
     std::fs::write(
         root.path().join("config.toml"),
-        r#"provider = "xai"
+        r#"[model]
+provider = "xai"
 model = "grok-fixture"
 auth = "xai-oauth"
 reasoning = "high"
 
 [web_search]
-hosted = false
-provider = "disabled"
+mode = "off"
 "#,
     )
     .unwrap();
@@ -145,7 +145,7 @@ fn applies_configured_tool_output_limit() {
     std::fs::write(root.path().join("large.txt"), "abcdefgh").unwrap();
     std::fs::write(
         root.path().join("config.toml"),
-        "max_output_bytes = 5\nweb_search.mode = \"off\"\n",
+        "web_search.mode = \"off\"\n\n[output]\nmax_output_bytes = 5\n",
     )
     .unwrap();
 
@@ -595,7 +595,7 @@ fn output_run_persists_agent_identity() {
     let root = TempDir::new().unwrap();
     std::fs::write(
         root.path().join("config.toml"),
-        "provider = \"openai\"\nmodel = \"gpt-5.5\"\n",
+        "[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\n",
     )
     .unwrap();
     let output_file = root.path().join("result.json");

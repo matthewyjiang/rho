@@ -61,7 +61,7 @@ auth = "api-key"
         let saved = set_backend(CredentialStoreBackend::File, Some(path.clone())).unwrap();
         assert_eq!(saved, path);
 
-        let config = Config::load_settings_only(path.clone()).unwrap();
+        let config = Config::load(Some(path.clone())).unwrap();
         assert_eq!(config.credential_store, Some(CredentialStoreBackend::File));
         let text = fs::read_to_string(saved).unwrap();
         assert!(text.contains("credential_store = \"file\""));
@@ -150,7 +150,7 @@ auth = "api-key"
     std::env::set_var("RHO_HOME", rho_dir.path());
 
     let result = std::panic::catch_unwind(|| {
-        let mut config = Config::load_settings_only(config_path.clone()).unwrap();
+        let mut config = Config::load(Some(config_path.clone())).unwrap();
         assert!(config.credential_store.is_none());
         initialize_from_config(&mut config, &config_path).unwrap();
         assert_eq!(config.credential_store, Some(CredentialStoreBackend::File));
@@ -158,7 +158,7 @@ auth = "api-key"
             !legacy_path.exists(),
             "startup migration removes legacy file"
         );
-        let reloaded = Config::load_settings_only(config_path.clone()).unwrap();
+        let reloaded = Config::load(Some(config_path.clone())).unwrap();
         assert_eq!(
             reloaded.credential_store,
             Some(CredentialStoreBackend::File)

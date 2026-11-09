@@ -253,7 +253,8 @@ impl Workspace {
         let home = IsolatedHome::new().unwrap();
         std::fs::write(
             &home.config_path,
-            r#"provider = "xai"
+            r#"[model]
+provider = "xai"
 model = "grok-fixture"
 auth = "xai-oauth"
 
@@ -261,8 +262,7 @@ auth = "xai-oauth"
 permission_mode = "plan"
 
 [web_search]
-hosted = false
-provider = "disabled"
+mode = "off"
 "#,
         )
         .unwrap();

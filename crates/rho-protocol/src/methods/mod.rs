@@ -50,6 +50,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 mod auth;
 mod catalog;
+mod config;
 mod daemon;
 mod event;
 mod input;
@@ -69,6 +70,10 @@ pub use catalog::{
     SessionDeleteParams, SessionDeleteResponse, SessionListParams, SessionListResponse,
     SessionRenameParams, SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST,
     SESSION_RENAME,
+};
+pub use config::{
+    Applies, IntegerUnit, ModelRuntime, ModelSelection, SettingChoice, SettingKey, SettingKind,
+    SettingSpec, SettingValue,
 };
 pub use daemon::{
     ClientInfo, DaemonInfo, DaemonStatus, HelloParams, HelloResponse, StatusParams, StopParams,

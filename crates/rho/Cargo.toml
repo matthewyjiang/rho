@@ -36,6 +36,8 @@ humantime = "2"
 anyhow = "1"
 thiserror = "2"
 toml = "1.1"
+# Edits config.toml in place so saves keep the user's comments and key order.
+toml_edit = { version = "0.25", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 async-trait = "0.1"
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }

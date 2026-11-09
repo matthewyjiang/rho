@@ -32,6 +32,7 @@ mod background_tasks;
 mod cache_stats;
 mod cache_warm;
 mod click_sequence;
+mod client_settings;
 mod clipboard;
 mod codemode_command;
 mod command_actions;
@@ -105,6 +106,7 @@ fn plural_suffix(count: usize) -> &'static str {
     }
 }
 
+pub(crate) use client_settings::TuiSettings;
 pub(crate) use first_run::SetupEntry;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod antigravity_login;
@@ -496,9 +498,9 @@ pub struct SessionBootstrap {
 
 pub struct ApplicationServices {
     pub(crate) config_repository: ConfigRepository,
-    /// Theme id from the already-loaded startup config, so the TUI does not
-    /// re-read and re-parse the config file for one field.
-    pub(crate) theme: String,
+    /// The `tui` client settings, theme, and chords read at startup. Toggles
+    /// change this copy only; the files are not written.
+    pub(crate) settings: TuiSettings,
     /// Set when this launch should open the first-run setup screen, and at
     /// which step. `None` for a returning session.
     pub(crate) first_run: Option<first_run::SetupEntry>,
@@ -527,7 +529,7 @@ pub(crate) async fn run(
     let mut terminal = synced_backend::init();
     let probe = terminal_probe::probe_terminal();
     Theme::initialize_palette(probe.palette);
-    Theme::apply_committed(&info.services.theme);
+    Theme::apply_committed(&info.services.settings.theme);
     let herdr = info.services.herdr.clone();
     let result = {
         let injected = smoke_injection::after_terminal_init();

@@ -1,4 +1,4 @@
-//! `display.show_header_hints` hides the session header hint block at startup,
+//! `show_header_hints` in `clients/tui.toml` hides the session header hint block at startup,
 //! and the Appearance toggle brings it back live.
 
 use std::{fs::OpenOptions, io::Write};
@@ -43,8 +43,10 @@ pub(super) const HEADER_HINTS_SCENARIO: Scenario = Scenario::new(
 
 fn setup_hidden_hints(home: &IsolatedHome) -> Result<()> {
     writeln!(
-        OpenOptions::new().append(true).open(&home.config_path)?,
-        "\n[display]\nshow_header_hints = false"
+        OpenOptions::new()
+            .append(true)
+            .open(&home.client_settings_path)?,
+        "show_header_hints = false"
     )?;
     Ok(())
 }

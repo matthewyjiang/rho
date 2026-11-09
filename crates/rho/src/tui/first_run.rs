@@ -79,7 +79,7 @@ const SIGNED_OUT_HINTS: &[Hint] = &[
 const SIGNED_OUT_HEADLINE: &str = " Not signed in. Rho needs a provider before it can answer.";
 
 /// Whether the session header shows its keyboard hint block, from
-/// `display.show_header_hints`.
+/// `show_header_hints` in `clients/tui.toml`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum HeaderHints {
     Shown,

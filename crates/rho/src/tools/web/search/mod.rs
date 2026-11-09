@@ -79,21 +79,18 @@ fn resolve_ready_backend(config: &Config) -> Result<ReadyBackend, String> {
         SearchBackend::OpenAi => resolve_openai(config).map(ReadyBackend::OpenAi),
         SearchBackend::Exa => match settings.exa.connection {
             ExaSearchConnection::Api => Ok(ReadyBackend::ExaApi {
-                key: require_key(
-                    load_search_key(config, WebSearchCredential::Exa),
-                    "EXA_API_KEY",
-                )?,
+                key: require_key(load_search_key(WebSearchCredential::Exa), "EXA_API_KEY")?,
             }),
             ExaSearchConnection::Mcp => Ok(ReadyBackend::ExaMcp),
         },
         SearchBackend::Brave => Ok(ReadyBackend::Brave {
             key: require_key(
-                load_search_key(config, WebSearchCredential::Brave),
+                load_search_key(WebSearchCredential::Brave),
                 "BRAVE_SEARCH_API_KEY",
             )?,
         }),
         SearchBackend::Firecrawl => {
-            let key = load_search_key(config, WebSearchCredential::Firecrawl);
+            let key = load_search_key(WebSearchCredential::Firecrawl);
             if key.is_none()
                 && settings
                     .destination(SearchBackend::Firecrawl)
@@ -116,7 +113,7 @@ fn resolve_openai(config: &Config) -> Result<openai::OpenAiSearchAuth, String> {
             Ok(openai::OpenAiSearchAuth::Codex { tokens, source })
         }
         OpenAiSearchConnection::Api => {
-            let key = load_openai_api_key(config).ok_or_else(|| {
+            let key = load_openai_api_key().ok_or_else(|| {
                 "OpenAI web search unavailable: /login openai or set OPENAI_API_KEY".to_string()
             })?;
             Ok(openai::OpenAiSearchAuth::ApiKey(key))
@@ -133,8 +130,8 @@ fn require_key(key: Option<String>, name: &str) -> Result<String, String> {
     key.ok_or_else(|| format!("{name} is not set"))
 }
 
-fn load_search_key(config: &Config, credential: WebSearchCredential) -> Option<String> {
-    env_search_key(credential).or_else(|| stored_or_legacy(config, credential))
+fn load_search_key(credential: WebSearchCredential) -> Option<String> {
+    env_search_key(credential).or_else(|| stored_key(credential))
 }
 
 fn env_search_key(credential: WebSearchCredential) -> Option<String> {
@@ -144,9 +141,9 @@ fn env_search_key(credential: WebSearchCredential) -> Option<String> {
         .find_map(|name| std::env::var(name).ok().and_then(nonempty_credential))
 }
 
-fn load_openai_api_key(config: &Config) -> Option<String> {
+fn load_openai_api_key() -> Option<String> {
     env_search_key(WebSearchCredential::OpenAi)
-        .or_else(|| stored_or_legacy(config, WebSearchCredential::OpenAi))
+        .or_else(|| stored_key(WebSearchCredential::OpenAi))
         .or_else(|| {
             load_provider_api_key(&AppCredentialStore, "openai")
                 .ok()
@@ -155,17 +152,11 @@ fn load_openai_api_key(config: &Config) -> Option<String> {
         })
 }
 
-fn stored_or_legacy(config: &Config, credential: WebSearchCredential) -> Option<String> {
+fn stored_key(credential: WebSearchCredential) -> Option<String> {
     load_web_search_api_key(&AppCredentialStore, credential)
         .ok()
         .flatten()
         .and_then(nonempty_credential)
-        .or_else(|| {
-            config
-                .legacy_web_search_api_key(credential)
-                .map(str::to_string)
-                .and_then(nonempty_credential)
-        })
 }
 
 fn resolve_codex_tokens() -> (Option<CodexTokens>, CodexAuthSource) {

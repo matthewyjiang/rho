@@ -7,7 +7,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct Keybindings {
     /// How plain keys edit the main composer. Vim mode adds a normal mode.
-    #[serde(skip_serializing_if = "EditingMode::is_default")]
+    /// Set from the `tui` client's `editing_mode` setting; `[keybindings]`
+    /// in `tui.toml` holds only chords.
+    #[serde(skip)]
     pub editing_mode: EditingMode,
     /// Starts a new session like `/new`. Unbound by default: a single chord
     /// that drops the conversation is too easy to hit.
@@ -46,7 +48,7 @@ pub struct Keybindings {
     pub redo: KeyBinding,
 }
 
-/// Composer editing model, chosen with `[keybindings] editing_mode`.
+/// Composer editing model, chosen with the `tui` client's `editing_mode`.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum EditingMode {
@@ -65,10 +67,6 @@ impl EditingMode {
         } else {
             Self::Default
         }
-    }
-
-    fn is_default(&self) -> bool {
-        *self == Self::Default
     }
 }
 
@@ -125,7 +123,6 @@ impl Keybindings {
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct PartialKeybindings {
-    editing_mode: Option<EditingMode>,
     reset_conversation: Option<KeyBinding>,
     search_prompt_history: Option<KeyBinding>,
     search_transcript: Option<KeyBinding>,
@@ -163,7 +160,7 @@ impl<'de> Deserialize<'de> for Keybindings {
         let defaults = Self::default();
         let explicit_permission_cycle = partial.cycle_permission_mode.is_some();
         let mut keybindings = Self {
-            editing_mode: partial.editing_mode.unwrap_or_default(),
+            editing_mode: EditingMode::Default,
             reset_conversation: partial.reset_conversation.filter(|_| !migrate_legacy_reset),
             search_prompt_history: partial
                 .search_prompt_history

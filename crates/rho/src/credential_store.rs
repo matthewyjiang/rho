@@ -201,11 +201,9 @@ pub(crate) fn saved_policy_backend(
         Some(path) => path.to_path_buf(),
         None => Config::default_path()?,
     };
-    if path.exists() {
-        let config = Config::load_settings_only(path)?;
-        if config.credential_store.is_some() {
-            return Ok(config.credential_store);
-        }
+    let config = Config::load(Some(path))?;
+    if config.credential_store.is_some() {
+        return Ok(config.credential_store);
     }
     Ok(read_legacy_policy_file()?)
 }
@@ -224,13 +222,7 @@ pub(crate) fn set_backend(
         Some(path) => path,
         None => Config::default_path()?,
     };
-    let mut config = if path.exists() {
-        Config::load_settings_only(path.clone())?
-    } else {
-        Config::default()
-    };
-    config.credential_store = Some(backend);
-    config.write_settings(path.clone())?;
+    Config::edit(&path, |config| config.credential_store = Some(backend))?;
     remember_config_path(&path);
     activate(backend)?;
     remove_legacy_policy_file()?;
@@ -239,28 +231,32 @@ pub(crate) fn set_backend(
 
 /// Resolve and open the backend once for this process from config + env.
 ///
-/// Also migrates legacy policy/web-search secrets when needed. Call at startup,
-/// not on every settings read.
+/// Also absorbs the legacy policy file and promotes a keyless custom host
+/// whose key is stored, saving only those keys. Call at startup, not on
+/// every settings read.
 pub(crate) fn initialize_from_config(
     config: &mut Config,
     config_path: &Path,
 ) -> anyhow::Result<()> {
     remember_config_path(config_path);
-    let mut dirty = absorb_legacy_policy(config)?;
+    let absorbed = absorb_legacy_policy(config)?;
     let backend = resolve_backend(config.credential_store)?;
     activate(backend)?;
-    // Web-search keys feed no provider, so moving them rebuilds nothing.
-    if matches!(
-        config.migrate_legacy_web_search_credentials(&UntrackedCredentialStore),
-        Ok(true)
-    ) {
-        dirty = true;
-    }
-    if config.promote_stored_custom_auth(&AppCredentialStore) {
-        dirty = true;
-    }
-    if dirty {
-        config.write_settings(config_path.to_path_buf())?;
+    let promoted = config.promote_stored_custom_auth(&AppCredentialStore);
+    if absorbed || promoted {
+        let (backend, provider, auth) = (
+            config.credential_store,
+            config.provider.clone(),
+            config.auth.clone(),
+        );
+        Config::edit(config_path, |saved| {
+            saved.credential_store = backend;
+            // A CLI override may have picked another provider; promote only
+            // the saved one.
+            if promoted && saved.provider == provider {
+                saved.auth = auth;
+            }
+        })?;
     }
     Ok(())
 }
@@ -428,10 +424,7 @@ fn read_config_backend() -> anyhow::Result<Option<CredentialStoreBackend>> {
         Some(path) => path,
         None => Config::default_path()?,
     };
-    if !path.exists() {
-        return Ok(None);
-    }
-    Ok(Config::load_settings_only(path)?.credential_store)
+    Ok(Config::load(Some(path))?.credential_store)
 }
 
 fn absorb_legacy_policy(config: &mut Config) -> anyhow::Result<bool> {

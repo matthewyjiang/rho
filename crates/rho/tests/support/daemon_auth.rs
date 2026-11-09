@@ -39,7 +39,8 @@ impl Fixture {
         std::fs::write(
             &sandbox.isolated.config_path,
             format!(
-                r#"provider = "mock"
+                r#"[model]
+provider = "mock"
 model = "mock-model"
 auth = "{AUTH}"
 
@@ -47,11 +48,9 @@ auth = "{AUTH}"
 base_url = "http://{address}/v1"
 
 [behavior]
-check_for_updates = false
 
 [web_search]
-hosted = false
-provider = "disabled"
+mode = "off"
 "#
             ),
         )

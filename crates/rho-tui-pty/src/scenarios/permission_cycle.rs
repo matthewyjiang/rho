@@ -11,12 +11,13 @@ use crate::{
 };
 
 fn setup_remapped_with_classifier(home: &IsolatedHome) -> Result<()> {
+    std::fs::write(
+        &home.tui_path,
+        "[keybindings]\ncycle_permission_mode = \"alt+n\"\n",
+    )?;
     let mut config = std::fs::read_to_string(&home.config_path)?;
     config.push_str(
         r#"
-[keybindings]
-cycle_permission_mode = "alt+n"
-
 [internal_agents.permission-classifier]
 provider = "openai"
 model = "gpt-5.5"

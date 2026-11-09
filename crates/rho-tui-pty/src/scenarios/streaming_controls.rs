@@ -1,6 +1,6 @@
-//! Streaming preferences share one durable setting across the menu and shortcut.
+//! Streaming preferences share one setting across the menu and shortcut.
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{ensure, Result};
 
 use crate::{
     env::IsolatedHome,
@@ -13,11 +13,11 @@ use super::{DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
 
 // Covers: off leaks partial output, paragraph leaks its unfinished suffix, or
 // switching modes finalizes a split Markdown fence and corrupts continued output.
-// Also retains startup/menu/shortcut persistence coverage in the same turn.
+// Also covers the startup client setting and menu/shortcut changes in one turn.
 // Owner: interactive TUI. Ordered usage receipts synchronize hidden-output checks.
 pub(super) const STREAMING_CONTROLS_SCENARIO: Scenario = Scenario::new(
     "streaming_controls",
-    "Hold output by mode and preserve split Markdown across persisted menu and shortcut changes",
+    "Hold output by mode and preserve split Markdown across menu and shortcut changes",
     DEFAULT_SIZE,
     &[
         Step::WaitText {
@@ -32,28 +32,9 @@ pub(super) const STREAMING_CONTROLS_SCENARIO: Scenario = Scenario::new(
 .with_setup(setup);
 
 fn setup(home: &IsolatedHome) -> Result<()> {
-    let mut config = std::fs::read_to_string(&home.config_path)?;
-    config.push_str("\n[display]\noutput_streaming = \"off\"\n");
-    std::fs::write(&home.config_path, config)?;
-    // Keep assertions independent of IsolatedHome's directory layout.
-    std::fs::write(
-        home.workspace.join(".streaming-config-path"),
-        home.config_path
-            .to_str()
-            .context("config path is not UTF-8")?,
-    )?;
-    Ok(())
-}
-
-fn assert_saved_mode(harness: &PtyHarness, mode: &str) -> Result<()> {
-    let workspace = harness.working_directory().context("missing workspace")?;
-    let path = std::fs::read_to_string(workspace.join(".streaming-config-path"))?;
-    let config = std::fs::read_to_string(path)?;
-    let expected = format!("output_streaming = \"{mode}\"");
-    ensure!(
-        config.lines().any(|line| line == expected),
-        "saved config does not contain {expected}"
-    );
+    let mut settings = std::fs::read_to_string(&home.client_settings_path)?;
+    settings.push_str("output_streaming = \"off\"\n");
+    std::fs::write(&home.client_settings_path, settings)?;
     Ok(())
 }
 
@@ -69,7 +50,6 @@ fn cycle_in_menu(harness: &mut PtyHarness, mode: &str) -> Result<()> {
     harness.inject_key(&Key::Down)?;
     harness.inject_key(&Key::Enter)?;
     harness.wait_for_text(&format!("output streaming: {mode}"), SETTLE)?;
-    assert_saved_mode(harness, mode)?;
     harness.inject_key(&Key::Esc)?;
     harness.wait_for_text("Agent behavior", SETTLE)?;
     harness.inject_key(&Key::Esc)?;
@@ -89,7 +69,6 @@ fn exercise_controls(harness: &mut PtyHarness) -> Result<()> {
     // text without requiring another provider event to drive the preview.
     harness.inject_key(&Key::Alt('s'))?;
     harness.wait_for_text("output streaming: live", SETTLE)?;
-    assert_saved_mode(harness, "live")?;
     harness.wait_for_text("Hidden off prefix", SETTLE)?;
 
     harness.set_phase("paragraph_boundary");
@@ -105,7 +84,6 @@ fn exercise_controls(harness: &mut PtyHarness) -> Result<()> {
     harness.set_phase("switch_reveals_held_suffix");
     harness.inject_key(&Key::Alt('s'))?;
     harness.wait_for_text("output streaming: off", SETTLE)?;
-    assert_saved_mode(harness, "off")?;
     harness.wait_for_text("Held paragraph suffix", SETTLE)?;
 
     harness.set_phase("switch_preserves_opening_fence");
@@ -113,7 +91,6 @@ fn exercise_controls(harness: &mut PtyHarness) -> Result<()> {
     harness.wait_for_text("$3.000", STREAM)?;
     harness.inject_key(&Key::Alt('s'))?;
     harness.wait_for_text("output streaming: live", SETTLE)?;
-    assert_saved_mode(harness, "live")?;
     super::release_fixture(harness, ".rho-fixture-release-streaming-controls")?;
     harness.wait_for_text("$4.000", STREAM)?;
     harness.wait_for_text("Markdown continuation complete.", SETTLE)?;
@@ -148,6 +125,5 @@ fn exercise_controls(harness: &mut PtyHarness) -> Result<()> {
     super::release_fixture(harness, ".rho-fixture-release-streaming-controls")?;
     harness.wait_for_text("Buffered completion delivered.", STREAM)?;
     harness.wait_for_text("Hidden off prefix continued.", SETTLE)?;
-    assert_saved_mode(harness, "off")?;
     Ok(())
 }

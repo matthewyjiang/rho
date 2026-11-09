@@ -17,11 +17,12 @@ pub(super) const FIRST_RUN_SIGNIN_ENV: &[(&str, &str)] = &[("RHO_FIRST_RUN", "si
 pub(super) fn setup_without_credential_store(home: &IsolatedHome) -> Result<()> {
     std::fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 "#,
     )?;
     Ok(())

@@ -467,11 +467,12 @@ fn fast_mode_appears_beside_the_active_model() {
     let home = IsolatedHome::new().unwrap();
     fs::write(
         &home.config_path,
-        r#"provider = "openai-codex"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai-codex"
 model = "gpt-5.5"
 auth = "codex"
-check_for_updates = false
-web_search.mode = "off"
 
 [behavior]
 credential_store = "file"

@@ -204,7 +204,7 @@ advice stays on the same card as `advisor  completed`, collapsed past the
 | --- | --- |
 | `[behavior].advisor_mode` | Offers the `advisor` tool when a model is also set. Default: `false`. |
 | `[internal_agents.advisor]` | The reviewer. On the default `rho` runtime: required provider, model, and auth. With `runtime = "claude-cli"`: optional pass-through `model` only. Optional `reasoning` either way. No conversation-model fallback. |
-| [`display.max_tool_output_lines`](/configuration#tool-output-limit) | How many lines of advice show inline before the TUI collapses the card. |
+| [`max_tool_output_lines`](/configuration#tool-output-limit) | How many lines of advice show inline before the TUI collapses the card. |
 
 See also: [`/advisor`](/interactive-tui#commands),
 [internal agent models](/configuration#internal-agent-models), and the

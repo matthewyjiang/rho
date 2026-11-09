@@ -117,7 +117,8 @@ fn provider_finish_reasons_reach_the_prompt_stop_reason() {
     std::fs::write(
         &home.config_path,
         format!(
-            r#"provider = "mock"
+            r#"[model]
+provider = "mock"
 model = "mock-model"
 
 [providers.custom.mock]
@@ -125,11 +126,9 @@ base_url = "http://{address}/v1"
 
 [behavior]
 permission_mode = "plan"
-check_for_updates = false
 
 [web_search]
-hosted = false
-provider = "disabled"
+mode = "off"
 "#
         ),
     )

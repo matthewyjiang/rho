@@ -13,7 +13,7 @@ pub(crate) struct ConfigRepository {
     path: Option<PathBuf>,
     #[cfg(test)]
     _temp_dir: Option<Arc<tempfile::TempDir>>,
-    /// When set, the next [`Self::save`] fails once after load/mutation so
+    /// When set, the next [`Self::update`] fails once before load/mutation so
     /// callers can exercise durable-save rollback without OS-specific FS locks.
     /// Shared across clones so the request is not tied to an OS thread.
     #[cfg(test)]
@@ -59,25 +59,26 @@ impl ConfigRepository {
         Config::load(self.path.clone())
     }
 
+    /// Saves every value of `config` that differs from the file, keeping
+    /// the rest of the file as written.
     pub(crate) fn save(&self, config: &Config) -> anyhow::Result<()> {
+        self.update(|saved| *saved = config.clone())
+    }
+
+    /// Loads the saved config, applies one typed mutation, and writes back
+    /// only the keys it changed before returning.
+    ///
+    /// The file's edit lock is held from load to write; a concurrent writer
+    /// makes this fail instead of waiting. Nothing is written when the
+    /// mutation leaves an invalid config.
+    pub(crate) fn update<T>(&self, update: impl FnOnce(&mut Config) -> T) -> anyhow::Result<T> {
         #[cfg(test)]
         {
             if self.fail_next_save.swap(false, Ordering::SeqCst) {
                 anyhow::bail!("injected config save failure");
             }
         }
-        config.save(self.path.clone())
-    }
-
-    /// Loads the latest config, applies one typed mutation, and persists it before returning.
-    ///
-    /// The update is atomic from the caller's perspective, but it does not provide concurrent
-    /// filesystem transaction semantics.
-    pub(crate) fn update<T>(&self, update: impl FnOnce(&mut Config) -> T) -> anyhow::Result<T> {
-        let mut config = self.load()?;
-        let value = update(&mut config);
-        self.save(&config)?;
-        Ok(value)
+        Config::edit(&self.configured_path()?, update)
     }
 }
 

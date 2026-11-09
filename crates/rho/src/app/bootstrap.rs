@@ -478,15 +478,15 @@ struct InteractiveStartup<'a> {
 }
 
 async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Result<()> {
-    let pending_update_notice = startup
-        .config
+    let settings = crate::tui::TuiSettings::load(&crate::paths::rho_dir()?)?;
+    let pending_update_notice = settings
         .check_for_updates
         .then(|| tokio::spawn(update::update_notice(env!("CARGO_PKG_VERSION"))));
     let pending_custom_models = cli_config::spawn_custom_provider_models_refresh(
         startup.config.providers.clone(),
         Arc::new(AppCredentialStore),
     );
-    let prompt_history_limit = startup.config.prompt_history_limit;
+    let prompt_history_limit = settings.prompt_history_limit;
     let pending_prompt_history = (prompt_history_limit > 0 && !startup.cli.no_save).then(|| {
         tokio::spawn(
             async move {
@@ -544,6 +544,7 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
         cli: startup.cli,
         catalog: startup.catalog,
         config: startup.config,
+        settings,
         config_path: absolute_config_path(&startup.config_repository)?,
         config_repository: startup.config_repository,
         cwd: startup.cwd,
