@@ -168,21 +168,18 @@ impl TurnTask {
             // without beginning its prompt, as the turns the stop stops do.
             Some(_) if stopping.is_cancelled() => (Ok(Ran::Cancelled), None),
             Some(runtime) => {
+                // Global settings that changed since the last turn reach the
+                // session now, before its prompt.
+                let config = session.config_for_turn(runtime).await;
                 let (ended, timed_out) = {
                     let turn = async {
                         let ended = match input {
                             TurnInput::Prompt(input) => {
-                                run_turn(runtime, &mut view, input, &session.config, &cancel).await
+                                run_turn(runtime, &mut view, input, &config, &cancel).await
                             }
                             TurnInput::Goal(turn) => {
-                                run_goal_turn(
-                                    runtime,
-                                    &mut view,
-                                    turn.into(),
-                                    &session.config,
-                                    &cancel,
-                                )
-                                .await
+                                run_goal_turn(runtime, &mut view, turn.into(), &config, &cancel)
+                                    .await
                             }
                         };
                         super::goal::drive(

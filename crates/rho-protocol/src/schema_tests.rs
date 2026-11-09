@@ -11,12 +11,13 @@ use crate::display::{
     NotificationVisibility, ToolCardStatus, ToolFact, ToolFamily, ToolHeader,
 };
 use crate::methods::{
-    AnswerStop, ApprovalSource, Ask, AuthKind, AuthStatus, Budget, CardTone, CommandKind,
-    CompactionStatus, ContentBlock, CredentialStoreKind, DefaultStyle, DetachReason, JobKind,
-    JobState, LoginOutcome, Operation, PathScope, PermissionMode, PlanStatus, ReasoningLevel,
-    Resolution, Selection, SessionEvent, SessionGoalPhase, SessionMcpMode, SessionMcpStatus,
-    StoreSelectedBy, ToolContent, ToolKind, ToolStatus, TurnErrorKind, TurnOutcome,
-    UncheckedReason, UnsteerOutcome,
+    AnswerStop, Applies, ApprovalSource, Ask, AuthKind, AuthStatus, Budget, CardTone, CommandKind,
+    CompactionStatus, ConfigLayer, ConfigNamespace, ContentBlock, CredentialStoreKind,
+    DefaultStyle, DetachReason, IntegerUnit, JobKind, JobState, LoginOutcome, ModelRuntime,
+    Operation, PathScope, PermissionMode, PlanStatus, ReasoningLevel, Resolution, Selection,
+    SessionEvent, SessionGoalPhase, SessionMcpMode, SessionMcpStatus, SettingKind, StoreSelectedBy,
+    ToolContent, ToolKind, ToolStatus, TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome,
+    ValueSource,
 };
 
 // Covers: the committed schema/protocol.json is what the wire types
@@ -56,7 +57,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 45] = [
+    let cases: [(&str, bool); 52] = [
         (
             "SessionGoalPhase",
             reads_as(unseen(), SessionGoalPhase::Unknown),
@@ -159,6 +160,16 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
             "NotificationVisibility",
             reads_as(unseen(), NotificationVisibility::Unknown),
         ),
+        ("SettingKind", reads_as(unseen_kind(), SettingKind::Unknown)),
+        ("IntegerUnit", reads_as(unseen(), IntegerUnit::Unknown)),
+        ("ModelRuntime", reads_as(unseen(), ModelRuntime::Unknown)),
+        ("Applies", reads_as(unseen(), Applies::Unknown)),
+        (
+            "ConfigNamespace",
+            reads_as(unseen_kind(), ConfigNamespace::Unknown),
+        ),
+        ("ValueSource", reads_as(unseen(), ValueSource::Unknown)),
+        ("ConfigLayer", reads_as(unseen(), ConfigLayer::Unknown)),
     ];
 
     let document = super::document();

@@ -29,6 +29,9 @@ use super::{
 /// A hand-edited structured table (or list) and how it saves.
 struct FileOnly {
     key: &'static str,
+    label: &'static str,
+    /// The docs page, from the docs site root, that describes the table.
+    docs: &'static str,
     /// The item to write; `None` removes the key.
     encode: fn(&Config) -> anyhow::Result<Option<Item>>,
 }
@@ -38,10 +41,14 @@ struct FileOnly {
 const FILE_ONLY: [FileOnly; 7] = [
     FileOnly {
         key: "model.aliases",
+        label: "Model aliases",
+        docs: "/configuration#model-aliases",
         encode: |config| non_empty(&config.model_aliases, ModelAliases::is_empty),
     },
     FileOnly {
         key: "model.favorite_models",
+        label: "Favorite models",
+        docs: "/configuration#common-settings",
         encode: |config| {
             Ok((!config.favorite_models.is_empty()).then(|| {
                 Item::Value(Value::Array(Array::from_iter(
@@ -52,6 +59,8 @@ const FILE_ONLY: [FileOnly; 7] = [
     },
     FileOnly {
         key: "internal_agents",
+        label: "Internal agent models",
+        docs: "/configuration#internal-agent-models",
         encode: |config| {
             let entries = config
                 .internal_agents
@@ -68,6 +77,8 @@ const FILE_ONLY: [FileOnly; 7] = [
     },
     FileOnly {
         key: "providers",
+        label: "Provider profiles",
+        docs: "/providers/openai-compatible",
         encode: |config| {
             non_empty(
                 &PersistedProviderConfigs::from(&config.providers),
@@ -77,10 +88,14 @@ const FILE_ONLY: [FileOnly; 7] = [
     },
     FileOnly {
         key: "mcp",
+        label: "MCP servers",
+        docs: "/integrations/mcp#configuration-source-and-precedence",
         encode: |config| non_empty(&config.mcp, crate::tools::mcp::config::McpConfig::is_empty),
     },
     FileOnly {
         key: "openapi",
+        label: "OpenAPI sources",
+        docs: "/integrations/openapi",
         encode: |config| {
             non_empty(
                 &config.openapi,
@@ -90,6 +105,8 @@ const FILE_ONLY: [FileOnly; 7] = [
     },
     FileOnly {
         key: "prompt_templates",
+        label: "Prompt templates",
+        docs: "/configuration#prompt-templates",
         encode: |config| non_empty(&config.prompt_templates, BTreeMap::is_empty),
     },
 ];
@@ -122,6 +139,18 @@ fn registry_rows() -> Vec<&'static dyn AnySetting<Config>> {
         .collect()
 }
 
+/// The tables `config.toml` keeps that only a hand edit changes.
+pub(super) fn file_only_tables() -> Vec<rho_protocol::FileOnlyTable> {
+    FILE_ONLY
+        .iter()
+        .map(|table| rho_protocol::FileOnlyTable {
+            key: table.key.into(),
+            label: table.label.into(),
+            docs: table.docs.into(),
+        })
+        .collect()
+}
+
 pub(super) fn emit_warnings(path_display: &str, warnings: &[ConfigWarning]) {
     for warning in warnings {
         eprintln!("warning: {path_display}: {}", warning.message());
@@ -138,7 +167,7 @@ pub(super) fn errors_error(errors: &[ConfigError]) -> anyhow::Error {
 }
 
 /// The config `doc` describes, or every problem that keeps it from loading.
-pub(super) fn resolve(
+pub(crate) fn resolve(
     doc: &ConfigDocument,
 ) -> Result<(Config, Vec<ConfigWarning>), Vec<ConfigError>> {
     let mut config = Config::default();

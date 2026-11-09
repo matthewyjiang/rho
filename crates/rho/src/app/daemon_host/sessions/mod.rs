@@ -69,6 +69,7 @@ mod feed;
 mod goal;
 mod inputs;
 mod mcp;
+mod next_turn;
 mod observe;
 mod open;
 mod options;
@@ -85,6 +86,7 @@ mod test_sessions;
 mod turn;
 mod unload;
 
+use super::settings::ConfigStore;
 use feed::{Attached, Feed};
 use inputs::Inputs;
 use open::{open_session, session_environment, OpenWith, OpenedSession, Opening, Workspace};
@@ -118,6 +120,8 @@ pub(super) struct Sessions {
     reopening: ReopenLocks,
     /// The daemon-wide budget the sessions' subagents share, and their jobs.
     subagents: Subagents,
+    /// The daemon's settings, which sessions open and turn with.
+    settings: Arc<ConfigStore>,
     /// Cancelled once the daemon starts stopping ([`Self::begin_stop`]).
     stopping: CancellationToken,
     /// Read-held from each idle unload decision through its teardown, and
@@ -142,8 +146,11 @@ struct LoadedSession {
     /// [`Queued`]).
     runtime: Arc<tokio::sync::Mutex<Option<SessionRuntime>>>,
     handle: SessionHandle,
-    /// The config the session was opened with, which each turn reads.
-    config: Config,
+    /// The config the session's turns read: the one it opened with, which
+    /// each turn brings up to date (see [`next_turn`]).
+    config: Mutex<next_turn::SessionConfig>,
+    /// The daemon's settings, which each turn reads the global config from.
+    settings: Arc<ConfigStore>,
     /// The environment the session's children see, which each prompt
     /// replaces with its client's (#1659).
     environment: crate::session_environment::SessionEnvironment,
@@ -345,10 +352,12 @@ impl LoadedSession {
         opened: OpenedSession,
         auths: &[String],
         wakes: &WakeDir,
+        settings: &Arc<ConfigStore>,
     ) -> Self {
         let OpenedSession {
             runtime,
             config,
+            global,
             environment,
         } = opened;
         let (feed, live) = opening_feed(job, &runtime, &config, auths);
@@ -371,7 +380,8 @@ impl LoadedSession {
                     .timeout_seconds
                     .map(|seconds| Duration::from_secs(seconds.get())),
             )),
-            config,
+            config: next_turn::SessionConfig::new(config, global),
+            settings: Arc::clone(settings),
             environment,
             turn: Mutex::new(TurnSlot {
                 cancel: CancellationToken::new(),
@@ -482,8 +492,10 @@ impl Sessions {
     /// home.
     pub(super) fn new(jobs: Arc<JobRegistry>, rho_home: &Path) -> Self {
         let stopping = CancellationToken::new();
+        let subagents = Subagents::new(Arc::clone(&jobs), stopping.clone());
         Self {
-            subagents: Subagents::new(Arc::clone(&jobs), stopping.clone()),
+            settings: Arc::new(ConfigStore::new(rho_home, subagents.concurrency())),
+            subagents,
             jobs,
             loaded: Mutex::default(),
             reopening: ReopenLocks::default(),
@@ -491,6 +503,11 @@ impl Sessions {
             unloading: tokio::sync::RwLock::new(()),
             wakes: WakeDir::in_home(rho_home),
         }
+    }
+
+    /// The daemon's settings.
+    pub(super) fn settings(&self) -> &ConfigStore {
+        &self.settings
     }
 
     /// The sessions' subagents: the daemon-wide budget and its queue.
@@ -535,6 +552,7 @@ impl Sessions {
                 setup,
             },
             &self.subagents,
+            &self.settings,
             &job,
         )
         .await?;
@@ -570,6 +588,7 @@ impl Sessions {
             opened,
             &auths,
             &self.wakes,
+            &self.settings,
         );
         let refused = {
             let mut loaded = self.loaded();

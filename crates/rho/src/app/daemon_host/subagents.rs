@@ -6,9 +6,8 @@
 //! session or workflow run that started it.
 //!
 //! The budget's limit is `behavior.agent_concurrency` in the user's config,
-//! read again whenever a session opens, so an edit reaches every session's
-//! subagents once the next session opened. A queued run's job reports where it
-//! stands in the budget's queue.
+//! applied as soon as the daemon's settings store publishes a change (#1720).
+//! A queued run's job reports where it stands in the budget's queue.
 //!
 //! A run's job follows the run's status: `queued` until the run has
 //! capacity, `running`, then `completed`, `failed`, or `cancelled`. A run
@@ -36,7 +35,7 @@ use crate::{
             WorkflowEnd,
         },
     },
-    config::{Config, DEFAULT_AGENT_CONCURRENCY},
+    config::DEFAULT_AGENT_CONCURRENCY,
     subagent::{RunState, RunStatus},
 };
 
@@ -54,7 +53,8 @@ type Queues = Arc<Mutex<HashMap<JobId, QueueWatch>>>;
 
 impl Subagents {
     /// No runs yet; their jobs are recorded in `jobs`. The pool starts at
-    /// the default limit, which the first session's open replaces.
+    /// the default limit, which the settings store replaces once it read
+    /// the config.
     pub(super) fn new(jobs: Arc<JobRegistry>, stopping: CancellationToken) -> Self {
         Self {
             concurrency: AgentConcurrency::from_config(DEFAULT_AGENT_CONCURRENCY),
@@ -64,10 +64,11 @@ impl Subagents {
         }
     }
 
-    /// Sets the daemon-wide limit to `config`'s `agent_concurrency`. Runs
-    /// already going keep their slots.
-    pub(super) fn set_limit(&self, config: &Config) {
-        self.concurrency.set_total(config.agent_concurrency);
+    /// The daemon-wide budget, whose limit the settings store sets from
+    /// `behavior.agent_concurrency` (see `settings`). Runs already going
+    /// keep their slots when it shrinks.
+    pub(super) fn concurrency(&self) -> AgentConcurrency {
+        self.concurrency.clone()
     }
 
     /// The pool of the session whose turns are job `parent`: the

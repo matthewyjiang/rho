@@ -31,6 +31,10 @@
 //! | [`AUTH_LOGIN`] | [`AuthLoginParams`] | [`AuthLoginResponse`] |
 //! | [`AUTH_LOGIN_CANCEL`] | [`AuthLoginCancelParams`] | [`AuthLoginCancelResponse`] |
 //! | [`AUTH_CHOOSE_STORE`] | [`AuthChooseStoreParams`] | [`AuthChooseStoreResponse`] |
+//! | [`CONFIG_SCHEMA`] | [`ConfigSchemaParams`] | [`ConfigSchema`] |
+//! | [`CONFIG_REGISTER`] | [`ConfigRegisterParams`] | [`ConfigRegisterResponse`] |
+//! | [`CONFIG_GET`] | [`ConfigGetParams`] | [`ConfigGetResponse`] |
+//! | [`CONFIG_SET`] | [`ConfigSetParams`] | [`ConfigSetResponse`] |
 //!
 //! The daemon sends these notifications; clients send none.
 //!
@@ -40,6 +44,7 @@
 //! | [`SESSION_DETACHED`] | [`SessionDetachedParams`] |
 //! | [`AUTH_LOGIN_PROMPT`] | [`AuthLoginPromptParams`] |
 //! | [`AUTH_LOGIN_FINISHED`] | [`AuthLoginFinishedParams`] |
+//! | [`CONFIG_CHANGED`] | [`ConfigChangedParams`] |
 //!
 //! [`crate::schema`] publishes every method and notification as JSON Schema.
 //! Enums that read values they do not know as `Unknown`, so a protocol minor
@@ -78,8 +83,12 @@ pub use catalog::{
     SESSION_RENAME,
 };
 pub use config::{
-    Applies, IntegerUnit, ModelRuntime, ModelSelection, SettingChoice, SettingKey, SettingKind,
-    SettingSpec, SettingValue,
+    Applies, ClientName, ConfigCategory, ConfigChangedParams, ConfigError, ConfigGetParams,
+    ConfigGetResponse, ConfigLayer, ConfigNamespace, ConfigRegisterParams, ConfigRegisterResponse,
+    ConfigRevision, ConfigSchema, ConfigSchemaParams, ConfigSetParams, ConfigSetResponse,
+    FileOnlyTable, IntegerUnit, InvalidClientName, ModelRuntime, ModelSelection, SettingChange,
+    SettingChoice, SettingEntry, SettingKey, SettingKind, SettingSpec, SettingValue, ValueSource,
+    CONFIG_CHANGED, CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET,
 };
 pub use daemon::{
     ClientInfo, DaemonInfo, DaemonStatus, HelloParams, HelloResponse, StatusParams, StopParams,
@@ -226,11 +235,16 @@ protocol! {
         AuthLogin = AUTH_LOGIN: AuthLoginParams => AuthLoginResponse,
         AuthLoginCancel = AUTH_LOGIN_CANCEL: AuthLoginCancelParams => AuthLoginCancelResponse,
         AuthChooseStore = AUTH_CHOOSE_STORE: AuthChooseStoreParams => AuthChooseStoreResponse,
+        ConfigSchemaMethod = CONFIG_SCHEMA: ConfigSchemaParams => ConfigSchema,
+        ConfigRegister = CONFIG_REGISTER: ConfigRegisterParams => ConfigRegisterResponse,
+        ConfigGet = CONFIG_GET: ConfigGetParams => ConfigGetResponse,
+        ConfigSet = CONFIG_SET: ConfigSetParams => ConfigSetResponse,
     }
     notifications {
         SessionEventNotification = SESSION_EVENT: SessionEventParams,
         SessionDetachedNotification = SESSION_DETACHED: SessionDetachedParams,
         AuthLoginPromptNotification = AUTH_LOGIN_PROMPT: AuthLoginPromptParams,
         AuthLoginFinishedNotification = AUTH_LOGIN_FINISHED: AuthLoginFinishedParams,
+        ConfigChangedNotification = CONFIG_CHANGED: ConfigChangedParams,
     }
 }

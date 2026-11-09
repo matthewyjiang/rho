@@ -149,6 +149,14 @@ error_codes! {
         /// store could not read them, or the provider refused them. Sign in
         /// (`rho/auth/login` or `rho/auth/key`), then try again.
         SignInRequired = -32019,
+        /// The settings changed since the revision a `rho/config/set` was
+        /// made against, so the daemon wrote nothing. Read them again
+        /// (`rho/config/get`), then send the change again.
+        ConfigConflict = -32020,
+        /// The settings file is not valid TOML, so the daemon cannot merge a
+        /// change into it and wrote nothing. Fix the file by hand;
+        /// `rho/config/get` lists where it fails.
+        ConfigInvalid = -32021,
     }
 }
 

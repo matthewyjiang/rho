@@ -19,9 +19,10 @@ use crate::{
     jsonrpc,
     methods::{
         AuthLoginFinishedNotification, AuthLoginFinishedParams, AuthLoginPromptNotification,
-        AuthLoginPromptParams, Hello, Method, Notification, SessionDetachedNotification,
-        SessionDetachedParams, SessionEventNotification, SessionEventParams, AUTH_LOGIN_FINISHED,
-        AUTH_LOGIN_PROMPT, SESSION_DETACHED, SESSION_EVENT,
+        AuthLoginPromptParams, ConfigChangedNotification, ConfigChangedParams, Hello, Method,
+        Notification, SessionDetachedNotification, SessionDetachedParams, SessionEventNotification,
+        SessionEventParams, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT, CONFIG_CHANGED,
+        SESSION_DETACHED, SESSION_EVENT,
     },
     ClientInfo, ErrorCode, FrameError, HelloParams, HelloResponse, Message, MessageReader,
     MessageWriter, ParseError, Request, RequestId, Response, RpcError, VersionMismatch,
@@ -59,6 +60,7 @@ pub enum DaemonNotification {
     SessionDetached(SessionDetachedParams),
     LoginPrompt(AuthLoginPromptParams),
     LoginFinished(AuthLoginFinishedParams),
+    ConfigChanged(ConfigChangedParams),
     /// A notification a newer daemon sends that this crate does not know.
     Unknown {
         method: String,
@@ -382,6 +384,8 @@ fn decode(notification: jsonrpc::Notification) -> Result<DaemonNotification, Par
     } else if method == AUTH_LOGIN_FINISHED {
         decode_params::<AuthLoginFinishedNotification>(params)
             .map(DaemonNotification::LoginFinished)
+    } else if method == CONFIG_CHANGED {
+        decode_params::<ConfigChangedNotification>(params).map(DaemonNotification::ConfigChanged)
     } else {
         Ok(DaemonNotification::Unknown { method })
     }

@@ -488,3 +488,61 @@ fn compaction_internal_agent_selects_the_summarizer_model() {
         assert_eq!(CompactionConfig::from(&config).summarizer, expected, "{case}");
     }
 }
+
+// Covers: every setting the registry says applies at a loaded session's
+// next turn is one `take_next_turn_settings` carries, so the schema never
+// promises a change a running session does not take.
+// Owner: config registry.
+#[test]
+fn next_turn_settings_carry_every_next_turn_setting() {
+    use super::{registry::AGENT_SETTINGS, setting::Apply};
+    let global = Config::parse_settings(
+        r#"
+[behavior]
+advisor_mode = true
+
+[compaction]
+auto_compact = false
+compact_threshold_percent = 70
+compact_target_percent = 30
+
+[internal_agents.advisor]
+provider = "anthropic"
+model = "claude-opus-4-8"
+reasoning = "high"
+"#,
+    )
+    .unwrap();
+    let next_turn = AGENT_SETTINGS
+        .iter()
+        .filter(|setting| setting.applies() == Apply::NextTurn)
+        .collect::<Vec<_>>();
+    let session = Config::default();
+    // The fixture sets each one, so the check below is not vacuous.
+    let unset = next_turn
+        .iter()
+        .filter(|setting| !setting.differs(&session, &global))
+        .map(|setting| setting.key())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        unset,
+        Vec::<&str>::new(),
+        "the fixture leaves these at their defaults"
+    );
+
+    let mut session = session;
+    let changes = session.take_next_turn_settings(&global);
+    let missed = next_turn
+        .iter()
+        .filter(|setting| setting.differs(&session, &global))
+        .map(|setting| setting.key())
+        .collect::<Vec<_>>();
+    assert_eq!(missed, Vec::<&str>::new());
+    assert_eq!(
+        changes,
+        super::NextTurnChanges {
+            advisor: true,
+            compaction: true,
+        }
+    );
+}

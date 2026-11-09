@@ -31,7 +31,7 @@ use std::{
 use rho_protocol::{ClientEnvironment, ErrorCode, RpcError, SessionSetup};
 
 use super::{
-    super::{jobs::JobId, subagents::Subagents},
+    super::{jobs::JobId, settings::ConfigStore, subagents::Subagents},
     open_failed,
     setup::Setup,
 };
@@ -42,7 +42,6 @@ use crate::{
             root_host_tools, AgentBinder, AgentInvocation, AgentRole, BoundAgent, LaunchTools,
         },
         cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
-        config_repository::ConfigRepository,
         session_runtime::{
             ApprovalPolicy, HostCapabilities, RunShape, SessionBuild, SessionLaunch,
             SessionOpening, SessionRole, SessionRuntime, SessionUse,
@@ -120,6 +119,8 @@ pub(super) struct OpenedSession {
     pub(super) runtime: SessionRuntime,
     /// The config the session was built with, which every prompt reads.
     pub(super) config: Config,
+    /// The global config it was built from, before its agent's own.
+    pub(super) global: Arc<Config>,
     /// The environment the session's children see, which each prompt
     /// replaces with its client's.
     pub(super) environment: SessionEnvironment,
@@ -156,6 +157,7 @@ pub(super) async fn open_session(
     opening: Opening,
     with: &OpenWith,
     subagents: &Subagents,
+    settings: &ConfigStore,
     job: &JobId,
 ) -> Result<OpenedSession, RpcError> {
     let saved = match &opening {
@@ -169,6 +171,7 @@ pub(super) async fn open_session(
         setup,
         SessionUse::Run,
         subagents,
+        settings,
         job,
     )
     .await
@@ -182,6 +185,7 @@ pub(super) async fn open_session(
 pub(super) async fn open_to_read(
     stored: StoredSession,
     subagents: &Subagents,
+    settings: &ConfigStore,
     job: &JobId,
 ) -> Result<OpenedSession, RpcError> {
     let setup = Setup::resolve(&SessionSetup::default(), stored.cwd(), Some(&stored))?;
@@ -191,6 +195,7 @@ pub(super) async fn open_to_read(
         setup,
         SessionUse::Read,
         subagents,
+        settings,
         job,
     )
     .await
@@ -204,6 +209,7 @@ async fn open_runtime(
     setup: Setup,
     session_use: SessionUse,
     subagents: &Subagents,
+    settings: &ConfigStore,
     job: &JobId,
 ) -> anyhow::Result<OpenedSession> {
     let cwd = &opening.cwd().to_path_buf();
@@ -216,12 +222,12 @@ async fn open_runtime(
         host_mcp,
         adds_to_saved,
     } = setup;
-    let repository = ConfigRepository::new(None);
-    let config_path = repository.configured_path()?;
-    let config = repository.load()?;
+    let config_path = settings.agent_path().to_path_buf();
+    let global = settings.agent_config().await?;
     // The last config read publishes its custom providers to the daemon,
     // as each rho process publishes its own at startup.
-    config.providers.activate()?;
+    global.providers.activate()?;
+    let config = (*global).clone();
     let available_tools = root_host_tools(
         &config,
         LaunchTools::from_flags(left_out.tools, left_out.subagents),
@@ -304,11 +310,10 @@ async fn open_runtime(
             runtime
         }
     };
-    // Only a session that opened resizes every session's budget.
-    subagents.set_limit(&config);
     Ok(OpenedSession {
         runtime,
         config,
+        global,
         environment,
     })
 }

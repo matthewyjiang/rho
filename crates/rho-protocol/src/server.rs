@@ -13,30 +13,32 @@ use tokio::{
 };
 
 use crate::{
-    forward::Forwarders,
+    forward::{ConfigWatch, Forwarders},
     jsonrpc,
     login_relay::LoginStream,
     methods::{
         AuthChooseStore, AuthChooseStoreParams, AuthChooseStoreResponse, AuthKey, AuthKeyParams,
         AuthKeyResponse, AuthList, AuthListParams, AuthListResponse, AuthLogin, AuthLoginCancel,
         AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse,
-        AuthLogout, AuthLogoutParams, AuthLogoutResponse, Hello, JobList, JobListParams,
-        JobListResponse, Method, SessionAnswer, SessionAnswerParams, SessionAnswerResponse,
-        SessionAttach, SessionAttachParams, SessionAttachResponse, SessionCancel,
-        SessionCancelParams, SessionCancelResponse, SessionConfigure, SessionConfigureParams,
-        SessionConfigureResponse, SessionDelete, SessionDeleteParams, SessionDeleteResponse,
-        SessionDetach, SessionDetachParams, SessionDetachResponse, SessionHold, SessionHoldParams,
-        SessionHoldResponse, SessionId, SessionList, SessionListParams, SessionListResponse,
-        SessionMcp, SessionMcpInventory, SessionMcpParams, SessionNew, SessionNewParams,
-        SessionNewResponse, SessionObserve, SessionObserveParams, SessionPrompt,
-        SessionPromptParams, SessionPromptResponse, SessionRename, SessionRenameParams,
-        SessionRenameResponse, SessionSteer, SessionSteerParams, SessionSteerResponse,
-        SessionUnsteer, SessionUnsteerParams, SessionUnsteerResponse, Status, Stop,
-        AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT,
-        DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH,
-        SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD,
-        SESSION_LIST, SESSION_MCP, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT, SESSION_RENAME,
-        SESSION_STEER, SESSION_UNSTEER,
+        AuthLogout, AuthLogoutParams, AuthLogoutResponse, ConfigGet, ConfigGetParams,
+        ConfigRegister, ConfigRegisterParams, ConfigRegisterResponse, ConfigSchema,
+        ConfigSchemaMethod, ConfigSchemaParams, ConfigSet, ConfigSetParams, ConfigSetResponse,
+        Hello, JobList, JobListParams, JobListResponse, Method, SessionAnswer, SessionAnswerParams,
+        SessionAnswerResponse, SessionAttach, SessionAttachParams, SessionAttachResponse,
+        SessionCancel, SessionCancelParams, SessionCancelResponse, SessionConfigure,
+        SessionConfigureParams, SessionConfigureResponse, SessionDelete, SessionDeleteParams,
+        SessionDeleteResponse, SessionDetach, SessionDetachParams, SessionDetachResponse,
+        SessionHold, SessionHoldParams, SessionHoldResponse, SessionId, SessionList,
+        SessionListParams, SessionListResponse, SessionMcp, SessionMcpInventory, SessionMcpParams,
+        SessionNew, SessionNewParams, SessionNewResponse, SessionObserve, SessionObserveParams,
+        SessionPrompt, SessionPromptParams, SessionPromptResponse, SessionRename,
+        SessionRenameParams, SessionRenameResponse, SessionSteer, SessionSteerParams,
+        SessionSteerResponse, SessionUnsteer, SessionUnsteerParams, SessionUnsteerResponse, Status,
+        Stop, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT,
+        CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_STATUS, DAEMON_STOP, HELLO,
+        JOB_LIST, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE,
+        SESSION_DELETE, SESSION_DETACH, SESSION_HOLD, SESSION_LIST, SESSION_MCP, SESSION_NEW,
+        SESSION_OBSERVE, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -235,6 +237,31 @@ pub trait Service: Send + Sync {
         &self,
         params: AuthChooseStoreParams,
     ) -> impl Future<Output = Result<AuthChooseStoreResponse, RpcError>> + Send;
+
+    /// Answers `rho/config/schema`: every agent setting.
+    fn config_schema(&self) -> impl Future<Output = Result<ConfigSchema, RpcError>> + Send;
+
+    /// Handles `rho/config/register`: replace the client's settings schema.
+    fn register_config(
+        &self,
+        params: ConfigRegisterParams,
+    ) -> impl Future<Output = Result<ConfigRegisterResponse, RpcError>> + Send;
+
+    /// Handles `rho/config/get`: the namespace's state, current when this
+    /// resolves. The connection answers with it, then sends each later
+    /// state's changes as `rho/config/changed` until the client reads the
+    /// namespace again or the connection ends.
+    fn get_config(
+        &self,
+        params: ConfigGetParams,
+    ) -> impl Future<Output = Result<ConfigWatch, RpcError>> + Send;
+
+    /// Handles `rho/config/set`: write every change, or none, and publish
+    /// the new state to the namespace's [`ConfigWatch`]es.
+    fn set_config(
+        &self,
+        params: ConfigSetParams,
+    ) -> impl Future<Output = Result<ConfigSetResponse, RpcError>> + Send;
 }
 
 /// What the daemon reports in its `rho/hello` response.
@@ -452,6 +479,16 @@ where
                         while calls.try_join_next().is_some() {}
                         continue;
                     }
+                    Ok(Route::ConfigGet(params)) => {
+                        let responder = Responder::new(id, &outbox);
+                        let service = Arc::clone(&service);
+                        let forwarders = Arc::clone(forwarders);
+                        calls.spawn(async move {
+                            watch_config(&*service, params, responder, &forwarders).await;
+                        });
+                        while calls.try_join_next().is_some() {}
+                        continue;
+                    }
                     Ok(Route::Detach(SessionDetachParams { session })) => {
                         forwarders.detach(&session);
                         Response {
@@ -529,6 +566,9 @@ enum Route {
     /// `rho/auth/login`: the service answers it in its own task, then the
     /// connection forwards the login's prompt and end.
     Login(AuthLoginParams),
+    /// `rho/config/get`: the service answers it in its own task, then the
+    /// connection forwards the namespace's changes.
+    ConfigGet(ConfigGetParams),
 }
 
 /// A post-handshake request whose params decoded, waiting for the service.
@@ -553,6 +593,9 @@ enum ServiceCall {
     ListAuths,
     CancelLogin(AuthLoginCancelParams),
     ChooseStore(AuthChooseStoreParams),
+    ConfigSchema,
+    RegisterConfig(ConfigRegisterParams),
+    SetConfig(ConfigSetParams),
 }
 
 impl Connection {
@@ -597,6 +640,7 @@ impl Connection {
                 decode_params::<SessionDetach>(params).map(Route::Detach)
             }
             (Self::Ready, AUTH_LOGIN) => decode_params::<AuthLogin>(params).map(Route::Login),
+            (Self::Ready, CONFIG_GET) => decode_params::<ConfigGet>(params).map(Route::ConfigGet),
             (Self::Ready, method) => ServiceCall::decode(method, params).map(Route::Call),
         }
     }
@@ -629,6 +673,10 @@ impl ServiceCall {
             AUTH_LIST => decode_params::<AuthList>(params).map(|AuthListParams {}| Self::ListAuths),
             AUTH_LOGIN_CANCEL => decode_params::<AuthLoginCancel>(params).map(Self::CancelLogin),
             AUTH_CHOOSE_STORE => decode_params::<AuthChooseStore>(params).map(Self::ChooseStore),
+            CONFIG_SCHEMA => decode_params::<ConfigSchemaMethod>(params)
+                .map(|ConfigSchemaParams {}| Self::ConfigSchema),
+            CONFIG_REGISTER => decode_params::<ConfigRegister>(params).map(Self::RegisterConfig),
+            CONFIG_SET => decode_params::<ConfigSet>(params).map(Self::SetConfig),
             method => Err(RpcError::new(
                 ErrorCode::MethodNotFound,
                 format!("unknown method {method}"),
@@ -659,7 +707,10 @@ impl ServiceCall {
             | Self::LogoutAuth(_)
             | Self::ListAuths
             | Self::CancelLogin(_)
-            | Self::ChooseStore(_) => None,
+            | Self::ChooseStore(_)
+            | Self::ConfigSchema
+            | Self::RegisterConfig(_)
+            | Self::SetConfig(_) => None,
         }
     }
 
@@ -720,6 +771,15 @@ impl ServiceCall {
             }
             Self::ChooseStore(params) => {
                 encode_result::<AuthChooseStore>(&service.choose_store(params).await?)
+            }
+            Self::ConfigSchema => {
+                encode_result::<ConfigSchemaMethod>(&service.config_schema().await?)
+            }
+            Self::RegisterConfig(params) => {
+                encode_result::<ConfigRegister>(&service.register_config(params).await?)
+            }
+            Self::SetConfig(params) => {
+                encode_result::<ConfigSet>(&service.set_config(params).await?)
             }
         }
     }
@@ -783,6 +843,26 @@ async fn login<Svc: Service>(
             let outbox = responder.outbox.clone();
             forwarders.relay_login(login, stream, outbox, move || {
                 responder.send(Ok(result));
+            });
+        }
+        Err(error) => responder.send(Err(error)),
+    }
+}
+
+/// Answers a `rho/config/get` through `responder`, then forwards the
+/// namespace's changes through `forwarders`.
+async fn watch_config<Svc: Service>(
+    service: &Svc,
+    params: ConfigGetParams,
+    responder: Responder,
+    forwarders: &Arc<Forwarders>,
+) {
+    let namespace = params.namespace.clone();
+    match service.get_config(params).await {
+        Ok(watch) => {
+            let outbox = responder.outbox.clone();
+            forwarders.watch_config(namespace, watch, outbox, move |state| {
+                responder.send(encode_result::<ConfigGet>(state));
             });
         }
         Err(error) => responder.send(Err(error)),

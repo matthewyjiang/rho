@@ -41,6 +41,10 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/auth/login` | `auth`, `flow`? | Starts auth profile `auth`'s interactive login in the daemon and returns its `login` id; its prompt and its end follow as notifications ([below](#logging-in)). `flow` is `browser`, the default, or `device_code`. |
 | `rho/auth/login_cancel` | `login` | Asks the login to stop, which then ends `cancelled`, and returns `{}`; a login the provider already approved still saves and ends `succeeded`. |
 | `rho/auth/choose_store` | `store` | Checks that credential store `store` (`os` or `file`) takes a temporary secret, saves it as the daemon's `behavior.credential_store`, and returns the new `credential_store` ([below](#credential-store)). |
+| `rho/config/schema` | | Every agent setting: `categories`, `settings` (each a [setting spec](#settings)), and the `file_only` tables only a hand edit changes. |
+| `rho/config/register` | `client`, `settings` | Declares the client's own settings, which the daemon then stores for it ([below](#client-settings)), and returns `{}`. |
+| `rho/config/get` | `namespace` | The namespace's `revision`, `values`, and `errors`; the connection then gets `rho/config/changed` for it ([below](#settings)). |
+| `rho/config/set` | `namespace`, `layer`, `revision`, `changes` | Writes every change, or none, and returns the new `revision` ([below](#settings)). |
 
 A prompt whose turn ends before it began returns an error instead of a result:
 
@@ -278,6 +282,29 @@ One login per auth profile runs at a time, whichever client started it: another 
 
 The daemon never moves credentials to another store on its own. While `selected_by` is `default`, a client signing in should ask its user which store to use, offering the file store when the OS store is `unreachable`, as `rho login` does, and send the answer with `rho/auth/choose_store`. The daemon first writes and deletes a temporary secret there, refusing a store that does not take it with `CredentialStoreUnavailable`, then saves the choice in its config and keeps credentials there from then on; credentials already saved stay where they are, and the models each session may switch to follow the new store. A store `RHO_CREDENTIAL_STORE` chose cannot be replaced this way, so the daemon refuses with `EnvironmentOverride` naming the variable.
 
+## Settings
+
+The daemon reads and writes the user's settings for its clients (#1720), so a frontend renders a settings screen from data. A `namespace` is `{"kind": "agent"}`, the agent's settings in `config.toml`, or `{"kind": "client", "name": "<name>"}`, a client's own ([below](#client-settings)).
+
+`rho/config/schema` describes each agent setting with its `key`, which is also where `config.toml` keeps it (`behavior.permission_mode` is the `permission_mode` key of `[behavior]`); its `kind`; its `default`, absent for an optional setting that is unset by default; the `category` page and optional `section` it sits under; a `label` and `help`; whether a project may later override it (`overridable_per_project`); and `applies`, when a change takes effect:
+
+| `applies` | Takes effect |
+| --- | --- |
+| `immediately` | As soon as it is saved, such as `behavior.agent_concurrency`, which resizes the subagent budget. |
+| `next_turn` | At the next turn of every loaded session: the advisor and automatic compaction settings. |
+| `next_session` | In sessions the daemon opens later. |
+| `restart` | When the daemon next starts, such as `behavior.credential_store`. |
+
+A `kind` is `bool`; `choice`, whose `choices` each have a `value`, a `label`, and optional `help`; `integer`, from `min` to an optional `max`, with an optional `unit` (`bytes`, `lines`, `percent`, or `seconds`); `text`; or `model`, on the `runtimes` it lists (`rho`, `claude-cli`). A value is `true`/`false`, a whole number, a string (a choice's `value`), or for a model `{"runtime": "rho", "provider", "model"}` or `{"runtime": "claude-cli", "model"?}`. A model on another provider takes that provider's default auth profile.
+
+`rho/config/get` returns every setting of the namespace in `values`, each with its `value`, absent when unset, and its `source`: `global` when the file sets it, `default` otherwise. It also returns `errors`, each a `message` and the `key` it concerns when it has one, for what keeps the file from loading. While the file does not load, `values` are the last ones that did, and those stay in force: sessions keep opening with them. The connection then gets `rho/config/changed` with the namespace, its new `revision`, the `values` that changed, and the whole `errors` list whenever either changes, including through the client's own `rho/config/set` and edits by hand. Reading the namespace again replaces that subscription. The daemon notices a hand edit the next time something touches the settings: a config request, a session opening, or a turn starting.
+
+`rho/config/set` takes the `revision` the client last read and a list of `changes`, each `{"op": "set", "key", "value"}` or `{"op": "reset", "key"}`, which removes the key from the file so its default applies. `layer` is `global`, the user's file. The daemon edits only those keys, keeping the file's comments and layout, then loads the result; nothing is written unless every change is valid and the file still loads. A stale `revision` gets `ConfigConflict`: read the settings again and resend. An unknown key, a value the setting does not take, or a result that does not load, such as a compaction target at or above its threshold, gets `InvalidParams` naming each key, its limit, and the value sent. A file that is not valid TOML gets `ConfigInvalid`: fix it by hand.
+
+### Client settings
+
+A client keeps its own settings in the daemon by declaring them with `rho/config/register`: a `client` name of lowercase letters, digits, and `-`, and `settings` in the schema's shape, each a `bool`, `choice`, `integer`, or `text` setting. The daemon stores their values in `~/.rho/clients/<name>.toml`, one file per client, and serves them as `{"kind": "client", "name": "<name>"}`. Registering again replaces the client's schema, which the daemon keeps until it stops; a client registers each time it connects to a new daemon. Keys the file holds that the schema does not list stay in the file and are not served. `rho/config/get` or `rho/config/set` on a client that has not registered gets `InvalidParams`.
+
 ## The client's environment
 
 A session's commands run with its client's environment, not the daemon's ([#1659](https://github.com/matthewyjiang/rho/issues/1659)). `rho/session/new`, `rho/session/prompt`, and `rho/session/attach` each carry `environment`, the client's environment variables as an object of strings; a client leaves out a variable whose name or value is not UTF-8. A new session's commands start with the opening client's, each prompt replaces it with the prompting client's, and an attach uses its own only when it reopens a session the daemon had unloaded. Processes already running keep the environment they started with. MCP servers, hooks, OpenAPI sources, CLI subagents, a Claude Code advisor, and the workflow runs a session starts read it too, as [Daemon](daemon.md#environment) describes. The daemon leaves provider credentials out of commands' environments, though CLI subagents and the advisor get them, never logs the environment, and never saves it, so a session reopened after a restart takes the reopening client's.
@@ -311,6 +338,8 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 | -32017 | `LoginBusy` | The daemon is already signing in to the auth profile; wait for that login to finish. |
 | -32018 | `LoginNotFound` | No login under way has the id: it ended, or never started. |
 | -32019 | `SignInRequired` | The daemon could not open the session because its model's auth profile has no usable credentials: none are saved or set, they could not be read, or the provider refused them. Sign in, then try again. |
+| -32020 | `ConfigConflict` | The settings changed since the `revision` a `rho/config/set` sent, so nothing was written. Read them again, then resend. |
+| -32021 | `ConfigInvalid` | The settings file is not valid TOML, so the daemon cannot merge a change into it and wrote nothing. Fix it by hand; `rho/config/get` lists where it fails. |
 
 ## Versions and compatibility
 

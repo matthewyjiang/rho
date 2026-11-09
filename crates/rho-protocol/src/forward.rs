@@ -20,6 +20,14 @@
 //! A login's forwarder is never replaced or stopped early; it ends with its
 //! login or with the connection, and dropping its stream then tells the
 //! login its client left.
+//!
+//! A connection also has one forwarder per settings namespace it read; see
+//! [`config`].
+
+#[path = "config_forward.rs"]
+mod config;
+
+pub use config::ConfigWatch;
 
 use std::{
     collections::HashMap,
@@ -36,9 +44,9 @@ use crate::{
     login_relay::{LoginEvent, LoginStream},
     methods::{
         AuthLoginFinishedNotification, AuthLoginFinishedParams, AuthLoginPromptNotification,
-        AuthLoginPromptParams, LoginId, Notification, Seq, SessionDetachedNotification,
-        SessionDetachedParams, SessionEvent, SessionEventNotification, SessionEventParams,
-        SessionId,
+        AuthLoginPromptParams, ConfigNamespace, LoginId, Notification, Seq,
+        SessionDetachedNotification, SessionDetachedParams, SessionEvent, SessionEventNotification,
+        SessionEventParams, SessionId,
     },
     server::{Outbox, Outgoing},
     subscription::{Next, Subscription},
@@ -72,6 +80,8 @@ struct Table {
     /// is no longer current.
     next_id: u64,
     current: HashMap<SessionId, Current>,
+    /// Each settings namespace's current forwarder.
+    config: HashMap<ConfigNamespace, config::ConfigCurrent>,
     tasks: JoinSet<()>,
 }
 
@@ -93,6 +103,7 @@ impl Forwarders {
                 open: true,
                 next_id: 0,
                 current: HashMap::new(),
+                config: HashMap::new(),
                 tasks: JoinSet::new(),
             }),
         }

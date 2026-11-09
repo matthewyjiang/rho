@@ -106,6 +106,8 @@ In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#command
 | Tools | Inline shell, edit tool, web search, and SpaceXAI image generation when the conversation provider is SpaceXAI |
 | Providers | Login, logout, model-list refresh, models.dev catalog refresh, startup update check |
 
+Clients of the [daemon](/daemon#configuration-changes) read and change the agent settings, and keep their own, through [`rho/config/*`](/protocol#settings); each setting there says when a change takes effect.
+
 Apply timing:
 
 - Before the next turn: permission mode, edit tool, advisor mode, web search.

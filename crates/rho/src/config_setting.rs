@@ -77,11 +77,15 @@ pub(crate) trait AnySetting<S>: Sync {
     fn save(&self, before: &S, after: &S, doc: &mut ConfigDocument);
     /// Whether the key path `path` in a file belongs to this setting.
     fn owns(&self, path: &[String]) -> bool;
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "rho/config/schema serves it in the next commit")
-    )]
     fn spec(&self) -> SettingSpec;
+    /// The setting's value in `store` as the protocol carries it; `None`
+    /// for an unset optional value.
+    fn wire_value(&self, store: &S) -> Option<SettingValue>;
+    #[cfg(test)]
+    fn applies(&self) -> Apply;
+    /// Whether `a` and `b` hold different values.
+    #[cfg(test)]
+    fn differs(&self, a: &S, b: &S) -> bool;
 }
 
 impl<S: Default + 'static, T: SettingType> AnySetting<S> for Setting<S, T> {
@@ -121,6 +125,20 @@ impl<S: Default + 'static, T: SettingType> AnySetting<S> for Setting<S, T> {
             applies: self.meta.applies.wire(),
             overridable_per_project: self.meta.overridable_per_project,
         }
+    }
+
+    fn wire_value(&self, store: &S) -> Option<SettingValue> {
+        (self.get)(store).to_wire()
+    }
+
+    #[cfg(test)]
+    fn applies(&self) -> Apply {
+        self.meta.applies
+    }
+
+    #[cfg(test)]
+    fn differs(&self, a: &S, b: &S) -> bool {
+        (self.get)(a) != (self.get)(b)
     }
 }
 
@@ -814,7 +832,6 @@ impl Choice for crate::keybindings::EditingMode {
 
 /// Whether a spec's default is a value its own kind accepts, so a declared
 /// range or choice list cannot reject the setting's own default.
-#[cfg(test)]
 pub(crate) fn default_fits_kind(spec: &SettingSpec) -> bool {
     match (&spec.kind, &spec.default) {
         (_, None) => true,

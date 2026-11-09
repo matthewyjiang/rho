@@ -72,6 +72,7 @@ mod version;
 
 pub use client::{Client, ClientError, DaemonNotification, Notifications};
 pub use error::ErrorCode;
+pub use forward::ConfigWatch;
 pub use jsonrpc::{
     FrameError, Message, MessageReader, MessageWriter, Notification, ParseError, Request,
     RequestId, Response, RpcError, MAX_LINE_BYTES,
@@ -96,8 +97,11 @@ pub use methods::{
     UncheckedKey, UncheckedReason, UnsteerOutcome, SESSION_ANSWER, SESSION_HOLD,
 };
 pub use methods::{
-    Applies, IntegerUnit, ModelRuntime, ModelSelection, SettingChoice, SettingKey, SettingKind,
-    SettingSpec, SettingValue,
+    Applies, ClientName, ConfigCategory, ConfigChangedParams, ConfigError, ConfigGetParams,
+    ConfigGetResponse, ConfigLayer, ConfigNamespace, ConfigRegisterParams, ConfigRegisterResponse,
+    ConfigRevision, ConfigSchema, ConfigSchemaParams, ConfigSetParams, ConfigSetResponse,
+    FileOnlyTable, IntegerUnit, InvalidClientName, ModelRuntime, ModelSelection, SettingChange,
+    SettingChoice, SettingEntry, SettingKey, SettingKind, SettingSpec, SettingValue, ValueSource,
 };
 pub use methods::{
     AuthChooseStoreParams, AuthChooseStoreResponse, CredentialStoreKind, CredentialStoreStatus,

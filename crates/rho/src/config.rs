@@ -45,6 +45,12 @@ pub(crate) use setting::default_fits_kind;
 #[path = "config_registry.rs"]
 mod registry;
 
+#[path = "config_wire.rs"]
+mod wire;
+pub(crate) use wire::{
+    agent_schema, agent_values, client_specs_problem, spec_values, write_changes,
+};
+
 #[path = "config_migrate_2x.rs"]
 #[cfg_attr(
     not(test),
@@ -118,6 +124,7 @@ pub use web_search::{
 
 #[path = "config_load.rs"]
 mod load;
+pub(crate) use load::resolve as resolve_document;
 
 pub(crate) use provider_config::ProviderConfigs;
 
@@ -653,6 +660,65 @@ impl Config {
         (target.model == self.model
             && target.provider.as_deref().unwrap_or(&self.provider) == self.provider)
             .then_some(name)
+    }
+}
+
+/// Which hooks [`Config::take_next_turn_settings`] calls for.
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, reason = "the unix-only daemon applies them")
+)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct NextTurnChanges {
+    /// Advisor mode, model, or reasoning changed.
+    pub(crate) advisor: bool,
+    /// An automatic compaction setting changed.
+    pub(crate) compaction: bool,
+}
+
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, reason = "the unix-only daemon applies them")
+)]
+impl Config {
+    /// Takes from `global` every setting that reaches a loaded session at
+    /// its next turn (`Apply::NextTurn` in the registry), keeping the rest of
+    /// this session's config, and reports what changed.
+    pub(crate) fn take_next_turn_settings(&mut self, global: &Config) -> NextTurnChanges {
+        use crate::agent::ADVISOR_AGENT_ID;
+        let advisor = |config: &Config| {
+            (
+                config.advisor_mode,
+                config.internal_agents.get(ADVISOR_AGENT_ID).cloned(),
+            )
+        };
+        let compaction = |config: &Config| {
+            (
+                config.auto_compact,
+                config.compact_threshold_percent,
+                config.compact_target_percent,
+            )
+        };
+        let changes = NextTurnChanges {
+            advisor: advisor(self) != advisor(global),
+            compaction: compaction(self) != compaction(global),
+        };
+        self.advisor_mode = global.advisor_mode;
+        match global.internal_agents.get(ADVISOR_AGENT_ID) {
+            Some(selection) => {
+                self.internal_agents
+                    .insert(ADVISOR_AGENT_ID.into(), selection.clone());
+            }
+            None => {
+                self.internal_agents.remove(ADVISOR_AGENT_ID);
+            }
+        }
+        (
+            self.auto_compact,
+            self.compact_threshold_percent,
+            self.compact_target_percent,
+        ) = compaction(global);
+        changes
     }
 }
 
