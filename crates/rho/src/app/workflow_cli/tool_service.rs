@@ -447,9 +447,14 @@ impl AppWorkflowToolService {
         let planned =
             super::planner_worker::run_supervised_planner(&sources, supplied_inputs, &limits)
                 .await?;
+        let launchable = super::plan_host::ensure_program_launchable(
+            &planned.program,
+            &catalog,
+            crate::workflow::HandleLaunch::CURRENT,
+        )?;
         let executable_identities = self
             .authorize_node_resolution_reads(
-                &planned.program,
+                launchable,
                 &catalog,
                 environment.path().as_deref(),
                 context,
@@ -463,7 +468,7 @@ impl AppWorkflowToolService {
             &available_tools,
             &executable_identities,
         );
-        let resolved_nodes = super::plan_host::resolve_nodes_with_host(&planned.program, &host)?;
+        let resolved_nodes = super::plan_host::resolve_nodes_with_host(launchable, &host)?;
         super::freeze_planned_workflow(sources, planned, resolved_nodes, &limits)
     }
 

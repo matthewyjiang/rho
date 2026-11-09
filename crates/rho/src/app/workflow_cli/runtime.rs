@@ -31,7 +31,7 @@ use crate::{
     permission_classifier_handler::ClassifierApprovalHandler,
     session_environment::{Ambient, SessionEnvironment},
     tools::workflow_tracker::WorkflowRunTracker,
-    workflow::{ResolvedNode, StoredRun, WorkflowOutcome},
+    workflow::{ResolvedNode, RunId, StoredRun, WorkflowOutcome},
 };
 
 use super::{
@@ -390,15 +390,11 @@ pub(crate) async fn spawn_background_run(
                     Ok(final_run) => tracker.mark_finished_from_stored(final_run),
                     Err(error) => tracker.mark_failed(&run_id.to_string(), error.to_string()),
                 }
+                let ended = drive_end(&result);
+                log_drive_end(run_id, &ended);
                 if let Some(end) = end {
                     // The host may already have stopped following the run.
-                    let _ = end.send(drive_end(&result));
-                }
-                match result {
-                    Ok(_) => tracing::info!(%run_id, "background workflow completed"),
-                    Err(error) => {
-                        tracing::warn!(%run_id, error = %error, "background workflow failed")
-                    }
+                    let _ = end.send(ended);
                 }
             },
         )
@@ -407,6 +403,18 @@ pub(crate) async fn spawn_background_run(
     // Return the pre-spawn snapshot immediately. Progress is eventually consistent
     // via status / watch / automatic completion notification.
     Ok(run)
+}
+
+/// Logs how background run `run_id` ended: a run that failed, was denied or
+/// blocked logs as failed with its outcome, not as completed (#1736).
+fn log_drive_end(run_id: RunId, end: &WorkflowEnd) {
+    match end {
+        WorkflowEnd::Completed => tracing::info!(%run_id, "background workflow completed"),
+        WorkflowEnd::Cancelled => tracing::info!(%run_id, "background workflow cancelled"),
+        WorkflowEnd::Failed(reason) => {
+            tracing::warn!(%run_id, error = %reason, "background workflow failed")
+        }
+    }
 }
 
 /// How a drive that returned `result` ended, for the host following it.

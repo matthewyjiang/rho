@@ -123,10 +123,13 @@ working directory with no-follow checks and compares its content and file
 identity with the confirmed program. Linux and Android launch the executable,
 script interpreter, and working directory through those verified handles, so a
 path replacement after the check cannot select another object. Frozen workflow
-command execution fails closed on other targets. Those targets do not use the
-verified original path because their current process adapter cannot keep the
-same handle-based guarantee. Workflows with only in-process Rho agent nodes
-remain available there.
+command execution fails closed on other targets, such as macOS and Windows.
+Those targets do not use the verified original path because their current
+process adapter cannot keep the same handle-based guarantee. There,
+`workflow validate`, `plan`, and `start` reject a workflow with a command node
+or an external CLI agent node (Claude CLI, Cursor, or Antigravity) before you
+approve it, with the same error a launch would give. Workflows with only
+in-process Rho agent nodes remain available there.
 
 ## Permissions, approval, and trust
 
