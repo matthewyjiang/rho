@@ -424,19 +424,26 @@ impl App {
 
     pub(super) fn commit_daemon_config(&mut self, value: &str) -> anyhow::Result<()> {
         match value {
+            // Child pages stack on the settings page, so Esc returns to it.
             config_picker::CONVERSATION_MODEL_VALUE => {
                 if let Some(picker) = self.daemon_model_picker() {
-                    self.input_ui.set_composer(ComposerMode::Picker(picker));
+                    self.open_child_picker(picker);
                 }
             }
             config_picker::REASONING_VALUE => return self.cycle_daemon_reasoning(),
             FAST_MODE => return self.set_daemon_fast(""),
-            config_picker::PERMISSION_MODE_VALUE => self.open_daemon_permission_picker(),
-            config_picker::THEME_VALUE => return self.open_theme_picker(),
+            config_picker::PERMISSION_MODE_VALUE => {
+                if let Some(picker) = self.daemon_permission_picker() {
+                    self.open_child_picker(picker);
+                }
+            }
+            config_picker::THEME_VALUE => return self.open_theme_picker_from_config(),
             _ => {
                 if let Some(mode) = value.strip_prefix(config_picker::PERMISSION_MODE_PREFIX) {
                     self.set_daemon_permission(mode.parse()?)?;
-                    self.input_ui.set_composer(ComposerMode::Input);
+                    if !self.pop_picker_level() {
+                        self.input_ui.set_composer(ComposerMode::Input);
+                    }
                 } else {
                     self.daemon_command_unavailable("config");
                 }

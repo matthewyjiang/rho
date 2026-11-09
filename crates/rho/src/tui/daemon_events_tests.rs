@@ -15,11 +15,17 @@ use crate::tui::{daemon_inputs::AnswerRefusal, StreamKind};
 
 // Covers: context tokens and cumulative spend have different meanings; a
 // later unknown price must clear spend rather than reusing the prior total.
-// Title events must survive mapping, including successive renames.
+// Title events must survive mapping, including successive renames; a
+// replayed rename sets the title without a notice.
 // Owner: pure daemon event mapper
 #[test]
 fn usage_and_title_updates_keep_their_independent_values() {
     let views = map(vec![
+        Step::Attached(Vec::new()),
+        Step::Event(SessionEvent::TitleChanged {
+            title: "Replayed title".into(),
+        }),
+        Step::ReplayEnded(JobState::Idle),
         Step::Event(SessionEvent::Usage {
             used_tokens: 1200,
             window_tokens: Some(8000),
@@ -37,7 +43,13 @@ fn usage_and_title_updates_keep_their_independent_values() {
             title: "Renamed live".into(),
         }),
     ]);
-    // Compare the state updates, not the title notice's UI copy.
+    // Compare the state updates, and count the notices rather than lock
+    // their UI copy: only the two live renames say so.
+    let notices = views
+        .iter()
+        .filter(|view| matches!(view, DaemonView::Notice(_)))
+        .count();
+    assert_eq!(notices, 2);
     let updates: Vec<_> = views
         .into_iter()
         .filter(|view| !matches!(view, DaemonView::Notice(_)))
@@ -45,6 +57,8 @@ fn usage_and_title_updates_keep_their_independent_values() {
     assert_eq!(
         updates,
         vec![
+            DaemonView::Title("Replayed title".into()),
+            resting(Rest::Ready),
             DaemonView::Context {
                 used_tokens: 1200,
                 window_tokens: Some(8000)

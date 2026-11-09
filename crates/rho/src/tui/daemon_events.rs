@@ -242,6 +242,11 @@ impl DaemonEvents {
                 self.end_messages();
                 views
             }
+            // A replayed rename only sets the title, which the attach
+            // already showed; a live one says so too.
+            SessionEvent::TitleChanged { title } if self.inputs.replaying() => {
+                vec![DaemonView::Title(title)]
+            }
             SessionEvent::TitleChanged { title } => vec![
                 DaemonView::Notice(format!("session titled: {title}")),
                 DaemonView::Title(title),

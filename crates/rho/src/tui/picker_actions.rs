@@ -272,7 +272,8 @@ impl App {
         idle_model_parent: Option<(UiPicker, &'static str)>,
     ) -> anyhow::Result<()> {
         if self.info.session.daemon.is_some() {
-            return self.select_daemon_model(value);
+            self.select_daemon_model(value)?;
+            return self.restore_config_parent(idle_model_parent, /*preserve_status*/ true);
         }
         self.refresh_available_auths();
         match self.resolve_model_selection(
@@ -409,7 +410,15 @@ impl App {
             return Ok(());
         };
         let feedback = preserve_status.then(|| self.status().to_string());
-        self.open_main_config_picker(selected_value, picker.filter)?;
+        if self.info.session.daemon.is_some() {
+            // The daemon's settings page, not the local config editor.
+            let filter = picker.filter.clone();
+            let mut parent = self.refreshed_config_page(picker);
+            Self::restore_picker_position(&mut parent, selected_value, filter);
+            self.input_ui.set_composer(ComposerMode::Picker(parent));
+        } else {
+            self.open_main_config_picker(selected_value, picker.filter)?;
+        }
         if let Some(feedback) = feedback.filter(|feedback| !feedback.is_empty()) {
             self.set_status(feedback);
         }

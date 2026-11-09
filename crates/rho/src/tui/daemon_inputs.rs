@@ -52,6 +52,11 @@ impl OpenInputs {
         };
     }
 
+    /// Whether the attachment's replay is still arriving.
+    pub(super) fn replaying(&self) -> bool {
+        self.replaying
+    }
+
     /// The replay is over: every request still open shows, oldest first.
     pub(super) fn end_replay(&mut self) -> Vec<DaemonView> {
         self.replaying = false;
