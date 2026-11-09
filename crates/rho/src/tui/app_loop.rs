@@ -607,6 +607,13 @@ impl App {
         if let Some(message) = self.info.services.auth_unavailable.as_deref() {
             return Some(UserBlock::Auth(message));
         }
+        if self.info.session.daemon.is_some() {
+            return self
+                .daemon_goal()
+                .filter(|goal| goal.phase == rho_protocol::SessionGoalPhase::Blocked)
+                .and_then(|goal| goal.last_reason.as_deref())
+                .map(UserBlock::Goal);
+        }
         self.goal
             .as_ref()
             .filter(|goal| goal.is_blocked())

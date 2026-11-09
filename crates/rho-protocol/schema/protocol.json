@@ -2583,6 +2583,23 @@
             "mode"
           ],
           "type": "object"
+        },
+        {
+          "description": "Control the loaded session's goal without waiting for its turn.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/SessionGoalAction"
+            },
+            "kind": {
+              "const": "goal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "action"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3099,6 +3116,140 @@
       ],
       "type": "object"
     },
+    "SessionGoal": {
+      "description": "A goal the loaded session keeps working on, independently of clients.",
+      "properties": {
+        "condition": {
+          "description": "The user's completion condition.",
+          "type": "string"
+        },
+        "evaluated_turns": {
+          "description": "Evaluations completed, not provider calls or SDK steps.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "human_steps": {
+          "description": "Remaining human-only work; empty while active.",
+          "items": {
+            "$ref": "#/$defs/SessionGoalStep"
+          },
+          "type": "array"
+        },
+        "last_reason": {
+          "description": "Why the last evaluation found the goal unmet or blocked.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phase": {
+          "$ref": "#/$defs/SessionGoalPhase",
+          "description": "Whether the goal is working or waiting for the user."
+        },
+        "set_at": {
+          "description": "Unix time, in seconds, when the goal was set. Clients count the\ngoal's elapsed time from it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "condition",
+        "phase",
+        "evaluated_turns",
+        "set_at",
+        "human_steps"
+      ],
+      "type": "object"
+    },
+    "SessionGoalAction": {
+      "description": "A goal lifecycle change, sent through `rho/session/configure`. Unlike\nmodel settings, these actions do not queue behind a running goal.",
+      "oneOf": [
+        {
+          "description": "Set a nonempty condition and start working. Refused while a turn runs.",
+          "properties": {
+            "condition": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "set",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "condition"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Disarm the loop immediately, cancelling evaluation or retry waits,\nbut not a model turn already running. Idempotent when no goal exists.",
+          "properties": {
+            "kind": {
+              "const": "clear",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Verify a blocked goal's human steps, or continue an active goal.\nRefused while a turn runs or when there is no goal.",
+          "properties": {
+            "kind": {
+              "const": "resume",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SessionGoalPhase": {
+      "anyOf": [
+        {
+          "enum": [
+            "active"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "blocked",
+          "description": "Resume or a new user prompt verifies the previously blocked steps.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Whether the goal is working or waiting for external human-only steps."
+    },
+    "SessionGoalStep": {
+      "description": "One step the evaluator found outside the session's authority or capabilities.",
+      "properties": {
+        "action": {
+          "description": "What the user has to do.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why the session cannot do it itself.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "reason"
+      ],
+      "type": "object"
+    },
     "SessionHoldParams": {
       "description": "Params of [`SESSION_HOLD`].",
       "properties": {
@@ -3384,6 +3535,17 @@
             }
           ],
           "description": "Absent when the current model has no fast mode."
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionGoal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The daemon-owned goal, absent after completion, clear, or cancel.\nKept while the session is loaded, not across daemon restarts."
         },
         "model": {
           "$ref": "#/$defs/ModelOptions"

@@ -564,6 +564,7 @@ impl Service for AttachService {
                     available: Vec::new(),
                 },
                 commands: Vec::new(),
+                goal: None,
             },
         };
         Ok((response, subscription))

@@ -14,7 +14,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{PermissionMode, SessionId};
+use super::{PermissionMode, SessionGoal, SessionGoalAction, SessionId};
 
 /// Change one setting of a loaded session between its turns: a change sent
 /// during a turn, waiting for input included, waits for the turn to end,
@@ -51,6 +51,8 @@ pub enum SessionChange {
     FastMode { enabled: bool },
     /// Gate later turns' tool calls with `mode`.
     PermissionMode { mode: PermissionMode },
+    /// Control the loaded session's goal without waiting for its turn.
+    Goal { action: SessionGoalAction },
 }
 
 /// Result of [`SESSION_CONFIGURE`], once the change applied, after the turn
@@ -76,6 +78,10 @@ pub struct SessionOptions {
     pub permission_mode: PermissionModeOptions,
     /// The commands a prompt may start with or mention, in menu order.
     pub commands: Vec<SessionCommand>,
+    /// The daemon-owned goal, absent after completion, clear, or cancel.
+    /// Kept while the session is loaded, not across daemon restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<Box<SessionGoal>>,
 }
 
 /// A model, by its provider and the provider's model id.

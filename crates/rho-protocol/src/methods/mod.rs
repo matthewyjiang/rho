@@ -53,6 +53,7 @@ mod auth;
 mod catalog;
 mod daemon;
 mod event;
+mod goal;
 mod input;
 mod job;
 mod login;
@@ -81,6 +82,7 @@ pub use event::{
     PlanStatus, Seq, SessionEvent, SteerId, StreamId, ToolCallId, ToolCallUpdate, ToolContent,
     ToolKind, ToolStatus,
 };
+pub use goal::{SessionGoal, SessionGoalAction, SessionGoalPhase, SessionGoalStep};
 pub use input::{
     ApprovalAsk, ApprovalSource, Ask, Choice, DefaultAnswer, DefaultStyle, InputAnswer,
     InputRequest, InputRequestId, InputTimeout, Operation, PathScope, PermissionMode,

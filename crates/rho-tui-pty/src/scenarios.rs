@@ -28,6 +28,8 @@ mod daemon_approval;
 #[cfg(unix)]
 mod daemon_detach;
 #[cfg(unix)]
+mod daemon_goal;
+#[cfg(unix)]
 mod daemon_mcp;
 #[cfg(unix)]
 mod daemon_options;
@@ -673,6 +675,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_resume::SCENARIO,
     #[cfg(unix)]
     daemon_detach::SCENARIO,
+    #[cfg(unix)]
+    daemon_goal::SCENARIO,
     #[cfg(unix)]
     daemon_mcp::SCENARIO,
     #[cfg(unix)]

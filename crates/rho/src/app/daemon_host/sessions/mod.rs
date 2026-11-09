@@ -65,6 +65,7 @@ mod catalog;
 mod configure;
 mod cost;
 mod feed;
+mod goal;
 mod inputs;
 mod mcp;
 mod open;
@@ -154,6 +155,8 @@ struct LoadedSession {
     feed: Feed,
     /// Shared inventory handles; reads never wait for the active turn.
     mcp: Mutex<crate::app::session_mcp::SessionMcp>,
+    /// Goal lifecycle shared with control requests while the runtime is busy.
+    goal: Mutex<goal::GoalControl>,
     /// Turns the runtime's events into the feed's; only the turn under way
     /// and its steers use it, each briefly and never across an await.
     live: Mutex<LiveEvents>,
@@ -344,6 +347,7 @@ impl LoadedSession {
             live: Mutex::new(live),
             mcp: Mutex::new(crate::app::session_mcp::SessionMcp::of(&runtime)),
             feed,
+            goal: Mutex::default(),
             job,
             jobs,
             runtime: Arc::new(tokio::sync::Mutex::new(Some(runtime))),
@@ -453,6 +457,7 @@ impl LoadedSession {
         // cancel. Lock order: the turn lock, then the prompt gate's
         // slot inside `handle.cancel()`; nothing takes them the other way.
         turn.cancel.cancel();
+        self.cancel_goal();
         self.handle.cancel();
     }
 }

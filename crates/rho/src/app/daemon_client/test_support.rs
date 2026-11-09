@@ -35,6 +35,7 @@ pub(crate) fn attach_response(
                 available: Vec::new(),
             },
             commands: Vec::new(),
+            goal: None,
         },
     }
 }

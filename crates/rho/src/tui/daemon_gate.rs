@@ -18,7 +18,11 @@ pub(super) enum CommandRoute {
 
 pub(super) fn command_route(command: CommandId) -> CommandRoute {
     match command {
-        CommandId::Model | CommandId::Permissions | CommandId::Fast => CommandRoute::Options,
+        // Session state the daemon owns, shown from and changed through
+        // the session's options.
+        CommandId::Model | CommandId::Permissions | CommandId::Fast | CommandId::Goal => {
+            CommandRoute::Options
+        }
         // These commands are implemented by the daemon's prompt pipeline.
         CommandId::Init | CommandId::Compact => CommandRoute::Prompt,
         CommandId::Exit
@@ -33,7 +37,7 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Skills
         | CommandId::Mcp => CommandRoute::Ui,
         // Session navigation/deletion and title writes need daemon methods;
-        // config/provider/auth editors, agents, advisor and goals still own
+        // config/provider/auth editors, agents and the advisor still own
         // in-process state. Hubs (/workflow, /attach, /side) likewise
         // describe the wrong runtime, even when opened read-only.
         CommandId::AddDir
@@ -49,7 +53,6 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Tree
         | CommandId::Context
         | CommandId::Info
-        | CommandId::Goal
         | CommandId::Hooks
         | CommandId::Agents
         | CommandId::Attach

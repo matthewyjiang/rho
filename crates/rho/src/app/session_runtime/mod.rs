@@ -49,6 +49,7 @@ mod compact;
 mod credentials;
 mod delegation;
 mod events;
+mod goal;
 mod handle;
 mod left_out;
 mod mode;

@@ -33,7 +33,7 @@ impl LoadedSession {
             crate::app::session_mcp::SessionMcp::of(runtime);
         let options = daemon_options(runtime, &self.config, auths);
         self.feed.update_options(options.clone());
-        options
+        self.feed.options()
     }
 }
 

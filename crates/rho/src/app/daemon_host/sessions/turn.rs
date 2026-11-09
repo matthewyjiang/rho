@@ -99,9 +99,14 @@ pub(super) const DAEMON_COMMANDS: CommandSet = CommandSet {
 
 /// How a prompt's turn ran, before the daemon records its end: a model
 /// turn and a command that ran to its end both complete with an outcome.
-enum Ran {
+pub(super) enum Ran {
     Completed(wire::TurnOutcome),
     Cancelled,
+}
+
+enum TurnInput {
+    Prompt(UserInput),
+    Goal(Turn),
 }
 
 /// One turn of a session whose job already recorded the turn's start.
@@ -126,11 +131,18 @@ impl TurnTask {
     /// stops (see [`PromptStart`]).
     pub(super) fn spawn(self, input: UserInput) -> oneshot::Receiver<PromptStart> {
         let (started, start) = oneshot::channel();
-        tokio::spawn(self.run(input, started));
+        tokio::spawn(self.run(TurnInput::Prompt(input), started));
         start
     }
 
-    async fn run(self, input: UserInput, started: oneshot::Sender<PromptStart>) {
+    /// Start a host-constructed goal turn without parsing its displayed command.
+    pub(super) fn spawn_goal(self, input: Turn) -> oneshot::Receiver<PromptStart> {
+        let (started, start) = oneshot::channel();
+        tokio::spawn(self.run(TurnInput::Goal(input), started));
+        start
+    }
+
+    async fn run(self, input: TurnInput, started: oneshot::Sender<PromptStart>) {
         let Self {
             session,
             runtime,
@@ -157,7 +169,24 @@ impl TurnTask {
             Some(_) if stopping.is_cancelled() => (Ok(Ran::Cancelled), None),
             Some(runtime) => {
                 let (ended, timed_out) = {
-                    let turn = run_turn(runtime, &mut view, input, &session.config, &cancel);
+                    let turn = async {
+                        let ended = match input {
+                            TurnInput::Prompt(input) => {
+                                run_turn(runtime, &mut view, input, &session.config, &cancel).await
+                            }
+                            TurnInput::Goal(turn) => {
+                                run_goal_turn(
+                                    runtime,
+                                    &mut view,
+                                    turn.into(),
+                                    &session.config,
+                                    &cancel,
+                                )
+                                .await
+                            }
+                        };
+                        super::goal::drive(runtime, &mut view, ended, &cancel).await
+                    };
                     tokio::pin!(turn);
                     // The deadline first, so a limit already past cancels
                     // the turn before it saves its prompt.
@@ -175,6 +204,7 @@ impl TurnTask {
                 // reports it follows the transcript's cut: a client reset
                 // from then on gets the saved turn, then how it ended.
                 save_transcript(&session, runtime);
+                session.report_goal_outcome();
                 // The turn may have left new skills, prompts, or MCP prompts
                 // behind; clients see them before they see the turn end.
                 session.refresh_options(runtime, &available_auths().await);
@@ -225,7 +255,7 @@ fn failure(
 
 /// `error` on `runtime` as clients are told it, hiding an authentication
 /// failure's text, which may echo credentials.
-fn client_error(runtime: &SessionRuntime, error: &anyhow::Error) -> wire::TurnError {
+pub(super) fn client_error(runtime: &SessionRuntime, error: &anyhow::Error) -> wire::TurnError {
     // The model the turn ran on, which a configure may have switched from
     // the config's.
     let current = runtime.current_model();
@@ -297,7 +327,7 @@ async fn run_turn(
             command = session_commands::resolve(input.clone(), &commands, DAEMON_COMMANDS) => command,
         }
     };
-    let turn = match command? {
+    let mut turn = match command? {
         PromptCommand::Turn {
             input: model,
             calls,
@@ -330,9 +360,33 @@ async fn run_turn(
         }
     };
     // The command stays the shown message; the model gets its expansion.
+    super::goal::prepare_turn(&view.session, &mut turn);
     view.session.live().prompt(&turn.display);
     // A turn builds a large future; keep it on the heap.
     let ended = Box::pin(runtime.run_prompt_turn(view, &scope, turn, config)).await?;
+    Ok(match ended {
+        TurnOutcome::Completed(run) => Ran::Completed(outcome::finished(&run)),
+        TurnOutcome::Cancelled => Ran::Cancelled,
+    })
+}
+
+/// Run a goal continuation or retry with normal persistence, child boundary
+/// delivery, cancellation, and plan handoff. A retry inserts no duplicate prompt.
+pub(super) async fn run_goal_turn(
+    runtime: &mut SessionRuntime,
+    view: &mut DaemonView,
+    input: crate::app::session_runtime::TurnStart,
+    config: &Config,
+    cancel: &CancellationToken,
+) -> anyhow::Result<Ran> {
+    let scope = runtime.begin_prompt(config).await?;
+    if cancel.is_cancelled() {
+        return Ok(Ran::Cancelled);
+    }
+    if let crate::app::session_runtime::TurnStart::Prompt(turn) = &input {
+        view.session.live().prompt(&turn.display);
+    }
+    let ended = Box::pin(runtime.run_prompt_turn(view, &scope, input, config)).await?;
     Ok(match ended {
         TurnOutcome::Completed(run) => Ran::Completed(outcome::finished(&run)),
         TurnOutcome::Cancelled => Ran::Cancelled,
@@ -459,8 +513,8 @@ attach reopens it from its file";
 /// Records the turn's end exactly once: through [`Self::end`], or, when the
 /// view drops without it, as the turn task panicking, failed with
 /// [`UNEXPECTED_STOP`].
-struct DaemonView {
-    session: Arc<LoadedSession>,
+pub(super) struct DaemonView {
+    pub(super) session: Arc<LoadedSession>,
     /// Answered `Began` once the turn began (see [`PromptStart::Began`]),
     /// or with how the turn ended if it ends first.
     started: Option<oneshot::Sender<PromptStart>>,
