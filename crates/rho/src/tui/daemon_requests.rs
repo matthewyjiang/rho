@@ -8,12 +8,13 @@
 //! control worker to stay usable during the turn: a goal runs as one long
 //! turn, which a queued change would otherwise hold `/goal clear` behind.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use rho_protocol::{
     methods::{ConfigSet, SessionConfigure, SessionMcp, SessionPrompt},
-    ClientEnvironment, ConfigSetParams, ContentBlock, ErrorCode, SessionChange,
-    SessionConfigureParams, SessionGoalAction, SessionId, SessionMcpParams, SessionPromptParams,
+    ClientEnvironment, ConfigNamespace, ConfigRevision, ConfigSetParams, ContentBlock, ErrorCode,
+    SessionChange, SessionConfigureParams, SessionGoalAction, SessionId, SessionMcpParams,
+    SessionPromptParams,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -39,6 +40,36 @@ enum Control {
     },
 }
 
+/// The revision each namespace's last write of this TUI produced, by the
+/// revision the TUI stamped it with. A quick second write still carries
+/// that stamp, since the daemon's `rho/config/changed` for the first has
+/// not reached the cache yet; it is sent against the first write's result
+/// instead, so it is not refused as a conflict with the TUI's own change.
+/// A change by anyone else still makes the daemon refuse it.
+#[derive(Default)]
+struct OwnWrites(HashMap<ConfigNamespace, (ConfigRevision, ConfigRevision)>);
+
+impl OwnWrites {
+    fn revision_for(&self, namespace: &ConfigNamespace, stamped: ConfigRevision) -> ConfigRevision {
+        match self.0.get(namespace) {
+            Some((base, saved)) if *base == stamped => saved.clone(),
+            _ => stamped,
+        }
+    }
+
+    /// Records that a write stamped `stamped` saved `saved`. A write that
+    /// was itself chained keeps the original stamp, which is what the
+    /// cache still holds.
+    fn saved(
+        &mut self,
+        namespace: ConfigNamespace,
+        stamped: ConfigRevision,
+        saved: ConfigRevision,
+    ) {
+        self.0.insert(namespace, (stamped, saved));
+    }
+}
+
 pub(super) struct DaemonRequests {
     sender: mpsc::UnboundedSender<Request>,
     pub(super) views: mpsc::UnboundedReceiver<DaemonView>,
@@ -58,6 +89,7 @@ impl DaemonRequests {
         let control_views = views.clone();
         // Control requests bypass configure, which can wait for a turn to end.
         let control_task = tokio::spawn(async move {
+            let mut writes = OwnWrites::default();
             while let Some(request) = control_requests.recv().await {
                 match request {
                     Control::Mcp => {
@@ -88,11 +120,17 @@ impl DaemonRequests {
                             )));
                         }
                     }
-                    Control::SetConfig { params, label } => {
+                    Control::SetConfig { mut params, label } => {
                         // `rho/config/changed`, not this response, updates
-                        // what the TUI shows.
+                        // what the TUI shows; the response only lets the
+                        // next write build on this one.
+                        let base = params.revision.clone();
+                        params.revision = writes.revision_for(&params.namespace, base.clone());
                         let view = match control_link.request::<ConfigSet>(&params).await {
-                            Ok(_) => continue,
+                            Ok(response) => {
+                                writes.saved(params.namespace, base, response.revision);
+                                continue;
+                            }
                             Err(error) if error.error_code() == Some(ErrorCode::ConfigConflict) => {
                                 // Another client's change, or this TUI's own
                                 // write the daemon has not reported back yet.
@@ -204,3 +242,7 @@ fn goal_verb(action: &SessionGoalAction) -> &'static str {
         _ => "change",
     }
 }
+
+#[cfg(test)]
+#[path = "daemon_requests_tests.rs"]
+mod tests;
