@@ -165,6 +165,8 @@ pub trait CredentialStore: Send + Sync {
     /// Use for revocable authorization data that must observe other processes'
     /// writes. Uncached stores can use this default; caching implementations must
     /// override it without invalidating or repopulating their ordinary cache.
+    /// Decorators must forward this method to the wrapped store rather than
+    /// falling back to [`Self::get_secret`].
     fn get_secret_fresh(&self, account: &str) -> CredentialResult<Option<String>> {
         self.get_secret(account)
     }

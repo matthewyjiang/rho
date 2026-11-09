@@ -1,7 +1,10 @@
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use pretty_assertions::assert_eq;
-use rho_providers::credentials::CredentialResult;
+use rho_providers::credentials::{CredentialResult, CredentialStoreBackend};
 use tempfile::TempDir;
 
 use super::*;
@@ -50,31 +53,48 @@ impl CredentialStore for StaleCache {
     }
 }
 
-// Covers: an older concurrent read repopulating the ordinary credential
-// cache must not make a later authorization read accept a revoked token.
-// Owner: MCP token loading at the credential-store boundary.
+// Covers: the actual application wrapper must not turn fresh authorization
+// reads into cached reads: neither an old hit nor an old miss may hide the
+// backing token set after another process revokes or creates a token.
+// Owner: MCP credential-store boundary through the selected-store decorator.
 #[test]
-fn token_reads_ignore_stale_credential_cache_after_revoke() {
+fn token_reads_bypass_cached_hits_and_misses_through_the_application_wrapper() {
     let root = TempDir::new().unwrap();
-    let store = StaleCache {
-        cached: MemoryStore::default(),
-        current: MemoryStore::default(),
-    };
     let mut tokens = TokenSet::default();
     let secret = tokens
         .rotate(
-            "revoked",
+            "remote",
             Rotation {
                 access: None,
                 workspaces: vec![root.path().to_owned()],
             },
         )
         .unwrap();
-    tokens.save(&store.cached).unwrap();
-    assert!(tokens.revoke("revoked"));
-    tokens.save(&store.current).unwrap();
+    let observed: Vec<_> = [
+        ("revoked", tokens.clone(), TokenSet::default()),
+        ("cached-miss", TokenSet::default(), tokens),
+    ]
+    .into_iter()
+    .map(|(case, cached, current)| {
+        let store = StaleCache {
+            cached: MemoryStore::default(),
+            current: MemoryStore::default(),
+        };
+        cached.save(&store.cached).unwrap();
+        current.save(&store.current).unwrap();
+        let store =
+            crate::credential_store::notifying_store(Arc::new(store), CredentialStoreBackend::Os);
+        (
+            case,
+            TokenSet::load(store.as_ref())
+                .unwrap()
+                .authenticate(&secret)
+                .is_some(),
+        )
+    })
+    .collect();
 
-    assert_eq!(TokenSet::load(&store).unwrap().authenticate(&secret), None);
+    assert_eq!(observed, vec![("revoked", false), ("cached-miss", true)]);
 }
 
 // Covers: a new token defaults to read access over the canonical
