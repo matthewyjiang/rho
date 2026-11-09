@@ -133,12 +133,16 @@ rho mcp token rotate laptop --scope write --workspace ~/src/app --workspace ~/sr
 
 ```bash
 rho mcp token list           # names, scopes, and workspaces; --json for one document
-rho mcp token revoke laptop  # the token stops working at once
+rho mcp token revoke laptop  # reject subsequent requests with this token
 ```
 
-The server reads the tokens on every request, so a rotation or a revoke applies to a running server without a restart.
+The server reads the tokens on every request, so a rotation or a revoke applies to requests not yet accepted, without restarting the server. It does not cancel an already admitted tool call, close an already open SSE stream, or stop daemon work the token started.
 
 A request without a token, or with one rho does not know, gets `401 Unauthorized`. A token's scope or workspaces refusing a tool is the tool's error, which the model reads, not an HTTP error.
+
+Each HTTP transport session belongs to the token name that initialized it. Another token name, or an unknown or deleted session ID, gets `404 Not Found` for requests, notifications, streams, resume, and deletion. Rotating a token keeps its existing transport sessions and applies its current grant to subsequent requests. Recreating a revoked token under the same name recreates that principal and can regain its surviving transport sessions.
+
+Token mutations serialize through `.rho-mcp-tokens.lock` in the OS account's home, resolved from the account database rather than `HOME`, `RHO_HOME`, or `TMPDIR`. This keeps a service and a login shell on the same lock even when their environments differ. The home must be owned by the account and allow no group or other write access; the lock itself is private and cannot be a symlink.
 
 ### Hosts and origins
 

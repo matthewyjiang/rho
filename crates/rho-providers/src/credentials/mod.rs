@@ -159,6 +159,16 @@ pub type CredentialResult<T> = Result<T, CredentialError>;
 /// should be reported as `CredentialError` values instead of panicking.
 pub trait CredentialStore: Send + Sync {
     fn get_secret(&self, account: &str) -> CredentialResult<Option<String>>;
+
+    /// Reads the backing store without consulting or populating a read cache.
+    ///
+    /// Use for revocable authorization data that must observe other processes'
+    /// writes. Uncached stores can use this default; caching implementations must
+    /// override it without invalidating or repopulating their ordinary cache.
+    fn get_secret_fresh(&self, account: &str) -> CredentialResult<Option<String>> {
+        self.get_secret(account)
+    }
+
     fn set_secret(&self, account: &str, secret: &str) -> CredentialResult<()>;
     fn delete_secret(&self, account: &str) -> CredentialResult<bool>;
 }

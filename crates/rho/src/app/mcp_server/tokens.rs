@@ -64,7 +64,7 @@ impl TokenSet {
     /// The set saved in `store`; empty when none is.
     pub(crate) fn load(store: &dyn CredentialStore) -> anyhow::Result<Self> {
         let Some(saved) = store
-            .get_secret(ACCOUNT)
+            .get_secret_fresh(ACCOUNT)
             .context("could not read the MCP server tokens from the credential store")?
         else {
             return Ok(Self::default());

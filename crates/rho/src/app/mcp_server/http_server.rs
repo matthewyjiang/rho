@@ -5,9 +5,11 @@
 //! - it binds a loopback address only, so the network reaches it only
 //!   through a tunnel the user set up;
 //! - every request carries a bearer token from `rho mcp token`, read from the
-//!   credential store per request so a rotation or revoke applies at once,
+//!   credential store per request so rotation/revoke affects new requests,
 //!   and the token's grant rides on the request to the core, which enforces
 //!   it;
+//! - every session ID belongs to the token name that initialized it, so
+//!   another valid token cannot use its requests, streams, or deletion;
 //! - rmcp checks the `Host` header (loopback names, plus the tunnel's
 //!   `--allow-host`) and refuses any `Origin` that is not an
 //!   `--allow-origin`, so a web page cannot drive it from a browser.
@@ -19,15 +21,18 @@ use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::{body::Incoming, header, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use rmcp::transport::streamable_http_server::{
-    session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
+use rmcp::transport::{
+    common::http_header::HEADER_SESSION_ID,
+    streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService},
 };
 
 use super::{tokens::TokenSet, Grants, SessionTools};
-use crate::{
-    app::session_control::SessionControl,
-    credential_store::{AppCredentialStore, UntrackedCredentialStore},
-};
+use crate::{app::session_control::SessionControl, credential_store::UntrackedCredentialStore};
+
+#[path = "http_sessions.rs"]
+mod sessions;
+
+use sessions::{Owner, Sessions};
 
 /// The path the MCP endpoint answers on.
 const ENDPOINT: &str = "/mcp";
@@ -47,7 +52,12 @@ pub(crate) struct HttpOptions {
 }
 
 type Body = BoxBody<Bytes, Infallible>;
-type Service = StreamableHttpService<SessionTools, LocalSessionManager>;
+type Service = StreamableHttpService<SessionTools, Sessions>;
+
+struct HttpServer {
+    service: Service,
+    sessions: Arc<Sessions>,
+}
 
 /// Serves the tools on `options.address` until the process is stopped.
 pub(crate) async fn serve_http(
@@ -73,6 +83,7 @@ pub(crate) async fn serve_http(
         )
         .with_allowed_origins(options.allowed_origins)
         .enforce_origin_validation();
+    let sessions = Arc::new(Sessions::default());
     let service: Service = StreamableHttpService::new(
         move || {
             Ok(SessionTools {
@@ -80,17 +91,18 @@ pub(crate) async fn serve_http(
                 grants: Grants::PerRequest,
             })
         },
-        Arc::default(),
+        Arc::clone(&sessions),
         config,
     );
+    let server = Arc::new(HttpServer { service, sessions });
     eprintln!("rho mcp serve listening on http://{local}{ENDPOINT}");
     loop {
         let (stream, _) = listener.accept().await?;
-        let service = service.clone();
+        let server = Arc::clone(&server);
         tokio::spawn(async move {
             let handler = hyper::service::service_fn(move |request| {
-                let service = service.clone();
-                async move { Ok::<_, Infallible>(handle(&service, request).await) }
+                let server = Arc::clone(&server);
+                async move { Ok::<_, Infallible>(handle(&server, request).await) }
             });
             if let Err(error) = hyper::server::conn::http1::Builder::new()
                 .serve_connection(TokioIo::new(stream), handler)
@@ -103,7 +115,7 @@ pub(crate) async fn serve_http(
 }
 
 /// Authenticates `request` and hands it to rmcp with its token's grant.
-async fn handle(service: &Service, mut request: Request<Incoming>) -> Response<Body> {
+async fn handle(server: &HttpServer, mut request: Request<Incoming>) -> Response<Body> {
     if request.uri().path() != ENDPOINT {
         return refusal(StatusCode::NOT_FOUND, "not found");
     }
@@ -123,8 +135,18 @@ async fn handle(service: &Service, mut request: Request<Incoming>) -> Response<B
     let Some(token) = tokens.authenticate(&presented) else {
         return unauthorized("invalid bearer token");
     };
+    let owner = Owner(token.name.clone());
+    if request
+        .headers()
+        .get(HEADER_SESSION_ID)
+        .is_some_and(|id| !server.sessions.owns(id, &owner))
+    {
+        // Do not disclose whether a session exists for a different principal.
+        return refusal(StatusCode::NOT_FOUND, "not found");
+    }
+    request.extensions_mut().insert(owner);
     request.extensions_mut().insert(token.grant());
-    service.handle(request).await
+    server.service.handle(request).await
 }
 
 /// The token in an `Authorization: Bearer <token>` header.
@@ -143,11 +165,7 @@ fn bearer(request: &Request<Incoming>) -> Option<String> {
 /// The saved tokens, read past the OS store's per-process cache so a
 /// rotation or revoke another process saved applies to the next request.
 async fn load_tokens() -> anyhow::Result<TokenSet> {
-    tokio::task::spawn_blocking(|| {
-        AppCredentialStore::reread_external_logins();
-        TokenSet::load(&UntrackedCredentialStore)
-    })
-    .await?
+    tokio::task::spawn_blocking(|| TokenSet::load(&UntrackedCredentialStore)).await?
 }
 
 fn unauthorized(message: &str) -> Response<Body> {

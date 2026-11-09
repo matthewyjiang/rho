@@ -18,10 +18,7 @@ use rmcp::{
     RoleClient, ServiceExt,
 };
 use serde_json::{json, Value};
-use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    net::TcpStream,
-};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 use super::sessions::{Follower, Sandbox, DEADLINE};
 
@@ -382,12 +379,32 @@ fn rotate(sandbox: &Sandbox, name: &str, args: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
 
-/// The status a raw `initialize` POST to `url` gets with these headers.
-async fn initialize_status(url: &str, headers: &[(&str, &str)]) -> u16 {
-    let address = url
-        .strip_prefix("http://")
-        .and_then(|rest| rest.strip_suffix("/mcp"))
+/// Sends a request without consuming its potentially unbounded SSE body.
+async fn http_request(
+    url: &str,
+    method: reqwest::Method,
+    headers: &[(&str, &str)],
+    body: &str,
+) -> reqwest::Response {
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(DEADLINE)
+        .build()
         .unwrap();
+    let mut request = client
+        .request(method, url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2025-06-18")
+        .body(body.to_owned());
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    request.send().await.expect("the server answers")
+}
+
+/// Initializes a transport session, returning its status and session header.
+async fn initialize(url: &str, headers: &[(&str, &str)]) -> reqwest::Response {
     let body = json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -399,30 +416,105 @@ async fn initialize_status(url: &str, headers: &[(&str, &str)]) -> u16 {
         },
     })
     .to_string();
-    let mut request = format!(
-        "POST /mcp HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n",
-        body.len()
+    http_request(url, reqwest::Method::POST, headers, &body).await
+}
+
+// Covers: a known MCP transport session is private to its token principal for
+// requests, notifications, streams/resume, and deletion; unknown and deleted IDs
+// are indistinguishable from another token's session.
+// Owner: rho mcp serve --http session authorization, through the actual binary.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn http_sessions_belong_to_the_token_that_initialized_them() {
+    use reqwest::Method;
+
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let sandbox = Sandbox::new();
+    let allowed = sandbox.workspace.display().to_string();
+    let owner = format!(
+        "Bearer {}",
+        rotate(&sandbox, "owner", &["--workspace", &allowed])
     );
-    for (name, value) in headers {
-        request.push_str(&format!("{name}: {value}\r\n"));
+    let other = format!(
+        "Bearer {}",
+        rotate(&sandbox, "other", &["--workspace", &allowed])
+    );
+    let (_server, url) = http_server(&sandbox).await;
+    let response = initialize(&url, &[("Authorization", &owner)]).await;
+    assert_eq!(response.status().as_u16(), 200);
+    let session = response.headers()["mcp-session-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    drop(response);
+    let initialized = http_request(
+        &url,
+        Method::POST,
+        &[("Authorization", &owner), ("Mcp-Session-Id", &session)],
+        &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}).to_string(),
+    )
+    .await;
+    assert_eq!(initialized.status().as_u16(), 202);
+
+    let ping = json!({"jsonrpc": "2.0", "id": 2, "method": "ping"}).to_string();
+    let notification = json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/cancelled",
+        "params": {"requestId": 999},
+    })
+    .to_string();
+    let cases = [
+        (Method::GET, None, "", 200),
+        (Method::GET, Some("0"), "", 200),
+        (Method::POST, None, ping.as_str(), 200),
+        (Method::POST, None, notification.as_str(), 202),
+        // Deletion runs last so preceding refusals cannot terminate the owner's session.
+        (Method::DELETE, None, "", 202),
+    ];
+    for (method, last_event, body, success) in &cases {
+        let mut statuses = Vec::new();
+        for (token, id) in [
+            (&other, session.as_str()),
+            (&owner, "unknown-session"),
+            (&other, "unknown-session"),
+            (&owner, session.as_str()),
+        ] {
+            let mut headers = vec![("Authorization", token.as_str()), ("Mcp-Session-Id", id)];
+            if let Some(event) = last_event {
+                headers.push(("Last-Event-ID", event));
+            }
+            statuses.push(
+                http_request(&url, method.clone(), &headers, body)
+                    .await
+                    .status()
+                    .as_u16(),
+            );
+        }
+        assert_eq!(
+            statuses,
+            vec![404, 404, 404, *success],
+            "{method} resume={last_event:?}"
+        );
     }
-    request.push_str("\r\n");
-    request.push_str(&body);
-    let mut stream = TcpStream::connect(address).await.unwrap();
-    stream.write_all(request.as_bytes()).await.unwrap();
-    let mut response = Vec::new();
-    let mut buffer = [0_u8; 512];
-    // The status line is all this needs; an event stream may stay open.
-    while !response.windows(2).any(|window| window == b"\r\n") {
-        let read = tokio::time::timeout(DEADLINE, stream.read(&mut buffer))
-            .await
-            .expect("the server answers")
-            .unwrap();
-        assert!(read > 0, "the server closed before answering");
-        response.extend_from_slice(&buffer[..read]);
+    // A successful DELETE removes the authorization binding as well as the session.
+    for (method, last_event, body, _) in &cases {
+        for token in [&owner, &other] {
+            let mut headers = vec![
+                ("Authorization", token.as_str()),
+                ("Mcp-Session-Id", &session),
+            ];
+            if let Some(event) = last_event {
+                headers.push(("Last-Event-ID", event));
+            }
+            assert_eq!(
+                http_request(&url, method.clone(), &headers, body)
+                    .await
+                    .status()
+                    .as_u16(),
+                404,
+                "deleted session: {method} resume={last_event:?}",
+            );
+        }
     }
-    let status = String::from_utf8_lossy(&response);
-    status.split(' ').nth(1).unwrap().parse().unwrap()
 }
 
 /// An MCP client of the HTTP server at `url` with `token`.
@@ -452,9 +544,9 @@ async fn http_refuses_what_its_tokens_do_not_allow() {
     let bearer = |token: &str| format!("Bearer {token}");
 
     let statuses = [
-        initialize_status(&url, &[]).await,
-        initialize_status(&url, &[("Authorization", "Bearer rho_mcp_wrong")]).await,
-        initialize_status(
+        initialize(&url, &[]).await,
+        initialize(&url, &[("Authorization", "Bearer rho_mcp_wrong")]).await,
+        initialize(
             &url,
             &[
                 ("Authorization", &bearer(&reader)),
@@ -462,8 +554,9 @@ async fn http_refuses_what_its_tokens_do_not_allow() {
             ],
         )
         .await,
-        initialize_status(&url, &[("Authorization", &bearer(&reader))]).await,
-    ];
+        initialize(&url, &[("Authorization", &bearer(&reader))]).await,
+    ]
+    .map(|response| response.status().as_u16());
     let read_only = http_client(&url, &reader).await;
     let listed = call(&read_only, "list", json!({})).await;
     let read_only_new = call(

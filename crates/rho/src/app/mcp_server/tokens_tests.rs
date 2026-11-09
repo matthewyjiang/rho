@@ -27,6 +27,56 @@ impl CredentialStore for MemoryStore {
     }
 }
 
+struct StaleCache {
+    cached: MemoryStore,
+    current: MemoryStore,
+}
+
+impl CredentialStore for StaleCache {
+    fn get_secret(&self, account: &str) -> CredentialResult<Option<String>> {
+        self.cached.get_secret(account)
+    }
+
+    fn get_secret_fresh(&self, account: &str) -> CredentialResult<Option<String>> {
+        self.current.get_secret(account)
+    }
+
+    fn set_secret(&self, account: &str, secret: &str) -> CredentialResult<()> {
+        self.current.set_secret(account, secret)
+    }
+
+    fn delete_secret(&self, account: &str) -> CredentialResult<bool> {
+        self.current.delete_secret(account)
+    }
+}
+
+// Covers: an older concurrent read repopulating the ordinary credential
+// cache must not make a later authorization read accept a revoked token.
+// Owner: MCP token loading at the credential-store boundary.
+#[test]
+fn token_reads_ignore_stale_credential_cache_after_revoke() {
+    let root = TempDir::new().unwrap();
+    let store = StaleCache {
+        cached: MemoryStore::default(),
+        current: MemoryStore::default(),
+    };
+    let mut tokens = TokenSet::default();
+    let secret = tokens
+        .rotate(
+            "revoked",
+            Rotation {
+                access: None,
+                workspaces: vec![root.path().to_owned()],
+            },
+        )
+        .unwrap();
+    tokens.save(&store.cached).unwrap();
+    assert!(tokens.revoke("revoked"));
+    tokens.save(&store.current).unwrap();
+
+    assert_eq!(TokenSet::load(&store).unwrap().authenticate(&secret), None);
+}
+
 // Covers: a new token defaults to read access over the canonical
 // directories it was given, its secret authenticates as its grant after a
 // save and load, a rotation keeps the token's grant and retires the old

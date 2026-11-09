@@ -145,6 +145,10 @@ impl CredentialStore for AppCredentialStore {
         selected_store()?.get_secret(account)
     }
 
+    fn get_secret_fresh(&self, account: &str) -> CredentialResult<Option<String>> {
+        selected_store()?.get_secret_fresh(account)
+    }
+
     fn set_secret(&self, account: &str, secret: &str) -> CredentialResult<()> {
         let saved = selected_store()?.set_secret(account, secret);
         // A failed write may still have changed the store, as an OS store
@@ -175,6 +179,10 @@ pub(crate) struct UntrackedCredentialStore;
 impl CredentialStore for UntrackedCredentialStore {
     fn get_secret(&self, account: &str) -> CredentialResult<Option<String>> {
         selected_store()?.get_secret(account)
+    }
+
+    fn get_secret_fresh(&self, account: &str) -> CredentialResult<Option<String>> {
+        selected_store()?.get_secret_fresh(account)
     }
 
     fn set_secret(&self, account: &str, secret: &str) -> CredentialResult<()> {
