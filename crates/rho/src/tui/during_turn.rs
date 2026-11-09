@@ -128,6 +128,13 @@ impl App {
         // Same order as the idle composer: pin cycle wins when a user binds
         // `cycle_pinned_model` onto a key that `handle_configurable_*` also
         // owns (for example Ctrl-P rebound to `toggle_tool_output`).
+        if self.info.session.daemon.is_some()
+            && crate::keybindings::ReservedComposerKey::from_key(key)
+                == Some(crate::keybindings::ReservedComposerKey::ReasoningCycle)
+        {
+            self.cycle_daemon_reasoning()?;
+            return Ok(());
+        }
         if self.handle_running_favorite_cycle_key(key)? {
             return Ok(());
         }
@@ -198,6 +205,19 @@ impl App {
                 self.queue_steering_prompt(prompt, display_prompt, paste_segments)?;
             }
             Err(commands::CommandParseError::Unknown(name)) => {
+                if self.info.session.daemon.is_some() {
+                    self.clear_submitted_input();
+                    if self.daemon_prompt_command_available(&name) {
+                        return self.queue_prompt(
+                            prompt,
+                            display_prompt,
+                            paste_segments,
+                            Vec::new(),
+                        );
+                    }
+                    self.daemon_command_unavailable(&name);
+                    return Ok(());
+                }
                 if let Some(expanded) = self.resolve_prompt_template(
                     &name,
                     super::command_palette::slash_command_args(&prompt),
@@ -339,6 +359,28 @@ impl App {
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        if self.refuse_daemon_command(&invocation) {
+            return Ok(());
+        }
+        if self.info.session.daemon.is_some() {
+            match super::daemon_gate::command_route(invocation.id) {
+                super::daemon_gate::CommandRoute::Options => {
+                    return self.execute_daemon_option_command(&invocation)
+                }
+                super::daemon_gate::CommandRoute::Prompt => {
+                    if !self.daemon_prompt_command_available(&invocation.name) {
+                        self.daemon_command_unavailable(&invocation.name);
+                        return Ok(());
+                    }
+                    let prompt = format!("/{} {}", invocation.name, invocation.args);
+                    return self.queue_prompt(prompt.clone(), prompt, Vec::new(), Vec::new());
+                }
+                super::daemon_gate::CommandRoute::Ui => {}
+                super::daemon_gate::CommandRoute::Unavailable => {
+                    unreachable!("gate refused unported command")
+                }
+            }
+        }
         match invocation.id {
             CommandId::Exit => self.execute_exit_command(),
             CommandId::Theme => self.open_theme_picker(),

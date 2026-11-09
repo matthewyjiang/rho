@@ -381,6 +381,10 @@ impl App {
         &mut self,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            self.open_daemon_config();
+            return Ok(());
+        }
         let config = self.info.services.config_repository.load()?;
         self.info.runtime.max_tool_output_lines = config.max_tool_output_lines.max(1);
         self.info

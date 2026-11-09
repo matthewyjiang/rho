@@ -408,6 +408,8 @@ pub(super) enum CommandChoiceKind {
     /// A prompt offered by a connected MCP server. Expanded on submit, because
     /// `prompts/get` is a round-trip the palette cannot make.
     McpPrompt,
+    /// A daemon-advertised command, completed verbatim and resolved by its host.
+    SessionCommand,
     /// One value a server suggested for the prompt argument under the cursor.
     /// Carries the char range it fills so picking it settles that argument
     /// alone, leaving the command and any other arguments as typed.

@@ -13,6 +13,54 @@ use rho_sdk::{SteeringId, ToolCallId};
 use super::{DaemonEvents, DaemonView, Rest, TurnState};
 use crate::tui::{daemon_inputs::AnswerRefusal, StreamKind};
 
+// Covers: context tokens and cumulative spend have different meanings; a
+// later unknown price must clear spend rather than reusing the prior total.
+// Title events must survive mapping, including successive renames.
+// Owner: pure daemon event mapper
+#[test]
+fn usage_and_title_updates_keep_their_independent_values() {
+    let views = map(vec![
+        Step::Event(SessionEvent::Usage {
+            used_tokens: 1200,
+            window_tokens: Some(8000),
+            cost_usd_micros: Some(4321),
+        }),
+        Step::Event(SessionEvent::TitleChanged {
+            title: "First title".into(),
+        }),
+        Step::Event(SessionEvent::Usage {
+            used_tokens: 900,
+            window_tokens: None,
+            cost_usd_micros: None,
+        }),
+        Step::Event(SessionEvent::TitleChanged {
+            title: "Renamed live".into(),
+        }),
+    ]);
+    // Compare the state updates, not the title notice's UI copy.
+    let updates: Vec<_> = views
+        .into_iter()
+        .filter(|view| !matches!(view, DaemonView::Notice(_)))
+        .collect();
+    assert_eq!(
+        updates,
+        vec![
+            DaemonView::Context {
+                used_tokens: 1200,
+                window_tokens: Some(8000)
+            },
+            DaemonView::Spend(Some(4321)),
+            DaemonView::Title("First title".into()),
+            DaemonView::Context {
+                used_tokens: 900,
+                window_tokens: None
+            },
+            DaemonView::Spend(None),
+            DaemonView::Title("Renamed live".into()),
+        ]
+    );
+}
+
 /// What the session hands the mapper: an event, a reset replay's start, an
 /// attach's open requests and its replay's end, or what came of an answer
 /// the TUI sent.

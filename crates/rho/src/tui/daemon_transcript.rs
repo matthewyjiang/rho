@@ -82,6 +82,17 @@ impl App {
                         terminal,
                     )?;
                 }
+                DaemonView::Spend(cost_usd_micros) => {
+                    self.usage.cumulative_usage = Some(rho_providers::model::ModelUsage {
+                        cost_usd_micros,
+                        ..Default::default()
+                    });
+                }
+                DaemonView::Title(title) => self.daemon_title = Some(title),
+                DaemonView::Options(options) => self.show_daemon_options(*options),
+                DaemonView::ConfigureFinished => {
+                    self.daemon_option_requests.pop_front();
+                }
                 DaemonView::Turn(state) => self.show_daemon_turn(state).await,
                 DaemonView::SteerApplied(id) => {
                     // The user row that follows shows it.

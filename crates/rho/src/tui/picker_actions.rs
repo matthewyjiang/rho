@@ -182,8 +182,17 @@ impl App {
                 if matches!(commit.turn(), PickerTurn::Idle) {
                     self.input_ui.set_shell_mode(None);
                 }
-                self.input_ui
-                    .set_text_and_cursor(format!("/skill:{value}"), self.input_char_len());
+                let text = if self.info.session.daemon.is_some() {
+                    format!("${value} ")
+                } else {
+                    format!("/skill:{value}")
+                };
+                let cursor = if self.info.session.daemon.is_some() {
+                    text.chars().count()
+                } else {
+                    self.input_char_len()
+                };
+                self.input_ui.set_text_and_cursor(text, cursor);
                 self.input_ui.set_command_palette_dismissed(true);
                 self.set_status("skill command inserted");
                 Ok(())
@@ -262,6 +271,9 @@ impl App {
         commit: &mut PickerCommit<'_>,
         idle_model_parent: Option<(UiPicker, &'static str)>,
     ) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            return self.select_daemon_model(value);
+        }
         self.refresh_available_auths();
         match self.resolve_model_selection(
             value,

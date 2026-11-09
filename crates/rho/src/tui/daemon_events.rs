@@ -73,6 +73,12 @@ pub(super) enum DaemonView {
         used_tokens: u64,
         window_tokens: Option<u64>,
     },
+    /// The daemon's cumulative session spend, independent of context tokens.
+    Spend(Option<u64>),
+    Title(String),
+    Options(Box<rho_protocol::SessionOptions>),
+    /// One background configure request finished, successfully or otherwise.
+    ConfigureFinished,
     /// Whether a turn runs, as the job's state says.
     Turn(TurnState),
     /// The steer the TUI sent with this id applied: the user row that
@@ -207,15 +213,17 @@ impl DaemonEvents {
             }
             SessionEvent::ToolCall(update) => self.tool_call(*update).into_iter().collect(),
             SessionEvent::Plan { entries } => vec![DaemonView::Plan(todo_list(&entries))],
-            // The session's cost reaches the spend gauge in T1e.
             SessionEvent::Usage {
                 used_tokens,
                 window_tokens,
-                ..
-            } => vec![DaemonView::Context {
-                used_tokens,
-                window_tokens,
-            }],
+                cost_usd_micros,
+            } => vec![
+                DaemonView::Context {
+                    used_tokens,
+                    window_tokens,
+                },
+                DaemonView::Spend(cost_usd_micros),
+            ],
             SessionEvent::Compaction { status, .. } => vec![compaction(status)],
             SessionEvent::ResponseDiscarded => {
                 // What the provider streamed stays; the retry's text starts
@@ -234,9 +242,10 @@ impl DaemonEvents {
                 self.end_messages();
                 views
             }
-            // The TUI reads the title from the session's file, which the
-            // daemon saved before it sent this; T1e shows it as it changes.
-            SessionEvent::TitleChanged { .. } => Vec::new(),
+            SessionEvent::TitleChanged { title } => vec![
+                DaemonView::Notice(format!("session titled: {title}")),
+                DaemonView::Title(title),
+            ],
             SessionEvent::State { state } => vec![self.turn(state)],
             SessionEvent::InputRequested { request } => {
                 self.inputs.requested(*request).into_iter().collect()
@@ -245,8 +254,9 @@ impl DaemonEvents {
                 self.inputs.resolved(id, resolution).into_iter().collect()
             }
             SessionEvent::InputHeld { id } => self.inputs.held(id).into_iter().collect(),
-            // The session's options reach the TUI's model and mode in T1e.
-            SessionEvent::OptionsChanged { .. } => Vec::new(),
+            SessionEvent::OptionsChanged { options } => {
+                vec![DaemonView::Options(Box::new(options))]
+            }
             // `Unknown`, or an event a newer daemon sends.
             _ => Vec::new(),
         }

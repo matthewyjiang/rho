@@ -29,6 +29,9 @@ impl App {
         agent: &mut InteractiveRuntime,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            return self.commit_daemon_config(value);
+        }
         let Some(row) = ConfigRow::parse(value) else {
             return Ok(());
         };
@@ -40,6 +43,9 @@ impl App {
         &mut self,
         value: &str,
     ) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            return self.commit_daemon_config(value);
+        }
         let Some(row) = ConfigRow::parse(value) else {
             return Ok(());
         };
@@ -463,22 +469,33 @@ impl App {
 
     fn config_page_picker(&self, page: config_picker::ConfigPage) -> anyhow::Result<UiPicker> {
         use config_picker::ConfigPage;
-        let config = self.load_config_for_display()?;
         let info = &self.info.runtime;
         Ok(match page {
-            ConfigPage::Root => config_picker::config_picker(info, &config),
-            ConfigPage::Category(category) => {
-                config_picker::category_picker(category.value(), info, &config)
-                    .expect("known config category must have a picker")
+            ConfigPage::Root => {
+                config_picker::config_picker(info, &self.load_config_for_display()?)
             }
-            ConfigPage::WebSearch => {
-                config_picker::web_search_config_picker(&config, &info.provider, &info.model)
-            }
+            ConfigPage::Category(category) => config_picker::category_picker(
+                category.value(),
+                info,
+                &self.load_config_for_display()?,
+            )
+            .expect("known config category must have a picker"),
+            ConfigPage::WebSearch => config_picker::web_search_config_picker(
+                &self.load_config_for_display()?,
+                &info.provider,
+                &info.model,
+            ),
             ConfigPage::WebSearchBackend(backend) => super::web_search_config::backend_picker(
                 backend,
-                &config,
+                &self.load_config_for_display()?,
                 self.credential_store.as_ref(),
             ),
+            ConfigPage::SessionOptions => self
+                .daemon_config_picker()
+                .ok_or_else(|| anyhow::anyhow!("no daemon session options are available"))?,
+            ConfigPage::SessionPermissionMode => self
+                .daemon_permission_picker()
+                .ok_or_else(|| anyhow::anyhow!("no daemon session options are available"))?,
         })
     }
 

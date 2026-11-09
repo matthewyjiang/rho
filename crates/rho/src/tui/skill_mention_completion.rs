@@ -56,6 +56,24 @@ impl App {
         &mut self,
         cursor: &SkillMentionCursor,
     ) -> Vec<CommandChoice> {
+        if let Some(options) = &self.daemon_options {
+            return options
+                .commands
+                .iter()
+                .filter(|command| {
+                    command.kind == rho_protocol::CommandKind::Skill
+                        && command.name.starts_with(&cursor.typed)
+                })
+                .map(|command| CommandChoice {
+                    name: command.name.clone(),
+                    usage: format!("${}", command.name),
+                    description: command.description.clone(),
+                    kind: CommandChoiceKind::SkillMention {
+                        token: cursor.token.clone(),
+                    },
+                })
+                .collect();
+        }
         self.discovered_skills()
             .iter()
             .filter(|skill| {

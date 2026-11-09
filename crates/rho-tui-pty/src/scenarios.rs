@@ -26,6 +26,8 @@ mod copy_output;
 #[cfg(unix)]
 mod daemon_approval;
 #[cfg(unix)]
+mod daemon_options;
+#[cfg(unix)]
 mod daemon_prompt;
 #[cfg(unix)]
 mod daemon_resume;
@@ -679,6 +681,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_approval::DAEMON_APPROVAL_SCENARIO,
     #[cfg(unix)]
     daemon_approval::DAEMON_APPROVAL_DENY_SCENARIO,
+    #[cfg(unix)]
+    daemon_options::PERMISSION_MODE,
+    #[cfg(unix)]
+    daemon_options::GATED_COMMAND,
     Scenario::new(
         "sessions_hub",
         "Inspect a foreign session safely, then browse, resume, and delete locally",

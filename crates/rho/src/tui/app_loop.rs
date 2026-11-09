@@ -103,6 +103,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<Option<ExitReceipt>> {
+        self.show_taken_daemon_views(terminal).await?;
         self.start_model_metadata_fetch(agent);
         self.start_github_pr_fetch();
         let had_recovered_messages = self.insert_recovered_history()?;

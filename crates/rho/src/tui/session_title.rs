@@ -98,6 +98,9 @@ pub(super) fn sanitize_session_title(title: &str) -> Option<String> {
 impl App {
     /// Stored title for the current session, if the store has one.
     pub(super) fn session_title(&self) -> Option<String> {
+        if self.info.session.daemon.is_some() {
+            return self.daemon_title.clone();
+        }
         let session_id = self.info.session.session_id.as_deref()?;
         Session::title(&self.info.runtime.cwd, session_id)
             .ok()

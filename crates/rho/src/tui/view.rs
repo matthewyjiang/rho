@@ -913,7 +913,20 @@ impl App {
     fn refresh_statusline_state(&mut self) {
         self.statusline
             .update_signed_in(self.setup_state().signed_in);
-        self.statusline.update_model(&self.info.runtime);
+        if let Some(options) = &self.daemon_options {
+            self.statusline.update_model_controls(
+                &self.info.runtime,
+                super::statusline::ModelControls {
+                    fast_mode_active: options.fast_mode.as_ref().is_some_and(|fast| fast.enabled),
+                    reasoning_configurable: options
+                        .reasoning
+                        .as_ref()
+                        .is_some_and(|reasoning| reasoning.available.len() > 1),
+                },
+            );
+        } else {
+            self.statusline.update_model(&self.info.runtime);
+        }
         let display_usage = super::usage_cost::display_usage_with_live(
             self.usage.cumulative_usage.as_ref(),
             &self.usage.live_stream,

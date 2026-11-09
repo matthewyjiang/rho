@@ -29,6 +29,9 @@ impl App {
     }
 
     pub(super) fn open_resume_picker(&mut self) -> anyhow::Result<()> {
+        if self.refuse_daemon_action(super::CommandId::Resume, "resume") {
+            return Ok(());
+        }
         if self.info.session.no_save {
             self.insert_entry(&Entry::Notice(
                 "resume unavailable with --no-save; start Rho without it to resume".into(),

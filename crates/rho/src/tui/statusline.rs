@@ -171,6 +171,12 @@ impl StatusLineState {
     }
 }
 
+/// Display controls supplied by the owner of the session's settings.
+pub(super) struct ModelControls {
+    pub(super) fast_mode_active: bool,
+    pub(super) reasoning_configurable: bool,
+}
+
 impl StatusLine {
     pub(super) fn update_not_saved(&mut self, not_saved: bool) {
         if self.state.not_saved != not_saved {
@@ -208,25 +214,58 @@ impl StatusLine {
         }
     }
 
+    /// Updates the model chrome from the in-process runtime. Reasoning
+    /// capability is read from the model catalog only when the model view
+    /// changed, not on every frame.
     pub(super) fn update_model(&mut self, info: &RuntimeModelView) {
         let fast_mode_active = info.fast_mode_active();
-        if self.state.provider != info.provider
+        if self.model_changed(info, fast_mode_active) {
+            let configurable = reasoning_is_configurable(&info.provider, &info.model);
+            self.set_model(info, fast_mode_active, configurable);
+        }
+    }
+
+    /// Updates the model chrome from controls the session's settings owner,
+    /// a daemon, supplies.
+    pub(super) fn update_model_controls(
+        &mut self,
+        info: &RuntimeModelView,
+        controls: ModelControls,
+    ) {
+        if self.model_changed(info, controls.fast_mode_active)
+            || self.state.reasoning_configurable != controls.reasoning_configurable
+        {
+            self.set_model(
+                info,
+                controls.fast_mode_active,
+                controls.reasoning_configurable,
+            );
+        }
+    }
+
+    fn model_changed(&self, info: &RuntimeModelView, fast_mode_active: bool) -> bool {
+        self.state.provider != info.provider
             || self.state.model != info.model
             || self.state.fast_mode_active != fast_mode_active
             || self.state.zen_mode != info.zen_mode
             || self.state.reasoning != info.reasoning
             || self.state.permission_mode != info.permission_mode
-        {
-            self.state.provider.clone_from(&info.provider);
-            self.state.model.clone_from(&info.model);
-            self.state.fast_mode_active = fast_mode_active;
-            self.state.zen_mode = info.zen_mode;
-            self.state.reasoning = info.reasoning;
-            self.state.reasoning_configurable =
-                reasoning_is_configurable(&info.provider, &info.model);
-            self.state.permission_mode = info.permission_mode;
-            self.invalidate();
-        }
+    }
+
+    fn set_model(
+        &mut self,
+        info: &RuntimeModelView,
+        fast_mode_active: bool,
+        reasoning_configurable: bool,
+    ) {
+        self.state.provider.clone_from(&info.provider);
+        self.state.model.clone_from(&info.model);
+        self.state.fast_mode_active = fast_mode_active;
+        self.state.zen_mode = info.zen_mode;
+        self.state.reasoning = info.reasoning;
+        self.state.reasoning_configurable = reasoning_configurable;
+        self.state.permission_mode = info.permission_mode;
+        self.invalidate();
     }
 
     pub(super) fn update_usage(

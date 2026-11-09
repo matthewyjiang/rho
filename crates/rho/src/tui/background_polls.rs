@@ -76,6 +76,9 @@ impl App {
     }
 
     pub(super) fn start_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
+        if self.info.session.daemon.is_some() {
+            return;
+        }
         self.tasks.abort(|id| *id == TaskId::ModelMetadata);
         let provider = self.info.runtime.provider.clone();
         let model = rho_providers::providers::fast_mode::request_model(

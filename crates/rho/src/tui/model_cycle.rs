@@ -41,12 +41,18 @@ impl App {
     }
 
     pub(super) fn conversation_model_picker(&mut self) -> UiPicker {
+        if let Some(picker) = self.daemon_model_picker() {
+            return picker;
+        }
         self.refresh_available_auths();
         let scope = self.resolved_model_picker_scope();
         model_picker::model_picker(&self.info.runtime, &self.available_auths, scope)
     }
 
     pub(super) fn conversation_model_picker_during_run(&mut self) -> UiPicker {
+        if let Some(picker) = self.daemon_model_picker() {
+            return picker;
+        }
         self.refresh_available_auths();
         let scope = self.resolved_model_picker_scope();
         model_picker::model_picker_during_run(
@@ -100,6 +106,9 @@ impl App {
     }
 
     pub(super) fn toggle_model_picker_scope(&mut self) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            return Ok(());
+        }
         let (value, filter) = match self.input_ui.composer() {
             ComposerMode::Picker(picker) if picker.is_model_list() => (
                 picker
@@ -210,6 +219,10 @@ impl App {
         let Some(direction) = self.favorite_cycle_direction(key) else {
             return Ok(false);
         };
+        if self.info.session.daemon.is_some() {
+            self.cycle_daemon_model(direction)?;
+            return Ok(true);
+        }
         let target = self.next_pinned_selection(direction);
         if !self.report_cycle_target(&target) {
             return Ok(false);
@@ -233,6 +246,10 @@ impl App {
         let Some(direction) = self.favorite_cycle_direction(key) else {
             return Ok(false);
         };
+        if self.info.session.daemon.is_some() {
+            self.cycle_daemon_model(direction)?;
+            return Ok(true);
+        }
         let target = self.next_pinned_selection(direction);
         if !self.report_cycle_target(&target) {
             return Ok(false);

@@ -69,6 +69,29 @@ impl App {
             media,
             paste_segments,
         } = submission;
+        if self.refuse_daemon_command(&invocation) {
+            return Ok(());
+        }
+        if self.info.session.daemon.is_some() {
+            match super::daemon_gate::command_route(invocation.id) {
+                super::daemon_gate::CommandRoute::Options => {
+                    return self.execute_daemon_option_command(&invocation)
+                }
+                super::daemon_gate::CommandRoute::Prompt => {
+                    if !self.daemon_prompt_command_available(&invocation.name) {
+                        self.daemon_command_unavailable(&invocation.name);
+                        return Ok(());
+                    }
+                    return self
+                        .submit_daemon_turn(turn, media, paste_segments, terminal)
+                        .await;
+                }
+                super::daemon_gate::CommandRoute::Ui => {}
+                super::daemon_gate::CommandRoute::Unavailable => {
+                    unreachable!("gate refused unported command")
+                }
+            }
+        }
         match invocation.id {
             CommandId::AddDir => self.execute_add_dir_command(&invocation, agent).await,
             CommandId::Advisor => self.execute_advisor_command(invocation, agent).await,
@@ -148,7 +171,9 @@ impl App {
             CommandId::Limits => self.execute_limits_command(terminal),
             CommandId::Spend => self.execute_spend_command(),
             CommandId::Todo => {
-                self.refresh_todo_list(agent);
+                if self.info.session.daemon.is_none() {
+                    self.refresh_todo_list(agent);
+                }
                 self.execute_todo_command(terminal)
             }
             CommandId::Fast => self.execute_fast_command(invocation, agent),
@@ -181,6 +206,9 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.refuse_daemon_action(CommandId::New, "new") {
+            return Ok(());
+        }
         // Reset refuses to run under compaction, so stop it first.
         self.abort_compact(agent).await;
         if let Err(error) = agent.reset() {

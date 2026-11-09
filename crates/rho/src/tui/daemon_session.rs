@@ -12,7 +12,8 @@
 //!
 //! The TUI prompts, cancels, steers, and withdraws steers through it
 //! (`daemon_turn`), and answers and holds input requests (`daemon_answers`);
-//! options come in T1e. Quitting drops the connection, and the daemon keeps
+//! configures options through a background request queue. Quitting drops
+//! the connection, and the daemon keeps
 //! the session; a detach, and reattaching after `lagged`, come in T1f.
 //!
 //! Off unix there is no daemon (#1665): the type is uninhabited, so the
@@ -37,6 +38,13 @@ pub(crate) enum DaemonSession {}
 
 #[cfg(not(unix))]
 impl DaemonSession {
+    pub(in crate::tui) fn configure(
+        &self,
+        _change: rho_protocol::SessionChange,
+    ) -> anyhow::Result<()> {
+        match *self {}
+    }
+
     pub(crate) fn saved_id(&self) -> Option<&str> {
         match *self {}
     }
@@ -99,13 +107,13 @@ mod unix {
     use rho_protocol::ClientError;
     use rho_protocol::{
         methods::{
-            SessionAnswer, SessionAttach, SessionCancel, SessionHold, SessionNew, SessionPrompt,
-            SessionSteer, SessionUnsteer,
+            SessionAnswer, SessionAttach, SessionCancel, SessionHold, SessionNew, SessionSteer,
+            SessionUnsteer,
         },
         ClientEnvironment, ContentBlock, DetachReason, ErrorCode, InputAnswer, InputRequestId,
         JobState, Replay, SessionAnswerParams, SessionAttachParams, SessionCancelParams,
-        SessionHoldParams, SessionId, SessionNewParams, SessionPromptParams, SessionSetup,
-        SessionSteerParams, SessionUnsteerParams, SteerId, UnsteerOutcome,
+        SessionHoldParams, SessionId, SessionNewParams, SessionSetup, SessionSteerParams,
+        SessionUnsteerParams, SteerId, UnsteerOutcome,
     };
     use rho_sdk::SteeringId;
     use tokio::sync::mpsc;
@@ -113,6 +121,7 @@ mod unix {
     use super::super::{
         daemon_events::{DaemonEvents, DaemonView, Rest, TurnState},
         daemon_inputs::AnswerRefusal,
+        daemon_requests::DaemonRequests,
     };
     use crate::app::daemon_client::{Daemon, Link, Part, Routed, StreamPosition};
 
@@ -153,6 +162,7 @@ mod unix {
         pending: Vec<DaemonView>,
         /// Set once the daemon ended the attachment; nothing more arrives.
         ended: bool,
+        requests: Option<DaemonRequests>,
     }
 
     impl DaemonSession {
@@ -201,6 +211,10 @@ mod unix {
                 // reattaches after `lagged` with one.
                 Replay::Tail => Vec::new(),
             };
+            pending.push(DaemonView::Options(Box::new(response.options.clone())));
+            if let Some(title) = &response.title {
+                pending.push(DaemonView::Title(title.clone()));
+            }
             events.attached(std::mem::take(&mut response.inputs));
             let replay_state = if response.replay_events == 0 {
                 pending.extend(events.end_replay(response.state));
@@ -208,7 +222,7 @@ mod unix {
             } else {
                 Some(response.state)
             };
-            Ok(Self {
+            let mut session = Self {
                 position: StreamPosition::attached(&response),
                 daemon,
                 id,
@@ -219,7 +233,13 @@ mod unix {
                 replay_state,
                 pending,
                 ended: false,
-            })
+                requests: None,
+            };
+            session.requests = Some(DaemonRequests::new(
+                session.attached_link().await?,
+                session.id.clone(),
+            ));
+            Ok(session)
         }
 
         /// The session's id, once it is saved: a resumed session's. A new
@@ -243,7 +263,13 @@ mod unix {
             if self.ended {
                 return std::future::pending().await;
             }
-            let first = self.routed.recv().await;
+            let first = tokio::select! {
+                biased;
+                routed = self.routed.recv() => routed,
+                Some(error) = self.requests.as_mut().expect("attached session has requests").views.recv() => {
+                    return vec![error];
+                }
+            };
             let mut views = std::mem::take(&mut self.pending);
             self.read(first, &mut views);
             views
@@ -253,6 +279,11 @@ mod unix {
         /// waiting: what a request's response already let through.
         pub(in crate::tui) fn take_views(&mut self) -> Vec<DaemonView> {
             let mut views = std::mem::take(&mut self.pending);
+            if let Some(requests) = &mut self.requests {
+                while let Ok(error) = requests.views.try_recv() {
+                    views.push(error);
+                }
+            }
             if !self.ended {
                 if let Ok(first) = self.routed.try_recv() {
                     self.read(Some(first), &mut views);
@@ -323,16 +354,26 @@ mod unix {
             &self,
             content: Vec<ContentBlock>,
         ) -> anyhow::Result<()> {
-            let link = self.attached_link().await?;
-            let params = SessionPromptParams {
-                session: self.id.clone(),
-                content,
-                timeout_ms: None,
-                environment: ClientEnvironment::of_this_process(),
-            };
-            link.request::<SessionPrompt>(&params).await?;
-            link.fence().await;
-            Ok(())
+            self.attached_link().await?;
+            self.requests
+                .as_ref()
+                .expect("attached session has requests")
+                .prompt(content)
+                .await
+        }
+
+        /// Queue a change without waiting for the active turn to release it.
+        pub(in crate::tui) fn configure(
+            &self,
+            change: rho_protocol::SessionChange,
+        ) -> anyhow::Result<()> {
+            if self.ended {
+                anyhow::bail!(LOST);
+            }
+            self.requests
+                .as_ref()
+                .expect("attached session has requests")
+                .configure(change)
         }
 
         /// Asks the turn under way, if any, to stop. A closed connection
