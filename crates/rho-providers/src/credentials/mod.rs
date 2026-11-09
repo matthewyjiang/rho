@@ -11,8 +11,10 @@
 //!   Rho home directory (`RHO_HOME` or `~/.rho`). File storage is never selected
 //!   implicitly; callers must request it.
 //!
-//! Use [`open_credential_store`] to construct a backend and
-//! [`probe_credential_store`] for a non-destructive availability check.
+//! Use [`open_credential_store`] to construct a backend,
+//! [`check_credential_store`] to see whether it can be reached without
+//! writing to it, and [`probe_credential_store`] to confirm it takes a
+//! temporary secret.
 
 mod backend;
 mod file;
@@ -40,7 +42,8 @@ use thiserror::Error;
 use crate::provider::{self, ProviderAuthKind};
 
 pub use backend::{
-    open_credential_store, probe_credential_store, CredentialStoreBackend, CredentialStoreProbe,
+    check_credential_store, open_credential_store, probe_credential_store, CredentialStoreBackend,
+    CredentialStoreProbe,
 };
 pub use file::FileCredentialStore;
 #[cfg(any(test, debug_assertions))]

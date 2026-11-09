@@ -96,6 +96,10 @@ pub use methods::{
     UncheckedKey, UncheckedReason, UnsteerOutcome, SESSION_ANSWER, SESSION_HOLD,
 };
 pub use methods::{
+    AuthChooseStoreParams, AuthChooseStoreResponse, CredentialStoreKind, CredentialStoreStatus,
+    StoreSelectedBy,
+};
+pub use methods::{
     AuthKind, AuthListParams, AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse,
     AuthLoginFinishedParams, AuthLoginParams, AuthLoginPromptParams, AuthLoginResponse, AuthStatus,
     AuthSummary, LoginFlow, LoginId, LoginOutcome, LoginPrompt,

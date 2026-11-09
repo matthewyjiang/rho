@@ -112,6 +112,10 @@ const DAEMON_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(unix)]
 async fn run_foreground(paths: &DaemonPaths, unload_idle_after: Duration) -> anyhow::Result<()> {
     paths.prepare_runtime_dir()?;
+    // Every rho process refuses a store it does not know rather than pick
+    // one, so the daemon does before serving anyone.
+    let store_environment = crate::credential_store::environment_backend()
+        .context("RHO_CREDENTIAL_STORE in the daemon's environment")?;
     // Read once: changing the filter or the sink needs a daemon restart.
     let filter = std::env::var("RHO_LOG")
         .ok()
@@ -166,6 +170,7 @@ async fn run_foreground(paths: &DaemonPaths, unload_idle_after: Duration) -> any
         paths.socket.clone(),
         bound.started_at(),
         shutdown.clone(),
+        store_environment,
     ));
     let unloads = {
         let host = Arc::clone(&host);
@@ -290,11 +295,17 @@ fn status_text(status: &DaemonStatus) -> String {
         uptime_secs,
         jobs,
         socket,
+        credential_store,
         started_at: _,
     } = status;
     let uptime = humantime::format_duration(Duration::from_secs(*uptime_secs));
+    let (store, chosen) = crate::doctor::store_words(credential_store);
+    let reach = match &credential_store.unreachable {
+        None => String::new(),
+        Some(reason) => format!("\n  unreachable  {reason}"),
+    };
     format!(
-        "rho daemon is running\n  pid       {pid}\n  version   {version}\n  protocol  {protocol}\n  uptime    {uptime}\n  jobs      {jobs}\n  socket    {}\n",
+        "rho daemon is running\n  pid          {pid}\n  version      {version}\n  protocol     {protocol}\n  uptime       {uptime}\n  jobs         {jobs}\n  socket       {}\n  credentials  {store} store, chosen {chosen}{reach}\n",
         socket.display()
     )
 }

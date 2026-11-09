@@ -97,6 +97,21 @@ pub fn probe_credential_store(backend: CredentialStoreBackend) -> CredentialStor
     }
 }
 
+/// Checks whether this process can reach `backend` without writing or
+/// prompting for anything: it looks up an account that does not exist.
+///
+/// On Linux the OS store fails when the process has no session D-Bus or no
+/// Secret Service on it, as for a daemon started from an SSH login. A lookup
+/// that finds nothing asks for no unlock, so a locked keyring passes;
+/// [`probe_credential_store`] writes, which is what a locked one refuses.
+pub fn check_credential_store(backend: CredentialStoreBackend) -> CredentialResult<()> {
+    let store: Arc<dyn CredentialStore> = match backend {
+        CredentialStoreBackend::Os => Arc::new(UncachedOsCredentialStore),
+        CredentialStoreBackend::File => Arc::new(FileCredentialStore::open()?),
+    };
+    store.get_secret(&probe_account_name()).map(drop)
+}
+
 fn probe_backend(backend: CredentialStoreBackend) -> CredentialResult<()> {
     let store: Arc<dyn CredentialStore> = match backend {
         CredentialStoreBackend::Os => Arc::new(UncachedOsCredentialStore),

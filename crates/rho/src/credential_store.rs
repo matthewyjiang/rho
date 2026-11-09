@@ -13,11 +13,14 @@ use rho_providers::credentials::{
 
 use crate::config::Config;
 
+mod selection;
 mod startup_notice;
+pub(crate) use selection::{SelectedBy, StoreSelection};
 pub(crate) use startup_notice::{notifying_store, StartupKeyringNotice};
 
 const LEGACY_POLICY_FILE: &str = "credential-store";
-const ENV_BACKEND: &str = "RHO_CREDENTIAL_STORE";
+/// The variable that chooses a process's credential store over config.
+pub(crate) const ENV_BACKEND: &str = "RHO_CREDENTIAL_STORE";
 
 /// Application credential adapter selected by the configured backend.
 ///
@@ -61,18 +64,6 @@ impl StoreChoiceRequest {
                 available: self.file.available,
             },
         ]
-    }
-
-    pub fn available_backends(&self) -> Vec<CredentialStoreBackend> {
-        self.options()
-            .into_iter()
-            .filter(|option| option.available)
-            .map(|option| option.backend)
-            .collect()
-    }
-
-    pub fn default_backend(&self) -> Option<CredentialStoreBackend> {
-        self.available_backends().into_iter().next()
     }
 
     pub fn detail_for(&self, backend: CredentialStoreBackend) -> &str {
@@ -218,7 +209,8 @@ pub(crate) fn saved_policy_backend(
     Ok(read_legacy_policy_file()?)
 }
 
-/// Persist the backend in config.toml and open it for this process.
+/// Persist the backend in config.toml and open it for this process, once
+/// it took a temporary secret.
 pub(crate) fn set_backend(
     backend: CredentialStoreBackend,
     config_path: Option<PathBuf>,
@@ -227,7 +219,15 @@ pub(crate) fn set_backend(
     if !availability.available {
         anyhow::bail!(availability.detail);
     }
+    save_backend(backend, config_path)
+}
 
+/// Persist the backend in config.toml and open it for this process,
+/// without probing it: the caller already did.
+pub(crate) fn save_backend(
+    backend: CredentialStoreBackend,
+    config_path: Option<PathBuf>,
+) -> anyhow::Result<PathBuf> {
     let path = match config_path {
         Some(path) => path,
         None => Config::default_path()?,
@@ -298,6 +298,19 @@ pub(crate) fn configured_backend() -> CredentialResult<CredentialStoreBackend> {
     resolve_backend(read_config_backend().ok().flatten())
 }
 
+/// `RHO_CREDENTIAL_STORE` in this process's environment, parsed; `None`
+/// when it is unset or blank.
+pub(crate) fn environment_backend() -> CredentialResult<Option<CredentialStoreBackend>> {
+    selection::parse_environment(std::env::var(ENV_BACKEND).ok().as_deref())
+}
+
+/// The store this process selects with `environment`, its parsed
+/// [`environment_backend`], and the config as it is on disk now. A config
+/// that cannot be read selects nothing, as for every credential read.
+pub(crate) fn current_selection(environment: Option<CredentialStoreBackend>) -> StoreSelection {
+    StoreSelection::resolve(environment, read_config_backend().ok().flatten())
+}
+
 pub(crate) fn build_provider_from_config(
     config: &Config,
     credential_store: Arc<dyn CredentialStore>,
@@ -366,10 +379,7 @@ fn env_backend_override() -> Option<String> {
 fn resolve_backend(
     config_backend: Option<CredentialStoreBackend>,
 ) -> CredentialResult<CredentialStoreBackend> {
-    if let Some(value) = env_backend_override() {
-        return CredentialStoreBackend::parse(&value);
-    }
-    Ok(config_backend.unwrap_or(CredentialStoreBackend::Os))
+    Ok(StoreSelection::resolve(environment_backend()?, config_backend).backend)
 }
 
 fn activate(backend: CredentialStoreBackend) -> CredentialResult<()> {
@@ -480,17 +490,6 @@ fn remove_legacy_policy_file() -> anyhow::Result<()> {
 
 fn legacy_policy_path() -> anyhow::Result<PathBuf> {
     Ok(crate::paths::rho_dir()?.join(LEGACY_POLICY_FILE))
-}
-
-#[cfg(test)]
-fn resolve_backend_from(
-    environment: Option<&str>,
-    config_backend: Option<CredentialStoreBackend>,
-) -> CredentialResult<CredentialStoreBackend> {
-    if let Some(value) = environment.map(str::trim).filter(|value| !value.is_empty()) {
-        return CredentialStoreBackend::parse(value);
-    }
-    Ok(config_backend.unwrap_or(CredentialStoreBackend::Os))
 }
 
 #[cfg(test)]

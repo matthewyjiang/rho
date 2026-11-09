@@ -3,16 +3,17 @@
 use std::sync::Arc;
 
 use rho_protocol::{
-    AuthKeyParams, AuthKeyResponse, AuthListResponse, AuthLoginCancelParams,
-    AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse, AuthLogoutParams,
-    AuthLogoutResponse, DaemonStatus, ErrorCode, JobListResponse, LoginStream, RpcError, Service,
-    SessionAnswerParams, SessionAnswerResponse, SessionAttachParams, SessionAttachResponse,
-    SessionCancelParams, SessionCancelResponse, SessionConfigureParams, SessionConfigureResponse,
-    SessionDeleteParams, SessionDeleteResponse, SessionHoldParams, SessionHoldResponse,
-    SessionListParams, SessionListResponse, SessionNewParams, SessionNewResponse,
-    SessionPromptParams, SessionPromptResponse, SessionRenameParams, SessionRenameResponse,
-    SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
-    Subscription, PROTOCOL_VERSION,
+    AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse,
+    AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
+    AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, CredentialStoreKind,
+    CredentialStoreStatus, DaemonStatus, ErrorCode, JobListResponse, LoginStream, RpcError,
+    Service, SessionAnswerParams, SessionAnswerResponse, SessionAttachParams,
+    SessionAttachResponse, SessionCancelParams, SessionCancelResponse, SessionConfigureParams,
+    SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse, SessionHoldParams,
+    SessionHoldResponse, SessionListParams, SessionListResponse, SessionNewParams,
+    SessionNewResponse, SessionPromptParams, SessionPromptResponse, SessionRenameParams,
+    SessionRenameResponse, SessionSteerParams, SessionSteerResponse, SessionUnsteerParams,
+    SessionUnsteerResponse, StoreSelectedBy, Subscription, PROTOCOL_VERSION,
 };
 use rho_sdk::CancellationToken;
 
@@ -41,6 +42,11 @@ pub(super) fn test_status() -> DaemonStatus {
         uptime_secs: 0,
         jobs: 0,
         socket: "/test/daemon.sock".into(),
+        credential_store: CredentialStoreStatus {
+            store: CredentialStoreKind::File,
+            selected_by: StoreSelectedBy::Environment,
+            unreachable: None,
+        },
     }
 }
 
@@ -162,6 +168,13 @@ impl Service for StubHost {
         &self,
         _: AuthLoginCancelParams,
     ) -> Result<AuthLoginCancelResponse, RpcError> {
+        Err(no_credential_store())
+    }
+
+    async fn choose_store(
+        &self,
+        _: AuthChooseStoreParams,
+    ) -> Result<AuthChooseStoreResponse, RpcError> {
         Err(no_credential_store())
     }
 }

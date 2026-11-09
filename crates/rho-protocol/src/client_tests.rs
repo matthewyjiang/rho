@@ -8,7 +8,8 @@ use crate::{
         DetachReason, JobList, Seq, SessionEvent, SessionId, Status, DAEMON_STATUS, JOB_LIST,
         SESSION_DETACHED, SESSION_EVENT,
     },
-    DaemonStatus, JobListParams, JobListResponse, ProtocolVersion, StatusParams, VersionFix,
+    CredentialStoreKind, CredentialStoreStatus, DaemonStatus, JobListParams, JobListResponse,
+    ProtocolVersion, StatusParams, VersionFix,
 };
 
 fn client_info() -> ClientInfo {
@@ -27,6 +28,11 @@ fn fake_status() -> DaemonStatus {
         uptime_secs: 0,
         jobs: 0,
         socket: "/tmp/rho-test.sock".into(),
+        credential_store: CredentialStoreStatus {
+            store: CredentialStoreKind::Os,
+            selected_by: crate::StoreSelectedBy::Default,
+            unreachable: Some("no session D-Bus".into()),
+        },
     }
 }
 

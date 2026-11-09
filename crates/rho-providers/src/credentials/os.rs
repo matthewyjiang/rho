@@ -56,8 +56,9 @@ impl OsCredentialStore {
     }
 
     fn entry(account: &str) -> CredentialResult<keyring::Entry> {
-        keyring::Entry::new(SERVICE, account)
-            .map_err(|err| CredentialError::StoreUnavailable(err.to_string()))
+        keyring::Entry::new(SERVICE, account).map_err(|err| {
+            CredentialError::StoreUnavailable(connection_failure().unwrap_or_else(|| err.to_string()))
+        })
     }
 
     fn get_entry_secret(account: &str) -> CredentialResult<Option<String>> {
@@ -169,6 +170,20 @@ impl OsCredentialStore {
             Err(err) => Err(err),
         }
     }
+}
+
+/// Why this process could not connect to the OS store, or `None` when it
+/// did. The keyring connects once per process and keeps the outcome, so a
+/// process that could not, such as a daemon started without a session
+/// D-Bus, cannot reach the store until it restarts. Without this, every
+/// entry reports only that no default store is set.
+fn connection_failure() -> Option<String> {
+    let error = keyring::Entry::store_status().as_ref().err()?;
+    Some(if cfg!(target_os = "linux") {
+        format!("could not reach the Secret Service over the session D-Bus: {error}")
+    } else {
+        format!("could not open the OS credential store: {error}")
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

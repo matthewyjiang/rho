@@ -17,25 +17,26 @@ use crate::{
     jsonrpc,
     login_relay::LoginStream,
     methods::{
-        AuthKey, AuthKeyParams, AuthKeyResponse, AuthList, AuthListParams, AuthListResponse,
-        AuthLogin, AuthLoginCancel, AuthLoginCancelParams, AuthLoginCancelResponse,
-        AuthLoginParams, AuthLoginResponse, AuthLogout, AuthLogoutParams, AuthLogoutResponse,
-        Hello, JobList, JobListParams, JobListResponse, Method, SessionAnswer, SessionAnswerParams,
-        SessionAnswerResponse, SessionAttach, SessionAttachParams, SessionAttachResponse,
-        SessionCancel, SessionCancelParams, SessionCancelResponse, SessionConfigure,
-        SessionConfigureParams, SessionConfigureResponse, SessionDelete, SessionDeleteParams,
-        SessionDeleteResponse, SessionDetach, SessionDetachParams, SessionDetachResponse,
-        SessionHold, SessionHoldParams, SessionHoldResponse, SessionId, SessionList,
-        SessionListParams, SessionListResponse, SessionMcp, SessionMcpInventory, SessionMcpParams,
-        SessionNew, SessionNewParams, SessionNewResponse, SessionObserve, SessionObserveParams,
-        SessionPrompt, SessionPromptParams, SessionPromptResponse, SessionRename,
-        SessionRenameParams, SessionRenameResponse, SessionSteer, SessionSteerParams,
-        SessionSteerResponse, SessionUnsteer, SessionUnsteerParams, SessionUnsteerResponse, Status,
-        Stop, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, DAEMON_STATUS,
-        DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL,
-        SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD, SESSION_LIST, SESSION_MCP,
-        SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER,
-        SESSION_UNSTEER,
+        AuthChooseStore, AuthChooseStoreParams, AuthChooseStoreResponse, AuthKey, AuthKeyParams,
+        AuthKeyResponse, AuthList, AuthListParams, AuthListResponse, AuthLogin, AuthLoginCancel,
+        AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse,
+        AuthLogout, AuthLogoutParams, AuthLogoutResponse, Hello, JobList, JobListParams,
+        JobListResponse, Method, SessionAnswer, SessionAnswerParams, SessionAnswerResponse,
+        SessionAttach, SessionAttachParams, SessionAttachResponse, SessionCancel,
+        SessionCancelParams, SessionCancelResponse, SessionConfigure, SessionConfigureParams,
+        SessionConfigureResponse, SessionDelete, SessionDeleteParams, SessionDeleteResponse,
+        SessionDetach, SessionDetachParams, SessionDetachResponse, SessionHold, SessionHoldParams,
+        SessionHoldResponse, SessionId, SessionList, SessionListParams, SessionListResponse,
+        SessionMcp, SessionMcpInventory, SessionMcpParams, SessionNew, SessionNewParams,
+        SessionNewResponse, SessionObserve, SessionObserveParams, SessionPrompt,
+        SessionPromptParams, SessionPromptResponse, SessionRename, SessionRenameParams,
+        SessionRenameResponse, SessionSteer, SessionSteerParams, SessionSteerResponse,
+        SessionUnsteer, SessionUnsteerParams, SessionUnsteerResponse, Status, Stop,
+        AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT,
+        DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH,
+        SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD,
+        SESSION_LIST, SESSION_MCP, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT, SESSION_RENAME,
+        SESSION_STEER, SESSION_UNSTEER,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -227,6 +228,13 @@ pub trait Service: Send + Sync {
         &self,
         params: AuthLoginCancelParams,
     ) -> impl Future<Output = Result<AuthLoginCancelResponse, RpcError>> + Send;
+
+    /// Handles `rho/auth/choose_store`: check that the store takes a
+    /// secret, then keep provider credentials there.
+    fn choose_store(
+        &self,
+        params: AuthChooseStoreParams,
+    ) -> impl Future<Output = Result<AuthChooseStoreResponse, RpcError>> + Send;
 }
 
 /// What the daemon reports in its `rho/hello` response.
@@ -544,6 +552,7 @@ enum ServiceCall {
     LogoutAuth(AuthLogoutParams),
     ListAuths,
     CancelLogin(AuthLoginCancelParams),
+    ChooseStore(AuthChooseStoreParams),
 }
 
 impl Connection {
@@ -619,6 +628,7 @@ impl ServiceCall {
             AUTH_LOGOUT => decode_params::<AuthLogout>(params).map(Self::LogoutAuth),
             AUTH_LIST => decode_params::<AuthList>(params).map(|AuthListParams {}| Self::ListAuths),
             AUTH_LOGIN_CANCEL => decode_params::<AuthLoginCancel>(params).map(Self::CancelLogin),
+            AUTH_CHOOSE_STORE => decode_params::<AuthChooseStore>(params).map(Self::ChooseStore),
             method => Err(RpcError::new(
                 ErrorCode::MethodNotFound,
                 format!("unknown method {method}"),
@@ -648,7 +658,8 @@ impl ServiceCall {
             | Self::SaveAuthKey(_)
             | Self::LogoutAuth(_)
             | Self::ListAuths
-            | Self::CancelLogin(_) => None,
+            | Self::CancelLogin(_)
+            | Self::ChooseStore(_) => None,
         }
     }
 
@@ -706,6 +717,9 @@ impl ServiceCall {
             Self::ListAuths => encode_result::<AuthList>(&service.list_auths().await?),
             Self::CancelLogin(params) => {
                 encode_result::<AuthLoginCancel>(&service.cancel_login(params).await?)
+            }
+            Self::ChooseStore(params) => {
+                encode_result::<AuthChooseStore>(&service.choose_store(params).await?)
             }
         }
     }

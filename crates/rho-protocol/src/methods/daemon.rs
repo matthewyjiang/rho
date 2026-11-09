@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::ProtocolVersion;
+use crate::{CredentialStoreStatus, ProtocolVersion};
 
 /// Handshake. Must be the first request on every connection.
 pub const HELLO: &str = "rho/hello";
@@ -69,6 +69,9 @@ pub struct DaemonStatus {
     pub jobs: u64,
     /// The socket the daemon listens on.
     pub socket: PathBuf,
+    /// The credential store the daemon keeps provider credentials in, what
+    /// chose it, and whether the daemon can reach it.
+    pub credential_store: CredentialStoreStatus,
 }
 
 /// Params of [`DAEMON_STOP`].

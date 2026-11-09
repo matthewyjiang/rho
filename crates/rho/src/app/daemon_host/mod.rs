@@ -6,8 +6,9 @@
 //! the job registry (`jobs/`), whose records outlive the daemon, and the
 //! sessions it has loaded (`sessions/`), which own the budget their
 //! subagents share (`subagents.rs`). It also writes the credential store
-//! those sessions read (`auth.rs`), and runs the interactive logins clients
-//! start, relaying each to its client (`logins.rs`).
+//! those sessions read (`auth.rs`), reports and chooses that store
+//! (`store.rs`), and runs the interactive logins clients start, relaying
+//! each to its client (`logins.rs`).
 
 use std::{
     io,
@@ -17,17 +18,19 @@ use std::{
 };
 
 use rho_protocol::{
-    AuthKeyParams, AuthKeyResponse, AuthListResponse, AuthLoginCancelParams,
-    AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse, AuthLogoutParams,
-    AuthLogoutResponse, DaemonStatus, JobListResponse, LoginStream, RpcError, Service,
-    SessionAnswerParams, SessionAnswerResponse, SessionAttachParams, SessionAttachResponse,
-    SessionCancelParams, SessionCancelResponse, SessionConfigureParams, SessionConfigureResponse,
-    SessionDeleteParams, SessionDeleteResponse, SessionHoldParams, SessionHoldResponse,
-    SessionListParams, SessionListResponse, SessionNewParams, SessionNewResponse,
-    SessionObserveParams, SessionPromptParams, SessionPromptResponse, SessionRenameParams,
-    SessionRenameResponse, SessionSteerParams, SessionSteerResponse, SessionUnsteerParams,
-    SessionUnsteerResponse, Subscription, PROTOCOL_VERSION,
+    AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse,
+    AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
+    AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, DaemonStatus, JobListResponse,
+    LoginStream, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
+    SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
+    SessionConfigureParams, SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse,
+    SessionHoldParams, SessionHoldResponse, SessionListParams, SessionListResponse,
+    SessionNewParams, SessionNewResponse, SessionObserveParams, SessionPromptParams,
+    SessionPromptResponse, SessionRenameParams, SessionRenameResponse, SessionSteerParams,
+    SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse, Subscription,
+    PROTOCOL_VERSION,
 };
+use rho_providers::credentials::CredentialStoreBackend;
 use rho_sdk::CancellationToken;
 
 use crate::daemon::DaemonLock;
@@ -36,6 +39,7 @@ mod auth;
 mod jobs;
 mod logins;
 mod sessions;
+mod store;
 mod subagents;
 mod wire;
 
@@ -69,11 +73,15 @@ pub(super) struct DaemonHost {
     /// they saved a credential.
     sessions: Arc<Sessions>,
     logins: Arc<Logins>,
+    /// `RHO_CREDENTIAL_STORE` in the daemon's environment, parsed once at
+    /// startup, which refuses a value it does not know.
+    store_environment: Option<CredentialStoreBackend>,
 }
 
 impl DaemonHost {
     /// A host for the daemon of `rho_home` listening on `socket` since
-    /// `started_at` (Unix seconds), keeping its jobs in `jobs`.
+    /// `started_at` (Unix seconds), keeping its jobs in `jobs`, with
+    /// `store_environment` its parsed `RHO_CREDENTIAL_STORE`.
     /// `rho/daemon/stop` calls [`Self::begin_stop`], which cancels
     /// `shutdown`, the transport's; once the transport stopped serving, call
     /// [`Self::stop_sessions`].
@@ -83,6 +91,7 @@ impl DaemonHost {
         socket: PathBuf,
         started_at: u64,
         shutdown: CancellationToken,
+        store_environment: Option<CredentialStoreBackend>,
     ) -> Self {
         Self {
             socket,
@@ -92,6 +101,7 @@ impl DaemonHost {
             logins: Arc::new(Logins::new()),
             shutdown,
             jobs,
+            store_environment,
         }
     }
 
@@ -133,6 +143,7 @@ impl Service for DaemonHost {
             uptime_secs: self.started.elapsed().as_secs(),
             jobs: u64::try_from(self.jobs.in_progress()).unwrap_or(u64::MAX),
             socket: self.socket.clone(),
+            credential_store: store::status(self.store_environment).await,
         }
     }
 
@@ -279,5 +290,12 @@ impl Service for DaemonHost {
         params: AuthLoginCancelParams,
     ) -> Result<AuthLoginCancelResponse, RpcError> {
         self.logins.cancel(params)
+    }
+
+    async fn choose_store(
+        &self,
+        params: AuthChooseStoreParams,
+    ) -> Result<AuthChooseStoreResponse, RpcError> {
+        store::choose(params, self.store_environment, &self.sessions).await
     }
 }
