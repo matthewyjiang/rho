@@ -9,31 +9,34 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     crate::paths::process_env_lock()
 }
 
-// Covers: an environment backend overrides the configured one, and an unknown
+// Covers: an environment backend overrides the configured one and says so,
+// config comes next, the OS store is the default, and an unknown
 // environment value is an error instead of a silent fallback.
 // Owner: credential store backend resolution
 #[test]
 fn environment_backend_overrides_config_and_rejects_unknown_values() {
-    let configured = Some(CredentialStoreBackend::File);
+    use CredentialStoreBackend::{File, Os};
+    let resolve = |environment: Option<&str>, config| {
+        selection::parse_environment(environment)
+            .map(|environment| StoreSelection::resolve(environment, config))
+    };
+    let selected = |backend, selected_by| StoreSelection {
+        backend,
+        selected_by,
+    };
     assert_eq!(
-        resolve_backend_from(Some("os"), configured).unwrap(),
-        CredentialStoreBackend::Os
+        [
+            resolve(Some("os"), Some(File)).unwrap(),
+            resolve(Some(" "), Some(File)).unwrap(),
+            resolve(None, None).unwrap(),
+        ],
+        [
+            selected(Os, SelectedBy::Environment),
+            selected(File, SelectedBy::Config),
+            selected(Os, SelectedBy::Default),
+        ]
     );
-    assert!(resolve_backend_from(Some("plaintext-maybe"), configured).is_err());
-}
-
-#[test]
-fn needs_choice_only_when_unset_and_no_env() {
-    assert!(needs_explicit_choice_from(false, None));
-    assert!(!needs_explicit_choice_from(true, None));
-    assert!(!needs_explicit_choice_from(
-        false,
-        Some(CredentialStoreBackend::Os)
-    ));
-    assert!(!needs_explicit_choice_from(
-        true,
-        Some(CredentialStoreBackend::File)
-    ));
+    assert!(resolve(Some("plaintext-maybe"), Some(File)).is_err());
 }
 
 #[test]

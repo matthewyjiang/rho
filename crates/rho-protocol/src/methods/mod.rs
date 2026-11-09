@@ -30,6 +30,7 @@
 //! | [`AUTH_LOGOUT`] | [`AuthLogoutParams`] | [`AuthLogoutResponse`] |
 //! | [`AUTH_LOGIN`] | [`AuthLoginParams`] | [`AuthLoginResponse`] |
 //! | [`AUTH_LOGIN_CANCEL`] | [`AuthLoginCancelParams`] | [`AuthLoginCancelResponse`] |
+//! | [`AUTH_CHOOSE_STORE`] | [`AuthChooseStoreParams`] | [`AuthChooseStoreResponse`] |
 //!
 //! The daemon sends these notifications; clients send none.
 //!
@@ -64,6 +65,7 @@ mod options;
 mod outcome;
 mod session;
 mod setup;
+mod store;
 
 pub use auth::{
     AuthKeyParams, AuthKeyResponse, AuthKind, AuthListParams, AuthListResponse, AuthLogoutParams,
@@ -124,6 +126,10 @@ pub use session::{
     SESSION_OBSERVE, SESSION_PROMPT, SESSION_STEER, SESSION_UNSTEER,
 };
 pub use setup::{ChildThreads, McpServer, SecretMap, SessionPart, SessionSetup};
+pub use store::{
+    AuthChooseStoreParams, AuthChooseStoreResponse, CredentialStoreKind, CredentialStoreStatus,
+    StoreSelectedBy, AUTH_CHOOSE_STORE,
+};
 
 /// A request method with typed params and result.
 ///
@@ -219,6 +225,7 @@ protocol! {
         AuthLogout = AUTH_LOGOUT: AuthLogoutParams => AuthLogoutResponse,
         AuthLogin = AUTH_LOGIN: AuthLoginParams => AuthLoginResponse,
         AuthLoginCancel = AUTH_LOGIN_CANCEL: AuthLoginCancelParams => AuthLoginCancelResponse,
+        AuthChooseStore = AUTH_CHOOSE_STORE: AuthChooseStoreParams => AuthChooseStoreResponse,
     }
     notifications {
         SessionEventNotification = SESSION_EVENT: SessionEventParams,

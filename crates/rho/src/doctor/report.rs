@@ -69,6 +69,7 @@ impl DoctorSectionId {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum DoctorCheckId {
     ProviderAuth { auth_mode: String },
+    DaemonCredentialStore,
     ModelCache { provider: String },
     ProviderEndpoint { provider: String },
     SelectedModel,
@@ -90,7 +91,9 @@ pub(crate) enum DoctorCheckId {
 impl DoctorCheckId {
     pub(crate) const fn section(&self) -> DoctorSectionId {
         match self {
-            Self::ProviderAuth { .. } => DoctorSectionId::Authentication,
+            Self::ProviderAuth { .. } | Self::DaemonCredentialStore => {
+                DoctorSectionId::Authentication
+            }
             Self::ModelCache { .. }
             | Self::ProviderEndpoint { .. }
             | Self::SelectedModel

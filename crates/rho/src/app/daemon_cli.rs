@@ -79,9 +79,32 @@ pub(super) async fn connect() -> Result<daemon::Connection, Unreachable> {
     let paths = paths().map_err(|error| unreachable(format!("{error:#}")))?;
     let spawner = daemon::ProcessSpawner::current_exe()
         .map_err(|error| unreachable(format!("could not find the rho executable: {error}")))?;
-    daemon::connect_or_spawn(&paths, cli_client_info(), &spawner)
+    daemon::connect_or_spawn(&paths, cli_client_info(), &CheckedSpawner(spawner))
         .await
         .map_err(|error| unreachable(error.to_string()))
+}
+
+/// Starts the daemon once this process's environment, which it inherits,
+/// passes the checks the daemon makes at startup, so a daemon that would
+/// refuse to start is reported now rather than after the start timeout. A
+/// daemon already running never sees this environment, so only a spawn
+/// checks it.
+#[cfg(unix)]
+struct CheckedSpawner(daemon::ProcessSpawner);
+
+#[cfg(unix)]
+impl daemon::DaemonSpawner for CheckedSpawner {
+    fn spawn(&self, paths: &DaemonPaths) -> std::io::Result<()> {
+        crate::credential_store::environment_backend().map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "RHO_CREDENTIAL_STORE in this environment, which it would inherit: {error}"
+                ),
+            )
+        })?;
+        self.0.spawn(paths)
+    }
 }
 
 /// Whether this invocation runs the daemon, which installs its own always-on
@@ -128,6 +151,12 @@ async fn run_foreground(paths: &DaemonPaths, unload_idle_after: Duration) -> any
         LogSink::File(file)
     };
     logging::install(&filter, sink);
+    // Every rho process refuses a store it does not know rather than pick
+    // one, so the daemon does before serving anyone. An auto-spawned
+    // daemon's stderr goes nowhere, so the log says why it stopped.
+    let store_environment = crate::credential_store::environment_backend()
+        .context("RHO_CREDENTIAL_STORE in the daemon's environment")
+        .inspect_err(|error| tracing::error!(error = %format!("{error:#}"), "not starting"))?;
     // A panicking request handler is answered with an internal error, and an
     // auto-spawned daemon's stderr goes nowhere, so the log is the only place
     // the panic can surface.
@@ -166,6 +195,7 @@ async fn run_foreground(paths: &DaemonPaths, unload_idle_after: Duration) -> any
         paths.socket.clone(),
         bound.started_at(),
         shutdown.clone(),
+        store_environment,
     ));
     let unloads = {
         let host = Arc::clone(&host);
@@ -290,11 +320,17 @@ fn status_text(status: &DaemonStatus) -> String {
         uptime_secs,
         jobs,
         socket,
+        credential_store,
         started_at: _,
     } = status;
     let uptime = humantime::format_duration(Duration::from_secs(*uptime_secs));
+    let (store, chosen) = crate::credential_store::wire::words(credential_store);
+    let reach = match &credential_store.unreachable {
+        None => String::new(),
+        Some(reason) => format!("\n  unreachable  {reason}"),
+    };
     format!(
-        "rho daemon is running\n  pid       {pid}\n  version   {version}\n  protocol  {protocol}\n  uptime    {uptime}\n  jobs      {jobs}\n  socket    {}\n",
+        "rho daemon is running\n  pid          {pid}\n  version      {version}\n  protocol     {protocol}\n  uptime       {uptime}\n  jobs         {jobs}\n  socket       {}\n  credentials  {store} store, chosen {chosen}{reach}\n",
         socket.display()
     )
 }

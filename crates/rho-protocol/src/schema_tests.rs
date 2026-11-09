@@ -12,10 +12,11 @@ use crate::display::{
 };
 use crate::methods::{
     AnswerStop, ApprovalSource, Ask, AuthKind, AuthStatus, Budget, CardTone, CommandKind,
-    CompactionStatus, ContentBlock, DefaultStyle, DetachReason, JobKind, JobState, LoginOutcome,
-    Operation, PathScope, PermissionMode, PlanStatus, ReasoningLevel, Resolution, Selection,
-    SessionEvent, SessionGoalPhase, SessionMcpMode, SessionMcpStatus, ToolContent, ToolKind,
-    ToolStatus, TurnErrorKind, TurnOutcome, UncheckedReason, UnsteerOutcome,
+    CompactionStatus, ContentBlock, CredentialStoreKind, DefaultStyle, DetachReason, JobKind,
+    JobState, LoginOutcome, Operation, PathScope, PermissionMode, PlanStatus, ReasoningLevel,
+    Resolution, Selection, SessionEvent, SessionGoalPhase, SessionMcpMode, SessionMcpStatus,
+    StoreSelectedBy, ToolContent, ToolKind, ToolStatus, TurnErrorKind, TurnOutcome,
+    UncheckedReason, UnsteerOutcome,
 };
 
 // Covers: the committed schema/protocol.json is what the wire types
@@ -55,7 +56,7 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
     let unseen = || json!("from_a_newer_daemon");
     let unseen_tag = || json!({ "type": "from_a_newer_daemon" });
     let unseen_kind = || json!({ "kind": "from_a_newer_daemon" });
-    let cases: [(&str, bool); 43] = [
+    let cases: [(&str, bool); 45] = [
         (
             "SessionGoalPhase",
             reads_as(unseen(), SessionGoalPhase::Unknown),
@@ -121,6 +122,14 @@ fn enums_marked_open_read_unknown_values_as_unknown() {
         ("CommandKind", reads_as(unseen(), CommandKind::Unknown)),
         ("AuthKind", reads_as(unseen(), AuthKind::Unknown)),
         ("AuthStatus", reads_as(unseen(), AuthStatus::Unknown)),
+        (
+            "CredentialStoreKind",
+            reads_as(unseen(), CredentialStoreKind::Unknown),
+        ),
+        (
+            "StoreSelectedBy",
+            reads_as(unseen(), StoreSelectedBy::Unknown),
+        ),
         (
             "LoginOutcome",
             reads_as(unseen_tag(), LoginOutcome::Unknown),

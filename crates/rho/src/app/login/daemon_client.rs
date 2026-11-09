@@ -11,24 +11,35 @@
 //! A credential variable set in this shell would override what the daemon
 //! saves, in every rho started here, so `rho login` refuses before asking.
 //!
+//! When neither the daemon's environment nor its config chose a credential
+//! store, `rho login` asks which to use first, offering what the daemon can
+//! reach, since the daemon writes the credential: one a client started from
+//! an SSH login may have no session D-Bus for the OS store even where this
+//! shell has one. The daemon checks the store takes a secret and saves the
+//! choice (`rho/auth/choose_store`).
+//!
 //! Interrupting `rho login` ends its connection, and the daemon cancels an
 //! interactive login whose client left, unless the provider already
 //! approved it. A key the daemon already received is saved.
 
 use anyhow::anyhow;
 use rho_protocol::{
-    methods::{AuthKey, AuthLogin},
-    AuthKeyParams, AuthLoginParams, ClientError, DaemonNotification, ErrorCode, LoginOutcome,
+    methods::{AuthChooseStore, AuthKey, AuthLogin, Status},
+    AuthChooseStoreParams, AuthKeyParams, AuthLoginParams, Client, ClientError, DaemonNotification,
+    ErrorCode, LoginOutcome, StatusParams, StoreSelectedBy,
 };
 use rho_providers::auth::browser::{self, BrowserAvailability};
 
 use super::{
     drive,
     relay_wire::{flow_to_wire, prompt_from_wire},
-    secret, SignIn, Target,
+    secret,
+    store_choice::{self, StoreOffers},
+    SignIn, Target,
 };
 use crate::{
     app::{credential_writes, daemon_cli},
+    credential_store,
     daemon::Connection,
     login_prompt_print::eprint_login_prompt,
 };
@@ -65,6 +76,7 @@ fn refuse_shell_override(
 async fn save_key(auth: String, entry_label: &str) -> anyhow::Result<()> {
     let key = secret::read(entry_label).await?;
     let Connection { client, .. } = daemon_cli::connect().await?;
+    ensure_store(&client).await?;
     let saved = client
         .request::<AuthKey>(&AuthKeyParams {
             auth: auth.clone(),
@@ -91,6 +103,7 @@ async fn log_in(auth: String, provider_label: &str, device_auth: bool) -> anyhow
         mut notifications,
         ..
     } = daemon_cli::connect().await?;
+    ensure_store(&client).await?;
     let login = client
         .request::<AuthLogin>(&AuthLoginParams {
             auth: auth.clone(),
@@ -119,6 +132,51 @@ async fn log_in(auth: String, provider_label: &str, device_auth: bool) -> anyhow
             _ => {}
         }
     }
+}
+
+/// Asks which credential store to use when nothing chose one for the
+/// daemon, offering the OS store as the daemon reaches it, and has the
+/// daemon keep credentials in the answer.
+async fn ensure_store(client: &Client) -> anyhow::Result<()> {
+    let status = client
+        .request::<Status>(&StatusParams {})
+        .await
+        .map_err(|error| {
+            refused(
+                error,
+                "could not ask the rho daemon about its credential store".into(),
+            )
+        })?
+        .credential_store;
+    if status.selected_by != StoreSelectedBy::Default {
+        return Ok(());
+    }
+    let offers = StoreOffers {
+        os_unavailable: status.unreachable,
+        // The daemon checks the file store when it is chosen.
+        file_unavailable: None,
+    };
+    // A variable in this shell reaches only a daemon started from it, so
+    // name what reaches a running one.
+    let unattended = "the rho daemon's credential store is unset; set it before non-interactive login with `rho credential-store set file` or behavior.credential_store in config.toml, which the daemon reads, or restart the daemon with RHO_CREDENTIAL_STORE=os|file";
+    let backend =
+        tokio::task::spawn_blocking(move || store_choice::ask(&offers, unattended)).await??;
+    client
+        .request::<AuthChooseStore>(&AuthChooseStoreParams {
+            store: credential_store::wire::kind(backend),
+        })
+        .await
+        .map_err(|error| {
+            refused(
+                error,
+                format!("could not choose the {} credential store", backend.as_str()),
+            )
+        })?;
+    eprintln!(
+        "credential store set to {} in the rho daemon's config",
+        backend.as_str()
+    );
+    Ok(())
 }
 
 /// What `rho login` reports for a login to `auth` that ended with

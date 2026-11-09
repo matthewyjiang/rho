@@ -3,7 +3,9 @@
 //! Runs the same checks as the interactive `/doctor` overlay without a TUI.
 //! Root `--provider`/`--model`/`--auth`/`--reasoning` apply in memory so the
 //! report matches `rho --provider X run`. Probes run concurrently under one
-//! deadline so a hung endpoint cannot stall the report.
+//! deadline so a hung endpoint cannot stall the report. On unix the running
+//! daemon, never one this starts, reports the credential store it keeps
+//! provider credentials in, under the same deadline.
 
 use std::{sync::Arc, time::Duration};
 
@@ -11,6 +13,8 @@ use rho_providers::credentials::{available_auth_modes, CredentialStore};
 use serde::Serialize;
 
 use super::config_repository::ConfigRepository;
+#[cfg(unix)]
+use crate::doctor::{daemon_store_check, DaemonStore};
 use crate::{
     cli::Cli,
     credential_store::AppCredentialStore,
@@ -88,9 +92,18 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
         .into_iter()
         .map(|id| (id.clone(), tokio::spawn(run_probe(id, store.clone()))))
         .collect();
-    for outcome in collect_probes(handles, PROBE_DEADLINE).await {
+    #[cfg(unix)]
+    let (outcomes, daemon_store) = tokio::join!(
+        collect_probes(handles, PROBE_DEADLINE),
+        ask_daemon_store(PROBE_DEADLINE)
+    );
+    #[cfg(not(unix))]
+    let outcomes = collect_probes(handles, PROBE_DEADLINE).await;
+    for outcome in outcomes {
         report.replace_checks(probe_checks(&outcome, &config.provider));
     }
+    #[cfg(unix)]
+    report.replace_checks(vec![daemon_store_check(&daemon_store)]);
 
     if json {
         println!(
@@ -128,6 +141,37 @@ fn apply_doctor_overrides(
         },
     )?;
     Ok(())
+}
+
+/// Asks the running daemon which credential store it keeps provider
+/// credentials in and whether it can reach it, giving up after `deadline`.
+#[cfg(unix)]
+async fn ask_daemon_store(deadline: Duration) -> DaemonStore {
+    use rho_protocol::{methods::Status, StatusParams};
+
+    use crate::daemon::{self, ConnectError};
+
+    let ask = async {
+        let paths = super::daemon_cli::paths().map_err(|error| format!("{error:#}"))?;
+        let connection = match daemon::connect(&paths, daemon::cli_client_info()).await {
+            Ok(connection) => connection,
+            Err(ConnectError::NotRunning) => return Ok(DaemonStore::NotRunning),
+            Err(error) => return Err(error.to_string()),
+        };
+        let status = connection
+            .client
+            .request::<Status>(&StatusParams {})
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(DaemonStore::Reported(status.credential_store))
+    };
+    match tokio::time::timeout(deadline, ask).await {
+        Ok(Ok(store)) => store,
+        Ok(Err(reason)) => DaemonStore::Unanswered(reason),
+        Err(_) => DaemonStore::Unanswered(format!(
+            "it did not report its status within PROBE_DEADLINE ({deadline:?})"
+        )),
+    }
 }
 
 /// Collect every spawned probe under one shared deadline. A probe that
