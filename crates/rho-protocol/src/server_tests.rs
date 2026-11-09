@@ -17,7 +17,9 @@ use crate::{
         SessionOptions, StreamId, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT, SESSION_DETACHED,
         SESSION_EVENT,
     },
-    subscription, LoginRelay, ProtocolVersion, Published, Publisher, RequestId,
+    subscription, AuthChooseStoreParams, AuthChooseStoreResponse, CredentialStoreKind,
+    CredentialStoreStatus, LoginRelay, ProtocolVersion, Published, Publisher, RequestId,
+    StoreSelectedBy,
 };
 
 /// Failure bound for each response a test waits for. The tests synchronize
@@ -33,6 +35,11 @@ fn test_status() -> DaemonStatus {
         uptime_secs: 0,
         jobs: 0,
         socket: "/tmp/rho-test.sock".into(),
+        credential_store: CredentialStoreStatus {
+            store: CredentialStoreKind::File,
+            selected_by: StoreSelectedBy::Config,
+            unreachable: None,
+        },
     }
 }
 
@@ -156,6 +163,13 @@ macro_rules! hosts_no_sessions {
             &self,
             _: AuthLoginCancelParams,
         ) -> Result<AuthLoginCancelResponse, RpcError> {
+            Err(no_credential_store())
+        }
+
+        async fn choose_store(
+            &self,
+            _: AuthChooseStoreParams,
+        ) -> Result<AuthChooseStoreResponse, RpcError> {
             Err(no_credential_store())
         }
     };

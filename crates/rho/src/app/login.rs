@@ -5,7 +5,9 @@
 //! daemon when none runs (`daemon_client.rs`). `rho acp --login`, which an
 //! ACP host runs in a terminal, signs in the same way. Where the daemon is
 //! unsupported (Windows, #1665) `rho login` signs in in this process
-//! (`in_process.rs`), and `rho acp` is unavailable.
+//! (`in_process.rs`), and `rho acp` is unavailable. Before the first
+//! sign-in, either way asks which credential store to keep it in
+//! (`store_choice.rs`).
 
 #[cfg(unix)]
 mod daemon_client;
@@ -15,6 +17,7 @@ mod in_process;
 #[cfg(unix)]
 pub(super) mod relay_wire;
 mod secret;
+pub(super) mod store_choice;
 
 #[cfg(unix)]
 use rho_providers::provider::{resolve_auth_mode, ProviderAuthKind};

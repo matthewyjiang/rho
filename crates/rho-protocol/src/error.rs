@@ -119,16 +119,19 @@ error_codes! {
         /// or delete it (#1661). Close it there first.
         SessionInUse = -32012,
         /// A variable in the daemon's environment holds the auth profile's
-        /// credential, and it wins over a saved one, so saving or deleting
-        /// one would change nothing (#1662). Unset it where the daemon
-        /// starts and restart the daemon. `data` is a
+        /// credential, or `RHO_CREDENTIAL_STORE` chooses the credential
+        /// store, and it wins over what the request would save, so saving
+        /// or deleting it would change nothing (#1662). Unset it where the
+        /// daemon starts and restart the daemon. `data` is a
         /// [`crate::EnvironmentOverride`] naming the variable.
         EnvironmentOverride = -32013 => crate::EnvironmentOverride,
         /// The provider refused the API key, so the daemon saved nothing
         /// (#1662).
         KeyRefused = -32014,
         /// The credential store could not be opened, read, or written, as
-        /// when the OS keyring is locked or unavailable (#1662).
+        /// when the OS keyring is locked or the daemon has no session D-Bus
+        /// to reach it (#1662). `rho/daemon/status` says why, and
+        /// `rho/auth/choose_store` chooses another store.
         CredentialStoreUnavailable = -32015,
         /// The daemon has not loaded the session, which a request that only
         /// changes a loaded session, such as a settings change, needs.

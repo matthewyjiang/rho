@@ -71,5 +71,14 @@ async fn daemon_serves_status_and_cleans_up_on_stop() {
 
     assert!(!paths.socket.exists(), "socket removed");
     assert!(!paths.info_file.exists(), "info file removed");
-    assert!(!lock::is_held(&paths).unwrap(), "lock released");
+    // A child another test forks at this moment shares the lock's open file
+    // description until it execs, so wait for the release rather than
+    // sample it once.
+    assert!(
+        lock::wait_until_released(&paths, SHUTDOWN_DEADLINE)
+            .await
+            .unwrap()
+            .is_some(),
+        "lock released"
+    );
 }

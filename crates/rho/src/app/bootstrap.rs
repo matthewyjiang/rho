@@ -266,17 +266,21 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
             }
             login::LoginCommand::Cli { .. } | login::LoginCommand::AcpTerminal { .. } => {}
         }
-        // A daemon login saves under the daemon's config, which reads the
-        // credential store chosen here (#1662).
+        // Custom providers must be registered for `login` to find them. A
+        // daemon login saves under the daemon's config, and asks the daemon
+        // which credential store to use (#1662).
         let config_repository = ConfigRepository::new(cli.config.clone());
-        let mut config = config_repository.load()?;
+        let config = config_repository.load()?;
         config.providers.activate()?;
-        let config_path = absolute_config_path(&config_repository)?;
-        ensure_cli_credential_store_choice(&mut config, Some(config_path.clone()))?;
         #[cfg(unix)]
         let signed_in = login::run(command).await;
         #[cfg(not(unix))]
-        let signed_in = login::run(command, &config_repository, &mut config, &config_path).await;
+        let signed_in = {
+            let mut config = config;
+            let config_path = absolute_config_path(&config_repository)?;
+            ensure_cli_credential_store_choice(&mut config, Some(config_path.clone()))?;
+            login::run(command, &config_repository, &mut config, &config_path).await
+        };
         return Ok(EarlyDispatch::Handled(signed_in));
     }
     Ok(EarlyDispatch::Continue)
@@ -562,77 +566,29 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
     .await
 }
 
+/// Asks, in this process, which credential store `rho login` keeps
+/// credentials in when nothing chose one. On unix the daemon writes them, so
+/// `rho login` asks with what the daemon reaches instead (`login`).
+#[cfg(not(unix))]
 fn ensure_cli_credential_store_choice(
     config: &mut crate::config::Config,
     config_path: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
-    use rho_providers::credentials::CredentialStoreBackend;
-    use std::io::{self, IsTerminal, Write};
-
     let Some(request) = crate::credential_store::choice_request(config) else {
         return Ok(());
     };
-
-    if !crate::stdio::stdin_is_terminal() || !io::stderr().is_terminal() {
-        anyhow::bail!(
-            "credential store is unset; set it before non-interactive login with \
+    let unavailable = |probe: &rho_providers::credentials::CredentialStoreProbe| {
+        (!probe.available).then(|| probe.detail.clone())
+    };
+    let backend = login::store_choice::ask(
+        &login::store_choice::StoreOffers {
+            os_unavailable: unavailable(&request.os),
+            file_unavailable: unavailable(&request.file),
+        },
+        "credential store is unset; set it before non-interactive login with \
 `rho credential-store set os|file`, behavior.credential_store in config.toml, \
-or RHO_CREDENTIAL_STORE=os|file"
-        );
-    }
-
-    let backends = request.available_backends();
-    if backends.is_empty() {
-        anyhow::bail!(
-            "no credential store backend is available (os: {}; file: {})",
-            request.os.detail,
-            request.file.detail
-        );
-    }
-
-    eprintln!("Choose where Rho stores provider credentials:");
-    eprintln!("This is saved to config and used for future logins on this machine.");
-    if request.os.available {
-        eprintln!("  [1] OS credential store (recommended)");
-    } else {
-        eprintln!(
-            "  [1] OS credential store (unavailable: {})",
-            request.os.detail
-        );
-    }
-    if request.file.available {
-        eprintln!("  [2] Local file under ~/.rho/credentials (not encrypted at rest)");
-    } else {
-        eprintln!("  [2] Local file (unavailable: {})", request.file.detail);
-    }
-    let default_backend = request
-        .default_backend()
-        .unwrap_or(CredentialStoreBackend::Os);
-    let default_hint = match default_backend {
-        CredentialStoreBackend::Os => "1",
-        CredentialStoreBackend::File => "2",
-    };
-    eprint!("Choice [1/2 or os/file] (default {default_hint}): ");
-    io::stderr().flush()?;
-
-    let mut answer = String::new();
-    io::stdin().read_line(&mut answer)?;
-    let backend = match answer.trim() {
-        "" => default_backend,
-        "1" | "os" | "OS" => CredentialStoreBackend::Os,
-        "2" | "file" | "FILE" => CredentialStoreBackend::File,
-        other => {
-            anyhow::bail!("unrecognized credential store choice '{other}'; expected 1/os or 2/file")
-        }
-    };
-    if !backends.contains(&backend) {
-        let detail = request.detail_for(backend);
-        anyhow::bail!(
-            "{} credential store is unavailable: {detail}",
-            backend.as_str()
-        );
-    }
-
+or RHO_CREDENTIAL_STORE=os|file",
+    )?;
     let path = crate::credential_store::set_backend(backend, config_path)?;
     config.credential_store = Some(backend);
     eprintln!(

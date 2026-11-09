@@ -173,6 +173,30 @@
       ],
       "description": "What an input request asks."
     },
+    "AuthChooseStoreParams": {
+      "description": "Params of [`AUTH_CHOOSE_STORE`].",
+      "properties": {
+        "store": {
+          "$ref": "#/$defs/CredentialStoreKind"
+        }
+      },
+      "required": [
+        "store"
+      ],
+      "type": "object"
+    },
+    "AuthChooseStoreResponse": {
+      "description": "Result of [`AUTH_CHOOSE_STORE`]: the daemon wrote and deleted a\ntemporary secret in the store, saved it as `behavior.credential_store`\nin its config, and keeps credentials there from now on. Credentials\nalready saved stay where they are.",
+      "properties": {
+        "credential_store": {
+          "$ref": "#/$defs/CredentialStoreStatus"
+        }
+      },
+      "required": [
+        "credential_store"
+      ],
+      "type": "object"
+    },
     "AuthKeyParams": {
       "description": "Params of [`AUTH_KEY`].\n\nThe key travels only over the daemon's socket, which is private to the\ndaemon's user (mode 0600) and refuses peers of another user, and the\ndaemon never logs it. `Debug` shows `[redacted]` in its place, so a\nclient that logs its requests does not log the key either.",
       "properties": {
@@ -722,6 +746,49 @@
       ],
       "description": "One piece of a prompt or a user message."
     },
+    "CredentialStoreKind": {
+      "anyOf": [
+        {
+          "const": "os",
+          "description": "The OS keyring: the Secret Service on Linux, the Keychain on macOS.",
+          "type": "string"
+        },
+        {
+          "const": "file",
+          "description": "A private file under the daemon's rho home, not encrypted at rest.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "A store the daemon can keep provider credentials in. Protocol minors may\nadd stores."
+    },
+    "CredentialStoreStatus": {
+      "description": "The credential store the daemon's environment and config select, which\nevery sign-in through the daemon writes.",
+      "properties": {
+        "selected_by": {
+          "$ref": "#/$defs/StoreSelectedBy"
+        },
+        "store": {
+          "$ref": "#/$defs/CredentialStoreKind"
+        },
+        "unreachable": {
+          "description": "Why the daemon cannot reach the store, absent when it can. The\ndaemon checks without writing, so a locked keyring counts as\nreachable until a write is refused.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "store",
+        "selected_by"
+      ],
+      "type": "object"
+    },
     "Cursor": {
       "description": "Where a client is in a session's stream; send it back to resume.",
       "properties": {
@@ -760,6 +827,10 @@
     "DaemonStatus": {
       "description": "Result of [`DAEMON_STATUS`].",
       "properties": {
+        "credential_store": {
+          "$ref": "#/$defs/CredentialStoreStatus",
+          "description": "The credential store the daemon keeps provider credentials in, what\nchose it, and whether the daemon can reach it."
+        },
         "jobs": {
           "description": "Jobs with a turn in progress: [`crate::JobState::Running`] or\n[`crate::JobState::WaitingForInput`].",
           "format": "uint64",
@@ -801,7 +872,8 @@
         "started_at",
         "uptime_secs",
         "jobs",
-        "socket"
+        "socket",
+        "credential_store"
       ],
       "type": "object"
     },
@@ -3843,6 +3915,31 @@
       "description": "Result of [`DAEMON_STOP`]: the daemon has begun shutting down. It finishes\nin-flight responses, closes connections, interrupts running turns, and\nexits.",
       "type": "object"
     },
+    "StoreSelectedBy": {
+      "anyOf": [
+        {
+          "const": "default",
+          "description": "Nothing did, so the daemon uses the OS store. A client signing in\nshould ask its user to choose one, which [`AUTH_CHOOSE_STORE`] saves.",
+          "type": "string"
+        },
+        {
+          "const": "config",
+          "description": "`behavior.credential_store` in the daemon's config.",
+          "type": "string"
+        },
+        {
+          "const": "environment",
+          "description": "`RHO_CREDENTIAL_STORE` in the daemon's environment, which wins over\nthe config, so [`AUTH_CHOOSE_STORE`] refuses.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What chose the daemon's credential store. Protocol minors may add values."
+    },
     "StreamId": {
       "description": "One loaded session's event stream. A new daemon, or a reload, starts\na new stream.",
       "type": "string"
@@ -4884,6 +4981,14 @@
     }
   },
   "methods": {
+    "rho/auth/choose_store": {
+      "params": {
+        "$ref": "#/$defs/AuthChooseStoreParams"
+      },
+      "result": {
+        "$ref": "#/$defs/AuthChooseStoreResponse"
+      }
+    },
     "rho/auth/key": {
       "params": {
         "$ref": "#/$defs/AuthKeyParams"

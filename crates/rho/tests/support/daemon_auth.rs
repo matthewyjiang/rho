@@ -1,15 +1,21 @@
 //! Signing the daemon in and out over its socket (#1662): a key one client
 //! saves or deletes applies to another client's running session from its
 //! next prompt, against a provider that checks every key over real HTTP.
+//! Also the credential store the daemon reports and a client chooses.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    process::Command,
+    sync::{Arc, Mutex},
+};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{AuthKey, AuthLogout, JobList, SessionPrompt},
-    AuthKeyParams, AuthKeyResponse, AuthLogoutParams, AuthLogoutResponse, Client, ClientError,
-    ContentBlock, EnvironmentOverride, ErrorCode, JobListParams, JobState, RpcError, SessionId,
-    SessionPromptParams, TurnError, TurnErrorKind, TurnOutcome,
+    methods::{AuthChooseStore, AuthKey, AuthLogout, JobList, SessionPrompt, Status},
+    AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse,
+    AuthLogoutParams, AuthLogoutResponse, Client, ClientError, ContentBlock, CredentialStoreKind,
+    CredentialStoreStatus, EnvironmentOverride, ErrorCode, JobListParams, JobState, RpcError,
+    SessionId, SessionPromptParams, StatusParams, StoreSelectedBy, TurnError, TurnErrorKind,
+    TurnOutcome,
 };
 use rho_providers::credentials::{CredentialStore, FileCredentialStore};
 use serde_json::Value;
@@ -34,6 +40,14 @@ struct Fixture {
 impl Fixture {
     /// Starts the daemon with the variables `environment` set.
     async fn start(valid: &Arc<Mutex<String>>, environment: &[(&str, &str)]) -> Self {
+        Self::start_with(valid, |command| {
+            command.envs(environment.iter().copied());
+        })
+        .await
+    }
+
+    /// Starts the daemon with its command changed by `configure`.
+    async fn start_with(valid: &Arc<Mutex<String>>, configure: impl FnOnce(&mut Command)) -> Self {
         let address = spawn_provider(Arc::clone(valid));
         let sandbox = Sandbox::new();
         std::fs::write(
@@ -58,10 +72,9 @@ provider = "disabled"
         .unwrap();
         let store = FileCredentialStore::with_rho_home(sandbox.isolated.rho_home()).unwrap();
         let mut command = sandbox.rho("fixed");
-        command
-            // The session must reach the real provider, not the fixture one.
-            .env_remove("RHO_AUTOMATION_TEST_MODE")
-            .envs(environment.iter().copied());
+        // The session must reach the real provider, not the fixture one.
+        command.env_remove("RHO_AUTOMATION_TEST_MODE");
+        configure(&mut command);
         sandbox.spawn_daemon(command, &[]).await;
         Self { sandbox, store }
     }
@@ -124,6 +137,24 @@ async fn save_key(client: &Client, key: &str) -> Result<AuthKeyResponse, RpcErro
 async fn logout(client: &Client) -> Result<AuthLogoutResponse, RpcError> {
     client
         .request::<AuthLogout>(&AuthLogoutParams { auth: AUTH.into() })
+        .await
+        .map_err(rpc_error)
+}
+
+async fn store_status(client: &Client) -> CredentialStoreStatus {
+    client
+        .request::<Status>(&StatusParams {})
+        .await
+        .unwrap()
+        .credential_store
+}
+
+async fn choose_store(
+    client: &Client,
+    store: CredentialStoreKind,
+) -> Result<AuthChooseStoreResponse, RpcError> {
+    client
+        .request::<AuthChooseStore>(&AuthChooseStoreParams { store })
         .await
         .map_err(rpc_error)
 }
@@ -236,5 +267,107 @@ async fn a_key_in_the_daemons_environment_refuses_sign_in_and_out() {
             fixture.saved_key(),
         ),
         (overridden.clone(), overridden, Some(FIRST_KEY.into()))
+    );
+}
+
+// Covers: a daemon with no session D-Bus, as one a client started from an
+// SSH login, reports that it cannot reach the OS store nothing chose for
+// it, and fails closed: it refuses a key, and refuses choosing the OS
+// store, keeping nothing in the file store meanwhile. Once a client
+// chooses the file store, the status says so and why, keys land there, and
+// a session signs in with them (#1662).
+// Owner: daemon credential store status and choice, over the real socket;
+// the sandbox's empty XDG_RUNTIME_DIR is the missing session bus.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_daemon_without_a_session_bus_fails_closed_until_a_client_chooses_the_file_store() {
+    let valid = Arc::new(Mutex::new(FIRST_KEY.to_owned()));
+    // Nothing chooses the store: not the sandbox's environment, nor its config.
+    let fixture = Fixture::start_with(&valid, |command| {
+        command.env_remove("RHO_CREDENTIAL_STORE");
+    })
+    .await;
+    let client = fixture.sandbox.connect().await;
+
+    let headless = store_status(&client).await;
+    assert_eq!(
+        (
+            headless.store,
+            headless.selected_by,
+            headless.unreachable.is_some()
+        ),
+        (CredentialStoreKind::Os, StoreSelectedBy::Default, true),
+        "{headless:?}"
+    );
+    assert_eq!(
+        (
+            error_of(save_key(&client, FIRST_KEY).await).0,
+            error_of(choose_store(&client, CredentialStoreKind::Os).await).0,
+            fixture.saved_key(),
+        ),
+        (
+            Some(ErrorCode::CredentialStoreUnavailable),
+            Some(ErrorCode::CredentialStoreUnavailable),
+            None
+        )
+    );
+
+    let chosen = CredentialStoreStatus {
+        store: CredentialStoreKind::File,
+        selected_by: StoreSelectedBy::Config,
+        unreachable: None,
+    };
+    assert_eq!(
+        choose_store(&client, CredentialStoreKind::File).await,
+        Ok(AuthChooseStoreResponse {
+            credential_store: chosen.clone()
+        })
+    );
+    assert_eq!(store_status(&client).await, chosen);
+    assert_eq!(
+        save_key(&client, FIRST_KEY).await,
+        Ok(AuthKeyResponse { unchecked: None })
+    );
+    let session = fixture.sandbox.new_session(&client).await;
+    assert_eq!(
+        (fixture.saved_key(), fixture.prompt(&client, &session).await),
+        (Some(FIRST_KEY.into()), Ok(JobState::Completed)),
+        "log:\n{}",
+        fixture.sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: RHO_CREDENTIAL_STORE in the daemon's environment chose its store,
+// so the status says so, and choosing a store is refused, naming the
+// variable, since config would change nothing.
+// Owner: daemon credential store status and choice.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_store_the_daemons_environment_chose_cannot_be_replaced() {
+    let valid = Arc::new(Mutex::new(FIRST_KEY.to_owned()));
+    // The sandbox sets RHO_CREDENTIAL_STORE=file for every rho it starts.
+    let fixture = Fixture::start(&valid, &[]).await;
+    let client = fixture.sandbox.connect().await;
+
+    assert_eq!(
+        (
+            store_status(&client).await,
+            error_of(choose_store(&client, CredentialStoreKind::File).await),
+        ),
+        (
+            CredentialStoreStatus {
+                store: CredentialStoreKind::File,
+                selected_by: StoreSelectedBy::Environment,
+                unreachable: None,
+            },
+            (
+                Some(ErrorCode::EnvironmentOverride),
+                Some(
+                    serde_json::to_value(EnvironmentOverride {
+                        variable: "RHO_CREDENTIAL_STORE".into(),
+                    })
+                    .unwrap()
+                )
+            )
+        )
     );
 }

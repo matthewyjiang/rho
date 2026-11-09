@@ -532,3 +532,67 @@ fn keyless_ollama_login_lists_its_model(harness: &mut PtyHarness, base: &str) {
         .wait_for_text_gone("llama-pty:latest", WaitTimeout::secs(5, "picker closed"))
         .unwrap();
 }
+
+// Covers: `rho login` to a custom provider on a machine whose session has
+// no D-Bus, as an SSH login's: the daemon it starts cannot reach the OS
+// store, so the store prompt marks it unavailable and Enter takes the file
+// store; the daemon saves that choice and keeps the key there (#1662).
+// Owner: rho login CLI against the daemon it starts (PTY, real terminal).
+#[cfg(target_os = "linux")]
+#[test]
+fn rho_login_without_a_session_bus_falls_back_to_the_file_store_it_offers() {
+    let home = IsolatedHome::new().unwrap();
+    // Nothing chooses the store; the sandbox's empty XDG_RUNTIME_DIR is the
+    // missing session bus, for `rho login` and the daemon it starts.
+    // The key check reaches the discard port, so the key saves unchecked.
+    std::fs::write(
+        &home.config_path,
+        "provider = \"mock\"\nmodel = \"mock-model\"\nauth = \"mock-api-key\"\ncheck_for_updates = false\n\n[providers.custom.mock]\nbase_url = \"http://127.0.0.1:9/v1\"\n",
+    )
+    .unwrap();
+    let plan = RhoLaunchPlan::matrix(
+        PathBuf::from(env!("CARGO_BIN_EXE_rho")),
+        &home,
+        PtySize {
+            rows: 28,
+            cols: 200,
+        },
+    )
+    .with_arg("login")
+    .with_arg("mock");
+    let mut harness = PtyHarness::spawn_named(&plan, "rho_login_headless_store").unwrap();
+
+    harness
+        .wait_for_text("input hidden", WaitTimeout::secs(20, "key prompt"))
+        .unwrap();
+    harness.type_text("sk-test-headless").unwrap();
+    harness.inject_key(&Key::Enter).unwrap();
+    harness
+        .wait_for_text("(default 2)", WaitTimeout::secs(20, "store prompt"))
+        .unwrap();
+    harness
+        .assert_screen_contains("OS credential store (unavailable:")
+        .unwrap();
+    harness.inject_key(&Key::Enter).unwrap();
+    assert_eq!(
+        harness
+            .wait_for_exit(WaitTimeout::secs(30, "rho login exits"))
+            .unwrap(),
+        0,
+        "{}",
+        harness.screen().contents()
+    );
+
+    let config = std::fs::read_to_string(&home.config_path).unwrap();
+    let store =
+        rho_providers::credentials::FileCredentialStore::with_rho_home(home.rho_home()).unwrap();
+    use rho_providers::credentials::CredentialStore;
+    assert_eq!(
+        (
+            config.contains("credential_store = \"file\""),
+            store.get_secret("provider:mock:api-key").unwrap()
+        ),
+        (true, Some("sk-test-headless".to_owned())),
+        "{config}"
+    );
+}
