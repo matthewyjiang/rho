@@ -1,10 +1,35 @@
 use std::{fs::File, path::Path};
 
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-use super::secure_fs::identity_drift;
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-use super::WorkflowError;
-use super::WorkflowResult;
+use super::{WorkflowError, WorkflowResult};
+
+/// Whether a target's OS adapter can launch a frozen executable, its script
+/// interpreter, and its working directory from the handles Rho verified, so a
+/// path replaced after the check cannot select another object.
+///
+/// Frozen command nodes and external CLI agent nodes need this launch;
+/// in-process Rho agent nodes do not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HandleLaunch {
+    Supported,
+    Unsupported,
+}
+
+impl HandleLaunch {
+    /// The support of the target Rho was built for.
+    pub(crate) const CURRENT: Self = if cfg!(any(target_os = "linux", target_os = "android")) {
+        Self::Supported
+    } else {
+        Self::Unsupported
+    };
+
+    /// Fails with the platform limit when frozen processes cannot launch.
+    pub(crate) fn ensure(self) -> WorkflowResult<()> {
+        match self {
+            Self::Supported => Ok(()),
+            Self::Unsupported => Err(WorkflowError::UnsupportedPlatform),
+        }
+    }
+}
 
 pub(crate) fn verified_handle_path(
     file: &File,
@@ -21,10 +46,7 @@ pub(crate) fn verified_handle_path(
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let _ = file;
-        Err(WorkflowError::Corrupt {
-            path: _fallback.to_owned(),
-            reason: "frozen workflow launch requires handle-based executable and working-directory support on this platform".to_owned(),
-        })
+        Err(WorkflowError::UnsupportedPlatform)
     }
 }
 
@@ -65,10 +87,7 @@ pub(crate) fn configure_handle_inheritance(
     _command: &mut tokio::process::Command,
     _files: &[&File],
 ) -> WorkflowResult<()> {
-    Err(identity_drift(
-        Path::new("<handle>"),
-        "handle inheritance is unavailable on this platform",
-    ))
+    Err(WorkflowError::UnsupportedPlatform)
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "android")))]

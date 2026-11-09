@@ -306,16 +306,12 @@ async fn run_exact_process(
     })
 }
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
+/// Planning rejects command nodes on targets without this launch; this gate
+/// still covers plans and runs frozen before that check existed.
 fn ensure_handle_based_launch_supported() -> Result<(), ToolError> {
-    Ok(())
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-fn ensure_handle_based_launch_supported() -> Result<(), ToolError> {
-    Err(execution_error(
-        "frozen workflow process execution is unavailable on this platform because the OS adapter cannot launch the executable, interpreter, and working directory from verified handles",
-    ))
+    crate::workflow::HandleLaunch::CURRENT
+        .ensure()
+        .map_err(|error| execution_error(error.to_string()))
 }
 
 fn command_from_execution(

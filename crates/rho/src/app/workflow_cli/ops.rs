@@ -12,16 +12,18 @@ use crate::{
     workflow::{
         normalize_workflow, validate_runtime_budgets, validate_workflow, verify_directory_identity,
         verify_executable_identity, CollectedSources, Digest, FrozenSchedulerSettings,
-        FrozenWorkflow, InputName, Inventory, PlanConsent, PlanId, PlanInventory, PlannerIdentity,
-        PlanningLimits, ResolvedNode, RunId, RunInventory, RunLifecycle, SourceCollector,
-        StoredPlan, StoredRun, WorkflowService, WorkflowStore, WorkflowValue,
+        FrozenWorkflow, HandleLaunch, InputName, Inventory, PlanConsent, PlanId, PlanInventory,
+        PlannerIdentity, PlanningLimits, ResolvedNode, RunId, RunInventory, RunLifecycle,
+        SourceCollector, StoredPlan, StoredRun, WorkflowService, WorkflowStore, WorkflowValue,
         FROZEN_WORKFLOW_SCHEMA_VERSION,
     },
 };
 
 use super::{
     cancel::CancellationOutcome,
-    plan_host::{resolve_nodes_with_host, DiscoveringPlanHost, PlanHost},
+    plan_host::{
+        ensure_program_launchable, resolve_nodes_with_host, DiscoveringPlanHost, PlanHost,
+    },
     planner_worker::{self, run_supervised_planner, PlannerWorkerPlan},
     STARLARK_VERSION,
 };
@@ -84,7 +86,9 @@ impl WorkflowOps {
         limits: &PlanningLimits,
     ) -> anyhow::Result<PreparedPlan> {
         let planned = run_supervised_planner(&sources, inputs, limits).await?;
-        let resolved_nodes = resolve_nodes_with_host(&planned.program, host)?;
+        let launchable =
+            ensure_program_launchable(&planned.program, host.catalog(), HandleLaunch::CURRENT)?;
+        let resolved_nodes = resolve_nodes_with_host(launchable, host)?;
         freeze_planned_workflow(sources, planned, resolved_nodes, limits)
     }
 

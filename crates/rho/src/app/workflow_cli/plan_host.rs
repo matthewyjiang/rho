@@ -12,8 +12,8 @@ use crate::{
     app::agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundRuntime},
     app::sdk_config,
     workflow::{
-        freeze_directory_identity, freeze_executable_identity, ExecutableIdentity, NodeExecution,
-        ResolvedAgent, ResolvedCommand, ResolvedNode,
+        freeze_directory_identity, freeze_executable_identity, ExecutableIdentity, HandleLaunch,
+        NodeExecution, ResolvedAgent, ResolvedCommand, ResolvedNode,
     },
 };
 
@@ -155,11 +155,54 @@ impl PlanHost for AuthorizedPlanHost<'_> {
     }
 }
 
+/// A workflow program whose nodes can all launch on the planning target.
+///
+/// Node resolution and executable-read authorization take only this, so no
+/// planning adapter can skip [`ensure_program_launchable`].
+#[derive(Clone, Copy)]
+pub(crate) struct LaunchableProgram<'a>(&'a crate::workflow::WorkflowProgram);
+
+impl<'a> LaunchableProgram<'a> {
+    pub(crate) fn program(self) -> &'a crate::workflow::WorkflowProgram {
+        self.0
+    }
+}
+
+/// Rejects `program` when `launch` cannot start one of its nodes, before any
+/// node resolves or has its executable read authorized (#1736). Command
+/// nodes and agents on an external CLI runtime launch a frozen process from
+/// verified handles; in-process Rho agents launch none.
+pub(crate) fn ensure_program_launchable<'a>(
+    program: &'a crate::workflow::WorkflowProgram,
+    catalog: &crate::agent::AgentCatalog,
+    launch: HandleLaunch,
+) -> anyhow::Result<LaunchableProgram<'a>> {
+    if launch == HandleLaunch::Supported {
+        return Ok(LaunchableProgram(program));
+    }
+    for node in program.root.nodes.values() {
+        let launches_process = match &node.execution {
+            NodeExecution::Command(_) => true,
+            NodeExecution::Agent(agent) => catalog
+                .find(&agent.agent)?
+                .definition
+                .runtime
+                .runtime()
+                .is_external_cli(),
+        };
+        if launches_process {
+            launch.ensure()?;
+        }
+    }
+    Ok(LaunchableProgram(program))
+}
+
 pub(crate) fn resolve_nodes_with_host(
-    program: &crate::workflow::WorkflowProgram,
+    program: LaunchableProgram<'_>,
     host: &dyn PlanHost,
 ) -> anyhow::Result<BTreeMap<crate::workflow::NodeId, ResolvedNode>> {
     program
+        .program()
         .root
         .nodes
         .iter()
@@ -403,3 +446,7 @@ fn resolve_executable_path(
     };
     Ok(resolved)
 }
+
+#[cfg(test)]
+#[path = "plan_host_tests.rs"]
+mod tests;
