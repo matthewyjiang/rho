@@ -320,7 +320,8 @@ Run rho model-prompt edit --help for editor setup, saving, and reload behavior."
         #[command(subcommand)]
         command: SessionsCommand,
     },
-    /// Inspect configured Model Context Protocol servers.
+    /// Inspect configured Model Context Protocol servers, or serve rho's
+    /// sessions as one.
     Mcp {
         #[command(subcommand)]
         command: McpCommand,
@@ -600,6 +601,12 @@ pub enum DaemonCommand {
         #[arg(long, value_name = "DURATION", value_parser = parse_unload_idle_after)]
         unload_idle_after: Option<Duration>,
     },
+    /// Start the daemon in the background unless it is already running,
+    /// and wait until it answers.
+    ///
+    /// Exits 0 once a daemon runs, including one that already did. Waits
+    /// for a daemon that is stopping to exit before starting a new one.
+    Start,
     /// Show the running daemon's pid, version, uptime, and socket.
     ///
     /// Never starts a daemon. Exits with status 1 when none is running.
@@ -705,6 +712,23 @@ pub enum McpCommand {
         #[arg(long)]
         connect: bool,
     },
+    /// Serve the rho daemon's sessions as an MCP server over stdio: list,
+    /// read, start, prompt, steer, cancel, and wait for them. No tool
+    /// answers a session's approvals or questions.
+    Serve(McpServeArgs),
+}
+
+#[derive(clap::Args, Clone, Debug)]
+pub struct McpServeArgs {
+    /// The deepest a session this server starts or prompts may run: 1 for
+    /// a session started by a person's or an outside agent's call, one more
+    /// for each session in between. Defaults to 3.
+    #[arg(long, value_name = "N")]
+    pub max_depth: Option<u32>,
+    /// How many sessions the server's caller may have running at once.
+    /// Defaults to 10.
+    #[arg(long, value_name = "N")]
+    pub max_sessions: Option<u32>,
 }
 
 /// Target scope for plugin install and link.

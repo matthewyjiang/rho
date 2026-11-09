@@ -7,8 +7,10 @@ The rho daemon is one long-lived background process per user and rho home (`~/.r
 | Command | What it does |
 | --- | --- |
 | `rho daemon` | Run the daemon in the foreground until it is stopped. Same as `rho daemon run`. `rho daemon run --unload-idle-after <DURATION>` sets how long a session sits idle before it is [unloaded](#unloading-idle-sessions), or discarded if it saved nothing (`60s` by default). |
+| `rho daemon start` | Start the daemon in the background unless one is running, wait until it answers, and print its pid. Run again, it starts no second daemon and still exits 0, so scripts can run it unconditionally. |
 | `rho daemon status` | Show the running daemon's pid, version, protocol, uptime, jobs, and socket. Add `--json` for one JSON document. |
 | `rho daemon stop` | Ask the daemon to shut down and wait for it to exit. |
+| `rho mcp serve` | Serve the daemon's sessions as an MCP server, so another agent can start, follow, and steer them. See [MCP server](/mcp-server). |
 | `rho attach <ID>` | Follow a session's turn until it ends, and exit as it ended; answer its requests, steer it, or cancel it from the terminal; Ctrl+C detaches. See [Attaching to a daemon session](/automation-cli#attaching-to-a-daemon-session). |
 
 `status`, `stop`, and `attach` never start a daemon. With none running, they print `rho daemon is not running` and exit with status 1.
@@ -101,7 +103,7 @@ CLI subagents ([Claude Code](/subagents/claude-cli), [Cursor](/subagents/cursor)
 
 ## Starting automatically
 
-Frontends that use the daemon, such as `rho run --detach`, start it when none is running, so you rarely run `rho daemon` yourself. If several start at once, they agree on a single daemon. A frontend that starts one while the previous daemon is still shutting down can time out waiting for it; [#1657](https://github.com/matthewyjiang/rho/issues/1657) tracks waiting for the old daemon instead. The started daemon runs `rho daemon run` from the same `rho` executable in its own process group, so `Ctrl+C` in your terminal does not stop it.
+Frontends that use the daemon, such as `rho run --detach` and `rho daemon start`, start it when none is running, so you rarely run `rho daemon` yourself. If several start at once, they agree on a single daemon. A frontend that finds the previous daemon still shutting down waits for it to exit, up to 5 seconds, and then starts the new one; a daemon still holding its lock after that fails the frontend with the limit and the time it waited. The started daemon runs `rho daemon run` from the same `rho` executable in its own process group, so `Ctrl+C` in your terminal does not stop it.
 
 ## Versions
 

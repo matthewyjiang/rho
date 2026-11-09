@@ -1,4 +1,6 @@
-//! CLI handlers for `rho mcp list` and `rho mcp show`.
+//! CLI handlers for `rho mcp`: `list` and `show` inspect the MCP servers
+//! rho connects to; `serve` serves rho's sessions as one
+//! (`app::mcp_server`).
 
 use serde::Serialize;
 
@@ -14,7 +16,30 @@ use crate::{
 
 use super::config_repository::ConfigRepository;
 
+#[path = "mcp_cli_serve.rs"]
+mod serve;
+
 pub(super) async fn run(command: &McpCommand, cli: &Cli) -> anyhow::Result<()> {
+    match command {
+        McpCommand::List { json, connect } => {
+            inventory(Inventory::List { json: *json }, *connect, cli).await
+        }
+        McpCommand::Show { id, json, connect } => {
+            inventory(Inventory::Show { id, json: *json }, *connect, cli).await
+        }
+        McpCommand::Serve(args) => serve::serve(args).await,
+    }
+}
+
+/// What `rho mcp list` and `rho mcp show` print.
+enum Inventory<'a> {
+    List { json: bool },
+    Show { id: &'a str, json: bool },
+}
+
+/// `rho mcp list` and `rho mcp show`; `connect` starts the servers to report
+/// whether they connect.
+async fn inventory(view: Inventory<'_>, connect: bool, cli: &Cli) -> anyhow::Result<()> {
     let config_repository = ConfigRepository::new(cli.config.clone());
     let config = config_repository.load()?;
     // Include plugin-provided servers so the inventory matches a session.
@@ -23,9 +48,6 @@ pub(super) async fn run(command: &McpCommand, cli: &Cli) -> anyhow::Result<()> {
     crate::plugins::log(&plugin_discovery.report);
     let mut mcp_config = config.mcp.clone();
     mcp_config.merge(plugin_discovery.mcp);
-    let connect = match command {
-        McpCommand::List { connect, .. } | McpCommand::Show { connect, .. } => *connect,
-    };
     let plan = if connect {
         McpSessionPlan::Connect
     } else {
@@ -46,11 +68,9 @@ pub(super) async fn run(command: &McpCommand, cli: &Cli) -> anyhow::Result<()> {
         ),
     )
     .await;
-    let result = match command {
-        McpCommand::List { json, .. } => print_list(&outcome.report, *json),
-        McpCommand::Show { id, json, .. } => {
-            print_show(&outcome.report, &outcome.catalog, id, *json)
-        }
+    let result = match view {
+        Inventory::List { json } => print_list(&outcome.report, json),
+        Inventory::Show { id, json } => print_show(&outcome.report, &outcome.catalog, id, json),
     };
     if let Some(bundle) = outcome.bundle {
         bundle.close().await;

@@ -121,6 +121,7 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
         collapsed: true,
         items: [
           { text: 'Overview', link: '/daemon' },
+          { text: 'MCP server', link: '/mcp-server' },
           { text: 'Protocol', link: '/protocol' },
         ],
       },

@@ -3,8 +3,9 @@
 //! `rho daemon run` wires the daemon host (`app::daemon_host`) to the generic
 //! transport (`crate::daemon`). This is also the boundary that reads process
 //! environment (`RHO_HOME`, `XDG_RUNTIME_DIR`, `RHO_LOG`, `JOURNAL_STREAM`);
-//! `crate::daemon` takes the resolved values. `status` and `stop` never start
-//! a daemon.
+//! `crate::daemon` takes the resolved values. `start` is the clients' ensure
+//! running path ([`connect`]) as a command; `status` and `stop` never start a
+//! daemon.
 
 use crate::cli::{Command, DaemonCommand};
 
@@ -41,6 +42,7 @@ pub(super) async fn run(command: Option<DaemonCommand>) -> anyhow::Result<()> {
         DaemonCommand::Run { unload_idle_after } => {
             run_foreground(&paths, unload_idle_after.unwrap_or(UNLOAD_IDLE_AFTER)).await
         }
+        DaemonCommand::Start => start().await,
         DaemonCommand::Status { json } => status(&paths, json).await,
         DaemonCommand::Stop => stop(&paths).await,
     }
@@ -69,8 +71,8 @@ pub(crate) struct Unreachable {
 }
 
 /// Connects to this rho home's daemon, starting one when none runs, for
-/// the commands that are its clients: `rho run --detach`, `rho login`, and
-/// `rho acp`.
+/// the commands that are its clients: `rho run --detach`, `rho login`,
+/// `rho acp`, `rho mcp serve`, and `rho daemon start`.
 #[cfg(unix)]
 pub(super) async fn connect() -> Result<daemon::Connection, Unreachable> {
     let unreachable = |reason: String| Unreachable { reason };
@@ -252,6 +254,19 @@ fn stderr_is_journal_stream(stream: &std::ffi::OsStr) -> bool {
         .try_clone_to_owned()
         .and_then(|fd| std::fs::File::from(fd).metadata())
         .is_ok_and(|stderr| stderr.dev() == device && stderr.ino() == inode)
+}
+
+/// `rho daemon start`: connects to the running daemon, or starts one and
+/// waits until it answers. Idempotent, so a daemon that already runs counts
+/// as started.
+#[cfg(unix)]
+async fn start() -> anyhow::Result<()> {
+    let connection = connect().await?;
+    println!(
+        "rho daemon is running (pid {})",
+        connection.hello.daemon.pid
+    );
+    Ok(())
 }
 
 #[cfg(unix)]
