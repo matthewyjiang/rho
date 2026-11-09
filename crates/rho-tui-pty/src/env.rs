@@ -244,6 +244,11 @@ impl RhoLaunchPlan {
         let mut env = default_clean_env();
         env.extend(home.env());
         env.push(("RHO_TUI_TEST_MODE".into(), "matrix".into()));
+        // Where fixture release markers are, for a fixture the daemon hosts.
+        env.push((
+            "RHO_TUI_FIXTURE_WORKSPACE".into(),
+            home.workspace.display().to_string(),
+        ));
         // A crash then says where.
         env.push(("RUST_BACKTRACE".into(), "1".into()));
         Self {

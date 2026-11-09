@@ -294,6 +294,14 @@ impl Session {
         Self::open_by_id_with_histories_in_root(&session_root()?, cwd, id_prefix)
     }
 
+    /// Resolves a resume prefix without opening the session or taking its
+    /// writer lease. Daemon clients leave opening to the daemon.
+    #[cfg(unix)]
+    pub(crate) fn resolve_id(cwd: &Path, id_prefix: &str) -> anyhow::Result<String> {
+        let root = session_root()?;
+        Ok(SessionStore::new(&root, cwd).resolve(id_prefix)?.id)
+    }
+
     /// Opens one exact workspace-scoped session without falling back to another workspace.
     pub fn open_target_with_histories(
         target: &SessionTarget,

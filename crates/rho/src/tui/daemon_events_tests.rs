@@ -5,7 +5,7 @@ use rho_protocol::{
     display::{Presentation, ToolCard, ToolCardStatus, ToolFamily, ToolHeader},
     AnswerStop, ApprovalAsk, ApprovalSource, Ask, Choice, ContentBlock, InputAnswer, InputRequest,
     InputRequestId, InputTimeout, JobState, MessageId, Operation, PathScope, Question, QuestionAsk,
-    Resolution, Selection, SessionEvent, SteerId, ToolCallId as WireCallId, ToolCallUpdate,
+    Replay, Resolution, Selection, SessionEvent, SteerId, ToolCallId as WireCallId, ToolCallUpdate,
     ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
 };
 use rho_sdk::{SteeringId, ToolCallId};
@@ -81,6 +81,7 @@ fn usage_and_title_updates_keep_their_independent_values() {
 enum Step {
     Event(SessionEvent),
     Reset,
+    Tail,
     Attached(Vec<InputRequest>),
     ReplayEnded(JobState),
     Answering(InputRequestId),
@@ -94,7 +95,8 @@ fn map(steps: Vec<Step>) -> Vec<DaemonView> {
     for step in steps {
         match step {
             Step::Event(event) => views.extend(events.map(event)),
-            Step::Reset => views.push(events.reset()),
+            Step::Reset => views.push(events.replay(Replay::Reset)),
+            Step::Tail => views.push(events.replay(Replay::Tail)),
             Step::Attached(inputs) => events.attached(inputs),
             Step::ReplayEnded(state) => views.extend(events.end_replay(state)),
             Step::Answering(id) => events.answering(id),
@@ -196,11 +198,56 @@ fn call() -> ToolCallId {
 // Covers: a daemon session's replayed or live events reach the transcript as
 // the rows the in-process TUI shows: one row per message, the daemon's tool
 // cards running then finished, a call cut off shown interrupted, an answer
-// completing missing chunks, and a reset replay starting the session over.
+// completing missing chunks, a tail preserving partial rows and cards, and
+// a reset replay starting the session over.
 // Owner: tui daemon event mapping
 #[test]
 fn session_events_map_to_transcript_views() {
     let cases = [
+        (
+            "tail replay finishes the open reply without duplicating its row or answer",
+            vec![
+                user("hello"),
+                reply("m1", "Good "),
+                Step::Tail,
+                Step::Attached(Vec::new()),
+                reply("m1", "morning."),
+                answered("Good morning."),
+                Step::ReplayEnded(JobState::Completed),
+            ],
+            vec![
+                DaemonView::User("hello".into()),
+                text(StreamKind::Assistant, "Good ", true),
+                DaemonView::InputsReset,
+                text(StreamKind::Assistant, "morning.", false),
+                resting(Rest::Ready),
+            ],
+        ),
+        (
+            "an empty tail preserves an open call until its live interruption",
+            vec![
+                tool(
+                    ToolStatus::Pending,
+                    Some(Presentation::Card(read_card(ToolCardStatus::Running))),
+                ),
+                Step::Tail,
+                Step::Attached(Vec::new()),
+                Step::ReplayEnded(JobState::Running),
+                tool(ToolStatus::Failed, None),
+            ],
+            vec![
+                DaemonView::ToolRunning {
+                    call: call(),
+                    card: read_card(ToolCardStatus::Running),
+                },
+                DaemonView::InputsReset,
+                DaemonView::Turn(TurnState::Running),
+                DaemonView::ToolFinished {
+                    call: call(),
+                    presentation: read_card(ToolCardStatus::Interrupted).into(),
+                },
+            ],
+        ),
         (
             "replayed turn with a tool card",
             vec![
@@ -535,6 +582,27 @@ fn input_requests_show_once_and_close_as_resolved() {
         ..timed_question(3)
     };
     let cases = [
+        (
+            "a tail replaces stale requests and shows each still-open request once",
+            vec![
+                requested(approval(1)),
+                requested(approval(2)),
+                Step::Tail,
+                Step::Attached(vec![approval(3)]),
+                resolved(1, Resolution::Answered),
+                requested(approval(3)),
+                requested(approval(4)),
+                resolved(4, Resolution::Withdrawn),
+                Step::ReplayEnded(JobState::WaitingForInput),
+            ],
+            vec![
+                opened(approval(1)),
+                opened(approval(2)),
+                DaemonView::InputsReset,
+                DaemonView::Turn(TurnState::WaitingForInput),
+                opened(approval(3)),
+            ],
+        ),
         (
             "the replay leaves a request open: it shows once the replay ends",
             vec![

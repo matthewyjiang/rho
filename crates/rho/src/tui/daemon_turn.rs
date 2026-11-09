@@ -90,11 +90,11 @@ impl App {
     /// the daemon sent before it answered, such as the turn's start, waits
     /// for [`Self::show_taken_daemon_views`].
     async fn request_daemon_turn(
-        &self,
+        &mut self,
         turn: &TurnPrompt,
         media: &[ChatMedia],
     ) -> anyhow::Result<()> {
-        let Some(session) = self.info.session.daemon.as_ref() else {
+        let Some(session) = self.info.session.daemon.as_mut() else {
             anyhow::bail!("no daemon session is open");
         };
         session

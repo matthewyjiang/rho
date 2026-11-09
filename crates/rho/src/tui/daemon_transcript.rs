@@ -30,6 +30,7 @@ impl App {
                     self.set_todo_list(None);
                     self.drop_daemon_inputs();
                 }
+                DaemonView::InputsReset => self.drop_daemon_inputs(),
                 DaemonView::User(text) => self.insert_entry(&Entry::User(text)),
                 DaemonView::Text { kind, text, opens } => {
                     if self.turn.is_provider_turn() {

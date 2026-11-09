@@ -12,9 +12,12 @@
 //!
 //! The TUI prompts, cancels, steers, and withdraws steers through it
 //! (`daemon_turn`), and answers and holds input requests (`daemon_answers`);
-//! configures options through a background request queue. Quitting drops
-//! the connection, and the daemon keeps
-//! the session; a detach, and reattaching after `lagged`, come in T1f.
+//! configures options through a background request queue. Quitting closes
+//! the connection, which detaches the session without cancelling its turn.
+//! A lagged attachment resumes after its last cursor, preserving the
+//! transcript for a tail replay or replacing it for a reset. A failed
+//! reattach ends following. The exit receipt offers to resume a session
+//! once it is saved: resumed, titled, or past its first prompt.
 //!
 //! Off unix there is no daemon (#1665): the type is uninhabited, so the
 //! TUI's daemon paths compile everywhere and never run there.
@@ -62,7 +65,7 @@ impl DaemonSession {
     }
 
     pub(in crate::tui) async fn prompt(
-        &self,
+        &mut self,
         _content: Vec<rho_protocol::ContentBlock>,
     ) -> anyhow::Result<()> {
         match *self {}
@@ -99,7 +102,9 @@ impl DaemonSession {
 #[cfg(unix)]
 mod unix {
     use std::{
+        future::Future,
         path::{Path, PathBuf},
+        pin::Pin,
         sync::Arc,
     };
 
@@ -111,9 +116,9 @@ mod unix {
             SessionUnsteer,
         },
         ClientEnvironment, ContentBlock, DetachReason, ErrorCode, InputAnswer, InputRequestId,
-        JobState, Replay, SessionAnswerParams, SessionAttachParams, SessionCancelParams,
-        SessionHoldParams, SessionId, SessionNewParams, SessionSetup, SessionSteerParams,
-        SessionUnsteerParams, SteerId, UnsteerOutcome,
+        JobState, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
+        SessionCancelParams, SessionHoldParams, SessionId, SessionNewParams, SessionSetup,
+        SessionSteerParams, SessionUnsteerParams, SteerId, UnsteerOutcome,
     };
     use rho_sdk::SteeringId;
     use tokio::sync::mpsc;
@@ -126,6 +131,8 @@ mod unix {
     use crate::app::daemon_client::{Daemon, Link, Part, Routed, StreamPosition};
 
     const LOST: &str = "lost the connection to the rho daemon";
+
+    type Reattach = Pin<Box<dyn Future<Output = anyhow::Result<SessionAttachResponse>> + Send>>;
 
     /// Which session the TUI follows.
     pub(crate) enum DaemonTarget {
@@ -143,11 +150,12 @@ mod unix {
     pub(crate) struct DaemonSession {
         /// Holds the connection; dropping it closes the connection, which
         /// detaches the session.
-        daemon: Daemon,
+        daemon: Arc<Daemon>,
         id: SessionId,
-        /// Whether the session was saved before the TUI opened it. A new one
-        /// is saved once its first turn runs.
-        resumed: bool,
+        /// Whether the session is saved, so the exit receipt offers to
+        /// resume it: it was resumed, has a title, or took a prompt.
+        saved: bool,
+        setup: SessionSetup,
         workspace: PathBuf,
         routed: mpsc::UnboundedReceiver<Routed>,
         events: DaemonEvents,
@@ -163,13 +171,16 @@ mod unix {
         /// Set once the daemon ended the attachment; nothing more arrives.
         ended: bool,
         requests: Option<DaemonRequests>,
+        /// Kept across cancelled `next_views` waits; never restart an attach
+        /// merely because the TUI handled a key or redrew.
+        reattach: Option<Reattach>,
     }
 
     impl DaemonSession {
         /// Opens or resumes `target` and attaches to it. The daemon starts
         /// when none runs.
         pub(crate) async fn open(target: DaemonTarget) -> anyhow::Result<Self> {
-            let daemon = Daemon::default();
+            let daemon = Arc::new(Daemon::default());
             let (id, setup, resumed) = match target {
                 DaemonTarget::New(params) => {
                     let setup = params.setup.clone();
@@ -196,7 +207,7 @@ mod unix {
                 environment: ClientEnvironment::of_this_process(),
                 setup,
             };
-            let mut response = match daemon.request::<SessionAttach>(&params).await {
+            let response = match daemon.request::<SessionAttach>(&params).await {
                 Ok(response) => response,
                 Err(error) => {
                     daemon.unroute(&id);
@@ -205,28 +216,13 @@ mod unix {
                 }
             };
             let mut events = DaemonEvents::default();
-            let mut pending = match response.replay {
-                Replay::Reset => vec![events.reset()],
-                // A first attach has no cursor, so it always resets; T1f
-                // reattaches after `lagged` with one.
-                Replay::Tail => Vec::new(),
-            };
-            pending.push(DaemonView::Options(Box::new(response.options.clone())));
-            if let Some(title) = &response.title {
-                pending.push(DaemonView::Title(title.clone()));
-            }
-            events.attached(std::mem::take(&mut response.inputs));
-            let replay_state = if response.replay_events == 0 {
-                pending.extend(events.end_replay(response.state));
-                None
-            } else {
-                Some(response.state)
-            };
+            let (pending, replay_state) = begin_replay(&mut events, &response);
             let mut session = Self {
                 position: StreamPosition::attached(&response),
                 daemon,
                 id,
-                resumed,
+                saved: resumed || response.title.is_some(),
+                setup: params.setup,
                 workspace: response.workspace,
                 routed,
                 events,
@@ -234,6 +230,7 @@ mod unix {
                 pending,
                 ended: false,
                 requests: None,
+                reattach: None,
             };
             session.requests = Some(DaemonRequests::new(
                 session.attached_link().await?,
@@ -242,10 +239,10 @@ mod unix {
             Ok(session)
         }
 
-        /// The session's id, once it is saved: a resumed session's. A new
-        /// one has nothing to resume until its first turn saves it.
+        /// The session's id, once a resume, saved title, or catalog lookup
+        /// confirmed it has something to resume.
         pub(crate) fn saved_id(&self) -> Option<&str> {
-            self.resumed.then_some(self.id.as_str())
+            self.saved.then_some(self.id.as_str())
         }
 
         /// The directory the session works in, as the daemon reports it.
@@ -253,15 +250,35 @@ mod unix {
             &self.workspace
         }
 
-        /// What the daemon sent since the last call, mapped; waits for at
-        /// least one notification. A replay arrives all at once, so it
-        /// reads as one batch rather than one frame per event.
+        /// What the daemon sent since the last call, mapped; waits for a
+        /// notification or reattach response. Queued replay events read as
+        /// one batch rather than one frame per event.
         ///
-        /// Cancel-safe: nothing is taken before the first notification
-        /// arrives, so the app loop may drop the wait for another branch.
+        /// Cancel-safe: the reattach future stays in the session, and no
+        /// queued views are taken until the wait finishes.
         pub(super) async fn next_views(&mut self) -> Vec<DaemonView> {
             if self.ended {
                 return std::future::pending().await;
+            }
+            if let Some(reattach) = &mut self.reattach {
+                let response = reattach.await;
+                self.reattach = None;
+                let mut views = std::mem::take(&mut self.pending);
+                match response {
+                    Ok(response) => {
+                        self.position.reattached(&response);
+                        self.saved |= response.title.is_some();
+                        self.workspace = response.workspace.clone();
+                        let (replay, state) = begin_replay(&mut self.events, &response);
+                        self.replay_state = state;
+                        views.extend(replay);
+                    }
+                    Err(error) => {
+                        tracing::debug!(%error, "could not reattach the daemon session");
+                        views.extend(self.end(detached(DetachReason::Lagged)));
+                    }
+                }
+                return views;
             }
             let first = tokio::select! {
                 biased;
@@ -284,7 +301,7 @@ mod unix {
                     views.push(error);
                 }
             }
-            if !self.ended {
+            if !self.ended && self.reattach.is_none() {
                 if let Ok(first) = self.routed.try_recv() {
                     self.read(Some(first), &mut views);
                 }
@@ -300,12 +317,32 @@ mod unix {
                 match next {
                     Some(Routed::Event { seq, event }) => {
                         let part = self.position.observe(seq);
+                        if matches!(event, rho_protocol::SessionEvent::TitleChanged { .. }) {
+                            self.saved = true;
+                        }
                         views.extend(self.events.map(event));
                         if let Part::Replayed { left: 0, .. } = part {
                             if let Some(state) = self.replay_state.take() {
                                 views.extend(self.events.end_replay(state));
                             }
                         }
+                    }
+                    Some(Routed::Detached(DetachReason::Lagged)) => {
+                        let daemon = Arc::clone(&self.daemon);
+                        let params = SessionAttachParams {
+                            session: self.id.clone(),
+                            after: self.position.cursor().cloned(),
+                            environment: ClientEnvironment::of_this_process(),
+                            setup: self.setup.clone(),
+                        };
+                        self.reattach = Some(Box::pin(async move {
+                            // Lagged ends the subscription, not the connection.
+                            // A lost connection still ends following, never sends
+                            // prompts or answers on a new unseen attachment.
+                            let link = daemon.current().await.context(LOST)?;
+                            Ok(link.request::<SessionAttach>(&params).await?)
+                        }));
+                        return;
                     }
                     Some(Routed::Detached(reason)) => {
                         views.extend(self.end(detached(reason)));
@@ -349,9 +386,10 @@ mod unix {
 
         /// Starts a turn of `content`. Once this returns, the views of what
         /// the daemon sent before it answered, such as the turn's start, are
-        /// waiting for [`Self::take_views`].
+        /// waiting for [`Self::take_views`], and the session is saved: the
+        /// daemon answers once the turn saved its prompt.
         pub(in crate::tui) async fn prompt(
-            &self,
+            &mut self,
             content: Vec<ContentBlock>,
         ) -> anyhow::Result<()> {
             self.attached_link().await?;
@@ -359,7 +397,9 @@ mod unix {
                 .as_ref()
                 .expect("attached session has requests")
                 .prompt(content)
-                .await
+                .await?;
+            self.saved = true;
+            Ok(())
         }
 
         /// Queue a change without waiting for the active turn to release it.
@@ -484,6 +524,27 @@ mod unix {
                 }
             }
         }
+    }
+
+    /// A tail keeps message/card state, but open prompts are rebuilt from
+    /// the attach snapshot and replay, just as for a reset.
+    fn begin_replay(
+        events: &mut DaemonEvents,
+        response: &SessionAttachResponse,
+    ) -> (Vec<DaemonView>, Option<JobState>) {
+        let mut views = vec![events.replay(response.replay)];
+        views.push(DaemonView::Options(Box::new(response.options.clone())));
+        if let Some(title) = &response.title {
+            views.push(DaemonView::Title(title.clone()));
+        }
+        events.attached(response.inputs.clone());
+        let state = if response.replay_events == 0 {
+            views.extend(events.end_replay(response.state));
+            None
+        } else {
+            Some(response.state)
+        };
+        (views, state)
     }
 
     /// Why a steer, or its withdrawal, was refused, as the TUI says it.

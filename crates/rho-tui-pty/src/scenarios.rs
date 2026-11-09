@@ -26,6 +26,8 @@ mod copy_output;
 #[cfg(unix)]
 mod daemon_approval;
 #[cfg(unix)]
+mod daemon_detach;
+#[cfg(unix)]
 mod daemon_options;
 #[cfg(unix)]
 mod daemon_prompt;
@@ -673,6 +675,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
         &[],
         /*smoke*/ false,
     ),
+    #[cfg(unix)]
+    daemon_detach::SCENARIO,
     #[cfg(unix)]
     daemon_prompt::DAEMON_PROMPT_SCENARIO,
     #[cfg(unix)]
