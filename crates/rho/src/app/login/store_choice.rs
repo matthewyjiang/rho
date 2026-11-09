@@ -75,14 +75,14 @@ impl StoreOffers {
 
 /// Asks on stderr which store `offers` to keep provider credentials in, and
 /// reads the answer from stdin. Blocks on the terminal, so call it off the
-/// async workers. Without a terminal it refuses, naming how to choose.
-pub(in crate::app) fn ask(offers: &StoreOffers) -> anyhow::Result<CredentialStoreBackend> {
+/// async workers. Without a terminal it refuses with `unattended`, which
+/// names how the writer of the credentials can be told instead.
+pub(in crate::app) fn ask(
+    offers: &StoreOffers,
+    unattended: &str,
+) -> anyhow::Result<CredentialStoreBackend> {
     if !crate::stdio::stdin_is_terminal() || !io::stderr().is_terminal() {
-        anyhow::bail!(
-            "credential store is unset; set it before non-interactive login with \
-`rho credential-store set os|file`, behavior.credential_store in config.toml, \
-or RHO_CREDENTIAL_STORE=os|file"
-        );
+        anyhow::bail!("{unattended}");
     }
     let default = offers.require_default()?;
     eprintln!("Choose where Rho stores provider credentials:");

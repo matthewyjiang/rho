@@ -25,14 +25,10 @@
 use anyhow::anyhow;
 use rho_protocol::{
     methods::{AuthChooseStore, AuthKey, AuthLogin, Status},
-    AuthChooseStoreParams, AuthKeyParams, AuthLoginParams, Client, ClientError,
-    CredentialStoreKind, DaemonNotification, ErrorCode, LoginOutcome, StatusParams,
-    StoreSelectedBy,
+    AuthChooseStoreParams, AuthKeyParams, AuthLoginParams, Client, ClientError, DaemonNotification,
+    ErrorCode, LoginOutcome, StatusParams, StoreSelectedBy,
 };
-use rho_providers::{
-    auth::browser::{self, BrowserAvailability},
-    credentials::CredentialStoreBackend,
-};
+use rho_providers::auth::browser::{self, BrowserAvailability};
 
 use super::{
     drive,
@@ -43,6 +39,7 @@ use super::{
 };
 use crate::{
     app::{credential_writes, daemon_cli},
+    credential_store,
     daemon::Connection,
     login_prompt_print::eprint_login_prompt,
 };
@@ -159,13 +156,15 @@ async fn ensure_store(client: &Client) -> anyhow::Result<()> {
         // The daemon checks the file store when it is chosen.
         file_unavailable: None,
     };
-    let backend = tokio::task::spawn_blocking(move || store_choice::ask(&offers)).await??;
-    let store = match backend {
-        CredentialStoreBackend::Os => CredentialStoreKind::Os,
-        CredentialStoreBackend::File => CredentialStoreKind::File,
-    };
+    // A variable in this shell reaches only a daemon started from it, so
+    // name what reaches a running one.
+    let unattended = "the rho daemon's credential store is unset; set it before non-interactive login with `rho credential-store set file` or behavior.credential_store in config.toml, which the daemon reads, or restart the daemon with RHO_CREDENTIAL_STORE=os|file";
+    let backend =
+        tokio::task::spawn_blocking(move || store_choice::ask(&offers, unattended)).await??;
     client
-        .request::<AuthChooseStore>(&AuthChooseStoreParams { store })
+        .request::<AuthChooseStore>(&AuthChooseStoreParams {
+            store: credential_store::wire::kind(backend),
+        })
         .await
         .map_err(|error| {
             refused(

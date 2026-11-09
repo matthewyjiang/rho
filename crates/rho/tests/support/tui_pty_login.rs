@@ -533,10 +533,10 @@ fn keyless_ollama_login_lists_its_model(harness: &mut PtyHarness, base: &str) {
         .unwrap();
 }
 
-// Covers: `rho login` on a machine whose session has no D-Bus, as an SSH
-// login's: the daemon it starts cannot reach the OS store, so the store
-// prompt marks it unavailable and Enter takes the file store; the daemon
-// saves that choice and keeps the key there (#1662).
+// Covers: `rho login` to a custom provider on a machine whose session has
+// no D-Bus, as an SSH login's: the daemon it starts cannot reach the OS
+// store, so the store prompt marks it unavailable and Enter takes the file
+// store; the daemon saves that choice and keeps the key there (#1662).
 // Owner: rho login CLI against the daemon it starts (PTY, real terminal).
 #[cfg(target_os = "linux")]
 #[test]
@@ -544,9 +544,10 @@ fn rho_login_without_a_session_bus_falls_back_to_the_file_store_it_offers() {
     let home = IsolatedHome::new().unwrap();
     // Nothing chooses the store; the sandbox's empty XDG_RUNTIME_DIR is the
     // missing session bus, for `rho login` and the daemon it starts.
+    // The key check reaches the discard port, so the key saves unchecked.
     std::fs::write(
         &home.config_path,
-        "provider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\ncheck_for_updates = false\n",
+        "provider = \"mock\"\nmodel = \"mock-model\"\nauth = \"mock-api-key\"\ncheck_for_updates = false\n\n[providers.custom.mock]\nbase_url = \"http://127.0.0.1:9/v1\"\n",
     )
     .unwrap();
     let plan = RhoLaunchPlan::matrix(
@@ -558,7 +559,7 @@ fn rho_login_without_a_session_bus_falls_back_to_the_file_store_it_offers() {
         },
     )
     .with_arg("login")
-    .with_arg("api-key");
+    .with_arg("mock");
     let mut harness = PtyHarness::spawn_named(&plan, "rho_login_headless_store").unwrap();
 
     harness
@@ -589,7 +590,7 @@ fn rho_login_without_a_session_bus_falls_back_to_the_file_store_it_offers() {
     assert_eq!(
         (
             config.contains("credential_store = \"file\""),
-            store.get_secret("provider:openai:api-key").unwrap()
+            store.get_secret("provider:mock:api-key").unwrap()
         ),
         (true, Some("sk-test-headless".to_owned())),
         "{config}"

@@ -40,20 +40,6 @@ fn environment_backend_overrides_config_and_rejects_unknown_values() {
 }
 
 #[test]
-fn needs_choice_only_when_unset_and_no_env() {
-    assert!(needs_explicit_choice_from(false, None));
-    assert!(!needs_explicit_choice_from(true, None));
-    assert!(!needs_explicit_choice_from(
-        false,
-        Some(CredentialStoreBackend::Os)
-    ));
-    assert!(!needs_explicit_choice_from(
-        true,
-        Some(CredentialStoreBackend::File)
-    ));
-}
-
-#[test]
 fn set_backend_persists_in_config() {
     let _guard = env_lock();
     let rho_dir = tempfile::tempdir().unwrap();

@@ -3,9 +3,10 @@
 //! never starting one, since a daemon a client started from an SSH login
 //! can lack what the OS store needs while this process has it.
 
-use rho_protocol::{CredentialStoreKind, CredentialStoreStatus, StoreSelectedBy};
+use rho_protocol::{CredentialStoreStatus, StoreSelectedBy};
 
 use super::report::{DoctorCheck, DoctorCheckId, DoctorStatus};
+use crate::credential_store::wire;
 
 const LABEL: &str = "Daemon credential store";
 
@@ -35,7 +36,7 @@ pub(crate) fn daemon_store_check(store: &DaemonStore) -> DoctorCheck {
             row(DoctorStatus::Warn, "daemon did not answer".into()).with_hint(reason.clone())
         }
         DaemonStore::Reported(status) => {
-            let (name, chosen) = store_words(status);
+            let (name, chosen) = wire::words(status);
             match &status.unreachable {
                 None => row(DoctorStatus::Ok, format!("{name} store")).with_hint(format!("chosen {chosen}")),
                 Some(reason) => {
@@ -48,10 +49,13 @@ pub(crate) fn daemon_store_check(store: &DaemonStore) -> DoctorCheck {
                             DoctorStatus::Fail,
                             "change RHO_CREDENTIAL_STORE where the daemon starts, then run `rho daemon stop`",
                         ),
-                        _ => (
+                        StoreSelectedBy::Config => (
                             DoctorStatus::Fail,
                             "choose another with `rho credential-store set file`",
                         ),
+                        // A newer daemon's selector: this build cannot say
+                        // what changes it.
+                        _ => (DoctorStatus::Warn, "check how the daemon chose it"),
                     };
                     row(severity, format!("{name} store unreachable")).with_hint(format!(
                         "{reason}; {choose}, or stop the daemon with `rho daemon stop` so a client where the store works starts it again"
@@ -60,23 +64,6 @@ pub(crate) fn daemon_store_check(store: &DaemonStore) -> DoctorCheck {
             }
         }
     }
-}
-
-/// How `status`'s store and what chose it read in a sentence, as in
-/// "os store, chosen by default".
-pub(crate) fn store_words(status: &CredentialStoreStatus) -> (&'static str, &'static str) {
-    let name = match status.store {
-        CredentialStoreKind::Os => "os",
-        CredentialStoreKind::File => "file",
-        _ => "unknown",
-    };
-    let chosen = match status.selected_by {
-        StoreSelectedBy::Default => "by default",
-        StoreSelectedBy::Config => "in config",
-        StoreSelectedBy::Environment => "by RHO_CREDENTIAL_STORE",
-        _ => "by an unknown setting",
-    };
-    (name, chosen)
 }
 
 #[cfg(test)]

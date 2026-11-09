@@ -15,6 +15,7 @@ use crate::config::Config;
 
 mod selection;
 mod startup_notice;
+pub(crate) mod wire;
 pub(crate) use selection::{SelectedBy, StoreSelection};
 pub(crate) use startup_notice::{notifying_store, StartupKeyringNotice};
 
@@ -209,22 +210,31 @@ pub(crate) fn saved_policy_backend(
     Ok(read_legacy_policy_file()?)
 }
 
+/// Why [`set_backend`] did not switch stores.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SetBackendError {
+    /// The store did not take a temporary secret; why, from the probe.
+    #[error("{0}")]
+    Unavailable(String),
+    /// Config could not be saved, or the store could not be opened.
+    #[error("{0:#}")]
+    Save(anyhow::Error),
+}
+
 /// Persist the backend in config.toml and open it for this process, once
 /// it took a temporary secret.
 pub(crate) fn set_backend(
     backend: CredentialStoreBackend,
     config_path: Option<PathBuf>,
-) -> anyhow::Result<PathBuf> {
+) -> Result<PathBuf, SetBackendError> {
     let availability = probe(backend);
     if !availability.available {
-        anyhow::bail!(availability.detail);
+        return Err(SetBackendError::Unavailable(availability.detail));
     }
-    save_backend(backend, config_path)
+    save_backend(backend, config_path).map_err(SetBackendError::Save)
 }
 
-/// Persist the backend in config.toml and open it for this process,
-/// without probing it: the caller already did.
-pub(crate) fn save_backend(
+fn save_backend(
     backend: CredentialStoreBackend,
     config_path: Option<PathBuf>,
 ) -> anyhow::Result<PathBuf> {
@@ -284,14 +294,15 @@ pub(crate) fn activate_for_login(config: &Config, config_path: &Path) -> anyhow:
     Ok(())
 }
 
-/// Whether config still needs an explicit credential-store choice before login.
-pub(crate) fn needs_explicit_choice(config: &Config) -> bool {
-    env_backend_override().is_none() && config.credential_store.is_none()
-}
-
-/// Build a choice request when login still needs an explicit backend selection.
+/// Build a choice request when login still needs an explicit backend
+/// selection: nothing chose one. An unknown `RHO_CREDENTIAL_STORE` counts as
+/// a choice, which every store access then refuses.
 pub(crate) fn choice_request(config: &Config) -> Option<StoreChoiceRequest> {
-    needs_explicit_choice(config).then(StoreChoiceRequest::probe)
+    let unchosen = environment_backend().is_ok_and(|environment| {
+        StoreSelection::resolve(environment, config.credential_store).selected_by
+            == SelectedBy::Default
+    });
+    unchosen.then(StoreChoiceRequest::probe)
 }
 
 pub(crate) fn configured_backend() -> CredentialResult<CredentialStoreBackend> {
@@ -367,13 +378,6 @@ pub(crate) async fn build_provider_on(
         ..Config::default()
     };
     build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore)).await
-}
-
-fn env_backend_override() -> Option<String> {
-    std::env::var(ENV_BACKEND)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 fn resolve_backend(
@@ -490,14 +494,6 @@ fn remove_legacy_policy_file() -> anyhow::Result<()> {
 
 fn legacy_policy_path() -> anyhow::Result<PathBuf> {
     Ok(crate::paths::rho_dir()?.join(LEGACY_POLICY_FILE))
-}
-
-#[cfg(test)]
-fn needs_explicit_choice_from(
-    env_set: bool,
-    config_backend: Option<CredentialStoreBackend>,
-) -> bool {
-    !env_set && config_backend.is_none()
 }
 
 #[cfg(test)]

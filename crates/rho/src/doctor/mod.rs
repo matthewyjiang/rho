@@ -15,7 +15,7 @@ use std::path::Path;
 use rho_providers::{auth::login_dispatch::ProviderAuthentication, credentials::CredentialStore};
 
 pub(crate) use checks::HerdrProbe;
-pub(crate) use daemon_store::{daemon_store_check, store_words, DaemonStore};
+pub(crate) use daemon_store::{daemon_store_check, DaemonStore};
 pub(crate) use probes::{
     plan_probes, probe_checks, run_probe, DoctorProbeGate, DoctorProbeId, DoctorProbeOutcome,
 };

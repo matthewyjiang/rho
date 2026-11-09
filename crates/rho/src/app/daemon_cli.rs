@@ -76,6 +76,10 @@ pub(crate) struct Unreachable {
 #[cfg(unix)]
 pub(super) async fn connect() -> Result<daemon::Connection, Unreachable> {
     let unreachable = |reason: String| Unreachable { reason };
+    // A daemon started here inherits the variable and would refuse it, so
+    // say why now rather than after waiting for a daemon that stopped.
+    crate::credential_store::environment_backend()
+        .map_err(|error| unreachable(format!("RHO_CREDENTIAL_STORE: {error}")))?;
     let paths = paths().map_err(|error| unreachable(format!("{error:#}")))?;
     let spawner = daemon::ProcessSpawner::current_exe()
         .map_err(|error| unreachable(format!("could not find the rho executable: {error}")))?;
@@ -112,10 +116,6 @@ const DAEMON_STOP_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(unix)]
 async fn run_foreground(paths: &DaemonPaths, unload_idle_after: Duration) -> anyhow::Result<()> {
     paths.prepare_runtime_dir()?;
-    // Every rho process refuses a store it does not know rather than pick
-    // one, so the daemon does before serving anyone.
-    let store_environment = crate::credential_store::environment_backend()
-        .context("RHO_CREDENTIAL_STORE in the daemon's environment")?;
     // Read once: changing the filter or the sink needs a daemon restart.
     let filter = std::env::var("RHO_LOG")
         .ok()
@@ -132,6 +132,12 @@ async fn run_foreground(paths: &DaemonPaths, unload_idle_after: Duration) -> any
         LogSink::File(file)
     };
     logging::install(&filter, sink);
+    // Every rho process refuses a store it does not know rather than pick
+    // one, so the daemon does before serving anyone. An auto-spawned
+    // daemon's stderr goes nowhere, so the log says why it stopped.
+    let store_environment = crate::credential_store::environment_backend()
+        .context("RHO_CREDENTIAL_STORE in the daemon's environment")
+        .inspect_err(|error| tracing::error!(error = %format!("{error:#}"), "not starting"))?;
     // A panicking request handler is answered with an internal error, and an
     // auto-spawned daemon's stderr goes nowhere, so the log is the only place
     // the panic can surface.
@@ -299,7 +305,7 @@ fn status_text(status: &DaemonStatus) -> String {
         started_at: _,
     } = status;
     let uptime = humantime::format_duration(Duration::from_secs(*uptime_secs));
-    let (store, chosen) = crate::doctor::store_words(credential_store);
+    let (store, chosen) = crate::credential_store::wire::words(credential_store);
     let reach = match &credential_store.unreachable {
         None => String::new(),
         Some(reason) => format!("\n  unreachable  {reason}"),

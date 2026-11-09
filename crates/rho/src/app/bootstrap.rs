@@ -266,15 +266,17 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
             }
             login::LoginCommand::Cli { .. } | login::LoginCommand::AcpTerminal { .. } => {}
         }
-        // A daemon login saves under the daemon's config, and asks the
-        // daemon which credential store to use (#1662).
+        // Custom providers must be registered for `login` to find them. A
+        // daemon login saves under the daemon's config, and asks the daemon
+        // which credential store to use (#1662).
+        let config_repository = ConfigRepository::new(cli.config.clone());
+        let config = config_repository.load()?;
+        config.providers.activate()?;
         #[cfg(unix)]
         let signed_in = login::run(command).await;
         #[cfg(not(unix))]
         let signed_in = {
-            let config_repository = ConfigRepository::new(cli.config.clone());
-            let mut config = config_repository.load()?;
-            config.providers.activate()?;
+            let mut config = config;
             let config_path = absolute_config_path(&config_repository)?;
             ensure_cli_credential_store_choice(&mut config, Some(config_path.clone()))?;
             login::run(command, &config_repository, &mut config, &config_path).await
@@ -578,10 +580,15 @@ fn ensure_cli_credential_store_choice(
     let unavailable = |probe: &rho_providers::credentials::CredentialStoreProbe| {
         (!probe.available).then(|| probe.detail.clone())
     };
-    let backend = login::store_choice::ask(&login::store_choice::StoreOffers {
-        os_unavailable: unavailable(&request.os),
-        file_unavailable: unavailable(&request.file),
-    })?;
+    let backend = login::store_choice::ask(
+        &login::store_choice::StoreOffers {
+            os_unavailable: unavailable(&request.os),
+            file_unavailable: unavailable(&request.file),
+        },
+        "credential store is unset; set it before non-interactive login with \
+`rho credential-store set os|file`, behavior.credential_store in config.toml, \
+or RHO_CREDENTIAL_STORE=os|file",
+    )?;
     let path = crate::credential_store::set_backend(backend, config_path)?;
     config.credential_store = Some(backend);
     eprintln!(

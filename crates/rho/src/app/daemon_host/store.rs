@@ -11,8 +11,8 @@
 //! it cannot be reached, so a client can offer that choice.
 
 use rho_protocol::{
-    AuthChooseStoreParams, AuthChooseStoreResponse, CredentialStoreKind, CredentialStoreStatus,
-    EnvironmentOverride, ErrorCode, RpcError, StoreSelectedBy,
+    AuthChooseStoreParams, AuthChooseStoreResponse, CredentialStoreStatus, EnvironmentOverride,
+    ErrorCode, RpcError,
 };
 use rho_providers::credentials::{check_credential_store, CredentialError, CredentialStoreBackend};
 
@@ -20,7 +20,7 @@ use super::{
     auth::{self, credentials_changed},
     sessions::Sessions,
 };
-use crate::credential_store::{self, SelectedBy, StoreSelection};
+use crate::credential_store::{self, wire, SetBackendError};
 
 /// The store the daemon's environment and config select now, and whether
 /// the daemon can reach it. `environment` is the daemon's parsed
@@ -55,37 +55,33 @@ pub(super) async fn choose(
         )
         .with_data(data));
     }
-    let backend = match params.store {
-        CredentialStoreKind::Os => CredentialStoreBackend::Os,
-        CredentialStoreKind::File => CredentialStoreBackend::File,
-        _ => {
-            return Err(RpcError::new(
-                ErrorCode::InvalidParams,
-                "unknown credential store; expected os or file",
-            ))
-        }
+    let Some(backend) = wire::backend(params.store) else {
+        return Err(RpcError::new(
+            ErrorCode::InvalidParams,
+            "unknown credential store; expected os or file",
+        ));
     };
     let credential_store = auth::off_workers(move || {
-        let probe = credential_store::probe(backend);
-        if !probe.available {
-            return Err(RpcError::new(
-                ErrorCode::CredentialStoreUnavailable,
-                format!(
-                    "the daemon could not keep a credential in the {} store: {}",
-                    backend.as_str(),
-                    probe.detail
-                ),
-            ));
-        }
-        let internal = |error: anyhow::Error| {
+        let internal = |error: String| {
             RpcError::new(
                 ErrorCode::InternalError,
-                format!("could not save the credential store choice: {error:#}"),
+                format!("could not save the credential store choice: {error}"),
             )
         };
-        let path = auth::repository().configured_path().map_err(internal)?;
-        credential_store::save_backend(backend, Some(path)).map_err(internal)?;
-        Ok(current(environment))
+        let path = auth::repository()
+            .configured_path()
+            .map_err(|error| internal(format!("{error:#}")))?;
+        match credential_store::set_backend(backend, Some(path)) {
+            Ok(_) => Ok(current(environment)),
+            Err(SetBackendError::Unavailable(detail)) => Err(RpcError::new(
+                ErrorCode::CredentialStoreUnavailable,
+                format!(
+                    "the daemon could not keep a credential in the {} store: {detail}",
+                    backend.as_str()
+                ),
+            )),
+            Err(error @ SetBackendError::Save(_)) => Err(internal(error.to_string())),
+        }
     })
     .await??;
     tracing::info!(store = backend.as_str(), "chose the credential store");
@@ -95,27 +91,14 @@ pub(super) async fn choose(
 }
 
 fn current(environment: Option<CredentialStoreBackend>) -> CredentialStoreStatus {
-    let StoreSelection {
-        backend,
-        selected_by,
-    } = credential_store::current_selection(environment);
-    CredentialStoreStatus {
-        store: match backend {
-            CredentialStoreBackend::Os => CredentialStoreKind::Os,
-            CredentialStoreBackend::File => CredentialStoreKind::File,
-        },
-        selected_by: match selected_by {
-            SelectedBy::Environment => StoreSelectedBy::Environment,
-            SelectedBy::Config => StoreSelectedBy::Config,
-            SelectedBy::Default => StoreSelectedBy::Default,
-        },
-        // Only why: the error's generic advice on choosing a store is the
-        // client's to give.
-        unreachable: check_credential_store(backend)
-            .err()
-            .map(|error| match error {
-                CredentialError::StoreUnavailable(reason) => reason,
-                error @ CredentialError::InvalidData(_) => error.to_string(),
-            }),
-    }
+    let selection = credential_store::current_selection(environment);
+    // Only why: the error's generic advice on choosing a store is the
+    // client's to give.
+    let unreachable = check_credential_store(selection.backend)
+        .err()
+        .map(|error| match error {
+            CredentialError::StoreUnavailable(reason) => reason,
+            error @ CredentialError::InvalidData(_) => error.to_string(),
+        });
+    wire::status(selection, unreachable)
 }

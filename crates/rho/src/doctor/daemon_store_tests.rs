@@ -1,5 +1,7 @@
 use pretty_assertions::assert_eq;
 
+use rho_protocol::CredentialStoreKind;
+
 use super::*;
 
 fn reported(

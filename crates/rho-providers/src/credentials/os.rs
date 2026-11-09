@@ -57,7 +57,9 @@ impl OsCredentialStore {
 
     fn entry(account: &str) -> CredentialResult<keyring::Entry> {
         keyring::Entry::new(SERVICE, account).map_err(|err| {
-            CredentialError::StoreUnavailable(connection_failure().unwrap_or_else(|| err.to_string()))
+            CredentialError::StoreUnavailable(
+                connection_failure().unwrap_or_else(|| err.to_string()),
+            )
         })
     }
 

@@ -105,19 +105,22 @@ pub fn probe_credential_store(backend: CredentialStoreBackend) -> CredentialStor
 /// that finds nothing asks for no unlock, so a locked keyring passes;
 /// [`probe_credential_store`] writes, which is what a locked one refuses.
 pub fn check_credential_store(backend: CredentialStoreBackend) -> CredentialResult<()> {
-    let store: Arc<dyn CredentialStore> = match backend {
-        CredentialStoreBackend::Os => Arc::new(UncachedOsCredentialStore),
-        CredentialStoreBackend::File => Arc::new(FileCredentialStore::open()?),
-    };
-    store.get_secret(&probe_account_name()).map(drop)
+    uncached_store(backend)?
+        .get_secret(&probe_account_name())
+        .map(drop)
 }
 
 fn probe_backend(backend: CredentialStoreBackend) -> CredentialResult<()> {
-    let store: Arc<dyn CredentialStore> = match backend {
+    run_availability_probe(uncached_store(backend)?.as_ref())
+}
+
+/// `backend` without the OS store's process-wide read cache, so a check or
+/// probe asks the store itself.
+fn uncached_store(backend: CredentialStoreBackend) -> CredentialResult<Arc<dyn CredentialStore>> {
+    Ok(match backend {
         CredentialStoreBackend::Os => Arc::new(UncachedOsCredentialStore),
         CredentialStoreBackend::File => Arc::new(FileCredentialStore::open()?),
-    };
-    run_availability_probe(store.as_ref())
+    })
 }
 
 fn run_availability_probe(store: &dyn CredentialStore) -> CredentialResult<()> {
