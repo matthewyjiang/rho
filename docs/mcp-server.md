@@ -58,7 +58,7 @@ To let a session work unattended, give it a [permission mode](/configuration/per
 
 Sessions that start sessions can recurse: an agent driving rho through this server may run a session that drives rho through its own. The server bounds that with two budgets, enforced on every `new` and `prompt`:
 
-- **Session depth.** A session the server starts or prompts runs one level deeper than the server's caller: depth 1 when a person or an outside agent runs the server, depth 2 when a depth-1 session does. A session carries its depth to the processes it starts in `RHO_SESSION_DEPTH`, its MCP servers included, so a `rho mcp serve` it runs knows where it sits. `--max-depth` sets the deepest a session may run, 3 by default. `read` and `wait` never load a session the daemon has unloaded, so reading one starts none of its MCP servers at the reader's depth.
+- **Session depth.** A session the server starts or prompts runs one level deeper than the session that calls: depth 1 when a person or an outside agent calls, depth 2 when a depth-1 session does. A session carries its depth to the processes it starts in `RHO_SESSION_DEPTH`, so a `rho mcp serve` it runs knows where it sits. A rho session also sends its current depth with every call to a rho MCP server, over stdio or HTTP, so the count follows the turn that calls: a session prompted again from deeper in a chain is held to its new depth by the server it already runs, and a call over HTTP counts from the calling session, not from wherever the listener was started. A call that sends none, such as an outside agent's over HTTP, is depth 0. `--max-depth` sets the deepest a session may run, 3 by default. `read` and `wait` never load a session the daemon has unloaded, so reading one starts none of its MCP servers at the reader's depth.
 - **Concurrent sessions.** Each caller may have as many sessions running at once as `--max-sessions`, 10 by default, the same as the daemon's default agent concurrency. Over HTTP each token is a caller of its own. A session counts from when the caller starts or prompts it until its turn ends, a turn waiting for a person included; prompting a session the caller already has running adds none.
 
 A start past either budget is refused with the budget, its limit, and the value asked for:
@@ -68,7 +68,7 @@ session depth budget: limit 3, asked 4; a session at depth 3 may not start or pr
 concurrent sessions budget for token "ci": limit 10, asked 11
 ```
 
-The depth guards against runaway recursion, not against a session's own tools: a session with a shell can still reach the daemon's socket directly.
+The depth guards against runaway recursion, not against a session's own tools: a session with a shell can still reach the daemon's socket directly. The same holds for the [scope a token passes on](#scope-follows-the-sessions-a-token-starts).
 
 An argument past its limit, such as a `wait` longer than 50 seconds, is refused the same way, naming the limit and the value asked for.
 
@@ -137,6 +137,12 @@ rho mcp token revoke laptop  # reject subsequent requests with this token
 ```
 
 The server reads the tokens on every request, so a rotation or a revoke applies to requests not yet accepted, without restarting the server. It does not cancel an already admitted tool call, close an already open SSE stream, or stop daemon work the token started.
+
+### Scope follows the sessions a token starts
+
+A session a token starts or prompts runs with the token's scope and workspaces, which it carries to the processes it starts in `RHO_SESSION_SCOPE` and sends with every call to a rho MCP server. Any `rho mcp serve` the session reaches holds the call to that scope as well as its own grant: the session's stdio server, which would otherwise have local write access, refuses a workspace outside the token's, and a call over HTTP with a broader token gets only what both allow. A scope a request sends can narrow a token, never widen it. A session a person prompts afterwards runs with that person's full access again. Over stdio, the depth and scope a server starts with are only a default: the calling rho session's own replace them on every call, so setting `RHO_SESSION_DEPTH` or `RHO_SESSION_SCOPE` in the server's config `env` does not pin them.
+
+This keeps a token's limits on the sessions it starts, not their tools: like the [depth](#limits), it is not a sandbox, and a session with a shell can reach the daemon's socket directly. A token with write access may also steer a turn someone else started, which keeps that turn's own scope.
 
 A request without a token, or with one rho does not know, gets `401 Unauthorized`. A token's scope or workspaces refusing a tool is the tool's error, which the model reads, not an HTTP error.
 

@@ -26,7 +26,7 @@ use rmcp::transport::{
     streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService},
 };
 
-use super::{tokens::TokenSet, Grants, SessionTools};
+use super::{tokens::TokenSet, SessionTools, Transport};
 use crate::{app::session_control::SessionControl, credential_store::UntrackedCredentialStore};
 
 #[path = "http_sessions.rs"]
@@ -88,7 +88,7 @@ pub(crate) async fn serve_http(
         move || {
             Ok(SessionTools {
                 control: Arc::clone(&control),
-                grants: Grants::PerRequest,
+                transport: Transport::Http,
             })
         },
         Arc::clone(&sessions),

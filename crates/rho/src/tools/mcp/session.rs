@@ -146,7 +146,7 @@ pub(super) async fn connect_server_bounded(
     server: &McpServerConfig,
     options: &McpSessionOptions,
 ) -> ConnectResult {
-    let environment = &options.environment;
+    let environment = &options.environment.current();
     // Authorization runs before the startup clock. It carries its own budgets,
     // and a browser login is a person's pace, not a server's.
     let http_client =
@@ -669,7 +669,7 @@ async fn refresh_tools(maintenance: &SessionMaintenance) {
 }
 
 /// Gives a stdio server the base set from `environment` and the session's
-/// nesting depth, then its config's `env`, then its `env_from_env` read from
+/// caller context, then its config's `env`, then its `env_from_env` read from
 /// `environment`.
 fn apply_stdio_environment(
     command: &mut tokio::process::Command,
@@ -678,10 +678,13 @@ fn apply_stdio_environment(
     environment: &Ambient,
 ) -> anyhow::Result<()> {
     environment.apply_base(command);
-    // A `rho mcp serve` registered as a session's server counts its depth
-    // from the session's, so its caps hold across hops (#1672).
-    if let Some(depth) = environment.read_os(crate::child_env::SESSION_DEPTH_ENV) {
-        command.env(crate::child_env::SESSION_DEPTH_ENV, depth);
+    // A `rho mcp serve` registered as a session's server starts from the
+    // session's depth and scope, so its caps hold across hops (#1672). Each
+    // call then carries the session's current ones (#1765).
+    for name in crate::caller_context::ENV_NAMES {
+        if let Some(value) = environment.read_os(name) {
+            command.env(name, value);
+        }
     }
     command.envs(env);
     for (name, variable) in env_from_env {

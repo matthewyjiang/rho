@@ -145,15 +145,19 @@ fn tokens_rotate_authenticate_and_revoke() {
         (
             Some(Grant {
                 holder: Holder::Token("remote".into()),
-                access: Access::Read,
-                workspaces: Workspaces::Only(vec![workspace.clone()]),
+                scope: Scope {
+                    access: Access::Read,
+                    workspaces: Workspaces::Only(vec![workspace.clone()]),
+                },
             }),
             (
                 false,
                 Some(Grant {
                     holder: Holder::Token("remote".into()),
-                    access: Access::Write,
-                    workspaces: Workspaces::Only(vec![workspace]),
+                    scope: Scope {
+                        access: Access::Write,
+                        workspaces: Workspaces::Only(vec![workspace]),
+                    },
                 })
             ),
             (true, false),
