@@ -267,6 +267,7 @@ impl Sandbox {
                 environment,
                 agent: None,
                 setup: SessionSetup::default(),
+                parent: None,
             })
             .await
             .unwrap()

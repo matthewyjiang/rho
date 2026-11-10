@@ -5,7 +5,9 @@
 //! `waiting_for_input` while that turn waits on an approval, a plan
 //! approval, or a question, and then how the turn ended. A new prompt
 //! starts the next turn from any ended state. `interrupted` is how a turn
-//! ends when its daemon stops before the turn does.
+//! ends when its daemon stops before the turn does. The turns of a session
+//! another job started (#1714) are `queued` for capacity in the daemon-wide
+//! budget before they run, as subagent runs are.
 //!
 //! A subagent job is one run, which is one turn: `queued` while it waits
 //! for capacity in the daemon-wide budget, then `running`, then how it
@@ -26,7 +28,8 @@ use serde::{Deserialize, Serialize};
 pub(in crate::app::daemon_host) enum JobState {
     /// Created; no turn has started.
     Idle,
-    /// A subagent run waiting for capacity.
+    /// A subagent run, or a turn of a session another job started,
+    /// waiting for capacity.
     Queued,
     Running,
     /// The running turn waits for someone to answer an approval, a plan
@@ -58,7 +61,9 @@ pub(in crate::app::daemon_host) enum TurnEnd {
 pub(in crate::app::daemon_host) enum JobEvent {
     /// A prompt started a new turn.
     TurnStarted,
-    /// A queued subagent run got capacity and started. Only a queued job
+    /// A prompt started a new turn that waits for capacity first.
+    TurnQueued,
+    /// A queued run or turn got capacity and started. Only a queued job
     /// takes it, so a run that starts after the daemon's stop recorded its
     /// job interrupted cannot revive the job.
     Admitted,
@@ -84,17 +89,19 @@ impl JobState {
         &self,
         event: JobEvent,
     ) -> Result<Self, TransitionRefused> {
-        use JobEvent::{Admitted, InputOpened, InputSettled, TurnEnded, TurnStarted};
+        use JobEvent::{Admitted, InputOpened, InputSettled, TurnEnded, TurnQueued, TurnStarted};
         use JobState::{Ended, Idle, Queued, Running, WaitingForInput};
         match (self, event) {
             (Idle | Ended(_), TurnStarted) => Ok(Running),
+            (Idle | Ended(_), TurnQueued) => Ok(Queued),
             (Queued, Admitted) => Ok(Running),
             (Running, InputOpened) => Ok(WaitingForInput),
             (WaitingForInput, InputSettled) => Ok(Running),
             (Queued | Running | WaitingForInput, TurnEnded(end)) => Ok(Ended(end)),
             (
                 Idle | Queued | Running | WaitingForInput | Ended(_),
-                event @ (TurnStarted | Admitted | InputOpened | InputSettled | TurnEnded(_)),
+                event @ (TurnStarted | TurnQueued | Admitted | InputOpened | InputSettled
+                | TurnEnded(_)),
             ) => Err(TransitionRefused {
                 from: self.clone(),
                 event,
@@ -136,6 +143,7 @@ impl std::fmt::Display for JobEvent {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
             Self::TurnStarted => "turn_started",
+            Self::TurnQueued => "turn_queued",
             Self::Admitted => "admitted",
             Self::InputOpened => "input_opened",
             Self::InputSettled => "input_settled",

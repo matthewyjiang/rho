@@ -39,6 +39,7 @@ async fn new_session(
             environment: sandbox.client_environment(),
             agent: agent.map(str::to_owned),
             setup,
+            parent: None,
         })
         .await
         .map(|opened| opened.session)

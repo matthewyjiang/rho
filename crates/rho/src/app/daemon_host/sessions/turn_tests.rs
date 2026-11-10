@@ -348,6 +348,7 @@ async fn a_cancel_before_the_prompt_begins_saves_nothing() {
     let start = TurnTask {
         session: Arc::clone(&session),
         runtime: Queued::join(&session.runtime),
+        budget: None,
         stopping: rho_sdk::CancellationToken::new(),
         cancel,
         limit: None,
@@ -447,6 +448,7 @@ async fn the_daemon_times_a_turn_out_at_its_limit() {
         let start = TurnTask {
             session: Arc::clone(&session),
             runtime: Queued::join(&session.runtime),
+            budget: None,
             stopping: rho_sdk::CancellationToken::new(),
             // The session's own, as a prompt passes it, which the limit's
             // cancel trips.

@@ -29,7 +29,8 @@ use tokio::sync::{oneshot, watch};
 use super::jobs::{JobEvent, JobId, JobRecord, JobRegistry, JobState, RegisterError, TurnEnd};
 use crate::{
     app::{
-        agent_concurrency::{AgentConcurrency, QueuePlace, QueueWatch},
+        agent_binding::CapacityClass,
+        agent_concurrency::{AgentConcurrency, QueuePlace, QueueWatch, QueuedRun},
         subagent_pool::{
             ChildObserver, HostedWorkflow, StartedSubagent, StartedWorkflow, SubagentPool,
             WorkflowEnd,
@@ -85,9 +86,48 @@ impl Subagents {
         }
     }
 
+    /// Puts a turn of session job `job`, which another session started, in
+    /// line for capacity in the daemon-wide budget, which it shares with
+    /// subagent runs (#1714). The job reports where it waits for as long as
+    /// the turn's [`TurnBudget::listing`] lives.
+    pub(super) fn queue_turn(&self, job: &JobId) -> TurnBudget {
+        let queued = self.concurrency.join(CapacityClass::Rho);
+        lock(&self.queues).insert(job.clone(), queued.watch());
+        TurnBudget {
+            queued,
+            concurrency: self.concurrency.clone(),
+            listing: Listing {
+                job: job.clone(),
+                queues: Arc::clone(&self.queues),
+            },
+        }
+    }
+
     /// Where job `job`'s run waits for capacity, while it does.
     pub(super) fn queue_place(&self, job: &JobId) -> Option<QueuePlace> {
         lock(&self.queues).get(job)?.place()
+    }
+}
+
+/// A started session's turn in line for the daemon-wide budget.
+pub(super) struct TurnBudget {
+    pub(super) queued: QueuedRun,
+    /// The budget, for taking a slot again after lending it (see
+    /// `sessions::budget`).
+    pub(super) concurrency: AgentConcurrency,
+    /// Keeps the job's place in line listed until dropped.
+    pub(super) listing: Listing,
+}
+
+/// A job's place in line, listed for `rho/job/list` until dropped.
+pub(super) struct Listing {
+    job: JobId,
+    queues: Queues,
+}
+
+impl Drop for Listing {
+    fn drop(&mut self) {
+        lock(&self.queues).remove(&self.job);
     }
 }
 
