@@ -5,10 +5,10 @@
 //! The daemon lists a job per run (`rho/job/list`), which says whose run it
 //! is; what a run is doing is in its artifact directory, which the daemon
 //! writes under the rho home this process shares. The rail asks for the
-//! jobs when a session is first followed, then while a turn runs or the
-//! rail shows a run, the only times one can start or change, at most once
-//! per [`RAIL_POLL`], and reads the status of each run that is live or
-//! ended moments ago.
+//! jobs when a session is first followed, once whenever a turn ends, and
+//! while a turn runs or the last list named a run the rails show, the only
+//! times one can start or change, at most once per [`RAIL_POLL`], and
+//! reads the status of each run that is live or ended moments ago.
 //! `/attach` then opens a run's artifacts from the same directory.
 //!
 //! In process, a finished row leaves the rail when its result reaches the
@@ -47,8 +47,10 @@ pub(super) struct DaemonRail {
     asked: Option<Instant>,
     /// Whether that list has not been answered yet.
     waiting: bool,
-    /// Whether a turn ran when the rail last looked.
-    in_turn: bool,
+    /// Whether the last list named a run the rails show, which may change
+    /// with no turn running. The list, not the rows, says so: a run whose
+    /// files could not be read just then has no row and is still going.
+    shows_runs: bool,
     /// Each run's artifact directory, resolved once.
     directories: HashMap<String, PathBuf>,
 }
@@ -122,15 +124,8 @@ impl App {
             return;
         };
         // A run starts only in a turn, and changes only while it shows.
-        let in_turn = self.turn.is_provider_turn();
-        let may_change =
-            in_turn || self.subagent_panel.count() > 0 || self.workflow_panel.is_active();
+        let may_change = self.turn.is_provider_turn() || self.daemon_rail.shows_runs;
         let rail = &mut self.daemon_rail;
-        // One more list once a turn ends, for a run it started since the
-        // last.
-        if std::mem::replace(&mut rail.in_turn, in_turn) && !in_turn {
-            rail.asked = None;
-        }
         let due = rail
             .asked
             .is_none_or(|asked| may_change && asked.elapsed() >= RAIL_POLL);
@@ -139,6 +134,18 @@ impl App {
         }
         rail.asked = Some(Instant::now());
         rail.waiting = true;
+    }
+
+    /// Owes the rail one more job list: a turn ended, and may have started
+    /// a run since the last list, however briefly it ran.
+    pub(super) fn daemon_turn_may_have_started_runs(&mut self) {
+        self.daemon_rail.asked = None;
+    }
+
+    /// Whether the rails show runs that change with no turn running, so
+    /// the idle loop keeps asking after them.
+    pub(super) fn daemon_rail_shows_runs(&self) -> bool {
+        self.daemon_rail.shows_runs
     }
 
     /// Puts the followed session's runs among `jobs` on the subagent and
@@ -151,8 +158,11 @@ impl App {
         };
         let session = session.id().to_owned();
         let now = subagent::unix_now_secs();
-        self.show_daemon_workflows(&rail_jobs(&jobs, &session, JobKind::Workflow, now), now);
-        let snapshots = rail_jobs(&jobs, &session, JobKind::Subagent, now)
+        let workflows = rail_jobs(&jobs, &session, JobKind::Workflow, now);
+        let subagents = rail_jobs(&jobs, &session, JobKind::Subagent, now);
+        self.daemon_rail.shows_runs = !workflows.is_empty() || !subagents.is_empty();
+        self.show_daemon_workflows(&workflows, now);
+        let snapshots = subagents
             .into_iter()
             .filter_map(|job| job.run.clone())
             .filter_map(|run| {

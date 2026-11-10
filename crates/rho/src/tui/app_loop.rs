@@ -190,8 +190,7 @@ impl App {
                 || agent
                     .processes()
                     .is_some_and(crate::tools::process::ProcessManager::has_pending_notification)
-                || (self.info.session.daemon.is_some()
-                    && (self.subagent_panel.is_active() || self.workflow_panel.is_active()))
+                || self.daemon_rail_shows_runs()
                 || self.pending_subagent_questionnaire.is_some()
                 || self.subagent_inbox.has_queued_questionnaires()
                 || self.subagent_inbox.has_parent_action_requests();

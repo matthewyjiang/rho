@@ -204,6 +204,7 @@ impl App {
         if !self.turn.is_provider_turn() {
             return;
         }
+        self.daemon_turn_may_have_started_runs();
         // Read before `stop_loading` clears the turn clock.
         let worked = self.turn.elapsed_at(Instant::now());
         if matches!(rest, Rest::Interrupted) {
