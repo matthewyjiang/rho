@@ -1,20 +1,25 @@
-//! Overlay single-line text input for config keys and agent fields.
+//! Overlay single-line text input for settings and agent fields.
 
-use rho_providers::credentials::WebSearchCredential;
+use rho_protocol::SettingKey;
 
 use super::{
+    daemon_settings::SettingsNamespace,
     line_editor::LineEditor,
     line_editor_view::EditorPresentation,
     picker::UiPicker,
     view_composer::{editor_frame, ComposerFrame},
-    web_search_config::WebSearchUrlField,
 };
 
 /// Which overlay owns a [`TextInput`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum TextInputTarget {
-    ConfigApiKey(WebSearchCredential),
-    ConfigUrl(WebSearchUrlField),
+    /// A daemon setting's integer or text; `label` is the prompt's, with
+    /// the range an integer takes.
+    Setting {
+        namespace: SettingsNamespace,
+        key: SettingKey,
+        label: String,
+    },
     AgentField(AgentField),
     /// One step of the `/login` endpoint wizard, which owns its own state.
     CustomHost(super::custom_provider_login::CustomHostStep),
@@ -58,16 +63,18 @@ pub(super) struct TextInput {
 }
 
 impl TextInput {
-    pub(super) fn config_api_key(credential: WebSearchCredential, value: Option<String>) -> Self {
+    pub(super) fn setting(
+        namespace: SettingsNamespace,
+        key: SettingKey,
+        label: String,
+        value: String,
+    ) -> Self {
         Self {
-            target: TextInputTarget::ConfigApiKey(credential),
-            editor: LineEditor::new(value.unwrap_or_default()),
-        }
-    }
-
-    pub(super) fn config_url(field: WebSearchUrlField, value: impl Into<String>) -> Self {
-        Self {
-            target: TextInputTarget::ConfigUrl(field),
+            target: TextInputTarget::Setting {
+                namespace,
+                key,
+                label,
+            },
             editor: LineEditor::new(value),
         }
     }
@@ -101,8 +108,7 @@ impl TextInput {
 
     fn presentation(&self) -> EditorPresentation {
         match self.target {
-            TextInputTarget::ConfigApiKey(_) => EditorPresentation::Masked,
-            TextInputTarget::ConfigUrl(_)
+            TextInputTarget::Setting { .. }
             | TextInputTarget::AgentField(_)
             | TextInputTarget::CustomHost(_) => EditorPresentation::Plain,
         }
@@ -110,8 +116,7 @@ impl TextInput {
 
     pub(super) fn label(&self) -> &str {
         match &self.target {
-            TextInputTarget::ConfigApiKey(credential) => credential.label(),
-            TextInputTarget::ConfigUrl(field) => field.label(),
+            TextInputTarget::Setting { label, .. } => label,
             TextInputTarget::AgentField(field) => field.label(),
             TextInputTarget::CustomHost(step) => step.label(),
         }
@@ -121,9 +126,7 @@ impl TextInput {
     fn confirm_verb(&self) -> &'static str {
         match &self.target {
             TextInputTarget::CustomHost(_) => "Enter continue",
-            TextInputTarget::ConfigApiKey(_)
-            | TextInputTarget::ConfigUrl(_)
-            | TextInputTarget::AgentField(_) => "Enter save",
+            TextInputTarget::Setting { .. } | TextInputTarget::AgentField(_) => "Enter save",
         }
     }
 }

@@ -1,8 +1,9 @@
-//! Advisor mode: the `/advisor` command, the config row, and a live review.
+//! Advisor mode in the TUI: the warning for a mode saved without a model,
+//! and a live review. Choosing the advisor through the daemon is in
+//! the `daemon_advisor` scenario (`daemon_config`).
 //!
-//! The isolated home has no credentials, so every model picker would be empty.
-//! `XAI_API_KEY` gives these scenarios a provider whose models come from the
-//! static catalog, which is enough for the advisor model picker to offer rows.
+//! The isolated home has no credentials. `XAI_API_KEY` makes `xai` an
+//! available auth, so its catalog model can be the advisor.
 
 use std::time::{Duration, Instant};
 
@@ -11,7 +12,6 @@ use anyhow::{ensure, Result};
 use crate::{
     env::IsolatedHome,
     harness::PtyHarness,
-    keys::Key,
     scenario::{Scenario, Step},
     WaitTimeout,
 };
@@ -20,13 +20,6 @@ use super::{DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
 
 /// Makes `xai` an available auth, so model pickers list its static catalog.
 const XAI_KEY_ENV: &[(&str, &str)] = &[("XAI_API_KEY", "fixture-xai-key")];
-
-/// Adds Poolside, whose fixed Off/Max reasoning gives the reasoning picker a
-/// known, short level set without network metadata.
-const XAI_AND_POOLSIDE_KEY_ENV: &[(&str, &str)] = &[
-    ("XAI_API_KEY", "fixture-xai-key"),
-    ("POOLSIDE_API_KEY", "fixture-poolside-key"),
-];
 
 const ADVISOR_MODEL: &str = "xai/grok-4.5";
 
@@ -153,20 +146,6 @@ fn assert_statusline_has_no_advisor(harness: &PtyHarness) -> Result<()> {
     Ok(())
 }
 
-fn assert_advisor_indicator_absent(harness: &mut PtyHarness) -> Result<()> {
-    wait_for_advisor_divider(
-        harness,
-        SETTLE,
-        |row| !row.is_empty() && !row.contains("advisor"),
-        |row| {
-            format!(
-                "advisor mode is off, so the composer divider must not claim a reviewer:\n{row}"
-            )
-        },
-    )?;
-    assert_statusline_has_no_advisor(harness)
-}
-
 fn assert_advisor_indicator_names_the_model(harness: &mut PtyHarness) -> Result<()> {
     let expected = format!("advisor: {ADVISOR_MODEL}");
     wait_for_advisor_divider(
@@ -198,41 +177,9 @@ fn assert_advisor_card_has_no_empty_arguments(harness: &mut PtyHarness) -> Resul
     Ok(())
 }
 
-/// The advisor has no conversation-model fallback, so offering that row would
-/// promise a selection the mode cannot use.
-fn assert_picker_omits_the_conversation_model(harness: &mut PtyHarness) -> Result<()> {
-    let screen = harness.screen().contents();
-    ensure!(
-        !screen.contains("Use conversation model"),
-        "the advisor model picker must not offer the conversation model:\n{screen}"
-    );
-    Ok(())
-}
-
-/// The advisor scenarios, as `ALL_SCENARIOS` lists them.
-pub(super) const ADVISOR_COMMAND_SCENARIO: Scenario = Scenario::new(
-    "advisor_command",
-    "Choose an advisor model, turn the mode off from config, and turn it on again",
-    DEFAULT_SIZE,
-    ADVISOR_COMMAND_STEPS,
-    /*smoke*/ false,
-)
-.with_env(XAI_KEY_ENV);
-
-pub(super) const ADVISOR_MODEL_COMMAND_SCENARIO: Scenario = Scenario {
-    id: "advisor_model_command",
-    description: "Swap the advisor model and pick only supported reasoning levels",
-    size: DEFAULT_SIZE,
-    setup: Some(setup_advisor_ready),
-    env: XAI_AND_POOLSIDE_KEY_ENV,
-    args: &[],
-    steps: ADVISOR_MODEL_COMMAND_STEPS,
-    smoke: false,
-};
-
 pub(super) const ADVISOR_MISSING_MODEL_SCENARIO: Scenario = Scenario {
     id: "advisor_missing_model",
-    description: "Warn about advisor mode saved without a model and route to a model picker",
+    description: "Warn about advisor mode saved without a model",
     size: DEFAULT_SIZE,
     setup: Some(setup_advisor_without_model),
     env: XAI_KEY_ENV,
@@ -252,204 +199,8 @@ pub(super) const ADVISOR_REVIEW_SCENARIO: Scenario = Scenario {
     smoke: false,
 };
 
-// Covers: /advisor on asks for a model, remembers it across off and on, and
-// every surface that shows the mode follows the change.
-// Owner: interactive TUI
-const ADVISOR_COMMAND_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Custom(assert_advisor_indicator_absent),
-    Step::Phase("dismiss_model_prompt"),
-    Step::SubmitText("/advisor on"),
-    Step::WaitText {
-        text: "select model for advisor",
-        timeout: SETTLE,
-    },
-    Step::Custom(assert_picker_omits_the_conversation_model),
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "advisor mode stays off",
-        timeout: SETTLE,
-    },
-    Step::Custom(assert_advisor_indicator_absent),
-    Step::Phase("choose_advisor_model"),
-    Step::SubmitText("/advisor on"),
-    Step::WaitText {
-        text: "select model for advisor",
-        timeout: SETTLE,
-    },
-    Step::TypeIntoField("grok-4.5"),
-    Step::WaitText {
-        text: ADVISOR_MODEL,
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "advisor mode is on: xai/grok-4.5 reviews the session",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "advisor: xai/grok-4.5",
-        timeout: SETTLE,
-    },
-    Step::Custom(assert_advisor_indicator_names_the_model),
-    Step::Phase("config_row_turns_it_off"),
-    Step::SubmitText("/config"),
-    Step::WaitText {
-        text: "Agent behavior",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Down),
-    Step::Key(Key::Down),
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "Config / Agent behavior",
-        timeout: SETTLE,
-    },
-    Step::AssertText("Advisor mode"),
-    Step::AssertText("on · xai/grok-4.5"),
-    Step::TypeIntoField("advisor_mode"),
-    Step::WaitTextGone {
-        text: "Permission mode",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "advisor mode is off",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "Appearance",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "Type a message",
-        timeout: SETTLE,
-    },
-    Step::Custom(assert_advisor_indicator_absent),
-    Step::Phase("model_survives_the_round_trip"),
-    // The advisor model was chosen once, so turning the mode on again must not
-    // ask for it a second time.
-    Step::SubmitText("/advisor on"),
-    Step::WaitText {
-        text: "advisor mode is on: xai/grok-4.5 reviews the session",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "advisor: xai/grok-4.5",
-        timeout: SETTLE,
-    },
-    Step::Custom(assert_advisor_indicator_names_the_model),
-    Step::ExitCommand,
-];
-
-/// The reasoning picker must list only the levels the model supports.
-fn assert_reasoning_picker_offers_only_off_and_max(harness: &mut PtyHarness) -> Result<()> {
-    let rows = harness.screen().rows_text();
-    let offered: Vec<&str> = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
-        .into_iter()
-        .filter(|level| {
-            rows.iter().any(|row| {
-                row.trim()
-                    .trim_start_matches(['→', ' '])
-                    .split_whitespace()
-                    .next()
-                    == Some(level)
-            })
-        })
-        .collect();
-    ensure!(
-        offered == ["off", "max"],
-        "advisor reasoning picker must offer only the model's levels, got {offered:?}:\n{}",
-        harness.screen().debug_dump()
-    );
-    Ok(())
-}
-
-// Covers: /advisor model swaps the advisor model without touching the mode,
-// follows up with a reasoning picker listing only supported levels, and Esc in
-// either picker leaves the saved choice alone.
-// Owner: interactive TUI
-const ADVISOR_MODEL_COMMAND_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "advisor: xai/grok-4.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("dismiss_keeps_the_model"),
-    Step::SubmitText("/advisor model"),
-    Step::WaitText {
-        text: "select model for advisor",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "advisor model unchanged",
-        timeout: SETTLE,
-    },
-    Step::Custom(assert_advisor_indicator_names_the_model),
-    Step::Phase("model_with_levels_asks_for_reasoning"),
-    Step::SubmitText("/advisor model"),
-    Step::WaitText {
-        text: "select model for advisor",
-        timeout: SETTLE,
-    },
-    Step::TypeIntoField("laguna"),
-    Step::WaitText {
-        text: "poolside/laguna-m.1",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "select reasoning for advisor",
-        timeout: SETTLE,
-    },
-    Step::Custom(assert_reasoning_picker_offers_only_off_and_max),
-    Step::TypeIntoField("off"),
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "advisor reasoning: off",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "advisor: poolside/laguna-m.1",
-        timeout: SETTLE,
-    },
-    Step::Phase("dismissing_reasoning_keeps_the_saved_level"),
-    Step::SubmitText("/advisor model"),
-    Step::WaitText {
-        text: "select model for advisor",
-        timeout: SETTLE,
-    },
-    Step::TypeIntoField("laguna"),
-    Step::WaitText {
-        text: "poolside/laguna-m.1",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "select reasoning for advisor",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "advisor reasoning unchanged: off",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "Type a message",
-        timeout: SETTLE,
-    },
-    Step::ExitCommand,
-];
-
-// Covers: advisor mode saved on with no advisor model must read as unusable and
-// route the user to a model instead of pretending to work.
+// Covers: advisor mode saved on with no advisor model must read as unusable
+// instead of pretending to work.
 // Owner: interactive TUI
 const ADVISOR_MISSING_MODEL_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -462,57 +213,6 @@ const ADVISOR_MISSING_MODEL_STEPS: &[Step] = &[
         timeout: STARTUP,
     },
     Step::Custom(assert_advisor_indicator_warns_about_the_missing_model),
-    Step::Phase("command_asks_for_a_model"),
-    Step::SubmitText("/advisor on"),
-    Step::WaitText {
-        text: "select model for advisor",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "Type a message",
-        timeout: SETTLE,
-    },
-    Step::Custom(assert_advisor_indicator_warns_about_the_missing_model),
-    Step::Phase("config_row_asks_for_a_model"),
-    Step::SubmitText("/config"),
-    Step::WaitText {
-        text: "Agent behavior",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Down),
-    Step::Key(Key::Down),
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "Config / Agent behavior",
-        timeout: SETTLE,
-    },
-    Step::AssertText("on · no model"),
-    Step::TypeIntoField("advisor_mode"),
-    Step::WaitTextGone {
-        text: "Permission mode",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "advisor mode is off",
-        timeout: SETTLE,
-    },
-    // Turning it back on from the config row has no model to use, so the row
-    // opens the picker rather than saving a mode that cannot run.
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "select model for advisor",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "Config / Agent behavior",
-        timeout: SETTLE,
-    },
-    Step::AssertText("Advisor mode"),
-    Step::Key(Key::Esc),
-    Step::Key(Key::Esc),
     Step::ExitCommand,
 ];
 

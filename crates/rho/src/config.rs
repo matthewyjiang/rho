@@ -114,9 +114,9 @@ impl ConfigWarning {
 
 #[path = "config_web_search.rs"]
 mod web_search;
-pub(crate) use web_search::{
-    parse_search_endpoint_url, web_search_route, EXA_MCP_DEFAULT_URL, OPENAI_CODEX_RESPONSES_URL,
-};
+#[cfg(test)]
+pub(crate) use web_search::OPENAI_CODEX_RESPONSES_URL;
+pub(crate) use web_search::{parse_search_endpoint_url, web_search_route};
 pub use web_search::{
     ExaSearchConnection, OpenAiSearchConnection, SearchBackend, WebSearchMode, WebSearchRoute,
     WebSearchSettings,
@@ -379,17 +379,6 @@ impl Config {
                 .auto_edit_format(provider)
                 .unwrap_or_else(|| preferred_edit_format_for_provider(provider)),
             EditTool::Pinned(format) => format,
-        }
-    }
-
-    pub(crate) fn edit_tool_display_label(&self) -> String {
-        self.edit_tool_display_label_for_provider(&self.provider)
-    }
-
-    pub(crate) fn edit_tool_display_label_for_provider(&self, provider: &str) -> String {
-        match self.edit_tool {
-            EditTool::Auto => format!("auto ({})", self.resolved_edit_tool_for_provider(provider)),
-            EditTool::Pinned(format) => format.label().into(),
         }
     }
 }

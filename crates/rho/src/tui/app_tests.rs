@@ -553,49 +553,6 @@ fn favorite_save_failure_keeps_model_picker_open() {
 }
 
 #[test]
-fn esc_from_nested_web_search_config_returns_to_tools_category() {
-    let config_dir = tempfile::tempdir().unwrap();
-    let mut app = test_app();
-    app.info.services.config_repository =
-        ConfigRepository::new(Some(config_dir.path().join("config.toml")));
-    let config = app.info.services.config_repository.load().unwrap();
-    let mut root =
-        config_picker::config_picker(&app.info.runtime, &config, &app.info.services.settings);
-    App::restore_picker_position(
-        &mut root,
-        config_picker::TOOLS_CATEGORY_VALUE,
-        String::new(),
-    );
-    let mut parent = config_picker::category_picker(
-        config_picker::TOOLS_CATEGORY_VALUE,
-        &app.info.runtime,
-        &config,
-        &app.info.services.settings,
-    )
-    .unwrap()
-    .with_parent(root);
-    App::restore_picker_position(&mut parent, config_picker::WEB_SEARCH_VALUE, "web".into());
-    app.input_ui.set_composer(ComposerMode::Picker(parent));
-    let child = config_picker::web_search_config_picker(
-        &config,
-        &app.info.runtime.provider,
-        &app.info.runtime.model,
-    );
-    app.open_child_picker(child);
-
-    app.handle_picker_escape(/*running*/ false).unwrap();
-
-    let ComposerMode::Picker(picker) = app.input_ui.composer() else {
-        panic!("expected picker after nested config escape");
-    };
-    assert_eq!(
-        picker.selected_item().unwrap().value,
-        config_picker::WEB_SEARCH_VALUE
-    );
-    assert_eq!(picker.filter, "web");
-}
-
-#[test]
 fn input_history_recalls_previous_messages_and_restores_draft() {
     let mut app = test_app();
     app.push_input_history("first message");

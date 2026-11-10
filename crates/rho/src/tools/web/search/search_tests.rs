@@ -63,7 +63,13 @@ fn config(backend: SearchBackend, base: String) -> SearchBackendConfig {
         backend,
         ..WebSearchSettings::default()
     };
-    settings.set_endpoint(backend, Some(base));
+    let endpoint = match backend {
+        SearchBackend::OpenAi => &mut settings.openai.api_base_url,
+        SearchBackend::Exa => &mut settings.exa.api_base_url,
+        SearchBackend::Brave => &mut settings.brave.api_base_url,
+        SearchBackend::Firecrawl => &mut settings.firecrawl.api_base_url,
+    };
+    *endpoint = Some(base);
     let ready = match backend {
         SearchBackend::Firecrawl => Ok(ReadyBackend::Firecrawl { key: None }),
         _ => Err("unavailable".into()),

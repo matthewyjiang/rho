@@ -129,23 +129,6 @@ pub(super) struct ShellOutput {
     pub(super) ok: bool,
 }
 
-pub(super) fn available_shells(selected: &str) -> Vec<String> {
-    let candidates: &[&str] = if cfg!(windows) {
-        &["powershell", "pwsh", "cmd"]
-    } else {
-        &["bash", "zsh", "fish", "sh"]
-    };
-    let mut shells = candidates
-        .iter()
-        .filter(|shell| crate::executable::find_on_path(shell).is_some())
-        .map(|shell| (*shell).to_string())
-        .collect::<Vec<_>>();
-    if !selected.is_empty() && !shells.iter().any(|shell| shell == selected) {
-        shells.push(selected.to_string());
-    }
-    shells
-}
-
 #[cfg(test)]
 pub(super) async fn execute(
     shell: &str,

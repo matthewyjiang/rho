@@ -22,11 +22,18 @@ pub(super) enum AdvisorStatus {
 
 impl AdvisorStatus {
     pub(super) fn new(advisor_mode: bool, model: Option<&InternalAgentModelConfig>) -> Self {
+        Self::of(
+            advisor_mode,
+            model.map(InternalAgentModelConfig::display_reference),
+        )
+    }
+
+    /// The status of `advisor_mode` with the advisor model `model`, as its
+    /// reference reads.
+    pub(super) fn of(advisor_mode: bool, model: Option<String>) -> Self {
         match (advisor_mode, model) {
             (false, _) => Self::Off,
-            (true, Some(selection)) => Self::Reviewing {
-                model: selection.display_reference(),
-            },
+            (true, Some(model)) => Self::Reviewing { model },
             (true, None) => Self::MissingModel,
         }
     }
@@ -44,15 +51,6 @@ impl AdvisorStatus {
             Self::Off => Vec::new(),
             Self::Reviewing { model } => vec![format!("advisor: {model}"), "advisor".into()],
             Self::MissingModel => vec!["advisor: no model".into(), "advisor".into()],
-        }
-    }
-
-    /// Config-picker badge for the advisor row.
-    pub(super) fn badge(&self) -> String {
-        match self {
-            Self::Off => "off".into(),
-            Self::Reviewing { model } => format!("on · {model}"),
-            Self::MissingModel => "on · no model".into(),
         }
     }
 

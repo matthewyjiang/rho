@@ -60,16 +60,6 @@ pub enum EditingMode {
     Vim,
 }
 
-impl EditingMode {
-    pub(crate) fn from_vim_enabled(enabled: bool) -> Self {
-        if enabled {
-            Self::Vim
-        } else {
-            Self::Default
-        }
-    }
-}
-
 impl Default for Keybindings {
     fn default() -> Self {
         Self {

@@ -38,7 +38,7 @@ OpenRouter model IDs often contain a slash. Both auth modes use the same provide
 
 Legacy `openrouter-oauth/...` model references still load and normalize to `openrouter/...`.
 
-Rho fetches the model list from OpenRouter's `/models` endpoint after login. Choose **Refresh model lists** in `/config` when models change. Rho sends turns to `/chat/completions`.
+Rho fetches the model list from OpenRouter's `/models` endpoint after login. Run `/refresh-models` when models change. Rho sends turns to `/chat/completions`.
 
 ## Reasoning controls
 

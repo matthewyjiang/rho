@@ -69,7 +69,7 @@ connection = "api" # api or mcp; missing API credentials do not switch transport
 
 [web_search.firecrawl]
 # api_base_url = "http://localhost:3002" # omit for Firecrawl Cloud
-# Configure keys through /config or environment, not this file.
+# Set keys in the environment (FIRECRAWL_API_KEY, EXA_API_KEY, BRAVE_SEARCH_API_KEY), not this file.
 
 # MCP stays inert while this table has no enabled server entries.
 # See /integrations/mcp for stdio and Streamable HTTP examples.
@@ -117,7 +117,7 @@ The interactive TUI keeps its own settings at the top level of `~/.rho/clients/t
 ```toml
 show_reasoning_output = true
 zen_mode = false
-output_streaming = "live" # live, paragraph, off; /config → Appearance → Output streaming
+output_streaming = "live" # live, paragraph, off; /config → Display → Output streaming
 max_tool_output_lines = 10
 prompt_history_limit = 1000 # 0 disables saving; at most 10000
 cache_miss_notices = false

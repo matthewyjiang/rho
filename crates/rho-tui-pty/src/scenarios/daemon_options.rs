@@ -17,7 +17,7 @@ const ENV: &[(&str, &str)] = &[
 const INSTRUCTIONS: &str = "# Project instructions\nKeep this instruction unchanged.\n";
 
 // Covers: /permissions changes the daemon's actual tool policy, not just the
-// local statusline. A configure queued during a running turn must leave Esc
+// local statusline, and its picker opens on the mode in force. A configure queued during a running turn must leave Esc
 // responsive, and become visible only after cancellation releases the turn.
 // Owner: interactive TUI as a daemon client
 pub(super) const PERMISSION_MODE: Scenario = Scenario::new(
@@ -32,6 +32,18 @@ pub(super) const PERMISSION_MODE: Scenario = Scenario::new(
         Step::SubmitText("/permissions supervised"),
         Step::WaitText {
             text: "Supervised ·",
+            timeout: SETTLE,
+        },
+        // The picker opens on the mode in force: Enter keeps supervised, so
+        // the tool below still asks.
+        Step::SubmitText("/permissions"),
+        Step::WaitText {
+            text: "Permission mode · Type to search",
+            timeout: SETTLE,
+        },
+        Step::Key(Key::Enter),
+        Step::WaitTextGone {
+            text: "Permission mode · Type to search",
             timeout: SETTLE,
         },
         Step::SubmitText("fixture tool"),

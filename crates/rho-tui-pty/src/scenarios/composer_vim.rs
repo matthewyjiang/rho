@@ -66,7 +66,6 @@ pub(super) const COMPOSER_VIM_SCENARIO: Scenario = Scenario::new(
             timeout: SETTLE,
         },
         Step::Phase("toggle_from_config"),
-        Step::Custom(toggle_off_then_on),
         Step::CtrlCExit,
     ],
     /*smoke*/ false,
@@ -95,29 +94,4 @@ fn submit_and_wait(harness: &mut PtyHarness) -> Result<()> {
     harness.settle_plain_text_input();
     harness.inject_key(&Key::Enter)?;
     wait_for_turn_completion_after(harness, "fixture response: hello there")
-}
-
-fn toggle_off_then_on(harness: &mut PtyHarness) -> Result<()> {
-    toggle_vim_from_appearance(harness, "vim mode: off")?;
-    harness.wait_for_text_gone("INSERT", SETTLE)?;
-    toggle_vim_from_appearance(harness, "vim mode: on")?;
-    harness.wait_for_text("INSERT", SETTLE)
-}
-
-fn toggle_vim_from_appearance(harness: &mut PtyHarness, status: &str) -> Result<()> {
-    harness.submit_text("/config")?;
-    harness.wait_for_text("Config · saves automatically", SETTLE)?;
-    harness.inject_key(&Key::Down)?;
-    harness.inject_key(&Key::Enter)?;
-    harness.wait_for_text("Config / Appearance", SETTLE)?;
-    // Vim mode is the last of nine Appearance rows.
-    for _ in 0..8 {
-        harness.inject_key(&Key::Down)?;
-    }
-    harness.inject_key(&Key::Char(' '))?;
-    harness.wait_for_text(status, SETTLE)?;
-    harness.inject_key(&Key::Esc)?;
-    harness.wait_for_text("Config · saves automatically", SETTLE)?;
-    harness.inject_key(&Key::Esc)?;
-    harness.wait_for_text_gone("Config · saves automatically", SETTLE)
 }

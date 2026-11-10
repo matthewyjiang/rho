@@ -24,7 +24,7 @@ Rho supports Moonshot's OpenAI-compatible Chat Completions API through two expli
 | API base | `https://api.kimi.com/coding/v1` |
 | Model list | Refreshable after authentication |
 
-Both providers send turns to `/chat/completions` and fetch models from `/models`. Their model lists can be updated through **Refresh model lists** in `/config` after authentication. Rho preserves account-specific context limits returned by the model-list API. For Kimi Code, account-specific reasoning choices replace general models.dev reasoning metadata when available.
+Both providers send turns to `/chat/completions` and fetch models from `/models`. Their model lists can be updated through `/refresh-models` after authentication. Rho preserves account-specific context limits returned by the model-list API. For Kimi Code, account-specific reasoning choices replace general models.dev reasoning metadata when available.
 
 Although Moonshot and Kimi Code share an OpenAI-compatible transport, they use separate reasoning contracts:
 

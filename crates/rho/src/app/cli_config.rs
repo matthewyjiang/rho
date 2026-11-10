@@ -555,7 +555,7 @@ fn apply_provider_override(
         match cached_models {
             CachedModelRequirement::Optional => None,
             CachedModelRequirement::Required => anyhow::bail!(
-                "no cached models for provider '{provider}'. Open /config and choose Refresh model lists, or pass a cached provider/model with --model"
+                "no cached models for provider '{provider}'. Run /refresh-models in the TUI, or pass a cached provider/model with --model"
             ),
         }
     };

@@ -1,4 +1,5 @@
-//! Apply saved compaction settings without replacing an in-flight compactor.
+//! Apply saved compaction settings without replacing an in-flight compactor,
+//! once `/agents` changes the compaction model.
 
 use super::{App, InteractiveRuntime};
 

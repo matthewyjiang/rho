@@ -122,8 +122,8 @@ the pre-turn conversation baseline.
 secrets in files touched by native tools. They are not redacted. Disabling rewind
 does not delete existing journals. Treat session folders as sensitive data and
 include them in your retention policy. To prevent new capture, set
-`[behavior] workspace_rewind = false` or toggle **Workspace rewind** under Agent
-behavior in `/config`, then restart Rho.
+`[behavior] workspace_rewind = false` or toggle `/config` → **Agent** →
+**Workspace rewind**; sessions opened afterwards stop capturing.
 
 ## Searching prior conversations
 

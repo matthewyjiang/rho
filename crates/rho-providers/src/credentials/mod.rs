@@ -57,9 +57,12 @@ const WEB_SEARCH_OPENAI_API_KEY_ACCOUNT: &str = "web-search:openai:api-key";
 const WEB_SEARCH_EXA_API_KEY_ACCOUNT: &str = "web-search:exa:api-key";
 const WEB_SEARCH_BRAVE_API_KEY_ACCOUNT: &str = "web-search:brave:api-key";
 const WEB_SEARCH_FIRECRAWL_API_KEY_ACCOUNT: &str = "web-search:firecrawl:api-key";
-/// Ollama device keys live in `~/.ollama`, which the Ollama CLI shares, so a
-/// key on disk does not mean the user signed in to Rho. Device login sets this
-/// flag and logout deletes it; the key itself is never removed.
+/// Ollama device keys live in a directory the Ollama CLI shares (`~/.ollama`,
+/// or the party's `OLLAMA_DEVICE_KEY_DIR`), so a key on disk does not mean the
+/// user signed in to Rho. Device login sets this flag and logout deletes it;
+/// the key itself is never removed. The flag is the store's, not the key's:
+/// parties that share a store share it, whichever directory each keeps its
+/// key in.
 const OLLAMA_DEVICE_SIGNED_IN_ACCOUNT: &str = "provider:ollama-cloud:device-signed-in";
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -165,9 +168,11 @@ pub trait CredentialStore: Send + Sync {
     fn get_secret(&self, account: &str) -> CredentialResult<Option<String>>;
 
     /// Environment variable `name` of the party these credentials belong
-    /// to, which holds a credential that wins over a stored one, such as
-    /// `OPENAI_API_KEY`. Every credential lookup that has a store reads the
-    /// environment through it, never from the process directly.
+    /// to: one that holds a credential that wins over a stored one, such as
+    /// `OPENAI_API_KEY`, or says where a credential is kept, as
+    /// `OLLAMA_DEVICE_KEY_DIR` does. Every credential lookup that has a
+    /// store reads the environment through it, never from the process
+    /// directly.
     ///
     /// The default is this process's environment, right for a process that
     /// acts for one user. A store that serves another party, as a daemon
@@ -352,10 +357,11 @@ pub(crate) fn ollama_device_login_recorded(store: &dyn CredentialStore) -> Crede
     Ok(store.get_secret(OLLAMA_DEVICE_SIGNED_IN_ACCOUNT)?.is_some())
 }
 
-/// True when Rho is signed in and a usable `~/.ollama` device key exists.
+/// True when Rho is signed in and a usable device key exists in the key
+/// directory of the party `store` belongs to.
 fn ollama_device_signed_in(store: &dyn CredentialStore) -> CredentialResult<bool> {
     Ok(ollama_device_login_recorded(store)?
-        && crate::auth::ollama_device::ollama_device_credentials_available())
+        && crate::auth::ollama_device::ollama_device_credentials_available(store))
 }
 
 pub(crate) fn sign_in_ollama_device(store: &dyn CredentialStore) -> CredentialResult<()> {

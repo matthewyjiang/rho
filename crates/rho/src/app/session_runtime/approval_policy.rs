@@ -141,7 +141,7 @@ pub(crate) fn ensure_auto_classifier_model(
         .is_none()
     {
         anyhow::bail!(
-            "permission mode auto requires a configured permission-classifier model (set via /config or config.toml [internal_agents.permission-classifier])"
+            "permission mode auto requires a configured permission-classifier model (set it with /agents, /config in a daemon TUI, or config.toml [internal_agents.permission-classifier])"
         );
     }
     crate::permission_classifier::check_screen_config(config, credentials)

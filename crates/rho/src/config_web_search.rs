@@ -7,7 +7,6 @@
 
 use std::{fmt, str::FromStr};
 
-use rho_providers::credentials::WebSearchCredential;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -112,24 +111,6 @@ impl SearchBackend {
             Self::Exa => EXA_API_DEFAULT_BASE,
             Self::Brave => BRAVE_API_DEFAULT_BASE,
             Self::Firecrawl => FIRECRAWL_API_DEFAULT_BASE,
-        }
-    }
-
-    pub(crate) const fn credential(self) -> WebSearchCredential {
-        match self {
-            Self::OpenAi => WebSearchCredential::OpenAi,
-            Self::Exa => WebSearchCredential::Exa,
-            Self::Brave => WebSearchCredential::Brave,
-            Self::Firecrawl => WebSearchCredential::Firecrawl,
-        }
-    }
-
-    pub(crate) const fn from_credential(credential: WebSearchCredential) -> Self {
-        match credential {
-            WebSearchCredential::OpenAi => Self::OpenAi,
-            WebSearchCredential::Exa => Self::Exa,
-            WebSearchCredential::Brave => Self::Brave,
-            WebSearchCredential::Firecrawl => Self::Firecrawl,
         }
     }
 }
@@ -275,24 +256,6 @@ pub struct WebSearchSettings {
 }
 
 impl WebSearchSettings {
-    pub(crate) fn endpoint(&self, backend: SearchBackend) -> Option<&str> {
-        match backend {
-            SearchBackend::OpenAi => self.openai.api_base_url.as_deref(),
-            SearchBackend::Exa => self.exa.api_base_url.as_deref(),
-            SearchBackend::Brave => self.brave.api_base_url.as_deref(),
-            SearchBackend::Firecrawl => self.firecrawl.api_base_url.as_deref(),
-        }
-    }
-
-    pub(crate) fn set_endpoint(&mut self, backend: SearchBackend, url: Option<String>) {
-        match backend {
-            SearchBackend::OpenAi => self.openai.api_base_url = url,
-            SearchBackend::Exa => self.exa.api_base_url = url,
-            SearchBackend::Brave => self.brave.api_base_url = url,
-            SearchBackend::Firecrawl => self.firecrawl.api_base_url = url,
-        }
-    }
-
     /// Canonical destination for the selected connection of `backend`.
     pub(crate) fn destination(&self, backend: SearchBackend) -> SearchDestination<'_> {
         match backend {
@@ -348,19 +311,6 @@ pub(crate) enum SearchDestination<'a> {
 }
 
 impl<'a> SearchDestination<'a> {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Fixed { label, .. } | Self::Resolved { label, .. } => label,
-        }
-    }
-
-    pub(crate) fn configured(self) -> Option<&'a str> {
-        match self {
-            Self::Fixed { .. } => None,
-            Self::Resolved { configured, .. } => configured,
-        }
-    }
-
     pub(crate) fn resolve_path(self, path: &str) -> anyhow::Result<Url> {
         match self {
             Self::Fixed { url, .. } => Url::parse(url).map_err(anyhow::Error::from),

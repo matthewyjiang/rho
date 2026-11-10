@@ -3,7 +3,7 @@
 Parent: [Interactive TUI](/interactive-tui).
 
 Rho can match the host terminal or use a named color theme. Open the picker with
-`/theme`, or from `/config` → **Appearance** → **Theme**.
+`/theme`, or from the **Theme** row of `/config`.
 
 ## Default: terminal
 

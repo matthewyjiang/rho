@@ -358,12 +358,6 @@ impl RuntimeDiagnostics {
         }
     }
 
-    pub(crate) fn update_web_search(&self, settings: &crate::config::WebSearchSettings) {
-        let mut state = self.write();
-        state.config.web_search_mode = settings.mode.as_str().into();
-        state.config.web_search_backend = settings.backend.as_str().into();
-    }
-
     pub fn update_compaction_config(&self, config: &CompactionConfig) {
         let mut state = self.write();
         state.config.auto_compact = config.auto_compact;
@@ -387,12 +381,6 @@ impl RuntimeDiagnostics {
     /// pool rather than the process startup snapshot.
     pub fn update_agent_concurrency(&self, agent_concurrency: usize) {
         self.write().config.agent_concurrency = agent_concurrency;
-    }
-
-    /// Edit tool selection can change mid-session, so the mirror follows the
-    /// live value rather than the process startup snapshot.
-    pub fn update_edit_tool(&self, edit_tool: &str) {
-        self.write().config.edit_tool = edit_tool.into();
     }
 
     pub fn update_prompt_sources(&self, sources: Vec<crate::prompt::PromptSource>) {
