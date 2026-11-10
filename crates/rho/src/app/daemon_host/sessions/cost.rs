@@ -21,9 +21,9 @@ use crate::{
 /// each model step and at the run's end, plus, between those, the response
 /// under way.
 pub(super) struct TurnCost {
-    /// The model the turn runs on, whose catalog price values usage the
-    /// provider put no cost on.
-    model: CurrentModel,
+    /// The catalog price of the model the turn runs on, which values
+    /// usage the provider put no cost on.
+    pricing: RoutePricing,
     /// The session's cost as the ledger last had it.
     ledger: Option<u64>,
     /// The run's usage when the ledger was last read: every request it
@@ -31,17 +31,29 @@ pub(super) struct TurnCost {
     recorded: ModelUsage,
     /// The run's usage as the provider last counted it.
     run: ModelUsage,
-    /// The most the response under way has been reported to cost since the
-    /// ledger was last read. A response the provider discards leaves the
+    /// The most the session has been reported to cost since the ledger was
+    /// last read. A response the provider discards leaves the
     /// run's usage, though the ledger will count it, so the cost holds
     /// here rather than fall until the next read.
     shown: Option<u64>,
 }
 
 impl TurnCost {
-    pub(super) fn new(model: CurrentModel) -> Self {
+    /// A turn on `model`. Looks its catalog price up once: a stale row is
+    /// fine for an estimate the ledger settles.
+    pub(super) fn on(model: &CurrentModel) -> Self {
+        Self::priced_by(catalog_route_pricing(&model.provider, &model.model))
+    }
+
+    /// A turn on a model the catalog has no price for.
+    #[cfg(test)]
+    pub(super) fn unpriced() -> Self {
+        Self::priced_by(RoutePricing::Unknown)
+    }
+
+    fn priced_by(pricing: RoutePricing) -> Self {
         Self {
-            model,
+            pricing,
             ledger: None,
             recorded: ModelUsage::default(),
             run: ModelUsage::default(),
@@ -74,11 +86,9 @@ impl TurnCost {
     fn streaming(&mut self, run: &ModelUsage) -> Option<u64> {
         self.run = run.clone();
         let unrecorded = usage_difference(run, Some(&self.recorded));
-        let unrecorded = unrecorded.cost_usd_micros.or_else(|| {
-            match catalog_route_pricing(&self.model.provider, &self.model.model) {
-                RoutePricing::Catalog(metadata) => catalog_cost_usd_micros(&unrecorded, &metadata),
-                RoutePricing::Local | RoutePricing::Unknown => None,
-            }
+        let unrecorded = unrecorded.cost_usd_micros.or_else(|| match &self.pricing {
+            RoutePricing::Catalog(metadata) => catalog_cost_usd_micros(&unrecorded, metadata),
+            RoutePricing::Local | RoutePricing::Unknown => None,
         });
         let cost = match (self.ledger, unrecorded) {
             (None, None) => None,

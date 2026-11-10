@@ -1,8 +1,7 @@
 use rho_providers::model::{ContextUsage, ModelMetadata, ModelUsage};
 use rho_sdk::model::context::estimate_text_tokens;
 
-use crate::usage::pricing::catalog_cost_usd_micros;
-pub(super) use crate::usage::pricing::usage_difference;
+use crate::usage::pricing::{catalog_cost_usd_micros, usage_difference};
 
 /// Attempt-aware provider usage snapshots for a single run.
 ///
