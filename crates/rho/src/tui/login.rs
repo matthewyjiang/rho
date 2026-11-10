@@ -213,8 +213,7 @@ impl App {
     }
 
     fn load_settings_for_login(&self) -> anyhow::Result<crate::config::Config> {
-        let path = self.info.services.config_repository.configured_path()?;
-        crate::config::Config::load_settings_only(path)
+        self.info.services.config_repository.load()
     }
 
     pub(super) async fn submit_credential_store_choice(
@@ -378,7 +377,7 @@ impl App {
 
     fn report_login_not_required(&mut self, provider: &str) {
         self.set_status(format!(
-            "{provider} does not require login. Refresh its model list in /config, then choose a model with /model."
+            "{provider} does not require login. Refresh its model list with /refresh-models, then choose a model with /model."
         ));
     }
 
@@ -659,7 +658,7 @@ impl App {
     ) -> anyhow::Result<bool> {
         let Some(model) = catalog::default_model_for_provider(&target.provider) else {
             self.set_status(format!(
-                "stored credentials for {}, but no cached models are available. Open /config and choose Refresh model lists before switching to it.",
+                "stored credentials for {}, but no cached models are available. Run /refresh-models before switching to it.",
                 target.provider
             ));
             return Ok(false);

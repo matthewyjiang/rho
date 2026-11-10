@@ -301,15 +301,6 @@ impl AgentExecutor {
         config.auth = auth.to_string();
     }
 
-    /// Future delegated runs inherit the parent's applied search settings.
-    /// Already-bound runs keep their owned configuration and tool snapshots.
-    pub(crate) fn update_web_search(&self, settings: &crate::config::WebSearchSettings) {
-        self.config
-            .write()
-            .expect("delegated config lock")
-            .web_search = settings.clone();
-    }
-
     /// Updates the added directories future launches inherit. Already-spawned
     /// agents keep the scope they started with.
     pub(crate) fn update_added_dirs(&self, added_dirs: crate::added_dirs::AddedDirs) {

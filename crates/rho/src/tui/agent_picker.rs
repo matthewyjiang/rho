@@ -21,37 +21,12 @@ use super::{
 pub(super) enum InternalAgentModelPickerOrigin {
     /// Opened from the agents picker; reopen it after a selection.
     AgentsPicker,
-    /// Opened by `/advisor on`; a selection also turns advisor mode on.
-    AdvisorCommand,
-    /// Opened by `/advisor model`; a selection keeps the mode as it is and
-    /// follows up with a reasoning picker when the model supports one.
-    AdvisorModelCommand,
-    /// Opened from the config picker's advisor mode row when enabling without a
-    /// model; a selection also turns advisor mode on and returns to config.
-    AdvisorConfigRow,
-    /// Opened from the config picker's advisor model row; returns to config
-    /// without forcing advisor mode on.
-    AdvisorModelConfigRow,
-    /// Opened from the config picker's permission mode row when enabling Auto
-    /// without a classifier model; selection also applies Auto and returns to
-    /// config.
-    PermissionModeConfigRow,
     /// Opened by `/permissions auto`; selection applies Auto and returns to input.
     PermissionModeCommand,
-    /// Opened from the config picker's classifier model row; returns to config
-    /// without forcing Auto on.
-    PermissionClassifierModelConfigRow,
     /// Opened at interactive startup when permission mode is already Auto with
     /// no classifier model. Selection keeps Auto; cancel falls back to
     /// Supervised. Opens alone in the composer (no parent picker).
     PermissionModeStartup,
-    /// The permission screen's picker, opened from its config row; returns to
-    /// config.
-    PermissionScreenModelConfigRow,
-    /// The permission screen's picker, opened by Auto setup from the config
-    /// picker's permission mode row once a classifier model is picked. Esc
-    /// keeps the classifier model; either way returns to config.
-    PermissionScreenSetupConfigRow,
     /// The permission screen's picker, opened by `/permissions auto` once a
     /// classifier model is picked. Opens alone in the composer.
     PermissionScreenSetupCommand,
@@ -60,14 +35,12 @@ pub(super) enum InternalAgentModelPickerOrigin {
 impl InternalAgentModelPickerOrigin {
     /// True when the picker replaces the composer alone (no parent to return to).
     pub(super) fn opens_standalone(self) -> bool {
-        matches!(
-            self,
-            Self::AdvisorCommand
-                | Self::AdvisorModelCommand
-                | Self::PermissionModeStartup
-                | Self::PermissionModeCommand
-                | Self::PermissionScreenSetupCommand
-        )
+        match self {
+            Self::AgentsPicker => false,
+            Self::PermissionModeStartup
+            | Self::PermissionModeCommand
+            | Self::PermissionScreenSetupCommand => true,
+        }
     }
 }
 

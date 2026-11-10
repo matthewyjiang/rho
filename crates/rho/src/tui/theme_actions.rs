@@ -1,4 +1,4 @@
-use super::{theme::Theme, theme_picker, App, ComposerMode, Entry, UiPicker};
+use super::{theme::Theme, theme_picker, App, ComposerMode, UiPicker};
 
 impl App {
     pub(super) fn open_theme_picker(&mut self) -> anyhow::Result<()> {
@@ -17,8 +17,7 @@ impl App {
         &mut self,
         attach: impl FnOnce(&mut Self, UiPicker),
     ) -> anyhow::Result<()> {
-        let config = self.info.services.config_repository.load()?;
-        let picker = theme_picker::theme_picker(&config.theme);
+        let picker = theme_picker::theme_picker(&self.info.services.settings.theme);
         if let Some(item) = picker.selected_item() {
             Theme::preview(&item.value);
         }
@@ -50,25 +49,14 @@ impl App {
         Theme::clear_picker_catalog();
     }
 
+    /// Applies the picked theme for this run. `theme` in `~/.rho/tui.toml`
+    /// stays as the user wrote it.
     pub(super) fn submit_theme_selection(&mut self, value: &str) -> anyhow::Result<()> {
-        let save = self.info.services.config_repository.update(|config| {
-            config.theme = value.to_string();
-            config.theme.clone()
-        });
-        match save {
-            Ok(theme) => {
-                Theme::apply_committed(&theme);
-                Theme::clear_picker_catalog();
-                let label = theme_picker::label_for_theme_id(&theme);
-                self.set_status(format!("theme: {label}"));
-            }
-            Err(error) => {
-                Theme::cancel_preview();
-                Theme::clear_picker_catalog();
-                self.insert_entry(&Entry::Error(format!("could not save theme: {error}")));
-                self.set_status("config save failed");
-            }
-        }
+        self.info.services.settings.theme = value.to_string();
+        Theme::apply_committed(value);
+        Theme::clear_picker_catalog();
+        let label = theme_picker::label_for_theme_id(value);
+        self.set_status(format!("theme: {label}"));
         Ok(())
     }
 }

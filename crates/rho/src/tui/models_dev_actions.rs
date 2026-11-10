@@ -31,8 +31,8 @@ impl App {
         Ok(written)
     }
 
-    /// `/refresh-models` shortcut for `/config` → Providers → Refresh model
-    /// lists (all) + Refresh models.dev catalog.
+    /// `/refresh-models`: refreshes every configured provider's model list,
+    /// then the models.dev catalog.
     ///
     /// Runs both refreshes in sequence so one command keeps cached provider
     /// models and models.dev metadata in sync.

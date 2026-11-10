@@ -16,13 +16,13 @@ fn server(window: Option<u32>) -> (IsolatedHome, AcpServer) {
     std::fs::create_dir_all(&rho_home).unwrap();
     std::fs::write(
         &home.config_path,
-        r#"provider = "xai"
+        r#"[model]
+provider = "xai"
 model = "grok-fixture"
 auth = "xai-oauth"
 
 [web_search]
-hosted = false
-provider = "disabled"
+mode = "off"
 "#,
     )
     .unwrap();

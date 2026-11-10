@@ -15,17 +15,6 @@ favorite_models = []
 # deep = "anthropic/claude-opus-4-8"
 # fast = "gpt-5.6-luna"
 
-[display]
-show_reasoning_output = true
-zen_mode = false
-output_streaming = "live" # live, paragraph, off; /config → Appearance → Output streaming
-theme = "terminal" # terminal, a built-in id from /theme, or a custom ~/.rho/themes/<id>.json stem
-max_tool_output_lines = 10
-prompt_history_limit = 1000
-cache_miss_notices = false
-show_header_hints = true # keyboard hints under the session header; sign-in hints stay while signed out
-notifications = true # OSC 9 or bell when a turn finishes or needs you while unfocused; off under Herdr
-
 [output]
 max_output_bytes = 64000
 
@@ -80,7 +69,7 @@ connection = "api" # api or mcp; missing API credentials do not switch transport
 
 [web_search.firecrawl]
 # api_base_url = "http://localhost:3002" # omit for Firecrawl Cloud
-# Configure keys through /config or environment, not this file.
+# Set keys in the environment (FIRECRAWL_API_KEY, EXA_API_KEY, BRAVE_SEARCH_API_KEY), not this file.
 
 # MCP stays inert while this table has no enabled server entries.
 # See /integrations/mcp for stdio and Streamable HTTP examples.
@@ -107,7 +96,6 @@ mode = "on" # "on": natives and codemode declared; "only": tools hidden unless t
 
 [behavior]
 advisor_mode = false
-check_for_updates = true
 enable_subagents = true
 agent_concurrency = 10
 workspace_rewind = true # native file-tool checkpoints; restart after changing; false opts out
@@ -120,9 +108,31 @@ inline_shell = "bash" # bash default on macOS/Linux; powershell on Windows
 [prompt_templates]
 review = "Review this code for correctness, security, and maintainability."
 "explain-tests" = "Explain how these tests cover the expected behavior."
+```
+
+That is `~/.rho/config.toml`. Every setting sits in a table grouped by purpose; a key at the top level, or one from an older layout, is a load error.
+
+The interactive TUI keeps its own settings at the top level of `~/.rho/clients/tui.toml`:
+
+```toml
+show_reasoning_output = true
+zen_mode = false
+output_streaming = "live" # live, paragraph, off; /config → Display → Output streaming
+max_tool_output_lines = 10
+prompt_history_limit = 1000 # 0 disables saving; at most 10000
+cache_miss_notices = false
+show_header_hints = true # keyboard hints under the session header; sign-in hints stay while signed out
+notifications = true # OSC 9 or bell when a turn finishes or needs you while unfocused; off under Herdr
+editing_mode = "default" # or "vim" for vim-style normal/insert editing in the composer
+check_for_updates = true
+```
+
+The theme and keybinding chords live in `~/.rho/tui.toml`:
+
+```toml
+theme = "terminal" # terminal, a built-in id from /theme, or a custom ~/.rho/themes/<id>.json stem
 
 [keybindings]
-# editing_mode = "vim" # vim-style normal/insert editing in the composer; default "default"; /config → Appearance → Vim mode
 search_prompt_history = "ctrl+r"
 search_transcript = "ctrl+f"
 # reset_conversation = "ctrl+shift+n" # same as /new; unbound by default
@@ -142,11 +152,9 @@ undo = "ctrl+z"
 redo = "ctrl+shift+z" # needs a terminal that reports ctrl+shift
 ```
 
-Settings are grouped by purpose so the file is easier to scan and edit by hand. Rho still reads the previous flat format and rewrites it into groups the next time it saves config.
+Keybindings use `+`-separated modifiers and keys. Supported modifiers are `ctrl`, `alt`, and `shift`; supported named keys include `enter`, `esc`, `tab`, arrow keys, `home`, `end`, `pageup`, `pagedown`, `backspace`, and `delete`. Single-character keys can be used directly. `queue_prompt` queues a follow-up during a model turn (default `alt+enter`); `ctrl+enter` is always accepted as a fallback because some terminals bind `alt+enter` to fullscreen. `undo` and `redo` act on the composer and the side chat prompt. `editing_mode = "vim"` in `clients/tui.toml` turns on [vim mode](/interactive-tui#vim-mode) for the main composer. Keybinding changes take effect when Rho starts.
 
-Keybindings use `+`-separated modifiers and keys. Supported modifiers are `ctrl`, `alt`, and `shift`; supported named keys include `enter`, `esc`, `tab`, arrow keys, `home`, `end`, `pageup`, `pagedown`, `backspace`, and `delete`. Single-character keys can be used directly. `queue_prompt` queues a follow-up during a model turn (default `alt+enter`); `ctrl+enter` is always accepted as a fallback because some terminals bind `alt+enter` to fullscreen. `undo` and `redo` act on the composer and the side chat prompt. `editing_mode = "vim"` turns on [vim mode](/interactive-tui#vim-mode) for the main composer. Keybinding changes take effect when Rho starts.
-
-The full saved file can also include model overrides for reserved internal agents. Each entry under `[internal_agents]` selects the provider, model, and auth used by that role. An internal agent with no entry follows the active conversation selection. `[providers.ollama].base_url` and `[providers.custom.<name>].base_url` set OpenAI-compatible endpoints used for those hosts' chat, model refresh, and health checks. First-run setup does not write `[providers.ollama]`; `/login ollama` stores the API base and an optional key. `[providers.custom.<name>].catalog` optionally borrows a models.dev provider for context, price, and reasoning. Rho still reads the old `[title]` and flat `title_provider`, `title_model`, and `title_auth` settings, then migrates them to `[internal_agents.session-title]` when it next saves config. Web search API keys are normally stored in the configured credential store rather than config.
+The full saved file can also include model overrides for reserved internal agents. Each entry under `[internal_agents]` selects the provider, model, and auth used by that role. An internal agent with no entry follows the active conversation selection. `[providers.ollama].base_url` and `[providers.custom.<name>].base_url` set OpenAI-compatible endpoints used for those hosts' chat, model refresh, and health checks. First-run setup does not write `[providers.ollama]`; `/login ollama` stores the API base and an optional key. `[providers.custom.<name>].catalog` optionally borrows a models.dev provider for context, price, and reasoning. Web search API keys are normally stored in the configured credential store rather than config.
 
 Ollama's provider-specific API base uses its own section and does not affect other providers. It appears after `/login ollama` or a hand edit:
 

@@ -6,7 +6,6 @@ use super::{
     approval::ApprovalComposer,
     chat_media::ChatMedia,
     commands::{self, CommandSpec},
-    config_editor::ConfigNumberInput,
     doctor_overlay,
     feed_image::FeedImage,
     inline_choice::InlineChoiceModal,
@@ -99,6 +98,9 @@ pub(super) struct InteractiveModelSelection {
 #[derive(Default)]
 pub(super) struct StreamUi {
     pub(in crate::tui) mode: super::streaming_mode::StreamingMode,
+    /// The cycle shortcut chose `mode`, which is not saved: reading the
+    /// saved settings again keeps it until a saved change replaces it.
+    pub(in crate::tui) mode_from_shortcut: bool,
     pub(in crate::tui) paragraph_boundary: super::streaming_mode::ParagraphBoundary,
     pub(in crate::tui) assistant_stream: AppendOnlyStream,
     pub(in crate::tui) assistant_stream_code_fence: CodeFenceState,
@@ -223,7 +225,6 @@ pub(super) enum ComposerMode {
     Input,
     Picker(UiPicker),
     SecretInput(SecretInput),
-    ConfigNumberInput(ConfigNumberInput),
     TextInput(super::text_input::TextInput),
     InteractivePending(PendingLoginComposer),
     InlineChoice(InlineChoiceModal),
@@ -260,7 +261,6 @@ impl ComposerMode {
             Self::Input => false,
             Self::Picker(_)
             | Self::SecretInput(_)
-            | Self::ConfigNumberInput(_)
             | Self::TextInput(_)
             | Self::InteractivePending(_)
             | Self::InlineChoice(_)
@@ -285,7 +285,6 @@ impl ComposerMode {
         match self {
             Self::Input | Self::Picker(_) => true,
             Self::SecretInput(_)
-            | Self::ConfigNumberInput(_)
             | Self::TextInput(_)
             | Self::InteractivePending(_)
             | Self::InlineChoice(_)

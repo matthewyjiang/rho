@@ -4,11 +4,16 @@
 
 use anyhow::{ensure, Result};
 
-use super::{daemon_resume::write_daemon_config, DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
+use super::{
+    daemon_config::{close_config, open_category},
+    daemon_resume::write_daemon_config,
+    DEFAULT_SIZE, SETTLE, STARTUP, STREAM,
+};
 use crate::{
     artifacts::ArtifactWriter,
     env::{IsolatedHome, RhoLaunchPlan},
     harness::PtyHarness,
+    keys::Key,
     scenario::{Scenario, ScenarioOutcome, ScenarioRunner},
 };
 
@@ -25,7 +30,9 @@ const IDLE_COMPOSER: &str = "Type a message";
 
 // Covers: when the daemon restarts in place, the TUI attached to it
 // reconnects without an error, keeps the conversation, and its next prompt
-// runs in the restarted daemon; a TUI whose session had saved nothing yet,
+// runs in the restarted daemon, and `/config` still saves and applies a
+// TUI setting, which the restarted daemon knows only once the TUI
+// registers and reads its settings again; a TUI whose session had saved nothing yet,
 // which the restarted daemon cannot reopen, goes on in a new session that
 // keeps the settings the person changed.
 // Owner: interactive TUI as a daemon client
@@ -82,6 +89,17 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
             !screen.contains("could not"),
             "the TUI showed an error across the restart:\n{screen}"
         );
+
+        harness.set_phase("settings_after_restart");
+        open_category(&mut harness, "display", "Zen mode")?;
+        harness.type_into_field("editing")?;
+        harness.inject_key(&Key::Enter)?;
+        harness.wait_for_text("Editing mode · Type to search", SETTLE)?;
+        harness.type_into_field("vim")?;
+        harness.inject_key(&Key::Enter)?;
+        close_config(&mut harness)?;
+        // Only the restarted daemon's change notification applies it.
+        harness.wait_for_text("INSERT", SETTLE)?;
         let code = harness.quit_with_exit_command()?;
         ensure!(code == 0, "the TUI exited with code {code}");
 

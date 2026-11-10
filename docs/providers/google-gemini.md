@@ -29,7 +29,7 @@ Run `/logout google` to remove the Google API key from the configured credential
 
 ## Models
 
-Open `/config` and choose **Refresh model lists**. Rho reads Google's Models API, keeps text chat models that support `generateContent`, and caches their input and output token limits. Then select a model, for example:
+Run `/refresh-models`. Rho reads Google's Models API, keeps text chat models that support `generateContent`, and caches their input and output token limits. Then select a model, for example:
 
 ```text
 /model google/gemini-3.1-flash-lite

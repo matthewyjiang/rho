@@ -233,10 +233,11 @@ timeout_secs = 30
 "#,
     )
     .unwrap();
-    let store = rho_providers::credentials::MemoryCredentialStore::default();
-    let config = crate::config::Config::load_with_store(path.clone(), &store).unwrap();
-    config.save_with_store(path.clone(), &store).unwrap();
-    let reloaded = crate::config::Config::load_with_store(path, &store).unwrap();
+    let config = crate::config::Config::load(Some(path)).unwrap();
+    // A fresh file, so the save encodes the table instead of keeping it.
+    let saved = dir.path().join("saved.toml");
+    config.save(Some(saved.clone())).unwrap();
+    let reloaded = crate::config::Config::load(Some(saved)).unwrap();
 
     let expected = OpenApiSourceConfig {
         spec: "https://example.com/github.json".into(),
