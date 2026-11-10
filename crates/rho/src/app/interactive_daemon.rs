@@ -116,16 +116,20 @@ pub(super) async fn open(
         },
     };
 
+    // The picker opens over a new session, which the daemon discards
+    // unused, and switches to its choice, which runs as it was saved: a
+    // flag for the session has nothing to apply to yet.
+    if matches!(startup, StartupSession::Picker) && !changes.is_empty() {
+        anyhow::bail!(
+            "--provider, --model, --reasoning, and --permission-mode need a session id with --resume"
+        );
+    }
+    // A reopened session runs as the agent it was saved as.
+    if !matches!(startup, StartupSession::Fresh) && agent.is_some() {
+        anyhow::bail!("--agent with --resume or --continue is not supported with RHO_TUI_DAEMON=1");
+    }
     let target = match startup {
-        // The picker opens over a new session and switches to its choice;
-        // the daemon discards the new one unused.
         StartupSession::Fresh | StartupSession::Picker => tui::DaemonTarget::New,
-        StartupSession::ById(_) | StartupSession::Latest(_) if agent.is_some() => {
-            // A reopened session runs as the agent it was saved as.
-            anyhow::bail!(
-                "--agent with --resume or --continue is not supported with RHO_TUI_DAEMON=1"
-            )
-        }
         // Resolve as in process, but never take the writer lease from
         // the daemon that may still be running this session's turn.
         StartupSession::ById(prefix) => {

@@ -1,10 +1,11 @@
 //! The daemon session the TUI follows instead of running one in process
 //! (#1667, behind `RHO_TUI_DAEMON=1`; see `app/interactive.rs`).
 //!
-//! [`DaemonSession::open`] opens or resumes the session on this process's
-//! daemon connection (`app::daemon_client`, which starts the daemon when
-//! none runs) and attaches to it before the TUI takes the terminal, so a
-//! refusal reads as an ordinary startup error. The app loop then waits on
+//! [`DaemonSession::open`] opens or resumes the session on a daemon
+//! connection of its own (`app::daemon_client`, which starts the daemon
+//! when none runs) and attaches to it: at launch before the TUI takes the
+//! terminal, so a refusal reads as an ordinary startup error, and again
+//! for each session the TUI switches to (`daemon_switch`). The app loop then waits on
 //! [`next_views`], which maps what the daemon sent since through
 //! [`DaemonEvents`]: the reset replay of the saved conversation first, then
 //! live events. Once the replay is over, the job state the attach answered
@@ -21,7 +22,8 @@
 //! for the restarted daemon, and resets; one that had saved nothing, which
 //! the restarted daemon cannot reopen, is replaced by a new session. A
 //! failed reattach ends following. The exit receipt offers to resume a session
-//! once it is saved: resumed, titled, or past its first prompt.
+//! once it is saved: resumed, titled, past its first prompt, or given
+//! context (`/remember`, a `!` command's output).
 //!
 //! Off unix there is no daemon (#1665): the type is uninhabited, so the
 //! TUI's daemon paths compile everywhere and never run there.
@@ -54,7 +56,8 @@ pub(crate) enum DaemonTarget {
 pub(crate) enum InitialSettings {
     /// As the daemon opened it.
     Kept,
-    /// Changes the launch asked for; one the daemon refuses fails the open.
+    /// Changes the launch asked for; one the daemon refuses fails the open,
+    /// unless the session has a turn under way, which they wait for.
     Required(Vec<rho_protocol::SessionChange>),
     /// The settings of the session it replaces; one the daemon refuses
     /// keeps its default.
@@ -93,9 +96,10 @@ mod unix {
             SessionSteer, SessionUnsteer,
         },
         ClientEnvironment, ContentBlock, DetachReason, ErrorCode, InputAnswer, InputRequestId,
-        SessionAnswerParams, SessionAttachParams, SessionAttachResponse, SessionCancelParams,
-        SessionChange, SessionConfigureParams, SessionHoldParams, SessionId, SessionNewParams,
-        SessionOptions, SessionSteerParams, SessionUnsteerParams, SteerId, UnsteerOutcome,
+        JobState, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
+        SessionCancelParams, SessionChange, SessionConfigureParams, SessionHoldParams, SessionId,
+        SessionNewParams, SessionOptions, SessionSteerParams, SessionUnsteerParams, SteerId,
+        UnsteerOutcome,
     };
     use rho_sdk::SteeringId;
     use tokio::sync::{mpsc, oneshot, watch};
@@ -277,10 +281,12 @@ mod unix {
     }
 
     /// Carries `changes` to `session`; one the daemon refuses keeps its
-    /// default, as do those after it.
+    /// default.
     async fn carry(link: &Link, session: &SessionId, changes: Vec<SessionChange>) {
-        if let Err((_, error)) = configure_all(link, session, changes).await {
-            tracing::warn!(%error, "could not carry a setting to the new daemon session");
+        for change in changes {
+            if let Err((_, error)) = configure_all(link, session, vec![change]).await {
+                tracing::warn!(%error, "could not carry a setting to the new daemon session");
+            }
         }
     }
 
@@ -365,8 +371,20 @@ mod unix {
             let link = daemon.current().await.context(LOST)?;
             // After the attach, which loads a saved session. The daemon
             // also sends each change's options on the session's stream.
+            let at_rest = !matches!(
+                response.state,
+                JobState::Queued | JobState::Running | JobState::WaitingForInput
+            );
+            // A change waits for the turn under way, which may wait for
+            // this client: those go through the request queue once the
+            // session is followed, and a refusal shows as a row.
+            let mut queued = Vec::new();
             let changed = match settings {
                 InitialSettings::Kept => None,
+                InitialSettings::Required(changes) if !at_rest => {
+                    queued = changes;
+                    None
+                }
                 InitialSettings::Required(changes) => {
                     match configure_all(&link, &id, changes).await {
                         Ok(options) => options,
@@ -390,7 +408,7 @@ mod unix {
             });
             let mut events = DaemonEvents::default();
             let pending = begin_replay(&mut events, &response);
-            Ok(Self {
+            let session = Self {
                 position: StreamPosition::attached(&response),
                 daemon,
                 id,
@@ -406,7 +424,11 @@ mod unix {
                 ended: false,
                 requests: Some(DaemonRequests::new(requests)),
                 reattach: None,
-            })
+            };
+            for change in queued {
+                session.configure(change)?;
+            }
+            Ok(session)
         }
 
         /// Opens `target` on a connection of its own, to follow in this
@@ -429,7 +451,16 @@ mod unix {
         /// The session's id, once a resume, saved title, or catalog lookup
         /// confirmed it has something to resume.
         pub(crate) fn saved_id(&self) -> Option<&str> {
-            self.saved.then_some(self.id.as_str())
+            self.is_saved().then_some(self.id.as_str())
+        }
+
+        /// Whether the daemon has a file for the session.
+        fn is_saved(&self) -> bool {
+            self.saved
+                || self
+                    .requests
+                    .as_ref()
+                    .is_some_and(DaemonRequests::saved_rows)
         }
 
         /// The directory the session works in, as the daemon reports it.
@@ -582,7 +613,7 @@ mod unix {
                             opened: self
                                 .opened
                                 .clone()
-                                .filter(|_| !self.saved)
+                                .filter(|_| !self.is_saved())
                                 .map(|opened| (opened, self.options.clone())),
                         };
                         self.reattach = Some(Box::pin(async move {

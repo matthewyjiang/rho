@@ -10,11 +10,21 @@
 //! idempotency key, so one a stopping daemon refused goes again on the
 //! restarted daemon without running twice (#1777). Cancel and answers
 //! deliberately bypass this queue, since they may unblock that change. MCP
-//! inventory reads and goal actions use an independent control worker to stay
-//! usable during the turn: a goal runs as one long turn, which a queued
-//! change would otherwise hold `/goal clear` behind.
+//! inventory reads, renames, and goal actions use an independent control
+//! worker to stay usable during the turn: a goal runs as one long turn, which
+//! a queued change would otherwise hold `/goal clear` behind.
+//!
+//! A change still queued here when the TUI quits is not sent: context from a
+//! `!` command that finished behind a change waiting for the turn is lost
+//! with the queue.
 
-use std::{future::Future, sync::Arc};
+use std::{
+    future::Future,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use rho_protocol::{
     methods::{JobList, SessionConfigure, SessionMcp, SessionPrompt, SessionRename},
@@ -114,6 +124,9 @@ pub(super) struct DaemonRequests {
     task: tokio::task::JoinHandle<()>,
     control: mpsc::UnboundedSender<Control>,
     control_task: tokio::task::JoinHandle<()>,
+    /// Set once a change saved rows, which saves a session that had
+    /// nothing saved yet.
+    saved_rows: Arc<AtomicBool>,
 }
 
 impl DaemonRequests {
@@ -207,11 +220,14 @@ impl DaemonRequests {
                 }
             }
         });
+        let saved_rows = Arc::new(AtomicBool::new(false));
+        let saved = Arc::clone(&saved_rows);
         let task = tokio::spawn(async move {
             while let Some(request) = requests.recv().await {
                 match request {
                     Request::Configure(change) => {
                         let setting = setting_name(&change);
+                        let saves_rows = matches!(change, SessionChange::Context { .. });
                         let answer = on_attachment(&mut target, |link, session| {
                             let change = change.clone();
                             async move {
@@ -230,6 +246,9 @@ impl DaemonRequests {
                             }
                             None => Some(LOST.to_owned()),
                         };
+                        if error.is_none() && saves_rows {
+                            saved.store(true, Ordering::Relaxed);
+                        }
                         let _ = views.send(DaemonView::ConfigureFinished);
                         if let Some(error) = error {
                             let _ = views.send(DaemonView::Error(format!(
@@ -275,7 +294,13 @@ impl DaemonRequests {
             task,
             control,
             control_task,
+            saved_rows,
         }
+    }
+
+    /// Whether a change sent from here saved rows to the session.
+    pub(super) fn saved_rows(&self) -> bool {
+        self.saved_rows.load(Ordering::Relaxed)
     }
 
     pub(super) fn request_mcp(&self) -> anyhow::Result<()> {

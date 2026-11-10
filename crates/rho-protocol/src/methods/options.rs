@@ -109,8 +109,7 @@ pub struct ModelOptions {
     pub current: ModelRef,
     /// The auth profile `current` runs on, which names how its use is
     /// billed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth: Option<String>,
+    pub auth: String,
     /// The user's favorites first, then the rest; always includes `current`.
     pub available: Vec<ModelChoice>,
 }

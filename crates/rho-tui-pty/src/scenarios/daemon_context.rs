@@ -54,7 +54,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         harness.submit_text("/title Night shift")?;
         harness.wait_for_text("session titled: Night shift", SETTLE)?;
         harness.submit_text("!echo shell-marker-7")?;
-        harness.wait_for_text("shell output pending context insertion", STREAM)?;
+        harness.wait_for_text("shell output included in context", STREAM)?;
         // Prompts queue behind the context changes, so this reply means the
         // daemon took both.
         harness.submit_text("hello second")?;

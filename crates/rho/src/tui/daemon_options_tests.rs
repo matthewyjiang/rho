@@ -17,7 +17,7 @@ fn resolve_only_unambiguous_advertised_models() {
         model: "shared".into(),
     };
     let options = ModelOptions {
-        auth: None,
+        auth: "api-key".into(),
         current: first.clone(),
         available: vec![
             ModelChoice {

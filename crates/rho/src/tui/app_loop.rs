@@ -758,13 +758,9 @@ impl App {
     }
 
     fn exit_receipt(&self) -> Option<ExitReceipt> {
-        let session_id = match &self.info.session.daemon {
-            Some(daemon) => daemon.saved_id(),
-            None => self.info.session.session_id.as_deref(),
-        };
-        session_id.map(|session_id| {
+        self.current_session_id().map(|session_id| {
             ExitReceipt::capture(
-                session_id.to_owned(),
+                session_id,
                 self.session_title(),
                 self.usage.cumulative_usage.as_ref(),
                 self.model_metadata.as_ref(),

@@ -345,10 +345,7 @@ impl App {
     }
 
     fn side_chat_parent_session_id(&self) -> SessionId {
-        self.info
-            .session
-            .session_id
-            .as_deref()
+        self.current_session_id()
             .and_then(|id| id.parse().ok())
             .unwrap_or_default()
     }

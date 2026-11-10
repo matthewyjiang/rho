@@ -25,7 +25,7 @@ fn replay(feed: &Feed, after: Option<Cursor>) -> (Replay, Vec<(u64, wire::Sessio
 fn options(mode: wire::PermissionMode) -> wire::SessionOptions {
     wire::SessionOptions {
         model: wire::ModelOptions {
-            auth: None,
+            auth: "api-key".into(),
             current: wire::ModelRef {
                 provider: "test".into(),
                 model: "model".into(),

@@ -86,9 +86,7 @@ impl App {
             .runtime
             .model
             .clone_from(&options.model.current.model);
-        if let Some(auth) = &options.model.auth {
-            self.info.runtime.auth.clone_from(auth);
-        }
+        self.info.runtime.auth.clone_from(&options.model.auth);
         let reasoning = options
             .reasoning
             .as_ref()

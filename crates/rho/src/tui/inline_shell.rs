@@ -654,7 +654,10 @@ impl super::App {
         )));
         self.refresh_git_after_command(Some(output.command.as_str()));
         self.set_status(if output.ok {
-            if task.mode.included_in_context() {
+            if task.mode.included_in_context() && self.info.session.daemon.is_some() {
+                // Sent already; the daemon adds it between turns.
+                "shell output included in context".to_string()
+            } else if task.mode.included_in_context() {
                 "shell output pending context insertion".to_string()
             } else {
                 "shell output excluded from context".to_string()

@@ -680,7 +680,7 @@ impl Service for AttachService {
             title: None,
             options: SessionOptions {
                 model: ModelOptions {
-                    auth: None,
+                    auth: "api-key".into(),
                     current: ModelRef {
                         provider: "test".into(),
                         model: "model".into(),

@@ -37,7 +37,8 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Skills
         | CommandId::Mcp
         // Read from this process's disk and config, which the daemon
-        // shares, or written through the session (`/title`, `/remember`).
+        // shares, written through the session (`/title`, `/remember`), or
+        // run beside it on a copy of its transcript (`/side`).
         | CommandId::Info
         | CommandId::Doctor
         | CommandId::Limits

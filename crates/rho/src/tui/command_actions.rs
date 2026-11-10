@@ -231,7 +231,6 @@ impl App {
         self.info.runtime.added_dirs = agent.added_dirs().clone();
         self.held_turns.clear();
         self.clear_tool_sources_loading_activity();
-        self.start_follow_ups = None;
         self.info.session.session_id = None;
         self.reset_session_view(terminal)?;
         self.set_status("new session");
