@@ -16,7 +16,9 @@ use std::{
 use rho_protocol::{methods::Status, ClientError, StatusParams};
 
 use crate::{
-    daemon::{self, ConnectError, DaemonPathError, DaemonPaths, SocketFound, VariableKind},
+    daemon::{
+        self, ConnectError, DaemonPathError, DaemonPaths, LockHolder, SocketFound, VariableKind,
+    },
     doctor::{
         daemon::{
             environment_check, process_check, service_check, socket_check, DaemonEnvironment,
@@ -39,8 +41,11 @@ pub(super) async fn checks(deadline: Duration) -> Vec<DoctorCheck> {
         Ok(paths) => {
             let (process, store) = ask(&paths, deadline).await;
             // A daemon that did not answer still wrote its record.
-            let pid = daemon_pid(&process)
-                .or_else(|| daemon::running_record(&paths).map(|record| record.pid));
+            let pid = daemon_pid(&process).or_else(|| {
+                daemon::lock_holder(&paths)
+                    .record()
+                    .map(|record| record.pid)
+            });
             let environment = match (&process, pid) {
                 (DaemonProcess::NotRunning, _) => DaemonEnvironment::NotRunning,
                 (_, Some(pid)) => match read_environment(pid) {
@@ -102,8 +107,9 @@ async fn ask(paths: &DaemonPaths, deadline: Duration) -> (DaemonProcess, DaemonS
             Ok(connection) => connection,
             Err(ConnectError::NotRunning) => return not_answering(paths),
             Err(ConnectError::Handshake(ClientError::VersionMismatch(mismatch))) => {
-                let recorded =
-                    daemon::running_record(paths).map(|record| (record.pid, record.version));
+                let recorded = daemon::lock_holder(paths)
+                    .record()
+                    .map(|record| (record.pid, record.version));
                 return (
                     DaemonProcess::Incompatible { mismatch, recorded },
                     DaemonStore::Unanswered(mismatch.to_string()),
@@ -134,8 +140,16 @@ async fn ask(paths: &DaemonPaths, deadline: Duration) -> (DaemonProcess, DaemonS
 /// that holds the home's lock all the same is one listening on a socket of
 /// another runtime directory, or one still starting or stopping.
 fn not_answering(paths: &DaemonPaths) -> (DaemonProcess, DaemonStore) {
-    let Some(record) = daemon::running_record(paths) else {
-        return (DaemonProcess::NotRunning, DaemonStore::NotRunning);
+    let record = match daemon::lock_holder(paths) {
+        LockHolder::Nobody => return (DaemonProcess::NotRunning, DaemonStore::NotRunning),
+        LockHolder::Starting => {
+            let reason = "it is still starting; run `rho doctor` again in a moment".to_owned();
+            return (
+                DaemonProcess::Unanswered(reason.clone()),
+                DaemonStore::Unanswered(reason),
+            );
+        }
+        LockHolder::Daemon(record) => record,
     };
     let (process, reason) = if record.socket == paths.socket {
         let reason = format!(

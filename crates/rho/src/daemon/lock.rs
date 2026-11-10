@@ -175,11 +175,34 @@ pub(crate) fn read_record(paths: &DaemonPaths) -> Option<DaemonRecord> {
     serde_json::from_slice(&contents).ok()
 }
 
-/// The record of the daemon running now, or `None` when none holds the lock
-/// or it has not written its record yet. A record alone may be a crashed
-/// daemon's, whose pid may have been reused.
-pub(crate) fn running_record(paths: &DaemonPaths) -> Option<DaemonRecord> {
-    is_held(paths).ok()?.then(|| read_record(paths))?
+/// Who holds the daemon lock now.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LockHolder {
+    /// No daemon runs.
+    Nobody,
+    /// A daemon between taking the lock and writing its record.
+    Starting,
+    Daemon(DaemonRecord),
+}
+
+impl LockHolder {
+    /// The running daemon's record, once it wrote one.
+    pub(crate) fn record(self) -> Option<DaemonRecord> {
+        match self {
+            Self::Daemon(record) => Some(record),
+            Self::Nobody | Self::Starting => None,
+        }
+    }
+}
+
+/// Who holds the daemon lock now. The record is read only while the lock is
+/// held: a record alone may be a crashed daemon's, whose pid may have been
+/// reused. A lock that cannot be probed counts as held by nobody.
+pub(crate) fn holder(paths: &DaemonPaths) -> LockHolder {
+    if !is_held(paths).unwrap_or(false) {
+        return LockHolder::Nobody;
+    }
+    read_record(paths).map_or(LockHolder::Starting, LockHolder::Daemon)
 }
 
 /// Sends SIGTERM to the recorded daemon, for a daemon that cannot take a

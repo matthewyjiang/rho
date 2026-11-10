@@ -98,6 +98,12 @@ async fn a_daemon_on_another_socket_is_not_reported_as_down() {
     let root = TempDir::new().unwrap();
     let paths = paths(&root);
     let _lock = daemon::acquire_lock(&paths).unwrap();
+    // A daemon holding the lock before it wrote its record is starting.
+    let starting = ask(&paths, DEADLINE).await.0;
+    assert!(
+        matches!(starting, DaemonProcess::Unanswered(_)),
+        "{starting:?}"
+    );
     std::fs::write(
         &paths.info_file,
         serde_json::json!({

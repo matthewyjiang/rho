@@ -33,8 +33,8 @@ pub(crate) use client::{connect, ConnectAs, ConnectError, Connection, DAEMON_RES
 pub(crate) use executable::{Executable, FileIdentity, ProbeError};
 pub(crate) use handoff::{take as take_handoff, Handoff};
 pub(crate) use lock::{
-    acquire as acquire_lock, running_record, terminate_recorded_daemon, wait_until_released,
-    DaemonLock,
+    acquire as acquire_lock, holder as lock_holder, terminate_recorded_daemon, wait_until_released,
+    DaemonLock, LockHolder,
 };
 pub(crate) use paths::{real_home, DaemonPathError, DaemonPaths, SocketFound};
 pub(crate) use server::{bind, rebind, Served};
