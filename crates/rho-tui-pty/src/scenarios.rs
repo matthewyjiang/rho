@@ -459,6 +459,12 @@ const ALL_SCENARIOS: &[Scenario] = &[
     SIDE_DURING_TURN_SCENARIO,
     SIDE_COMPOSER_SCENARIO,
     fast_discovery::FAST_DISCOVERY_SCENARIO,
+    #[cfg(unix)]
+    fast_discovery::DAEMON_FAST_DISCOVERY_SCENARIO,
+    #[cfg(unix)]
+    command_palette::DAEMON_TAB_COMPLETE_SCENARIO,
+    #[cfg(unix)]
+    workspace_rewind::DAEMON_WORKSPACE_REWIND_OFF_SCENARIO,
     CREATE_AGENT_COMMAND_SCENARIO,
     CREATE_AGENT_MISSING_TOOLS_SCENARIO,
     TAB_COMPLETE_ENTER_BARE_COMMAND_SCENARIO,
@@ -612,6 +618,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     permission_cycle::IDLE,
     permission_cycle::REMAPPED,
     permission_cycle::QUEUED,
+    #[cfg(unix)]
+    permission_cycle::DAEMON_QUEUED,
     Scenario::new(
         "open_workflow_hub_empty",
         "Open the workflows hub when the workspace has no workflows yet",

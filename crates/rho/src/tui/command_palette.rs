@@ -22,13 +22,22 @@ pub(super) enum CommandPaletteKeyOutcome {
 }
 
 impl App {
-    fn command_context(&self) -> commands::CommandContext {
-        commands::CommandContext {
-            fast_mode_supported: rho_providers::providers::fast_mode::supports_fast_mode(
+    /// What decides which commands and arguments are on offer. A daemon
+    /// session says itself whether its model has a fast mode.
+    pub(super) fn command_context(&self) -> commands::CommandContext {
+        let fast_mode_supported = match &self.info.session.daemon {
+            Some(_) => self
+                .daemon_options
+                .as_ref()
+                .is_some_and(|options| options.fast_mode.is_some()),
+            None => rho_providers::providers::fast_mode::supports_fast_mode(
                 &self.info.runtime.provider,
                 &self.info.runtime.model,
                 &self.info.runtime.auth,
             ),
+        };
+        commands::CommandContext {
+            fast_mode_supported,
         }
     }
 
@@ -439,7 +448,9 @@ pub(super) fn selected_command(
         .cloned()
 }
 
-fn argument_command_choice(choice: &'static commands::CommandArgumentChoice) -> CommandChoice {
+pub(super) fn argument_command_choice(
+    choice: &'static commands::CommandArgumentChoice,
+) -> CommandChoice {
     CommandChoice {
         name: choice.completion.to_string(),
         usage: choice.usage.to_string(),

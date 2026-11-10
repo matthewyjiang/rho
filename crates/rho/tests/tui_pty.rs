@@ -1218,6 +1218,22 @@ fn daemon_streaming_controls_hold_and_reveal_output() {
     assert_pass("daemon_streaming_controls");
 }
 
+// Covers: with RHO_TUI_DAEMON=1, the palette completes a command's
+// argument, `/fast` follows the session's model, `/rewind` says when
+// rewind is off, and a permission change mid-turn says it is queued.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_commands_match_the_in_process_palette_and_replies() {
+    for scenario in [
+        "daemon_tab_complete_enter_bare_command",
+        "daemon_fast_command_discovery",
+        "daemon_workspace_rewind_off",
+        "daemon_permission_cycle_queued",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
 // Covers: with RHO_TUI_DAEMON=1 in supervised mode, a daemon turn's write
 // opens the TUI's approval prompt, Allow once answers the daemon, and the
 // turn completes with the write done.

@@ -96,7 +96,7 @@ impl App {
         Ok(false)
     }
 
-    fn report_fast_mode(&mut self, enabled: bool, supported: bool) {
+    pub(super) fn report_fast_mode(&mut self, enabled: bool, supported: bool) {
         let (mode, detail) = match (enabled, supported) {
             (true, true) => ("on", "faster responses at a higher credit rate"),
             (true, false) => (

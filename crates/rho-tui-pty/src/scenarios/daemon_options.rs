@@ -76,7 +76,7 @@ pub(super) const PERMISSION_MODE: Scenario = Scenario::new(
         Step::Key(Key::Alt('m')),
         Step::Key(Key::Alt('m')),
         Step::WaitText {
-            text: "the change applies after the current turn",
+            text: "queued for next turn",
             timeout: SETTLE,
         },
         Step::AssertText("Bypass ·"),

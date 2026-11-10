@@ -80,6 +80,9 @@ fn model_picker(options: &SessionOptions) -> UiPicker {
     )
 }
 
+/// What a change asked for mid-turn says when it has no wording of its own.
+const QUEUED_CHANGE: &str = "the change applies after the current turn";
+
 impl App {
     pub(super) fn show_daemon_options(&mut self, options: SessionOptions) {
         // The session runs on another provider or auth than the one last
@@ -110,6 +113,24 @@ impl App {
             reasoning,
             rho_providers::model::ReasoningRequestSource::Explicit,
         );
+        // A switch this TUI asked for says where it landed, with the
+        // reasoning level the daemon gave the new model.
+        let switched = self.daemon_options.as_ref().is_some_and(|shown| {
+            shown.model.current != options.model.current
+                && self
+                    .daemon_option_requests
+                    .iter()
+                    .any(|change| matches!(change, SessionChange::Model { .. }))
+        });
+        if switched {
+            self.set_status(format!(
+                "model switched to {} with reasoning {reasoning}",
+                rho_providers::provider::model_reference(
+                    &options.model.current.provider,
+                    &options.model.current.model,
+                )
+            ));
+        }
         if let Ok(mode) = PermissionMode::try_from(options.permission_mode.current) {
             self.info.runtime.permission_mode = mode;
         }
@@ -144,7 +165,24 @@ impl App {
                 // Visible state remains the daemon's acknowledged options.
                 self.daemon_option_requests.push_back(change);
                 if self.turn.is_provider_turn() {
-                    self.set_status("the change applies after the current turn");
+                    // In the words an in-process turn queues the same
+                    // change with.
+                    self.set_status(match self.daemon_option_requests.back() {
+                        Some(SessionChange::PermissionMode { mode }) => {
+                            match PermissionMode::try_from(*mode) {
+                                Ok(mode) => format!(
+                                    "permission mode {} queued for next turn",
+                                    mode.as_str()
+                                ),
+                                Err(_) => QUEUED_CHANGE.to_owned(),
+                            }
+                        }
+                        Some(SessionChange::Model { model, .. }) => format!(
+                            "model change to {} queued for after this run",
+                            rho_providers::provider::model_reference(&model.provider, &model.model)
+                        ),
+                        _ => QUEUED_CHANGE.to_owned(),
+                    });
                 }
             }
             Err(error) => self.insert_entry(&Entry::Error(format!(
@@ -392,12 +430,19 @@ impl App {
             }
         };
         if enabled && current.is_none() {
-            self.insert_entry(&Entry::Error(
-                "fast mode is not offered by the daemon session".into(),
-            ));
+            self.insert_entry(&Entry::Error(format!(
+                "fast mode is not available for {}/{}",
+                self.info.runtime.provider, self.info.runtime.model
+            )));
             return Ok(());
         }
-        self.configure_daemon(SessionChange::FastMode { enabled })
+        // Off already, on a model with no fast mode: nothing to ask for.
+        let supported = current.is_some();
+        if supported {
+            self.configure_daemon(SessionChange::FastMode { enabled })?;
+        }
+        self.report_fast_mode(enabled, supported);
+        Ok(())
     }
 
     pub(super) fn open_daemon_permission_picker(&mut self) {

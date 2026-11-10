@@ -48,6 +48,14 @@ impl App {
             self.set_status("workspace rewind unavailable with --no-save");
             return Ok(());
         }
+        // The setting is the launch config's, which a daemon session's
+        // workspace follows too.
+        if !agent.workspace_rewind_enabled() {
+            self.set_status(
+                "workspace rewind is off; set behavior.workspace_rewind = true and restart Rho",
+            );
+            return Ok(());
+        }
         let (checkpoints, prompts) = if self.info.session.daemon.is_some() {
             // The daemon holds the session open; its checkpoints and tree
             // are read from the files both share.
@@ -69,12 +77,6 @@ impl App {
             };
             (checkpoints, prompts)
         } else {
-            if !agent.workspace_rewind_enabled() {
-                self.set_status(
-                    "workspace rewind is off; set behavior.workspace_rewind = true and restart Rho",
-                );
-                return Ok(());
-            }
             let prompts = agent
                 .stored_session()
                 .map(|storage| storage.tree_turn_items())

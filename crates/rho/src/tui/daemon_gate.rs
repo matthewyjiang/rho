@@ -82,59 +82,83 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
 }
 
 impl App {
+    /// The palette's matches for a daemon session, shaped as in process:
+    /// a settled command's argument values alone, else the matching
+    /// commands in the built-in order with an exact match's arguments
+    /// after them, then the session's own commands. A built-in the daemon
+    /// runs as a prompt is listed only while the session offers it.
     pub(super) fn daemon_command_choices(&self) -> Vec<super::CommandChoice> {
+        let context = self.command_context();
+        let arguments = crate::commands::argument_choices(
+            self.input_ui.text(),
+            self.input_ui.cursor(),
+            &context,
+        );
+        if !arguments.is_empty() {
+            return arguments
+                .iter()
+                .map(super::command_palette::argument_command_choice)
+                .collect();
+        }
         let Some(prefix) = crate::commands::command_prefix(self.input_ui.text()) else {
             return Vec::new();
         };
         let prefix = prefix.trim_start_matches('/').to_ascii_lowercase();
-        let mut choices: Vec<_> = crate::commands::matching_commands(&prefix)
+        let offered: Vec<_> = self
+            .daemon_options
+            .iter()
+            .flat_map(|options| &options.commands)
+            .filter(|command| command.kind == rho_protocol::CommandKind::Slash)
+            .collect();
+        let session_choice = |command: &rho_protocol::SessionCommand| super::CommandChoice {
+            name: command.name.clone(),
+            usage: match &command.input_hint {
+                Some(hint) => format!("/{} {hint}", command.name),
+                None => format!("/{}", command.name),
+            },
+            description: command.description.clone(),
+            kind: super::CommandChoiceKind::SessionCommand,
+        };
+        let mut builtins = crate::commands::matching_commands(&prefix);
+        builtins.retain(|command| context.is_discoverable(command.id));
+        let exact = builtins
+            .iter()
+            .find(|command| command.name.eq_ignore_ascii_case(&prefix))
+            .copied();
+        let mut choices: Vec<_> = builtins
             .into_iter()
-            .filter(|command| {
-                matches!(
-                    command_route(command.id),
-                    CommandRoute::Ui | CommandRoute::Options
-                )
-            })
-            .filter(|command| {
-                command.id != CommandId::Fast
-                    || self
-                        .daemon_options
-                        .as_ref()
-                        .is_some_and(|options| options.fast_mode.is_some())
-            })
-            .map(|command| super::CommandChoice {
-                name: command.name.into(),
-                usage: command.usage.into(),
-                description: command.description.into(),
-                kind: super::CommandChoiceKind::Builtin(command),
+            .filter_map(|command| match command_route(command.id) {
+                CommandRoute::Prompt => offered
+                    .iter()
+                    .find(|offered| offered.name == command.name)
+                    .map(|offered| session_choice(offered)),
+                CommandRoute::Ui | CommandRoute::Options => Some(super::CommandChoice {
+                    name: command.name.into(),
+                    usage: command.usage.into(),
+                    description: command.description.into(),
+                    kind: super::CommandChoiceKind::Builtin(command),
+                }),
             })
             .collect();
-        if let Some(options) = &self.daemon_options {
+        if let Some(command) = exact {
             choices.extend(
-                options
-                    .commands
+                command
+                    .argument_choices
                     .iter()
-                    .filter(|command| {
-                        command.kind == rho_protocol::CommandKind::Slash
-                            && command.name.to_ascii_lowercase().starts_with(&prefix)
-                    })
-                    .filter(|command| {
-                        !crate::commands::COMMANDS.iter().any(|builtin| {
-                            builtin.name == command.name
-                                && command_route(builtin.id) != CommandRoute::Prompt
-                        })
-                    })
-                    .map(|command| super::CommandChoice {
-                        name: command.name.clone(),
-                        usage: match &command.input_hint {
-                            Some(hint) => format!("/{} {hint}", command.name),
-                            None => format!("/{}", command.name),
-                        },
-                        description: command.description.clone(),
-                        kind: super::CommandChoiceKind::SessionCommand,
-                    }),
+                    .map(super::command_palette::argument_command_choice),
             );
         }
+        choices.extend(
+            offered
+                .iter()
+                .filter(|command| command.name.to_ascii_lowercase().starts_with(&prefix))
+                .filter(|command| {
+                    !crate::commands::COMMANDS
+                        .iter()
+                        .any(|builtin| builtin.name == command.name)
+                })
+                .map(|command| session_choice(command)),
+        );
         choices
     }
 

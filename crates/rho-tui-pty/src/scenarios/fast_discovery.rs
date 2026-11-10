@@ -175,3 +175,19 @@ fn wait_for_draft(harness: &mut PtyHarness, draft: &str) -> Result<()> {
         );
     }
 }
+
+// Covers: the same discovery when the daemon says whether the session's
+// model has a fast mode, and `/fast` answers in the in-process words.
+// Owner: interactive TUI as a daemon client
+#[cfg(unix)]
+pub(super) const DAEMON_FAST_DISCOVERY_SCENARIO: Scenario = Scenario {
+    id: "daemon_fast_command_discovery",
+    description: "Follow a daemon session's model switches in /fast suggestions",
+    env: &[
+        ("CODEX_ACCESS_TOKEN", "fixture-codex-token"),
+        ("OPENAI_API_KEY", "fixture-openai-key"),
+        ("RHO_TUI_DAEMON", "1"),
+    ],
+    smoke: false,
+    ..FAST_DISCOVERY_SCENARIO
+};
