@@ -37,7 +37,7 @@ use super::{
     setup::Setup,
 };
 use crate::{
-    agent::{AgentCapabilities, AgentCatalog, DEFAULT_AGENT_ID},
+    agent::{AgentCapabilities, AgentCatalog, AgentDefinition, DEFAULT_AGENT_ID},
     app::{
         agent_binding::{
             root_host_tools, AgentBinder, AgentInvocation, AgentRole, BoundAgent, LaunchTools,
@@ -177,27 +177,53 @@ pub(super) async fn open_session(
     .map_err(open_failed)
 }
 
-/// The project trust a read falls back to when the agents a session was
-/// saved as are not found without any: the project's agents and plugins.
-/// A read only parses them: it starts no hooks, tool sources, or turns.
-pub(super) const READ_PROJECT_AGENTS: ProjectTrusts = ProjectTrusts {
-    agents: ProjectTrust::Trusted,
-    plugins: ProjectTrust::Trusted,
-    ..ProjectTrusts::UNTRUSTED
-};
+/// The project trust `stored` is read under, which no client is there to
+/// grant: none when the agents it was saved as are found without, so a
+/// project file never stands in for an agent saved without trust; else the
+/// project's agents and plugins, which a session saved as one of them
+/// needs. A read only parses them: it starts no hooks, tool sources, or
+/// turns.
+fn reading_trust(stored: &StoredSession) -> anyhow::Result<ProjectTrusts> {
+    let catalog = AgentCatalog::discover(stored.cwd(), ProjectTrusts::UNTRUSTED)?;
+    let found = |id: &str, accepts: &dyn Fn(&AgentDefinition) -> bool| {
+        catalog
+            .find(id)
+            .is_ok_and(|entry| accepts(&entry.definition))
+    };
+    let root = stored.root_agent()?;
+    let delegated = stored.delegated_agent_id()?;
+    let found_untrusted = root
+        .as_ref()
+        .is_none_or(|root| found(&root.id, &|definition| root.validate(definition).is_ok()))
+        && delegated.as_deref().is_none_or(|id| {
+            found(id, &|definition| {
+                stored
+                    .validate_agent_definition_identity(definition)
+                    .is_ok()
+            })
+        });
+    Ok(if found_untrusted {
+        ProjectTrusts::UNTRUSTED
+    } else {
+        ProjectTrusts {
+            agents: ProjectTrust::Trusted,
+            plugins: ProjectTrust::Trusted,
+            ..ProjectTrusts::UNTRUSTED
+        }
+    })
+}
 
 /// Opens `stored` only to read what it saved, its turns recorded on job
 /// `job`: it starts none of its MCP servers, OpenAPI sources, or hooks, sees
 /// no client's environment (see [`SessionEnvironment::for_reading`]), and
 /// takes no setup but what its file keeps. Its agents are found under
-/// `project_trust`, which no client is there to grant: see
-/// [`READ_PROJECT_AGENTS`]. Fails as [`open_session`] does.
+/// [`reading_trust`]. Fails as [`open_session`] does.
 pub(super) async fn open_to_read(
     stored: StoredSession,
-    project_trust: ProjectTrusts,
     subagents: &Subagents,
     job: &JobId,
 ) -> Result<OpenedSession, RpcError> {
+    let project_trust = reading_trust(&stored).map_err(open_failed)?;
     let setup = Setup::resolve(&SessionSetup::default(), stored.cwd(), Some(&stored))?;
     open_runtime(
         Opening::Saved(stored),

@@ -17,16 +17,13 @@ use rho_sdk::SessionId;
 
 use super::{
     attach_response,
-    open::{open_to_read, READ_PROJECT_AGENTS},
+    open::open_to_read,
     opening_feed,
     options::available_auths,
     reopen::{parse_session, saved_session},
     writing, Sessions,
 };
-use crate::{
-    app::daemon_host::jobs::{JobId, JobRecord, SessionJob},
-    workspace::ProjectTrusts,
-};
+use crate::app::daemon_host::jobs::{JobId, JobRecord, SessionJob};
 
 impl Sessions {
     /// Subscribes a client to a session's events without loading it: a
@@ -84,19 +81,7 @@ impl Sessions {
         let job = last.unwrap_or_else(|| {
             JobRecord::new_session(JobId::generate(), stored.cwd().to_path_buf(), id.clone())
         });
-        // Without project trust first, as nobody here grants any: a project
-        // file must not stand in for the agent a session was saved as
-        // without it. A session saved as a project's agent opens only on
-        // the second try.
-        let untrusted =
-            open_to_read(stored, ProjectTrusts::UNTRUSTED, &self.subagents, &job.id).await;
-        let opened = match untrusted {
-            Ok(opened) => opened,
-            Err(_) => {
-                let stored = saved_session(id).await?;
-                open_to_read(stored, READ_PROJECT_AGENTS, &self.subagents, &job.id).await?
-            }
-        };
+        let opened = open_to_read(stored, &self.subagents, &job.id).await?;
         let (feed, _) = opening_feed(
             &job,
             &opened.runtime,
