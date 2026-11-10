@@ -27,11 +27,25 @@ impl Sessions {
         // see it now: refused, not queued behind the turn. A change or an
         // options refresh holds the runtime only briefly, so those are
         // waited for.
-        if let SessionJob::Busy(_) = self.jobs.session_job(&session.id) {
-            return Err(RpcError::new(
-                ErrorCode::SessionBusy,
-                "the session is in a turn; ask again once it ends",
-            ));
+        match self.jobs.session_job(&session.id) {
+            SessionJob::Busy(job) if job == session.job => {
+                return Err(RpcError::new(
+                    ErrorCode::SessionBusy,
+                    "the session is in a turn; ask again once it ends",
+                ));
+            }
+            // Another job writes it, as a subagent run writes its own
+            // session: not a turn of this one, but as busy.
+            SessionJob::Busy(job) => {
+                return Err(RpcError::new(
+                    ErrorCode::SessionBusy,
+                    format!(
+                        "job {job} is writing session {}; ask again once it ends",
+                        session.id
+                    ),
+                ));
+            }
+            SessionJob::New | SessionJob::Last(_) => {}
         }
         let runtime = session.runtime.lock().await;
         // `None` once the daemon's stop or the idle unload took it.
