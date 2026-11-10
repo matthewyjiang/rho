@@ -186,8 +186,9 @@ struct LoginAuth {
 
 impl LoginAuth {
     /// Checks that `auth` takes an interactive login whose credential the
-    /// daemon's sessions would read. Loads the config and its store first,
-    /// as every credential write does. Blocks.
+    /// daemon's sessions would read, and that the daemon can reach the
+    /// store it would save it in. Loads the config and its store first, as
+    /// every credential write does. Blocks.
     fn resolve(auth: &str, credentials: Arc<dyn CredentialStore>) -> Result<Self, RpcError> {
         credential_writes::load_config_and_store(&repository())?;
         let invalid = |message: String| RpcError::new(ErrorCode::InvalidParams, message);
@@ -214,6 +215,9 @@ impl LoginAuth {
             CredentialWrite::Login,
             credentials.as_ref(),
         )?;
+        // The credential is saved only once the provider approved, so a
+        // store that would not take it is refused before the user is asked.
+        credential_writes::refuse_unreachable_store(credentials.as_ref())?;
         Ok(Self {
             auth: mode.id,
             provider_label,
@@ -246,6 +250,7 @@ async fn run(
     let auth = target.auth;
     // The client opens the URL, so the daemon launches no browser.
     let approved = drive::approve(
+        target.credentials.as_ref(),
         auth,
         flow_from_wire(flow),
         BrowserAvailability::Headless,
