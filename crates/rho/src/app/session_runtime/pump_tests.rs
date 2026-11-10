@@ -400,7 +400,8 @@ fn child_question() -> (
 
 // Covers: a subagent's question reaches the host as a question of the
 // turn, named by a notice, and the host's answer reaches the subagent, not
-// the parent's run; one still open when the turn is cancelled is withdrawn
+// the parent's run; one whose subagent stops waiting is withdrawn, and one
+// still open when the turn is cancelled is withdrawn
 // and its subagent told nobody will answer, as is one asked afterwards.
 // Owner: session runtime turn pump.
 #[tokio::test]
@@ -414,6 +415,12 @@ async fn a_subagents_question_is_answered_through_the_turn() {
         answer: Ok(rho_sdk::HostInputResponse::new().answer("go", ["yes"])),
     });
     let answer = answered.await.expect("the answer reaches the subagent");
+
+    let (asked, abandoned_id, abandoned) = child_question();
+    harness.child_questions.send(asked).await.unwrap();
+    let abandoned_ask = [harness.next().await, harness.next().await];
+    drop(abandoned);
+    let given_up = harness.next().await;
 
     let (asked, open_id, open) = child_question();
     harness.child_questions.send(asked).await.unwrap();
@@ -429,6 +436,8 @@ async fn a_subagents_question_is_answered_through_the_turn() {
             answer
                 .ok()
                 .and_then(|answer| answer.answers().get("go").cloned()),
+            abandoned_ask,
+            given_up,
             second,
             withdrawn,
             open.await.is_err(),
@@ -437,6 +446,8 @@ async fn a_subagents_question_is_answered_through_the_turn() {
         (
             [Seen::Notice, Seen::QuestionAsked(answered_id)],
             Some(vec!["yes".to_owned()]),
+            [Seen::Notice, Seen::QuestionAsked(abandoned_id.clone())],
+            Seen::QuestionWithdrawn(abandoned_id),
             [Seen::Notice, Seen::QuestionAsked(open_id.clone())],
             Seen::QuestionWithdrawn(open_id),
             true,

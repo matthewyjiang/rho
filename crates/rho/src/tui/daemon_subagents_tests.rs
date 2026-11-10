@@ -40,15 +40,17 @@ fn run(id: &str, parent: &str, state: JobState, updated_at: u64) -> JobSummary {
     }
 }
 
-// Covers: the rail shows the followed session's runs only, a workflow run's
-// agent nodes included and whatever order the jobs list in, and drops a
-// finished run once it ended long enough ago, so another session's
-// children and old history never show.
+// Covers: the rail shows the runs the followed session started itself,
+// whatever order the jobs list in, and drops a finished run once it ended
+// long enough ago, so a workflow's agent nodes, another session's children
+// and old history never show.
 // Owner: daemon subagent rail (pure selection)
 #[test]
 fn the_rail_takes_the_sessions_live_and_just_ended_runs() {
     let jobs = [
-        // Listed before the jobs above it: all three began the same second.
+        // Listed before its session: both began the same second.
+        run("early", "mine", JobState::Running, 0),
+        // A workflow's agent node, which the workflow panel shows.
         run("node", "workflow", JobState::Running, 0),
         job("workflow", JobKind::Workflow, Some("mine")),
         session("mine", "s1"),
@@ -64,6 +66,6 @@ fn the_rail_takes_the_sessions_live_and_just_ended_runs() {
 
     assert_eq!(
         rail_runs(&jobs, "s1", NOW),
-        ["run-node", "run-live", "run-queued", "run-fresh"]
+        ["run-early", "run-live", "run-queued", "run-fresh"]
     );
 }

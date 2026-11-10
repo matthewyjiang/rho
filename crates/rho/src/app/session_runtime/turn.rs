@@ -241,8 +241,7 @@ impl SessionRuntime {
         let mut plan_approvals = self.built.tools.take_plan_permission_requests();
         // Bound for this run, which stays open while the session's
         // subagents work, and only when a person can be asked: a subagent
-        // of an unbound parent gets no questionnaire tool. A question that
-        // arrives once the run ended finds the binding closed and fails.
+        // of an unbound parent gets no questionnaire tool.
         let mut child_questions = match self.build.host.questions {
             QuestionSupport::Available => self
                 .built
@@ -271,6 +270,13 @@ impl SessionRuntime {
             io,
         )
         .await;
+        // Nobody listens between runs: a subagent still working asks
+        // nothing rather than queueing a question for a later turn.
+        if child_questions.take().is_some() {
+            if let Some(manager) = self.built.tools.subagents() {
+                manager.unbind_host_input();
+            }
+        }
         self.built
             .tools
             .restore_plan_permission_requests(plan_approvals);

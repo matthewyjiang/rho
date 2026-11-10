@@ -1486,7 +1486,7 @@
           "description": "Where the job waits for capacity, when its state is\n[`JobState::Queued`]."
         },
         "run": {
-          "description": "The id of the subagent run a [`JobKind::Subagent`] job follows, which\nnames the run's artifact directory under the daemon's rho home.",
+          "description": "The id of the subagent run a [`JobKind::Subagent`] job follows. For\na run a session started, it names the run's artifact directory\nunder the daemon's rho home.",
           "type": [
             "string",
             "null"

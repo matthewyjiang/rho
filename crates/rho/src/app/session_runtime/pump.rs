@@ -278,8 +278,8 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                     continue;
                 };
                 // Dropping the reply tells the subagent nobody will answer:
-                // the turn is ending, or its host cannot ask a person.
-                if cancelled || questions == QuestionSupport::Unavailable {
+                // the turn is ending.
+                if cancelled {
                     continue;
                 }
                 let SubagentHostInputRequest {
@@ -299,6 +299,12 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                 });
                 hooks.question_requested(session, &request);
                 pending.child_questions.insert(request.id().clone(), response);
+            }
+
+            // Its subagent stopped waiting, as one the parent stopped does.
+            id = abandoned_child_question(&mut pending.child_questions) => {
+                pending.child_questions.remove(&id);
+                io.emit(SessionEvent::QuestionWithdrawn { id });
             }
 
             request = next_plan_approval(plan_approvals.as_deref_mut()), if events_open => {
@@ -381,6 +387,20 @@ fn withdraw_questions(pending: &mut Pending, io: &TurnIo) {
     {
         io.emit(SessionEvent::QuestionWithdrawn { id });
     }
+}
+
+/// The pending child question whose subagent no longer waits for an
+/// answer; never resolves while every subagent waits.
+async fn abandoned_child_question(pending: &mut BTreeMap<HostInputId, ChildReply>) -> HostInputId {
+    std::future::poll_fn(|context| {
+        for (id, reply) in pending.iter_mut() {
+            if reply.poll_closed(context).is_ready() {
+                return std::task::Poll::Ready(id.clone());
+            }
+        }
+        std::task::Poll::Pending
+    })
+    .await
 }
 
 async fn next_child_question(

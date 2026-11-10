@@ -109,8 +109,9 @@ pub struct JobSummary {
     /// runtime (Claude, Cursor, Antigravity), which keeps its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<SessionId>,
-    /// The id of the subagent run a [`JobKind::Subagent`] job follows, which
-    /// names the run's artifact directory under the daemon's rho home.
+    /// The id of the subagent run a [`JobKind::Subagent`] job follows. For
+    /// a run a session started, it names the run's artifact directory
+    /// under the daemon's rho home.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
     /// The workflow run a [`JobKind::Workflow`] job drives.

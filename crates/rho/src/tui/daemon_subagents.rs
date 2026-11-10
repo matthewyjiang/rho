@@ -4,8 +4,10 @@
 //! The daemon lists a job per run (`rho/job/list`), which says whose run it
 //! is; what a run is doing is in its artifact directory, which the daemon
 //! writes under the rho home this process shares. The rail asks for the
-//! jobs while the activity panels refresh, at most once per [`RAIL_POLL`],
-//! and reads the status of each run that is live or ended moments ago.
+//! jobs when a session is first followed, then while a turn runs or the
+//! rail shows a run, the only times one can start or change, at most once
+//! per [`RAIL_POLL`], and reads the status of each run that is live or
+//! ended moments ago.
 //! `/attach` then opens a run's artifacts from the same directory.
 //!
 //! In process, a finished row leaves the rail when its result reaches the
@@ -38,20 +40,24 @@ const ENDED_RETENTION: Duration = Duration::from_secs(10);
 /// What the rail remembers between job lists.
 #[derive(Default)]
 pub(super) struct DaemonRail {
-    /// When the last job list was asked for; `None` before the first, and
-    /// after a session switch.
+    /// When the last job list was asked for; `None` while one is owed
+    /// whatever the session is doing: before the first, after a session
+    /// switch, and once a turn ended.
     asked: Option<Instant>,
     /// Whether that list has not been answered yet.
     waiting: bool,
+    /// Whether a turn ran when the rail last looked.
+    in_turn: bool,
     /// Each run's artifact directory, resolved once.
     directories: HashMap<String, PathBuf>,
 }
 
-/// The runs of the subagent jobs under `session`'s jobs, at any depth, so
-/// a workflow run's agent nodes count: those in progress, and those ended
-/// no longer than [`ENDED_RETENTION`] before `now` (Unix seconds).
+/// The runs the session `session` started itself, as the in-process rail
+/// shows them: those in progress, and those ended no longer than
+/// [`ENDED_RETENTION`] before `now` (Unix seconds). A workflow's agent
+/// nodes are the workflow panel's, and keep their artifacts elsewhere.
 fn rail_runs(jobs: &[JobSummary], session: &str, now: u64) -> Vec<String> {
-    let mut family: HashSet<&JobId> = jobs
+    let own: HashSet<&JobId> = jobs
         .iter()
         .filter(|job| {
             job.kind == JobKind::Session
@@ -62,26 +68,14 @@ fn rail_runs(jobs: &[JobSummary], session: &str, now: u64) -> Vec<String> {
         })
         .map(|job| &job.id)
         .collect();
-    let child_of = |family: &HashSet<&JobId>, job: &JobSummary| {
-        job.parent
-            .as_ref()
-            .is_some_and(|parent| family.contains(parent))
-    };
-    // Jobs made in the same second list in either order, so a pass may
-    // meet a job before its parent: repeat until one adds nothing.
-    loop {
-        let children: Vec<&JobId> = jobs
-            .iter()
-            .filter(|job| child_of(&family, job) && !family.contains(&job.id))
-            .map(|job| &job.id)
-            .collect();
-        if children.is_empty() {
-            break;
-        }
-        family.extend(children);
-    }
     jobs.iter()
-        .filter(|job| job.kind == JobKind::Subagent && child_of(&family, job))
+        .filter(|job| {
+            job.kind == JobKind::Subagent
+                && job
+                    .parent
+                    .as_ref()
+                    .is_some_and(|parent| own.contains(parent))
+        })
         .filter(|job| {
             let in_progress = matches!(
                 job.state,
@@ -111,8 +105,18 @@ impl App {
         let Some(session) = &self.info.session.daemon else {
             return;
         };
+        // A run starts only in a turn, and changes only while it shows.
+        let in_turn = self.turn.is_provider_turn();
+        let may_change = in_turn || self.subagent_panel.count() > 0;
         let rail = &mut self.daemon_rail;
-        let due = rail.asked.is_none_or(|asked| asked.elapsed() >= RAIL_POLL);
+        // One more list once a turn ends, for a run it started since the
+        // last.
+        if std::mem::replace(&mut rail.in_turn, in_turn) && !in_turn {
+            rail.asked = None;
+        }
+        let due = rail
+            .asked
+            .is_none_or(|asked| may_change && asked.elapsed() >= RAIL_POLL);
         if rail.waiting || !due || session.request_jobs().is_err() {
             return;
         }
