@@ -1,14 +1,23 @@
-//! Workspace workflow entry files and the `/workflow:<name>` commands that
-//! start them. The TUI hub lists these sources; the TUI and ACP sessions both
-//! resolve `/workflow:<name> [inputs]` through [`resolve_start_command`].
+//! Workspace workflow entry files and the `/workflow:` commands that start
+//! their runs. The TUI hub lists these sources; a session's prompts resolve
+//! `/workflow:<name> [inputs]`, `/workflow:plan/<plan id>`, and
+//! `/workflow:run/<run id> [recover]` through [`resolve_launch`].
 
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    str::FromStr,
 };
+
+use crate::workflow::{PlanId, RunId};
 
 /// Slash-command prefix for starting one discovered workflow.
 pub(crate) const COMMAND_PREFIX: &str = "workflow:";
+/// What follows the prefix to name a saved plan, and a run.
+const PLAN_PREFIX: &str = "plan/";
+const RUN_PREFIX: &str = "run/";
+/// The argument that lets a resumed run repeat nodes of unknown outcome.
+const RECOVER: &str = "recover";
 
 /// A workflow source the hub can validate or plan.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,6 +56,22 @@ pub(crate) struct StartCommand {
     pub(crate) workflow: DiscoveredWorkflow,
     /// Explicit input values; omitted inputs use their declared defaults.
     pub(crate) inputs: BTreeMap<String, serde_json::Value>,
+}
+
+/// What a `/workflow:` prompt starts in the background.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum WorkflowLaunch {
+    /// A new run of a workspace workflow, planned now.
+    Source(StartCommand),
+    /// A new run of a saved plan.
+    Plan(PlanId),
+    /// A run that stopped, taken up again.
+    Resume {
+        run: RunId,
+        /// Whether nodes whose outcome is unknown run again: the person
+        /// said nothing of theirs still runs.
+        recover_uncertain: bool,
+    },
 }
 
 /// Finds workflow entry files under `.rho/workflows`.
@@ -119,6 +144,63 @@ pub(crate) fn resolve_start_command(
     name.get(..COMMAND_PREFIX.len())
         .filter(|prefix| prefix.eq_ignore_ascii_case(COMMAND_PREFIX))
         .map(|_| resolve_label(workspace, &name[COMMAND_PREFIX.len()..], args))
+}
+
+/// Resolves the slash token `name` (without `/`) and its trailing `args` to
+/// what it starts: a workspace workflow by name, as
+/// [`resolve_start_command`] does, or `plan/<plan id>` and
+/// `run/<run id> [recover]`, the hub's rows for saved plans and stopped
+/// runs. A name is a file stem, so it never contains the `/` those have.
+pub(crate) fn resolve_launch(
+    workspace: &Path,
+    name: &str,
+    args: &str,
+) -> Option<Result<WorkflowLaunch, String>> {
+    let target = name
+        .get(..COMMAND_PREFIX.len())
+        .filter(|prefix| prefix.eq_ignore_ascii_case(COMMAND_PREFIX))
+        .map(|_| &name[COMMAND_PREFIX.len()..])?;
+    let args = args.trim();
+    Some(if let Some(plan) = target.strip_prefix(PLAN_PREFIX) {
+        match (PlanId::from_str(plan), args) {
+            (Ok(plan), "") => Ok(WorkflowLaunch::Plan(plan)),
+            (Ok(_), _) => Err("a saved plan takes no inputs".to_owned()),
+            (Err(_), _) => Err(format!("'{plan}' is not a plan id")),
+        }
+    } else if let Some(run) = target.strip_prefix(RUN_PREFIX) {
+        let recover_uncertain = match args {
+            "" => Ok(false),
+            RECOVER => Ok(true),
+            other => Err(format!("unknown option '{other}'; use `{RECOVER}`")),
+        };
+        match (RunId::from_str(run), recover_uncertain) {
+            (Ok(run), Ok(recover_uncertain)) => Ok(WorkflowLaunch::Resume {
+                run,
+                recover_uncertain,
+            }),
+            (Ok(_), Err(detail)) => Err(detail),
+            (Err(_), _) => Err(format!("'{run}' is not a run id")),
+        }
+    } else {
+        resolve_label(workspace, target, args).map(WorkflowLaunch::Source)
+    })
+}
+
+impl WorkflowLaunch {
+    /// The prompt that starts a run of saved plan `plan`.
+    pub(crate) fn plan_command(plan: PlanId) -> String {
+        format!("/{COMMAND_PREFIX}{PLAN_PREFIX}{plan}")
+    }
+
+    /// The prompt that takes run `run` up again.
+    pub(crate) fn resume_command(run: RunId, recover_uncertain: bool) -> String {
+        let command = format!("/{COMMAND_PREFIX}{RUN_PREFIX}{run}");
+        if recover_uncertain {
+            format!("{command} {RECOVER}")
+        } else {
+            command
+        }
+    }
 }
 
 fn resolve_label(workspace: &Path, label: &str, args: &str) -> Result<StartCommand, String> {

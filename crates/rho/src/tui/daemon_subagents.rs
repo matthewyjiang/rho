@@ -1,5 +1,6 @@
 //! The subagent rail of a daemon session: the runs the session started,
-//! as the daemon's jobs name them.
+//! as the daemon's jobs name them. The same job list feeds the workflow
+//! rail (`daemon_workflows`).
 //!
 //! The daemon lists a job per run (`rho/job/list`), which says whose run it
 //! is; what a run is doing is in its artifact directory, which the daemon
@@ -52,11 +53,16 @@ pub(super) struct DaemonRail {
     directories: HashMap<String, PathBuf>,
 }
 
-/// The runs the session `session` started itself, as the in-process rail
-/// shows them: those in progress, and those ended no longer than
-/// [`ENDED_RETENTION`] before `now` (Unix seconds). A workflow's agent
-/// nodes are the workflow panel's, and keep their artifacts elsewhere.
-fn rail_runs(jobs: &[JobSummary], session: &str, now: u64) -> Vec<String> {
+/// The jobs of `kind` the session `session` started itself, as the
+/// in-process rails show them: those in progress, and those ended no longer
+/// than [`ENDED_RETENTION`] before `now` (Unix seconds). A workflow's agent
+/// nodes are not the session's own, and keep their artifacts elsewhere.
+pub(super) fn rail_jobs<'a>(
+    jobs: &'a [JobSummary],
+    session: &str,
+    kind: JobKind,
+    now: u64,
+) -> Vec<&'a JobSummary> {
     let own: HashSet<&JobId> = jobs
         .iter()
         .filter(|job| {
@@ -70,21 +76,31 @@ fn rail_runs(jobs: &[JobSummary], session: &str, now: u64) -> Vec<String> {
         .collect();
     jobs.iter()
         .filter(|job| {
-            job.kind == JobKind::Subagent
+            job.kind == kind
                 && job
                     .parent
                     .as_ref()
                     .is_some_and(|parent| own.contains(parent))
         })
         .filter(|job| {
-            let in_progress = matches!(
-                job.state,
-                JobState::Idle | JobState::Queued | JobState::Running | JobState::WaitingForInput
-            );
-            in_progress || now.saturating_sub(job.updated_at) < ENDED_RETENTION.as_secs()
+            in_progress(job.state) || now.saturating_sub(job.updated_at) < ENDED_RETENTION.as_secs()
         })
-        .filter_map(|job| job.run.clone())
         .collect()
+}
+
+/// Whether a job in `state` may still change.
+pub(super) fn in_progress(state: JobState) -> bool {
+    match state {
+        JobState::Idle | JobState::Queued | JobState::Running | JobState::WaitingForInput => true,
+        JobState::Completed
+        | JobState::Failed
+        | JobState::Cancelled
+        | JobState::TimedOut
+        | JobState::Interrupted
+        | JobState::Unknown => false,
+        // A state this build does not know cannot be waited on.
+        _ => false,
+    }
 }
 
 impl DaemonRail {
@@ -107,7 +123,8 @@ impl App {
         };
         // A run starts only in a turn, and changes only while it shows.
         let in_turn = self.turn.is_provider_turn();
-        let may_change = in_turn || self.subagent_panel.count() > 0;
+        let may_change =
+            in_turn || self.subagent_panel.count() > 0 || self.workflow_panel.is_active();
         let rail = &mut self.daemon_rail;
         // One more list once a turn ends, for a run it started since the
         // last.
@@ -124,17 +141,20 @@ impl App {
         rail.waiting = true;
     }
 
-    /// Puts the followed session's runs among `jobs` on the subagent rail.
-    /// A failed list keeps the rows the rail has; the next one replaces
-    /// them.
+    /// Puts the followed session's runs among `jobs` on the subagent and
+    /// workflow rails. A failed list keeps the rows the rails have; the
+    /// next one replaces them.
     pub(super) fn show_daemon_jobs(&mut self, jobs: Result<Vec<JobSummary>, String>) {
         self.daemon_rail.waiting = false;
         let (Ok(jobs), Some(session)) = (jobs, &self.info.session.daemon) else {
             return;
         };
+        let session = session.id().to_owned();
         let now = subagent::unix_now_secs();
-        let snapshots = rail_runs(&jobs, session.id(), now)
+        self.show_daemon_workflows(&rail_jobs(&jobs, &session, JobKind::Workflow, now), now);
+        let snapshots = rail_jobs(&jobs, &session, JobKind::Subagent, now)
             .into_iter()
+            .filter_map(|job| job.run.clone())
             .filter_map(|run| {
                 let status = self.daemon_rail.status(&run)?;
                 let done = status.state.is_terminal();
@@ -163,6 +183,7 @@ impl App {
     pub(super) fn reset_daemon_rail(&mut self) {
         self.daemon_rail = DaemonRail::default();
         self.subagent_panel.ingest(Vec::new());
+        self.workflow_panel.ingest(Vec::new());
     }
 }
 

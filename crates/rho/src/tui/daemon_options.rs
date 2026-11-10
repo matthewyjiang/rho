@@ -310,6 +310,10 @@ impl App {
                 self.execute_daemon_advisor_command(&invocation.args);
                 Ok(())
             }
+            CommandId::Codemode => {
+                self.execute_daemon_codemode_command(&invocation.args);
+                Ok(())
+            }
             _ => unreachable!("only daemon option commands reach option dispatch"),
         }
     }

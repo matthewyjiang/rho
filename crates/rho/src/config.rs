@@ -663,6 +663,8 @@ pub(crate) struct NextTurnChanges {
     pub(crate) advisor: bool,
     /// An automatic compaction setting changed.
     pub(crate) compaction: bool,
+    /// The codemode mode changed.
+    pub(crate) codemode: bool,
 }
 
 #[cfg_attr(
@@ -714,6 +716,10 @@ impl Config {
                 self.compact_threshold_percent,
                 self.compact_target_percent,
             ) = compaction(now);
+        }
+        if was.codemode.mode != now.codemode.mode {
+            changes.codemode = self.codemode.mode != now.codemode.mode;
+            self.codemode.mode = now.codemode.mode;
         }
         changes
     }

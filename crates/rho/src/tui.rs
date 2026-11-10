@@ -78,6 +78,7 @@ mod daemon_subagents;
 mod daemon_switch;
 mod daemon_transcript;
 mod daemon_turn;
+mod daemon_workflows;
 mod diff_pane;
 mod diff_viewer;
 mod divider;

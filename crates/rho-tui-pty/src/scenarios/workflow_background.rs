@@ -63,7 +63,7 @@ pub(super) const WORKFLOW_HUB_PLANNED_RETRY_SCENARIO: Scenario = Scenario::new(
 )
 .with_setup(setup_workflow);
 
-fn setup_workflow(home: &IsolatedHome) -> Result<()> {
+pub(super) fn setup_workflow(home: &IsolatedHome) -> Result<()> {
     let gate = CString::new(home.workspace.join(GATE).as_os_str().as_bytes())?;
     // A FIFO read blocks in the real command runner until the PTY writes it.
     // No Python, fixture runtime, polling shell, or timing-based release.
@@ -369,7 +369,7 @@ fn click_live_workflow(harness: &mut PtyHarness) -> Result<()> {
     harness.mouse(MouseButton::Left, 5, row, false)
 }
 
-fn assert_live_rail(harness: &mut PtyHarness) -> Result<()> {
+pub(super) fn assert_live_rail(harness: &mut PtyHarness) -> Result<()> {
     harness.wait_for_text(LIVE_PROGRESS, STREAM)?;
     ensure!(
         harness
@@ -383,7 +383,7 @@ fn assert_live_rail(harness: &mut PtyHarness) -> Result<()> {
     Ok(())
 }
 
-fn release_gate(harness: &mut PtyHarness) -> Result<()> {
+pub(super) fn release_gate(harness: &mut PtyHarness) -> Result<()> {
     let gate = harness
         .working_directory()
         .context("workflow working directory")?
@@ -428,7 +428,7 @@ fn wait_for_completion(harness: &mut PtyHarness, run_id: &str) -> Result<()> {
     wait_for_turn_completion_after(harness, &response)
 }
 
-fn record_ids(directory: &Path) -> Result<Vec<String>> {
+pub(super) fn record_ids(directory: &Path) -> Result<Vec<String>> {
     let mut ids = Vec::new();
     for entry in fs::read_dir(directory)? {
         let entry = entry?;

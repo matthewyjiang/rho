@@ -26,7 +26,8 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Permissions
         | CommandId::Fast
         | CommandId::Goal
-        | CommandId::Advisor => CommandRoute::Options,
+        | CommandId::Advisor
+        | CommandId::Codemode => CommandRoute::Options,
         // These commands are implemented by the daemon's prompt pipeline.
         CommandId::Init | CommandId::Compact => CommandRoute::Prompt,
         CommandId::Exit
@@ -69,15 +70,12 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         // The daemon opens the session these follow next.
         | CommandId::New
         | CommandId::Resume
-        | CommandId::Sessions => CommandRoute::Ui,
-        // The conversation tree and rewind need daemon methods;
-        // provider/auth editors and the advisor still own in-process
-        // state. The /workflow hub likewise describes the wrong runtime,
-        // even when opened read-only.
-        | CommandId::Rewind
-        | CommandId::Tree
-        | CommandId::Codemode
-        | CommandId::Workflow => CommandRoute::Unavailable,
+        | CommandId::Sessions
+        // The hub lists the workspace's workflow store, which the daemon
+        // shares; a launch is a prompt the daemon runs.
+        | CommandId::Workflow => CommandRoute::Ui,
+        // The conversation tree and rewind need daemon methods.
+        CommandId::Rewind | CommandId::Tree => CommandRoute::Unavailable,
     }
 }
 

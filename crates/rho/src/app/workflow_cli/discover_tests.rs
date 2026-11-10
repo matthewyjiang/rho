@@ -1,4 +1,7 @@
-use super::{command_workflows, discover_workflow_sources, resolve_start_command};
+use super::{
+    command_workflows, discover_workflow_sources, resolve_launch, resolve_start_command,
+    WorkflowLaunch,
+};
 use pretty_assertions::assert_eq;
 
 fn workspace(files: &[&str]) -> tempfile::TempDir {
@@ -143,5 +146,58 @@ fn command_workflows_lists_each_name_once() {
     assert_eq!(
         names,
         vec!["workflow:Case", "workflow:solo", "workflow:twin"]
+    );
+}
+
+// Covers: the hub's prompts for a saved plan and a stopped run resolve to
+// that plan and run, with recovery only when asked for, and each prompt the
+// hub writes resolves back to what it names; a malformed id or stray
+// argument is refused with the reason, and a workflow's name still starts
+// its source.
+// Owner: `/workflow:` resolution shared by every session host.
+#[test]
+fn launch_resolves_plans_runs_and_sources() {
+    let root = workspace(&[".rho/workflows/review.star"]);
+    let (plan, run) = (
+        crate::workflow::PlanId::new(),
+        crate::workflow::RunId::new(),
+    );
+    let resolve = |prompt: &str| {
+        let (name, args) = prompt[1..].split_once(' ').unwrap_or((&prompt[1..], ""));
+        resolve_launch(root.path(), name, args).map(|resolved| resolved.is_ok().then_some(resolved))
+    };
+    let launch = |prompt: &str| resolve(prompt).flatten().and_then(Result::ok);
+
+    assert_eq!(
+        (
+            launch(&WorkflowLaunch::plan_command(plan)),
+            launch(&WorkflowLaunch::resume_command(
+                run, /*recover_uncertain*/ false
+            )),
+            launch(&WorkflowLaunch::resume_command(
+                run, /*recover_uncertain*/ true
+            )),
+            launch("/workflow:review").map(|launch| matches!(launch, WorkflowLaunch::Source(_))),
+            resolve(&format!("/workflow:plan/{plan} extra")),
+            resolve("/workflow:plan/nope"),
+            resolve(&format!("/workflow:run/{run} again")),
+            resolve("/prompt:review"),
+        ),
+        (
+            Some(WorkflowLaunch::Plan(plan)),
+            Some(WorkflowLaunch::Resume {
+                run,
+                recover_uncertain: false
+            }),
+            Some(WorkflowLaunch::Resume {
+                run,
+                recover_uncertain: true
+            }),
+            Some(true),
+            Some(None),
+            Some(None),
+            Some(None),
+            None,
+        )
     );
 }

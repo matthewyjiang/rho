@@ -190,7 +190,8 @@ impl App {
                 || agent
                     .processes()
                     .is_some_and(crate::tools::process::ProcessManager::has_pending_notification)
-                || (self.info.session.daemon.is_some() && self.subagent_panel.is_active())
+                || (self.info.session.daemon.is_some()
+                    && (self.subagent_panel.is_active() || self.workflow_panel.is_active()))
                 || self.pending_subagent_questionnaire.is_some()
                 || self.subagent_inbox.has_queued_questionnaires()
                 || self.subagent_inbox.has_parent_action_requests();
@@ -692,9 +693,12 @@ impl App {
         }
         changed |= panel_changed;
         changed |= self.process_panel.update(agent.processes());
-        changed |= self
-            .workflow_panel
-            .update(agent.workflow_tracker(), agent.session_id().as_str());
+        // A daemon session's workflow rows arrive with its jobs too.
+        if self.info.session.daemon.is_none() {
+            changed |= self
+                .workflow_panel
+                .update(agent.workflow_tracker(), agent.session_id().as_str());
+        }
         changed |= self.refresh_todo_list(agent);
         // Fold terminal subagent/advisor costs on every panel refresh path (idle
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.

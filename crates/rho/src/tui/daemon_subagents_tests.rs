@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use pretty_assertions::assert_eq;
 use rho_protocol::{JobId, JobKind, JobState, JobSummary, SessionId};
 
-use super::rail_runs;
+use super::rail_jobs;
 
 const NOW: u64 = 1_000;
 
@@ -64,8 +64,21 @@ fn the_rail_takes_the_sessions_live_and_just_ended_runs() {
         job("unnamed", JobKind::Subagent, Some("mine")),
     ];
 
+    let rail = |kind| rail_jobs(&jobs, "s1", kind, NOW);
     assert_eq!(
-        rail_runs(&jobs, "s1", NOW),
-        ["run-early", "run-live", "run-queued", "run-fresh"]
+        (
+            rail(JobKind::Subagent)
+                .into_iter()
+                .filter_map(|job| job.run.as_deref())
+                .collect::<Vec<_>>(),
+            rail(JobKind::Workflow)
+                .into_iter()
+                .map(|job| job.id.as_str())
+                .collect::<Vec<_>>(),
+        ),
+        (
+            vec!["run-early", "run-live", "run-queued", "run-fresh"],
+            vec!["workflow"],
+        )
     );
 }

@@ -62,7 +62,52 @@ pub(crate) struct WorkflowRailSummary {
     pub(crate) elapsed_seconds: u64,
 }
 
+/// Every task of `run` with its saved state, by task id.
+fn stored_tasks(run: &StoredRun) -> BTreeMap<String, NodeState> {
+    run.state
+        .state
+        .tasks()
+        .map(|(id, state)| (id.to_string(), state.clone()))
+        .collect()
+}
+
+/// How many of `tasks` reached a final state.
+fn completed_tasks(tasks: &BTreeMap<String, NodeState>) -> usize {
+    tasks
+        .values()
+        .filter(|state| state.terminal().is_some())
+        .count()
+}
+
+/// The label of the first of `tasks` that is running.
+fn active_task(tasks: &BTreeMap<String, NodeState>) -> Option<String> {
+    tasks.iter().find_map(|(id, state)| {
+        matches!(state, NodeState::Running { .. }).then(|| {
+            id.parse::<TaskInstanceId>()
+                .map_or_else(|_| id.clone(), |task| task.label())
+        })
+    })
+}
+
 impl WorkflowRailSummary {
+    /// The row for `run` as its saved state has it, for a host that does
+    /// not drive the run itself. `failed` says the drive ended in an error;
+    /// `elapsed_seconds` is how long it has gone, or went.
+    pub(crate) fn from_stored(run: &StoredRun, failed: bool, elapsed_seconds: u64) -> Self {
+        let tasks = stored_tasks(run);
+        Self {
+            run_id: run.manifest.run_id.to_string(),
+            workflow_name: run.graph.program.name.as_str().to_owned(),
+            lifecycle: run.state.state.lifecycle,
+            outcome: run.state.state.outcome(),
+            failed,
+            completed_tasks: completed_tasks(&tasks),
+            total_tasks: tasks.len(),
+            active_task: active_task(&tasks),
+            elapsed_seconds,
+        }
+    }
+
     pub(crate) fn is_live(&self) -> bool {
         !self.failed
             && matches!(
@@ -180,12 +225,7 @@ impl WorkflowRunTracker {
         }
         entry.lifecycle = run.state.state.lifecycle;
         entry.outcome = run.state.state.outcome();
-        entry.tasks = run
-            .state
-            .state
-            .tasks()
-            .map(|(id, state)| (id.to_string(), state.clone()))
-            .collect();
+        entry.tasks = stored_tasks(run);
     }
 
     /// Apply transient node activity without filesystem reads. Late events from
@@ -250,18 +290,9 @@ impl WorkflowRunTracker {
                     .finished
                     .as_ref()
                     .is_some_and(|snapshot| snapshot.error.is_some()),
-                completed_tasks: entry
-                    .tasks
-                    .values()
-                    .filter(|state| state.terminal().is_some())
-                    .count(),
+                completed_tasks: completed_tasks(&entry.tasks),
                 total_tasks: entry.tasks.len(),
-                active_task: entry.tasks.iter().find_map(|(id, state)| {
-                    matches!(state, NodeState::Running { .. }).then(|| {
-                        id.parse::<TaskInstanceId>()
-                            .map_or_else(|_| id.clone(), |task| task.label())
-                    })
-                }),
+                active_task: active_task(&entry.tasks),
                 elapsed_seconds: entry
                     .finished_at
                     .unwrap_or_else(Instant::now)

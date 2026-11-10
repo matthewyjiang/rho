@@ -1242,6 +1242,17 @@ fn daemon_saves_and_deletes_a_key_for_the_tui() {
     assert_pass("daemon_login");
 }
 
+// Covers: the workflow hub starts its run in the daemon, where it keeps
+// going after the TUI quits and shows on the rail of the next one, and
+// `/codemode` saves the mode through the daemon.
+// Owner: interactive TUI as a daemon client (#1667)
+// Requires the verified-handle workflow command adapter; other platforms fail closed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn daemon_runs_the_workflow_the_hub_starts() {
+    assert_pass("daemon_workflow");
+}
+
 // Covers: `/new`, `/resume`, and the `--resume` picker switch the daemon
 // session the TUI follows; a launch flag's setting carries into `/new`.
 // Owner: interactive TUI as a daemon client (#1667)

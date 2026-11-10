@@ -40,6 +40,10 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     if name == super::daemon_login::SCENARIO.id {
         return super::daemon_login::run(runner);
     }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if name == super::daemon_workflow::SCENARIO.id {
+        return super::daemon_workflow::run(runner);
+    }
     #[cfg(unix)]
     if name == super::daemon_reports::SCENARIO.id {
         return super::daemon_reports::run(runner);

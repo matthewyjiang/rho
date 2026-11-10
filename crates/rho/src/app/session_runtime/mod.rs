@@ -48,6 +48,7 @@ mod agent;
 pub(in crate::app) mod agent_catalog;
 mod approval_policy;
 mod build;
+mod codemode;
 mod compact;
 mod context;
 mod credentials;

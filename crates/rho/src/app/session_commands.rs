@@ -27,7 +27,7 @@ use crate::{
     agent::{AgentCatalog, AgentCatalogError, AgentRuntimeSpec},
     app::{
         session_runtime::{AgentTask, CommandRejected, SessionRuntime, SessionTools},
-        workflow_cli::discover::{self as workflows, StartCommand},
+        workflow_cli::discover::{self as workflows, WorkflowLaunch},
     },
     commands::{init_turn, CommandId, CommandInvocation, CommandParseError},
     config::Config,
@@ -155,8 +155,9 @@ pub(crate) enum PromptCommand {
     },
     /// `/compact`, with optional guidance on what to keep.
     Compact { instructions: Option<String> },
-    /// `/workflow:<name>`: start one workspace workflow in the background.
-    StartWorkflow(StartCommand),
+    /// `/workflow:<name>`, `/workflow:plan/<id>`, `/workflow:run/<id>`:
+    /// start a workflow run in the background.
+    StartWorkflow(WorkflowLaunch),
     /// `/agent:<name>`: bind a fresh session before running the task.
     RunAsAgent(AgentTask),
 }
@@ -311,7 +312,7 @@ async fn dynamic(
         }
     }
     let trailing = leading_text(&input).map_or("", command_args);
-    if let Some(resolved) = workflows::resolve_start_command(scope.cwd, name, trailing) {
+    if let Some(resolved) = workflows::resolve_launch(scope.cwd, name, trailing) {
         let rejected = |detail: &str| CommandRejected(format!("could not run /{name}: {detail}"));
         match commands.workflows {
             Hosting::Runs => {}

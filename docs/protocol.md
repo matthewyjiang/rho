@@ -58,7 +58,7 @@ A prompt whose turn ends before it began returns an error instead of a result:
 A prompt that starts with a slash command resolves as it does in [`rho run`](/automation-cli#sessions-commands-and-questions): prompt templates, MCP prompts, `/init`, `/agent:<name>`, and `$skill` mentions work, and so do `/compact` and `/workflow:<name>`, which run no model turn:
 
 - `/compact [instructions]` compacts the session's context. Clients get the command as a `user_message`, a `compaction` event that starts, then one that completes, followed by `usage` with the compacted context's fill, then what the compaction did as an `agent_message_chunk`, and the turn ends `answered` with the same `text`. A compaction that fails or is cancelled ends `failed` or `cancelled` instead, with no agent message. Neither message is saved: a later reload replays the compaction's own saved row in their place.
-- `/workflow:<name> [inputs JSON]` starts the workspace workflow in the background. Clients get the prompt as a `user_message` and the start notice, with the run id, as an `agent_message_chunk`, both saved, and the turn ends `answered` with the notice as `text`.
+- `/workflow:<name> [inputs JSON]` starts the workspace workflow in the background; `/workflow:plan/<plan id>` starts a run of a saved plan, and `/workflow:run/<run id>` takes a stopped run up again, with `recover` after it to run again the attempts whose outcome is unknown, once nothing of theirs still runs. Clients get the prompt as a `user_message` and the start notice, with the run id, as an `agent_message_chunk`, both saved, and the turn ends `answered` with the notice as `text`.
 - `/agent:<name> [--model <reference> --] <task>` rebinds a session that has no conversation yet to that agent, then runs `task` as its turn; clients get the agent's options as `options_changed` before the turn's output.
 
 The TUI's own commands, such as `/model`, do not run in the daemon, and the turn fails as a `configuration` error.
@@ -307,7 +307,7 @@ The daemon reads and writes the user's settings for its clients (#1720), so a fr
 | `applies` | Takes effect |
 | --- | --- |
 | `immediately` | As soon as it is saved, such as `behavior.agent_concurrency`, which resizes the subagent budget. |
-| `next_turn` | At the next turn of every loaded session: the advisor and automatic compaction settings. |
+| `next_turn` | At the next turn of every loaded session: the advisor and automatic compaction settings, and the codemode mode. |
 | `next_session` | In sessions the daemon opens later. |
 | `restart` | When the daemon next starts, such as `behavior.credential_store`. |
 

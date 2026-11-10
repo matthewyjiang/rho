@@ -34,7 +34,7 @@ use crate::{
             InsertedMessage, PlanReport, PromptScope, SessionEvent, SessionRuntime, TitleJob, Turn,
             TurnControl, TurnIo, TurnOutcome, TurnView, UnsavedCompaction, WorkflowStart,
         },
-        workflow_cli::discover::StartCommand,
+        workflow_cli::discover::WorkflowLaunch,
     },
     config::Config,
 };
@@ -479,7 +479,7 @@ async fn start_workflow(
     view: &mut DaemonView,
     scope: &PromptScope,
     display: UserInput,
-    start: StartCommand,
+    start: WorkflowLaunch,
     config: &Config,
 ) -> anyhow::Result<Ran> {
     let (notice, inserted, reply) = match runtime
