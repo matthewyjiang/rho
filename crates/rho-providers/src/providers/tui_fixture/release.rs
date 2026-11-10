@@ -1,4 +1,5 @@
-//! Workspace marker releases shared by fixtures. A release is consumed once.
+//! Workspace marker releases shared by fixtures, and where fixtures find the
+//! workspace's files. A release is consumed once.
 
 use std::{io::ErrorKind, path::PathBuf, time::Duration};
 
@@ -8,23 +9,23 @@ use rho_sdk::{CancellationToken, ProviderError};
 // only bounds how soon we notice a release.
 const RELEASE_POLL: Duration = Duration::from_millis(20);
 
-/// Names the workspace the PTY harness writes release markers to. A
+/// Names the workspace the PTY harness reads and writes fixture files in. A
 /// daemon-hosted fixture runs in the daemon, whose working directory is `/`,
-/// not the workspace, so it finds markers through this.
+/// not the workspace, so it finds them through this.
 const WORKSPACE_ENV: &str = "RHO_TUI_FIXTURE_WORKSPACE";
 
-/// Where `marker` is: in the harness's workspace, or relative to this
-/// process's working directory, which is the workspace in process.
-fn marker_path(marker: &str) -> PathBuf {
+/// Where the workspace's `file` is: in the harness's workspace, or relative
+/// to this process's working directory, which is the workspace in process.
+pub(super) fn workspace_path(file: &str) -> PathBuf {
     match std::env::var_os(WORKSPACE_ENV) {
-        Some(workspace) => PathBuf::from(workspace).join(marker),
-        None => PathBuf::from(marker),
+        Some(workspace) => PathBuf::from(workspace).join(file),
+        None => PathBuf::from(file),
     }
 }
 
 /// Consume a release, or clear an owned stale marker before publishing output.
 pub(super) fn consume_release(marker: &str) -> Result<bool, ProviderError> {
-    match std::fs::remove_file(marker_path(marker)) {
+    match std::fs::remove_file(workspace_path(marker)) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
         Err(error) => Err(ProviderError::interrupted(format!(
