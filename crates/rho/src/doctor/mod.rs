@@ -5,6 +5,7 @@
 //! id and feeds [`probe_checks`] back through [`DoctorReport::replace_checks`].
 
 mod checks;
+pub(crate) mod daemon;
 mod daemon_store;
 mod probes;
 mod report;

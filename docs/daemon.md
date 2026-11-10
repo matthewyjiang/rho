@@ -216,6 +216,20 @@ A `/login` or `/logout` in a TUI runs in that process until the TUI becomes a da
 
 The daemon serves and changes [configuration](/configuration) for its clients over [`rho/config/*`](/protocol#settings), and reads `config.toml` again whenever it changed, by a client or by hand, the next time a request, a session opening, or a turn touches it. Each setting says when a change takes effect: `agent_concurrency` at once, the advisor and automatic compaction settings at the next turn of every loaded session, and the rest in sessions opened later. A hand edit that no longer loads keeps the last good settings in force; `rho/config/get` lists its errors until you fix it. If `config.toml` never loaded since the daemon started, sessions do not open. Daemon-level settings, which are the `RHO_LOG` filter, the socket location (`XDG_RUNTIME_DIR`, `RHO_HOME`), and the credential store, are read once at startup. Restart the daemon with `rho daemon stop` to change them; a [sign-in or sign-out](#credentials) through the daemon also moves it to the credential store the config selects then, and `rho/auth/choose_store` moves it to the store a client chose. New sessions read that store, while running sessions keep the credentials they hold until a write moves them or their provider refuses them.
 
+## Checking the daemon
+
+[`rho doctor`](/automation-cli) reports on the daemon without starting one, each row with what to do about it; `rho doctor --json` carries the same rows in a `daemon` section, the credential store's under `authentication`.
+
+| Row | Reports | An issue when |
+| --- | --- | --- |
+| `Daemon` | Whether one runs, with its pid, rho version, and protocol version. | Its protocol is incompatible with this `rho`'s (fails; see [Versions](#versions)), or its rho version is another one (warns). A daemon that is not running is not an issue: the next client starts it. |
+| `Daemon socket` | Whether the socket and its directory are yours alone. | Either is open to group or others, owned by someone else, or not what it should be (fails; see [Socket and permissions](#socket-and-permissions)). |
+| `Service` | Whether the [service](#running-as-a-service) for `rho mcp serve --http` is saved under the name the examples use, `rho-mcp.service` or `dev.rho.mcp.plist`, and on Linux whether it is enabled. It reads the files in your own unit directory and asks no service manager, so a unit under another name or installed system-wide is not found. | A systemd unit is saved but not enabled (warns). No service is not an issue: the daemon needs none. |
+| `Daemon environment` | Which of the variables the daemon reads from [its own environment](#starting-automatically) differ from this shell's, by name only. | A network variable or daemon setting differs, such as `HTTPS_PROXY` or `RHO_LOG` (warns): the daemon keeps what it started with. Variables such as `PATH` that only differ between shells are listed without a warning, as sessions use their client's. Linux only: elsewhere the row says the environment cannot be read. |
+| `Daemon credential store` | The store the daemon keeps provider credentials in and what chose it. | The daemon cannot reach it (see [Credentials](#credentials)). |
+
+On Windows the report has one `Daemon` row saying the daemon is not supported yet.
+
 ## Running as a service
 
 The daemon needs no service of its own: every frontend starts it on demand. Only a process that has to listen before any client shows up needs a service manager, and today that is [`rho mcp serve --http`](/mcp-server#over-http). It is a daemon client like any other, so its first tool call starts the daemon from inside its service, and its unit is all the always-on setup there is. Use `rho daemon start` in a script that wants the daemon running before anything connects.

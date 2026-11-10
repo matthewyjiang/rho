@@ -175,6 +175,13 @@ pub(crate) fn read_record(paths: &DaemonPaths) -> Option<DaemonRecord> {
     serde_json::from_slice(&contents).ok()
 }
 
+/// The record of the daemon running now, or `None` when none holds the lock
+/// or it has not written its record yet. A record alone may be a crashed
+/// daemon's, whose pid may have been reused.
+pub(crate) fn running_record(paths: &DaemonPaths) -> Option<DaemonRecord> {
+    is_held(paths).ok()?.then(|| read_record(paths))?
+}
+
 /// Sends SIGTERM to the recorded daemon, for a daemon that cannot take a
 /// `rho/daemon/stop` request because it speaks an incompatible protocol.
 /// SIGTERM triggers the same graceful shutdown. Returns the signalled pid, or
