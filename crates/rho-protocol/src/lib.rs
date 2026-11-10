@@ -73,6 +73,7 @@ mod login_relay;
 pub mod methods;
 pub mod schema;
 mod server;
+mod server_settings;
 mod subscription;
 mod version;
 
@@ -136,5 +137,6 @@ pub use methods::{
     SESSION_MCP,
 };
 pub use server::{serve_connection, ServerInfo, Service, CLOSE_GRACE};
+pub use server_settings::SettingsService;
 pub use subscription::{subscription, Published, Publisher, Subscription};
 pub use version::{ProtocolVersion, RestartCost, VersionFix, VersionMismatch, PROTOCOL_VERSION};

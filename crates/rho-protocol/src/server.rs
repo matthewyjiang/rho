@@ -12,8 +12,9 @@ use tokio::{
     task::JoinSet,
 };
 
+use crate::server_settings::{self, SettingsService};
 use crate::{
-    forward::{ConfigWatch, Forwarders},
+    forward::Forwarders,
     jsonrpc,
     login_relay::LoginStream,
     methods::{
@@ -21,14 +22,13 @@ use crate::{
         AuthKeyResponse, AuthList, AuthListParams, AuthListResponse, AuthLogin, AuthLoginCancel,
         AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse,
         AuthLogout, AuthLogoutParams, AuthLogoutResponse, ClientInfo, ConfigGet, ConfigGetParams,
-        ConfigRegister, ConfigRegisterParams, ConfigRegisterResponse, ConfigSchema,
-        ConfigSchemaMethod, ConfigSchemaParams, ConfigSet, ConfigSetParams, ConfigSetResponse,
-        Hello, JobList, JobListParams, JobListResponse, Method, Restart, RestartParams,
-        RestartResponse, SessionAnswer, SessionAnswerParams, SessionAnswerResponse, SessionAttach,
-        SessionAttachParams, SessionAttachResponse, SessionCancel, SessionCancelParams,
-        SessionCancelResponse, SessionConfigure, SessionConfigureParams, SessionConfigureResponse,
-        SessionDelete, SessionDeleteParams, SessionDeleteResponse, SessionDetach,
-        SessionDetachParams, SessionDetachResponse, SessionHold, SessionHoldParams,
+        ConfigRegister, ConfigRegisterParams, ConfigSchemaMethod, ConfigSchemaParams, ConfigSet,
+        ConfigSetParams, Hello, JobList, JobListParams, JobListResponse, Method, Restart,
+        RestartParams, RestartResponse, SessionAnswer, SessionAnswerParams, SessionAnswerResponse,
+        SessionAttach, SessionAttachParams, SessionAttachResponse, SessionCancel,
+        SessionCancelParams, SessionCancelResponse, SessionConfigure, SessionConfigureParams,
+        SessionConfigureResponse, SessionDelete, SessionDeleteParams, SessionDeleteResponse,
+        SessionDetach, SessionDetachParams, SessionDetachResponse, SessionHold, SessionHoldParams,
         SessionHoldResponse, SessionId, SessionList, SessionListParams, SessionListResponse,
         SessionMcp, SessionMcpInventory, SessionMcpParams, SessionNew, SessionNewParams,
         SessionNewResponse, SessionObserve, SessionObserveParams, SessionPrompt,
@@ -70,7 +70,7 @@ use crate::{
 /// `rho/session/detach` has no method: the connection answers it by
 /// dropping that session's [`Subscription`], which the publisher sees as
 /// [`crate::Published::Gone`].
-pub trait Service: Send + Sync {
+pub trait Service: SettingsService + Send + Sync {
     /// Called once a connection's `rho/hello` is accepted, before its answer
     /// is written, with the client the hello names. It runs in the
     /// connection's read loop, so it must return without waiting. Does
@@ -268,31 +268,6 @@ pub trait Service: Send + Sync {
         &self,
         params: AuthChooseStoreParams,
     ) -> impl Future<Output = Result<AuthChooseStoreResponse, RpcError>> + Send;
-
-    /// Answers `rho/config/schema`: every agent setting.
-    fn config_schema(&self) -> impl Future<Output = Result<ConfigSchema, RpcError>> + Send;
-
-    /// Handles `rho/config/register`: replace the client's settings schema.
-    fn register_config(
-        &self,
-        params: ConfigRegisterParams,
-    ) -> impl Future<Output = Result<ConfigRegisterResponse, RpcError>> + Send;
-
-    /// Handles `rho/config/get`: the namespace's state, current when this
-    /// resolves. The connection answers with it, then sends each later
-    /// state's changes as `rho/config/changed` until the client reads the
-    /// namespace again or the connection ends.
-    fn get_config(
-        &self,
-        params: ConfigGetParams,
-    ) -> impl Future<Output = Result<ConfigWatch, RpcError>> + Send;
-
-    /// Handles `rho/config/set`: write every change, or none, and publish
-    /// the new state to the namespace's [`ConfigWatch`]es.
-    fn set_config(
-        &self,
-        params: ConfigSetParams,
-    ) -> impl Future<Output = Result<ConfigSetResponse, RpcError>> + Send;
 }
 
 /// What the daemon reports in its `rho/hello` response.
@@ -523,7 +498,13 @@ where
                         let service = Arc::clone(&service);
                         let forwarders = Arc::clone(forwarders);
                         calls.spawn(async move {
-                            watch_config(&*service, params, responder, &forwarders).await;
+                            server_settings::watch_config(
+                                &*service,
+                                params,
+                                responder,
+                                &forwarders,
+                            )
+                            .await;
                         });
                         while calls.try_join_next().is_some() {}
                         continue;
@@ -927,35 +908,15 @@ async fn login<Svc: Service>(
     }
 }
 
-/// Answers a `rho/config/get` through `responder`, then forwards the
-/// namespace's changes through `forwarders`.
-async fn watch_config<Svc: Service>(
-    service: &Svc,
-    params: ConfigGetParams,
-    responder: Responder,
-    forwarders: &Arc<Forwarders>,
-) {
-    let namespace = params.namespace.clone();
-    match service.get_config(params).await {
-        Ok(watch) => {
-            let outbox = responder.outbox.clone();
-            forwarders.watch_config(namespace, watch, outbox, move |state| {
-                responder.send(encode_result::<ConfigGet>(state));
-            });
-        }
-        Err(error) => responder.send(Err(error)),
-    }
-}
-
 /// The duty to answer one request handed to the service.
 ///
 /// A call that ends without answering, because its handler panicked or the
 /// connection cancelled it, answers with an internal error on drop, so the
 /// peer never waits on a request that will not finish.
-struct Responder {
+pub(crate) struct Responder {
     /// `None` once answered.
     id: Option<RequestId>,
-    outbox: Outbox,
+    pub(crate) outbox: Outbox,
 }
 
 impl Responder {
@@ -966,7 +927,7 @@ impl Responder {
         }
     }
 
-    fn send(mut self, outcome: Result<Value, RpcError>) {
+    pub(crate) fn send(mut self, outcome: Result<Value, RpcError>) {
         self.answer(outcome);
     }
 
@@ -1016,7 +977,7 @@ fn hello_protocol(params: Option<&Value>) -> Result<ProtocolVersion, RpcError> {
 }
 
 /// Encodes `M`'s result, the type [`crate::Client::request`] decodes.
-fn encode_result<M: Method>(result: &M::Result) -> Result<Value, RpcError> {
+pub(crate) fn encode_result<M: Method>(result: &M::Result) -> Result<Value, RpcError> {
     encode(result)
 }
 

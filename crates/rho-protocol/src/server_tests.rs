@@ -18,9 +18,10 @@ use crate::{
         SESSION_DETACHED, SESSION_EVENT,
     },
     subscription, AuthChooseStoreParams, AuthChooseStoreResponse, ConfigChangedParams,
-    ConfigGetResponse, ConfigNamespace, ConfigRevision, CredentialStoreKind, CredentialStoreStatus,
-    LoginRelay, ProtocolVersion, Published, Publisher, RequestId, SettingEntry, SettingKey,
-    SettingValue, StoreSelectedBy, ValueSource,
+    ConfigGetResponse, ConfigNamespace, ConfigRegisterResponse, ConfigRevision, ConfigSchema,
+    ConfigSetResponse, ConfigWatch, CredentialStoreKind, CredentialStoreStatus, LoginRelay,
+    ProtocolVersion, Published, Publisher, RequestId, SettingEntry, SettingKey, SettingValue,
+    StoreSelectedBy, ValueSource,
 };
 
 /// Failure bound for each response a test waits for. The tests synchronize
@@ -186,24 +187,26 @@ fn no_credential_store() -> RpcError {
 
 /// The config methods of a test service that keeps no settings.
 macro_rules! serves_no_config {
-    () => {
-        async fn config_schema(&self) -> Result<ConfigSchema, RpcError> {
-            Err(no_config())
-        }
+    ($service:ty) => {
+        impl SettingsService for $service {
+            async fn config_schema(&self) -> Result<ConfigSchema, RpcError> {
+                Err(no_config())
+            }
 
-        async fn register_config(
-            &self,
-            _: ConfigRegisterParams,
-        ) -> Result<ConfigRegisterResponse, RpcError> {
-            Err(no_config())
-        }
+            async fn register_config(
+                &self,
+                _: ConfigRegisterParams,
+            ) -> Result<ConfigRegisterResponse, RpcError> {
+                Err(no_config())
+            }
 
-        async fn get_config(&self, _: ConfigGetParams) -> Result<ConfigWatch, RpcError> {
-            Err(no_config())
-        }
+            async fn get_config(&self, _: ConfigGetParams) -> Result<ConfigWatch, RpcError> {
+                Err(no_config())
+            }
 
-        async fn set_config(&self, _: ConfigSetParams) -> Result<ConfigSetResponse, RpcError> {
-            Err(no_config())
+            async fn set_config(&self, _: ConfigSetParams) -> Result<ConfigSetResponse, RpcError> {
+                Err(no_config())
+            }
         }
     };
 }
@@ -270,10 +273,11 @@ impl Service for FakeService {
     async fn stop(&self) {}
 
     hosts_no_sessions!();
-    serves_no_config!();
     attaches_nothing!();
     logs_in_nothing!();
 }
+
+serves_no_config!(FakeService);
 
 /// Panics in `status`, as a handler bug would.
 struct PanickingService;
@@ -292,10 +296,11 @@ impl Service for PanickingService {
     async fn stop(&self) {}
 
     hosts_no_sessions!();
-    serves_no_config!();
     attaches_nothing!();
     logs_in_nothing!();
 }
+
+serves_no_config!(PanickingService);
 
 /// `status` answers only once the test releases it. `stop` resolves the
 /// connection's shutdown (see [`GatedService::shutdown`]) and returns only
@@ -330,10 +335,11 @@ impl Service for GatedService {
     }
 
     hosts_no_sessions!();
-    serves_no_config!();
     attaches_nothing!();
     logs_in_nothing!();
 }
+
+serves_no_config!(GatedService);
 
 fn hello_line(id: i64, protocol: ProtocolVersion) -> String {
     serde_json::json!({
@@ -690,7 +696,6 @@ impl Service for AttachService {
     async fn stop(&self) {}
 
     hosts_no_sessions!();
-    serves_no_config!();
     logs_in_nothing!();
 
     async fn attach_session(
@@ -732,6 +737,8 @@ impl Service for AttachService {
         Ok((response, subscription))
     }
 }
+
+serves_no_config!(AttachService);
 
 /// One message the daemon sent, reduced to what the attach tests compare.
 #[derive(Debug, PartialEq)]
@@ -1067,7 +1074,6 @@ impl Service for LoginService {
     async fn stop(&self) {}
 
     hosts_no_sessions!();
-    serves_no_config!();
     attaches_nothing!();
 
     async fn login(
@@ -1087,6 +1093,8 @@ impl Service for LoginService {
         Ok((response, stream))
     }
 }
+
+serves_no_config!(LoginService);
 
 fn login_line(id: i64) -> String {
     request_with_params(id, AUTH_LOGIN, serde_json::json!({"auth": "xai-oauth"}))
@@ -1176,7 +1184,9 @@ impl Service for ConfigService {
     attaches_nothing!();
     logs_in_nothing!();
     nobody_uses_it!();
+}
 
+impl SettingsService for ConfigService {
     async fn config_schema(&self) -> Result<ConfigSchema, RpcError> {
         Err(no_config())
     }
