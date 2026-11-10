@@ -29,6 +29,8 @@ pub(crate) mod daemon_client;
 mod daemon_host;
 mod detach;
 mod doctor_cli;
+#[cfg(unix)]
+mod doctor_daemon;
 pub(crate) mod endpoint_login;
 mod headless_host;
 mod host_mcp;

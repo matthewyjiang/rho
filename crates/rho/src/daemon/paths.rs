@@ -8,7 +8,7 @@
 use std::{
     ffi::OsString,
     fs, io,
-    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
@@ -77,6 +77,29 @@ pub(crate) enum DaemonPathError {
     InsecureMode { path: PathBuf, mode: u32 },
     #[error("could not prepare rho daemon directory {path}: {message}")]
     Io { path: PathBuf, message: String },
+    #[error("could not read {path}: {message}")]
+    Unreadable { path: PathBuf, message: String },
+    #[error(
+        "{path} is not a socket; run `rho daemon stop`, remove it, and let the next client start the daemon"
+    )]
+    NotASocket { path: PathBuf },
+    #[error(
+        "rho daemon socket {path} is owned by uid {owner}, not uid {uid}; remove it and let the next client start the daemon"
+    )]
+    SocketWrongOwner { path: PathBuf, owner: u32, uid: u32 },
+    #[error(
+        "rho daemon socket {path} has mode {mode:04o} but must not be accessible to group or others; run `chmod 600 {path}`"
+    )]
+    InsecureSocketMode { path: PathBuf, mode: u32 },
+}
+
+/// What [`DaemonPaths::inspect_socket`] found where the daemon listens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SocketFound {
+    /// No daemon has bound a socket there, or its directory does not exist.
+    Missing,
+    /// A socket of this user's that nobody else can reach.
+    Private,
 }
 
 impl DaemonPaths {
@@ -132,6 +155,51 @@ impl DaemonPaths {
         prepare_private_dir(&self.state_dir)
     }
 
+    /// Verifies, creating and changing nothing, that the socket and the
+    /// runtime directory holding it are this user's and closed to everyone
+    /// else, as [`DaemonPaths::prepare_runtime_dir`] and the daemon's bind
+    /// leave them. `rho doctor` reports the result.
+    pub(crate) fn inspect_socket(&self) -> Result<SocketFound, DaemonPathError> {
+        let io_error = |path: &Path, error: io::Error| DaemonPathError::Unreadable {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        };
+        match fs::symlink_metadata(&self.runtime_dir) {
+            Ok(metadata) => verify_private_dir(&self.runtime_dir, &metadata)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(SocketFound::Missing)
+            }
+            Err(error) => return Err(io_error(&self.runtime_dir, error)),
+        }
+        let path = &self.socket;
+        let metadata = match fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(SocketFound::Missing)
+            }
+            Err(error) => return Err(io_error(path, error)),
+        };
+        if !metadata.file_type().is_socket() {
+            return Err(DaemonPathError::NotASocket { path: path.clone() });
+        }
+        let uid = current_uid();
+        if metadata.uid() != uid {
+            return Err(DaemonPathError::SocketWrongOwner {
+                path: path.clone(),
+                owner: metadata.uid(),
+                uid,
+            });
+        }
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            return Err(DaemonPathError::InsecureSocketMode {
+                path: path.clone(),
+                mode,
+            });
+        }
+        Ok(SocketFound::Private)
+    }
+
     /// Creates the log directory (0700) and opens the log for appending
     /// (0600).
     pub(crate) fn open_log_file(&self) -> io::Result<fs::File> {
@@ -167,6 +235,12 @@ fn prepare_private_dir(path: &Path) -> Result<(), DaemonPathError> {
     }
     // Not following symlinks: a link could point anywhere.
     let metadata = fs::symlink_metadata(path).map_err(io_error)?;
+    verify_private_dir(path, &metadata)
+}
+
+/// Verifies that `metadata`, read from `path` without following symlinks, is
+/// of a real directory owned by this user and closed to everyone else.
+fn verify_private_dir(path: &Path, metadata: &fs::Metadata) -> Result<(), DaemonPathError> {
     if !metadata.is_dir() {
         return Err(DaemonPathError::NotADirectory {
             path: path.to_path_buf(),
