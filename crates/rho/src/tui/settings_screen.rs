@@ -8,17 +8,13 @@
 //! an integer or text opens the line editor, where an empty entry resets it.
 //!
 //! Every write goes to the daemon with the revision the TUI last saw
-//! (`DaemonSession::set_config`) and this process as its writer, so a
-//! write sent before the daemon reported the last one back is not refused
-//! for it; nothing changes here until the daemon's `rho/config/changed`
-//! says so. Then an open page re-renders with its
+//! (`DaemonSession::set_config`), which names the TUI as its writer, so a
+//! write sent before `rho/config/changed` for the last one arrives is not
+//! refused for it; nothing changes here until that notification says so. Then an open page re-renders with its
 //! selection kept, and a `tui` client change takes effect live.
 
-use std::sync::LazyLock;
-
 use rho_protocol::{
-    Applies, ConfigLayer, ConfigSetParams, ConfigWriter, SettingChange, SettingKey, SettingKind,
-    SettingValue,
+    Applies, ConfigLayer, ConfigSetParams, SettingChange, SettingKey, SettingKind, SettingValue,
 };
 
 use super::{
@@ -27,10 +23,6 @@ use super::{
     text_input::TextInput,
     App, ComposerMode, Entry, PickerItem, TuiSettings, UiPicker,
 };
-
-/// This process's settings writes, whatever session it shows.
-static TUI_WRITER: LazyLock<ConfigWriter> =
-    LazyLock::new(|| ConfigWriter::new(uuid::Uuid::new_v4().to_string()));
 
 /// A settings page, rebuilt from the cached settings whenever they change,
 /// so returning to it shows what a child page saved.
@@ -440,7 +432,8 @@ impl App {
             namespace: namespace.wire(),
             layer: ConfigLayer::Global,
             revision: settings.values(namespace).revision.clone(),
-            writer: Some(TUI_WRITER.clone()),
+            // `DaemonRequests` names the writer.
+            writer: None,
             changes,
         };
         match session.set_config(params, label.to_owned()) {

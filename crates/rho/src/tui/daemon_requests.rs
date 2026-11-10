@@ -16,8 +16,9 @@ use std::{future::Future, sync::Arc};
 
 use rho_protocol::{
     methods::{ConfigSet, SessionConfigure, SessionMcp, SessionPrompt},
-    ClientEnvironment, ClientError, ConfigSetParams, ContentBlock, ErrorCode, SessionChange,
-    SessionConfigureParams, SessionGoalAction, SessionId, SessionMcpParams, SessionPromptParams,
+    ClientEnvironment, ClientError, ConfigSetParams, ConfigWriter, ContentBlock, ErrorCode,
+    SessionChange, SessionConfigureParams, SessionGoalAction, SessionId, SessionMcpParams,
+    SessionPromptParams,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -123,6 +124,9 @@ impl DaemonRequests {
         let (sender, mut requests) = mpsc::unbounded_channel();
         let (views, receiver) = mpsc::unbounded_channel();
         let (control, mut control_requests) = mpsc::unbounded_channel();
+        // Names these writes, so the daemon tells them from another
+        // client's (see `ConfigSetParams::writer`).
+        let writer = ConfigWriter::new(uuid::Uuid::new_v4().to_string());
         let mut control_target = target.clone();
         let mut target = target;
         let control_views = views.clone();
@@ -169,7 +173,8 @@ impl DaemonRequests {
                             "could not {verb} the goal: {error}"
                         )));
                     }
-                    Control::SetConfig { params, label } => {
+                    Control::SetConfig { mut params, label } => {
+                        params.writer = Some(writer.clone());
                         let answer = on_attachment(&mut control_target, |link, _| {
                             let params = params.clone();
                             async move { link.request::<ConfigSet>(&params).await }
@@ -182,8 +187,9 @@ impl DaemonRequests {
                             Some((_, Err(error)))
                                 if error.error_code() == Some(ErrorCode::ConfigConflict) =>
                             {
-                                // Another client's change, or a hand edit:
-                                // this TUI's own never conflict.
+                                // Another client's change or a hand edit;
+                                // this TUI's own writes conflict only
+                                // across a daemon restart.
                                 DaemonView::Status("settings changed; try again".into())
                             }
                             Some((_, Err(error))) => {

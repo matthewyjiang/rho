@@ -1,8 +1,9 @@
-//! Advisor mode: the `/advisor` command, the config row, and a live review.
+//! Advisor mode in the TUI: the warning for a mode saved without a model,
+//! and a live review. Choosing the advisor through the daemon is in
+//! the `daemon_advisor` scenario (`daemon_config`).
 //!
-//! The isolated home has no credentials, so every model picker would be empty.
-//! `XAI_API_KEY` gives these scenarios a provider whose models come from the
-//! static catalog, which is enough for the advisor model picker to offer rows.
+//! The isolated home has no credentials. `XAI_API_KEY` makes `xai` an
+//! available auth, so its catalog model can be the advisor.
 
 use std::time::{Duration, Instant};
 
@@ -176,7 +177,6 @@ fn assert_advisor_card_has_no_empty_arguments(harness: &mut PtyHarness) -> Resul
     Ok(())
 }
 
-/// The advisor scenarios, as `ALL_SCENARIOS` lists them.
 pub(super) const ADVISOR_MISSING_MODEL_SCENARIO: Scenario = Scenario {
     id: "advisor_missing_model",
     description: "Warn about advisor mode saved without a model",

@@ -2,7 +2,8 @@
 //!
 //! Once it attaches, a followed session registers the `tui` client's
 //! settings, then reads the agent schema and both namespaces' values
-//! (`daemon_session`); `rho/config/changed` keeps them current.
+//! (`daemon_settings_read`), and again on the new connection after the
+//! daemon restarts; `rho/config/changed` keeps them current.
 //! [`DaemonSettings`] is that cache, and maps it to `/config` rows;
 //! `settings_screen` owns the pages and what choosing a row does.
 
