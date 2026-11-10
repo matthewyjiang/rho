@@ -43,11 +43,22 @@ use super::{daemon_events::DaemonView, daemon_options::setting_name};
 use crate::app::daemon_client::Link;
 
 enum Request {
-    Configure(SessionChange),
+    Configure(SessionChange, Asked),
     Prompt {
         content: Vec<ContentBlock>,
         result: oneshot::Sender<anyhow::Result<()>>,
     },
+}
+
+/// Who asked for a change, which decides whether its end is reported.
+#[derive(Clone, Copy)]
+enum Asked {
+    /// The app, which counts the change as pending until
+    /// [`DaemonView::ConfigureFinished`].
+    ByApp,
+    /// The launch, carrying a setting to a session opened mid-turn: the
+    /// app never counted it, so its end must not settle one the app did.
+    AtLaunch,
 }
 
 /// Where the session's requests go, as the session publishes it.
@@ -334,7 +345,7 @@ impl DaemonRequests {
         let task = tokio::spawn(async move {
             while let Some(request) = requests.recv().await {
                 match request {
-                    Request::Configure(change) => {
+                    Request::Configure(change, asked) => {
                         let setting = setting_name(&change);
                         let saves_rows = matches!(
                             change,
@@ -361,7 +372,9 @@ impl DaemonRequests {
                         if error.is_none() && saves_rows {
                             saved.store(true, Ordering::Relaxed);
                         }
-                        let _ = views.send(DaemonView::ConfigureFinished);
+                        if let Asked::ByApp = asked {
+                            let _ = views.send(DaemonView::ConfigureFinished);
+                        }
                         if let Some(error) = error {
                             let _ = views.send(DaemonView::Error(format!(
                                 "could not change the {setting}: {error}"
@@ -461,7 +474,15 @@ impl DaemonRequests {
 
     pub(super) fn configure(&self, change: SessionChange) -> anyhow::Result<()> {
         self.sender
-            .send(Request::Configure(change))
+            .send(Request::Configure(change, Asked::ByApp))
+            .map_err(|_| anyhow::anyhow!(LOST))
+    }
+
+    /// Queues a launch setting for a session opened mid-turn. A refusal
+    /// still shows as an error; nothing reports that it finished.
+    pub(super) fn carry(&self, change: SessionChange) -> anyhow::Result<()> {
+        self.sender
+            .send(Request::Configure(change, Asked::AtLaunch))
             .map_err(|_| anyhow::anyhow!(LOST))
     }
 

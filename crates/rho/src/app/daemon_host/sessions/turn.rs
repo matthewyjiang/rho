@@ -305,17 +305,30 @@ pub(super) async fn restart_transcript(session: &LoadedSession, runtime: &Sessio
         let mut live = session.live();
         live.forget_replayed();
         (
-            saved_replay(&mut live, runtime, &session.job).unwrap_or_default(),
+            saved_replay(&mut live, runtime, &session.job),
             live.context_usage(runtime.context_estimate()),
         )
     };
+    // The conversation moved either way, so the old transcript cannot
+    // stay. Rows that could not be read leave it empty, which must not
+    // read as a conversation with nothing in it.
+    let unread = saved.is_none()
+        && runtime
+            .saved_history()
+            .is_some_and(|saved| saved.display_rows().is_err());
     let usage = cost::priced(vec![usage], &session.id).await;
-    session.feed.restart(saved);
+    session.feed.restart(saved.unwrap_or_default());
     let rests = wire::SessionEvent::State {
         state: wire::JobState::Idle,
         turn: None,
     };
-    session.feed.publish([rests].into_iter().chain(usage));
+    let unread = unread.then(|| wire::SessionEvent::Notice {
+        text: "could not read the conversation's saved rows; the next turn still continues from it"
+            .into(),
+    });
+    session
+        .feed
+        .publish([rests].into_iter().chain(usage).chain(unread));
 }
 
 /// Generates the title the session's first answered turn asked for, which
