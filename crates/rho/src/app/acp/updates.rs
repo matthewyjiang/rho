@@ -92,7 +92,7 @@ impl Updates {
                     message,
                 ))]
             }
-            SessionEvent::ToolCall(update) => vec![self.tool_call(update)],
+            SessionEvent::ToolCall(update) => self.tool_call(update).into_iter().collect(),
             SessionEvent::Plan { entries } => vec![SessionUpdate::Plan(Plan::new(
                 entries.iter().map(plan_entry).collect(),
             ))],
@@ -154,7 +154,9 @@ impl Updates {
 
     /// The first report of a call opens its card; later ones patch only the
     /// fields they carry.
-    fn tool_call(&mut self, update: &wire::ToolCallUpdate) -> SessionUpdate {
+    /// Nothing for a patch that carries only a `display`, which ACP has no
+    /// field for: a call's card follows its streamed arguments.
+    fn tool_call(&mut self, update: &wire::ToolCallUpdate) -> Option<SessionUpdate> {
         let id = ToolCallId::new(update.id.as_str());
         let content = update
             .content
@@ -176,7 +178,16 @@ impl Updates {
             if let Some(locations) = locations {
                 call = call.locations(locations);
             }
-            return SessionUpdate::ToolCall(call);
+            return Some(SessionUpdate::ToolCall(call));
+        }
+        if update.title.is_none()
+            && update.kind.is_none()
+            && update.status.is_none()
+            && update.raw_input.is_none()
+            && content.is_none()
+            && locations.is_none()
+        {
+            return None;
         }
         let fields = ToolCallUpdateFields::new()
             .title(update.title.clone())
@@ -185,7 +196,9 @@ impl Updates {
             .raw_input(update.raw_input.clone())
             .content(content)
             .locations(locations);
-        SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(id, fields))
+        Some(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            id, fields,
+        )))
     }
 
     /// A background result's card, as a finished tool call. Cards keep it out
