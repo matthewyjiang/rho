@@ -126,7 +126,7 @@ impl Sessions {
             }
             // Every client replays the conversation as it now stands.
             Ok(Applied::Restarted { notice }) => {
-                super::turn::restart_transcript(&session, runtime);
+                super::turn::restart_transcript(&session, runtime).await;
                 // After the restart, so the clients it detached replay it.
                 session
                     .feed
@@ -250,7 +250,7 @@ impl Change {
                 return match runtime.select_node(&node, config).await {
                     Ok(()) => Ok(Applied::Restarted { notice: None }),
                     Err(SelectNodeError::Change(error)) => Err(setting_error(error)),
-                    Err(error @ (SelectNodeError::Unsaved | SelectNodeError::Node(_))) => {
+                    Err(error @ (SelectNodeError::Unsaved | SelectNodeError::UnknownNode(_))) => {
                         Err(invalid(error.to_string()))
                     }
                 };

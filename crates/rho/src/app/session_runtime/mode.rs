@@ -1,10 +1,11 @@
 //! Permission mode changes for one session: swaps the mode by rebuilding the
 //! SDK runtime around the live conversation, the same way the interactive
-//! host does.
+//! host does. Other changes that need a new runtime rebuild through here
+//! too, around the live conversation or another point of the session's tree.
 
 use std::path::PathBuf;
 
-use rho_sdk::{SessionOptions, SessionSnapshot};
+use rho_sdk::{SessionOptions, SessionSnapshot, SystemPrompt};
 
 use super::{
     ensure_auto_classifier_model, model_context_window, model_scoped_config, RunShape,
@@ -12,6 +13,7 @@ use super::{
 };
 use crate::{
     app::{
+        conversation_switch::replace_system_prompt,
         policy::AppPolicy,
         runtime_builder::{build_runtime_with_max_steps, RuntimeBuildOptions},
         sdk_config::WorkspaceOptions,
@@ -88,19 +90,33 @@ impl SessionRuntime {
         mode: PermissionMode,
         writes: SessionWriteLog,
     ) -> Result<(), SettingChangeError> {
-        let conversation = self.built.session.snapshot();
-        self.rebuild_runtime_onto(config, mode, writes, conversation)
+        self.rebuild_around(config, mode, writes, /*moved_to*/ None)
             .await
     }
 
-    /// [`Self::rebuild_runtime`], around `conversation` in place of the
-    /// live one.
+    /// [`Self::rebuild_runtime`], around `conversation`, another point of
+    /// the session's saved tree, in place of the live one. The conversation
+    /// runs under the system prompt the session has now, which a node saved
+    /// before a model switch does not hold, and the checklist and loaded
+    /// tools are the ones it had there.
     pub(super) async fn rebuild_runtime_onto(
         &mut self,
         config: &Config,
         mode: PermissionMode,
         writes: SessionWriteLog,
         conversation: SessionSnapshot,
+    ) -> Result<(), SettingChangeError> {
+        self.rebuild_around(config, mode, writes, Some(conversation))
+            .await
+    }
+
+    /// Rebuilds around `moved_to`, or the live conversation when `None`.
+    async fn rebuild_around(
+        &mut self,
+        config: &Config,
+        mode: PermissionMode,
+        writes: SessionWriteLog,
+        moved_to: Option<SessionSnapshot>,
     ) -> Result<(), SettingChangeError> {
         // Approvals follow the session's mode, which a caller's config,
         // built from the process config, may not carry.
@@ -153,16 +169,35 @@ impl SessionRuntime {
             *max_steps,
         )
         .map_err(|error| SettingChangeError::Apply(error.into()))?;
-        let session = match runtime
+        let conversation = moved_to
+            .clone()
+            .unwrap_or_else(|| self.built.session.snapshot());
+        let rebound = runtime
             .rebind_session(SessionOptions::from_snapshot(conversation))
             .await
-        {
+            .and_then(|session| {
+                // Before the swap, so a failure leaves the live session.
+                // The live conversation has the prompt already, and a
+                // session without one has none to restore.
+                if let (Some(_), SystemPrompt::Custom(text)) =
+                    (&moved_to, &self.built.prompt.system)
+                {
+                    replace_system_prompt(&session, text)?;
+                }
+                Ok(session)
+            });
+        let session = match rebound {
             Ok(session) => session,
             Err(error) => {
                 runtime.shutdown();
                 return Err(SettingChangeError::Apply(error.into()));
             }
         };
+        if moved_to.is_some() {
+            let moved = session.snapshot();
+            self.built.tools.todo_state().restore(&moved);
+            self.built.tools.code_mode().restore(&moved);
+        }
         let previous = std::mem::replace(&mut self.built.runtime, runtime);
         self.built.session = session;
         self.built.approval_receiver = approval.receiver;

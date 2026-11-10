@@ -296,6 +296,14 @@ impl LiveEvents {
     pub(crate) fn forget_replayed(&mut self) {
         self.replayed_rows = 0;
         self.replayed_ids = Default::default();
+        // Numbered again from the rows replayed next, as a fresh mapper's.
+        self.call_ids = Default::default();
+    }
+
+    /// The usage event for `estimate`, the session's context between
+    /// turns, with no cost yet.
+    pub(crate) fn context_usage(&mut self, estimate: ContextEstimate) -> WireEvent {
+        self.usage(estimate)
     }
 
     /// The wire events for `event`, in order; empty for events the wire does
