@@ -3,9 +3,8 @@
 //!
 //! - An approval is the approval prompt, and its decision the matching
 //!   answer.
-//! - A plan approval is the plan-approval questionnaire's decision
-//!   question, offering the request's modes this rho knows. The daemon
-//!   takes no feedback with it, so the feedback field is left out.
+//! - A plan approval is the plan-approval questionnaire, offering the
+//!   request's modes this rho knows; its feedback goes with the answer.
 //! - Questions are the questionnaire. A timeout's fallback answers show
 //!   with its countdown, but the form never submits them: the daemon does.
 
@@ -78,15 +77,16 @@ pub(super) fn approval_answer(decision: ApprovalDecision) -> InputAnswer {
 /// planning, as the in-process tool decides. Either carries the feedback
 /// the response gave.
 pub(super) fn plan_answer(response: &HostInputResponse, modes: &[PermissionMode]) -> InputAnswer {
-    match plan_exit::questionnaire_decision(response, modes) {
-        Some(decision) if decision.target != PermissionMode::Plan => InputAnswer::ApprovePlan {
-            mode: decision.target.into(),
+    let decision = plan_exit::questionnaire_decision(response, modes)
+        .unwrap_or_else(plan_exit::PlanExitDecision::keep_planning);
+    match decision.approved() {
+        Some(mode) => InputAnswer::ApprovePlan {
+            mode: mode.into(),
             feedback: decision.feedback,
         },
-        Some(decision) => InputAnswer::KeepPlanning {
+        None => InputAnswer::KeepPlanning {
             feedback: decision.feedback,
         },
-        None => InputAnswer::KeepPlanning { feedback: None },
     }
 }
 

@@ -19,8 +19,34 @@ use crate::permission::PermissionMode;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PlanExitDecision {
+    /// The mode to carry the plan out in; [`PermissionMode::Plan`] keeps
+    /// planning.
     pub(crate) target: PermissionMode,
+    /// What the user wrote for the model to read with the decision.
     pub(crate) feedback: Option<String>,
+}
+
+impl PlanExitDecision {
+    pub(crate) fn approve(mode: PermissionMode) -> Self {
+        Self {
+            target: mode,
+            feedback: None,
+        }
+    }
+
+    pub(crate) fn keep_planning() -> Self {
+        Self::approve(PermissionMode::Plan)
+    }
+
+    pub(crate) fn with_feedback(mut self, feedback: Option<String>) -> Self {
+        self.feedback = feedback;
+        self
+    }
+
+    /// The mode it approves the plan into, if it does.
+    pub(crate) fn approved(&self) -> Option<PermissionMode> {
+        (self.target != PermissionMode::Plan).then_some(self.target)
+    }
 }
 
 /// How the turn that proposed a plan ended.
@@ -103,37 +129,7 @@ pub(crate) struct PlanPermissionRequest {
     /// The modes the user may approve into, in offer order.
     pub(crate) targets: Vec<PermissionMode>,
     /// Dropping it unanswered reports the call as cancelled.
-    pub(crate) reply: oneshot::Sender<PlanPermissionAnswer>,
-}
-
-/// A permission-prompt host's answer to a plan approval.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PlanPermissionAnswer {
-    /// The mode to carry the plan out in; `None` keeps planning.
-    approved: Option<PermissionMode>,
-    /// What the user wrote for the model to read with the answer.
-    feedback: Option<String>,
-}
-
-impl PlanPermissionAnswer {
-    pub(crate) fn approve(mode: PermissionMode) -> Self {
-        Self {
-            approved: Some(mode),
-            feedback: None,
-        }
-    }
-
-    pub(crate) fn keep_planning() -> Self {
-        Self {
-            approved: None,
-            feedback: None,
-        }
-    }
-
-    pub(crate) fn with_feedback(mut self, feedback: Option<String>) -> Self {
-        self.feedback = feedback;
-        self
-    }
+    pub(crate) reply: oneshot::Sender<PlanExitDecision>,
 }
 
 pub(crate) type PlanPermissionSender = mpsc::UnboundedSender<PlanPermissionRequest>;
@@ -320,13 +316,14 @@ async fn ask_permission(
         () = context.cancellation().cancelled() => return Err(ToolError::cancelled()),
         answer = answer => answer.map_err(|_| ToolError::cancelled())?,
     };
-    // The one check that an answer names an offered mode.
+    // The one check that an answer names an offered mode. Its feedback is
+    // the host's to clean up; only blank text is none.
     Ok(PlanExitDecision {
         target: answer
-            .approved
+            .approved()
             .filter(|mode| targets.contains(mode))
             .unwrap_or(PermissionMode::Plan),
-        feedback: given_feedback(answer.feedback.as_deref()),
+        feedback: answer.feedback.filter(|text| !text.trim().is_empty()),
     })
 }
 

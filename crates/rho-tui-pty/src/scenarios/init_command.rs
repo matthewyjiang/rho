@@ -126,6 +126,7 @@ const INIT_PLAN_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Custom(assert_no_instructions),
+    Step::Custom(assert_refused_once),
     Step::ExitCommand,
 ];
 
@@ -201,4 +202,13 @@ fn assert_no_instructions(harness: &mut PtyHarness) -> Result<()> {
         "Plan onboarding wrote root instructions"
     );
     assert_nested_instructions_absent(cwd)
+}
+
+/// The refusal is the only error: the prompt was not also reported unsent.
+fn assert_refused_once(harness: &mut PtyHarness) -> Result<()> {
+    ensure!(
+        !harness.screen().contains_text("could not send the prompt"),
+        "the refused /init was also reported as a prompt that could not be sent"
+    );
+    Ok(())
 }

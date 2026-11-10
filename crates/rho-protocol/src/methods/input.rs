@@ -413,3 +413,7 @@ pub struct SessionHoldParams {
 /// request that closed is [`crate::ErrorCode::InputNotOpen`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionHoldResponse {}
+
+#[cfg(test)]
+#[path = "input_tests.rs"]
+mod tests;

@@ -35,7 +35,7 @@ use super::{
 use crate::{
     app::subagent_host_input::SubagentHostInputRequest,
     display_transcript::DisplayTranscript,
-    tools::plan_exit::{PlanPermissionAnswer, PlanPermissionReceiver, PlanPermissionRequest},
+    tools::plan_exit::{PlanExitDecision, PlanPermissionReceiver, PlanPermissionRequest},
 };
 
 pub(super) enum EventSource<'a> {
@@ -154,7 +154,7 @@ enum PlanSettled {
 #[derive(Default)]
 struct Pending {
     approvals: BTreeMap<ApprovalId, PendingApproval>,
-    plans: BTreeMap<PlanApprovalId, oneshot::Sender<PlanPermissionAnswer>>,
+    plans: BTreeMap<PlanApprovalId, oneshot::Sender<PlanExitDecision>>,
     questions: BTreeSet<HostInputId>,
     /// Where each open subagent question's answer goes. Dropping one tells
     /// the subagent nobody will answer.
@@ -426,7 +426,7 @@ async fn next_plan_approval(
 async fn wait_for_plan(
     id: PlanApprovalId,
     mut request: PlanPermissionRequest,
-    answered: oneshot::Receiver<PlanPermissionAnswer>,
+    answered: oneshot::Receiver<PlanExitDecision>,
 ) -> PlanSettled {
     tokio::select! {
         biased;

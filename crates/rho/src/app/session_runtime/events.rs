@@ -12,7 +12,7 @@ use rho_sdk::{
 
 use crate::{
     display_transcript::DisplayTranscript, permission::PermissionMode,
-    session::tree::DisplayRowOrigin, tools::plan_exit::PlanPermissionAnswer,
+    session::tree::DisplayRowOrigin, tools::plan_exit::PlanExitDecision,
 };
 
 /// One tool approval a turn asked for, unique within the turn.
@@ -135,7 +135,7 @@ pub(crate) enum TurnControl {
     },
     AnswerPlan {
         id: PlanApprovalId,
-        answer: PlanPermissionAnswer,
+        answer: PlanExitDecision,
     },
     AnswerQuestion {
         id: HostInputId,

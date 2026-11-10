@@ -29,7 +29,7 @@ use crate::{
         subagent_host_input::SubagentHostInputBridge,
     },
     config::Config,
-    tools::plan_exit::PlanPermissionAnswer,
+    tools::plan_exit::PlanExitDecision,
 };
 
 /// Keeps the status file fresh while a provider or tool call emits no events.
@@ -182,7 +182,7 @@ impl<'a> HeadlessView<'a> {
             SessionEvent::PlanApprovalRequested { id, .. } => {
                 let _ = control.send(TurnControl::AnswerPlan {
                     id,
-                    answer: PlanPermissionAnswer::keep_planning(),
+                    answer: PlanExitDecision::keep_planning(),
                 });
             }
             SessionEvent::QuestionAsked { id, request, .. } => match &self.parent {

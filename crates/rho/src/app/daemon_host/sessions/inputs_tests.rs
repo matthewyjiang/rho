@@ -18,7 +18,7 @@ use crate::{
         session_runtime::{ApprovalId, PlanApprovalId, SessionEvent, TurnControl},
     },
     permission::PermissionMode,
-    tools::plan_exit::PlanPermissionAnswer,
+    tools::plan_exit::PlanExitDecision,
 };
 
 /// Opens the request `event` asks in `inputs`, returning its id and the
@@ -106,7 +106,7 @@ fn a_request_hands_the_turn_only_the_answers_it_takes() {
             },
             Outcome::Turn(TurnControl::AnswerPlan {
                 id: PlanApprovalId::nth_for_tests(0),
-                answer: PlanPermissionAnswer::approve(PermissionMode::Auto),
+                answer: PlanExitDecision::approve(PermissionMode::Auto),
             }),
         ),
         (
@@ -116,7 +116,7 @@ fn a_request_hands_the_turn_only_the_answers_it_takes() {
             },
             Outcome::Turn(TurnControl::AnswerPlan {
                 id: PlanApprovalId::nth_for_tests(0),
-                answer: PlanPermissionAnswer::keep_planning()
+                answer: PlanExitDecision::keep_planning()
                     .with_feedback(Some("smaller steps".into())),
             }),
         ),

@@ -27,7 +27,7 @@ use crate::{
     },
     app::subagent_host_input::SubagentHostInputRequest,
     permission::PermissionMode,
-    tools::plan_exit::{PlanPermissionAnswer, PlanPermissionRequest},
+    tools::plan_exit::{PlanExitDecision, PlanPermissionRequest},
 };
 
 /// What a host sees of one event, comparable as a whole.
@@ -175,10 +175,7 @@ fn approval() -> (PendingApproval, oneshot::Receiver<ApprovalDecision>) {
     ))
 }
 
-fn plan() -> (
-    PlanPermissionRequest,
-    oneshot::Receiver<PlanPermissionAnswer>,
-) {
+fn plan() -> (PlanPermissionRequest, oneshot::Receiver<PlanExitDecision>) {
     let (reply, answer) = oneshot::channel();
     (
         PlanPermissionRequest {
@@ -300,7 +297,7 @@ async fn answers_reach_the_request_they_name() {
     });
     harness.answer(TurnControl::AnswerPlan {
         id: PlanApprovalId(0),
-        answer: PlanPermissionAnswer::approve(PermissionMode::AllowEdits),
+        answer: PlanExitDecision::approve(PermissionMode::AllowEdits),
     });
     drop(abandoned_answer);
     assert_eq!(harness.next().await, Seen::PlanWithdrawn(PlanApprovalId(1)));
@@ -315,7 +312,7 @@ async fn answers_reach_the_request_they_name() {
                 reason: "no".into()
             },
             ApprovalDecision::AllowForSession,
-            PlanPermissionAnswer::approve(PermissionMode::AllowEdits),
+            PlanExitDecision::approve(PermissionMode::AllowEdits),
         )
     );
 
