@@ -11,7 +11,8 @@
 //! them, in [`login`]; `rho mcp serve` driving its sessions is in [`mcp`],
 //! and the sessions a session starts, as its children, in [`started`];
 //! re-executing the daemon in place, for an upgrade or `rho daemon
-//! restart`, is in [`upgrade`]; what a daemon takes from the client that
+//! restart`, is in [`upgrade`]; what a client of another version hears at
+//! the handshake is in [`skew`]; what a daemon takes from the client that
 //! starts it, and each session's project trust, is in [`identity`].
 #![cfg(unix)]
 
@@ -60,6 +61,9 @@ mod started;
 
 #[path = "support/daemon_upgrade.rs"]
 mod upgrade;
+
+#[path = "support/daemon_skew.rs"]
+mod skew;
 
 #[path = "support/daemon_identity.rs"]
 mod identity;

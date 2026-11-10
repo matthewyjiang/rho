@@ -17,7 +17,7 @@ use crate::ErrorCode;
 /// Longest line, in bytes without the trailing newline, that either side
 /// reads or writes.
 ///
-/// A tripwire, not a budget: protocol 1.0 messages are under 1 KiB. The limit
+/// A tripwire, not a budget: the protocol's messages are under 1 KiB. The limit
 /// only stops a peer that never sends a newline from growing the read buffer
 /// without bound. If a real message ever reaches it, raise the limit rather
 /// than chunking the message.

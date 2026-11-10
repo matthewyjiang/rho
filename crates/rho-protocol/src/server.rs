@@ -4,7 +4,7 @@
 
 use std::{future::Future, sync::Arc, time::Duration};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -41,8 +41,8 @@ use crate::{
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
-    MessageWriter, Request, RequestId, Response, RpcError, StatusParams, StopParams, StopResponse,
-    VersionMismatch, PROTOCOL_VERSION,
+    MessageWriter, ProtocolVersion, Request, RequestId, Response, RestartCost, RpcError,
+    StatusParams, StopParams, StopResponse, VersionFix, VersionMismatch, PROTOCOL_VERSION,
 };
 
 /// The daemon's answers to post-handshake requests, one method per protocol
@@ -75,6 +75,21 @@ pub trait Service: Send + Sync {
     fn hello(&self, client: &ClientInfo) {
         let _ = client;
     }
+
+    /// Called once a connection whose `rho/hello` was accepted stops
+    /// reading, as its client leaves or the daemon shuts down; with
+    /// [`Self::hello`], it lets an implementor count its connected clients.
+    /// It must return without waiting. Does nothing unless overridden.
+    fn left(&self) {}
+
+    /// Called when the handshake refuses a client newer than the daemon,
+    /// which speaks `client`. Returns what restarting the daemon would cost
+    /// now, which the refusal carries ([`VersionMismatch::restart`]). That
+    /// client may replace a daemon whose restart is free, so never report
+    /// less than there is. The refused connection was never accepted, so it
+    /// is not one of the clients a restart disconnects. It runs in the
+    /// connection's read loop, so it must return without waiting.
+    fn refused_newer(&self, client: ProtocolVersion) -> RestartCost;
 
     /// Answers `rho/daemon/status`.
     fn status(&self) -> impl Future<Output = DaemonStatus> + Send;
@@ -402,6 +417,8 @@ where
 {
     let mut shutdown = std::pin::pin!(shutdown);
     let mut connection = Connection::AwaitingHello;
+    // Tells the service its client left, however this stops reading.
+    let mut accepted = None;
     loop {
         // `read_line` is not cancel-safe, so only branches that end the
         // connection may race it.
@@ -427,9 +444,12 @@ where
         };
         let response = match Message::parse(&line) {
             Ok(Message::Request(Request { id, method, params })) => {
-                match connection.route(&method, params, info) {
+                let refused_newer = |client| service.refused_newer(client);
+                match connection.route(&method, params, info, refused_newer) {
                     Ok(Route::Hello { response, client }) => {
                         service.hello(&client);
+                        // A connection's hello is accepted once.
+                        let _ = accepted.insert(Accepted(Arc::clone(&service)));
                         Response {
                             id: Some(id),
                             outcome: Ok(response),
@@ -527,6 +547,16 @@ async fn write_messages<W: AsyncWrite + Unpin>(
     Ok(())
 }
 
+/// A connection whose hello the service heard, which hears that it left
+/// once this drops.
+struct Accepted<Svc: Service>(Arc<Svc>);
+
+impl<Svc: Service> Drop for Accepted<Svc> {
+    fn drop(&mut self) {
+        self.0.left();
+    }
+}
+
 /// Handshake state of one connection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Connection {
@@ -581,21 +611,37 @@ enum ServiceCall {
 impl Connection {
     /// Answers the handshake, protocol errors, and detaches in place, and
     /// hands attaches and the other service methods on.
+    ///
+    /// A hello from an incompatible client is refused, which leaves the
+    /// connection awaiting one. A refused newer client is told what
+    /// restarting this daemon would cost, from `refused_newer`.
     fn route(
         &mut self,
         method: &str,
         params: Option<Value>,
         info: &ServerInfo,
+        refused_newer: impl FnOnce(ProtocolVersion) -> RestartCost,
     ) -> Result<Route, RpcError> {
         match (*self, method) {
             (Self::AwaitingHello, HELLO) => {
-                let hello = decode_params::<Hello>(params)?;
-                if let Some(mismatch) = VersionMismatch::between(PROTOCOL_VERSION, hello.protocol) {
+                // The version is read first and alone, so a client of
+                // another version hears that, not that the rest of its
+                // hello is one this daemon cannot read.
+                let client = hello_protocol(params.as_ref())?;
+                if let Some(mismatch) = VersionMismatch::between(PROTOCOL_VERSION, client) {
+                    let mismatch = match mismatch.fix {
+                        VersionFix::RestartDaemon => VersionMismatch {
+                            restart: Some(refused_newer(client)),
+                            ..mismatch
+                        },
+                        VersionFix::UpdateClient => mismatch,
+                    };
                     return Err(
                         RpcError::new(ErrorCode::VersionMismatch, mismatch.to_string())
                             .with_data(encode(&mismatch)?),
                     );
                 }
+                let hello = decode_params::<Hello>(params)?;
                 let response = encode_result::<Hello>(&HelloResponse {
                     protocol: PROTOCOL_VERSION,
                     daemon: info.daemon.clone(),
@@ -873,6 +919,23 @@ impl Drop for Responder {
 /// params type the client sends.
 fn decode_params<M: Method>(params: Option<Value>) -> Result<M::Params, RpcError> {
     serde_json::from_value(params.unwrap_or_else(|| Value::Object(Map::new())))
+        .map_err(|error| RpcError::new(ErrorCode::InvalidParams, error.to_string()))
+}
+
+/// The protocol a hello names, whatever else it holds.
+fn hello_protocol(params: Option<&Value>) -> Result<ProtocolVersion, RpcError> {
+    #[derive(Deserialize)]
+    struct Versioned {
+        protocol: ProtocolVersion,
+    }
+    let Some(params) = params else {
+        return Err(RpcError::new(
+            ErrorCode::InvalidParams,
+            format!("{HELLO} needs params"),
+        ));
+    };
+    Versioned::deserialize(params)
+        .map(|hello| hello.protocol)
         .map_err(|error| RpcError::new(ErrorCode::InvalidParams, error.to_string()))
 }
 

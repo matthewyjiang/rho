@@ -12,7 +12,9 @@
 //!
 //! CI compares it with the last release's (`scripts/check_protocol_compat.py`):
 //! a change a protocol minor does not allow fails unless the major rises, and
-//! any other change needs the minor to rise.
+//! any other change needs the minor to rise. While the major is 0, CI also
+//! compares each change with the commit before it, where any change to the
+//! wire needs the minor to rise.
 
 use schemars::{generate::SchemaSettings, SchemaGenerator};
 use serde_json::{json, Map, Value};

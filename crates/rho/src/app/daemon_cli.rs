@@ -77,7 +77,8 @@ pub(super) fn paths() -> anyhow::Result<DaemonPaths> {
 /// Why [`connect`] reached no daemon: the socket path is over the
 /// platform's limit, the daemon could not start or did not accept
 /// connections in time (the reason names its log file), or its protocol
-/// major differs (the reason says which side to update).
+/// is incompatible (the reason says which side to change and, for an older
+/// daemon someone is using, what a restart would cost).
 #[cfg(unix)]
 #[derive(Debug, thiserror::Error)]
 #[error("could not reach the rho daemon: {reason}; see https://matthewyjiang.github.io/rho/daemon")]
@@ -132,15 +133,20 @@ struct CheckedSpawner(daemon::ProcessSpawner);
 
 #[cfg(unix)]
 impl daemon::DaemonSpawner for CheckedSpawner {
+    fn check(&self) -> std::io::Result<()> {
+        crate::credential_store::environment_backend()
+            .map(drop)
+            .map_err(|error| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "RHO_CREDENTIAL_STORE in this environment, which it would inherit: {error}"
+                    ),
+                )
+            })
+    }
+
     fn spawn(&self, paths: &DaemonPaths) -> std::io::Result<()> {
-        crate::credential_store::environment_backend().map_err(|error| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!(
-                    "RHO_CREDENTIAL_STORE in this environment, which it would inherit: {error}"
-                ),
-            )
-        })?;
         self.0.spawn(paths)
     }
 }
@@ -475,7 +481,7 @@ async fn stop(paths: &DaemonPaths) -> anyhow::Result<()> {
         }
         // An incompatible daemon cannot take requests. SIGTERM triggers the
         // same graceful shutdown, so the version-mismatch advice to run
-        // `rho daemon stop` still works.
+        // `rho daemon restart`, which stops it this way, still works.
         Err(daemon::ConnectError::Handshake(ClientError::VersionMismatch(_))) => {
             daemon::terminate_recorded_daemon(paths)?.ok_or(daemon::ConnectError::NotRunning)?
         }
