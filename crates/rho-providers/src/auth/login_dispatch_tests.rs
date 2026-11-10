@@ -234,8 +234,8 @@ fn ollama_device_key_needs_rho_login_and_logout_undoes_it() {
 // Covers: the device key is kept where the party signing in keeps it. Two
 // parties that share a store, as two clients of one daemon do, each get a
 // key of their own in their own `OLLAMA_DEVICE_KEY_DIR`: one's login creates
-// no key for the other and does not sign the other in, and each is asked to
-// approve the key in its own directory (#1789).
+// no key for the other, which stays signed out while it has none, and each
+// is asked to approve the key in its own directory (#1789).
 // Owner: login dispatch
 #[test]
 fn each_party_signs_in_with_the_device_key_in_its_own_directory() {

@@ -3,6 +3,7 @@
 //! offline login fixture (`RHO_AUTOMATION_TEST_LOGIN`): a login to
 //! `xai-oauth` serves a loopback page and shows it as a device-code
 //! prompt, and a GET of the page approves it with placeholder tokens.
+//! Ollama Cloud's device-key login needs no fixture, since it calls nobody.
 
 use std::{
     collections::BTreeSet,
@@ -70,16 +71,16 @@ async fn start_login(client: &Client) -> Result<LoginId, Option<ErrorCode>> {
         .map_err(|error| error.error_code())
 }
 
-/// What `rho/auth/list` says of [`AUTH`].
-async fn status(client: &Client) -> AuthStatus {
+/// What `rho/auth/list` says of `auth` to a client with `environment`.
+async fn status(client: &Client, auth: &str, environment: ClientEnvironment) -> AuthStatus {
     client
-        .request::<AuthList>(&AuthListParams::default())
+        .request::<AuthList>(&AuthListParams { environment })
         .await
         .unwrap()
         .auths
         .into_iter()
-        .find(|summary| summary.auth == AUTH)
-        .expect("the daemon lists xai-oauth")
+        .find(|summary| summary.auth == auth)
+        .unwrap_or_else(|| panic!("the daemon lists {auth}"))
         .status
 }
 
@@ -128,20 +129,6 @@ async fn device_login(sandbox: &Sandbox, environment: ClientEnvironment) -> (Str
         String::from_utf8(key).unwrap(),
         next_finished(&mut notifications).await.outcome,
     )
-}
-
-/// What `rho/auth/list` says of [`DEVICE_AUTH`] to a client with
-/// `environment`.
-async fn device_status(client: &Client, environment: ClientEnvironment) -> AuthStatus {
-    client
-        .request::<AuthList>(&AuthListParams { environment })
-        .await
-        .unwrap()
-        .auths
-        .into_iter()
-        .find(|summary| summary.auth == DEVICE_AUTH)
-        .expect("the daemon lists ollama-cloud-device")
-        .status
 }
 
 /// The public key in `key_dir`, when a device key was created there.
@@ -251,7 +238,7 @@ async fn a_relayed_login_signs_in_a_running_session() {
         .await
         .unwrap();
     let (login_client, mut notifications) = sandbox.connect_following().await;
-    let signed_out = status(&login_client).await;
+    let signed_out = status(&login_client, AUTH, Default::default()).await;
 
     let login = start_login(&login_client).await.unwrap();
     let prompt = next_prompt(&mut notifications, &login).await;
@@ -265,7 +252,7 @@ async fn a_relayed_login_signs_in_a_running_session() {
             (prompt.user_code.as_deref(), prompt.url_with_code.as_deref()),
             finished,
             models_gained(&before, &after),
-            status(&login_client).await,
+            status(&login_client, AUTH, Default::default()).await,
             saved_token(&sandbox),
         ),
         (
@@ -289,8 +276,8 @@ async fn a_relayed_login_signs_in_a_running_session() {
 // directory of its own, as one inherited from the client that started it
 // would, creates no key there: each of two clients is asked to approve a
 // key the daemon created in that client's directory, the two keys differ,
-// and the first client's login does not sign in the second, which has no
-// key yet (#1789).
+// and after the first client's login the second, which has no key yet, is
+// still signed out (#1789).
 // Owner: daemon login relay.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn each_clients_device_login_uses_the_key_in_its_own_directory() {
@@ -304,8 +291,8 @@ async fn each_clients_device_login_uses_the_key_in_its_own_directory() {
 
     let (first_key, first_outcome) = device_login(&sandbox, first()).await;
     let after_first = (
-        device_status(&client, first()).await,
-        device_status(&client, second()).await,
+        status(&client, DEVICE_AUTH, first()).await,
+        status(&client, DEVICE_AUTH, second()).await,
         public_key_in(second_dir.path()),
     );
     let (second_key, second_outcome) = device_login(&sandbox, second()).await;
@@ -316,7 +303,7 @@ async fn each_clients_device_login_uses_the_key_in_its_own_directory() {
             (first_outcome, Some(first_key)),
             after_first,
             (second_outcome, Some(second_key)),
-            device_status(&client, second()).await,
+            status(&client, DEVICE_AUTH, second()).await,
             public_key_in(daemon_dir.path()),
         ),
         (
