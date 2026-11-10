@@ -171,6 +171,12 @@ error_codes! {
         /// file by hand, or change the keys it fails on; `rho/config/get`
         /// lists where it fails.
         ConfigInvalid = -32022,
+        /// The method needs a [`crate::ClientCapability`] this connection's
+        /// `rho/hello` did not declare, such as `rho/session/answer` from an
+        /// agent's session control, whose role may not declare it. Nothing
+        /// was done. A connection keeps what it declared: connect again as a
+        /// client that declares the capability.
+        CapabilityRequired = -32023,
     }
 }
 

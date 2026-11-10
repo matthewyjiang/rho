@@ -43,7 +43,7 @@ async fn daemon_serves_status_and_cleans_up_on_stop() {
     let socket_mode = fs::metadata(&paths.socket).unwrap().permissions().mode() & 0o777;
     assert_eq!(socket_mode, 0o600);
     let client::Connection { client, hello, .. } =
-        client::connect(&paths, client::cli_client_info())
+        client::connect(&paths, client::ConnectAs::Command.hello())
             .await
             .unwrap();
     assert_eq!(hello.daemon.pid, std::process::id());

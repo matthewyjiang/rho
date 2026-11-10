@@ -20,7 +20,7 @@ use super::{
 };
 use crate::{
     app::daemon_cli::{self, Reach},
-    daemon::Connection,
+    daemon::{ConnectAs, Connection},
 };
 
 /// An observation of one session, on its own connection.
@@ -36,7 +36,7 @@ impl Attached {
         session: &SessionId,
         after: Option<Cursor>,
     ) -> Result<Self, ControlError> {
-        let connection = daemon_cli::connect_with(reach).await?;
+        let connection = daemon_cli::connect_with(reach, ConnectAs::Agent).await?;
         let response = connection
             .client
             .request::<SessionObserve>(&SessionObserveParams {
