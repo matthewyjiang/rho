@@ -27,14 +27,28 @@ impl App {
             match view {
                 DaemonView::Clear => self.clear_daemon_transcript(),
                 DaemonView::InputsReset => self.drop_daemon_inputs(),
-                DaemonView::User(text) => self.insert_entry(&Entry::User(text)),
-                DaemonView::Text { kind, text, opens } => {
-                    if self.turn.is_provider_turn() {
-                        self.turn.set_activity_phase(match kind {
-                            StreamKind::Assistant => ActivityPhase::Responding,
-                            StreamKind::Reasoning => ActivityPhase::Thinking,
-                        });
+                DaemonView::User(text) => {
+                    self.finish_streams();
+                    self.insert_entry(&Entry::User(text));
+                }
+                // A running turn's text goes through the stream an
+                // in-process turn's does, which holds, paces and previews
+                // it as `output_streaming` says. History, and a turn this
+                // TUI is not showing busy, is written as it stands.
+                DaemonView::Text { kind, text, opens } if self.turn.is_provider_turn() => {
+                    if opens {
+                        // A new message starts a new row.
+                        self.finish_stream_text();
                     }
+                    self.handle_agent_event(
+                        match kind {
+                            StreamKind::Assistant => ViewModelEvent::OutputDelta(text),
+                            StreamKind::Reasoning => ViewModelEvent::ReasoningDelta(text),
+                        },
+                        terminal,
+                    )?;
+                }
+                DaemonView::Text { kind, text, opens } => {
                     if opens {
                         self.open_transcript_row(kind.entry(text));
                     } else {
@@ -115,8 +129,14 @@ impl App {
                 }
                 DaemonView::InputHeld(id) => self.daemon_input_held(id),
                 DaemonView::Status(text) => self.set_status(text),
-                DaemonView::Notice(text) => self.insert_entry(&Entry::Notice(text)),
-                DaemonView::Error(text) => self.insert_entry(&Entry::Error(text)),
+                DaemonView::Notice(text) => {
+                    self.finish_streams();
+                    self.insert_entry(&Entry::Notice(text));
+                }
+                DaemonView::Error(text) => {
+                    self.finish_streams();
+                    self.insert_entry(&Entry::Error(text));
+                }
             }
         }
         Ok(())
@@ -193,6 +213,10 @@ impl App {
     /// applied as follow-ups, and a completed one arms the next follow-up,
     /// which the app loop sends once the composer is free.
     async fn end_daemon_turn(&mut self, rest: Rest) {
+        // What the stream still holds of the reply shows before the turn's
+        // closing rows, and nothing of it outlasts the turn.
+        self.finish_streams();
+        self.reset_streams();
         // A turn withdraws its requests before it ends, so any prompt still
         // open is one the TUI can no longer follow.
         self.drop_daemon_inputs();
