@@ -189,7 +189,7 @@ impl Pump {
         });
         let port: Arc<dyn AcpClientPort> = host.clone();
         let context = InputContext {
-            daemon: Arc::new(Daemon::default()),
+            daemon: Arc::new(Daemon::for_frontend()),
             session: SessionId::new(SESSION),
             acp_id: AcpSessionId::new(SESSION),
             port,

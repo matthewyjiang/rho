@@ -21,10 +21,8 @@ use super::{
         subagents::TurnBudget,
         wire::state_event,
     },
-    being_deleted, ended_early,
-    open::session_environment,
-    stopping, Hold, KeyedTurn, LoadedSession, OpenWith, PromptStart, Queued, Sessions, TurnKind,
-    TurnLimit, TurnSlot, TurnTask,
+    being_deleted, ended_early, grant, stopping, Hold, KeyedTurn, LoadedSession, OpenWith,
+    PromptStart, Queued, Sessions, TurnKind, TurnLimit, TurnSlot, TurnTask,
 };
 use crate::{
     app::{prompt_content, session_runtime::SessionRuntime},
@@ -121,10 +119,11 @@ impl Sessions {
         })?;
         // A prompt carries no setup, so a session it reopens opens with what
         // its file keeps alone.
-        let with = OpenWith {
-            environment: session_environment(&params.environment)?,
-            setup: SessionSetup::default(),
-        };
+        let with = OpenWith::under(
+            grant::asked(params.grant, &params.environment)?,
+            &params.environment,
+            SessionSetup::default(),
+        )?;
         let (id, mut start) = loop {
             let (session, entered) = self
                 .enter_session(&params.session, &with, |session, turn| {
@@ -206,15 +205,18 @@ impl Sessions {
         }
         let record = TurnRecord::starting(key.clone());
         let id = record.id.clone();
-        let budget = match self.jobs.start_turn(&session.job, record) {
+        let (budget, grant) = match self
+            .jobs
+            .start_turn(&session.job, record, with.grant.clone())
+        {
             // Told under the turn lock, which the last turn's end is told
             // under too, so the feed never says `running` before the last
             // turn's end, nor a turn's end after the next turn began.
-            Ok(moved) => {
+            Ok((moved, grant)) => {
                 let budget = (moved.state == JobState::Queued)
                     .then(|| self.subagents.queue_turn(&session.job));
                 session.feed.publish([state_event(&moved)]);
-                budget
+                (budget, grant)
             }
             Err(StartTurnError::Busy) => match turn.kind {
                 TurnKind::Prompt => {
@@ -239,8 +241,12 @@ impl Sessions {
         };
         // The turn's processes and hooks, and later turns' until another
         // prompt, start in the prompting client's environment, whose
-        // project trust is the session's.
-        session.environment.replace(with.environment.clone());
+        // project trust is the session's, carrying the grant the job gave
+        // the turn: less than the prompt asked for when the job holds a
+        // limit.
+        session
+            .environment
+            .replace(grant::carrying(&grant, &with.environment));
         turn.cancel = CancellationToken::new();
         turn.kind = TurnKind::Prompt;
         let (start, started) = watch::channel(PromptStart::Pending);

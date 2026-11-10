@@ -22,19 +22,20 @@ use serde_json::Value;
 
 use super::{key_checking_provider::spawn_provider, sessions::Sandbox};
 
-const FIRST_KEY: &str = "test-first-key";
+pub(super) const FIRST_KEY: &str = "test-first-key";
 const SECOND_KEY: &str = "test-second-key";
 const WRONG_KEY: &str = "test-wrong-key";
 const AUTH: &str = "mock-api-key";
-const KEY_ACCOUNT: &str = "provider:mock:api-key";
+pub(super) const KEY_ACCOUNT: &str = "provider:mock:api-key";
 /// The variable that overrides the custom `mock` provider's saved key.
 const KEY_VARIABLE: &str = "RHO_MOCK_API_KEY";
 
-/// A daemon whose config selects the custom `mock` provider at a
-/// [`spawn_provider`] host, with a file credential store in its home.
-struct Fixture {
-    sandbox: Sandbox,
-    store: FileCredentialStore,
+/// A sandbox whose config selects the custom `mock` provider at a
+/// [`spawn_provider`] host, with a file credential store in its home, and
+/// the daemon a test or a client in it starts.
+pub(super) struct Fixture {
+    pub(super) sandbox: Sandbox,
+    pub(super) store: FileCredentialStore,
 }
 
 impl Fixture {
@@ -47,7 +48,21 @@ impl Fixture {
     }
 
     /// Starts the daemon with its command changed by `configure`.
-    async fn start_with(valid: &Arc<Mutex<String>>, configure: impl FnOnce(&mut Command)) -> Self {
+    pub(super) async fn start_with(
+        valid: &Arc<Mutex<String>>,
+        configure: impl FnOnce(&mut Command),
+    ) -> Self {
+        let fixture = Self::without_daemon(valid);
+        let mut command = fixture.sandbox.rho("fixed");
+        // The session must reach the real provider, not the fixture one.
+        command.env_remove("RHO_AUTOMATION_TEST_MODE");
+        configure(&mut command);
+        fixture.sandbox.spawn_daemon(command, &[]).await;
+        fixture
+    }
+
+    /// The sandbox with no daemon yet, for a client that starts one.
+    pub(super) fn without_daemon(valid: &Arc<Mutex<String>>) -> Self {
         let address = spawn_provider(Arc::clone(valid));
         let sandbox = Sandbox::new();
         std::fs::write(
@@ -70,17 +85,23 @@ mode = "off"
         )
         .unwrap();
         let store = FileCredentialStore::with_rho_home(sandbox.isolated.rho_home()).unwrap();
-        let mut command = sandbox.rho("fixed");
-        // The session must reach the real provider, not the fixture one.
-        command.env_remove("RHO_AUTOMATION_TEST_MODE");
-        configure(&mut command);
-        sandbox.spawn_daemon(command, &[]).await;
         Self { sandbox, store }
     }
 
     /// Prompts `session` and waits for its turn to end; how it ended, or
     /// the error a turn that ended before it saved the prompt answers.
     async fn prompt(&self, client: &Client, session: &SessionId) -> Result<JobState, RpcError> {
+        self.prompt_from(client, session, self.sandbox.client_environment())
+            .await
+    }
+
+    /// [`Self::prompt`] for a client whose environment is `environment`.
+    pub(super) async fn prompt_from(
+        &self,
+        client: &Client,
+        session: &SessionId,
+        environment: ClientEnvironment,
+    ) -> Result<JobState, RpcError> {
         client
             .request::<SessionPrompt>(&SessionPromptParams {
                 session: session.clone(),
@@ -88,8 +109,9 @@ mode = "off"
                     text: "hello".into(),
                 }],
                 timeout_ms: None,
-                environment: self.sandbox.client_environment(),
+                environment,
                 idempotency_key: None,
+                grant: None,
             })
             .await
             .map_err(rpc_error)?;
@@ -112,12 +134,12 @@ mode = "off"
             .await)
     }
 
-    fn saved_key(&self) -> Option<String> {
+    pub(super) fn saved_key(&self) -> Option<String> {
         self.store.get_secret(KEY_ACCOUNT).unwrap()
     }
 }
 
-fn rpc_error(error: ClientError) -> RpcError {
+pub(super) fn rpc_error(error: ClientError) -> RpcError {
     match error {
         ClientError::Rpc { error, .. } => error,
         error => panic!("the request failed outside the protocol: {error}"),
@@ -165,7 +187,7 @@ async fn logout_from(
         .map_err(rpc_error)
 }
 
-async fn store_status(client: &Client) -> CredentialStoreStatus {
+pub(super) async fn store_status(client: &Client) -> CredentialStoreStatus {
     client
         .request::<Status>(&StatusParams {})
         .await
@@ -321,10 +343,11 @@ async fn a_key_in_a_clients_environment_refuses_its_sign_in_and_out() {
 
 // Covers: a daemon with no session D-Bus, as one a client started from an
 // SSH login, reports that it cannot reach the OS store nothing chose for
-// it, and fails closed: it refuses a key, and refuses choosing the OS
-// store, keeping nothing in the file store meanwhile. Once a client
-// chooses the file store, the status says so and why, keys land there, and
-// a session signs in with them (#1662).
+// it, and fails closed: it refuses a key, refuses an interactive login
+// before the provider is asked, so nobody approves one that cannot be
+// saved, and refuses choosing the OS store, keeping nothing in the file
+// store meanwhile. Once a client chooses the file store, the status says
+// so and why, keys land there, and a session signs in with them (#1662).
 // Owner: daemon credential store status and choice, over the real socket;
 // the sandbox's empty XDG_RUNTIME_DIR is the missing session bus.
 #[cfg(target_os = "linux")]
@@ -348,13 +371,23 @@ async fn a_daemon_without_a_session_bus_fails_closed_until_a_client_chooses_the_
         (CredentialStoreKind::Os, StoreSelectedBy::Default, true),
         "{headless:?}"
     );
+    let login = client
+        .request::<rho_protocol::methods::AuthLogin>(&rho_protocol::AuthLoginParams {
+            auth: "xai-oauth".into(),
+            flow: None,
+            environment: ClientEnvironment::default(),
+        })
+        .await
+        .map_err(rpc_error);
     assert_eq!(
         (
             error_of(save_key(&client, FIRST_KEY).await).0,
+            error_of(login).0,
             error_of(choose_store(&client, CredentialStoreKind::Os).await).0,
             fixture.saved_key(),
         ),
         (
+            Some(ErrorCode::CredentialStoreUnavailable),
             Some(ErrorCode::CredentialStoreUnavailable),
             Some(ErrorCode::CredentialStoreUnavailable),
             None

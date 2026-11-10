@@ -155,6 +155,16 @@ pub struct SessionNewParams {
     /// session's turns still share the budget.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<SessionId>,
+    /// What the session may do through session control until a prompt
+    /// brings another grant; absent, what `environment` carries
+    /// (`RHO_SESSION_DEPTH`, `RHO_SESSION_SCOPE`), which is no limit when
+    /// it carries none. With a `parent` whose session a job of the daemon
+    /// writes, the session opens with no more than a session that job's
+    /// turn starts may have: at least one level deeper than its grant,
+    /// with no access or workspace it lacks. A session that opens with a
+    /// limit keeps it as its job's [`super::JobSummary::grant_limit`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<super::SessionGrant>,
 }
 
 /// Result of [`SESSION_NEW`]: the session is loaded and its job is
@@ -193,6 +203,14 @@ pub struct SessionPromptParams {
     /// project trust is not the session's is refused as
     /// [`crate::ErrorCode::ProjectTrustMismatch`].
     pub environment: ClientEnvironment,
+    /// What this turn, and later turns until another prompt, may do
+    /// through session control; absent, what `environment` carries, as for
+    /// [`SessionNewParams::grant`]. The daemon records it on the session's
+    /// job when the turn starts, held to the job's
+    /// [`super::JobSummary::grant_limit`]: a prompt that asks for more than
+    /// the limit is not refused, its turn runs under the limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<super::SessionGrant>,
     /// The client's name for this prompt, which makes sending it again
     /// safe, as after a connection that closed before the answer came. A
     /// prompt whose key is that of the session's latest turn starts none:

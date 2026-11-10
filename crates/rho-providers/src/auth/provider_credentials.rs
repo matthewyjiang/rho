@@ -347,7 +347,8 @@ fn load_anthropic_api_key(store: &dyn CredentialStore) -> Result<String, ModelEr
         .ok_or_else(|| missing_credential_error(missing_message))
 }
 
-/// Loads the `~/.ollama` device key once the user signed in to it through Rho.
+/// Loads the device key of the party `store` belongs to, once they signed in
+/// to it through Rho.
 pub(crate) fn load_ollama_device_key(
     store: &dyn CredentialStore,
     missing_message: &'static str,
@@ -355,7 +356,7 @@ pub(crate) fn load_ollama_device_key(
     if !crate::credentials::ollama_device_login_recorded(store)? {
         return Err(missing_credential_error(missing_message));
     }
-    load_ollama_device_key_from(OllamaDeviceKey::load_default, missing_message)
+    load_ollama_device_key_from(|| OllamaDeviceKey::load_default(store), missing_message)
 }
 
 pub(crate) fn load_ollama_device_key_from(

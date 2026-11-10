@@ -18,9 +18,9 @@ use std::{
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{SessionAttach, SessionCancel, Status},
-    Client, ClientInfo, Cursor, DaemonNotification, DetachReason, JobState, Notifications,
-    PendingUpgrade, Replay, SessionAttachParams, SessionAttachResponse, SessionCancelParams,
-    SessionEvent, SessionId, SessionSetup, StatusParams,
+    Client, ClientHello, ClientInfo, Cursor, DaemonNotification, DetachReason, JobState,
+    Notifications, PendingUpgrade, Replay, SessionAttachParams, SessionAttachResponse,
+    SessionCancelParams, SessionEvent, SessionId, SessionSetup, StatusParams,
 };
 use serde_json::json;
 use tempfile::TempDir;
@@ -348,10 +348,10 @@ async fn an_idle_daemon_upgrades_in_place_while_a_new_client_waits() {
         .expect("the restarting daemon keeps its socket");
     let waiting = tokio::spawn(Client::handshake(
         stream,
-        ClientInfo {
+        ClientHello::command(ClientInfo {
             name: "daemon-upgrade-test".into(),
             version: "0".into(),
-        },
+        }),
     ));
     open_gate(&sandbox, &gate).await;
     let (client, _, hello) = tokio::time::timeout(DEADLINE, waiting)

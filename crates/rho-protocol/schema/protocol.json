@@ -561,6 +561,16 @@
       ],
       "type": "object"
     },
+    "ClientCapability": {
+      "description": "Something a connection declares it does, which the daemon then lets it\ndo. A method that needs a capability the connection did not declare is\nrefused with [`crate::ErrorCode::CapabilityRequired`]. The daemon reads\nit, so it has no `Unknown`.",
+      "oneOf": [
+        {
+          "const": "answer",
+          "description": "Answer a session's open requests, its approvals and questions, and\nhold their timeouts: [`super::SESSION_ANSWER`] and\n[`super::SESSION_HOLD`].",
+          "type": "string"
+        }
+      ]
+    },
     "ClientEnvironment": {
       "additionalProperties": {
         "type": "string"
@@ -569,7 +579,7 @@
       "type": "object"
     },
     "ClientInfo": {
-      "description": "Who is connecting. Logged by the daemon; never used for authorization.",
+      "description": "Who is connecting. Logged by the daemon; never used for authorization,\nwhich goes by [`ClientRole`] and [`ClientCapability`].",
       "properties": {
         "name": {
           "description": "Frontend name, for example `rho-cli` or `rho-ui`.",
@@ -589,6 +599,21 @@
     "ClientName": {
       "description": "A client's settings namespace, such as `tui`. It names the file the\ndaemon stores them in, so it is lowercase ASCII letters, digits, and\n`-`, starting with a letter or digit, at most [`Self::MAX_LEN`] bytes.",
       "type": "string"
+    },
+    "ClientRole": {
+      "description": "What a connection is for, which bounds the capabilities it may declare.\nThe daemon reads it, so it has no `Unknown`: a role this daemon does not\nknow is [`crate::ErrorCode::InvalidParams`].\n\nA role is declared, not proven: the socket is private to the daemon's\nuser, and any process of that user may declare any role. It keeps a\nwell-behaved client to its part, so an agent's session-control client\ncannot answer the approvals of the sessions it drives; it is not a\nsandbox for a process that can open the socket itself.",
+      "oneOf": [
+        {
+          "const": "frontend",
+          "description": "A person's frontend, such as the terminal UI, `rho attach`, an ACP\nhost's `rho acp`, or a `rho` command. It may declare any capability.",
+          "type": "string"
+        },
+        {
+          "const": "agent",
+          "description": "An agent's session control: `rho mcp serve` and the `sessions` tool,\nwhich start, prompt, and watch sessions for a model. It may not\ndeclare [`ClientCapability::Answer`]: a turn that asks waits for a\nperson.",
+          "type": "string"
+        }
+      ]
     },
     "CodeWindow": {
       "anyOf": [
@@ -1450,20 +1475,75 @@
       ],
       "type": "object"
     },
+    "GrantAccess": {
+      "description": "What a grant lets its holder do to sessions. Both sides read it, and it\nis closed: an access a daemon does not know must fail, never widen.",
+      "oneOf": [
+        {
+          "const": "read",
+          "description": "List, read, and wait for sessions.",
+          "type": "string"
+        },
+        {
+          "const": "write",
+          "description": "Also start, prompt, steer, and cancel them.",
+          "type": "string"
+        }
+      ]
+    },
+    "GrantWorkspaces": {
+      "description": "The workspaces a grant reaches. Closed, as [`GrantAccess`] is.",
+      "oneOf": [
+        {
+          "enum": [
+            "any"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "These directories and everything under them, as canonical paths.",
+          "properties": {
+            "only": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "only"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "HelloParams": {
       "description": "Params of [`HELLO`].",
       "properties": {
+        "capabilities": {
+          "description": "What the connection does, each of which its role must allow; one it\ndoes not is [`crate::ErrorCode::InvalidParams`], and the hello is\nrefused.",
+          "items": {
+            "$ref": "#/$defs/ClientCapability"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
         "client": {
           "$ref": "#/$defs/ClientInfo"
         },
         "protocol": {
           "$ref": "#/$defs/ProtocolVersion",
           "description": "The protocol the client speaks."
+        },
+        "role": {
+          "$ref": "#/$defs/ClientRole",
+          "description": "What the connection is for. It holds for the connection's life."
         }
       },
       "required": [
         "protocol",
-        "client"
+        "client",
+        "role"
       ],
       "type": "object"
     },
@@ -1825,6 +1905,28 @@
             "string",
             "null"
           ]
+        },
+        "grant": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionGrant"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the turn under way, or the last one, of a\n[`JobKind::Session`] job may do through session control: what the\nrequest that started the turn asked for, held to `grant_limit`;\nbefore the first turn, what the session opened with. Absent for a\nturn without limits, as a person's own are, and for other jobs."
+        },
+        "grant_limit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionGrant"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The most `grant` may be, for a session that opened under a limit, as\none an agent starts through session control does: the grant it\nopened with. The daemon holds every later grant to it, whoever\nprompts the session: no shallower `depth`, no wider `access` or\n`workspaces`. Absent for a session that opened without a limit, as\na person's own does."
         },
         "id": {
           "$ref": "#/$defs/JobId"
@@ -4002,6 +4104,30 @@
       ],
       "type": "object"
     },
+    "SessionGrant": {
+      "additionalProperties": false,
+      "description": "What the turn a request starts may do through session control, the\n`sessions` tool and `rho mcp serve`: how deep the session sits among the\nsessions that started it, and the most it may do to others.\n\nThe request that opens or prompts a session names it\n([`super::SessionNewParams::grant`], [`super::SessionPromptParams::grant`]),\nand the daemon keeps it on the session's job\n([`super::JobSummary::grant`]), so it is the daemon's record, not the\ncaller's environment, that says what a session may do. The daemon sets\n`RHO_SESSION_DEPTH` and `RHO_SESSION_SCOPE` in the session's environment\nfrom it, replacing any the client's environment carries.\n\nIt bounds session control, not the session: the depth stops a runaway\nrecursion and the scope keeps a caller's limits on the sessions it\nstarts. Neither is a sandbox for a session that can run commands.\n\nUnknown fields are refused: a newer client's narrowing field must fail at\nan older daemon rather than be dropped and record a wider grant.",
+      "properties": {
+        "access": {
+          "$ref": "#/$defs/GrantAccess"
+        },
+        "depth": {
+          "description": "How many sessions started one another to reach this one: 0 for a\nsession a person drives, 1 for one that session's agent started.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "workspaces": {
+          "$ref": "#/$defs/GrantWorkspaces"
+        }
+      },
+      "required": [
+        "depth",
+        "access",
+        "workspaces"
+      ],
+      "type": "object"
+    },
     "SessionHoldParams": {
       "description": "Params of [`SESSION_HOLD`].",
       "properties": {
@@ -4239,6 +4365,17 @@
           "$ref": "#/$defs/ClientEnvironment",
           "description": "The client's environment, which the session's processes run with\nuntil a prompt brings another."
         },
+        "grant": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionGrant"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the session may do through session control until a prompt\nbrings another grant; absent, what `environment` carries\n(`RHO_SESSION_DEPTH`, `RHO_SESSION_SCOPE`), which is no limit when\nit carries none. With a `parent` whose session a job of the daemon\nwrites, the session opens with no more than a session that job's\nturn starts may have: at least one level deeper than its grant,\nwith no access or workspace it lacks. A session that opens with a\nlimit keeps it as its job's [`super::JobSummary::grant_limit`]."
+        },
         "parent": {
           "anyOf": [
             {
@@ -4378,7 +4515,7 @@
         },
         {
           "const": "questions",
-          "description": "Questions to the user: the session has no questionnaire tool, and an\nMCP server's question is declined, for a client that cannot show\n[`crate::Ask::Question`].",
+          "description": "Questions to the user: the session has no questionnaire tool, and an\nMCP server's question is declined, for a client that cannot show\n[`crate::Ask::Question`]. It only shapes what the session offers its\nmodel: which connections may answer a request is decided by the\n[`crate::ClientCapability::Answer`] each declared, not by this.",
           "type": "string"
         }
       ]
@@ -4396,6 +4533,17 @@
         "environment": {
           "$ref": "#/$defs/ClientEnvironment",
           "description": "The prompting client's environment, which the processes this turn\nstarts run with, and those of later turns until another prompt\nbrings another. Processes already running keep theirs. One whose\nproject trust is not the session's is refused as\n[`crate::ErrorCode::ProjectTrustMismatch`]."
+        },
+        "grant": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionGrant"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What this turn, and later turns until another prompt, may do\nthrough session control; absent, what `environment` carries, as for\n[`SessionNewParams::grant`]. The daemon records it on the session's\njob when the turn starts, held to the job's\n[`super::JobSummary::grant_limit`]: a prompt that asks for more than\nthe limit is not refused, its turn runs under the limit."
         },
         "idempotency_key": {
           "anyOf": [
@@ -6004,6 +6152,9 @@
     },
     "-32022": {
       "name": "ConfigInvalid"
+    },
+    "-32023": {
+      "name": "CapabilityRequired"
     },
     "-32600": {
       "name": "InvalidRequest"

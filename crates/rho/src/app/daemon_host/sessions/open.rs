@@ -48,6 +48,7 @@ use crate::{
             SessionOpening, SessionRole, SessionRuntime, SessionUse,
         },
     },
+    caller_context::CallerContext,
     config::Config,
     session::{Session as StoredSession, SessionPersistence},
     session_environment::{Ambient, SessionEnvironment},
@@ -114,6 +115,9 @@ pub(super) struct OpenWith {
     pub(super) environment: Ambient,
     /// The client's choices for the session.
     pub(super) setup: SessionSetup,
+    /// What a turn the request starts may do through session control, which
+    /// `environment` carries too (see `grant.rs`).
+    pub(super) grant: CallerContext,
 }
 
 /// A session, open, and the config it runs with.
@@ -269,6 +273,13 @@ async fn open_runtime(
     // The last config read publishes its custom providers to the daemon,
     // as each rho process publishes its own at startup.
     global.providers.activate()?;
+    // And its credential store: `rho credential-store set` and an edit of
+    // `config.toml` choose one from outside the daemon, as the way out of
+    // an OS store it cannot reach. A store that cannot be opened fails the
+    // credential reads below with the same error.
+    if let Err(error) = crate::credential_store::activate_from_config(&global, &config_path) {
+        tracing::warn!(error = %format!("{error:#}"), "could not open the credential store");
+    }
     let config = (*global).clone();
     let available_tools = root_host_tools(
         &config,

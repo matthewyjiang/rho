@@ -8,7 +8,8 @@
 //! starting them in [`detach`]; the tool processes the daemon's stop ends
 //! are in [`tools`], signing it in and out over its socket in [`auth`],
 //! and the interactive logins it relays to clients, `rho login` among
-//! them, in [`login`]; `rho mcp serve` driving its sessions is in [`mcp`],
+//! them, in [`login`], signing in where no OS credential store answers in
+//! [`headless`]; `rho mcp serve` driving its sessions is in [`mcp`],
 //! and the sessions a session starts, as its children, in [`started`];
 //! reading and changing settings over its socket is in [`config`];
 //! re-executing the daemon in place, for an upgrade or `rho daemon
@@ -54,6 +55,9 @@ mod auth;
 #[path = "support/daemon_login.rs"]
 mod login;
 
+#[path = "support/daemon_headless.rs"]
+mod headless;
+
 #[path = "support/daemon_mcp.rs"]
 mod mcp;
 
@@ -70,6 +74,9 @@ mod skew;
 
 #[path = "support/daemon_identity.rs"]
 mod identity;
+
+#[path = "support/daemon_grants.rs"]
+mod grants;
 
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;
