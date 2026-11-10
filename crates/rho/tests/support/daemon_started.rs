@@ -59,7 +59,7 @@ async fn job_of(client: &Client, session: &SessionId) -> JobSummary {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sessions_a_session_starts_are_its_children_and_share_the_agent_budget() {
     let sandbox = Sandbox::new();
-    sandbox.set_config("bypass", "[behavior]\nagent_concurrency = 1\n");
+    sandbox.set_config("bypass", "agent_concurrency = 1\n");
     let client = sandbox.start_daemon("tool-call").await;
     let parent = sandbox.new_session(&client).await;
     let [running, waiting, cancelled] = [
@@ -136,7 +136,7 @@ async fn sessions_a_session_starts_are_its_children_and_share_the_agent_budget()
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_started_session_lends_its_slot_to_the_subagents_it_waits_on() {
     let sandbox = Sandbox::new();
-    sandbox.set_config("bypass", "[behavior]\nagent_concurrency = 1\n");
+    sandbox.set_config("bypass", "agent_concurrency = 1\n");
     let client = sandbox.start_daemon("tool-call").await;
     let parent = sandbox.new_session(&client).await;
     let child = start_child(&sandbox, &client, &parent).await;
@@ -172,7 +172,7 @@ async fn a_started_session_lends_its_slot_to_the_subagents_it_waits_on() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_started_session_waiting_for_a_person_lends_its_slot() {
     let sandbox = Sandbox::new();
-    sandbox.set_config("supervised", "[behavior]\nagent_concurrency = 1\n");
+    sandbox.set_config("supervised", "agent_concurrency = 1\n");
     let client = sandbox.start_daemon("tool-call").await;
     let parent = sandbox.new_session(&client).await;
     let [asking, other] = [

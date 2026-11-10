@@ -1,4 +1,6 @@
-use super::{provider_picker, App, Entry, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
+use super::{
+    provider_picker, App, Entry, PickerBadge, PickerBadgeTone, PickerItem, TuiSettings, UiPicker,
+};
 use {
     crate::config::{Config, EditTool},
     crate::permission::PermissionMode,
@@ -162,8 +164,8 @@ fn cache_miss_notices_help() -> String {
     )
 }
 
-fn theme_badge(config: &Config) -> String {
-    super::theme::theme_display_name(&config.theme)
+fn theme_badge(settings: &TuiSettings) -> String {
+    super::theme::theme_display_name(&settings.theme)
 }
 
 /// Advisor badge: the mode, plus the advisor model once one is selected.
@@ -241,7 +243,11 @@ fn conversation_model_badge(info: &super::RuntimeModelView, config: &Config) -> 
     }
 }
 
-pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> UiPicker {
+pub(super) fn config_picker(
+    info: &super::RuntimeModelView,
+    config: &Config,
+    settings: &TuiSettings,
+) -> UiPicker {
     UiPicker::config(
         "Config · saves automatically",
         vec![
@@ -254,7 +260,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             item(
                 "Appearance",
                 "Theme, zen mode, output streaming, reasoning output, cache miss notices, header hints, notifications, collapsed tool output lines, and vim mode.",
-                Some(theme_badge(config)),
+                Some(theme_badge(settings)),
                 APPEARANCE_CATEGORY_VALUE,
             ),
             item(
@@ -312,6 +318,7 @@ pub(super) fn category_picker(
     category: &str,
     info: &super::RuntimeModelView,
     config: &Config,
+    settings: &TuiSettings,
 ) -> Option<UiPicker> {
     let page = ConfigPage::Category(ConfigCategory::from_value(category)?);
     let (title, items) = match category {
@@ -349,7 +356,7 @@ pub(super) fn category_picker(
                 item(
                     "Theme",
                     "Color theme for the interactive TUI. Enter opens a preview picker. Default matches the host terminal.",
-                    Some(theme_badge(config)),
+                    Some(theme_badge(settings)),
                     THEME_VALUE,
                 ),
                 item(
@@ -361,16 +368,16 @@ pub(super) fn category_picker(
                 item(
                     "Cache miss notices",
                     cache_miss_notices_help(),
-                    Some(on_off(config.cache_miss_notices)),
+                    Some(on_off(settings.cache_miss_notices)),
                     CACHE_MISS_NOTICES_VALUE,
                 ),
                 item(
                     "Output streaming",
                     format!(
                         "Reveal text live, by paragraph, or at message boundaries. Enter cycles to {}. Applies immediately and saves automatically.",
-                        config.output_streaming.next().label()
+                        settings.output_streaming.next().label()
                     ),
-                    Some(config.output_streaming.label().into()),
+                    Some(settings.output_streaming.label().into()),
                     OUTPUT_STREAMING_VALUE,
                 ),
                 item(
@@ -394,7 +401,7 @@ pub(super) fn category_picker(
                 item(
                     "Max tool output lines",
                     "Maximum collapsed tool output lines shown in the TUI.",
-                    Some(config.max_tool_output_lines.to_string()),
+                    Some(settings.max_tool_output_lines.to_string()),
                     MAX_TOOL_OUTPUT_LINES_VALUE,
                 ),
                 item(
@@ -541,7 +548,7 @@ pub(super) fn category_picker(
                 item(
                     "Prompt history limit",
                     "Saved composer prompts kept for up-arrow recall across sessions. 0 disables saving. Lowering the cap deletes older saved prompts after confirm.",
-                    Some(config.prompt_history_limit.to_string()),
+                    Some(settings.prompt_history_limit.to_string()),
                     PROMPT_HISTORY_LIMIT_VALUE,
                 ),
                 item(
@@ -623,7 +630,7 @@ pub(super) fn category_picker(
             items.push(item(
                 "Check for updates",
                 "Check GitHub releases at startup and show an update notice when available. Space toggles.",
-                Some(on_off(config.check_for_updates)),
+                Some(on_off(settings.check_for_updates)),
                 CHECK_FOR_UPDATES_VALUE,
             ));
             ("Config / Providers", items)

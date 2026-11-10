@@ -13,10 +13,10 @@ use crate::{
 };
 
 fn setup(home: &IsolatedHome) -> Result<()> {
-    let mut config = std::fs::read_to_string(&home.config_path)?;
+    let mut settings = std::fs::read_to_string(&home.client_settings_path)?;
     // Explicitly exercise the user's preview setting rather than a second message-only cap.
-    config.push_str("\n[display]\nmax_tool_output_lines = 2\n");
-    std::fs::write(&home.config_path, config)?;
+    settings.push_str("max_tool_output_lines = 2\n");
+    std::fs::write(&home.client_settings_path, settings)?;
     Ok(())
 }
 

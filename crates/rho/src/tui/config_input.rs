@@ -145,7 +145,8 @@ impl App {
                     }
                     return Ok(true);
                 }
-                let saved = match input.save(&self.info.services.config_repository) {
+                let services = &mut self.info.services;
+                let saved = match input.save(&services.config_repository, &mut services.settings) {
                     Ok(saved) => saved,
                     Err(err) => {
                         self.insert_entry(&Entry::Error(err.to_string()));
@@ -170,10 +171,6 @@ impl App {
                     }
                     ConfigNumberSave::MaxToolOutputLines(value) => {
                         self.info.runtime.max_tool_output_lines = value;
-                        self.info
-                            .services
-                            .diagnostics
-                            .update_max_tool_output_lines(value);
                         self.open_main_config_picker_selected(
                             config_picker::MAX_TOOL_OUTPUT_LINES_VALUE,
                         )?;
@@ -243,9 +240,6 @@ impl App {
                     return Ok(true);
                 };
                 let selected_value = input.key.picker_value();
-                let config = self.info.services.config_repository.load()?;
-                self.info.runtime.show_reasoning_output = config.show_reasoning_output;
-                self.info.runtime.zen_mode = config.zen_mode;
                 self.open_main_config_picker_selected(selected_value)?;
                 Ok(true)
             }
@@ -386,17 +380,11 @@ impl App {
             return Ok(());
         }
         let config = self.info.services.config_repository.load()?;
-        self.info.runtime.max_tool_output_lines = config.max_tool_output_lines.max(1);
-        self.info
-            .services
-            .diagnostics
-            .update_max_tool_output_lines(self.info.runtime.max_tool_output_lines);
-        self.info.runtime.show_reasoning_output = config.show_reasoning_output;
-        self.info.runtime.zen_mode = config.zen_mode;
         self.input_ui
             .set_composer(ComposerMode::Picker(config_picker::config_picker(
                 &self.info.runtime,
                 &config,
+                &self.info.services.settings,
             )));
         self.set_status("config");
         terminal.draw(|frame| self.draw(frame))?;

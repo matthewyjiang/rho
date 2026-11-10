@@ -212,7 +212,7 @@ Messages sent through `agents` action `message` show the task title first, then 
 run has no generated title yet, its first nonempty prompt line identifies the task.
 This keeps different tasks using the same agent role distinguishable.
 
-The excerpt uses your `display.max_tool_output_lines` setting. Press `Ctrl+O` or click
+The excerpt uses your `max_tool_output_lines` setting. Press `Ctrl+O` or click
 the card to see the complete message, full task title, and run ID.
 Surrounding whitespace is trimmed to match the text accepted for delivery. The
 durable receipt remains plain text for ACP clients and exported transcripts.

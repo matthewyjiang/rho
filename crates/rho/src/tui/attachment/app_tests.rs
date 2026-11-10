@@ -16,13 +16,13 @@ fn resolved_identity_line(
     identity_line(status, status.and_then(attach_reasoning), usage, now)
 }
 
-/// The display settings of a parent TUI on the default config.
+/// The display settings of a parent TUI on the default settings.
 fn default_display() -> AttachmentDisplaySettings {
-    let config = crate::config::Config::default();
+    let settings = crate::tui::TuiSettings::default();
     AttachmentDisplaySettings {
-        show_reasoning_output: config.show_reasoning_output,
-        zen_mode: config.zen_mode,
-        max_tool_output_lines: config.max_tool_output_lines,
+        show_reasoning_output: settings.show_reasoning_output,
+        zen_mode: settings.zen_mode,
+        max_tool_output_lines: settings.max_tool_output_lines,
     }
 }
 

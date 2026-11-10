@@ -205,14 +205,15 @@ pub(super) const AUTO_PERMISSION_MODE_CONFIG_STEPS: &[Step] = &[
 pub(super) fn setup_auto_without_classifier(home: &crate::env::IsolatedHome) -> anyhow::Result<()> {
     std::fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
-permission_mode = "auto"
 
 [behavior]
+permission_mode = "auto"
 credential_store = "file"
 "#,
     )?;
@@ -278,14 +279,15 @@ pub(super) fn run_auto_recovered_handoff(
     // default-agent fingerprint (seeded JSONL cannot invent one safely).
     fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
-permission_mode = "bypass"
 
 [behavior]
+permission_mode = "bypass"
 credential_store = "file"
 "#,
     )?;
@@ -684,11 +686,12 @@ pub(super) const SCREEN_ALLOW_THRESHOLD_SCENARIO: Scenario = Scenario::new(
 fn setup_decision_screen(home: &crate::env::IsolatedHome) -> anyhow::Result<()> {
     std::fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 
 [behavior]
 credential_store = "file"

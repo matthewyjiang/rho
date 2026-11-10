@@ -1,12 +1,16 @@
 //! What a connection declared in its `rho/hello`, and what that lets it do
 //! (#1780). The one place that decides which capabilities a role may
-//! declare and which methods need one.
+//! declare and which methods need one. It also reads the version a hello
+//! names, before the rest of it.
 
 use std::collections::BTreeSet;
 
+use serde::Deserialize;
+use serde_json::Value;
+
 use crate::{
     methods::{HELLO, SESSION_ANSWER, SESSION_HOLD},
-    ClientCapability, ClientInfo, ClientRole, ErrorCode, HelloParams, RpcError,
+    ClientCapability, ClientInfo, ClientRole, ErrorCode, HelloParams, ProtocolVersion, RpcError,
 };
 
 /// The role and capabilities an accepted hello declared, which hold until
@@ -59,6 +63,23 @@ impl Declared {
             None => Ok(()),
         }
     }
+}
+
+/// The protocol a hello names, whatever else it holds.
+pub(crate) fn hello_protocol(params: Option<&Value>) -> Result<ProtocolVersion, RpcError> {
+    #[derive(Deserialize)]
+    struct Versioned {
+        protocol: ProtocolVersion,
+    }
+    let Some(params) = params else {
+        return Err(RpcError::new(
+            ErrorCode::InvalidParams,
+            format!("{HELLO} needs params"),
+        ));
+    };
+    Versioned::deserialize(params)
+        .map(|hello| hello.protocol)
+        .map_err(|error| RpcError::new(ErrorCode::InvalidParams, error.to_string()))
 }
 
 /// Whether a connection of `role` may declare `capability`.

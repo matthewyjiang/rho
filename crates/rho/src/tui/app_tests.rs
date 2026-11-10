@@ -84,7 +84,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
         },
         services: ApplicationServices {
             config_repository: ConfigRepository::temporary_for_tests().unwrap(),
-            theme: "terminal".into(),
+            settings: crate::tui::TuiSettings::default(),
             first_run: None,
             auth_unavailable: None,
             update_notice: None,
@@ -559,7 +559,8 @@ fn esc_from_nested_web_search_config_returns_to_tools_category() {
     app.info.services.config_repository =
         ConfigRepository::new(Some(config_dir.path().join("config.toml")));
     let config = app.info.services.config_repository.load().unwrap();
-    let mut root = config_picker::config_picker(&app.info.runtime, &config);
+    let mut root =
+        config_picker::config_picker(&app.info.runtime, &config, &app.info.services.settings);
     App::restore_picker_position(
         &mut root,
         config_picker::TOOLS_CATEGORY_VALUE,
@@ -569,6 +570,7 @@ fn esc_from_nested_web_search_config_returns_to_tools_category() {
         config_picker::TOOLS_CATEGORY_VALUE,
         &app.info.runtime,
         &config,
+        &app.info.services.settings,
     )
     .unwrap()
     .with_parent(root);

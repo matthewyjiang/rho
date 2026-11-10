@@ -93,7 +93,14 @@ async fn a_newer_client_is_told_at_hello_what_restarting_the_daemon_would_cost()
     let during_the_turn = (hello(&sandbox, newer).await, hello(&sandbox, older).await);
     open_gate(&sandbox, &release).await;
     settled_job(&sandbox, &client, &session).await;
-    let after_the_turn = hello(&sandbox, newer).await;
+    // The job reads idle before the ended turn lets go of the session's
+    // runtime, which counts as work under way until then.
+    let after_the_turn = restart_costs(0, 1);
+    sandbox
+        .poll_until("the ended turn to let go of the session", async || {
+            (hello(&sandbox, newer).await == after_the_turn).then_some(())
+        })
+        .await;
     let same_protocol = hello(&sandbox, PROTOCOL_VERSION).await;
     drop(client);
     // The daemon notices each client leave on its own time.
@@ -105,7 +112,7 @@ async fn a_newer_client_is_told_at_hello_what_restarting_the_daemon_would_cost()
         .await;
 
     assert_eq!(
-        (during_the_turn, after_the_turn, same_protocol),
+        (during_the_turn, same_protocol),
         (
             (
                 restart_costs(1, 1),
@@ -116,7 +123,6 @@ async fn a_newer_client_is_told_at_hello_what_restarting_the_daemon_would_cost()
                     restart: None,
                 }),
             ),
-            restart_costs(0, 1),
             Ok(HelloResponse {
                 protocol: PROTOCOL_VERSION,
                 daemon: DaemonInfo {

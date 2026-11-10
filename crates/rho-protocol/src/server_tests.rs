@@ -14,12 +14,14 @@ use crate::{
         AuthLoginFinishedParams, AuthLoginPromptParams, DetachReason, JobState, LoginId,
         LoginOutcome, LoginPrompt, ModelOptions, ModelRef, PermissionMode, PermissionModeOptions,
         Replay, Seq, SessionDetachedParams, SessionEvent, SessionEventParams, SessionId,
-        SessionOptions, StreamId, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT, SESSION_DETACHED,
-        SESSION_EVENT,
+        SessionOptions, StreamId, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT, CONFIG_CHANGED,
+        SESSION_DETACHED, SESSION_EVENT,
     },
-    subscription, AuthChooseStoreParams, AuthChooseStoreResponse, CredentialStoreKind,
-    CredentialStoreStatus, LoginRelay, ProtocolVersion, Published, Publisher, RequestId,
-    StoreSelectedBy,
+    subscription, AuthChooseStoreParams, AuthChooseStoreResponse, ConfigChangedParams,
+    ConfigGetResponse, ConfigNamespace, ConfigRegisterResponse, ConfigRevision, ConfigSchema,
+    ConfigSetResponse, ConfigWatch, CredentialStoreKind, CredentialStoreStatus, LoginRelay,
+    ProtocolVersion, Published, Publisher, RequestId, SettingEntry, SettingKey, SettingValue,
+    StoreSelectedBy, ValueSource,
 };
 
 /// Failure bound for each response a test waits for. The tests synchronize
@@ -183,6 +185,37 @@ fn no_credential_store() -> RpcError {
     RpcError::new(ErrorCode::CredentialStoreUnavailable, "no credential store")
 }
 
+/// The config methods of a test service that keeps no settings.
+macro_rules! serves_no_config {
+    ($service:ty) => {
+        impl SettingsService for $service {
+            async fn config_schema(&self) -> Result<ConfigSchema, RpcError> {
+                Err(no_config())
+            }
+
+            async fn register_config(
+                &self,
+                _: ConfigRegisterParams,
+            ) -> Result<ConfigRegisterResponse, RpcError> {
+                Err(no_config())
+            }
+
+            async fn get_config(&self, _: ConfigGetParams) -> Result<ConfigWatch, RpcError> {
+                Err(no_config())
+            }
+
+            async fn set_config(&self, _: ConfigSetParams) -> Result<ConfigSetResponse, RpcError> {
+                Err(no_config())
+            }
+        }
+    };
+}
+
+/// The error every test service without settings answers with.
+fn no_config() -> RpcError {
+    RpcError::new(ErrorCode::MethodNotFound, "no settings")
+}
+
 /// The attach method of a test service that hosts no sessions.
 macro_rules! attaches_nothing {
     () => {
@@ -244,6 +277,8 @@ impl Service for FakeService {
     logs_in_nothing!();
 }
 
+serves_no_config!(FakeService);
+
 /// Panics in `status`, as a handler bug would.
 struct PanickingService;
 
@@ -264,6 +299,8 @@ impl Service for PanickingService {
     attaches_nothing!();
     logs_in_nothing!();
 }
+
+serves_no_config!(PanickingService);
 
 /// `status` answers only once the test releases it. `stop` resolves the
 /// connection's shutdown (see [`GatedService::shutdown`]) and returns only
@@ -301,6 +338,8 @@ impl Service for GatedService {
     attaches_nothing!();
     logs_in_nothing!();
 }
+
+serves_no_config!(GatedService);
 
 /// The hello of a frontend that answers its sessions' requests.
 fn hello_line(id: i64, protocol: ProtocolVersion) -> String {
@@ -781,6 +820,8 @@ impl Service for AttachService {
     }
 }
 
+serves_no_config!(AttachService);
+
 /// One message the daemon sent, reduced to what the attach tests compare.
 #[derive(Debug, PartialEq)]
 enum Seen {
@@ -789,6 +830,7 @@ enum Seen {
     Detached(SessionDetachedParams),
     LoginPrompt(AuthLoginPromptParams),
     LoginFinished(AuthLoginFinishedParams),
+    ConfigChanged(ConfigChangedParams),
 }
 
 fn answered(id: i64) -> Seen {
@@ -865,6 +907,7 @@ impl Peer {
                     AUTH_LOGIN_FINISHED => {
                         Seen::LoginFinished(serde_json::from_value(params).unwrap())
                     }
+                    CONFIG_CHANGED => Seen::ConfigChanged(serde_json::from_value(params).unwrap()),
                     other => panic!("unexpected notification {other}"),
                 }
             }
@@ -1133,6 +1176,8 @@ impl Service for LoginService {
     }
 }
 
+serves_no_config!(LoginService);
+
 fn login_line(id: i64) -> String {
     request_with_params(
         id,
@@ -1207,4 +1252,119 @@ async fn leaving_tells_a_login_its_client_is_gone() {
         .await
         .expect("the connection drops the login's stream within RESPONSE_DEADLINE");
     assert_eq!(peer.remaining().await, Vec::new());
+}
+
+/// Serves one settings namespace whose state the test publishes.
+struct ConfigService {
+    state: tokio::sync::watch::Sender<Arc<ConfigGetResponse>>,
+}
+
+impl Service for ConfigService {
+    async fn status(&self) -> DaemonStatus {
+        test_status()
+    }
+
+    async fn stop(&self) {}
+
+    hosts_no_sessions!();
+    attaches_nothing!();
+    logs_in_nothing!();
+    nobody_uses_it!();
+}
+
+impl SettingsService for ConfigService {
+    async fn config_schema(&self) -> Result<ConfigSchema, RpcError> {
+        Err(no_config())
+    }
+
+    async fn register_config(
+        &self,
+        _: ConfigRegisterParams,
+    ) -> Result<ConfigRegisterResponse, RpcError> {
+        Err(no_config())
+    }
+
+    async fn get_config(&self, _: ConfigGetParams) -> Result<ConfigWatch, RpcError> {
+        Ok(ConfigWatch::new(self.state.subscribe()))
+    }
+
+    async fn set_config(&self, _: ConfigSetParams) -> Result<ConfigSetResponse, RpcError> {
+        Err(no_config())
+    }
+}
+
+/// A state whose `entries` are bool settings, at `revision`.
+fn config_state(revision: &str, entries: &[(&str, bool)]) -> Arc<ConfigGetResponse> {
+    Arc::new(ConfigGetResponse {
+        revision: ConfigRevision::new(revision),
+        values: entries
+            .iter()
+            .map(|(key, value)| (SettingKey::new(*key), global(*value)))
+            .collect(),
+        errors: Vec::new(),
+    })
+}
+
+fn global(value: bool) -> SettingEntry {
+    SettingEntry {
+        value: Some(SettingValue::Bool(value)),
+        source: ValueSource::Global,
+    }
+}
+
+fn config_get_line(id: i64) -> String {
+    request_with_params(
+        id,
+        CONFIG_GET,
+        serde_json::json!({"namespace": {"kind": "agent"}}),
+    )
+}
+
+// Covers: `rho/config/get` answers, then sends `rho/config/changed` with
+// every entry that changed since the last notification, even when two
+// states were published before the forwarder ran; reading the namespace
+// again replaces the forwarder instead of adding a second one.
+// Owner: protocol server config forwarding.
+#[tokio::test]
+async fn config_get_answers_then_forwards_every_changed_entry() {
+    let service = Arc::new(ConfigService {
+        state: tokio::sync::watch::Sender::new(config_state("r0", &[("a", false), ("b", false)])),
+    });
+    let mut peer = Peer::connect(Arc::clone(&service));
+    peer.send(hello_line(1, PROTOCOL_VERSION)).await;
+    peer.send(config_get_line(2)).await;
+    assert_eq!(peer.take(2).await, [answered(1), answered(2)]);
+
+    // Two writes before the forwarder wakes: it sees only the second state,
+    // and must still report `a`.
+    service
+        .state
+        .send_replace(config_state("r1", &[("a", true), ("b", false)]));
+    service
+        .state
+        .send_replace(config_state("r2", &[("a", true), ("b", true)]));
+    let changed = |revision: &str, entries: &[(&str, bool)]| {
+        Seen::ConfigChanged(ConfigChangedParams {
+            namespace: ConfigNamespace::Agent,
+            revision: ConfigRevision::new(revision),
+            values: entries
+                .iter()
+                .map(|(key, value)| (SettingKey::new(*key), global(*value)))
+                .collect(),
+            errors: Vec::new(),
+        })
+    };
+    assert_eq!(
+        peer.take(1).await,
+        [changed("r2", &[("a", true), ("b", true)])]
+    );
+
+    peer.send(config_get_line(3)).await;
+    assert_eq!(peer.take(1).await, [answered(3)]);
+    service
+        .state
+        .send_replace(config_state("r3", &[("a", false), ("b", true)]));
+    assert_eq!(peer.take(1).await, [changed("r3", &[("a", false)])]);
+    peer.close_input().await;
+    assert_eq!(peer.remaining().await, []);
 }

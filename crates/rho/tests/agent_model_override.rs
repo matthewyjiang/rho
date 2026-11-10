@@ -104,8 +104,7 @@ async fn native_agent_model_override_reaches_child_provider() {
     std::fs::write(
         &config,
         format!(
-            r#"
-[model]
+            r#"[model]
 provider = "parent"
 model = "parent-model"
 auth = "none"
@@ -117,7 +116,6 @@ base_url = "http://{address}/parent/v1"
 base_url = "http://{address}/child/v1"
 [behavior]
 permission_mode = "plan"
-check_for_updates = false
 credential_store = "file"
 "#
         ),

@@ -46,12 +46,8 @@ TUI changes to mode, backend, endpoint, connection, and credentials apply before
 
 Firecrawl uses the [v2 search API](https://docs.firecrawl.dev/api-reference/endpoint/search). Self-hosted support depends on the deployed version and its search infrastructure. This integration does not enable Firecrawl scraping. `includeContent` keeps Rho's existing page-fetch behavior.
 
-## Migrating older settings
+## Older settings
 
-- Legacy `hosted = false` plus `provider = "disabled"` becomes `mode = "off"`. Legacy provider names stay case-insensitive. A backend-only or endpoint edit preserves that mode. Only an explicit `mode` overrides legacy routing.
-- A concrete legacy provider becomes the selected backend. `hosted` determines Auto versus Backend mode.
-- Legacy `provider = "auto"` becomes the OpenAI backend, with a warning. The old OpenAI, then Exa, then Brave failure chain is gone.
-- Legacy native-only configuration (`hosted = true`, `provider = "disabled"`) requires an explicit mode. Rho rejects that migration instead of enabling a client backend. Set `mode = "off"` to prevent search, or choose Auto and a backend.
-- Legacy OpenAI and Exa users get a warning to select their connection. Choose `codex` or `mcp` if that was the previously implicit transport.
+Rho 3.0 no longer reads the 2.x `hosted`, `provider`, and top-level `web_search_provider` keys. They are unknown keys, so a config that still sets them fails to load. Replace the pair `hosted = false`, `provider = "disabled"` with `mode = "off"`, and a concrete `provider` with `backend` plus `mode = "auto"` or `"backend"`.
 
 Existing flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values still migrate to the credential store. Empty strings are ignored.

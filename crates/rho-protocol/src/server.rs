@@ -4,7 +4,7 @@
 
 use std::{future::Future, sync::Arc, time::Duration};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Map, Value};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -12,8 +12,9 @@ use tokio::{
     task::JoinSet,
 };
 
+use crate::server_settings::{self, SettingsService};
 use crate::{
-    declared::Declared,
+    declared::{hello_protocol, Declared},
     forward::Forwarders,
     jsonrpc,
     login_relay::LoginStream,
@@ -21,13 +22,14 @@ use crate::{
         AuthChooseStore, AuthChooseStoreParams, AuthChooseStoreResponse, AuthKey, AuthKeyParams,
         AuthKeyResponse, AuthList, AuthListParams, AuthListResponse, AuthLogin, AuthLoginCancel,
         AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse,
-        AuthLogout, AuthLogoutParams, AuthLogoutResponse, ClientInfo, Hello, JobList,
-        JobListParams, JobListResponse, Method, Restart, RestartParams, RestartResponse,
-        SessionAnswer, SessionAnswerParams, SessionAnswerResponse, SessionAttach,
-        SessionAttachParams, SessionAttachResponse, SessionCancel, SessionCancelParams,
-        SessionCancelResponse, SessionConfigure, SessionConfigureParams, SessionConfigureResponse,
-        SessionDelete, SessionDeleteParams, SessionDeleteResponse, SessionDetach,
-        SessionDetachParams, SessionDetachResponse, SessionHold, SessionHoldParams,
+        AuthLogout, AuthLogoutParams, AuthLogoutResponse, ClientInfo, ConfigGet, ConfigGetParams,
+        ConfigRegister, ConfigRegisterParams, ConfigSchemaMethod, ConfigSchemaParams, ConfigSet,
+        ConfigSetParams, Hello, JobList, JobListParams, JobListResponse, Method, Restart,
+        RestartParams, RestartResponse, SessionAnswer, SessionAnswerParams, SessionAnswerResponse,
+        SessionAttach, SessionAttachParams, SessionAttachResponse, SessionCancel,
+        SessionCancelParams, SessionCancelResponse, SessionConfigure, SessionConfigureParams,
+        SessionConfigureResponse, SessionDelete, SessionDeleteParams, SessionDeleteResponse,
+        SessionDetach, SessionDetachParams, SessionDetachResponse, SessionHold, SessionHoldParams,
         SessionHoldResponse, SessionId, SessionList, SessionListParams, SessionListResponse,
         SessionMcp, SessionMcpInventory, SessionMcpParams, SessionNew, SessionNewParams,
         SessionNewResponse, SessionObserve, SessionObserveParams, SessionPrompt,
@@ -35,10 +37,11 @@ use crate::{
         SessionRenameResponse, SessionSteer, SessionSteerParams, SessionSteerResponse,
         SessionUnsteer, SessionUnsteerParams, SessionUnsteerResponse, Status, Stop,
         AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT,
-        DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER,
-        SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH,
-        SESSION_HOLD, SESSION_LIST, SESSION_MCP, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT,
-        SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
+        CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART, DAEMON_STATUS,
+        DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL,
+        SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD, SESSION_LIST, SESSION_MCP,
+        SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER,
+        SESSION_UNSTEER,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -68,7 +71,7 @@ use crate::{
 /// `rho/session/detach` has no method: the connection answers it by
 /// dropping that session's [`Subscription`], which the publisher sees as
 /// [`crate::Published::Gone`].
-pub trait Service: Send + Sync {
+pub trait Service: SettingsService + Send + Sync {
     /// Called once a connection's `rho/hello` is accepted, before its answer
     /// is written, with the client the hello names. It runs in the
     /// connection's read loop, so it must return without waiting. Does
@@ -494,6 +497,22 @@ where
                         while calls.try_join_next().is_some() {}
                         continue;
                     }
+                    Ok(Route::ConfigGet(params)) => {
+                        let responder = Responder::new(id, &outbox);
+                        let service = Arc::clone(&service);
+                        let forwarders = Arc::clone(forwarders);
+                        calls.spawn(async move {
+                            server_settings::watch_config(
+                                &*service,
+                                params,
+                                responder,
+                                &forwarders,
+                            )
+                            .await;
+                        });
+                        while calls.try_join_next().is_some() {}
+                        continue;
+                    }
                     Ok(Route::Detach(SessionDetachParams { session })) => {
                         forwarders.detach(&session);
                         Response {
@@ -583,6 +602,9 @@ enum Route {
     /// `rho/auth/login`: the service answers it in its own task, then the
     /// connection forwards the login's prompt and end.
     Login(AuthLoginParams),
+    /// `rho/config/get`: the service answers it in its own task, then the
+    /// connection forwards the namespace's changes.
+    ConfigGet(ConfigGetParams),
 }
 
 /// A post-handshake request whose params decoded, waiting for the service.
@@ -608,6 +630,9 @@ enum ServiceCall {
     ListAuths(AuthListParams),
     CancelLogin(AuthLoginCancelParams),
     ChooseStore(AuthChooseStoreParams),
+    ConfigSchema,
+    RegisterConfig(ConfigRegisterParams),
+    SetConfig(ConfigSetParams),
 }
 
 impl Connection {
@@ -672,6 +697,7 @@ impl Connection {
                         .map(|params| Route::Attach(AttachRequest::Observe(params))),
                     SESSION_DETACH => decode_params::<SessionDetach>(params).map(Route::Detach),
                     AUTH_LOGIN => decode_params::<AuthLogin>(params).map(Route::Login),
+                    CONFIG_GET => decode_params::<ConfigGet>(params).map(Route::ConfigGet),
                     method => ServiceCall::decode(method, params).map(Route::Call),
                 }
             }
@@ -709,6 +735,10 @@ impl ServiceCall {
             AUTH_LIST => decode_params::<AuthList>(params).map(Self::ListAuths),
             AUTH_LOGIN_CANCEL => decode_params::<AuthLoginCancel>(params).map(Self::CancelLogin),
             AUTH_CHOOSE_STORE => decode_params::<AuthChooseStore>(params).map(Self::ChooseStore),
+            CONFIG_SCHEMA => decode_params::<ConfigSchemaMethod>(params)
+                .map(|ConfigSchemaParams {}| Self::ConfigSchema),
+            CONFIG_REGISTER => decode_params::<ConfigRegister>(params).map(Self::RegisterConfig),
+            CONFIG_SET => decode_params::<ConfigSet>(params).map(Self::SetConfig),
             method => Err(RpcError::new(
                 ErrorCode::MethodNotFound,
                 format!("unknown method {method}"),
@@ -740,7 +770,10 @@ impl ServiceCall {
             | Self::LogoutAuth(_)
             | Self::ListAuths(_)
             | Self::CancelLogin(_)
-            | Self::ChooseStore(_) => None,
+            | Self::ChooseStore(_)
+            | Self::ConfigSchema
+            | Self::RegisterConfig(_)
+            | Self::SetConfig(_) => None,
         }
     }
 
@@ -807,6 +840,15 @@ impl ServiceCall {
             }
             Self::ChooseStore(params) => {
                 encode_result::<AuthChooseStore>(&service.choose_store(params).await?)
+            }
+            Self::ConfigSchema => {
+                encode_result::<ConfigSchemaMethod>(&service.config_schema().await?)
+            }
+            Self::RegisterConfig(params) => {
+                encode_result::<ConfigRegister>(&service.register_config(params).await?)
+            }
+            Self::SetConfig(params) => {
+                encode_result::<ConfigSet>(&service.set_config(params).await?)
             }
         }
     }
@@ -881,10 +923,10 @@ async fn login<Svc: Service>(
 /// A call that ends without answering, because its handler panicked or the
 /// connection cancelled it, answers with an internal error on drop, so the
 /// peer never waits on a request that will not finish.
-struct Responder {
+pub(crate) struct Responder {
     /// `None` once answered.
     id: Option<RequestId>,
-    outbox: Outbox,
+    pub(crate) outbox: Outbox,
 }
 
 impl Responder {
@@ -895,7 +937,7 @@ impl Responder {
         }
     }
 
-    fn send(mut self, outcome: Result<Value, RpcError>) {
+    pub(crate) fn send(mut self, outcome: Result<Value, RpcError>) {
         self.answer(outcome);
     }
 
@@ -927,25 +969,8 @@ fn decode_params<M: Method>(params: Option<Value>) -> Result<M::Params, RpcError
         .map_err(|error| RpcError::new(ErrorCode::InvalidParams, error.to_string()))
 }
 
-/// The protocol a hello names, whatever else it holds.
-fn hello_protocol(params: Option<&Value>) -> Result<ProtocolVersion, RpcError> {
-    #[derive(Deserialize)]
-    struct Versioned {
-        protocol: ProtocolVersion,
-    }
-    let Some(params) = params else {
-        return Err(RpcError::new(
-            ErrorCode::InvalidParams,
-            format!("{HELLO} needs params"),
-        ));
-    };
-    Versioned::deserialize(params)
-        .map(|hello| hello.protocol)
-        .map_err(|error| RpcError::new(ErrorCode::InvalidParams, error.to_string()))
-}
-
 /// Encodes `M`'s result, the type [`crate::Client::request`] decodes.
-fn encode_result<M: Method>(result: &M::Result) -> Result<Value, RpcError> {
+pub(crate) fn encode_result<M: Method>(result: &M::Result) -> Result<Value, RpcError> {
     encode(result)
 }
 

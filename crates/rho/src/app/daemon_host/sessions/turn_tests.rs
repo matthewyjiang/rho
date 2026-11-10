@@ -16,6 +16,7 @@ use crate::app::daemon_host::sessions::{
         approval, approval_withdrawn, plan, plan_withdrawn, question, question_withdrawn,
     },
 };
+use crate::app::daemon_host::settings::ConfigStore;
 use crate::{
     app::{
         daemon_host::{
@@ -119,10 +120,17 @@ async fn loaded_session(root: &Path, jobs: &Arc<JobRegistry>, job: JobId) -> Arc
         OpenedSession {
             runtime,
             config,
+            global: Arc::new(Config::default()),
             environment: SessionEnvironment::default(),
         },
         /*auths*/ &[],
         &WakeDir::in_home(root),
+        &Arc::new(ConfigStore::new(
+            root,
+            crate::app::agent_concurrency::AgentConcurrency::from_config(
+                crate::config::DEFAULT_AGENT_CONCURRENCY,
+            ),
+        )),
     ))
 }
 

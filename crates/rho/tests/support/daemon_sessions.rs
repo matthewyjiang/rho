@@ -43,13 +43,13 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// session file.
 pub(super) const REPLY: &str = "reply saved by the daemon session";
 
-const CONFIG: &str = r#"provider = "xai"
+const CONFIG: &str = r#"[model]
+provider = "xai"
 model = "grok-fixture"
 auth = "xai-oauth"
 
 [web_search]
-hosted = false
-provider = "disabled"
+mode = "off"
 "#;
 
 /// A one-node workflow whose agent replies from the fixture provider.
@@ -211,12 +211,13 @@ impl Sandbox {
         self.set_config(mode, "");
     }
 
-    /// Writes the fixture config with `permission_mode = "<mode>"` and the
-    /// TOML `tables` after it, which a daemon started after reads.
+    /// Writes the fixture config with `behavior.permission_mode = "<mode>"`
+    /// and the TOML `tables` after it, which a daemon started after reads.
+    /// Keys `tables` sets before any table header are `behavior` keys.
     pub(super) fn set_config(&self, mode: &str, tables: &str) {
         std::fs::write(
             &self.isolated.config_path,
-            format!("permission_mode = \"{mode}\"\n{CONFIG}\n{tables}"),
+            format!("{CONFIG}\n[behavior]\npermission_mode = \"{mode}\"\n\n{tables}"),
         )
         .unwrap();
     }
