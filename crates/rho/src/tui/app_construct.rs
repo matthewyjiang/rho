@@ -72,14 +72,9 @@ impl App {
             .as_ref()
             .map(|_| "no providers configured; run /login to sign in".to_string());
         let tasks = super::background_tasks::BackgroundTasks::from_startup(&mut info.services);
-        let (prompt_history_limit, output_streaming) = info
-            .services
-            .config_repository
-            .load()
-            .map(|config| (config.prompt_history_limit, config.output_streaming))
-            .unwrap_or_default();
+        let output_streaming = info.services.settings.output_streaming;
         let prompt_history = super::prompt_history::PromptHistory::new(
-            prompt_history_limit,
+            info.services.settings.prompt_history_limit,
             info.services.pending_prompt_history.take(),
         );
         let notifier = super::notifications::TerminalNotifier::new(

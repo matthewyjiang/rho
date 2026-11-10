@@ -25,6 +25,36 @@
       ],
       "description": "Why the model stopped at its final answer. A daemon that does not know\nwhy, as for a reason a newer SDK adds, sends `unknown`."
     },
+    "Applies": {
+      "anyOf": [
+        {
+          "const": "immediately",
+          "description": "As soon as the change is saved.",
+          "type": "string"
+        },
+        {
+          "const": "next_turn",
+          "description": "From the next turn of every loaded session.",
+          "type": "string"
+        },
+        {
+          "const": "next_session",
+          "description": "From the next session the daemon opens.",
+          "type": "string"
+        },
+        {
+          "const": "restart",
+          "description": "When the daemon next starts.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "When a changed setting takes effect."
+    },
     "ApprovalAsk": {
       "description": "A tool asks to use a capability its session's permission mode does not\ngrant on its own.",
       "properties": {
@@ -566,6 +596,10 @@
       ],
       "type": "object"
     },
+    "ClientName": {
+      "description": "A client's settings namespace, such as `tui`. It names the file the\ndaemon stores them in, so it is lowercase ASCII letters, digits, and\n`-`, starting with a letter or digit, at most [`Self::MAX_LEN`] bytes.",
+      "type": "string"
+    },
     "ClientRole": {
       "description": "What a connection is for, which bounds the capabilities it may declare.\nThe daemon reads it, so it has no `Unknown`: a role this daemon does not\nknow is [`crate::ErrorCode::InvalidParams`].\n\nA role is declared, not proven: the socket is private to the daemon's\nuser, and any process of that user may declare any role. It keeps a\nwell-behaved client to its part, so an agent's session-control client\ncannot answer the approvals of the sessions it drives; it is not a\nsandbox for a process that can open the socket itself.",
       "oneOf": [
@@ -696,6 +730,300 @@
         }
       ],
       "description": "Where a compaction is. Every status but `started` ends it."
+    },
+    "ConfigCategory": {
+      "description": "A settings page; [`SettingSpec::category`] names its `id`.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "type": "object"
+    },
+    "ConfigChangedParams": {
+      "description": "Params of [`CONFIG_CHANGED`].",
+      "properties": {
+        "errors": {
+          "description": "The whole error list, which replaces the last one.",
+          "items": {
+            "$ref": "#/$defs/ConfigError"
+          },
+          "type": "array"
+        },
+        "namespace": {
+          "$ref": "#/$defs/ConfigNamespace"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConfigRevision"
+        },
+        "values": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SettingEntry"
+          },
+          "description": "Only the settings whose entries changed.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "namespace",
+        "revision",
+        "values",
+        "errors"
+      ],
+      "type": "object"
+    },
+    "ConfigError": {
+      "description": "One problem in a settings file, by setting when it has one.",
+      "properties": {
+        "key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SettingKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "type": "object"
+    },
+    "ConfigGetParams": {
+      "description": "Params of [`CONFIG_GET`].",
+      "properties": {
+        "namespace": {
+          "$ref": "#/$defs/ConfigNamespace"
+        }
+      },
+      "required": [
+        "namespace"
+      ],
+      "type": "object"
+    },
+    "ConfigGetResponse": {
+      "description": "Result of [`CONFIG_GET`]. From then on the connection gets\n[`CONFIG_CHANGED`] for the namespace whenever a value or the error list\nchanges; reading the namespace again replaces that subscription.",
+      "properties": {
+        "errors": {
+          "description": "What keeps the file from loading. While the list is not empty, the\nvalues are the last ones that loaded, or the defaults.",
+          "items": {
+            "$ref": "#/$defs/ConfigError"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConfigRevision",
+          "description": "Send it with the next [`CONFIG_SET`]."
+        },
+        "values": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SettingEntry"
+          },
+          "description": "Every setting of the namespace.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "revision",
+        "values",
+        "errors"
+      ],
+      "type": "object"
+    },
+    "ConfigLayer": {
+      "anyOf": [
+        {
+          "const": "global",
+          "description": "The user's global file.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Which file a [`CONFIG_SET`] writes."
+    },
+    "ConfigNamespace": {
+      "anyOf": [
+        {
+          "description": "The agent's settings in `config.toml`, described by\n[`CONFIG_SCHEMA`].",
+          "properties": {
+            "kind": {
+              "const": "agent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A client's own settings, described by its [`CONFIG_REGISTER`].",
+          "properties": {
+            "kind": {
+              "const": "client",
+              "type": "string"
+            },
+            "name": {
+              "$ref": "#/$defs/ClientName"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Whose settings a request names."
+    },
+    "ConfigRegisterParams": {
+      "description": "Params of [`CONFIG_REGISTER`]. Registering again replaces the client's\nearlier schema; the daemon keeps it until it stops.",
+      "properties": {
+        "client": {
+          "$ref": "#/$defs/ClientName"
+        },
+        "settings": {
+          "description": "The client's settings. Each takes a [`SettingKind::Bool`],\n[`SettingKind::Choice`], [`SettingKind::Integer`], or\n[`SettingKind::Text`] value.",
+          "items": {
+            "$ref": "#/$defs/SettingSpec"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "client",
+        "settings"
+      ],
+      "type": "object"
+    },
+    "ConfigRegisterResponse": {
+      "description": "Result of [`CONFIG_REGISTER`].",
+      "type": "object"
+    },
+    "ConfigRevision": {
+      "description": "Identifies one state of a namespace's values. Opaque: compare it only\nfor equality, and send back the one [`CONFIG_GET`] or\n[`CONFIG_CHANGED`] gave.",
+      "type": "string"
+    },
+    "ConfigSchema": {
+      "description": "Result of [`CONFIG_SCHEMA`]: every agent setting, in display order.",
+      "properties": {
+        "categories": {
+          "description": "The pages settings sit on, in display order.",
+          "items": {
+            "$ref": "#/$defs/ConfigCategory"
+          },
+          "type": "array"
+        },
+        "file_only": {
+          "description": "Structured tables `config.toml` holds that only a hand edit\nchanges, such as provider profiles.",
+          "items": {
+            "$ref": "#/$defs/FileOnlyTable"
+          },
+          "type": "array"
+        },
+        "settings": {
+          "items": {
+            "$ref": "#/$defs/SettingSpec"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "categories",
+        "settings",
+        "file_only"
+      ],
+      "type": "object"
+    },
+    "ConfigSchemaParams": {
+      "description": "Params of [`CONFIG_SCHEMA`].",
+      "type": "object"
+    },
+    "ConfigSetParams": {
+      "description": "Params of [`CONFIG_SET`]. Every change lands, or none does: a change the\ndaemon refuses leaves the file as it was.",
+      "properties": {
+        "changes": {
+          "description": "Applied in order, so a setting another belongs to, such as an\ninternal agent's model before its reasoning, comes first.",
+          "items": {
+            "$ref": "#/$defs/SettingChange"
+          },
+          "type": "array"
+        },
+        "layer": {
+          "$ref": "#/$defs/ConfigLayer"
+        },
+        "namespace": {
+          "$ref": "#/$defs/ConfigNamespace"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConfigRevision",
+          "description": "The revision the changes were made against. A stale one is refused\nwith [`crate::ErrorCode::ConfigConflict`]."
+        },
+        "writer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigWriter"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Who makes the changes. A revision stays good for its writer while\nonly the writer's own changes followed it, so a client that sends a\nwrite before [`CONFIG_CHANGED`] for its last one arrives is not\nrefused for that change. A writer still sends each write only once\nthe last one's response came back: writes in flight together may\nland in either order. Without a writer, only the current revision is\ngood."
+        }
+      },
+      "required": [
+        "namespace",
+        "layer",
+        "revision",
+        "changes"
+      ],
+      "type": "object"
+    },
+    "ConfigSetResponse": {
+      "description": "Result of [`CONFIG_SET`].",
+      "properties": {
+        "revision": {
+          "$ref": "#/$defs/ConfigRevision",
+          "description": "The namespace's revision with the changes."
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "type": "object"
+    },
+    "ConfigWriter": {
+      "description": "Names one client instance's settings writes, such as a terminal's, so\nthey never conflict with each other (see [`ConfigSetParams::writer`]).\nOpaque: a client picks one unique to it, such as a random UUID, and\nsends it with each write.",
+      "type": "string"
     },
     "ContentBlock": {
       "anyOf": [
@@ -1125,6 +1453,28 @@
       ],
       "type": "object"
     },
+    "FileOnlyTable": {
+      "description": "A table of `config.toml` the protocol does not edit.",
+      "properties": {
+        "docs": {
+          "description": "Where its format is documented.",
+          "type": "string"
+        },
+        "key": {
+          "description": "Its dotted key, such as `providers`.",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "docs"
+      ],
+      "type": "object"
+    },
     "HelloParams": {
       "description": "Params of [`HELLO`].",
       "properties": {
@@ -1381,6 +1731,25 @@
         "reason"
       ],
       "type": "object"
+    },
+    "IntegerUnit": {
+      "anyOf": [
+        {
+          "enum": [
+            "bytes",
+            "lines",
+            "percent",
+            "seconds"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What a [`SettingKind::Integer`] counts."
     },
     "JobId": {
       "description": "A job's id. Opaque to clients: send back the string the daemon gave.",
@@ -1819,6 +2188,70 @@
         "model"
       ],
       "type": "object"
+    },
+    "ModelRuntime": {
+      "anyOf": [
+        {
+          "const": "rho",
+          "description": "Rho's own model stack.",
+          "type": "string"
+        },
+        {
+          "const": "claude-cli",
+          "description": "The Claude Code CLI, listed only where the daemon can run it.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What runs a [`SettingKind::Model`] setting's model."
+    },
+    "ModelSelection": {
+      "description": "The value of a [`SettingKind::Model`] setting.",
+      "oneOf": [
+        {
+          "properties": {
+            "model": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "runtime": {
+              "const": "rho",
+              "type": "string"
+            }
+          },
+          "required": [
+            "runtime",
+            "provider",
+            "model"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Absent `model` lets the Claude Code CLI pick its own default.",
+          "properties": {
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "runtime": {
+              "const": "claude-cli",
+              "type": "string"
+            }
+          },
+          "required": [
+            "runtime"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "NotificationCard": {
       "description": "Something that arrived for the reader: an agent message, a delegated-run\nresult, or a finished background process. Sources supply the data; the\nrenderer stays source-agnostic.\n\nFields added after the first saved journals read as their defaults when\nabsent, and are left out when they hold them.",
@@ -4184,6 +4617,294 @@
       ],
       "type": "object"
     },
+    "SettingChange": {
+      "description": "One change of a [`CONFIG_SET`].",
+      "oneOf": [
+        {
+          "description": "Write `value`, which the setting's [`SettingKind`] takes.",
+          "properties": {
+            "key": {
+              "$ref": "#/$defs/SettingKey"
+            },
+            "op": {
+              "const": "set",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/SettingValue"
+            }
+          },
+          "required": [
+            "op",
+            "key",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Remove the setting from the file, so its default applies.",
+          "properties": {
+            "key": {
+              "$ref": "#/$defs/SettingKey"
+            },
+            "op": {
+              "const": "reset",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "key"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SettingChoice": {
+      "description": "One value of a [`SettingKind::Choice`].",
+      "properties": {
+        "help": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "description": "What `config.toml` and [`SettingValue::Text`] hold.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "label"
+      ],
+      "type": "object"
+    },
+    "SettingEntry": {
+      "description": "A setting's value and where it comes from.",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/ValueSource"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SettingValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent for an optional setting that is unset."
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
+    },
+    "SettingKey": {
+      "description": "A setting's dotted name, which is also where `config.toml` keeps it:\n`behavior.permission_mode` is the `permission_mode` key of the\n`[behavior]` table.",
+      "type": "string"
+    },
+    "SettingKind": {
+      "anyOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "bool",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One of `choices`, by [`SettingChoice::value`].",
+          "properties": {
+            "choices": {
+              "items": {
+                "$ref": "#/$defs/SettingChoice"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "choice",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "choices"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A whole number from `min` to `max`, inclusive; no `max` means no\nupper bound.",
+          "properties": {
+            "kind": {
+              "const": "integer",
+              "type": "string"
+            },
+            "max": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "min": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "unit": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/IntegerUnit"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "min"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A model on one of `runtimes`.",
+          "properties": {
+            "kind": {
+              "const": "model",
+              "type": "string"
+            },
+            "runtimes": {
+              "items": {
+                "$ref": "#/$defs/ModelRuntime"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "runtimes"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "The values a setting takes."
+    },
+    "SettingSpec": {
+      "description": "One setting, as a settings screen shows it.",
+      "properties": {
+        "applies": {
+          "$ref": "#/$defs/Applies"
+        },
+        "category": {
+          "description": "The id of the category whose page lists the setting.",
+          "type": "string"
+        },
+        "default": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SettingValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent for an optional setting that is unset by default, such as a\ntimeout that is off until set."
+        },
+        "help": {
+          "description": "What the setting does, without when it applies: [`Self::applies`]\nsays that.",
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/$defs/SettingKey"
+        },
+        "kind": {
+          "$ref": "#/$defs/SettingKind"
+        },
+        "label": {
+          "type": "string"
+        },
+        "overridable_per_project": {
+          "description": "Whether a project may override the setting once project config\nexists; settings that size the daemon itself never may.",
+          "type": "boolean"
+        },
+        "section": {
+          "description": "A heading within the category page, when the page groups its rows.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "kind",
+        "category",
+        "label",
+        "help",
+        "applies",
+        "overridable_per_project"
+      ],
+      "type": "object"
+    },
+    "SettingValue": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/ModelSelection"
+        }
+      ],
+      "description": "A setting's value; which variant a setting takes follows its\n[`SettingKind`]: a choice is [`Self::Text`]."
+    },
     "StatusParams": {
       "description": "Params of [`DAEMON_STATUS`].",
       "type": "object"
@@ -5152,6 +5873,26 @@
       ],
       "description": "What [`SESSION_UNSTEER`] did with the steer."
     },
+    "ValueSource": {
+      "anyOf": [
+        {
+          "const": "default",
+          "description": "Nothing sets it; the value is its default.",
+          "type": "string"
+        },
+        {
+          "const": "global",
+          "description": "The user's global file sets it.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Where a setting's value comes from."
+    },
     "VersionFix": {
       "description": "Which side of an incompatible pair has to change.",
       "oneOf": [
@@ -5270,6 +6011,12 @@
       },
       "name": "ProjectTrustMismatch"
     },
+    "-32021": {
+      "name": "ConfigConflict"
+    },
+    "-32022": {
+      "name": "ConfigInvalid"
+    },
     "-32023": {
       "name": "CapabilityRequired"
     },
@@ -5336,6 +6083,38 @@
       },
       "result": {
         "$ref": "#/$defs/AuthLogoutResponse"
+      }
+    },
+    "rho/config/get": {
+      "params": {
+        "$ref": "#/$defs/ConfigGetParams"
+      },
+      "result": {
+        "$ref": "#/$defs/ConfigGetResponse"
+      }
+    },
+    "rho/config/register": {
+      "params": {
+        "$ref": "#/$defs/ConfigRegisterParams"
+      },
+      "result": {
+        "$ref": "#/$defs/ConfigRegisterResponse"
+      }
+    },
+    "rho/config/schema": {
+      "params": {
+        "$ref": "#/$defs/ConfigSchemaParams"
+      },
+      "result": {
+        "$ref": "#/$defs/ConfigSchema"
+      }
+    },
+    "rho/config/set": {
+      "params": {
+        "$ref": "#/$defs/ConfigSetParams"
+      },
+      "result": {
+        "$ref": "#/$defs/ConfigSetResponse"
       }
     },
     "rho/daemon/restart": {
@@ -5510,6 +6289,11 @@
         "$ref": "#/$defs/AuthLoginPromptParams"
       }
     },
+    "rho/config/changed": {
+      "params": {
+        "$ref": "#/$defs/ConfigChangedParams"
+      }
+    },
     "rho/session/detached": {
       "params": {
         "$ref": "#/$defs/SessionDetachedParams"
@@ -5523,7 +6307,7 @@
   },
   "protocol": {
     "major": 0,
-    "minor": 4
+    "minor": 5
   },
   "title": "rho daemon protocol"
 }

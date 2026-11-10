@@ -19,11 +19,12 @@ const AUTH_ENV: &[(&str, &str)] = &[
 fn setup(home: &IsolatedHome) -> Result<()> {
     std::fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 favorite_models = ["openai/gpt-5.5", "xai/grok-4.6", "poolside/laguna-m.1"]
 
 [behavior]

@@ -91,7 +91,7 @@ impl Sessions {
         // done, so the options this publishes are never older than one.
         let auths = available_auths(runtime.credentials()).await;
         let applied = change
-            .apply(runtime, &session.config, &auths)
+            .apply(runtime, &session.config(), &auths)
             .await
             .and_then(|()| {
                 runtime.keep_settings().map_err(|error| {

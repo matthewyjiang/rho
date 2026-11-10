@@ -28,7 +28,7 @@ flowchart TD
 | `ctrl-end` (default) | Jump back to the live bottom |
 | Left-click and drag | Select text; copy on release |
 
-The jump binding is `keybindings.jump_to_bottom` in config (default `ctrl+end`).
+The jump binding is `keybindings.jump_to_bottom` in `~/.rho/tui.toml` (default `ctrl+end`).
 It must differ from `open_editor`. Restart Rho after keybinding changes.
 
 ### Live bottom vs manual scroll
@@ -70,7 +70,7 @@ opens right away and lays out the rest in the background; the prompt shows
 `indexing` until every row is searchable, and matches in older rows appear as
 they are reached.
 
-The binding is `keybindings.search_transcript` in config (default `ctrl+f`).
+The binding is `keybindings.search_transcript` in `~/.rho/tui.toml` (default `ctrl+f`).
 
 ## Markdown and structure
 

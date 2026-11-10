@@ -122,7 +122,14 @@ impl Sessions {
             )),
         };
         let job = record.job().id.clone();
-        let opened = open_session(Opening::Saved(stored), with, &self.subagents, &job).await?;
+        let opened = open_session(
+            Opening::Saved(stored),
+            with,
+            &self.subagents,
+            &self.settings,
+            &job,
+        )
+        .await?;
         let session = self.add(record, opened).await?;
         tracing::info!(session = %id, %job, "reopened session");
         Ok(session)

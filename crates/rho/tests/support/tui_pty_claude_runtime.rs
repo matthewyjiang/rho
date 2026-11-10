@@ -282,11 +282,12 @@ fn fake_claude_advisor_reviews_the_session() {
     let home = IsolatedHome::new().unwrap();
     fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 
 [behavior]
 credential_store = "file"

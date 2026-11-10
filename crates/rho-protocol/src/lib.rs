@@ -74,11 +74,13 @@ mod login_relay;
 pub mod methods;
 pub mod schema;
 mod server;
+mod server_settings;
 mod subscription;
 mod version;
 
 pub use client::{Client, ClientError, DaemonNotification, Notifications};
 pub use error::ErrorCode;
+pub use forward::ConfigWatch;
 pub use jsonrpc::{
     FrameError, Message, MessageReader, MessageWriter, Notification, ParseError, Request,
     RequestId, Response, RpcError, MAX_LINE_BYTES,
@@ -105,6 +107,14 @@ pub use methods::{
     UncheckedReason, UnsteerOutcome, SESSION_ANSWER, SESSION_HOLD,
 };
 pub use methods::{
+    Applies, ClientName, ConfigCategory, ConfigChangedParams, ConfigError, ConfigGetParams,
+    ConfigGetResponse, ConfigLayer, ConfigNamespace, ConfigRegisterParams, ConfigRegisterResponse,
+    ConfigRevision, ConfigSchema, ConfigSchemaParams, ConfigSetParams, ConfigSetResponse,
+    ConfigWriter, FileOnlyTable, IntegerUnit, InvalidClientName, ModelRuntime, ModelSelection,
+    SettingChange, SettingChoice, SettingEntry, SettingKey, SettingKind, SettingSpec, SettingValue,
+    ValueSource,
+};
+pub use methods::{
     AuthChooseStoreParams, AuthChooseStoreResponse, CredentialStoreKind, CredentialStoreStatus,
     StoreSelectedBy,
 };
@@ -129,5 +139,6 @@ pub use methods::{
     SESSION_MCP,
 };
 pub use server::{serve_connection, ServerInfo, Service, CLOSE_GRACE};
+pub use server_settings::SettingsService;
 pub use subscription::{subscription, Published, Publisher, Subscription};
 pub use version::{ProtocolVersion, RestartCost, VersionFix, VersionMismatch, PROTOCOL_VERSION};

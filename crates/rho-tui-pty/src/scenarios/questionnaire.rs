@@ -122,10 +122,13 @@ const QUESTIONNAIRE_CLICK_STEPS: &[Step] = &[
 
 fn setup_supervised(home: &IsolatedHome) -> Result<()> {
     let config = std::fs::read_to_string(&home.config_path)?;
-    // Top-level keys must precede the first table header.
     std::fs::write(
         &home.config_path,
-        format!("permission_mode = \"supervised\"\n{config}"),
+        config.replacen(
+            "[behavior]\n",
+            "[behavior]\npermission_mode = \"supervised\"\n",
+            1,
+        ),
     )?;
     Ok(())
 }

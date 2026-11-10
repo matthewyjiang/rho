@@ -320,11 +320,10 @@ impl App {
     }
 
     pub(super) fn open_prompt_history_limit_editor(&mut self) -> anyhow::Result<()> {
-        let config = self.info.services.config_repository.load()?;
         self.input_ui
             .set_composer(ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
                 ConfigNumberKey::PromptHistoryLimit,
-                config.prompt_history_limit,
+                self.info.services.settings.prompt_history_limit,
             )));
         self.set_status("edit prompt history limit");
         Ok(())
@@ -402,16 +401,8 @@ impl App {
     }
 
     fn apply_prompt_history_limit(&mut self, new_limit: usize) -> anyhow::Result<()> {
-        if let Err(error) = self.info.services.config_repository.update(|config| {
-            config.prompt_history_limit = new_limit;
-        }) {
-            self.insert_entry(&Entry::Error(format!(
-                "could not save prompt history limit: {error}"
-            )));
-            self.open_main_config_picker_selected(config_picker::PROMPT_HISTORY_LIMIT_VALUE)?;
-            self.set_status("config save failed");
-            return Ok(());
-        }
+        // Lasts until Rho exits; `clients/tui.toml` is not written.
+        self.info.services.settings.prompt_history_limit = new_limit;
         self.prompt_history.set_limit(new_limit);
         if new_limit > 0 {
             self.input_ui.truncate_history_to_newest(new_limit);

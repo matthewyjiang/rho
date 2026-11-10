@@ -6,15 +6,11 @@ fn config_normalizes_provider_profiles_for_top_level_and_internal_models() {
     let path = dir.path().join("config.toml");
     std::fs::write(
         &path,
-        "provider = \"openrouter-oauth\"\nmodel = \"anthropic/claude-sonnet-4\"\nauth = \"openrouter-api-key\"\n[internal_agents.session-title]\nprovider = \"openrouter\"\nmodel = \"anthropic/claude-sonnet-4\"\nauth = \"openrouter-oauth\"\n",
+        "[model]\nprovider = \"openrouter-oauth\"\nmodel = \"anthropic/claude-sonnet-4\"\nauth = \"openrouter-api-key\"\n[internal_agents.session-title]\nprovider = \"openrouter\"\nmodel = \"anthropic/claude-sonnet-4\"\nauth = \"openrouter-oauth\"\n",
     )
     .unwrap();
 
-    let config = Config::load_with_store(
-        path,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap();
+    let config = Config::load(Some(path)).unwrap();
 
     assert_eq!(
         (config.provider.as_str(), config.auth.as_str()),
@@ -36,15 +32,11 @@ fn config_canonicalizes_legacy_poolside_wire_model_ids() {
     let path = dir.path().join("config.toml");
     std::fs::write(
         &path,
-        "provider = \"poolside\"\nmodel = \"poolside/laguna-m.1\"\nauth = \"poolside-api-key\"\n[internal_agents.session-title]\nprovider = \"poolside\"\nmodel = \"poolside/poolside/laguna-m.1\"\nauth = \"poolside-api-key\"\n",
+        "[model]\nprovider = \"poolside\"\nmodel = \"poolside/laguna-m.1\"\nauth = \"poolside-api-key\"\n[internal_agents.session-title]\nprovider = \"poolside\"\nmodel = \"poolside/poolside/laguna-m.1\"\nauth = \"poolside-api-key\"\n",
     )
     .unwrap();
 
-    let config = Config::load_with_store(
-        path,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap();
+    let config = Config::load(Some(path)).unwrap();
 
     assert_eq!(config.provider, "poolside");
     assert_eq!(config.model, "laguna-m.1");
@@ -59,8 +51,8 @@ fn config_canonicalizes_legacy_poolside_wire_model_ids() {
 fn default_config_omits_ollama_endpoint_until_login_or_explicit_table() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
-    Config::default().write_settings(path.clone()).unwrap();
-    let saved = std::fs::read_to_string(&path).unwrap();
+    Config::default().save(Some(path.clone())).unwrap();
+    let saved = std::fs::read_to_string(&path).unwrap_or_default();
     assert!(
         !saved.contains("[providers.ollama]"),
         "first-run config must not write a default Ollama endpoint: {saved}"
@@ -71,7 +63,7 @@ fn default_config_omits_ollama_endpoint_until_login_or_explicit_table() {
         .providers
         .set_endpoint("ollama", rho_providers::provider::OLLAMA_API_BASE)
         .unwrap();
-    config.write_settings(path.clone()).unwrap();
+    config.save(Some(path.clone())).unwrap();
     let saved = std::fs::read_to_string(&path).unwrap();
     assert!(
         saved.contains("[providers.ollama]"),
@@ -163,15 +155,11 @@ fn custom_openai_compatible_resolves_configured_endpoint() {
     let path = dir.path().join("config.toml");
     std::fs::write(
         &path,
-        "provider = \"composer\"\nmodel = \"composer-2.5\"\n[providers.custom.composer]\nbase_url = \"http://127.0.0.1:8787/v1\"\n",
+        "[model]\nprovider = \"composer\"\nmodel = \"composer-2.5\"\n[providers.custom.composer]\nbase_url = \"http://127.0.0.1:8787/v1\"\n",
     )
     .unwrap();
 
-    let config = Config::load_with_store(
-        path,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap();
+    let config = Config::load(Some(path)).unwrap();
 
     assert_eq!(config.provider, "composer");
     assert_eq!(config.auth, "none");
@@ -196,7 +184,7 @@ fn custom_openai_compatible_promotes_stored_key_over_keyless() {
     let path = dir.path().join("config.toml");
     std::fs::write(
         &path,
-        "provider = \"composer\"\nmodel = \"composer-2.5\"\nauth = \"none\"\n[providers.custom.composer]\nbase_url = \"http://127.0.0.1:8787/v1\"\n",
+        "[model]\nprovider = \"composer\"\nmodel = \"composer-2.5\"\nauth = \"none\"\n[providers.custom.composer]\nbase_url = \"http://127.0.0.1:8787/v1\"\n",
     )
     .unwrap();
 
@@ -204,7 +192,7 @@ fn custom_openai_compatible_promotes_stored_key_over_keyless() {
     store
         .set_secret("provider:composer:api-key", "composer-secret")
         .unwrap();
-    let mut config = Config::load_with_store(path, &store).unwrap();
+    let mut config = Config::load(Some(path)).unwrap();
     assert_eq!(config.auth, "none");
     assert!(config.promote_stored_custom_auth(&store));
     assert_eq!(config.auth, "composer-api-key");
@@ -222,12 +210,12 @@ fn custom_openai_compatible_keeps_keyed_auth_when_store_is_empty() {
     let path = dir.path().join("config.toml");
     std::fs::write(
         &path,
-        "provider = \"composer\"\nmodel = \"composer-2.5\"\nauth = \"composer-api-key\"\n[providers.custom.composer]\nbase_url = \"http://127.0.0.1:8787/v1\"\n",
+        "[model]\nprovider = \"composer\"\nmodel = \"composer-2.5\"\nauth = \"composer-api-key\"\n[providers.custom.composer]\nbase_url = \"http://127.0.0.1:8787/v1\"\n",
     )
     .unwrap();
 
     let store = MemoryCredentialStore::default();
-    let mut config = Config::load_with_store(path, &store).unwrap();
+    let mut config = Config::load(Some(path)).unwrap();
     assert_eq!(config.auth, "composer-api-key");
     assert!(!config.promote_stored_custom_auth(&store));
     assert_eq!(config.auth, "composer-api-key");
@@ -282,15 +270,11 @@ fn custom_provider_edit_tool_configures_auto_resolution() {
     let path = dir.path().join("config.toml");
     std::fs::write(
         &path,
-        "provider = \"vllm\"\nmodel = \"qwen2.5-coder\"\n[providers.custom.vllm]\nbase_url = \"http://127.0.0.1:8000/v1\"\nedit_tool = \"apply_patch\"\n[behavior]\nedit_tool = \"auto\"\n",
+        "[model]\nprovider = \"vllm\"\nmodel = \"qwen2.5-coder\"\n[providers.custom.vllm]\nbase_url = \"http://127.0.0.1:8000/v1\"\nedit_tool = \"apply_patch\"\n[behavior]\nedit_tool = \"auto\"\n",
     )
     .unwrap();
 
-    let mut config = Config::load_with_store(
-        path.clone(),
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap();
+    let mut config = Config::load(Some(path.clone())).unwrap();
 
     assert_eq!(
         config.resolved_edit_tool(),
@@ -302,7 +286,7 @@ fn custom_provider_edit_tool_configures_auto_resolution() {
         rho_tools::EditFormat::StrReplace
     );
 
-    config.write_settings(path.clone()).unwrap();
+    config.save(Some(path.clone())).unwrap();
     let saved = std::fs::read_to_string(path).unwrap();
     assert!(
         saved.contains("edit_tool = \"apply_patch\""),
@@ -327,12 +311,11 @@ fn custom_endpoint_options_load_intern_and_persist() {
     let path = dir.path().join("config.toml");
     std::fs::write(
         &path,
-        "provider = \"litellm\"\nmodel = \"gpt-5.6\"\n[providers.custom.composer]\nbase_url = \"http://127.0.0.1:8787/v1\"\ncatalog_mode = \"model-id\"\n[providers.custom.litellm]\nbase_url = \"http://127.0.0.1:4000/v1\"\napi = \"responses\"\ncatalog = \"llmgateway\"\nprompt_cache_ttl = \"1h\"\nrequest_compression = \"zstd\"\n",
+        "[model]\nprovider = \"litellm\"\nmodel = \"gpt-5.6\"\n[providers.custom.composer]\nbase_url = \"http://127.0.0.1:8787/v1\"\ncatalog_mode = \"model-id\"\n[providers.custom.litellm]\nbase_url = \"http://127.0.0.1:4000/v1\"\napi = \"responses\"\ncatalog = \"llmgateway\"\nprompt_cache_ttl = \"1h\"\nrequest_compression = \"zstd\"\n",
     )
     .unwrap();
-    let store = rho_providers::credentials::MemoryCredentialStore::default();
 
-    let config = Config::load_with_store(path.clone(), &store).unwrap();
+    let config = Config::load(Some(path.clone())).unwrap();
 
     let litellm = &config.providers.custom["litellm"];
     assert_eq!(
@@ -372,8 +355,8 @@ fn custom_endpoint_options_load_intern_and_persist() {
         )
     );
 
-    config.write_settings(path.clone()).unwrap();
-    let reloaded = Config::load_with_store(path, &store).unwrap();
+    config.save(Some(path.clone())).unwrap();
+    let reloaded = Config::load(Some(path)).unwrap();
     assert_eq!(reloaded.providers, config.providers);
     rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
 }
@@ -443,12 +426,11 @@ fn invalid_endpoint_options_name_the_offending_field() {
         ),
     ];
     let dir = tempfile::tempdir().unwrap();
-    let store = rho_providers::credentials::MemoryCredentialStore::default();
     for (case, table, field) in cases {
         let path = dir.path().join("config.toml");
         std::fs::write(&path, table).unwrap();
 
-        let error = Config::load_with_store(path, &store).unwrap_err();
+        let error = Config::load(Some(path)).unwrap_err();
 
         assert!(format!("{error:#}").contains(field), "{case}: {error:#}");
     }

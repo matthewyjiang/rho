@@ -42,8 +42,8 @@ async fn compaction_edits_wait_for_idle_and_preserve_calibration() {
         .config_repository
         .update(|config| {
             config.auto_compact = true;
-            config.set_compact_threshold_percent(75);
-            config.set_compact_target_percent(25);
+            config.compact_threshold_percent = 75;
+            config.compact_target_percent = 25;
         })
         .unwrap();
     app.compaction_reload_pending = true;

@@ -131,6 +131,7 @@ fn agent_behavior_config_rows_include_classifier_model_and_optional_reasoning() 
         config_picker::AGENT_CATEGORY_VALUE,
         &app.info.runtime,
         &config,
+        &app.info.services.settings,
     )
     .unwrap();
     assert!(picker
@@ -150,6 +151,7 @@ fn agent_behavior_config_rows_include_classifier_model_and_optional_reasoning() 
         config_picker::AGENT_CATEGORY_VALUE,
         &app.info.runtime,
         &config,
+        &app.info.services.settings,
     )
     .unwrap();
     let values: Vec<&str> = picker
@@ -180,6 +182,7 @@ fn xai_image_generation_row_is_hidden_until_provider_is_xai() {
         config_picker::TOOLS_CATEGORY_VALUE,
         &app.info.runtime,
         &config,
+        &app.info.services.settings,
     )
     .unwrap();
     assert!(!tools
@@ -192,6 +195,7 @@ fn xai_image_generation_row_is_hidden_until_provider_is_xai() {
         config_picker::TOOLS_CATEGORY_VALUE,
         &app.info.runtime,
         &config,
+        &app.info.services.settings,
     )
     .unwrap();
     assert!(tools

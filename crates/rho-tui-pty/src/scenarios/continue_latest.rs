@@ -32,14 +32,15 @@ pub(super) fn run_continue_latest(runner: &ScenarioRunner) -> Result<ScenarioOut
     let home = IsolatedHome::new()?;
     std::fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
-permission_mode = "bypass"
 
 [behavior]
+permission_mode = "bypass"
 credential_store = "file"
 "#,
     )?;

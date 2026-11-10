@@ -213,8 +213,7 @@ impl App {
     }
 
     fn load_settings_for_login(&self) -> anyhow::Result<crate::config::Config> {
-        let path = self.info.services.config_repository.configured_path()?;
-        crate::config::Config::load_settings_only(path)
+        self.info.services.config_repository.load()
     }
 
     pub(super) async fn submit_credential_store_choice(
