@@ -1917,6 +1917,17 @@
           ],
           "description": "What the turn under way, or the last one, of a\n[`JobKind::Session`] job may do through session control, as the\ndaemon recorded it from the request that started the turn; before\nthe first turn, what the session opened with. Absent for a turn\nwithout limits, as a person's own are, and for other jobs."
         },
+        "grant_limit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionGrant"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The most `grant` may be, for a session another session started: the\ngrant it opened with, itself no more than a session its parent's\nturn starts may have. The daemon holds every later grant to it,\nwhoever prompts the session: no shallower `depth`, no wider `access`\nor `workspaces`. Absent for a session a client started on its own."
+        },
         "id": {
           "$ref": "#/$defs/JobId"
         },

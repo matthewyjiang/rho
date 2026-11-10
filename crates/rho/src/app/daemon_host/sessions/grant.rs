@@ -8,11 +8,21 @@
 //! records it, and writes the session's `RHO_SESSION_*` variables from it,
 //! when it opens or reopens the session and when a prompt starts a turn, so
 //! the record and what the session's processes see never differ.
+//!
+//! A session another session's turn started is held to the grant it opened
+//! with (#1796), itself no more than its parent's turn could give: its job
+//! keeps that as the limit of every later grant, so a prompt from a person,
+//! or from a session with more, cannot widen it past its parent.
+
+use std::{collections::BTreeMap, sync::Arc};
 
 use rho_protocol::{ClientEnvironment, ErrorCode, RpcError, SessionGrant, SessionSetup};
 
 use super::open::{session_environment, OpenWith};
-use crate::caller_context::{CallerContext, ENV_NAMES};
+use crate::{
+    caller_context::{CallerContext, ENV_NAMES},
+    session_environment::Ambient,
+};
 
 /// The grant a request asks for: the one it names, else the one its
 /// client's `environment` carries. A grant the environment carries
@@ -33,6 +43,44 @@ pub(super) fn asked(
     }
 }
 
+/// The most a session opened asking for `asked` may ever be granted, when
+/// another session's turn starts it (#1796): `asked`, and no more than a
+/// session started under `parents`, the grant on the job writing the
+/// session that starts it, may have. A parent no job of the daemon writes
+/// has no record to hold it to, so what its request asked for is the limit.
+pub(super) fn limit_of_child(
+    asked: &CallerContext,
+    parents: Option<&CallerContext>,
+) -> CallerContext {
+    match parents {
+        Some(parents) => asked.within(&parents.child()),
+        None => asked.clone(),
+    }
+}
+
+/// `environment` carrying `grant`: its variables, with the grant's in place
+/// of any it had.
+fn carrying(grant: &CallerContext, environment: &Ambient) -> Ambient {
+    let mut variables = match environment {
+        Ambient::Client(variables) => BTreeMap::clone(variables),
+        // Never a daemon session's: each runs in a client's variables.
+        Ambient::ThisProcess => return Ambient::ThisProcess,
+    };
+    for name in ENV_NAMES {
+        variables.remove(name);
+    }
+    // A grant without limits is carried by no variable.
+    if !grant.is_root() {
+        variables.extend(
+            grant
+                .env()
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value)),
+        );
+    }
+    Ambient::Client(Arc::new(variables))
+}
+
 impl OpenWith {
     /// What a request with `environment` and `setup` brings a session it
     /// runs under `grant`: the client's variables, with the grant's in place
@@ -42,26 +90,24 @@ impl OpenWith {
         environment: &ClientEnvironment,
         setup: SessionSetup,
     ) -> Result<Self, RpcError> {
-        // A grant without limits is carried by no variable.
-        let carried = if grant.is_root() {
-            Vec::new()
-        } else {
-            grant.env()
-        };
-        let environment: ClientEnvironment = environment
-            .iter()
-            .filter(|(name, _)| !ENV_NAMES.contains(name))
-            .map(|(name, value)| (name.to_owned(), value.to_owned()))
-            .chain(
-                carried
-                    .into_iter()
-                    .map(|(name, value)| (name.to_owned(), value)),
-            )
-            .collect();
         Ok(Self {
-            environment: session_environment(&environment)?,
+            environment: carrying(&grant, &session_environment(environment)?),
             setup,
             grant,
         })
     }
+
+    /// What this request brings a session whose job gave it `grant`
+    /// instead of the one it asked for.
+    pub(super) fn granted(&self, grant: CallerContext) -> Self {
+        Self {
+            environment: carrying(&grant, &self.environment),
+            setup: self.setup.clone(),
+            grant,
+        }
+    }
 }
+
+#[cfg(test)]
+#[path = "grant_tests.rs"]
+mod tests;

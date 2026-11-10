@@ -112,6 +112,13 @@ pub struct JobSummary {
     /// without limits, as a person's own are, and for other jobs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant: Option<super::SessionGrant>,
+    /// The most `grant` may be, for a session another session started: the
+    /// grant it opened with, itself no more than a session its parent's
+    /// turn starts may have. The daemon holds every later grant to it,
+    /// whoever prompts the session: no shallower `depth`, no wider `access`
+    /// or `workspaces`. Absent for a session a client started on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_limit: Option<super::SessionGrant>,
     /// The Rho session the job writes; `None` for a subagent run on another
     /// runtime (Claude, Cursor, Antigravity), which keeps its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]

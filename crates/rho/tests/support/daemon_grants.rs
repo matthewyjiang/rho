@@ -1,7 +1,8 @@
 //! The grant and parent the daemon holds on each session's job (#1780),
 //! through the real binary: what a session's turn may do through session
 //! control is what the daemon recorded, not what its caller's environment
-//! says.
+//! says. A session another session started is held to the grant it opened
+//! with, which is no more than its parent's turn could give (#1796).
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
@@ -203,6 +204,140 @@ async fn a_reopened_sessions_job_holds_the_grant_it_reopened_under() {
     assert_eq!(
         (before, reopened),
         (Some(limited), None),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a session another session started never runs with more than its
+// parent's turn could give: opened asking for no limit, it gets the
+// parent's scope one level deeper, and its job reports that as its limit; a
+// person's prompt into it, which asks for no limit, runs under the same
+// limit, in the record and in what its processes see; a prompt that asks
+// for less gets less; and the parent, a session a client started on its
+// own, has no limit and loses its grant to a person's prompt as before
+// (#1796).
+// Owner: daemon job records, session grants.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_another_started_is_held_to_its_parents_grant() {
+    let sandbox = Sandbox::new();
+    sandbox.set_permission_mode("bypass");
+    let client = sandbox.start_daemon("tool-call").await;
+    let everything = SessionGrant {
+        depth: 0,
+        access: GrantAccess::Write,
+        workspaces: GrantWorkspaces::Any,
+    };
+    let held = limited_to_the_workspace(&sandbox, 2);
+    let less = SessionGrant {
+        depth: 5,
+        access: GrantAccess::Read,
+        workspaces: GrantWorkspaces::Any,
+    };
+    let held_and_less = SessionGrant {
+        workspaces: held.workspaces.clone(),
+        ..less.clone()
+    };
+    let scope_seen =
+        |access: &str| json!({"access": access, "workspaces": {"only": [sandbox.workspace]}});
+
+    let parent = open(
+        &sandbox,
+        &client,
+        sandbox.client_environment(),
+        None,
+        Some(limited_to_the_workspace(&sandbox, 1)),
+    )
+    .await;
+    let child = open(
+        &sandbox,
+        &client,
+        sandbox.client_environment(),
+        Some(&parent),
+        Some(everything),
+    )
+    .await;
+    let limits = |job: JobSummary| (job.grant, job.grant_limit);
+    let opened = limits(job_of(&client, &child).await);
+    let by_a_person = seen_in_a_turn(&sandbox, &client, &child, None).await;
+    let prompted = limits(job_of(&client, &child).await);
+    let asking_less = seen_in_a_turn(&sandbox, &client, &child, Some(less)).await;
+    let narrowed = limits(job_of(&client, &child).await);
+    let parent_by_a_person = seen_in_a_turn(&sandbox, &client, &parent, None).await;
+    let parents = limits(job_of(&client, &parent).await);
+
+    assert_eq!(
+        (
+            opened,
+            (by_a_person, prompted),
+            (asking_less, narrowed),
+            (parent_by_a_person, parents),
+        ),
+        (
+            (Some(held.clone()), Some(held.clone())),
+            (
+                ("2".to_owned(), scope_seen("write")),
+                (Some(held.clone()), Some(held.clone()))
+            ),
+            (
+                ("5".to_owned(), scope_seen("read")),
+                (Some(held_and_less), Some(held.clone()))
+            ),
+            (("unset".to_owned(), Value::Null), (None, None)),
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a session another session started, unloaded and reopened by a
+// person's attach, whose environment carries no limit, reopens under its
+// limit, and its next turn's processes see it (#1796).
+// Owner: daemon job records, session grants.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reopened_child_session_keeps_its_limit() {
+    let sandbox = Sandbox::new();
+    sandbox.set_permission_mode("bypass");
+    let client = sandbox
+        .start_daemon_with("tool-call", &["--unload-idle-after", "200ms"])
+        .await;
+    let held = limited_to_the_workspace(&sandbox, 1);
+    let parent = open(&sandbox, &client, sandbox.client_environment(), None, None).await;
+    let child = open(
+        &sandbox,
+        &client,
+        sandbox.client_environment(),
+        Some(&parent),
+        Some(held.clone()),
+    )
+    .await;
+    // A turn saves the session, so the unload keeps it to reopen.
+    seen_in_a_turn(&sandbox, &client, &child, Some(held.clone())).await;
+    sandbox.wait_unloaded(&child, /*times*/ 1).await;
+
+    // Kept attached, so the session stays loaded while its job is read.
+    let (person, _notifications) = sandbox.connect_following().await;
+    person
+        .request::<SessionAttach>(&SessionAttachParams {
+            session: child.clone(),
+            after: None,
+            environment: sandbox.client_environment(),
+            setup: SessionSetup::default(),
+        })
+        .await
+        .unwrap();
+    let reopened = job_of(&client, &child).await.grant;
+    let seen = seen_in_a_turn(&sandbox, &person, &child, None).await;
+
+    assert_eq!(
+        (reopened, seen),
+        (
+            Some(held),
+            (
+                "1".to_owned(),
+                json!({"access": "write", "workspaces": {"only": [sandbox.workspace]}})
+            )
+        ),
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

@@ -255,11 +255,16 @@ impl JobRegistry {
             .count()
     }
 
-    /// Records `grant` as job `id`'s, as a session reopened under it has.
-    /// Does nothing for a job the registry does not know.
+    /// Records `grant`, held to the job's limit, as job `id`'s, as a
+    /// session reopened under it has. Does nothing for a job the registry
+    /// does not know.
     pub(in crate::app::daemon_host) fn set_grant(&self, id: &JobId, grant: CallerContext) {
         let mut jobs = self.lock();
-        if let Some(record) = jobs.get_mut(id).filter(|record| record.grant != grant) {
+        let Some(record) = jobs.get_mut(id) else {
+            return;
+        };
+        let grant = record.held(grant);
+        if record.grant != grant {
             record.grant = grant;
             persist(&self.store, record);
         }
@@ -270,11 +275,12 @@ impl JobRegistry {
         self.lock().get(id).map(|record| record.grant.clone())
     }
 
-    /// Starts a new turn, `turn`, on session job `id`, under `grant`, which
-    /// the job's record keeps from then on, unless a turn is
-    /// already under way, and returns the state the turn starts in: `queued`
-    /// for a session another job started, whose turns wait for capacity in
-    /// the daemon-wide budget (#1714), `running` otherwise. Checked and
+    /// Starts a new turn, `turn`, on session job `id`, asking for `grant`,
+    /// unless a turn is already under way. The job's record keeps the grant
+    /// from then on, held to the job's limit (#1796). Returns the state the
+    /// turn starts in, `queued` for a session another job started, whose
+    /// turns wait for capacity in the daemon-wide budget (#1714), `running`
+    /// otherwise, and the grant the turn got. Checked and
     /// applied under one lock, so of two prompts that race only one starts
     /// a turn.
     pub(in crate::app::daemon_host) fn start_turn(
@@ -282,7 +288,7 @@ impl JobRegistry {
         id: &JobId,
         turn: TurnRecord,
         grant: CallerContext,
-    ) -> Result<Moved, StartTurnError> {
+    ) -> Result<(Moved, CallerContext), StartTurnError> {
         let mut jobs = self.lock();
         if self.closed.load(Ordering::Relaxed) {
             return Err(StartTurnError::Closed);
@@ -298,8 +304,9 @@ impl JobRegistry {
         // The outcome kept was the last turn's.
         record.outcome = None;
         record.turn = Some(turn);
-        record.grant = grant;
-        Ok(self.wrote(record, was_in_progress))
+        record.grant = record.held(grant);
+        let grant = record.grant.clone();
+        Ok((self.wrote(record, was_in_progress), grant))
     }
 
     /// Records that job `id`'s turn `turn` began, so a later daemon still

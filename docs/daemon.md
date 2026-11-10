@@ -61,7 +61,7 @@ A new prompt moves a session's job from any state but `queued`, `running`, and `
 
 ### Sessions other sessions start
 
-A session an agent starts from its own session, as the `sessions` tool's `new` does, is a job of kind `session` whose `parent` is the job writing the starting session, so `rho/job/list` shows who started what. A session started from one the daemon does not run, such as an in-process rho's, has no `parent` to show but is budgeted the same.
+A session an agent starts from its own session, as the `sessions` tool's `new` does, is a job of kind `session` whose `parent` is the job writing the starting session, so `rho/job/list` shows who started what. A session started from one the daemon does not run, such as an in-process rho's, has no `parent` to show but is budgeted the same. Either way the daemon holds it to the grant it started with, which is no more than its parent's turn could give, whoever prompts it later ([a session's grant](/protocol#a-session-s-grant)).
 
 Its turns share the [subagents' budget](#subagents): each turn is `queued`, with its `queue` place, until it gets a slot, then `running`. A prompt that has to wait answers once the turn queued; a turn cancelled while it waits ends `cancelled` without running, and a prompt's `timeout_ms` counts the wait. Such a turn can itself wait on others, so it holds its slot only while it runs alone: while it waits for a person's answer, or while sessions or subagents it started are under way, it lends the slot back, and once it runs alone again it takes a slot again in line, working on meanwhile. A slot is only ever held by a turn that waits on no other slot, so a budget of any size cannot deadlock, even when every slot's turn starts work of its own.
 
