@@ -50,3 +50,43 @@ fn fast_mode_is_available_only_for_fast_capable_models() {
         );
     }
 }
+
+// Covers: a session offers Auto only once a permission classifier model is
+// configured, or while it already runs Auto, so a host never offers a mode
+// the session refuses.
+// Owner: session options
+#[test]
+fn auto_is_offered_only_with_a_classifier_model() {
+    let current = CurrentModel {
+        provider: "openai".into(),
+        model: "gpt-5.5".into(),
+        auth: "api-key".into(),
+    };
+    let classifier = crate::config::Config::parse_settings(
+        "[internal_agents.permission-classifier]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n",
+    )
+    .unwrap();
+    let offers_auto = |config: &Config, mode: PermissionMode| {
+        build(
+            &current,
+            config,
+            /*available_auths*/ &[],
+            ReasoningLevel::High,
+            wire::FastModeOptions { enabled: false },
+            mode,
+            Vec::new(),
+        )
+        .permission_mode
+        .available
+        .contains(&PermissionMode::Auto.into())
+    };
+
+    assert_eq!(
+        [
+            offers_auto(&Config::default(), PermissionMode::Supervised),
+            offers_auto(&classifier, PermissionMode::Supervised),
+            offers_auto(&Config::default(), PermissionMode::Auto),
+        ],
+        [false, true, true]
+    );
+}

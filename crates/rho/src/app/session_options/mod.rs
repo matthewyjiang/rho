@@ -90,7 +90,19 @@ fn build(
             .then_some(fast_mode),
         permission_mode: wire::PermissionModeOptions {
             current: permission_mode.into(),
-            available: PermissionMode::ALL.into_iter().map(Into::into).collect(),
+            // Auto runs only with a classifier model, so a host offers it
+            // only then, or while the session already runs it.
+            available: PermissionMode::ALL
+                .into_iter()
+                .filter(|mode| {
+                    *mode != PermissionMode::Auto
+                        || permission_mode == PermissionMode::Auto
+                        || process_config
+                            .internal_agent_model(crate::agent::PERMISSION_CLASSIFIER_AGENT_ID)
+                            .is_some()
+                })
+                .map(Into::into)
+                .collect(),
         },
         commands,
         goal: None,

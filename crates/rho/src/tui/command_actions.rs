@@ -94,7 +94,10 @@ impl App {
         }
         match invocation.id {
             CommandId::AddDir => self.execute_add_dir_command(&invocation, agent).await,
-            CommandId::Advisor => self.execute_advisor_command(invocation, agent).await,
+            CommandId::Advisor => {
+                self.needs_daemon("advisor");
+                Ok(())
+            }
             CommandId::Codemode => self.execute_codemode_command(invocation, agent),
             CommandId::Exit => self.execute_exit_command(),
             CommandId::New => self.execute_new_command(terminal, agent).await,
@@ -121,7 +124,10 @@ impl App {
                 Ok(())
             }
             CommandId::Tree => self.execute_tree_command(agent),
-            CommandId::Config => self.execute_config_command(terminal),
+            CommandId::Config => {
+                self.execute_config_command();
+                Ok(())
+            }
             CommandId::Permissions => self.execute_permissions_command(invocation, agent).await,
             CommandId::Info => self.execute_info_command(),
             CommandId::Context => self.execute_context_command(agent),

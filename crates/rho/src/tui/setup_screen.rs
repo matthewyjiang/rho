@@ -226,10 +226,9 @@ impl App {
         let body = self.setup_body_frame(width, origin.height);
         self.retain_composer_window(&body);
         let cursor = match self.input_ui.composer() {
-            ComposerMode::Picker(_)
-            | ComposerMode::SecretInput(_)
-            | ComposerMode::ConfigNumberInput(_)
-            | ComposerMode::TextInput(_) => Some(body.cursor),
+            ComposerMode::Picker(_) | ComposerMode::SecretInput(_) | ComposerMode::TextInput(_) => {
+                Some(body.cursor)
+            }
             ComposerMode::Input
             | ComposerMode::InteractivePending(_)
             | ComposerMode::InlineChoice(_)

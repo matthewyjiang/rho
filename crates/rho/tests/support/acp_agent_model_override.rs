@@ -37,7 +37,7 @@ fn overridden_child_rejects_switch_that_breaks_definition_fast_policy() {
     let workspace = Workspace::new();
     std::fs::write(
         &workspace.home.config_path,
-        "provider = \"openai-codex\"\nmodel = \"gpt-6.1-sol\"\nauth = \"codex\"\n[behavior]\npermission_mode = \"plan\"\ncheck_for_updates = false\n",
+        "[model]\nprovider = \"openai-codex\"\nmodel = \"gpt-6.1-sol\"\nauth = \"codex\"\n\n[behavior]\npermission_mode = \"plan\"\n",
     ).unwrap();
     let rho_home = workspace.home.rho_home();
     let agents = rho_home.join("agents");
@@ -129,14 +129,15 @@ fn overridden_keyless_child_survives_new_optional_credentials() {
     let config = workspace.home.config_path.clone();
     std::fs::write(
         &config,
-        r#"provider = "openai-codex"
+        r#"[model]
+provider = "openai-codex"
 model = "gpt-6.1-sol"
 auth = "codex"
+
 [providers.custom.review-fixture]
 base_url = "http://127.0.0.1:9/v1"
 [behavior]
 permission_mode = "plan"
-check_for_updates = false
 "#,
     )
     .unwrap();
@@ -171,7 +172,7 @@ fn overridden_child_survives_load_save_load_with_foreign_parent_auth() {
     let workspace = Workspace::new();
     std::fs::write(
         &workspace.home.config_path,
-        "provider = \"openai-codex\"\nmodel = \"gpt-6.1-sol\"\nauth = \"codex\"\n[behavior]\npermission_mode = \"plan\"\ncheck_for_updates = false\n",
+        "[model]\nprovider = \"openai-codex\"\nmodel = \"gpt-6.1-sol\"\nauth = \"codex\"\n\n[behavior]\npermission_mode = \"plan\"\n",
     ).unwrap();
     let (mut server, session_id) = new_session(&workspace);
     let id = session_id.as_str();

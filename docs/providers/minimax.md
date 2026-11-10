@@ -50,7 +50,7 @@ rho --provider minimax \
 
 ## Models and wire shape
 
-Use `/config` and choose **Refresh model lists** to fetch the current catalog from `https://api.minimax.io/anthropic/v1/models`.
+Run `/refresh-models` to fetch the current catalog from `https://api.minimax.io/anthropic/v1/models`.
 
 Cost, context, and reasoning controls come from models.dev under `minimax`. Rho speaks Anthropic Messages on the MiniMax Anthropic-compatible base, including native thinking blocks. MiniMax-M3 supports toggling thinking; M2.x models always think.
 

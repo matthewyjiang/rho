@@ -214,7 +214,7 @@ A compatible snapshot evolution must either remain readable under the same schem
 
 ### Application configuration compatibility
 
-The Rho application's `~/.rho/config.toml` is owned by `rho-coding-agent`, not `rho-sdk`. The application currently reads its grouped format and still accepts the previous flat format, rewriting it into groups on a later save. SDK construction never discovers or writes this file.
+The Rho application's `~/.rho/config.toml` is owned by `rho-coding-agent`, not `rho-sdk`. The application reads its grouped format and rejects keys from the previous flat format. SDK construction never discovers or writes this file.
 
 Application values can affect an SDK-backed run when the application explicitly maps them:
 

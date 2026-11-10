@@ -21,55 +21,7 @@ pub(super) const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
         timeout: STARTUP,
     },
     Step::Phase("enable_supervised_mode"),
-    Step::SubmitText("/config"),
-    Step::WaitText {
-        text: "Config · saves automatically",
-        timeout: SETTLE,
-    },
-    Step::TypeIntoField("agent"),
-    Step::WaitText {
-        text: "Agent behavior",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "Config / Agent behavior",
-        timeout: SETTLE,
-    },
-    Step::AssertText("Permission mode"),
-    Step::Key(Key::Enter),
-    // Short terminals may only show the selected mode row; move onto
-    // Supervised by its detail text instead of requiring every label to fit.
-    Step::WaitText {
-        text: "No permission checks",
-        timeout: SETTLE,
-    },
-    Step::Custom(move_down_to_supervised_mode),
-    Step::Key(Key::Enter),
-    // Selection returns to the agent-behavior category with the label badge.
-    // Waits, not asserts: a loaded runner can show a frame half drawn.
-    Step::WaitText {
-        text: "Config / Agent behavior",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "Permission mode",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "Supervised",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "Appearance",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "permissions: supervised",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Esc),
+    Step::SubmitText("/permissions supervised"),
     // Mode changes are routine status text without a toast; the statusline
     // segment is the observable signal.
     Step::WaitText {
@@ -143,55 +95,6 @@ pub(super) const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     },
     Step::ExitCommand,
 ];
-
-/// Presses Down until the Supervised detail text is on screen, so the step
-/// survives mode-list reordering: a literal press count re-encodes the
-/// `PermissionMode::ALL` order and silently breaks when a mode lands ahead of
-/// Supervised, which is exactly how #870 broke this scenario. Supervised is
-/// the only mode whose detail contains the marker, so overshoot cannot
-/// false-positive.
-fn move_down_to_supervised_mode(harness: &mut PtyHarness) -> Result<()> {
-    const MARKER: &str = "Ask before writes, processes, and outside-workspace reads";
-    // The mode picker's own footer. Rows redraw top down, so once it is on
-    // screen the counter and detail above it belong to this picker, not to
-    // the config list it replaced.
-    const PICKER: &str = "Permission mode · Type to search";
-    let deadline = Instant::now() + Duration::from_secs(10);
-    // The counter the last Down should produce. Pressing again only once it
-    // shows means every press renders before the next, so no press is still
-    // queued when Supervised, the last mode, appears; a queued one would wrap
-    // the list back to Bypass.
-    let mut awaiting = None;
-    loop {
-        harness.poll(Duration::from_millis(30));
-        let contents = harness.screen().contents();
-        if contents.contains(PICKER) {
-            if contents.contains(MARKER) {
-                return Ok(());
-            }
-            if let Some((selected, total)) = picker_position(&contents) {
-                if awaiting.is_none_or(|awaiting| awaiting == (selected, total)) {
-                    awaiting = Some((selected % total + 1, total));
-                    harness.inject_key(&Key::Down)?;
-                }
-            }
-        }
-        if Instant::now() >= deadline {
-            anyhow::bail!(
-                "Supervised mode detail never became visible while pressing Down:\n{contents}"
-            );
-        }
-    }
-}
-
-/// The picker's `(selected/total)` counter, such as `(2/5)`.
-fn picker_position(contents: &str) -> Option<(u32, u32)> {
-    contents.split('(').skip(1).find_map(|rest| {
-        let (selected, rest) = rest.split_once('/')?;
-        let (total, _) = rest.split_once(')')?;
-        Some((selected.trim().parse().ok()?, total.trim().parse().ok()?))
-    })
-}
 
 /// Typed text runs through the paste-burst detector, whose Enter suppression
 /// window starts when Rho *reads* the last key. A stalled runner can read the

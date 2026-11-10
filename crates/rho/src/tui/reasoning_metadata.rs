@@ -1,4 +1,4 @@
-use super::{config_picker, App, ComposerMode, Entry, InteractiveRuntime};
+use super::{App, Entry, InteractiveRuntime};
 use rho_providers::{
     model::{
         models_dev, ModelMetadata, ReasoningCapabilities, ReasoningRequestSource,
@@ -161,20 +161,6 @@ impl App {
         let save_result = self.info.services.config_repository.update(|config| {
             config.reasoning = reasoning;
         });
-        if matches!(
-            self.input_ui.composer(),
-            ComposerMode::Picker(picker) if picker.is_config()
-        ) {
-            let config = self
-                .info
-                .services
-                .config_repository
-                .load()
-                .unwrap_or_default();
-            self.info.runtime.show_reasoning_output = config.show_reasoning_output;
-            self.info.runtime.zen_mode = config.zen_mode;
-            self.refresh_main_config_picker(config_picker::REASONING_VALUE)?;
-        }
         match save_result {
             Ok(()) => self.set_status(format!("reasoning: {reasoning}")),
             Err(err) => {

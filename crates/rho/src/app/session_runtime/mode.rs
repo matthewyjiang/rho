@@ -11,7 +11,6 @@ use super::{
     SessionRuntime, SettingChangeError,
 };
 use crate::{
-    added_dirs::AddedDirs,
     app::{
         policy::AppPolicy,
         runtime_builder::{build_runtime_with_max_steps, RuntimeBuildOptions},
@@ -46,20 +45,6 @@ impl SessionRuntime {
         if self.permission.mode == mode {
             return Ok(());
         }
-        let added = self.added_dirs.clone();
-        self.rebuild_runtime(mode, added, process_config).await
-    }
-
-    /// Rebuilds the SDK runtime to serve `mode` over the session's
-    /// workspace with `added` granted, rebinds the session onto it, and
-    /// records both as the session's. On error the session keeps the
-    /// runtime, mode and directories it had.
-    pub(super) async fn rebuild_runtime(
-        &mut self,
-        mode: PermissionMode,
-        added: AddedDirs,
-        process_config: &Config,
-    ) -> Result<(), SettingChangeError> {
         let mut config = model_scoped_config(&self.current_model(), process_config);
         config.permission_mode = mode;
         let credentials = self.build.host.environment.credentials();
@@ -71,95 +56,106 @@ impl SessionRuntime {
             .writes
             .clone()
             .carried_across(self.permission.mode, mode);
+        // `exit_plan_mode` is offered only in plan mode; the rebuilt runtime
+        // must see the tool list of the mode it serves.
+        self.built.tools.set_plan_exit_registered(mode);
+        if let Err(error) = self.rebuild_runtime(&config, mode, writes.clone()).await {
+            self.built
+                .tools
+                .set_plan_exit_registered(self.permission.mode);
+            return Err(error);
+        }
+        if let Some(manager) = self.built.tools.subagents() {
+            manager.update_permission_mode(mode);
+        }
+        self.permission = SessionPermission {
+            mode,
+            writes,
+            workspace_root: std::mem::take(&mut self.permission.workspace_root),
+        };
+        Ok(())
+    }
+
+    /// Rebuilds the SDK runtime around the live conversation and the tool
+    /// set as it stands, with `mode`'s policy and approvals over `writes`
+    /// whatever mode `config` names, keeping the session's run shape. The
+    /// live runtime is replaced only once the new one holds the session, so
+    /// on error the session keeps its runtime. Callers that change the tool
+    /// list keep the system prompt and tell the model with an appended notice instead.
+    pub(super) async fn rebuild_runtime(
+        &mut self,
+        config: &Config,
+        mode: PermissionMode,
+        writes: SessionWriteLog,
+    ) -> Result<(), SettingChangeError> {
+        // Approvals follow the session's mode, which a caller's config,
+        // built from the process config, may not carry.
+        let mut config = config.clone();
+        config.permission_mode = mode;
+        let config = &config;
         let approval = self.build.host.approvals.wire(ApprovalInputs {
             config: config.clone(),
             workspace_root: self.permission.workspace_root.clone(),
             usage_recording: self.built.runtime.usage_recording(),
             session_writes: writes.clone(),
-            credentials,
+            credentials: self.build.host.environment.credentials(),
         });
-        // `exit_plan_mode` is offered only in plan mode; the rebuilt runtime
-        // must see the tool list of the mode it serves.
-        self.built.tools.set_plan_exit_registered(mode);
-        let rebuilt = async {
-            let workspace = WorkspaceOptions {
-                root: self.permission.workspace_root.clone(),
-            }
-            .build_workspace(&added)
-            .map_err(|error| SettingChangeError::Apply(error.into()))?;
-            // The whole run shape, as when the session opened: a mode change
-            // keeps its step limit, attribution and hook labels.
-            let RunShape {
-                role,
-                max_steps,
-                hook_labels,
-            } = &self.build.run;
-            let runtime = build_runtime_with_max_steps(
-                RuntimeBuildOptions {
-                    provider: std::sync::Arc::clone(&self.built.provider),
-                    tools: &self.built.tools,
-                    workspace,
-                    workspace_policy: AppPolicy::for_mode(
-                        mode,
-                        writes.clone(),
-                        self.build.host.environment.current().path(),
-                    ),
-                    approval_session: approval.session,
-                    system_prompt: self.built.prompt.system.clone(),
-                    reasoning: self.built.session.reasoning_level(),
-                    service_tier: self.built.session.service_tier(),
-                    compaction: CompactionConfig::from(&config),
-                    context_window: model_context_window(&config.provider, &config.model),
-                    usage_purpose: role.usage_purpose(),
-                    usage_parent_session_id: role.parent().cloned(),
-                    usage_recording: self.built.runtime.usage_recording(),
-                    hook_host_labels: hook_labels.clone(),
-                    hooks: self.built.hooks.as_ref(),
-                    diagnostics: self.built.diagnostics.clone(),
-                    recall: self.built.tools.recall_store(),
-                },
-                *max_steps,
-            )
-            .map_err(|error| SettingChangeError::Apply(error.into()))?;
-            match runtime
-                .rebind_session(SessionOptions::from_snapshot(self.built.session.snapshot()))
-                .await
-            {
-                Ok(session) => Ok((runtime, session)),
-                Err(error) => {
-                    runtime.shutdown();
-                    Err(SettingChangeError::Apply(error.into()))
-                }
-            }
+        let workspace = WorkspaceOptions {
+            root: self.permission.workspace_root.clone(),
         }
-        .await;
-        let (runtime, session) = match rebuilt {
-            Ok(rebuilt) => rebuilt,
+        .build_workspace(&self.added_dirs)
+        .map_err(|error| SettingChangeError::Apply(error.into()))?;
+        // The whole run shape, as when the session opened: a rebuild keeps
+        // its step limit, attribution and hook labels.
+        let RunShape {
+            role,
+            max_steps,
+            hook_labels,
+        } = &self.build.run;
+        let runtime = build_runtime_with_max_steps(
+            RuntimeBuildOptions {
+                provider: std::sync::Arc::clone(&self.built.provider),
+                tools: &self.built.tools,
+                workspace,
+                workspace_policy: AppPolicy::for_mode(
+                    mode,
+                    writes,
+                    self.build.host.environment.current().path(),
+                ),
+                approval_session: approval.session,
+                system_prompt: self.built.prompt.system.clone(),
+                reasoning: self.built.session.reasoning_level(),
+                service_tier: self.built.session.service_tier(),
+                compaction: CompactionConfig::from(config),
+                context_window: model_context_window(&config.provider, &config.model),
+                usage_purpose: role.usage_purpose(),
+                usage_parent_session_id: role.parent().cloned(),
+                usage_recording: self.built.runtime.usage_recording(),
+                hook_host_labels: hook_labels.clone(),
+                hooks: self.built.hooks.as_ref(),
+                diagnostics: self.built.diagnostics.clone(),
+                recall: self.built.tools.recall_store(),
+            },
+            *max_steps,
+        )
+        .map_err(|error| SettingChangeError::Apply(error.into()))?;
+        let session = match runtime
+            .rebind_session(SessionOptions::from_snapshot(self.built.session.snapshot()))
+            .await
+        {
+            Ok(session) => session,
             Err(error) => {
-                self.built
-                    .tools
-                    .set_plan_exit_registered(self.permission.mode);
-                return Err(error);
+                runtime.shutdown();
+                return Err(SettingChangeError::Apply(error.into()));
             }
         };
-
         let previous = std::mem::replace(&mut self.built.runtime, runtime);
         self.built.session = session;
         self.built.approval_receiver = approval.receiver;
         if let Some(advisor) = self.built.tools.advisor() {
             advisor.bind_session(self.built.session.clone());
         }
-        if let Some(manager) = self.built.tools.subagents() {
-            manager.update_permission_mode(mode);
-            manager.update_added_dirs(added.clone());
-        }
-        self.added_dirs = added;
         previous.shutdown();
-        self.permission = SessionPermission {
-            mode,
-            writes,
-            workspace_root: std::mem::take(&mut self.permission.workspace_root),
-        };
         Ok(())
     }
 }

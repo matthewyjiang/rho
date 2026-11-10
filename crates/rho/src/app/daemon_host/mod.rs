@@ -25,15 +25,17 @@ use std::{
 use rho_protocol::{
     AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse, AuthListParams,
     AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
-    AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, ClientInfo, DaemonStatus,
-    DetachReason, JobListResponse, LoginStream, PendingUpgrade, ProtocolVersion, RestartCost,
-    RpcError, Service, SessionAnswerParams, SessionAnswerResponse, SessionAttachParams,
-    SessionAttachResponse, SessionCancelParams, SessionCancelResponse, SessionConfigureParams,
-    SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse, SessionHoldParams,
-    SessionHoldResponse, SessionListParams, SessionListResponse, SessionNewParams,
-    SessionNewResponse, SessionObserveParams, SessionPromptParams, SessionPromptResponse,
-    SessionRenameParams, SessionRenameResponse, SessionSteerParams, SessionSteerResponse,
-    SessionUnsteerParams, SessionUnsteerResponse, Subscription, PROTOCOL_VERSION,
+    AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, ClientInfo, ConfigGetParams,
+    ConfigRegisterParams, ConfigRegisterResponse, ConfigSchema, ConfigSetParams, ConfigSetResponse,
+    ConfigWatch, DaemonStatus, DetachReason, JobListResponse, LoginStream, PendingUpgrade,
+    ProtocolVersion, RestartCost, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
+    SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
+    SessionConfigureParams, SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse,
+    SessionHoldParams, SessionHoldResponse, SessionListParams, SessionListResponse,
+    SessionNewParams, SessionNewResponse, SessionObserveParams, SessionPromptParams,
+    SessionPromptResponse, SessionRenameParams, SessionRenameResponse, SessionSteerParams,
+    SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse, SettingsService,
+    Subscription, PROTOCOL_VERSION,
 };
 use rho_providers::credentials::CredentialStoreBackend;
 
@@ -43,6 +45,7 @@ mod auth;
 mod jobs;
 mod logins;
 mod sessions;
+mod settings;
 mod store;
 mod subagents;
 mod upgrade;
@@ -423,5 +426,26 @@ impl Service for DaemonHost {
         params: AuthChooseStoreParams,
     ) -> Result<AuthChooseStoreResponse, RpcError> {
         store::choose(params, self.store_environment, &self.sessions).await
+    }
+}
+
+impl SettingsService for DaemonHost {
+    async fn config_schema(&self) -> Result<ConfigSchema, RpcError> {
+        Ok(self.sessions.settings().schema())
+    }
+
+    async fn register_config(
+        &self,
+        params: ConfigRegisterParams,
+    ) -> Result<ConfigRegisterResponse, RpcError> {
+        self.sessions.settings().register(params).await
+    }
+
+    async fn get_config(&self, params: ConfigGetParams) -> Result<ConfigWatch, RpcError> {
+        self.sessions.settings().get(params).await
+    }
+
+    async fn set_config(&self, params: ConfigSetParams) -> Result<ConfigSetResponse, RpcError> {
+        self.sessions.settings().set(params).await
     }
 }

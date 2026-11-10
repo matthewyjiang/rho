@@ -15,7 +15,7 @@ use rho_sdk::model::ModelIdentity;
 use super::{
     catalog, session_picker::short_session_id, App, ComposerMode, Entry, InlineChoice,
     InlineChoiceModal, InlineChoiceOption, InlineChoicePending, InteractiveModelSelection,
-    InteractiveRuntime, UiPicker,
+    InteractiveRuntime,
 };
 
 pub(super) const ACTION_USE_SOURCE: &str = "use-source";
@@ -184,17 +184,6 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         self.prepare_model_selection(selection, agent).await
-    }
-
-    pub(super) async fn request_model_selection_from_config_picker(
-        &mut self,
-        selection: InteractiveModelSelection,
-        picker: UiPicker,
-        selected: &'static str,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        self.prepare_model_selection(selection, agent).await?;
-        self.open_main_config_picker(selected, picker.filter)
     }
 
     /// Model switches land immediately; the omission notice documents what the

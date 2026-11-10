@@ -35,7 +35,7 @@ Login refreshes the model list right away, and the model picker then shows the m
 /model ollama/<tool-capable-model>
 ```
 
-First-run setup does not write `[providers.ollama]`. The endpoint is stored only after this login, or when you add the table by hand. `rho login ollama` and an ACP sign-in record the same login at the default API base. Until then Rho treats Ollama as not logged in, even when a local server is running: Rho never contacts it, **Refresh model lists** and `/refresh-models` skip it, its models stay out of the pickers, a saved Ollama selection starts signed out, and `--provider ollama` asks you to log in. Logging out, or removing the table by hand, drops Ollama's cached model list.
+First-run setup does not write `[providers.ollama]`. The endpoint is stored only after this login, or when you add the table by hand. `rho login ollama` and an ACP sign-in record the same login at the default API base. Until then Rho treats Ollama as not logged in, even when a local server is running: Rho never contacts it, `/refresh-models` skips it, its models stay out of the pickers, a saved Ollama selection starts signed out, and `--provider ollama` asks you to log in. Logging out, or removing the table by hand, drops Ollama's cached model list.
 
 ## Use another server
 
@@ -60,6 +60,6 @@ Ollama's OpenAI-compatible endpoint can serve many model types, but not every mo
 
 ## Reasoning
 
-Ollama accepts `reasoning_effort` values `low`, `medium`, `high`, `max`, and `none`. Rho sends the selected level when the model advertises a `thinking` capability. Shift+Tab and `/config` cycle it. When the model is missing from models.dev and the server does not advertise capabilities, Rho still sends the field so you can turn thinking off, mapping other Rho levels to the nearest accepted value. Rho omits the field for models whose metadata reports reasoning as not configurable. Omitting the field lets Ollama enable thinking on its own.
+Ollama accepts `reasoning_effort` values `low`, `medium`, `high`, `max`, and `none`. Rho sends the selected level when the model advertises a `thinking` capability. Shift+Tab cycles it, and `/config` → **Models** → **Reasoning** sets it. When the model is missing from models.dev and the server does not advertise capabilities, Rho still sends the field so you can turn thinking off, mapping other Rho levels to the nearest accepted value. Rho omits the field for models whose metadata reports reasoning as not configurable. Omitting the field lets Ollama enable thinking on its own.
 
 If Ollama omits optional usage data, Rho still handles the response. Run `/doctor` to distinguish a reachable server with installed models, a reachable server with no models, an unreachable server, and an invalid or unsuccessful response.
