@@ -17,14 +17,14 @@ fn grant(depth: u32, access: Access, roots: Option<&[&str]>) -> CallerContext {
     }
 }
 
-// Covers: the limit of a session another session starts is never more than
-// a session its parent's turn starts may have, whatever the request asks
+// Covers: a session another session starts never opens with more than a
+// session its parent's turn starts may have, whatever the request asks
 // for: one level deeper than the parent at least, with no access or
 // workspace the parent lacks; a request that asks for less keeps less; and
 // a parent the daemon holds no grant for leaves what was asked (#1796).
 // Owner: daemon session grants.
 #[test]
-fn a_childs_limit_is_no_more_than_its_parents_turn_could_give() {
+fn a_child_opens_with_no_more_than_its_parents_turn_could_give() {
     let work = Some(["/work"].as_slice());
     let cases = [
         (
@@ -59,6 +59,6 @@ fn a_childs_limit_is_no_more_than_its_parents_turn_could_give() {
         ),
     ];
     for (name, asked, parents, limit) in cases {
-        assert_eq!(limit_of_child(&asked, parents.as_ref()), limit, "{name}");
+        assert_eq!(opening(asked, parents.as_ref()), limit, "{name}");
     }
 }

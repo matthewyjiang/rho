@@ -311,8 +311,7 @@ fn a_turns_grant_is_kept_on_its_jobs_record_across_daemons() {
     );
 }
 
-// Covers: a job with a grant limit, as a session another session started
-// has, never records more than the limit: a turn that asks for no limit, as
+// Covers: a job with a grant limit, as a session an agent started has, never records more than the limit: a turn that asks for no limit, as
 // a person's prompt does, gets the limit; one that asks for less gets less;
 // a reopen is held the same; a daemon that starts over the records still
 // holds it; and a job without a limit takes each grant as asked (#1796).
@@ -390,5 +389,52 @@ fn a_jobs_grant_never_exceeds_its_limit() {
             (CallerContext::ROOT, CallerContext::ROOT),
             (limit.clone(), limit),
         )
+    );
+}
+
+// Covers: the grant a session started from a subagent's or a workflow
+// node's session is held under is that of the session whose turn runs
+// them, not the unlimited one their own jobs keep (#1796).
+// Owner: daemon job registry, session grants.
+#[test]
+fn a_run_a_session_started_is_under_that_sessions_grant() {
+    use crate::caller_context::{Access, CallerContext, Scope, Workspaces};
+    let home = TempDir::new().unwrap();
+    let registry = JobRegistry::open(JobStore::open(home.path()).unwrap());
+    let limited = CallerContext {
+        depth: 1,
+        scope: Scope {
+            access: Access::Read,
+            workspaces: Workspaces::Any,
+        },
+    };
+    let session = JobRecord {
+        grant: limited.clone(),
+        ..JobRecord::new_session(
+            JobId::generate(),
+            PathBuf::from("/work"),
+            rho_sdk::SessionId::new(),
+        )
+    };
+    let workflow = JobRecord::new_workflow(
+        session.id.clone(),
+        PathBuf::from("/work"),
+        crate::workflow::RunId::new(),
+    );
+    let node = JobRecord::new_subagent(workflow.id.clone(), PathBuf::from("/work"), None);
+    let orphan = JobRecord::new_subagent(JobId::generate(), PathBuf::from("/work"), None);
+    let ids = [&session, &workflow, &node, &orphan].map(|record| record.id.clone());
+    for record in [session, workflow, node, orphan] {
+        registry.register(record).unwrap();
+    }
+
+    assert_eq!(
+        ids.map(|id| registry.session_grant(&id)),
+        [
+            Some(limited.clone()),
+            Some(limited.clone()),
+            Some(limited),
+            None
+        ]
     );
 }

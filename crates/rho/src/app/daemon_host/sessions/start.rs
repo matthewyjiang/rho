@@ -244,11 +244,9 @@ impl Sessions {
         // project trust is the session's, carrying the grant the job gave
         // the turn: less than the prompt asked for when the job holds a
         // limit.
-        session.environment.replace(if grant == with.grant {
-            with.environment.clone()
-        } else {
-            with.granted(grant).environment
-        });
+        session
+            .environment
+            .replace(grant::carrying(&grant, &with.environment));
         turn.cancel = CancellationToken::new();
         turn.kind = TurnKind::Prompt;
         let (start, started) = watch::channel(PromptStart::Pending);

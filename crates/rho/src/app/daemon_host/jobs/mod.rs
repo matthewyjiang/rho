@@ -129,11 +129,12 @@ pub(super) struct JobRecord {
     /// Other jobs keep [`CallerContext::ROOT`].
     #[serde(default = "root_grant", skip_serializing_if = "CallerContext::is_root")]
     pub(super) grant: CallerContext,
-    /// The most `grant` may ever be, for a session another session started
-    /// (#1796): the grant it opened with, which is no more than a session
-    /// its parent's turn starts may have. Set once, when the session opens.
-    /// `None` for a session a client started on its own, which each prompt
-    /// grants anew, and for other jobs.
+    /// The most `grant` may ever be, for a session that opened under a
+    /// limit, as one an agent starts through session control does (#1796):
+    /// the grant it opened with, which is no more than a session its
+    /// parent's turn starts may have. Set once, when the session opens.
+    /// `None` for a session that opened without a limit, as a person's
+    /// does, which each prompt grants anew, and for other jobs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) grant_limit: Option<CallerContext>,
     /// How a session job's turns get under way; subagent and workflow jobs

@@ -270,6 +270,23 @@ impl JobRegistry {
         }
     }
 
+    /// The grant of the session turn job `id` runs under: its own, for a
+    /// session job, else that of the nearest session job that started it,
+    /// as a subagent run's or a workflow drive's is. `None` when no known
+    /// session job is found.
+    pub(in crate::app::daemon_host) fn session_grant(&self, id: &JobId) -> Option<CallerContext> {
+        let jobs = self.lock();
+        let mut record = jobs.get(id)?;
+        loop {
+            match record.subject {
+                JobSubject::Session { .. } => return Some(record.grant.clone()),
+                JobSubject::Subagent { .. } | JobSubject::Workflow { .. } => {
+                    record = jobs.get(record.parent.as_ref()?)?;
+                }
+            }
+        }
+    }
+
     /// The grant job `id`'s record holds, if the job is known.
     pub(in crate::app::daemon_host) fn grant_of(&self, id: &JobId) -> Option<CallerContext> {
         self.lock().get(id).map(|record| record.grant.clone())

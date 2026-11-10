@@ -9,10 +9,12 @@
 //! when it opens or reopens the session and when a prompt starts a turn, so
 //! the record and what the session's processes see never differ.
 //!
-//! A session another session's turn started is held to the grant it opened
-//! with (#1796), itself no more than its parent's turn could give: its job
-//! keeps that as the limit of every later grant, so a prompt from a person,
-//! or from a session with more, cannot widen it past its parent.
+//! A session that opens under a limit, as every session an agent starts
+//! through session control does, is held to the grant it opened with
+//! (#1796), itself no more than its parent's turn could give: its job keeps
+//! that as the limit of every later grant, so a prompt from a person, or
+//! from a session with more, cannot widen it. A session that opens without
+//! one, as a person's does, has no limit, and each prompt grants it anew.
 
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -43,24 +45,26 @@ pub(super) fn asked(
     }
 }
 
-/// The most a session opened asking for `asked` may ever be granted, when
-/// another session's turn starts it (#1796): `asked`, and no more than a
-/// session started under `parents`, the grant on the job writing the
-/// session that starts it, may have. A parent no job of the daemon writes
-/// has no record to hold it to, so what its request asked for is the limit.
-pub(super) fn limit_of_child(
-    asked: &CallerContext,
-    parents: Option<&CallerContext>,
-) -> CallerContext {
+/// The grant a new session opens with when its request asks for `asked`:
+/// `asked`, and when another session's turn starts it, no more than a
+/// session started under `parents`, the grant of the job writing that
+/// session, may have (#1796). A session with no parent, or with one no job
+/// of the daemon writes, has no record to hold it to and opens with what
+/// was asked.
+///
+/// `parents` is the grant of the parent's turn under way, or of its last
+/// one under this daemon when it runs elsewhere now, which can only make
+/// the new session's grant less.
+pub(super) fn opening(asked: CallerContext, parents: Option<&CallerContext>) -> CallerContext {
     match parents {
         Some(parents) => asked.within(&parents.child()),
-        None => asked.clone(),
+        None => asked,
     }
 }
 
 /// `environment` carrying `grant`: its variables, with the grant's in place
 /// of any it had.
-fn carrying(grant: &CallerContext, environment: &Ambient) -> Ambient {
+pub(super) fn carrying(grant: &CallerContext, environment: &Ambient) -> Ambient {
     let mut variables = match environment {
         Ambient::Client(variables) => BTreeMap::clone(variables),
         // Never a daemon session's: each runs in a client's variables.
@@ -97,8 +101,8 @@ impl OpenWith {
         })
     }
 
-    /// What this request brings a session whose job gave it `grant`
-    /// instead of the one it asked for.
+    /// What this request brings a session it reopens whose job gave it
+    /// `grant` instead of the one it asked for.
     pub(super) fn granted(&self, grant: CallerContext) -> Self {
         Self {
             environment: carrying(&grant, &self.environment),
