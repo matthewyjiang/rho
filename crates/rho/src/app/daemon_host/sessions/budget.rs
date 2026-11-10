@@ -70,7 +70,9 @@ pub(super) async fn admit(
     let permits = match acquire.as_mut().now_or_never() {
         Some(permits) => permits,
         None => {
-            view.began();
+            // Answered as begun, but not recorded so: nothing ran yet, so
+            // a later daemon runs the prompt when it is sent again.
+            view.accepted();
             tokio::select! {
                 biased;
                 () = stopping.cancelled() => None,

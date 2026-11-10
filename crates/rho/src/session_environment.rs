@@ -5,7 +5,20 @@
 //! Antigravity), and each takes the environment current when it starts a
 //! child or reads a variable. A workflow run the session starts or resumes
 //! instead gets its own handle of the environment current then, which no
-//! later prompt replaces.
+//! later prompt replaces (see [`SessionEnvironment::snapshot`]).
+//!
+//! Project trust (`RHO_TRUST_PROJECT_*`) is read from the same environment,
+//! once: a session keeps the trust of the environment it opened with, and so
+//! do the workflow runs it starts (#1779). A host refuses a prompt whose
+//! environment grants other trust (see [`SessionEnvironment::trust_mismatch`])
+//! instead of running it under the session's. Only a [`SessionEnvironment`]
+//! says what is trusted; an [`Ambient`] is variables.
+//!
+//! Credentials are the opening environment's as well (#1779): an API key in
+//! one of its variables, and the credential store its `RHO_CREDENTIAL_STORE`
+//! chooses, are what the session's providers and tools read for as long as
+//! it is open (see [`SessionEnvironment::credentials`]). A later prompt's
+//! environment changes neither.
 
 use std::{
     collections::BTreeMap,
@@ -14,7 +27,13 @@ use std::{
     sync::{Arc, PoisonError, RwLock},
 };
 
+use rho_providers::credentials::CredentialStore;
 use rho_sdk::ProcessEnvironment;
+
+use crate::{
+    credential_store::{AppCredentialStore, ClientCredentialStore},
+    workspace::ProjectTrusts,
+};
 
 /// The environment a session's children see (#1659): this process's own,
 /// or a daemon client's variables.
@@ -59,6 +78,27 @@ impl Ambient {
             Self::ThisProcess => {}
             Self::Client(variables) => {
                 command.env_clear().envs(variables.iter());
+            }
+        }
+    }
+
+    /// The credentials of whoever this environment belongs to: this
+    /// process's own, or a daemon client's, which never include a variable
+    /// or a store choice of the daemon's (see [`ClientCredentialStore`]).
+    pub(crate) fn credentials(&self) -> Arc<dyn CredentialStore> {
+        match self {
+            Self::ThisProcess => Arc::new(AppCredentialStore),
+            Self::Client(variables) => Arc::new(ClientCredentialStore::new(Arc::clone(variables))),
+        }
+    }
+
+    /// [`Self::credentials`] for secrets no provider reads, such as an MCP
+    /// server's OAuth tokens, whose writes rebuild no session's provider.
+    fn untracked_credentials(&self) -> Arc<dyn CredentialStore> {
+        match self {
+            Self::ThisProcess => Arc::new(crate::credential_store::UntrackedCredentialStore),
+            Self::Client(variables) => {
+                Arc::new(ClientCredentialStore::new(Arc::clone(variables)).untracked())
             }
         }
     }
@@ -143,14 +183,72 @@ pub(crate) struct SessionEnvironment {
     ambient: Arc<RwLock<Ambient>>,
     /// `ambient`'s process environment, the handle process tools snapshot.
     process: rho_tools::SharedProcessEnvironment,
+    /// The trust the opening [`Ambient`] granted, which [`Self::replace`]
+    /// keeps.
+    project_trust: ProjectTrusts,
+    /// The [`Ambient`] the session opened with, whose credentials it keeps
+    /// through every [`Self::replace`].
+    opened_with: Ambient,
 }
 
 impl SessionEnvironment {
+    /// A session's environment, starting as `ambient`, with the project
+    /// trust `ambient` grants for as long as the session is open.
     pub(crate) fn new(ambient: Ambient) -> Self {
         Self {
             process: ambient.process_environment().into(),
+            project_trust: ProjectTrusts::read(|name| ambient.read(name)),
+            opened_with: ambient.clone(),
             ambient: Arc::new(RwLock::new(ambient)),
         }
+    }
+
+    /// This environment as it is now, on a handle of its own that no later
+    /// prompt replaces, with the session's project trust: what a workflow
+    /// run the session starts or resumes runs in (#1659).
+    pub(crate) fn snapshot(&self) -> Self {
+        Self {
+            project_trust: self.project_trust,
+            opened_with: self.opened_with.clone(),
+            ..Self::new(self.current())
+        }
+    }
+
+    /// The environment of a session opened only to read what it saved: no
+    /// client's variables, since nothing of the session starts, and the
+    /// `project_trust` its host reads the project's definitions under.
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "only the Unix daemon reads sessions")
+    )]
+    pub(crate) fn for_reading(project_trust: ProjectTrusts) -> Self {
+        Self {
+            project_trust,
+            ..Self::new(Ambient::Client(Arc::default()))
+        }
+    }
+
+    /// The session's project trust: what the environment it opened with
+    /// granted, not what a later prompt's does, since the session loads its
+    /// hooks, plugins, and agents when it opens (#1779).
+    pub(crate) fn project_trust(&self) -> ProjectTrusts {
+        self.project_trust
+    }
+
+    /// The session's credentials: those of the environment it opened with,
+    /// not of a later prompt's, as its project trust is (#1779). Every
+    /// provider the session builds and every key its tools read comes from
+    /// here, so a daemon session never uses a key from the daemon's own
+    /// environment or from another client's.
+    pub(crate) fn credentials(&self) -> Arc<dyn CredentialStore> {
+        self.opened_with.credentials()
+    }
+
+    /// [`Self::credentials`] for secrets no provider reads, such as an MCP
+    /// server's OAuth tokens: saving or refreshing one rebuilds no session's
+    /// provider (#1662).
+    pub(crate) fn untracked_credentials(&self) -> Arc<dyn CredentialStore> {
+        self.opened_with.untracked_credentials()
     }
 
     /// The environment a child started now sees.
@@ -166,8 +264,24 @@ impl SessionEnvironment {
         self.process.clone()
     }
 
+    /// How the project trust `ambient` grants differs from the session's,
+    /// or `None` when they agree. A host asks before a client's prompt
+    /// replaces the environment, and refuses the prompt on a difference: the
+    /// session cannot change its trust while it is open, and would otherwise
+    /// run the prompt with trust that client did not grant, or without
+    /// trust it did (#1779).
+    #[cfg_attr(not(unix), allow(dead_code, reason = "only the Unix daemon asks"))]
+    pub(crate) fn trust_mismatch(&self, ambient: &Ambient) -> Option<TrustMismatch> {
+        let theirs = ProjectTrusts::read(|name| ambient.read(name));
+        (theirs != self.project_trust).then(|| TrustMismatch {
+            session_only: self.project_trust.variables_beyond(theirs),
+            other_only: theirs.variables_beyond(self.project_trust),
+        })
+    }
+
     /// Makes `ambient` the environment every later child sees, process
-    /// tools' included.
+    /// tools' included. The session's project trust stays as it opened, so
+    /// a host first refuses an `ambient` with a [`Self::trust_mismatch`].
     #[cfg_attr(
         not(unix),
         allow(dead_code, reason = "only the Unix daemon replaces it")
@@ -177,6 +291,18 @@ impl SessionEnvironment {
         self.process.replace(ambient.process_environment());
         *current = ambient;
     }
+}
+
+/// How an environment's project trust differs from a session's (see
+/// [`SessionEnvironment::trust_mismatch`]), as the `RHO_TRUST_PROJECT_*`
+/// variables that grant what only one of them trusts. At least one list has
+/// a name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TrustMismatch {
+    /// What the session trusts and the other environment does not.
+    pub(crate) session_only: Vec<&'static str>,
+    /// What the other environment trusts and the session does not.
+    pub(crate) other_only: Vec<&'static str>,
 }
 
 /// Shows the current [`Ambient`]'s redacted form, never a variable's value.

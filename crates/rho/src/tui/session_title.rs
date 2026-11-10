@@ -84,6 +84,7 @@ pub(super) async fn generate_session_title(
         crate::title::first_turn_input(&first_user_message, &first_assistant_message),
         session_id,
         workspace_path,
+        std::sync::Arc::new(crate::credential_store::AppCredentialStore),
         usage_recording,
         cancellation,
     )

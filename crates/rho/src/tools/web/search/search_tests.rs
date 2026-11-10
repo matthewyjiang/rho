@@ -68,7 +68,11 @@ fn config(backend: SearchBackend, base: String) -> SearchBackendConfig {
         SearchBackend::Firecrawl => Ok(ReadyBackend::Firecrawl { key: None }),
         _ => Err("unavailable".into()),
     };
-    SearchBackendConfig { settings, ready }
+    SearchBackendConfig {
+        settings,
+        ready,
+        credentials: std::sync::Arc::new(crate::credential_store::AppCredentialStore),
+    }
 }
 
 fn with_ready(mut config: SearchBackendConfig, ready: ReadyBackend) -> SearchBackendConfig {

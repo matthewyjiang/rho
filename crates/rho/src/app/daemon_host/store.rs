@@ -18,7 +18,7 @@ use rho_providers::credentials::{check_credential_store, CredentialError, Creden
 
 use super::{
     auth::{self, credentials_changed},
-    sessions::Sessions,
+    sessions::{session_environment, Sessions},
 };
 use crate::credential_store::{self, wire, SetBackendError};
 
@@ -34,26 +34,36 @@ pub(super) async fn status(environment: Option<CredentialStoreBackend>) -> Crede
 }
 
 /// Keeps provider credentials in `params.store` from now on, once it took a
-/// temporary secret, and saves the choice in the daemon's config. Refused
-/// when the daemon's environment chooses the store, which wins over config.
+/// temporary secret, and saves the choice in the daemon's config: the store
+/// of every session whose client names none. Refused when the daemon's own
+/// environment chooses the store, which wins over config, and when the
+/// asking client's does, whose sessions the choice would not reach.
 pub(super) async fn choose(
     params: AuthChooseStoreParams,
     environment: Option<CredentialStoreBackend>,
     sessions: &Sessions,
 ) -> Result<AuthChooseStoreResponse, RpcError> {
-    if environment.is_some() {
-        let variable = credential_store::ENV_BACKEND;
+    let variable = credential_store::ENV_BACKEND;
+    let overridden = |message: String| {
         let data = serde_json::to_value(EnvironmentOverride {
             variable: variable.to_owned(),
         })
         .expect("an environment override serializes");
-        return Err(RpcError::new(
-            ErrorCode::EnvironmentOverride,
-            format!(
-                "{variable} in the daemon's environment chooses its credential store; unset it there and restart the daemon to choose another"
-            ),
-        )
-        .with_data(data));
+        RpcError::new(ErrorCode::EnvironmentOverride, message).with_data(data)
+    };
+    if environment.is_some() {
+        return Err(overridden(format!(
+            "{variable} in the daemon's environment chooses its credential store; unset it there and restart the daemon to choose another"
+        )));
+    }
+    let clients = session_environment(&params.environment)?;
+    if clients
+        .read(variable)
+        .is_some_and(|store| !store.trim().is_empty())
+    {
+        return Err(overridden(format!(
+            "{variable} in this client's environment chooses the credential store of its sessions; unset it there to use the daemon's"
+        )));
     }
     let Some(backend) = wire::backend(params.store) else {
         return Err(RpcError::new(

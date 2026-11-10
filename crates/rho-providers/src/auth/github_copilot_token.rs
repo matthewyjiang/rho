@@ -78,7 +78,8 @@ struct CopilotTokenEndpoints {
 
 impl GitHubCopilotAuthManager {
     pub(crate) fn new(store: Arc<dyn CredentialStore>) -> Result<Self, ModelError> {
-        Self::from_acquired(store, nonempty_env_copilot_token())
+        let env_token = nonempty_env_copilot_token(store.as_ref());
+        Self::from_acquired(store, env_token)
     }
 
     fn from_acquired(
@@ -149,7 +150,7 @@ pub(crate) async fn auth_material_with_store(
     client: &reqwest::Client,
     store: &dyn CredentialStore,
 ) -> Result<GitHubCopilotAuthMaterial, ModelError> {
-    auth_material_with_env_token(client, store, nonempty_env_copilot_token()).await
+    auth_material_with_env_token(client, store, nonempty_env_copilot_token(store)).await
 }
 
 async fn auth_material_with_env_token(
@@ -180,7 +181,8 @@ pub(crate) async fn force_refresh_auth_material_with_store(
     client: &reqwest::Client,
     store: &dyn CredentialStore,
 ) -> Result<Option<GitHubCopilotAuthMaterial>, ModelError> {
-    force_refresh_auth_material_with_env_token(client, store, nonempty_env_copilot_token()).await
+    force_refresh_auth_material_with_env_token(client, store, nonempty_env_copilot_token(store))
+        .await
 }
 
 async fn force_refresh_auth_material_with_env_token(
@@ -373,13 +375,13 @@ fn now_unix_seconds() -> i64 {
         .unwrap_or_default()
 }
 
-fn nonempty_env_copilot_token() -> Option<String> {
+fn nonempty_env_copilot_token(store: &dyn CredentialStore) -> Option<String> {
     let env_var = provider::provider_descriptor_by_id(ProviderId::GithubCopilot)
         .default_auth()
         .auth_kind
         .env_var()
         .expect("authenticated provider must declare an environment variable");
-    nonempty_token(std::env::var(env_var).ok())
+    nonempty_token(store.environment_variable(env_var))
 }
 
 fn nonempty_token(token: Option<String>) -> Option<String> {

@@ -11,7 +11,7 @@ use std::{
 
 use super::{
     state::TransitionRefused, unix_now, Admission, JobEvent, JobId, JobRecord, JobState, JobStore,
-    JobSubject, TurnEnd,
+    JobSubject, TurnEnd, TurnRecord,
 };
 
 /// The daemon's jobs: the ones it runs and the records it loaded at
@@ -83,10 +83,28 @@ pub(in crate::app::daemon_host) enum SessionJob {
     New,
     /// The latest job of its turns, which a reopen records its next turns
     /// on.
-    Last(JobRecord),
+    Last(Box<JobRecord>),
     /// This job writes the session right now, as a subagent run does, so
     /// the daemon must not open it a second time.
     Busy(JobId),
+}
+
+/// Where a change left a job: its state, and the turn the state is of,
+/// which a session job's attached clients are told together.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::app::daemon_host) struct Moved {
+    pub(in crate::app::daemon_host) state: JobState,
+    pub(in crate::app::daemon_host) turn: Option<rho_protocol::TurnId>,
+}
+
+impl JobRecord {
+    /// Where the job is now.
+    pub(in crate::app::daemon_host) fn moved(&self) -> Moved {
+        Moved {
+            state: self.state.clone(),
+            turn: self.turn.as_ref().map(|turn| turn.id.clone()),
+        }
+    }
 }
 
 /// Why an event did not apply.
@@ -120,7 +138,23 @@ impl JobRegistry {
             started: AtomicU64::new(0),
             changed: tokio::sync::Notify::new(),
         };
-        registry.interrupt_unfinished(&mut registry.lock());
+        {
+            let mut jobs = registry.lock();
+            registry.interrupt_unfinished(&mut jobs);
+            // A record written before turns had ids (#1777) names its last
+            // turn from here on.
+            for record in jobs.values_mut() {
+                let ran_turns = matches!(record.subject, JobSubject::Session { .. })
+                    && record.state != JobState::Idle;
+                if ran_turns && record.turn.is_none() {
+                    record.turn = Some(TurnRecord {
+                        began: true,
+                        ..TurnRecord::starting(/*key*/ None)
+                    });
+                    persist(&registry.store, record);
+                }
+            }
+        }
         registry
     }
 
@@ -207,7 +241,9 @@ impl JobRegistry {
                 last = Some(record);
             }
         }
-        last.map_or(SessionJob::New, |record| SessionJob::Last(record.clone()))
+        last.map_or(SessionJob::New, |record| {
+            SessionJob::Last(Box::new(record.clone()))
+        })
     }
 
     /// How many jobs have a turn under way.
@@ -218,15 +254,17 @@ impl JobRegistry {
             .count()
     }
 
-    /// Starts a new turn on session job `id`, unless one is already under
-    /// way, and returns the state the turn starts in: `queued` for a session
-    /// another job started, whose turns wait for capacity in the daemon-wide
-    /// budget (#1714), `running` otherwise. Checked and applied under one
-    /// lock, so of two prompts that race only one starts a turn.
+    /// Starts a new turn, `turn`, on session job `id`, unless one is
+    /// already under way, and returns the state the turn starts in: `queued`
+    /// for a session another job started, whose turns wait for capacity in
+    /// the daemon-wide budget (#1714), `running` otherwise. Checked and
+    /// applied under one lock, so of two prompts that race only one starts
+    /// a turn.
     pub(in crate::app::daemon_host) fn start_turn(
         &self,
         id: &JobId,
-    ) -> Result<JobState, StartTurnError> {
+        turn: TurnRecord,
+    ) -> Result<Moved, StartTurnError> {
         let mut jobs = self.lock();
         if self.closed.load(Ordering::Relaxed) {
             return Err(StartTurnError::Closed);
@@ -235,58 +273,70 @@ impl JobRegistry {
             Some(Admission::SharedBudget) => JobEvent::TurnQueued,
             Some(Admission::Immediate) | None => JobEvent::TurnStarted,
         };
-        match self.record_under(&mut jobs, id, event) {
-            Ok(state) => Ok(state),
-            Err(TransitionError::Unknown(unknown)) => Err(unknown.into()),
-            // A turn starts from every state but the two of a turn under way.
-            Err(TransitionError::Refused(_)) => Err(StartTurnError::Busy),
+        let record = jobs.get_mut(id).ok_or(UnknownJob)?;
+        let was_in_progress = record.state.in_progress();
+        // A turn starts from every state but those of a turn under way.
+        apply(record, event).map_err(|_| StartTurnError::Busy)?;
+        // The outcome kept was the last turn's.
+        record.outcome = None;
+        record.turn = Some(turn);
+        Ok(self.wrote(record, was_in_progress))
+    }
+
+    /// Records that job `id`'s turn `turn` began, so a later daemon still
+    /// answers a prompt sent again with the turn's key instead of running
+    /// it. Does nothing once it is recorded, or once another turn started.
+    pub(in crate::app::daemon_host) fn turn_began(&self, id: &JobId, turn: &rho_protocol::TurnId) {
+        let mut jobs = self.lock();
+        if let Some(record) = jobs.get_mut(id) {
+            let current = record.turn.as_mut();
+            if let Some(turn) = current.filter(|current| current.id == *turn && !current.began) {
+                turn.began = true;
+                persist(&self.store, record);
+            }
         }
     }
 
-    /// Applies `event` to job `id`, rewrites its record, and returns the
-    /// state it left the job in.
+    /// Applies `event` to job `id`, rewrites its record, and returns where
+    /// it left the job.
     pub(in crate::app::daemon_host) fn record(
         &self,
         id: &JobId,
         event: JobEvent,
-    ) -> Result<JobState, TransitionError> {
-        self.record_under(&mut self.lock(), id, event)
-    }
-
-    /// [`Self::record`], with the `jobs` lock held.
-    fn record_under(
-        &self,
-        jobs: &mut BTreeMap<JobId, JobRecord>,
-        id: &JobId,
-        event: JobEvent,
-    ) -> Result<JobState, TransitionError> {
+    ) -> Result<Moved, TransitionError> {
+        let mut jobs = self.lock();
         let record = jobs.get_mut(id).ok_or(UnknownJob)?;
         let was_in_progress = record.state.in_progress();
         apply(record, event)?;
+        Ok(self.wrote(record, was_in_progress))
+    }
+
+    /// Writes `record`, just moved from a state that `was_in_progress` or
+    /// not, under the `jobs` lock, and returns where it is now.
+    fn wrote(&self, record: &JobRecord, was_in_progress: bool) -> Moved {
         if record.state.in_progress() && !was_in_progress {
             self.started.fetch_add(1, Ordering::Relaxed);
         }
         persist(&self.store, record);
         self.changed.notify_waiters();
-        Ok(record.state.clone())
+        record.moved()
     }
 
     /// Records that job `id`'s turn ended as `end`, which its clients were
-    /// told as `outcome`, if they were, and returns the state it left the
-    /// job in.
+    /// told as `outcome`, if they were, and returns where it left the job.
     pub(in crate::app::daemon_host) fn end_turn(
         &self,
         id: &JobId,
         end: TurnEnd,
         outcome: Option<rho_protocol::TurnOutcome>,
-    ) -> Result<JobState, TransitionError> {
+    ) -> Result<Moved, TransitionError> {
         let mut jobs = self.lock();
         let record = jobs.get_mut(id).ok_or(UnknownJob)?;
         apply(record, JobEvent::TurnEnded(end))?;
         record.outcome = outcome;
         persist(&self.store, record);
         self.changed.notify_waiters();
-        Ok(record.state.clone())
+        Ok(record.moved())
     }
 
     /// Forgets job `id` and deletes its record. A record that cannot be

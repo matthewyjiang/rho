@@ -143,7 +143,7 @@ async fn turn(
             replayed -= 1;
             continue;
         }
-        if let SessionEvent::TurnEnded { outcome } = event {
+        if let SessionEvent::TurnEnded { outcome, .. } = event {
             return (outcome, events);
         }
         events.push(event);

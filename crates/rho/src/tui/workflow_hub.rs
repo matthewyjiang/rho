@@ -497,7 +497,7 @@ impl App {
         WorkflowOps::open(
             self.info.runtime.cwd.clone(),
             path,
-            &crate::session_environment::Ambient::ThisProcess,
+            &crate::session_environment::SessionEnvironment::default(),
         )
     }
 
@@ -794,7 +794,7 @@ impl App {
             pool: crate::app::subagent_pool::SubagentPool::Own,
             tracker,
             // The TUI's sessions run in this process's environment (#1659).
-            environment: crate::session_environment::Ambient::ThisProcess,
+            environment: crate::session_environment::SessionEnvironment::default(),
         };
         match workflow_cli::spawn_background_run(run, recovery, background).await {
             Ok(_) => {

@@ -78,7 +78,7 @@ impl SessionRuntime {
         {
             return Ok(());
         }
-        AgentBinder::bind_with_model_override(
+        AgentBinder::bind_with_credentials(
             Arc::new(self.agent.definition().clone()),
             AgentInvocation {
                 role: AgentRole::Delegated,
@@ -90,6 +90,7 @@ impl SessionRuntime {
                 model: &config.model,
                 auth: &config.auth,
             }),
+            self.build.host.environment.credentials().as_ref(),
         )?;
         Ok(())
     }
@@ -123,7 +124,10 @@ impl SessionRuntime {
         task: &AgentTask,
         process_config: &Config,
     ) -> anyhow::Result<()> {
-        let catalog = AgentCatalog::discover(self.storage.cwd())?;
+        let catalog = AgentCatalog::discover(
+            self.storage.cwd(),
+            self.build.host.environment.project_trust(),
+        )?;
         let definition = catalog.find(&task.agent_id)?.definition.clone();
         let model_override = task.model_override.clone();
         let cwd = self.storage.cwd().to_path_buf();
@@ -139,6 +143,7 @@ impl SessionRuntime {
                     model_override.as_deref().map(ModelOverride::Reference),
                     &build.launch.agent,
                     base,
+                    build.host.environment.credentials().as_ref(),
                 )
             },
             async |agent, config, id| {
@@ -270,14 +275,24 @@ impl SessionRuntime {
 /// load rather than widening the child to the root's tools. The host picks
 /// `launch_agent`: the daemon binds the root the session was rebound from
 /// (see its `bind_saved_agent`), ACP its process's launch agent. `catalog`
-/// discovers definitions only for delegated sessions.
+/// discovers definitions only for delegated sessions, which bind with the
+/// session's `credentials`.
 pub(super) fn loaded_agent(
     launch_agent: &BoundAgent,
     stored: &StoredSession,
     config: Config,
     catalog: impl FnOnce() -> anyhow::Result<AgentCatalog>,
+    credentials: &dyn rho_providers::credentials::CredentialStore,
 ) -> anyhow::Result<(BoundAgent, Config)> {
-    loaded_agent_with(launch_agent, stored, config, catalog, bind_delegated_agent)
+    loaded_agent_with(
+        launch_agent,
+        stored,
+        config,
+        catalog,
+        |definition, model_override, launch_agent, base| {
+            bind_delegated_agent(definition, model_override, launch_agent, base, credentials)
+        },
+    )
 }
 
 /// Keep credential discovery injectable while testing durable selection and
@@ -334,8 +349,9 @@ pub(in crate::app) fn bind_delegated_agent(
     model_override: Option<ModelOverride<'_>>,
     launch_agent: &BoundAgent,
     base: &Config,
+    credentials: &dyn rho_providers::credentials::CredentialStore,
 ) -> anyhow::Result<BoundAgent> {
-    AgentBinder::bind_with_model_override(
+    AgentBinder::bind_with_credentials(
         Arc::new(definition),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -343,6 +359,7 @@ pub(in crate::app) fn bind_delegated_agent(
         },
         base,
         model_override,
+        credentials,
     )
 }
 

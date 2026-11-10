@@ -97,9 +97,9 @@ pub use daemon::{
     DAEMON_STATUS, DAEMON_STOP, HELLO,
 };
 pub use event::{
-    CardTone, CompactionId, CompactionStatus, ContentBlock, Cursor, Location, MessageId, PlanEntry,
-    PlanStatus, Seq, SessionEvent, SteerId, StreamId, ToolCallId, ToolCallUpdate, ToolContent,
-    ToolKind, ToolStatus,
+    CardTone, CompactionId, CompactionStatus, ContentBlock, Cursor, IdempotencyKey, Location,
+    MessageId, PlanEntry, PlanStatus, Seq, SessionEvent, SteerId, StreamId, ToolCallId,
+    ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnId,
 };
 pub use goal::{SessionGoal, SessionGoalAction, SessionGoalPhase, SessionGoalStep};
 pub use input::{
@@ -129,13 +129,13 @@ pub use options::{
 };
 pub use outcome::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome};
 pub use session::{
-    ClientEnvironment, DetachReason, Replay, SessionAttachParams, SessionAttachResponse,
-    SessionCancelParams, SessionCancelResponse, SessionDetachParams, SessionDetachResponse,
-    SessionDetachedParams, SessionEventParams, SessionId, SessionNewParams, SessionNewResponse,
-    SessionObserveParams, SessionPromptParams, SessionPromptResponse, SessionSteerParams,
-    SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse, UnsteerOutcome,
-    SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH, SESSION_DETACHED, SESSION_EVENT, SESSION_NEW,
-    SESSION_OBSERVE, SESSION_PROMPT, SESSION_STEER, SESSION_UNSTEER,
+    ClientEnvironment, DetachReason, ProjectTrustMismatch, Replay, SessionAttachParams,
+    SessionAttachResponse, SessionCancelParams, SessionCancelResponse, SessionDetachParams,
+    SessionDetachResponse, SessionDetachedParams, SessionEventParams, SessionId, SessionNewParams,
+    SessionNewResponse, SessionObserveParams, SessionPromptParams, SessionPromptResponse,
+    SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
+    UnsteerOutcome, SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH, SESSION_DETACHED,
+    SESSION_EVENT, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT, SESSION_STEER, SESSION_UNSTEER,
 };
 pub use setup::{ChildThreads, McpServer, SecretMap, SessionPart, SessionSetup};
 pub use store::{

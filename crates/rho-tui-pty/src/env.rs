@@ -72,9 +72,9 @@ pub struct HostProfile {
 ///
 /// Every rho process in the sandbox reaches the same daemon, at
 /// [`Self::daemon_socket`]. A client that finds none running starts one,
-/// which inherits that client's whole environment, fixture variables
-/// included (`RHO_AUTOMATION_TEST_*`, `RHO_TUI_TEST_MODE`), and runs until
-/// it is stopped. So a sandbox runs one fixture mode, which every client in
+/// which keeps the allowed part of that client's environment, fixture
+/// variables included (`RHO_AUTOMATION_TEST_*`, `RHO_TUI_TEST_MODE`), and
+/// runs until it is stopped. So a sandbox runs one fixture mode, which every client in
 /// it must set: a client in another mode would be served by a daemon frozen
 /// in the first one's.
 ///

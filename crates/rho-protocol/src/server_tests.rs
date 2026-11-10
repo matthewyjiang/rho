@@ -160,7 +160,7 @@ macro_rules! hosts_no_sessions {
             Err(no_credential_store())
         }
 
-        async fn list_auths(&self) -> Result<AuthListResponse, RpcError> {
+        async fn list_auths(&self, _params: AuthListParams) -> Result<AuthListResponse, RpcError> {
             Err(no_credential_store())
         }
 
@@ -714,6 +714,7 @@ impl Service for AttachService {
             replay: Replay::Reset,
             replay_events: 0,
             state: JobState::Idle,
+            turn: None,
             inputs: Vec::new(),
             title: None,
             options: SessionOptions {
@@ -1097,7 +1098,11 @@ impl Service for LoginService {
 serves_no_config!(LoginService);
 
 fn login_line(id: i64) -> String {
-    request_with_params(id, AUTH_LOGIN, serde_json::json!({"auth": "xai-oauth"}))
+    request_with_params(
+        id,
+        AUTH_LOGIN,
+        serde_json::json!({"auth": "xai-oauth", "environment": {}}),
+    )
 }
 
 // Covers: a login's response precedes its prompt and end even when the

@@ -66,6 +66,7 @@ impl ApprovalPolicy {
                         workspace_path: inputs.workspace_root,
                         usage_recording: inputs.usage_recording,
                         session_writes: inputs.session_writes,
+                        credentials: inputs.credentials,
                     },
                 );
                 SessionApproval {
@@ -116,6 +117,7 @@ impl UnattendedApprovals {
                 inputs.config,
                 inputs.workspace_root,
                 inputs.usage_recording,
+                inputs.credentials,
                 /*human*/ None,
                 Some(inputs.session_writes),
             ),
@@ -127,7 +129,10 @@ impl UnattendedApprovals {
 /// run: no permission-classifier model, or an invalid screen. Every
 /// session build checks it, since an unattended Auto session has nobody to
 /// fall back to, and an attended one should not start half-wired.
-pub(crate) fn ensure_auto_classifier_model(config: &Config) -> anyhow::Result<()> {
+pub(crate) fn ensure_auto_classifier_model(
+    config: &Config,
+    credentials: &dyn rho_providers::credentials::CredentialStore,
+) -> anyhow::Result<()> {
     if config.permission_mode != PermissionMode::Auto {
         return Ok(());
     }
@@ -139,7 +144,7 @@ pub(crate) fn ensure_auto_classifier_model(config: &Config) -> anyhow::Result<()
             "permission mode auto requires a configured permission-classifier model (set via /config or config.toml [internal_agents.permission-classifier])"
         );
     }
-    crate::permission_classifier::check_screen_config(config)
+    crate::permission_classifier::check_screen_config(config, credentials)
 }
 
 #[cfg(test)]

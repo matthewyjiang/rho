@@ -171,8 +171,12 @@ impl Sessions {
                 environment: session.environment.current(),
                 setup: wire::SessionSetup::default(),
             };
-            let Entered::Started(started) = self.start_turn(&session, &mut slot, &with)? else {
-                unreachable!("an idle session never queues behind a wake wait");
+            let Entered::Started(started) =
+                self.start_turn(&session, &mut slot, &with, /*key*/ None)?
+            else {
+                unreachable!(
+                    "an idle session never queues behind a wake wait, and a goal turn names no key"
+                );
             };
             goal.cancel = CancellationToken::new();
             if let Some(state) = replacement {
@@ -191,12 +195,10 @@ impl Sessions {
             )
         };
         let (started, input) = start;
-        let _started = TurnTask {
+        TurnTask {
             session: Arc::clone(&session),
-            runtime: started.runtime,
-            budget: started.budget,
+            turn: started,
             stopping: self.stopping.clone(),
-            cancel: started.cancel,
             limit: None,
         }
         .spawn_goal(input);

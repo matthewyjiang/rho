@@ -215,6 +215,7 @@ fn refresh_session_compaction(switch: &ConversationSwitch<'_>) -> Result<(), Err
         recall: switch.tools.recall_store(),
         todo: Some(switch.tools.todo_state()),
         code_mode: Some(switch.tools.code_mode().clone()),
+        credentials: switch.tools.credentials(),
     });
     switch
         .session
@@ -258,6 +259,7 @@ fn restore_after_failed_step(
             recall: switch.tools.recall_store(),
             todo: Some(switch.tools.todo_state()),
             code_mode: Some(switch.tools.code_mode().clone()),
+            credentials: switch.tools.credentials(),
         });
         if let Err(refresh_error) = session.set_compaction(Some(Arc::new(compactor)), policy) {
             return Error::InvalidConfiguration {

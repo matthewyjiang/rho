@@ -23,10 +23,7 @@ use rho_providers::{
 use rho_sdk::{decision::DecisionModel, SecretString};
 use url::Url;
 
-use crate::{
-    config::{Config, ModelKind, RhoInternalAgentModel},
-    credential_store::AppCredentialStore,
-};
+use crate::config::{Config, ModelKind, RhoInternalAgentModel};
 
 /// A provider whose server serves decision models.
 struct Host {
@@ -191,10 +188,12 @@ pub(crate) fn kind_mismatch(selection: &RhoInternalAgentModel) -> Option<String>
 }
 
 /// The model `[internal_agents.<entry>]` names, or `None` when the entry is
-/// absent. An unusable entry is a [`ConfigError`].
+/// absent, with its key read from `credentials`: those of the session it
+/// decides for. An unusable entry is a [`ConfigError`].
 pub(crate) fn resolve<'a>(
     config: &'a Config,
     entry: &'static str,
+    credentials: &dyn CredentialStore,
 ) -> anyhow::Result<Option<EntryModel<'a>>> {
     let Some(configured) = config.internal_agent_model(entry) else {
         return Ok(None);
@@ -219,8 +218,8 @@ pub(crate) fn resolve<'a>(
             if !has_credentials(
                 descriptor,
                 &selection.auth,
-                &|name| std::env::var(name).ok(),
-                &AppCredentialStore,
+                &|name| credentials.environment_variable(name),
+                credentials,
             ) {
                 return Err(ConfigError::TextModelUnavailable {
                     entry,
@@ -241,8 +240,8 @@ pub(crate) fn resolve<'a>(
         entry,
         host.provider,
         &selection.auth,
-        &|name| std::env::var(name).ok(),
-        &AppCredentialStore,
+        &|name| credentials.environment_variable(name),
+        credentials,
     )?;
     let api_base = config.resolved_provider_endpoint(host.provider);
     let model: Box<dyn DecisionModel> = match host.protocol {

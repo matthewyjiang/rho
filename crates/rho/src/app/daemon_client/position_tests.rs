@@ -10,7 +10,7 @@ use crate::app::daemon_client::test_support::attach_response;
 #[test]
 fn the_cursor_is_the_highest_seq_seen_since_the_last_reset() {
     let mut position =
-        StreamPosition::attached(&attach_response(Replay::Reset, 3, JobState::Running));
+        StreamPosition::attached(&attach_response(Replay::Reset, 3, JobState::Running, None));
     position.observe(Seq(0));
     assert_eq!(position.cursor(), None);
     position.observe(Seq(4));
@@ -21,9 +21,9 @@ fn the_cursor_is_the_highest_seq_seen_since_the_last_reset() {
     };
     assert_eq!(position.cursor(), Some(&cursor));
 
-    position.reattached(&attach_response(Replay::Tail, 0, JobState::Running));
+    position.reattached(&attach_response(Replay::Tail, 0, JobState::Running, None));
     assert_eq!(position.cursor(), Some(&cursor));
-    position.reattached(&attach_response(Replay::Reset, 1, JobState::Running));
+    position.reattached(&attach_response(Replay::Reset, 1, JobState::Running, None));
     assert_eq!(position.cursor(), None);
 }
 
@@ -34,13 +34,13 @@ fn the_cursor_is_the_highest_seq_seen_since_the_last_reset() {
 #[test]
 fn both_kinds_of_replay_count_as_replayed() {
     let mut position =
-        StreamPosition::attached(&attach_response(Replay::Reset, 1, JobState::Running));
+        StreamPosition::attached(&attach_response(Replay::Reset, 1, JobState::Running, None));
     let mut replaying = Vec::new();
     for seq in [1, 2] {
         replaying.push(position.replaying());
         position.observe(Seq(seq));
     }
-    position.reattached(&attach_response(Replay::Tail, 1, JobState::Running));
+    position.reattached(&attach_response(Replay::Tail, 1, JobState::Running, None));
     for seq in [3, 4] {
         replaying.push(position.replaying());
         position.observe(Seq(seq));

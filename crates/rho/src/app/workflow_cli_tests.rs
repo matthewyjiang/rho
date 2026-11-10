@@ -280,7 +280,7 @@ async fn resume_preflight_is_self_contained_after_plan_deletion() {
     WorkflowOps::open(
         std::env::current_dir().unwrap(),
         Some(config.configured_path().unwrap()),
-        &crate::session_environment::Ambient::ThisProcess,
+        &crate::session_environment::SessionEnvironment::default(),
     )
     .unwrap()
     .recheck_run(&run)

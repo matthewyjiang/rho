@@ -1,10 +1,11 @@
 //! `session/prompt`: one prompt of this host's, from the daemon taking it
 //! to the end of its turn.
 //!
-//! The session's pump is armed first ([`Waiter`]), so the turn's user
-//! message and end, which arrive as events, are matched to the prompt. The
-//! daemon answers the prompt once it saved it, or with the turn's outcome
-//! when the turn ended first (a cancel that beat it).
+//! The session's pump is armed first ([`Waiter`]) and reads no event until
+//! the daemon answered the prompt with its turn's id, so the turn's user
+//! message and end, which arrive as events, are matched to the prompt by
+//! that id. The daemon answers the prompt once it saved it, or with the
+//! turn's outcome when the turn ended first (a cancel that beat it).
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -64,18 +65,24 @@ impl Adapter {
             outcome,
             accept: Arc::clone(&accept),
         };
-        // After earlier events, such as the end of a turn this host
-        // cancelled, so they do not end this prompt.
-        live.deliver(&link, Control::Arm(waiter)).await?;
+        let (began, turn) = oneshot::channel();
+        live.deliver(&link, Control::Arm { waiter, turn }).await?;
         let params = SessionPromptParams {
             session: live.id.clone(),
             content: requests::prompt_content(content),
             timeout_ms: None,
             environment: ClientEnvironment::of_this_process(),
+            idempotency_key: None,
         };
         let outcome = match link.request::<SessionPrompt>(&params).await {
-            Ok(_) => ended.await.map_err(|_| daemon::lost())??,
+            Ok(response) => {
+                // A pump that is gone fails `ended`.
+                let _ = began.send(response.turn);
+                ended.await.map_err(|_| daemon::lost())??
+            }
             Err(error) => {
+                // No turn to wait on: the pump reads on.
+                drop(began);
                 // What the turn showed before it ended, such as a menu its
                 // end refreshed, reaches the host before this answer.
                 let (flushed, done) = oneshot::channel();

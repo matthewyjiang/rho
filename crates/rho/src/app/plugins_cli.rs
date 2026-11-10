@@ -14,7 +14,7 @@ use crate::{
         discover_with_trust,
         git_source::{short_commit, InstallSource},
         manage::{self, InstallMode, UpdateOutcome, UpdateReport, UpdateSelection},
-        PluginLoadReport, PluginScope, PluginStatus, ProjectTrust, TRUST_PROJECT_PLUGINS_ENV,
+        PluginLoadReport, PluginScope, PluginStatus, TRUST_PROJECT_PLUGINS_ENV,
     },
 };
 
@@ -22,7 +22,7 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
     let home = crate::paths::home_dir();
     let rho_home = crate::paths::rho_dir().ok();
-    let trust = ProjectTrust::from_plugins_env();
+    let trust = crate::workspace::ProjectTrusts::of_this_process().plugins;
 
     match command {
         PluginsCommand::List { json } => {

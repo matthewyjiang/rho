@@ -10,6 +10,8 @@
 
 use std::sync::Arc;
 
+use rho_providers::credentials::CredentialStore;
+
 use rho_sdk::{
     model::{
         context::estimate_context_tokens, Message, ModelIdentity, ModelRequest, ModelResponse,
@@ -55,13 +57,18 @@ pub(crate) struct ModelCompactor {
 /// kept for the compactor's lifetime; a config change rebuilds the compactor.
 pub(super) struct Summarizer {
     model: SummarizerModel,
+    /// Whose sign-in the provider is built with.
+    credentials: Arc<dyn CredentialStore>,
     provider: tokio::sync::OnceCell<Arc<dyn ModelProvider>>,
 }
 
 impl Summarizer {
-    pub(super) fn new(model: SummarizerModel) -> Self {
+    /// A summarizer on `model`, signed in with `credentials` when it first
+    /// runs.
+    pub(super) fn new(model: SummarizerModel, credentials: Arc<dyn CredentialStore>) -> Self {
         Self {
             model,
+            credentials,
             provider: tokio::sync::OnceCell::new(),
         }
     }
@@ -71,6 +78,7 @@ impl Summarizer {
     pub(super) fn with_provider(model: SummarizerModel, provider: Arc<dyn ModelProvider>) -> Self {
         Self {
             model,
+            credentials: Arc::new(crate::credential_store::AppCredentialStore),
             provider: tokio::sync::OnceCell::new_with(Some(provider)),
         }
     }
@@ -84,15 +92,21 @@ impl Summarizer {
                     auth,
                     reasoning,
                 } = &self.model;
-                crate::credential_store::build_provider(provider, model, *reasoning, auth)
-                    .await
-                    .map_err(|error| Error::InvalidConfiguration {
-                        message: format!(
-                            "could not build the compaction model {}: {error}",
-                            rho_providers::provider::model_reference(provider, model)
-                        ),
-                        source: None,
-                    })
+                crate::credential_store::build_provider(
+                    provider,
+                    model,
+                    *reasoning,
+                    auth,
+                    Arc::clone(&self.credentials),
+                )
+                .await
+                .map_err(|error| Error::InvalidConfiguration {
+                    message: format!(
+                        "could not build the compaction model {}: {error}",
+                        rho_providers::provider::model_reference(provider, model)
+                    ),
+                    source: None,
+                })
             })
             .await
     }

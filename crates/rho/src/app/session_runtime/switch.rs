@@ -55,7 +55,7 @@ impl SessionRuntime {
             .map_err(SettingChangeError::Apply)?;
             let provider = build_provider_from_config_ensuring_catalog(
                 &login_config,
-                Arc::new(AppCredentialStore),
+                self.build.host.environment.credentials(),
             )
             .await
             .map_err(|error| SettingChangeError::Apply(error.into()))?;

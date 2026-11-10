@@ -102,6 +102,7 @@ impl Fixture {
         HostAgentTool::new(
             self.orchestrator.clone(),
             Path::new("."),
+            crate::workspace::ProjectTrusts::UNTRUSTED,
             &self.catalog,
             rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
             Arc::new(()),

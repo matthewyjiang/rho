@@ -47,7 +47,11 @@ fn runtime_for(
         provider: Arc::new(provider.clone()),
         tools,
         workspace,
-        workspace_policy: AppPolicy::for_mode(PermissionMode::Bypass, Default::default()),
+        workspace_policy: AppPolicy::for_mode(
+            PermissionMode::Bypass,
+            Default::default(),
+            /*search_path*/ None,
+        ),
         approval_session: None,
         system_prompt: SystemPrompt::None,
         reasoning: rho_sdk::ReasoningLevel::Off,

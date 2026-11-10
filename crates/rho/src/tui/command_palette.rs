@@ -191,7 +191,10 @@ impl App {
     /// frame — walks skill directories once and shares the result.
     pub(super) fn discovered_skills(&mut self) -> Arc<Vec<crate::skills::Skill>> {
         DiscoveryCache::get_or_refresh(&mut self.palette_caches.skills, PALETTE_CACHE_TTL, || {
-            crate::skills::discover(&self.info.runtime.cwd)
+            crate::skills::discover(
+                &self.info.runtime.cwd,
+                crate::workspace::ProjectTrusts::of_this_process(),
+            )
         })
     }
 

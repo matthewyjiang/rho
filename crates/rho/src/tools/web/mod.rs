@@ -41,13 +41,14 @@ pub(crate) fn hosted_web_search_active(config: &crate::config::Config) -> bool {
 }
 
 /// Client `web_search` tool for this config, if native search or a ready backend
-/// should expose it.
+/// should expose it, its keys read from `credentials`.
 pub(super) fn sdk_web_search(
     config: &crate::config::Config,
     store: WebAccessStore,
     max_output_bytes: usize,
+    credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
 ) -> Option<SdkWebSearch> {
-    let tool = access_tools_with_store(config, store);
+    let tool = access_tools_with_store(config, store, credentials);
     (hosted_web_search_active(config) || tool.client_available())
         .then(|| SdkWebSearch::new(tool, max_output_bytes))
 }
@@ -64,7 +65,10 @@ pub(crate) async fn test_search_backend(
         1,
         None,
         None,
-        &search::SearchBackendConfig::from_config(config),
+        &search::SearchBackendConfig::from_config(
+            config,
+            Arc::new(crate::credential_store::AppCredentialStore),
+        ),
     )
     .await?;
     Ok(items.len())
@@ -72,14 +76,19 @@ pub(crate) async fn test_search_backend(
 
 #[cfg(test)]
 pub(crate) fn access_tools(config: &crate::config::Config) -> WebSearch {
-    access_tools_with_store(config, WebAccessStore::new())
+    access_tools_with_store(
+        config,
+        WebAccessStore::new(),
+        Arc::new(crate::credential_store::AppCredentialStore),
+    )
 }
 
 pub(crate) fn access_tools_with_store(
     config: &crate::config::Config,
     store: WebAccessStore,
+    credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
 ) -> WebSearch {
-    WebSearch::with_client(config, util::http_client(), store)
+    WebSearch::with_client(config, util::http_client(), store, credentials)
 }
 
 pub(super) fn sdk_bundle(
@@ -87,12 +96,18 @@ pub(super) fn sdk_bundle(
     capabilities: &crate::agent::AgentCapabilities,
     process_environment: rho_tools::SharedProcessEnvironment,
     store: WebAccessStore,
+    credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
 ) -> super::sdk_registry::StaticToolBundle {
     use crate::agent::ToolCapability;
 
     let mut tools = Vec::<Arc<dyn SdkTool>>::new();
     if capabilities.contains(&ToolCapability::WebSearch) {
-        if let Some(tool) = sdk_web_search(config, store.clone(), config.max_output_bytes) {
+        if let Some(tool) = sdk_web_search(
+            config,
+            store.clone(),
+            config.max_output_bytes,
+            Arc::clone(&credentials),
+        ) {
             tools.push(Arc::new(tool));
         }
     }
@@ -101,6 +116,7 @@ pub(super) fn sdk_bundle(
             config.max_output_bytes,
             process_environment,
             store.clone(),
+            credentials,
         )));
     }
     if capabilities.contains(&ToolCapability::GetSearchContent) {

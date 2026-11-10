@@ -15,7 +15,7 @@ use crate::{
         agent_binding::BoundAgent,
         session_assembly::{
             assemble_session, ApprovalInputs, BuiltSession, HookStart, SessionAssembly,
-            SessionAssemblyOptions,
+            SessionAssemblyOptions, SignIn,
         },
         subagent_messaging::NoticePoster,
         subagent_pool::SubagentPool,
@@ -243,7 +243,7 @@ pub(super) async fn build_session(
     added_dirs: &AddedDirs,
     session_options: impl FnOnce(Arc<dyn ModelProvider>) -> anyhow::Result<SessionOptions>,
 ) -> anyhow::Result<(BuiltSession, SessionPermission)> {
-    ensure_auto_classifier_model(config)?;
+    ensure_auto_classifier_model(config, build.host.environment.credentials().as_ref())?;
     // A session request can follow a terminal login another process saved,
     // even when startup itself succeeded without credentials.
     AppCredentialStore::reread_external_logins();
@@ -284,6 +284,10 @@ pub(super) async fn build_session(
             SessionUse::Run => HookStart::Start,
             SessionUse::Read => HookStart::Skip,
         },
+        sign_in: match build.host.session_use {
+            SessionUse::Run => SignIn::Required,
+            SessionUse::Read => SignIn::NotNeeded,
+        },
         mcp_authorization: build.host.mcp_authorization,
         diagnostics: &build.launch.diagnostics,
         agent,
@@ -305,6 +309,7 @@ pub(super) async fn build_session(
                     &mut tools,
                     workspace,
                     config.max_output_bytes,
+                    build.host.environment.project_trust(),
                 ),
             }
             with_plan_exit(tools, build, agent, config)

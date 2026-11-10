@@ -115,6 +115,7 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
     } = cli_config::settle_bound_config(
         config,
         &bound_agent,
+        &crate::credential_store::AppCredentialStore,
         &provider_refresh,
         bound_reasoning_source,
     )
@@ -332,7 +333,10 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         }) => (output_file.clone(), *output, *max_steps, *timeout),
         _ => (None, OutputFormat::Text, None, None),
     };
-    let catalog = Arc::new(crate::agent::AgentCatalog::discover(&cwd)?);
+    let catalog = Arc::new(crate::agent::AgentCatalog::discover(
+        &cwd,
+        crate::workspace::ProjectTrusts::of_this_process(),
+    )?);
     let selected_agent = cli
         .agent
         .as_deref()

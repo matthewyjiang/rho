@@ -1,4 +1,7 @@
-use std::sync::{Arc, PoisonError, RwLock};
+use std::{
+    ffi::OsString,
+    sync::{Arc, PoisonError, RwLock},
+};
 
 use rho_sdk::ProcessEnvironment;
 use tokio::process::Command;
@@ -33,6 +36,27 @@ impl SharedProcessEnvironment {
 impl From<ProcessEnvironment> for SharedProcessEnvironment {
     fn from(environment: ProcessEnvironment) -> Self {
         Self::new(environment)
+    }
+}
+
+/// Variable `name` as a process started with `environment` would see it, so
+/// a tool can honor a setting of the session's environment without starting
+/// a process. `None` for a variable the policy withholds, and for an unknown
+/// [`ProcessEnvironment`] variant, which [`apply_process_environment`]
+/// refuses.
+pub(crate) fn process_variable(environment: &ProcessEnvironment, name: &str) -> Option<OsString> {
+    let listed = |names: &[String]| names.iter().any(|listed| listed == name);
+    match environment {
+        ProcessEnvironment::InheritAll => std::env::var_os(name),
+        ProcessEnvironment::InheritExcept { variable_names } => {
+            (!listed(variable_names)).then(|| std::env::var_os(name))?
+        }
+        ProcessEnvironment::InheritListed { variable_names } => {
+            listed(variable_names).then(|| std::env::var_os(name))?
+        }
+        ProcessEnvironment::Explicit { variables } => variables.get(name).map(OsString::from),
+        ProcessEnvironment::Empty => None,
+        _ => None,
     }
 }
 

@@ -2,7 +2,10 @@ use super::*;
 
 #[tokio::test]
 async fn advertises_valid_actions_and_rejects_unsupported_ones() {
-    let tool = Rho::new(crate::diagnostics::test_diagnostics("openai", "gpt-test"));
+    let tool = Rho::new(
+        crate::diagnostics::test_diagnostics("openai", "gpt-test"),
+        crate::workspace::ProjectTrusts::UNTRUSTED,
+    );
     let spec = tool.spec();
     assert_eq!(
         spec.input_schema["properties"]["action"]["enum"],

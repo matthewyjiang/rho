@@ -6,7 +6,7 @@ use rho_protocol::{
     AnswerStop, ApprovalAsk, ApprovalSource, Ask, Choice, ContentBlock, InputAnswer, InputRequest,
     InputRequestId, InputTimeout, JobState, MessageId, Operation, PathScope, Question, QuestionAsk,
     Replay, Resolution, Selection, SessionEvent, SteerId, ToolCallId as WireCallId, ToolCallUpdate,
-    ToolStatus, TurnError, TurnErrorKind, TurnOutcome,
+    ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome,
 };
 use rho_sdk::{SteeringId, ToolCallId};
 
@@ -21,11 +21,11 @@ use crate::tui::{daemon_inputs::AnswerRefusal, StreamKind};
 #[test]
 fn usage_and_title_updates_keep_their_independent_values() {
     let views = map(vec![
-        Step::Attached(Vec::new()),
+        Step::Attached(Vec::new(), JobState::Idle),
         Step::Event(SessionEvent::TitleChanged {
             title: "Replayed title".into(),
         }),
-        Step::ReplayEnded(JobState::Idle),
+        Step::ReplayEnded,
         Step::Event(SessionEvent::Usage {
             used_tokens: 1200,
             window_tokens: Some(8000),
@@ -82,11 +82,16 @@ enum Step {
     Event(SessionEvent),
     Reset,
     Tail,
-    Attached(Vec<InputRequest>),
-    ReplayEnded(JobState),
+    /// An attach that lists these requests open, whose replay ends with the
+    /// job in this state, of turn [`TURN`].
+    Attached(Vec<InputRequest>, JobState),
+    ReplayEnded,
     Answering(InputRequestId),
     Refused(InputRequestId, AnswerRefusal),
 }
+
+/// The turn the steps' states and ends are of, unless they name another.
+const TURN: &str = "t1";
 
 /// The views one session's mapper makes of `steps`.
 fn map(steps: Vec<Step>) -> Vec<DaemonView> {
@@ -97,8 +102,10 @@ fn map(steps: Vec<Step>) -> Vec<DaemonView> {
             Step::Event(event) => views.extend(events.map(event)),
             Step::Reset => views.push(events.replay(Replay::Reset)),
             Step::Tail => views.push(events.replay(Replay::Tail)),
-            Step::Attached(inputs) => events.attached(inputs),
-            Step::ReplayEnded(state) => views.extend(events.end_replay(state)),
+            Step::Attached(inputs, state) => {
+                events.attached(inputs, state, Some(TurnId::new(TURN)));
+            }
+            Step::ReplayEnded => views.extend(events.end_replay()),
             Step::Answering(id) => events.answering(id),
             Step::Refused(id, refusal) => views.extend(events.answer_refused(id, refusal)),
         }
@@ -143,6 +150,7 @@ fn tool(status: ToolStatus, display: Option<Presentation>) -> Step {
 
 fn answered(text: &str) -> Step {
     Step::Event(SessionEvent::TurnEnded {
+        turn: TurnId::new(TURN),
         outcome: TurnOutcome::Answered {
             text: text.into(),
             stop: AnswerStop::EndTurn,
@@ -151,11 +159,22 @@ fn answered(text: &str) -> Step {
 }
 
 fn state(state: JobState) -> Step {
-    Step::Event(SessionEvent::State { state })
+    state_of(TURN, state)
+}
+
+/// Turn `turn`'s job is in `state`.
+fn state_of(turn: &str, state: JobState) -> Step {
+    Step::Event(SessionEvent::State {
+        state,
+        turn: Some(TurnId::new(turn)),
+    })
 }
 
 fn ended(outcome: TurnOutcome) -> Step {
-    Step::Event(SessionEvent::TurnEnded { outcome })
+    Step::Event(SessionEvent::TurnEnded {
+        turn: TurnId::new(TURN),
+        outcome,
+    })
 }
 
 fn provider_failed(message: &str) -> TurnOutcome {
@@ -210,10 +229,10 @@ fn session_events_map_to_transcript_views() {
                 user("hello"),
                 reply("m1", "Good "),
                 Step::Tail,
-                Step::Attached(Vec::new()),
+                Step::Attached(Vec::new(), JobState::Completed),
                 reply("m1", "morning."),
                 answered("Good morning."),
-                Step::ReplayEnded(JobState::Completed),
+                Step::ReplayEnded,
             ],
             vec![
                 DaemonView::User("hello".into()),
@@ -231,8 +250,8 @@ fn session_events_map_to_transcript_views() {
                     Some(Presentation::Card(read_card(ToolCardStatus::Running))),
                 ),
                 Step::Tail,
-                Step::Attached(Vec::new()),
-                Step::ReplayEnded(JobState::Running),
+                Step::Attached(Vec::new(), JobState::Running),
+                Step::ReplayEnded,
                 tool(ToolStatus::Failed, None),
             ],
             vec![
@@ -340,6 +359,7 @@ fn session_events_map_to_transcript_views() {
                     Some(Presentation::Card(read_card(ToolCardStatus::Ok))),
                 ),
                 Step::Event(SessionEvent::TurnEnded {
+                    turn: TurnId::new(TURN),
                     outcome: TurnOutcome::MaxSteps {
                         text: "Reading it.".into(),
                     },
@@ -362,6 +382,7 @@ fn session_events_map_to_transcript_views() {
                     Some(Presentation::Card(read_card(ToolCardStatus::Ok))),
                 ),
                 Step::Event(SessionEvent::TurnEnded {
+                    turn: TurnId::new(TURN),
                     outcome: TurnOutcome::MaxSteps {
                         text: String::new(),
                     },
@@ -406,8 +427,10 @@ fn session_events_map_to_transcript_views() {
 }
 
 // Covers: the job's state drives the TUI's busy state, a failed turn rests
-// with its own reason and never the last turn's, and a steer's delivery and
-// echo carry the id the pending panel keys it by, ahead of its user row.
+// with its own reason and never another turn's, a replayed state is history
+// unless it is of the turn the replay ends under way (#1777), and a steer's
+// delivery and echo carry the id the pending panel keys it by, ahead of its
+// user row.
 // Owner: tui daemon event mapping
 #[test]
 fn job_states_and_steers_map_to_turn_views() {
@@ -446,8 +469,8 @@ fn job_states_and_steers_map_to_turn_views() {
             "a failure's reason does not outlive its turn",
             vec![
                 ended(provider_failed("provider refused the request")),
-                state(JobState::Queued),
-                state(JobState::Failed),
+                state_of("t2", JobState::Queued),
+                state_of("t2", JobState::Failed),
             ],
             vec![
                 DaemonView::Error("provider refused the request".into()),
@@ -470,6 +493,54 @@ fn job_states_and_steers_map_to_turn_views() {
                 DaemonView::Turn(TurnState::Running),
                 resting(Rest::Ready),
                 resting(Rest::Ready),
+            ],
+        ),
+        (
+            "a reset's turn that ran and ended shows only where the replay ends",
+            vec![
+                Step::Reset,
+                Step::Attached(Vec::new(), JobState::Completed),
+                state(JobState::Running),
+                state(JobState::WaitingForInput),
+                state(JobState::Completed),
+                Step::ReplayEnded,
+            ],
+            vec![DaemonView::Clear, resting(Rest::Ready)],
+        ),
+        (
+            "a tail's states are news: the turn the TUI watched ends before another's shows",
+            vec![
+                state(JobState::Running),
+                Step::Tail,
+                Step::Attached(Vec::new(), JobState::Running),
+                state(JobState::Completed),
+                state_of("t2", JobState::Running),
+                Step::ReplayEnded,
+            ],
+            vec![
+                DaemonView::Turn(TurnState::Running),
+                DaemonView::InputsReset,
+                resting(Rest::Ready),
+                DaemonView::Turn(TurnState::Running),
+                DaemonView::Turn(TurnState::Running),
+            ],
+        ),
+        (
+            "a reset shows the turn it ends under way from where its rows start, and no earlier turn",
+            vec![
+                Step::Reset,
+                Step::Attached(Vec::new(), JobState::Running),
+                state_of("t0", JobState::Running),
+                state_of("t0", JobState::Completed),
+                state(JobState::Running),
+                user("now"),
+                Step::ReplayEnded,
+            ],
+            vec![
+                DaemonView::Clear,
+                DaemonView::Turn(TurnState::Running),
+                DaemonView::User("now".into()),
+                DaemonView::Turn(TurnState::Running),
             ],
         ),
         (
@@ -588,12 +659,12 @@ fn input_requests_show_once_and_close_as_resolved() {
                 requested(approval(1)),
                 requested(approval(2)),
                 Step::Tail,
-                Step::Attached(vec![approval(3)]),
+                Step::Attached(vec![approval(3)], JobState::WaitingForInput),
                 resolved(1, Resolution::Answered),
                 requested(approval(3)),
                 requested(approval(4)),
                 resolved(4, Resolution::Withdrawn),
-                Step::ReplayEnded(JobState::WaitingForInput),
+                Step::ReplayEnded,
             ],
             vec![
                 opened(approval(1)),
@@ -606,10 +677,10 @@ fn input_requests_show_once_and_close_as_resolved() {
         (
             "the replay leaves a request open: it shows once the replay ends",
             vec![
-                Step::Attached(vec![approval(1)]),
+                Step::Attached(vec![approval(1)], JobState::WaitingForInput),
                 requested(approval(1)),
                 requested(approval(2)),
-                Step::ReplayEnded(JobState::WaitingForInput),
+                Step::ReplayEnded,
             ],
             vec![
                 DaemonView::Turn(TurnState::WaitingForInput),
@@ -620,21 +691,21 @@ fn input_requests_show_once_and_close_as_resolved() {
         (
             "the replay opens and closes a request: it never shows",
             vec![
-                Step::Attached(Vec::new()),
+                Step::Attached(Vec::new(), JobState::Running),
                 requested(approval(1)),
                 resolved(1, Resolution::Answered),
-                Step::ReplayEnded(JobState::Running),
+                Step::ReplayEnded,
             ],
             vec![DaemonView::Turn(TurnState::Running)],
         ),
         (
             "a request held during the replay shows without its timeout",
             vec![
-                Step::Attached(vec![timed_question(3)]),
+                Step::Attached(vec![timed_question(3)], JobState::WaitingForInput),
                 Step::Event(SessionEvent::InputHeld {
                     id: InputRequestId(3),
                 }),
-                Step::ReplayEnded(JobState::WaitingForInput),
+                Step::ReplayEnded,
             ],
             vec![DaemonView::Turn(TurnState::WaitingForInput), opened(held)],
         ),

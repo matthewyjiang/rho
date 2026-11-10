@@ -25,6 +25,7 @@ use super::{
 use crate::{
     agent::{AdvertisedAgents, AdvertisedChange, AgentCatalog, AgentDefinition, AgentRuntimeSpec},
     tools::{agent_output::AgentRunView, sdk_registry::AppToolSet},
+    workspace::ProjectTrusts,
 };
 
 /// Host-threads hook (`ChildAgents::HostThreads`, which `rho acp --t3code`
@@ -33,16 +34,23 @@ use crate::{
 /// delegated child, `--no-subagents`) is left unchanged, and one with
 /// `agent` alone gets no `agents`. Missing T3 tools fail each delegation
 /// call, not the session.
-pub(crate) fn install_host_delegation(tools: &mut AppToolSet, cwd: &Path, max_output_bytes: usize) {
+pub(crate) fn install_host_delegation(
+    tools: &mut AppToolSet,
+    cwd: &Path,
+    max_output_bytes: usize,
+    project_trust: ProjectTrusts,
+) {
     if !tools.contains("agent") {
         return;
     }
     let orchestrator = Arc::new(HostOrchestrator::connect(tools));
     // As the native `agent` tool this replaces, which just read it.
-    let catalog = AgentCatalog::discover(cwd).expect("agent catalog was validated at startup");
+    let catalog =
+        AgentCatalog::discover(cwd, project_trust).expect("agent catalog was validated at startup");
     let agent = HostAgentTool::new(
         orchestrator.clone(),
         cwd,
+        project_trust,
         &catalog,
         max_output_bytes,
         tools.checkpoint_tracker().clone(),
@@ -59,6 +67,8 @@ pub(crate) fn install_host_delegation(tools: &mut AppToolSet, cwd: &Path, max_ou
 struct HostAgentTool {
     orchestrator: Arc<HostOrchestrator>,
     cwd: PathBuf,
+    /// The session's project trust, which each rediscovery reads under.
+    project_trust: ProjectTrusts,
     advertised: AdvertisedAgents,
     max_output_bytes: usize,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
@@ -68,6 +78,7 @@ impl HostAgentTool {
     fn new(
         orchestrator: Arc<HostOrchestrator>,
         cwd: &Path,
+        project_trust: ProjectTrusts,
         catalog: &AgentCatalog,
         max_output_bytes: usize,
         mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
@@ -88,6 +99,7 @@ impl HostAgentTool {
         Self {
             orchestrator,
             cwd: cwd.to_owned(),
+            project_trust,
             advertised,
             max_output_bytes,
             mutation_observer,
@@ -100,7 +112,7 @@ impl HostAgentTool {
         context: ToolContext,
     ) -> Result<ToolOutput, ToolError> {
         let args = parse_agent_args(invocation.arguments().clone())?;
-        let catalog = AgentCatalog::discover(&self.cwd).map_err(|error| {
+        let catalog = AgentCatalog::discover(&self.cwd, self.project_trust).map_err(|error| {
             ToolError::new(
                 ToolErrorKind::Execution,
                 format!("could not reload agent definitions: {error}"),

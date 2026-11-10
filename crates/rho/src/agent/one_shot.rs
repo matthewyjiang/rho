@@ -1,6 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use anyhow::bail;
+use rho_providers::credentials::CredentialStore;
 use rho_sdk::{
     model::{ContentBlock, Message, ModelEvent, ModelRequest, ModelResponse, ModelUsage},
     provider::{ModelProvider, ProviderRequestEvent, ProviderStreamEvent},
@@ -72,16 +73,18 @@ pub(crate) struct OneShotAgentResult {
     pub usage: ModelUsage,
 }
 
-/// Builds the provider (awaiting catalog hydrate when needed) then runs the request.
+/// Builds the provider (awaiting catalog hydrate when needed), signed in
+/// with `credentials`, then runs the request.
 pub(crate) async fn run_one_shot_agent(
     request: OneShotAgentRequest<'_>,
     provider_name: &str,
     model: &str,
     auth: &str,
+    credentials: Arc<dyn CredentialStore>,
     usage_recording: ProviderRequestUsageRecording,
 ) -> anyhow::Result<OneShotAgentResult> {
     let reasoning = resolve_reasoning(request.definition, request.reasoning)?;
-    let provider = build_provider(provider_name, model, reasoning, auth).await?;
+    let provider = build_provider(provider_name, model, reasoning, auth, credentials).await?;
     run_one_shot_with_provider(
         provider.as_ref(),
         request,

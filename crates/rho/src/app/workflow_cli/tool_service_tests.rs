@@ -511,6 +511,7 @@ fn node_resolution_reuses_the_authorized_executable_identity() {
         &catalog,
         &available_tools,
         &executables,
+        &crate::credential_store::AppCredentialStore,
     );
     let launchable = super::super::plan_host::ensure_program_launchable(
         &program,

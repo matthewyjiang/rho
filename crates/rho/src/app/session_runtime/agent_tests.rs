@@ -110,7 +110,14 @@ fn load_restores_the_child_binding_or_fails() {
         )
         .unwrap();
 
-    let (agent, _) = loaded_agent(&launch_agent, &child, config.clone(), catalog).unwrap();
+    let (agent, _) = loaded_agent(
+        &launch_agent,
+        &child,
+        config.clone(),
+        catalog,
+        &crate::credential_store::AppCredentialStore,
+    )
+    .unwrap();
     assert_eq!(agent.fingerprint(), definition.fingerprint());
     assert_eq!(
         agent.rho_capabilities(),
@@ -119,9 +126,13 @@ fn load_restores_the_child_binding_or_fails() {
 
     let root_dir = tempfile::tempdir().unwrap();
     let root = session(root_dir.path());
-    let (agent, _) = loaded_agent(&launch_agent, &root, config.clone(), || {
-        panic!("a root session runs as its launch agent, never a looked-up definition")
-    })
+    let (agent, _) = loaded_agent(
+        &launch_agent,
+        &root,
+        config.clone(),
+        || panic!("a root session runs as its launch agent, never a looked-up definition"),
+        &crate::credential_store::AppCredentialStore,
+    )
     .unwrap();
     assert_eq!(agent.fingerprint(), launch_agent.fingerprint());
 
@@ -224,7 +235,15 @@ async fn rebind_keeps_the_host_mcp_servers() {
                 input: UserInput::text("task"),
             },
             &config,
-            |base| bind_delegated_agent(child, /*model_override*/ None, &launch_agent, base),
+            |base| {
+                bind_delegated_agent(
+                    child,
+                    /*model_override*/ None,
+                    &launch_agent,
+                    base,
+                    &crate::credential_store::AppCredentialStore,
+                )
+            },
             async |_, config, id| {
                 *built_with.lock().unwrap() = Some(config.clone());
                 let permission = SessionPermission {
