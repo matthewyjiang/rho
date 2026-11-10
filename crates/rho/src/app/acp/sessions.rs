@@ -545,6 +545,7 @@ impl Adapter {
         }
         let params = SessionDeleteParams {
             session: SessionId::new(request.session_id.0.as_ref()),
+            unless_attached: false,
         };
         let link = self.daemon.link().await?;
         match link.request::<SessionDelete>(&params).await {

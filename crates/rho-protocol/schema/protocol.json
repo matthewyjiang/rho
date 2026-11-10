@@ -3607,6 +3607,10 @@
       "properties": {
         "session": {
           "$ref": "#/$defs/SessionId"
+        },
+        "unless_attached": {
+          "description": "Refuse a session a client is attached to, as\n[`crate::ErrorCode::SessionInUse`], rather than detach its clients:\nfor a client that deletes sessions it is not showing and cannot\ntell which of them another client has open.",
+          "type": "boolean"
         }
       },
       "required": [

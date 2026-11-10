@@ -275,8 +275,12 @@ impl DaemonRequests {
                     Control::Delete { sessions, result } => {
                         let mut answers = Vec::with_capacity(sessions.len());
                         for session in sessions {
+                            // A session this TUI left is no longer attached;
+                            // one a client still shows, this TUI's own
+                            // included, is not this delete's to take.
                             let params = SessionDeleteParams {
                                 session: SessionId::new(session),
+                                unless_attached: true,
                             };
                             let answer = on_attachment(&mut control_target, |link, _| {
                                 let params = params.clone();
@@ -285,6 +289,11 @@ impl DaemonRequests {
                             .await;
                             answers.push(match answer {
                                 Some((_, Ok(_))) => Ok(()),
+                                // The daemon's own words name the session
+                                // and what holds it.
+                                Some((_, Err(ClientError::Rpc { error, .. }))) => {
+                                    Err(error.message)
+                                }
                                 Some((_, Err(error))) => Err(error.to_string()),
                                 None => Err(LOST.to_owned()),
                             });

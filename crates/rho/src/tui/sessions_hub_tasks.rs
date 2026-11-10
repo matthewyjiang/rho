@@ -20,10 +20,10 @@ use crate::session::{
 };
 
 /// Deletes sessions the store refused because something holds them open,
-/// through the daemon, which holds every session it has loaded and can let
-/// go of it: one answer per id, in order, a refusal in the daemon's words.
-/// Blocking.
-pub(super) type DeleteHeld = Box<dyn Fn(Vec<String>) -> Vec<Result<(), String>> + Send>;
+/// through the daemon, which holds every session it has loaded and lets go
+/// of one no client is attached to: one answer per id, in order, a refusal
+/// in the daemon's words. Blocking.
+pub(super) type DeleteHeld = Box<dyn FnOnce(Vec<String>) -> Vec<Result<(), String>> + Send>;
 
 /// Sessions a confirmed delete removes.
 #[derive(Clone, Debug)]
@@ -137,14 +137,17 @@ impl BatchDeleted {
             .into_iter()
             .partition(|failure| failure.in_use);
         if !in_use.is_empty() {
-            let answers = held(in_use.iter().map(|failure| failure.id.clone()).collect());
-            for (mut failure, answer) in in_use.into_iter().zip(answers) {
-                match answer {
-                    Ok(()) => self.deleted += 1,
-                    Err(refusal) => {
+            let mut answers =
+                held(in_use.iter().map(|failure| failure.id.clone()).collect()).into_iter();
+            for mut failure in in_use {
+                match answers.next() {
+                    Some(Ok(())) => self.deleted += 1,
+                    Some(Err(refusal)) => {
                         failure.error = refusal;
                         failures.push(failure);
                     }
+                    // Unanswered: the store's refusal stands.
+                    None => failures.push(failure),
                 }
             }
         }
