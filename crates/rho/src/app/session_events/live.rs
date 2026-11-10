@@ -69,8 +69,8 @@ const UNFINISHED_COMPACTION: &str = "compaction ended without a result";
 /// The session's checklist goes out as a plan whenever a finished tool
 /// changed it. Each model step reports its context fill as usage, as do a
 /// finished compaction and the run's end; the daemon adds the session's
-/// cost. Usage the provider counts while a response streams repeats the
-/// step's fill, so the daemon can price the response under way.
+/// cost, and asks for the fill again ([`Self::streamed_usage`]) to price a
+/// response while it streams.
 ///
 /// It also replays the session's saved rows ([`Self::replay`]), so a call
 /// id a provider reuses is numbered the same way live and replayed, and the
@@ -101,10 +101,9 @@ pub(crate) struct LiveEvents {
     /// The context fill last reported, which usage the provider counts
     /// within a response repeats.
     used_tokens: Option<u64>,
-    /// Cards of calls the step under way is still streaming that clients
-    /// have not been sent, by the calls' place in the provider's output:
-    /// one waits here until its call has an id and a name.
-    unsent_previews: HashMap<usize, rho_protocol::display::ToolCard>,
+    /// The cards of the calls the step under way is still streaming, by
+    /// the calls' place in the provider's output.
+    previews: HashMap<usize, StreamedPreview>,
     /// Wire ids of the calls opened live.
     call_ids: CallIds,
     /// Wire ids of the calls [`Self::replay`] opened.
@@ -191,7 +190,7 @@ impl LiveEvents {
             prompt: None,
             proposed: HashMap::new(),
             announced: BTreeMap::new(),
-            unsent_previews: HashMap::new(),
+            previews: HashMap::new(),
             used_tokens: None,
             call_ids: CallIds::default(),
             replayed_ids: CallIds::default(),
@@ -352,19 +351,14 @@ impl LiveEvents {
             | SessionEvent::QuestionAsked { .. }
             | SessionEvent::QuestionWithdrawn { .. } => Vec::new(),
         };
-        // Usage the provider counts mid-response arrives between a
-        // message's chunks, as a delivered steer may, and ends nothing.
-        let mid_response = matches!(event, SessionEvent::Run(RunEvent::UsageUpdated { .. }));
-        if !mid_response
-            && events.iter().any(|event| {
-                !matches!(
-                    event,
-                    WireEvent::AgentMessageChunk { .. }
-                        | WireEvent::ThoughtChunk { .. }
-                        | WireEvent::SteeringDelivered { .. }
-                )
-            })
-        {
+        if events.iter().any(|event| {
+            !matches!(
+                event,
+                WireEvent::AgentMessageChunk { .. }
+                    | WireEvent::ThoughtChunk { .. }
+                    | WireEvent::SteeringDelivered { .. }
+            )
+        }) {
             self.message = None;
         }
         late_steers.into_iter().chain(events).collect()
@@ -405,10 +399,14 @@ impl LiveEvents {
                 context_estimate, ..
             } => {
                 self.message = None;
-                // A step numbers its calls from zero again.
-                self.unsent_previews.clear();
+                // A step numbers its calls from zero again, and a call the
+                // last one streamed has started by now if it ever will.
+                let unstarted = self.fail_pending();
                 self.presenter.step_started();
-                vec![self.usage(*context_estimate)]
+                unstarted
+                    .into_iter()
+                    .chain([self.usage(*context_estimate)])
+                    .collect()
             }
             RunEvent::ToolProposed { call } => {
                 if !call.id.is_empty() {
@@ -482,19 +480,7 @@ impl LiveEvents {
                 // them again: the cards its streamed arguments opened close.
                 self.proposed.clear();
                 self.presenter.step_started();
-                self.unsent_previews.clear();
-                let discarded: Vec<_> = self
-                    .announced
-                    .values_mut()
-                    .filter(|call| call.state == CallState::Pending)
-                    .map(|call| {
-                        call.state = CallState::Finished;
-                        WireEvent::tool_call(status_update(
-                            call.id.clone(),
-                            Some(ToolStatus::Failed),
-                        ))
-                    })
-                    .collect();
+                let discarded = self.fail_pending();
                 discarded
                     .into_iter()
                     .chain([WireEvent::ResponseDiscarded])
@@ -527,17 +513,12 @@ impl LiveEvents {
             RunEvent::HostInputRequested { .. } | RunEvent::ToolHostInputRequested { .. } => {
                 Vec::new()
             }
-            // The provider counted more of the response under way. The
-            // context is as the step reported it; the daemon prices the
-            // session anew.
-            RunEvent::UsageUpdated { .. } => self
-                .used_tokens
-                .map(|used| self.fill(used))
-                .into_iter()
-                .collect(),
             // Retries, diagnostics and model-call metrics land as later
             // minors.
-            RunEvent::ProviderContextUpdated { .. }
+            // The daemon reports usage counted mid-response itself
+            // ([`Self::streamed_usage`]).
+            RunEvent::UsageUpdated { .. }
+            | RunEvent::ProviderContextUpdated { .. }
             | RunEvent::ProviderDiagnostic { .. }
             | RunEvent::WebSearch { .. }
             | RunEvent::ProviderRequestRetry
@@ -557,8 +538,16 @@ impl LiveEvents {
         self.fill(estimate.tokens())
     }
 
-    /// A usage event for a context holding `used_tokens`, which later
-    /// reports within the response repeat.
+    /// The context fill last reported, again, for a host that prices the
+    /// response under way when the provider counts more of its usage
+    /// ([`RunEvent::UsageUpdated`]). It arrives between a message's chunks
+    /// and ends nothing. `None` before any fill was reported.
+    pub(crate) fn streamed_usage(&mut self) -> Option<WireEvent> {
+        self.used_tokens.map(|used| self.fill(used))
+    }
+
+    /// A usage event for a context holding `used_tokens`, which
+    /// [`Self::streamed_usage`] repeats.
     fn fill(&mut self, used_tokens: u64) -> WireEvent {
         self.used_tokens = Some(used_tokens);
         WireEvent::Usage {
@@ -594,7 +583,7 @@ impl LiveEvents {
     /// next run starts clean: steers it has not applied were dropped.
     fn close_unfinished(&mut self) -> Vec<WireEvent> {
         self.proposed.clear();
-        self.unsent_previews.clear();
+        self.previews.clear();
         self.presenter =
             InteractiveToolPresenter::new(self.workspace.clone(), self.mcp_tools.clone());
         self.steers.clear();
@@ -670,17 +659,25 @@ impl LiveEvents {
             display: Some(shown.display),
             ..call
         };
-        if let Some(call) = self.announced.get_mut(id) {
-            if call.state == CallState::Finished && next == CallState::Open {
-                return None;
+        let (wire_id, streamed) = match self.announced.get_mut(id) {
+            // Opened by its streamed arguments and never started: this is
+            // the first clients hear of the call as proposed.
+            Some(call) if call.state == CallState::Pending => {
+                call.state = next;
+                (call.id.clone(), true)
             }
-            call.state = next;
-            return Some(WireEvent::tool_call(update(status_update(
-                call.id.clone(),
-                /*status*/ None,
-            ))));
-        }
-        let (wire_id, _) = self.announce(id, next);
+            Some(call) => {
+                if call.state == CallState::Finished && next == CallState::Open {
+                    return None;
+                }
+                call.state = next;
+                return Some(WireEvent::tool_call(update(status_update(
+                    call.id.clone(),
+                    /*status*/ None,
+                ))));
+            }
+            None => (self.announce(id, next).0, false),
+        };
         let card = match self.proposed.remove(id) {
             // Titled as replay titles a call whose tool reports nothing.
             Some(call) => named_call(
@@ -691,6 +688,8 @@ impl LiveEvents {
                 &self.workspace,
                 &self.mcp_tools,
             ),
+            // Its streamed open already named it.
+            None if streamed => status_update(wire_id, /*status*/ None),
             None => ToolCallUpdate {
                 title: Some(UNNAMED_TOOL_TITLE.to_owned()),
                 kind: Some(ToolKind::Other),
@@ -713,19 +712,25 @@ impl LiveEvents {
         name: Option<&str>,
         arguments_delta: &str,
     ) -> Vec<WireEvent> {
-        if let Some(presented) =
-            self.presenter
-                .preview(index, name.map(str::to_owned), arguments_delta)
-        {
-            self.unsent_previews.insert(index, presented.card);
+        let presented = self
+            .presenter
+            .preview(index, name.map(str::to_owned), arguments_delta);
+        let preview = self.previews.entry(index).or_default();
+        preview.received += arguments_delta.len();
+        if let Some(presented) = presented {
+            preview.unsent = Some(presented.card);
         }
         // The SDK repeats a call's id and name on each delta once known.
         let (Some(provider), Some(name)) = (id.filter(|id| !id.is_empty()), name) else {
             return Vec::new();
         };
-        let Some(card) = self.unsent_previews.remove(&index) else {
+        if preview.sent_at > 0 && preview.received < preview.sent_at + preview.sent_at / 4 {
+            return Vec::new();
+        }
+        let Some(card) = preview.unsent.take() else {
             return Vec::new();
         };
+        preview.sent_at = preview.received.max(1);
         let display = Some(Presentation::Card(card));
         match self
             .announced
@@ -759,6 +764,20 @@ impl LiveEvents {
         superseded
             .into_iter()
             .chain([WireEvent::tool_call(opened)])
+            .collect()
+    }
+
+    /// Closes as failed the calls streamed arguments opened that never
+    /// started, and forgets the step's streamed previews.
+    fn fail_pending(&mut self) -> Vec<WireEvent> {
+        self.previews.clear();
+        self.announced
+            .values_mut()
+            .filter(|call| call.state == CallState::Pending)
+            .map(|call| {
+                call.state = CallState::Finished;
+                WireEvent::tool_call(status_update(call.id.clone(), Some(ToolStatus::Failed)))
+            })
             .collect()
     }
 
@@ -796,6 +815,24 @@ impl LiveEvents {
             self.presenter.proposed(call.clone());
         }
     }
+}
+
+/// The card of a call the provider is still streaming, and how much of it
+/// clients have.
+///
+/// A card can hold all the arguments so far, a file's content for one, so
+/// sending each would cost the square of their size. One goes out when the
+/// arguments grew by a quarter since the last: the cards sent then sum to
+/// about five times the arguments (1 / (1 - 1/1.25)), however long they get.
+#[derive(Default)]
+struct StreamedPreview {
+    /// The newest card clients were not sent; it waits for the call's id
+    /// and name, and for the arguments to grow enough.
+    unsent: Option<rho_protocol::display::ToolCard>,
+    /// Bytes of arguments received.
+    received: usize,
+    /// `received` when a card was last sent; 0 before the first.
+    sent_at: usize,
 }
 
 /// What a progress or result update shows of a call.

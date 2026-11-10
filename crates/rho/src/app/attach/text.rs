@@ -89,6 +89,11 @@ impl<O: Write, E: Write> TextView<O, E> {
 
     /// Shows a tool call once it has a title, and again once it fails.
     fn tool_call(&mut self, update: &ToolCallUpdate) -> io::Result<()> {
+        // A call the model is still writing has no arguments to title it
+        // with; it shows once it starts.
+        if update.status == Some(ToolStatus::Pending) {
+            return Ok(());
+        }
         let mut lines = String::new();
         let call = match (self.calls.entry(update.id.clone()), &update.title) {
             (Entry::Occupied(entry), title) => {

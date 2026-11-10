@@ -14,7 +14,7 @@ use std::{
 };
 
 use rho_protocol as wire;
-use rho_sdk::{CancellationToken, UserInput};
+use rho_sdk::{CancellationToken, RunEvent, UserInput};
 use tokio::{
     sync::{mpsc, watch},
     time::Instant,
@@ -661,7 +661,14 @@ impl DaemonView {
         mut cost: cost::TurnCost,
     ) {
         while let Some(event) = events.recv().await {
-            let wire = self.session.live().map(&event);
+            let wire = {
+                let mut live = self.session.live();
+                let mut wire = live.map(&event);
+                if matches!(event, SessionEvent::Run(RunEvent::UsageUpdated { .. })) {
+                    wire.extend(live.streamed_usage());
+                }
+                wire
+            };
             let wire = cost.priced(&event, wire, &self.session.id).await;
             self.session.feed.publish(wire);
             if matches!(event, SessionEvent::MessageInserted(_)) {

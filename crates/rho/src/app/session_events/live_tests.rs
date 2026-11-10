@@ -675,6 +675,8 @@ fn a_streamed_call_opens_pending_and_keeps_its_id_when_it_starts() {
         streamed(Some("call-1"), r#"{"command":"l"#),
         // Its card follows its arguments.
         streamed(Some("call-1"), "s"),
+        // Sent once the arguments grew by a quarter.
+        streamed(Some("call-1"), " -la /tmp"),
         proposed("call-1", "ls"),
         started("call-1", ToolMetadata::default()),
         step(100),
@@ -733,26 +735,21 @@ fn usage_reports_the_configured_window() {
     );
 }
 
-// Covers: usage the provider counts while a response streams goes out as
-// the step's context fill again, for the daemon to price; before any step
-// there is no fill to report.
+// Covers: a host that prices a streaming response gets the step's context
+// fill again, and none before any step reported one.
 // Owner: session event live mapping
 #[test]
 fn streamed_usage_repeats_the_steps_fill() {
     let tool_set = AppToolSet::disabled();
     let mut live = live(&tool_set);
-    let streamed = || {
-        SessionEvent::Run(RunEvent::UsageUpdated {
-            usage: rho_sdk::model::ModelUsage::default(),
-        })
-    };
-    assert_eq!(
-        map_all(&mut live, &[streamed(), step(100), streamed()]),
-        vec![usage(100), usage(100)]
-    );
+    let before = live.streamed_usage();
+    map_all(&mut live, &[step(100)]);
+    assert_eq!((before, live.streamed_usage()), (None, Some(usage(100))));
 
     // It arrives between a reply's chunks, which stay one message.
-    let reply = map_all(&mut live, &[delta("Hel"), streamed(), delta("lo")]);
+    let mut reply = map_all(&mut live, &[delta("Hel")]);
+    live.streamed_usage();
+    reply.extend(map_all(&mut live, &[delta("lo")]));
     let messages: Vec<_> = reply
         .iter()
         .filter_map(|event| match event {
