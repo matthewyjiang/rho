@@ -214,9 +214,9 @@ async fn a_host_drives_a_session_in_another_workspace_over_mcp() {
 }
 
 // Covers: `read` and `wait` from a shallower host leave a session the daemon
-// unloaded as it is, starting none of its MCP servers or hooks, which would
-// run at the reader's nesting depth rather than the session's, while a
-// prompt still reopens it at the prompter's (#1672).
+// unloaded as it is, starting none of its MCP servers or hooks, while a
+// prompt still reopens it, at the depth it started at, not the shallower
+// prompter's (#1672, #1796).
 // Owner: session-control read and wait over rho/session/observe.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reading_an_unloaded_session_starts_nothing_of_it() {
@@ -330,7 +330,7 @@ async fn reading_an_unloaded_session_starts_nothing_of_it() {
             vec![
                 "hook unset".to_owned(),
                 "hook unset".to_owned(),
-                "mcp 1".to_owned(),
+                "mcp 3".to_owned(),
                 "mcp 3".to_owned(),
             ],
         ),

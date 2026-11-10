@@ -29,9 +29,13 @@ use anyhow::anyhow;
 use rho_protocol::{
     methods::{AuthChooseStore, AuthKey, AuthLogin, Status},
     AuthChooseStoreParams, AuthKeyParams, AuthLoginParams, Client, ClientEnvironment, ClientError,
-    DaemonNotification, ErrorCode, LoginOutcome, StatusParams, StoreSelectedBy,
+    CredentialStoreKind, DaemonNotification, ErrorCode, LoginOutcome, StatusParams,
+    StoreSelectedBy,
 };
-use rho_providers::auth::browser::{self, BrowserAvailability};
+use rho_providers::{
+    auth::browser::{self, BrowserAvailability},
+    credentials::CredentialStoreBackend,
+};
 
 use super::{
     drive,
@@ -79,7 +83,7 @@ fn refuse_shell_override(
 async fn save_key(auth: String, entry_label: &str) -> anyhow::Result<()> {
     let key = secret::read(entry_label).await?;
     let Connection { client, .. } = daemon_cli::connect().await?;
-    ensure_store(&client).await?;
+    let os_store = ensure_store(&client).await?;
     let saved = client
         .request::<AuthKey>(&AuthKeyParams {
             auth: auth.clone(),
@@ -87,7 +91,13 @@ async fn save_key(auth: String, entry_label: &str) -> anyhow::Result<()> {
             environment: ClientEnvironment::of_this_process(),
         })
         .await
-        .map_err(|error| refused(error, format!("could not save credentials for {auth}")))?;
+        .map_err(|error| {
+            store_refused(
+                error,
+                format!("could not save credentials for {auth}"),
+                os_store,
+            )
+        })?;
     match saved.unchecked {
         None => eprintln!("saved credentials for {auth}"),
         Some(unchecked) => eprintln!(
@@ -107,7 +117,7 @@ async fn log_in(auth: String, provider_label: &str, device_auth: bool) -> anyhow
         mut notifications,
         ..
     } = daemon_cli::connect().await?;
-    ensure_store(&client).await?;
+    let os_store = ensure_store(&client).await?;
     let login = client
         .request::<AuthLogin>(&AuthLoginParams {
             auth: auth.clone(),
@@ -115,7 +125,13 @@ async fn log_in(auth: String, provider_label: &str, device_auth: bool) -> anyhow
             environment: ClientEnvironment::of_this_process(),
         })
         .await
-        .map_err(|error| refused(error, format!("could not start the {provider_label} login")))?
+        .map_err(|error| {
+            store_refused(
+                error,
+                format!("could not start the {provider_label} login"),
+                os_store,
+            )
+        })?
         .login;
     loop {
         let Some(notification) = notifications.recv().await else {
@@ -144,9 +160,13 @@ async fn log_in(auth: String, provider_label: &str, device_auth: bool) -> anyhow
 /// daemon keep credentials in the answer. A `RHO_CREDENTIAL_STORE` in this
 /// shell already chose the store of what is signed in from here, so nothing
 /// is asked; a value that names no store fails here, as it would there.
-async fn ensure_store(client: &Client) -> anyhow::Result<()> {
-    if credential_store::environment_backend()?.is_some() {
-        return Ok(());
+/// Answers what chose the store when it is the OS store, for
+/// [`store_refused`]; `None` for the file store.
+async fn ensure_store(client: &Client) -> anyhow::Result<Option<OsStoreChosenBy>> {
+    match credential_store::environment_backend()? {
+        Some(CredentialStoreBackend::Os) => return Ok(Some(OsStoreChosenBy::Shell)),
+        Some(CredentialStoreBackend::File) => return Ok(None),
+        None => {}
     }
     let status = client
         .request::<Status>(&StatusParams {})
@@ -159,7 +179,13 @@ async fn ensure_store(client: &Client) -> anyhow::Result<()> {
         })?
         .credential_store;
     if status.selected_by != StoreSelectedBy::Default {
-        return Ok(());
+        return Ok((status.store == CredentialStoreKind::Os).then_some(
+            if status.selected_by == StoreSelectedBy::Environment {
+                OsStoreChosenBy::DaemonEnvironment
+            } else {
+                OsStoreChosenBy::Config
+            },
+        ));
     }
     let offers = StoreOffers {
         os_unavailable: status.unreachable,
@@ -185,7 +211,45 @@ async fn ensure_store(client: &Client) -> anyhow::Result<()> {
         "credential store set to {} in the rho daemon's config",
         backend.as_str()
     );
-    Ok(())
+    Ok(match backend {
+        CredentialStoreBackend::Os => Some(OsStoreChosenBy::Config),
+        CredentialStoreBackend::File => None,
+    })
+}
+
+/// What chose the OS store a sign-in writes, which decides where the file
+/// store can be chosen instead.
+#[derive(Clone, Copy, Debug)]
+enum OsStoreChosenBy {
+    /// `RHO_CREDENTIAL_STORE` in this shell.
+    Shell,
+    /// `RHO_CREDENTIAL_STORE` in the daemon's environment.
+    DaemonEnvironment,
+    /// The daemon's config, or the answer just saved there.
+    Config,
+}
+
+/// [`refused`] for a sign-in. A daemon that cannot reach the OS store
+/// `os_store` chose for it, as one started from an SSH login cannot, never
+/// moves to the file store on its own, so the user is told where to choose
+/// it.
+fn store_refused(
+    error: ClientError,
+    doing: String,
+    os_store: Option<OsStoreChosenBy>,
+) -> anyhow::Error {
+    let unreachable = error.error_code() == Some(ErrorCode::CredentialStoreUnavailable);
+    let advice = match os_store.filter(|_| unreachable) {
+        Some(OsStoreChosenBy::Shell) => "set RHO_CREDENTIAL_STORE=file in this shell",
+        Some(OsStoreChosenBy::DaemonEnvironment) => {
+            "restart the rho daemon with RHO_CREDENTIAL_STORE=file in its environment"
+        }
+        Some(OsStoreChosenBy::Config) => "run `rho credential-store set file`",
+        None => return refused(error, doing),
+    };
+    anyhow!(
+        "{doing}: {error}\nto keep credentials in a private file instead, {advice}, then run rho login again"
+    )
 }
 
 /// What `rho login` reports for a login to `auth` that ended with

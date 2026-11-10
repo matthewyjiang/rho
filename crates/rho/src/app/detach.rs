@@ -121,6 +121,7 @@ fn session_new(
             child_threads: ChildThreads::Daemon,
         },
         parent: None,
+        grant: None,
     })
 }
 
@@ -211,6 +212,7 @@ async fn start(
             timeout_ms,
             environment,
             idempotency_key: None,
+            grant: None,
         })
         .await
         .map_err(|error| {

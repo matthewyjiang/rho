@@ -21,7 +21,7 @@ use tokio::{
 
 use super::*;
 use crate::daemon::{
-    client::cli_client_info,
+    client::ConnectAs,
     lock, server,
     shutdown::{Ending, Shutdown},
     test_support::StubHost,
@@ -69,7 +69,7 @@ async fn racing_clients_spawn_one_daemon_and_all_connect() {
             let paths = paths.clone();
             let spawner = Arc::clone(&spawner);
             tokio::spawn(async move {
-                connect_or_spawn(&paths, cli_client_info(), spawner.as_ref())
+                connect_or_spawn(&paths, ConnectAs::Command.hello(), spawner.as_ref())
                     .await
                     .map(|connection| connection.hello.daemon.pid)
             })
@@ -113,7 +113,7 @@ async fn a_client_waits_for_a_draining_daemon_to_let_go_of_the_lock() {
         let spawner = Arc::clone(&spawner);
         tokio::spawn(async move {
             let mut observed = Some(observed);
-            connect_or_spawn_observing(&paths, cli_client_info(), spawner.as_ref(), || {
+            connect_or_spawn_observing(&paths, ConnectAs::Command.hello(), spawner.as_ref(), || {
                 if let Some(observed) = observed.take() {
                     let _ = observed.send(());
                 }
@@ -175,7 +175,7 @@ async fn a_client_on_another_socket_is_told_where_the_daemon_listens() {
 
     let error = tokio::time::timeout(
         DRAIN_WAIT_TIMEOUT / 2,
-        connect_or_spawn(&paths, cli_client_info(), &spawner),
+        connect_or_spawn(&paths, ConnectAs::Command.hello(), &spawner),
     )
     .await
     .expect("the client is refused before the drain budget")
@@ -300,7 +300,7 @@ async fn an_unused_older_daemon_is_replaced_by_the_clients_own() {
 
     let pid = tokio::time::timeout(
         RACE_DEADLINE,
-        connect_or_spawn(&paths, cli_client_info(), &spawner),
+        connect_or_spawn(&paths, ConnectAs::Command.hello(), &spawner),
     )
     .await
     .expect("the client connects once the older daemon stopped")
@@ -408,7 +408,7 @@ async fn a_daemon_the_client_may_not_replace_keeps_running() {
 
         let error = tokio::time::timeout(
             RACE_DEADLINE,
-            connect_or_spawn(&paths, cli_client_info(), spawner),
+            connect_or_spawn(&paths, ConnectAs::Command.hello(), spawner),
         )
         .await
         .expect("the client is refused")
