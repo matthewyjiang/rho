@@ -770,6 +770,18 @@ fn a_held_streamed_card_goes_out_when_the_host_asks() {
         (live.holds_previews(), live.held_previews()),
         (false, Vec::new())
     );
+
+    // A card still held when its call has run is dropped, not opened as a
+    // second call.
+    map_all(&mut live, &[streamed("x")]);
+    map_all(
+        &mut live,
+        &[
+            started("call-1", ToolMetadata::default()),
+            finished("call-1", ToolCompletion::Unavailable),
+        ],
+    );
+    assert_eq!(live.held_previews(), Vec::new());
 }
 
 // Covers: a host that prices a streaming response gets the step's context
