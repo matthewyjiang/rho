@@ -468,7 +468,11 @@ mod unix {
             };
             session.pending.push(settings_loaded(settings));
             for change in queued {
-                session.configure(change)?;
+                session
+                    .requests
+                    .as_ref()
+                    .expect("attached session has requests")
+                    .carry(change)?;
             }
             Ok(session)
         }
