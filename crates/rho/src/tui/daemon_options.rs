@@ -180,10 +180,15 @@ impl App {
         };
         match model_choice(&options.model, reference) {
             Ok(model) => {
+                let asked = self.daemon_option_requests.len();
                 self.configure_daemon(SessionChange::Model { model, auth: None })?;
-                // First-run setup ends with its model. A switch the daemon
-                // refuses shows as an error row in the session.
-                self.finish_setup_screen();
+                // First-run setup ends with its model, once the daemon was
+                // asked for it: a change that could not be sent leaves the
+                // step open under its error. One the daemon then refuses
+                // shows as an error row in the session.
+                if self.daemon_option_requests.len() > asked {
+                    self.finish_setup_screen();
+                }
                 Ok(())
             }
             Err(error) => {
