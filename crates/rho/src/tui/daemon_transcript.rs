@@ -62,6 +62,12 @@ impl App {
                     opens,
                     replayed: _,
                 } => {
+                    // Replayed into a running turn, as a reattach's tail
+                    // is: what the stream still holds came before it.
+                    if self.turn.is_provider_turn() {
+                        self.finish_streams();
+                        self.reset_streams();
+                    }
                     if opens {
                         self.open_transcript_row(kind.entry(text));
                     } else {
