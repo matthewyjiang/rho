@@ -1,3 +1,4 @@
+use crate::SessionId;
 use std::{
     collections::BTreeMap,
     fmt,
@@ -16,6 +17,9 @@ pub enum CapabilityKind {
     Network,
     Skill,
     InstructionDiscovery,
+    /// Acting on another agent session: starting, prompting, steering, or
+    /// cancelling it. Watching one needs no capability of this kind.
+    SessionControl,
 }
 
 impl CapabilityKind {
@@ -28,6 +32,7 @@ impl CapabilityKind {
             Self::Network => "network",
             Self::Skill => "skill",
             Self::InstructionDiscovery => "instruction discovery",
+            Self::SessionControl => "session control",
         }
     }
 }
@@ -378,6 +383,84 @@ pub enum CapabilityOperation {
     NetworkAccess(NetworkTarget),
     LoadSkill { name: String, path: Option<PathBuf> },
     DiscoverInstructions { path: PathBuf, scope: PathScope },
+    ControlSession(SessionControlTarget),
+}
+
+/// What a session-control operation does to an agent session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SessionControlAction {
+    /// Start a session with a first prompt.
+    New,
+    /// Start a session's next turn.
+    Prompt,
+    /// Give a running turn input for its next model request.
+    Steer,
+    /// Cancel the turn in progress.
+    Cancel,
+}
+
+impl SessionControlAction {
+    /// Stable lowercase label for diagnostics and host UI.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::New => "new",
+            Self::Prompt => "prompt",
+            Self::Steer => "steer",
+            Self::Cancel => "cancel",
+        }
+    }
+}
+
+/// The agent session an operation acts on: one it starts, prompts, steers,
+/// or cancels. Every field is part of the request, so an approval
+/// remembered for the session covers only an identical request: the same
+/// text sent to the same session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SessionControlTarget {
+    pub action: SessionControlAction,
+    /// The session; `None` for one the operation starts.
+    pub session: Option<SessionId>,
+    /// The session's workspace.
+    pub workspace: PathBuf,
+    /// The text the operation sends: a new session's first prompt, or a
+    /// prompt's or steer's text. `None` for a cancel.
+    pub text: Option<String>,
+}
+
+impl SessionControlTarget {
+    /// Starting a session in `workspace` with the first prompt `text`.
+    pub fn start(workspace: impl Into<PathBuf>, text: impl Into<String>) -> Self {
+        Self {
+            action: SessionControlAction::New,
+            session: None,
+            workspace: workspace.into(),
+            text: Some(text.into()),
+        }
+    }
+
+    /// Acting on `session`, in `workspace`, with `action`.
+    pub fn on(
+        action: SessionControlAction,
+        session: SessionId,
+        workspace: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            action,
+            session: Some(session),
+            workspace: workspace.into(),
+            text: None,
+        }
+    }
+
+    /// This operation, sending `text`.
+    pub fn with_text(self, text: impl Into<String>) -> Self {
+        Self {
+            text: Some(text.into()),
+            ..self
+        }
+    }
 }
 
 /// Security-sensitive authority requested by a tool or prompt adapter.
@@ -448,6 +531,10 @@ impl CapabilityRequest {
         )
     }
 
+    pub fn session_control(target: SessionControlTarget, source: CapabilitySource) -> Self {
+        Self::new(CapabilityOperation::ControlSession(target), source)
+    }
+
     pub fn operation(&self) -> &CapabilityOperation {
         &self.operation
     }
@@ -466,6 +553,7 @@ impl CapabilityRequest {
             CapabilityOperation::DiscoverInstructions { .. } => {
                 CapabilityKind::InstructionDiscovery
             }
+            CapabilityOperation::ControlSession(_) => CapabilityKind::SessionControl,
         }
     }
 
@@ -476,7 +564,10 @@ impl CapabilityRequest {
             | CapabilityOperation::DiscoverInstructions { scope, .. } => scope,
             CapabilityOperation::ExecuteProcess(_)
             | CapabilityOperation::NetworkAccess(_)
-            | CapabilityOperation::LoadSkill { .. } => return false,
+            | CapabilityOperation::LoadSkill { .. }
+            // The target's workspace names the session, not a path the
+            // operation reads or writes.
+            | CapabilityOperation::ControlSession(_) => return false,
         };
         match scope {
             PathScope::PrimaryWorkspace => false,

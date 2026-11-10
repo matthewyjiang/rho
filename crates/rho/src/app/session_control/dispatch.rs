@@ -59,23 +59,16 @@ impl Action {
 }
 
 impl SessionControl {
-    /// Runs `action` with `arguments` for `caller` and returns its result
-    /// as JSON.
+    /// Checks and runs `action` with `arguments` for `caller` and returns
+    /// its result as JSON.
     pub(crate) async fn call(
         &self,
         caller: &Caller,
         action: Action,
         arguments: Map<String, Value>,
     ) -> Result<Value, ControlError> {
-        match action {
-            Action::List => json(self.list(caller, parse(action, arguments)?).await?),
-            Action::Read => json(self.read(caller, parse(action, arguments)?).await?),
-            Action::New => json(self.new_session(caller, parse(action, arguments)?).await?),
-            Action::Prompt => json(self.prompt(caller, parse(action, arguments)?).await?),
-            Action::Steer => json(self.steer(caller, parse(action, arguments)?).await?),
-            Action::Cancel => json(self.cancel(caller, parse(action, arguments)?).await?),
-            Action::Wait => json(self.wait(caller, parse(action, arguments)?).await?),
-        }
+        let checked = self.check(caller, action, arguments).await?;
+        self.run(caller, checked).await
     }
 }
 
@@ -86,7 +79,7 @@ fn schema<T: JsonSchema>() -> Map<String, Value> {
     }
 }
 
-fn parse<T: DeserializeOwned>(
+pub(super) fn parse<T: DeserializeOwned>(
     action: Action,
     arguments: Map<String, Value>,
 ) -> Result<T, ControlError> {
@@ -95,7 +88,7 @@ fn parse<T: DeserializeOwned>(
     })
 }
 
-fn json(result: impl Serialize) -> Result<Value, ControlError> {
+pub(super) fn json(result: impl Serialize) -> Result<Value, ControlError> {
     serde_json::to_value(result)
         .map_err(|error| ControlError::Invalid(format!("could not encode the result: {error}")))
 }

@@ -225,8 +225,8 @@ pub use workspace::{
     ChannelApprovalHandler, DenyAllPolicy, DenyApprovals, EnvironmentVariables,
     ExecutableSelection, NetworkTarget, PathScope, PendingApproval, PolicyDecision,
     ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits,
-    ResolvedWorkspacePath, ScopedWorkspacePolicy, Workspace, WorkspacePathError,
-    WorkspacePathErrorKind, WorkspacePathState, WorkspacePolicy,
+    ResolvedWorkspacePath, ScopedWorkspacePolicy, SessionControlAction, SessionControlTarget,
+    Workspace, WorkspacePathError, WorkspacePathErrorKind, WorkspacePathState, WorkspacePolicy,
 };
 
 #[cfg(test)]

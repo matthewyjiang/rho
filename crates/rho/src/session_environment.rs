@@ -95,6 +95,20 @@ impl Ambient {
         }
     }
 
+    /// This environment as a daemon client sends it, the inverse of how the
+    /// daemon takes one (`daemon_host::sessions::open`): what the sessions
+    /// a session starts through session control run with.
+    #[cfg(unix)]
+    pub(crate) fn to_client(&self) -> rho_protocol::ClientEnvironment {
+        match self {
+            Self::ThisProcess => rho_protocol::ClientEnvironment::of_this_process(),
+            Self::Client(variables) => variables
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
+        }
+    }
+
     /// Variable `name` as [`Self::read`] reads it, keeping a value of this
     /// process's that is not UTF-8, for passing straight to a child.
     pub(crate) fn read_os(&self, name: &str) -> Option<OsString> {

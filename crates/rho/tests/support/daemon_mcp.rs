@@ -27,6 +27,9 @@ use super::sessions::{Follower, Sandbox, DEADLINE};
 #[path = "daemon_mcp_caller.rs"]
 mod caller;
 
+#[path = "daemon_mcp_native.rs"]
+mod native;
+
 type McpClient = RunningService<RoleClient, ()>;
 
 /// A directory beside the sandbox's workspace for sessions to work in, so

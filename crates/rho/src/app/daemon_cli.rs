@@ -85,13 +85,36 @@ pub(crate) struct Unreachable {
     reason: String,
 }
 
+/// Whether connecting may start the daemon.
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Reach {
+    /// Start one when none runs, as the commands that are its clients do.
+    #[default]
+    StartIfNeeded,
+    /// Only reach one already running, as an agent's `sessions` tool does:
+    /// a tool call never starts a long-lived daemon on its own.
+    Running,
+}
+
 /// Connects to this rho home's daemon, starting one when none runs, for
 /// the commands that are its clients: `rho run --detach`, `rho login`,
 /// `rho acp`, `rho mcp serve`, and `rho daemon start`.
 #[cfg(unix)]
 pub(super) async fn connect() -> Result<daemon::Connection, Unreachable> {
+    connect_with(Reach::StartIfNeeded).await
+}
+
+/// Connects to this rho home's daemon as `reach` allows.
+#[cfg(unix)]
+pub(super) async fn connect_with(reach: Reach) -> Result<daemon::Connection, Unreachable> {
     let unreachable = |reason: String| Unreachable { reason };
     let paths = paths().map_err(|error| unreachable(format!("{error:#}")))?;
+    if reach == Reach::Running {
+        return daemon::connect(&paths, cli_client_info())
+            .await
+            .map_err(|error| unreachable(error.to_string()));
+    }
     let spawner = daemon::ProcessSpawner::current_exe()
         .map_err(|error| unreachable(format!("could not find the rho executable: {error}")))?;
     daemon::connect_or_spawn(&paths, cli_client_info(), &CheckedSpawner(spawner))

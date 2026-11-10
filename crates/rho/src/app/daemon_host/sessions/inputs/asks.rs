@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 
 use rho_protocol::{
     self as wire, ApprovalAsk, ApprovalSource, Ask, Choice, DefaultAnswer, DefaultStyle, Operation,
-    PlanApprovalAsk, Question, QuestionAsk, Selection,
+    PlanApprovalAsk, Question, QuestionAsk, Selection, SessionControlAction,
 };
 use rho_sdk::{
     ApprovalRequest, CapabilityOperation, CapabilitySource, DefaultSelection, HostInputRequest,
-    HostQuestion, PathScope, SelectionMode,
+    HostQuestion, PathScope, SelectionMode, SessionControlAction as SdkAction,
 };
 use serde_json::Value;
 
@@ -59,6 +59,21 @@ pub(super) fn approval(request: &ApprovalRequest) -> Ask {
         CapabilityOperation::LoadSkill { name, path } => Operation::LoadSkill {
             name: name.clone(),
             path: path.as_deref().map(wire_path),
+        },
+        CapabilityOperation::ControlSession(target) => Operation::ControlSession {
+            action: match target.action {
+                SdkAction::New => SessionControlAction::New,
+                SdkAction::Prompt => SessionControlAction::Prompt,
+                SdkAction::Steer => SessionControlAction::Steer,
+                SdkAction::Cancel => SessionControlAction::Cancel,
+                _ => SessionControlAction::Unknown,
+            },
+            session: target
+                .session
+                .as_ref()
+                .map(|session| rho_protocol::SessionId::new(session.as_str())),
+            workspace: wire_path(&target.workspace),
+            text: target.text.clone(),
         },
         _ => Operation::Unknown,
     };

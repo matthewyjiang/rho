@@ -128,7 +128,7 @@ fn tool_kind_for_operation(operation: &Operation) -> ToolKind {
         Operation::WritePath { .. } => ToolKind::Edit,
         Operation::RunProcess { .. } => ToolKind::Execute,
         Operation::Network { .. } => ToolKind::Fetch,
-        Operation::LoadSkill { .. } => ToolKind::Other,
+        Operation::LoadSkill { .. } | Operation::ControlSession { .. } => ToolKind::Other,
         // `Unknown`, or an operation a newer daemon sends.
         _ => ToolKind::Other,
     }

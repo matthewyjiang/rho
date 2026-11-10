@@ -310,6 +310,7 @@ impl AppToolSet {
                 tool_set.session_search.clone(),
                 recall,
                 config.max_output_bytes,
+                environment.clone(),
             ));
         }
         if capabilities.contains(&ToolCapability::Rho) {

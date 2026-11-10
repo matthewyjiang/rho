@@ -451,6 +451,23 @@ fn operation(operation: &Operation) -> String {
         Operation::Network { url: Some(url) } => format!("access {}", one_line(url)),
         Operation::Network { url: None } => "access the network".to_owned(),
         Operation::LoadSkill { name, .. } => format!("load skill {}", one_line(name)),
+        Operation::ControlSession {
+            action,
+            session,
+            workspace,
+            text,
+        } => format!(
+            "{} session{} in {}{}",
+            action.as_str(),
+            session
+                .as_ref()
+                .map(|session| format!(" {}", one_line(session.as_str())))
+                .unwrap_or_default(),
+            one_line(&workspace.to_string_lossy()),
+            text.as_deref()
+                .map(|text| format!(": {}", one_line(text)))
+                .unwrap_or_default()
+        ),
         // `Operation` is non-exhaustive.
         _ => "do something this rho cannot name".to_owned(),
     }
