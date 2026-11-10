@@ -195,6 +195,7 @@ fn picks_become_daemon_changes() {
             "openrouter/openai/gpt-4".into(),
             Toggles::Select,
             Ok(SessionChange::Model {
+                auth: None,
                 model: model_ref("openrouter", "openai/gpt-4"),
             }),
         ),

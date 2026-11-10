@@ -294,14 +294,10 @@ impl Session {
         Self::open_by_id_with_histories_in_root(&session_root()?, cwd, id_prefix)
     }
 
-    /// Resolves a resume prefix without opening the session or taking its
-    /// writer lease. Daemon clients leave opening to the daemon.
-    pub(crate) fn resolve_id(cwd: &Path, id_prefix: &str) -> anyhow::Result<String> {
-        Ok(Self::resolve_target(cwd, id_prefix)?.id)
-    }
-
-    /// [`Self::resolve_id`] with the workspace the session belongs to,
-    /// which is another project's when the prefix matched none here.
+    /// Resolves a resume prefix, with the workspace the session belongs to,
+    /// which is another project's when the prefix matched none here,
+    /// without opening the session or taking its writer lease. Daemon
+    /// clients leave opening to the daemon.
     pub(crate) fn resolve_target(cwd: &Path, id_prefix: &str) -> anyhow::Result<SessionTarget> {
         let root = session_root()?;
         let resolved = SessionStore::new(&root, cwd).resolve(id_prefix)?;
@@ -518,13 +514,17 @@ impl Session {
         &self,
         definition: &crate::agent::AgentDefinition,
     ) -> anyhow::Result<()> {
-        let selected_id = definition.id.as_str();
-        let Some((id, fingerprint)) = self.stored_agent_identity()? else {
-            anyhow::bail!(
-                "cannot resume this session as agent '{selected_id}': the session has no stored agent definition identity"
-            );
-        };
-        SavedAgent { id, fingerprint }.validate(definition)
+        validate_agent_identity(&self.path, definition)
+    }
+
+    /// [`Self::validate_agent_definition_identity`] for session `target`,
+    /// read without opening the session, which another process may hold.
+    pub(crate) fn validate_saved_agent(
+        target: &SessionTarget,
+        definition: &crate::agent::AgentDefinition,
+    ) -> anyhow::Result<()> {
+        let resolved = SessionStore::new(&session_root()?, &target.cwd).resolve(&target.id)?;
+        validate_agent_identity(&resolved.path, definition)
     }
 
     /// Lists `listing`'s sessions in workspace `cwd`, newest first.
@@ -940,4 +940,19 @@ impl Session {
     pub(crate) fn cwd(&self) -> &Path {
         &self.cwd
     }
+}
+
+/// Whether `definition` is the agent the session file at `path` was saved
+/// as.
+fn validate_agent_identity(
+    path: &Path,
+    definition: &crate::agent::AgentDefinition,
+) -> anyhow::Result<()> {
+    let selected_id = definition.id.as_str();
+    let Some((id, fingerprint)) = agent_identity::read_agent_identity(path)? else {
+        anyhow::bail!(
+            "cannot resume this session as agent '{selected_id}': the session has no stored agent definition identity"
+        );
+    };
+    SavedAgent { id, fingerprint }.validate(definition)
 }

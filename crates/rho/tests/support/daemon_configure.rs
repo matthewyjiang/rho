@@ -103,6 +103,9 @@ fn reasoning_and_plan_exit(request: &Value) -> (String, bool) {
 // the daemon runs; a permission-mode and a reasoning change each answer
 // with the options as they are now, which an attached client receives as
 // `options_changed`, and the next turn's model request runs with both. A
+// model change that names an auth runs the switch on that auth, which fails
+// here for want of its key, and is invalid params when the provider does
+// not take the auth. A
 // change the session cannot take, or one this daemon does not know, is
 // refused as invalid params and changes nothing (#1667, #1670).
 // Owner: daemon session settings.
@@ -180,7 +183,14 @@ async fn a_change_reaches_attached_clients_and_the_next_turn() {
     assert_eq!(reasoned, Ok(expected.clone()));
     assert_eq!(next_options(&mut notifications, &session).await, expected);
 
+    let on_auth = |auth: &str| SessionChange::Model {
+        model: before.model.current.clone(),
+        auth: Some(auth.to_owned()),
+    };
     let refused = [
+        // The session runs on `xai-oauth`; the sandbox holds no xAI key.
+        on_auth("xai-api-key"),
+        on_auth("codex"),
         SessionChange::FastMode { enabled: true },
         SessionChange::PermissionMode {
             mode: PermissionMode::Unknown,
@@ -193,6 +203,14 @@ async fn a_change_reaches_attached_clients_and_the_next_turn() {
     assert_eq!(
         errors,
         [
+            Err(RpcError::new(
+                ErrorCode::InternalError,
+                "could not change the session's settings: missing SpaceXAI API key; run /login xai in the TUI or set XAI_API_KEY as a CI/dev override",
+            )),
+            Err(RpcError::new(
+                ErrorCode::InvalidParams,
+                "provider 'xai' does not take auth 'codex' (value 'xai/grok-fixture')",
+            )),
             Err(RpcError::new(
                 ErrorCode::InvalidParams,
                 "fast mode is not available for xai/grok-fixture",

@@ -49,7 +49,7 @@ use crate::{
         },
     },
     config::Config,
-    session::{Session as StoredSession, SessionPersistence},
+    session::Session as StoredSession,
     session_environment::{Ambient, SessionEnvironment},
     tools::mcp::McpAuthorizationMode,
     workspace::{ProjectTrust, ProjectTrusts},
@@ -262,6 +262,7 @@ async fn open_runtime(
         children,
         added_dirs,
         host_mcp,
+        persistence,
         adds_to_saved,
     } = setup;
     let config_path = settings.agent_path().to_path_buf();
@@ -337,7 +338,7 @@ async fn open_runtime(
             Box::pin(SessionRuntime::open_new(
                 session,
                 rho_sdk::SessionId::new(),
-                SessionPersistence::Saved,
+                persistence,
             ))
             .await?
         }

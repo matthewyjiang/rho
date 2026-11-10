@@ -167,9 +167,10 @@ mod unix {
     /// reasoning levels and fast mode the others may pick.
     fn changes_between(from: &SessionOptions, to: &SessionOptions) -> Vec<SessionChange> {
         let mut changes = Vec::new();
-        if from.model.current != to.model.current {
+        if from.model.current != to.model.current || from.model.auth != to.model.auth {
             changes.push(SessionChange::Model {
                 model: to.model.current.clone(),
+                auth: Some(to.model.auth.clone()),
             });
         }
         if let Some(reasoning) = to.reasoning.as_ref().filter(|reasoning| {
@@ -495,13 +496,20 @@ mod unix {
             self.is_saved().then_some(self.id.as_str())
         }
 
-        /// Whether the daemon has a file for the session.
+        /// Whether the daemon has a file for the session, which one opened
+        /// without saving never has.
         fn is_saved(&self) -> bool {
-            self.saved
-                || self
-                    .requests
-                    .as_ref()
-                    .is_some_and(DaemonRequests::saved_rows)
+            let keeps_file = !self
+                .launch
+                .setup
+                .without
+                .contains(&rho_protocol::SessionPart::Saving);
+            keeps_file
+                && (self.saved
+                    || self
+                        .requests
+                        .as_ref()
+                        .is_some_and(DaemonRequests::saved_rows))
         }
 
         /// The directory the session works in, as the daemon reports it.

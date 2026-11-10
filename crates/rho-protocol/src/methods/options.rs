@@ -46,7 +46,15 @@ pub struct SessionConfigureParams {
 pub enum SessionChange {
     /// Switch to `model`, one of [`ModelOptions::available`]. The session
     /// keeps its reasoning level, or refuses a model that cannot.
-    Model { model: ModelRef },
+    Model {
+        model: ModelRef,
+        /// The auth profile to run `model` on, as `--auth` names one: a
+        /// profile `model`'s provider takes. When absent, the session keeps
+        /// its auth if the provider takes it, else picks one that has
+        /// credentials.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auth: Option<String>,
+    },
     /// Spend `level`, one of [`ReasoningOptions::available`], on later turns.
     Reasoning { level: ReasoningLevel },
     /// Turn fast mode on or off. Turning it on needs a model that has it

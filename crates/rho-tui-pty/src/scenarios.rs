@@ -693,6 +693,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_tree::SCENARIO,
     #[cfg(unix)]
     daemon_rewind::SCENARIO,
+    #[cfg(unix)]
+    no_save::DAEMON_NO_SAVE_SESSION_SCENARIO,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     daemon_workflow::SCENARIO,
     #[cfg(unix)]

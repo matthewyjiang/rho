@@ -37,7 +37,9 @@ pub(super) fn is_daemon_resume_scenario(name: &str) -> bool {
 }
 
 // Covers: a daemon-hosted TUI resuming a saved session shows its prompt, the
-// daemon's tool card reading as the in-process TUI drew it, and the answer.
+// daemon's tool card reading as the in-process TUI drew it, and the answer;
+// `--agent` may name the agent the session was saved as, and any other is
+// refused before the TUI opens.
 // Owner: interactive TUI as a daemon client
 pub(super) fn run_daemon_resume(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
     // Dropped after the harnesses, so the daemon the resume started stops
@@ -76,6 +78,8 @@ pub(super) fn run_daemon_resume(runner: &ScenarioRunner) -> Result<ScenarioOutco
             &plan
                 .clone()
                 .with_env("RHO_TUI_DAEMON", "1")
+                .with_arg("--agent")
+                .with_arg("default")
                 .with_arg("--resume")
                 .with_arg(&session_id),
         )?;
@@ -87,6 +91,21 @@ pub(super) fn run_daemon_resume(runner: &ScenarioRunner) -> Result<ScenarioOutco
         harness.wait_for_text(SEED_PROMPT, STREAM)?;
         let code = harness.quit_with_exit_command()?;
         anyhow::ensure!(code == 0, "daemon session exited with code {code}");
+
+        super::pickers::setup_edit_user_agent(&home)?;
+        harness = spawn(
+            &plan
+                .clone()
+                .with_env("RHO_TUI_DAEMON", "1")
+                .with_arg("--agent")
+                .with_arg("editable-fixture")
+                .with_arg("--resume")
+                .with_arg(&session_id),
+        )?;
+        harness.set_phase("resume_as_another_agent");
+        harness.wait_for_text("as selected agent 'editable-fixture'", STARTUP)?;
+        let code = harness.wait_for_exit(STARTUP)?;
+        anyhow::ensure!(code != 0, "a resume as another agent exited cleanly");
         Ok(())
     });
 

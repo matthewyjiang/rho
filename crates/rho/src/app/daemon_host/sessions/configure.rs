@@ -27,7 +27,7 @@ use rho_sdk::{model::Message, ReasoningLevel};
 use super::{being_deleted, options::available_auths, queued::Queued, stopping, Held, Sessions};
 use crate::{
     app::{
-        session_options::{reasoning_from_wire, resolve_model},
+        session_options::{reasoning_from_wire, resolve_model, resolve_model_on},
         session_runtime::{
             AddDirError, RewindError, RewoundConversation, SelectNodeError, SessionRuntime,
             SettingChangeError,
@@ -41,11 +41,19 @@ use crate::{
 
 /// A change this daemon knows how to apply.
 enum Change {
-    Model(wire::ModelRef),
+    Model {
+        model: wire::ModelRef,
+        auth: Option<String>,
+    },
     Reasoning(ReasoningLevel),
-    FastMode { enabled: bool },
+    FastMode {
+        enabled: bool,
+    },
     PermissionMode(PermissionMode),
-    Context { text: String, display: String },
+    Context {
+        text: String,
+        display: String,
+    },
     AgentCatalog,
     AddDirectory(PathBuf),
     ModelCatalog,
@@ -166,7 +174,7 @@ enum Applied {
 impl Change {
     fn parse(change: wire::SessionChange) -> Result<Self, RpcError> {
         match change {
-            wire::SessionChange::Model { model } => Ok(Self::Model(model)),
+            wire::SessionChange::Model { model, auth } => Ok(Self::Model { model, auth }),
             wire::SessionChange::Reasoning { level } => reasoning_from_wire(level)
                 .map(Self::Reasoning)
                 .ok_or_else(|| invalid("unknown reasoning level")),
@@ -280,8 +288,8 @@ impl Change {
                     )),
                 };
             }
-            Self::Model(model) => {
-                let selection = model_selection(runtime, &model, auths)?;
+            Self::Model { model, auth } => {
+                let selection = model_selection(runtime, &model, auth.as_deref(), auths)?;
                 runtime.switch_model(&selection, config).await
             }
             Self::Reasoning(level) => runtime.set_reasoning_level(level, config),
@@ -292,20 +300,20 @@ impl Change {
     }
 }
 
-/// The selection `model` names for `runtime`'s session, with an auth in
-/// `auths`.
+/// The selection `model` names for `runtime`'s session, on `auth` when the
+/// change names one, else with an auth in `auths`.
 fn model_selection(
     runtime: &SessionRuntime,
     model: &wire::ModelRef,
+    auth: Option<&str>,
     auths: &[String],
 ) -> Result<ModelSelection, RpcError> {
-    resolve_model(
-        &model.provider,
-        &model.model,
-        &runtime.current_model(),
-        auths,
-    )
-    .map_err(|refused| invalid(refused.to_string()))
+    let current = runtime.current_model();
+    let resolved = match auth {
+        Some(auth) => resolve_model_on(&model.provider, &model.model, auth, &current),
+        None => resolve_model(&model.provider, &model.model, &current, auths),
+    };
+    resolved.map_err(|refused| invalid(refused.to_string()))
 }
 
 /// The error a refused change answers; the session keeps its old setting.

@@ -9,7 +9,7 @@ use rho_providers::model::{
     provider_models::with_provider_models_cache_dir_for_tests,
 };
 
-use super::{model_options, resolve_model, CurrentModel, ModelRefused};
+use super::{model_options, resolve_model, resolve_model_on, CurrentModel, ModelRefused};
 
 fn entry(provider: &str, model: &str) -> ModelCatalogEntry {
     ModelCatalogEntry {
@@ -183,5 +183,39 @@ fn resolve_model_keeps_the_current_model_and_refuses_unknown_ones() {
             auth: "api-key".into(),
             from_catalog: false,
         })
+    );
+}
+
+// Covers: a pick that names its auth runs on that auth, for another model
+// and for the current one, and is refused when the model's provider does
+// not take it, rather than run on the provider's default.
+// Owner: session options
+#[test]
+fn a_pick_that_names_its_auth_runs_on_it_or_is_refused() {
+    let on_key = CurrentModel {
+        provider: "xai".into(),
+        model: "grok-4.7".into(),
+        auth: "xai-api-key".into(),
+    };
+    let picks = [
+        ("xai", "grok-4.6", "xai-oauth"),
+        ("xai", "grok-4.7", "xai-oauth"),
+        ("xai", "grok-4.7", "xai-api-key"),
+        ("xai", "grok-4.7", "codex"),
+    ]
+    .map(|(provider, model, auth)| {
+        resolve_model_on(provider, model, auth, &on_key).map(|selection| selection.auth)
+    });
+
+    assert_eq!(
+        picks,
+        [
+            Ok("xai-oauth".to_owned()),
+            Ok("xai-oauth".to_owned()),
+            Ok("xai-api-key".to_owned()),
+            Err(ModelRefused(
+                "provider 'xai' does not take auth 'codex' (value 'xai/grok-4.7')".into()
+            )),
+        ]
     );
 }

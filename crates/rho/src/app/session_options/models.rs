@@ -13,7 +13,7 @@ use rho_providers::{
         display_name::model_display_name,
         favorites,
     },
-    provider::model_reference,
+    provider::{model_reference, provider_descriptor},
 };
 
 use crate::app::session_runtime::CurrentModel;
@@ -134,6 +134,35 @@ pub(crate) fn resolve_model(
         },
     )
     .map_err(|error| ModelRefused(refusal(error, &asked)))
+}
+
+/// [`resolve_model`] for a pick that names its auth profile, as `--auth`
+/// does: the selection runs on `auth`, which the model's provider must
+/// take. Whether `auth` has credentials is the switch's to find out.
+pub(crate) fn resolve_model_on(
+    provider: &str,
+    model: &str,
+    auth: &str,
+    current: &CurrentModel,
+) -> Result<ModelSelection, ModelRefused> {
+    // As if the session ran on `auth` and had no other: the current model
+    // keeps it, and the catalog picks it for a model that takes it.
+    let on_auth = CurrentModel {
+        auth: auth.to_owned(),
+        ..current.clone()
+    };
+    let selection = resolve_model(provider, model, &on_auth, &[auth.to_owned()])?;
+    let takes_auth = selection.auth == auth
+        && provider_descriptor(&selection.provider)
+            .is_some_and(|descriptor| descriptor.auth_mode(auth).is_some());
+    if !takes_auth {
+        return Err(ModelRefused(format!(
+            "provider '{}' does not take auth '{auth}' (value '{}')",
+            selection.provider,
+            model_reference(provider, model)
+        )));
+    }
+    Ok(selection)
 }
 
 fn refusal(error: ModelSelectionError, asked: &str) -> String {
