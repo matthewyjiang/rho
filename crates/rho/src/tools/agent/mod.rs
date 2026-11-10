@@ -1,6 +1,7 @@
 //! Delegated agent tools backed by native SDK runtimes or an ACP host.
 
 mod host_orchestrator;
+mod host_target;
 mod host_tools;
 pub(crate) mod message_receipt;
 

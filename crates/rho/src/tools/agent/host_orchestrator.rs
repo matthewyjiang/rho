@@ -11,6 +11,7 @@ use rho_sdk::{
 };
 use serde_json::{json, Value};
 
+use super::host_target;
 use crate::{
     agent::AgentDefinition,
     tools::{mcp::exported_name::namespaced_tool_name, sdk_registry::AppToolSet},
@@ -24,11 +25,15 @@ pub(super) struct HostOrchestrator {
     runs: Mutex<Vec<HostRun>>,
 }
 
-/// T3's three task tools, bound only as a complete set.
+/// T3's three required task tools, bound only as a complete set, plus the
+/// optional `orchestrator_capabilities` tool used to label a child's thread.
 struct HostContract {
     delegate: Arc<dyn Tool>,
     status: Arc<dyn Tool>,
     cancel: Arc<dyn Tool>,
+    /// Not part of the required set: without it a child with a per-call model
+    /// still runs on that model, and only T3's label for its thread is stale.
+    capabilities: Option<Arc<dyn Tool>>,
 }
 
 impl HostContract {
@@ -47,7 +52,49 @@ impl HostContract {
             delegate: lookup("delegate_task")?,
             status: lookup("task_status")?,
             cancel: lookup("task_cancel")?,
+            capabilities: tools
+                .tool_named(&namespaced_tool_name(SERVER, "orchestrator_capabilities")),
         })
+    }
+
+    /// Asks T3 what it offers for `model`, so the child's thread is labelled
+    /// with it; see [`host_target::launch_target`] for which replies yield a
+    /// target. Returns `Ok(None)` for every reason the label falls back to the
+    /// parent's model (tool absent, call failed, failure or unreadable reply,
+    /// or policy declines), logging the ones that mean T3's contract changed so
+    /// they are distinguishable from a deliberate decline. A user cancellation
+    /// propagates as `Err` so the launch does not spawn a child after a cancel.
+    async fn query_launch_target(
+        &self,
+        invocation_id: ToolCallId,
+        model: &str,
+        context: ToolContext,
+    ) -> Result<Option<Value>, ToolError> {
+        let Some(capabilities) = self.capabilities.as_ref() else {
+            return Ok(None);
+        };
+        let output = match capabilities
+            .call(
+                ToolInvocation::new(invocation_id, json!({"search": model})),
+                context,
+            )
+            .await
+        {
+            Ok(output) => output,
+            Err(error) if error.kind() == ToolErrorKind::Cancelled => return Err(error),
+            Err(error) => {
+                tracing::debug!(%error, model, "T3 orchestrator_capabilities call failed; labelling the child's thread with the parent's model");
+                return Ok(None);
+            }
+        };
+        if output.is_failure() {
+            tracing::debug!(model, "T3 orchestrator_capabilities returned a failure; labelling the child's thread with the parent's model");
+            return Ok(None);
+        }
+        let Some(structured) = output.structured_content() else {
+            return Ok(None);
+        };
+        Ok(host_target::launch_target(structured, model))
     }
 }
 
@@ -61,11 +108,12 @@ pub(super) struct HostRun {
 }
 
 impl HostOrchestrator {
-    /// Binds T3's three task tools from the `t3-code` server. A missing tool
-    /// does not fail the session: hosts open sessions without MCP servers too
-    /// (T3's provider status probe does). Instead every host operation fails
-    /// with the reason, so the user's `--t3code` opt-in never silently falls
-    /// back to in-process subagents.
+    /// Binds T3's three required task tools (and the optional
+    /// `orchestrator_capabilities` tool) from the `t3-code` server. A missing
+    /// required tool does not fail the session: hosts open sessions without MCP
+    /// servers too (T3's provider status probe does). Instead every host
+    /// operation fails with the reason, so the user's `--t3code` opt-in never
+    /// silently falls back to in-process subagents.
     pub(super) fn connect(tools: &AppToolSet) -> Self {
         Self {
             contract: HostContract::bind(tools),
@@ -87,9 +135,26 @@ impl HostOrchestrator {
         model_override: Option<&str>,
         context: ToolContext,
     ) -> Result<HostRun, ToolError> {
-        let arguments = delegate_arguments(definition, prompt, model_override);
-        let output = self
-            .contract()?
+        let contract = self.contract()?;
+        let mut arguments = delegate_arguments(definition, prompt, model_override);
+        // Only a `provider/model` reference can match a model id T3 advertises,
+        // so the label lookup applies to those alone; an alias or bare id keeps
+        // the parent's label, as before. The lookup reuses this call's id and
+        // context: both are safe because the nested MCP call never reads the id
+        // and completes fully before `delegate_task` runs.
+        if let Some(model) = model_override.filter(|model| model.contains('/')) {
+            match contract
+                .query_launch_target(invocation_id.clone(), model, context.clone())
+                .await?
+            {
+                Some(target) => arguments["target"] = target,
+                None => tracing::debug!(
+                    model,
+                    "T3 will label this child's thread with the parent's model"
+                ),
+            }
+        }
+        let output = contract
             .delegate
             .call(ToolInvocation::new(invocation_id, arguments), context)
             .await
@@ -193,10 +258,10 @@ impl HostOrchestrator {
 }
 
 /// A child receives just the rebinding command and the self-contained task.
-/// No `target.model` is sent: T3 accepts only models the ACP agent advertises,
-/// which excludes most pinned definition models (measured: `openai-codex/
-/// gpt-6-luna` failed with `model_unavailable`). The child's `/agent:` rebind
-/// applies the definition's model policy or the explicit per-call override itself.
+/// Its `/agent:` rebind applies the definition's model policy or the explicit
+/// per-call override itself, so the launch never depends on T3's model picker.
+/// [`HostOrchestrator::delegate`] adds a `target` only to keep T3's label for
+/// the thread in step with a per-call override.
 fn delegate_arguments(
     definition: &AgentDefinition,
     prompt: &str,

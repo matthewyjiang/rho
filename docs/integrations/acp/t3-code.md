@@ -36,7 +36,8 @@ sequenceDiagram
 
 - Rho calls the `delegate_task` tool of T3's `t3-code` MCP server, with `/agent:<name> <task>` as the child's first prompt. The `agents` tool's `status` and `stop` actions map to T3's `task_status` and `task_cancel`. There is no `message` action.
 - T3 derives each child's title from its task. Rho sends the full task and leaves T3's separate title field alone. The local `agents list` label is the task's first nonempty line.
-- A per-call `agent.model` travels in that `/agent:` command and is resolved by the child Rho. Rho does not use T3's `target.model`, which is a different model picker. If the model cannot be resolved or signed in, the child task fails. It never reports success on a fallback model.
+- A per-call `agent.model` travels in that `/agent:` command and is resolved by the child Rho. If the model cannot be resolved or signed in, the child task fails. It never reports success on a fallback model.
+- So that the child's thread shows the model it runs on, Rho asks T3's `orchestrator_capabilities` tool whether the parent's provider offers that `provider/model`. If it does, Rho also sets `target.model` and repeats the parent's options, such as permission mode and thought level, because T3 keeps them only for an unchanged model. Otherwise Rho sends no target and the thread keeps the parent's model label, while the child still runs on the requested model. Only a `provider/model` reference is looked up; an alias or bare model ID keeps the parent's label without a lookup. A model T3 does not list, a parent option the model does not accept, a failed or unreadable capabilities reply, or a T3 without that tool also keep the parent's label.
 - Only agents that use Rho's own runtime are offered. Agents that run through Claude Code, Cursor, or Antigravity are rejected, since T3 runs those providers itself. The model can start one with T3's `delegate_task` tool directly.
 - Workflows still run inside Rho.
 

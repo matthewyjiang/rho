@@ -129,7 +129,8 @@ Per-call overrides require `runtime: rho`. Claude CLI, Cursor, and Antigravity u
 different model namespaces and reject this field; their existing definition-based
 selection is unchanged. CLI, TUI, and ACP native delegation use the same binder.
 Under `rho acp --t3code`, the override travels with the child's `/agent:` rebind
-command rather than T3's model picker, so it reaches the actual Rho child.
+command, so it reaches the actual Rho child. T3's model picker for that thread
+[follows it when T3 offers the model](/integrations/acp/t3-code#subagents-run-as-t3-threads).
 
 Native `agent` receipts and `agents` structured status include the bound `provider`
 and `model`; completion/status text and run artifacts also report that selection.
