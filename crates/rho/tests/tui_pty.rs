@@ -1218,6 +1218,14 @@ fn daemon_streaming_controls_hold_and_reveal_output() {
     assert_pass("daemon_streaming_controls");
 }
 
+// Covers: with RHO_TUI_DAEMON=1, deleting a session the TUI just left,
+// which the daemon still holds open, goes through the daemon.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_tui_deletes_a_session_the_daemon_holds() {
+    assert_pass("daemon_delete_left_session");
+}
+
 // Covers: with RHO_TUI_DAEMON=1, the palette completes a command's
 // argument, `/fast` follows the session's model, `/rewind` says when
 // rewind is off, and a permission change mid-turn says it is queued.

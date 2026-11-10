@@ -106,3 +106,14 @@ pub(super) const INLINE_CHOICE_CLICK_SCENARIO: Scenario = Scenario::new(
     INLINE_CHOICE_CLICK_STEPS,
     /*smoke*/ false,
 );
+
+// Covers: a daemon session's TUI deletes a session it just left. The daemon
+// still holds that session open, so the delete goes through the daemon.
+// Owner: interactive TUI as a daemon client
+#[cfg(unix)]
+pub(super) const DAEMON_DELETE_LEFT_SESSION_SCENARIO: Scenario = Scenario {
+    id: "daemon_delete_left_session",
+    description: "Delete a session the daemon still holds from the resume picker",
+    env: super::daemon_resume::DAEMON_ENV,
+    ..INLINE_CHOICE_CLICK_SCENARIO
+};

@@ -352,6 +352,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     questionnaire::QUESTIONNAIRE_CLICK_SCENARIO,
     questionnaire::APPROVAL_CLICK_SCENARIO,
     inline_choice_click::INLINE_CHOICE_CLICK_SCENARIO,
+    #[cfg(unix)]
+    inline_choice_click::DAEMON_DELETE_LEFT_SESSION_SCENARIO,
     palette_click::SLASH_PALETTE_CLICK_SCENARIO,
     palette_click::FILE_PALETTE_CLICK_SCENARIO,
     #[cfg(unix)]

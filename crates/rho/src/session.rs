@@ -64,7 +64,9 @@ use persistence::{
 
 pub(crate) use agent_identity::SavedAgent;
 pub use delete::{is_cross_project, DeleteOptions, DeleteOutcome};
-pub(crate) use delete::{CleanupOutcome, ExactDelete, RunNotFinished, WorkspaceDeleteOutcome};
+pub(crate) use delete::{
+    is_in_use, CleanupFailure, CleanupOutcome, ExactDelete, RunNotFinished, WorkspaceDeleteOutcome,
+};
 pub(crate) use id_match::SavedInManyWorkspaces;
 pub(crate) use lease::SessionInUse;
 use lease::{LeasePurpose, SessionLease};

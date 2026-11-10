@@ -55,6 +55,26 @@ pub(crate) struct CleanupFailure {
     pub(crate) id: String,
     pub(crate) cwd: PathBuf,
     pub(crate) error: String,
+    /// Refused because the session, or one it started, is open elsewhere:
+    /// whoever holds it, such as the daemon, can still delete it.
+    pub(crate) in_use: bool,
+}
+
+impl CleanupFailure {
+    fn new(target: &SessionTarget, error: &anyhow::Error) -> Self {
+        Self {
+            id: target.id.clone(),
+            cwd: target.cwd.clone(),
+            error: format!("{error:#}"),
+            in_use: is_in_use(error),
+        }
+    }
+}
+
+/// Whether a delete was refused because something holds the session or a
+/// session it started.
+pub(crate) fn is_in_use(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| cause.is::<super::SessionInUse>())
 }
 
 /// Result of an explicit cleanup of sessions for missing workspace directories.
@@ -225,11 +245,7 @@ pub(super) fn cleanup_missing_targets_in_roots(
                 continue;
             }
             Err(error) => {
-                outcome.failures.push(CleanupFailure {
-                    id: target.id.clone(),
-                    cwd: target.cwd.clone(),
-                    error: format!("{error:#}"),
-                });
+                outcome.failures.push(CleanupFailure::new(target, &error));
                 continue;
             }
         }
@@ -239,11 +255,7 @@ pub(super) fn cleanup_missing_targets_in_roots(
         }
         match batch.delete_target(target) {
             Ok(deleted) => outcome.deleted.push(deleted),
-            Err(error) => outcome.failures.push(CleanupFailure {
-                id: target.id.clone(),
-                cwd: target.cwd.clone(),
-                error: format!("{error:#}"),
-            }),
+            Err(error) => outcome.failures.push(CleanupFailure::new(target, &error)),
         }
     }
     batch.finish();
@@ -324,11 +336,7 @@ pub(super) fn delete_targets_in_roots(
         }
         match batch.delete_target(target) {
             Ok(deleted) => outcome.deleted.push(deleted),
-            Err(error) => outcome.failures.push(CleanupFailure {
-                id: target.id.clone(),
-                cwd: target.cwd.clone(),
-                error: format!("{error:#}"),
-            }),
+            Err(error) => outcome.failures.push(CleanupFailure::new(target, &error)),
         }
     }
     batch.finish();
