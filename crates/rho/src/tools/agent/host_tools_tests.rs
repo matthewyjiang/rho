@@ -141,10 +141,11 @@ fn started_reply() -> ToolOutput {
     }))
 }
 
-// Covers: per-call models must always reach the child's rebind. T3 is asked
-// for a matching target only for a per-call model, and a launch must survive a
-// host that lacks the capabilities tool, fails it, or does not offer the model.
-// The host must not claim an effective selection before that child has bound it.
+// Covers: a per-call model always reaches the child's rebind command; T3 is
+// queried for a label target only for a `provider/model` reference; and the
+// launch still succeeds (with the parent's label) when no safe target applies
+// -- the capabilities tool is absent, the call fails, or the model is not
+// offered. `asks_t3` and `target` are explicit per row, not derived.
 // Owner: host agent launch forwarding, including parsed shared tool arguments.
 #[tokio::test]
 async fn model_override_reaches_the_child_command_and_an_offered_target() {
@@ -163,14 +164,43 @@ async fn model_override_reaches_the_child_command_and_an_offered_target() {
     };
     let luna_target = json!({"model": LUNA, "options": [{"id": "mode", "value": "plan"}]});
     let failed = || Some(Err(ToolError::new(ToolErrorKind::Execution, "host down")));
-    for (model, capabilities, target) in [
-        (None, offers_luna(), None),
-        (Some(LUNA), offers_luna(), Some(luna_target)),
-        (Some("@review"), offers_luna(), None),
-        (Some(LUNA), failed(), None),
-        (Some(LUNA), None, None),
+    for (case, model, capabilities, asks_t3, target) in [
+        (
+            "no model override: no query, no target",
+            None,
+            None,
+            false,
+            None,
+        ),
+        (
+            "alias: skipped before the query, no target",
+            Some("@review"),
+            offers_luna(),
+            false,
+            None,
+        ),
+        (
+            "offered provider/model: query, target with the parent's options",
+            Some(LUNA),
+            offers_luna(),
+            true,
+            Some(luna_target),
+        ),
+        (
+            "failed query: launch proceeds with the parent's label",
+            Some(LUNA),
+            failed(),
+            true,
+            None,
+        ),
+        (
+            "no capabilities tool: no query, parent's label",
+            Some(LUNA),
+            None,
+            false,
+            None,
+        ),
     ] {
-        let asks_host = model.is_some() && capabilities.is_some();
         let fixture = Fixture::with_capabilities(Ok(started_reply()), capabilities);
         let mut arguments = json!({"agent_id": "host-worker", "prompt": prompt});
         if let Some(model) = model {
@@ -193,11 +223,11 @@ async fn model_override_reaches_the_child_command_and_an_offered_target() {
             )
         };
         let mut expected = Vec::new();
-        if asks_host {
+        if asks_t3 {
             expected.push(call("orchestrator_capabilities", json!({"search": model})));
         }
         expected.push(call("delegate_task", delegated));
-        assert_eq!(*fixture.calls.lock().unwrap(), expected, "{model:?}");
+        assert_eq!(*fixture.calls.lock().unwrap(), expected, "{case}");
         assert_eq!(
             output.structured_content(),
             Some(
@@ -205,9 +235,37 @@ async fn model_override_reaches_the_child_command_and_an_offered_target() {
                     AgentRunView::started("task-1".into(), "host-worker".into(),)
                 )
                 .unwrap()
-            )
+            ),
+            "{case}",
         );
     }
+}
+
+// Covers: a cancel during the capabilities query must cancel the launch and
+// never send delegate_task, so a cancelled turn cannot spawn an untracked
+// child. Owner: host agent launch forwarding.
+#[tokio::test]
+async fn capabilities_cancellation_cancels_the_launch_before_delegating() {
+    let fixture =
+        Fixture::with_capabilities(Ok(started_reply()), Some(Err(ToolError::cancelled())));
+    let error = fixture
+        .launch_args(json!({
+            "agent_id": "host-worker",
+            "prompt": "Implement the parser",
+            "model": "openai-codex/gpt-6-luna",
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), ToolErrorKind::Cancelled);
+    assert_eq!(
+        *fixture.calls.lock().unwrap(),
+        vec![(
+            namespaced_tool_name("t3-code", "orchestrator_capabilities"),
+            invocation(json!({})).id().clone(),
+            json!({"search": "openai-codex/gpt-6-luna"}),
+        )]
+    );
+    assert!(fixture.orchestrator.runs().is_empty());
 }
 
 // Covers: launch must keep the host task receipt, fail loud on a bad/missing

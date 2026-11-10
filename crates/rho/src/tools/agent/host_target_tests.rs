@@ -95,6 +95,31 @@ fn target_is_sent_only_when_it_keeps_the_launch_unchanged() {
             None,
         ),
         (
+            "inherited provider instance is absent from providers",
+            {
+                let mut capabilities = capabilities();
+                capabilities["inheritedProviderInstanceId"] = json!("no-such-instance");
+                capabilities
+            },
+            OPUS,
+            None,
+        ),
+        (
+            // Fail closed: a missing field must not read as "no options" and
+            // send an empty options that drops the parent's mode/thought level.
+            "reply omits inheritedOptions entirely",
+            {
+                let mut capabilities = capabilities();
+                capabilities
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("inheritedOptions");
+                capabilities
+            },
+            OPUS,
+            None,
+        ),
+        (
             "reply without the expected fields",
             json!({"providers": []}),
             OPUS,

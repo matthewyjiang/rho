@@ -8,7 +8,9 @@ use serde_json::{json, Value};
 #[serde(rename_all = "camelCase")]
 struct Capabilities {
     inherited_provider_instance_id: String,
-    #[serde(default)]
+    /// Required, not `#[serde(default)]`: a reply missing this field must fail
+    /// to parse rather than read as "no options", which would send an empty
+    /// `options` and make T3 drop the parent's mode and thought level.
     inherited_options: Vec<SelectedOption>,
     providers: Vec<Provider>,
 }
@@ -54,7 +56,14 @@ struct ModelOption {
 ///   level, only for an unchanged model. The target repeats them, and the
 ///   model must accept every one.
 pub(super) fn launch_target(capabilities: &Value, model: &str) -> Option<Value> {
-    let capabilities = Capabilities::deserialize(capabilities).ok()?;
+    let capabilities = match Capabilities::deserialize(capabilities) {
+        Ok(capabilities) => capabilities,
+        Err(error) => {
+            // A shape we cannot read means T3's contract changed, not a decline.
+            tracing::debug!(%error, "could not read T3 orchestrator_capabilities; labelling the child's thread with the parent's model");
+            return None;
+        }
+    };
     let offered = capabilities
         .providers
         .iter()
@@ -63,7 +72,7 @@ pub(super) fn launch_target(capabilities: &Value, model: &str) -> Option<Value> 
         })?
         .models
         .iter()
-        .find(|offered| offered.id == model)?;
+        .find(|entry| entry.id == model)?;
     let accepts = |inherited: &SelectedOption| {
         offered
             .options
