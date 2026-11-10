@@ -8,15 +8,15 @@ use crate::{
         DetachReason, JobList, Seq, SessionEvent, SessionId, Status, DAEMON_STATUS, JOB_LIST,
         SESSION_DETACHED, SESSION_EVENT,
     },
-    CredentialStoreKind, CredentialStoreStatus, DaemonStatus, JobListParams, JobListResponse,
-    ProtocolVersion, RestartCost, StatusParams, VersionFix,
+    ClientInfo, CredentialStoreKind, CredentialStoreStatus, DaemonStatus, JobListParams,
+    JobListResponse, ProtocolVersion, RestartCost, StatusParams, VersionFix,
 };
 
-fn client_info() -> ClientInfo {
-    ClientInfo {
+fn client_hello() -> ClientHello {
+    ClientHello::frontend(ClientInfo {
         name: "test".into(),
         version: "0".into(),
-    }
+    })
 }
 
 fn fake_status() -> DaemonStatus {
@@ -152,7 +152,7 @@ async fn handshake_maps_incompatible_daemons_to_version_mismatch() {
             reader.read_line().await.unwrap();
         });
 
-        let error = Client::handshake(client, client_info())
+        let error = Client::handshake(client, client_hello())
             .await
             .err()
             .expect("mismatch");
@@ -206,7 +206,7 @@ async fn overlapping_requests_pair_by_id_and_notifications_interleave() {
         // Hold the stream open until the client leaves.
         reader.read_line().await.unwrap();
     });
-    let (client, mut notifications, _) = Client::handshake(client, client_info()).await.unwrap();
+    let (client, mut notifications, _) = Client::handshake(client, client_hello()).await.unwrap();
 
     let (status, jobs) = tokio::join!(
         client.request::<Status>(&StatusParams {}),
@@ -285,7 +285,7 @@ async fn pending_requests_fail_when_the_daemon_cannot_answer_them() {
             // Hold the stream open until the client leaves.
             reader.read_line().await.unwrap();
         });
-        let (client, _notifications, _) = Client::handshake(client, client_info()).await.unwrap();
+        let (client, _notifications, _) = Client::handshake(client, client_hello()).await.unwrap();
 
         let failure = match client.request::<Status>(&StatusParams {}).await {
             Err(ClientError::Closed) => Failure::Closed,

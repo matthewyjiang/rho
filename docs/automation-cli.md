@@ -329,7 +329,7 @@ mistyped `/cancle`, is refused rather than sent to the model.
 
 `rho attach` reads stdin only when, as it starts, stdin is the terminal and
 `rho attach` runs in its foreground, so a script's stdin is not taken for
-answers. Otherwise it only tells the requests, and any client can answer them.
+answers. Otherwise it only tells the requests, and any frontend can answer them.
 It does the same at the end of input; a request it held then no longer times
 out. `--input stdin` reads stdin whatever it is, for a script that writes
 answers to it. Such a script waits for each request on stderr before it writes

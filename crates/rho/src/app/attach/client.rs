@@ -23,7 +23,7 @@ use crate::{
         shutdown_signal::ShutdownSignals,
     },
     cli::{AttachInput, AttachOutput},
-    daemon::{self, cli_client_info, Connection},
+    daemon::{self, ConnectAs, Connection},
 };
 
 pub(in crate::app) async fn run(
@@ -132,7 +132,7 @@ async fn follow(id: &str, view: &mut View, lines: Lines) -> Result<(), Automatio
         client,
         mut notifications,
         ..
-    } = daemon::connect(&paths, cli_client_info())
+    } = daemon::connect(&paths, ConnectAs::Frontend.hello())
         .await
         .map_err(|error| AutomationExit::other(format!("{error:#}")))?;
     let jobs = client

@@ -167,9 +167,16 @@ impl Sessions {
                 ));
             }
             let with = OpenWith {
-                // The environment the last prompt brought; configure brings none.
+                // The environment and grant the last prompt brought;
+                // configure brings none.
                 environment: session.environment.current(),
                 setup: wire::SessionSetup::default(),
+                grant: self.jobs.grant_of(&session.job).ok_or_else(|| {
+                    RpcError::new(
+                        ErrorCode::InternalError,
+                        format!("session's job {} is not recorded", session.job),
+                    )
+                })?,
             };
             let Entered::Started(started) =
                 self.start_turn(&session, &mut slot, &with, /*key*/ None)?
