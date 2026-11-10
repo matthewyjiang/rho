@@ -21,8 +21,13 @@ use tokio::{
 };
 
 use super::{
-    super::jobs::TurnEnd, budget, cost, inputs::Inputs, options::available_auths, saved_replay,
-    start::StartedTurn, LoadedSession,
+    super::{jobs::TurnEnd, wire::state_event},
+    budget, cost,
+    inputs::Inputs,
+    options::available_auths,
+    saved_replay,
+    start::StartedTurn,
+    LoadedSession,
 };
 use crate::{
     app::{
@@ -295,15 +300,35 @@ pub(super) fn save_transcript(session: &LoadedSession, runtime: &SessionRuntime)
 /// Replaces the feed's transcript with the rows the session's file replays
 /// now that its conversation moved to another node of its tree, and
 /// detaches the session's clients to replay it (see [`Feed::restart`]).
+/// The new stream then says what a reopened session's does: how the job's
+/// last turn ended, so a replay still ends in the state an attach reports,
+/// and how full the context is now.
 ///
 /// [`Feed::restart`]: super::feed::Feed::restart
-pub(super) fn restart_transcript(session: &LoadedSession, runtime: &SessionRuntime) {
-    let saved = {
+pub(super) async fn restart_transcript(session: &LoadedSession, runtime: &SessionRuntime) {
+    let (saved, usage) = {
         let mut live = session.live();
         live.forget_replayed();
-        saved_replay(&mut live, runtime, &session.job).unwrap_or_default()
+        (
+            saved_replay(&mut live, runtime, &session.job).unwrap_or_default(),
+            live.context_usage(runtime.context_estimate()),
+        )
     };
+    let usage = cost::priced(vec![usage], &session.id).await;
+    let last_turn = session.jobs.get(&session.job).and_then(|job| {
+        let last = job.moved();
+        Some([
+            wire::SessionEvent::TurnEnded {
+                turn: last.turn.clone()?,
+                outcome: job.outcome?,
+            },
+            state_event(&last),
+        ])
+    });
     session.feed.restart(saved);
+    session
+        .feed
+        .publish(last_turn.into_iter().flatten().chain(usage));
 }
 
 /// Generates the title the session's first answered turn asked for, which

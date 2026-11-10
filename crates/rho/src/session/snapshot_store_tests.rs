@@ -47,7 +47,8 @@ fn empty_root_is_session_start_and_remains_restorable() -> anyhow::Result<()> {
     let baseline_id = session.active_checkpoint_target()?.unwrap().0;
     let first_turn = snapshot(&session, 2, vec![Message::user_text("first prompt")]);
     session.save_snapshot(&first_turn, first_turn.history())?;
-    // Missing user text alone must not classify later commits as session start.
+    // Missing user text alone must not classify a later commit as a session
+    // start: it carries the turn before it on.
     let assistant_turn = snapshot(
         &session,
         3,
@@ -59,14 +60,10 @@ fn empty_root_is_session_start_and_remains_restorable() -> anyhow::Result<()> {
     session.save_snapshot(&assistant_turn, &assistant_turn.history()[1..])?;
 
     let tree = SessionTree::load(session.path())?;
-    let items = tree.items()?;
+    let items = tree.turn_items()?;
     assert_eq!(
         items.iter().map(|item| item.kind).collect::<Vec<_>>(),
-        vec![
-            SessionTreeItemKind::SessionStart,
-            SessionTreeItemKind::Turn,
-            SessionTreeItemKind::Turn,
-        ]
+        vec![SessionTreeItemKind::SessionStart, SessionTreeItemKind::Turn]
     );
     assert_eq!(items[0].id, baseline_id);
     assert_eq!(items[0].first_user_text, None);

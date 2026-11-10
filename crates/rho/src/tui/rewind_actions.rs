@@ -54,7 +54,7 @@ impl App {
 
         let previews = agent
             .stored_session()
-            .map(|storage| storage.tree_items())
+            .map(|storage| storage.tree_turn_items())
             .transpose()?
             .unwrap_or_default()
             .into_iter()

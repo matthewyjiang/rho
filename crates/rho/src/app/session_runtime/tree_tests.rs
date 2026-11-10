@@ -40,7 +40,7 @@ fn leaf(runtime: &SessionRuntime) -> Option<NodeId> {
 
 // Covers: selecting a node moves what the model reads, not only the file's
 // leaf, back to that node, so the next turn continues from it; a node the
-// tree does not hold changes neither.
+// tree does not hold, or a leaf the file could not record, changes neither.
 // Owner: session runtime tree selection
 #[tokio::test]
 async fn selecting_a_node_moves_the_model_conversation_and_the_leaf_to_it() {
@@ -61,9 +61,13 @@ async fn selecting_a_node_moves_the_model_conversation_and_the_leaf_to_it() {
     let second = add(&mut runtime, "second");
 
     let unknown = NodeId::from_string("no-such-node").unwrap();
+    let stored = runtime.storage.file().unwrap().clone();
+    stored.fail_next_leaf_commit_for_tests();
+    let unrecorded = runtime.select_node(&first, &config).await.is_err();
+    let after_failed_write = (user_texts(&runtime), leaf(&runtime));
     let refused = matches!(
         runtime.select_node(&unknown, &config).await,
-        Err(SelectNodeError::Node(_))
+        Err(SelectNodeError::UnknownNode(_))
     );
     let after_refusal = (user_texts(&runtime), leaf(&runtime));
     let selected = runtime
@@ -71,17 +75,20 @@ async fn selecting_a_node_moves_the_model_conversation_and_the_leaf_to_it() {
         .await
         .map_err(|error| error.to_string());
 
+    let both = (vec!["first".to_owned(), "second".to_owned()], Some(second));
     assert_eq!(
         (
-            refused,
+            (refused, unrecorded),
             after_refusal,
+            after_failed_write,
             selected,
             user_texts(&runtime),
             leaf(&runtime)
         ),
         (
-            true,
-            (vec!["first".to_owned(), "second".to_owned()], Some(second)),
+            (true, true),
+            both.clone(),
+            both,
             Ok(()),
             vec!["first".to_owned()],
             Some(first),

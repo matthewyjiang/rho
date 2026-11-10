@@ -6,15 +6,9 @@
 //! stay in the tree. The session keeps its model, settings, tools, and
 //! added directories: those belong to the session, not to a node.
 
-use rho_sdk::SystemPrompt;
-
 use super::{model_scoped_config, SessionRuntime, SettingChangeError};
 use crate::{
-    app::{
-        conversation_switch::replace_system_prompt, interactive_runtime::startup::prompt_cache_key,
-    },
-    config::Config,
-    session::tree::NodeId,
+    app::interactive_runtime::startup::prompt_cache_key, config::Config, session::tree::NodeId,
 };
 
 /// Why [`SessionRuntime::select_node`] left the conversation where it was.
@@ -23,14 +17,19 @@ pub(crate) enum SelectNodeError {
     /// Nothing is saved yet, so the session has no tree.
     #[error("the session has no saved conversation yet")]
     Unsaved,
-    /// The session's tree holds no such node, or cannot be read.
-    #[error("{0:#}")]
-    Node(anyhow::Error),
+    /// The session's tree holds no such node.
+    #[error("the session's tree has no node '{0}'")]
+    UnknownNode(NodeId),
     #[error(transparent)]
     Change(SettingChangeError),
 }
 
 impl SessionRuntime {
+    /// How full the session's context is, between turns.
+    pub(crate) fn context_estimate(&self) -> rho_sdk::ContextEstimate {
+        self.built.session.context_estimate()
+    }
+
     /// Continues the conversation from `node` of the session's saved tree.
     /// On error the session keeps the conversation it had.
     pub(crate) async fn select_node(
@@ -43,13 +42,20 @@ impl SessionRuntime {
             .file()
             .cloned()
             .ok_or(SelectNodeError::Unsaved)?;
+        let read = |error: anyhow::Error| SelectNodeError::Change(SettingChangeError::Apply(error));
+        let known = stored
+            .with_session_tree(|tree| Ok(tree.node(node).is_some()))
+            .map_err(read)?;
+        if !known {
+            return Err(SelectNodeError::UnknownNode(node.clone()));
+        }
         let conversation = stored
             .snapshot_for_node(
                 node,
                 self.built.provider.identity(),
                 prompt_cache_key(stored.id()),
             )
-            .map_err(SelectNodeError::Node)?;
+            .map_err(read)?;
         let previous = self.built.session.snapshot();
         self.rebuild_onto(conversation, process_config)
             .await
@@ -66,9 +72,8 @@ impl SessionRuntime {
         Ok(())
     }
 
-    /// Rebuilds the runtime around `conversation` under the system prompt
-    /// the session runs with now, which a node saved before a model switch
-    /// does not hold.
+    /// Rebuilds the runtime around `conversation`, a point of the
+    /// session's tree, with the session's model and permission mode.
     async fn rebuild_onto(
         &mut self,
         conversation: rho_sdk::SessionSnapshot,
@@ -77,12 +82,7 @@ impl SessionRuntime {
         let config = model_scoped_config(&self.current_model(), process_config);
         let (mode, writes) = (self.permission.mode, self.permission.writes.clone());
         self.rebuild_runtime_onto(&config, mode, writes, conversation)
-            .await?;
-        if let SystemPrompt::Custom(text) = &self.built.prompt.system {
-            replace_system_prompt(&self.built.session, text)
-                .map_err(|error| SettingChangeError::Apply(error.into()))?;
-        }
-        Ok(())
+            .await
     }
 }
 
