@@ -171,8 +171,7 @@ impl Sessions {
                 environment: session.environment.current(),
                 setup: wire::SessionSetup::default(),
             };
-            let Entered::Started(cancel, runtime) = self.start_turn(&session, &mut slot, &with)?
-            else {
+            let Entered::Started(started) = self.start_turn(&session, &mut slot, &with)? else {
                 unreachable!("an idle session never queues behind a wake wait");
             };
             goal.cancel = CancellationToken::new();
@@ -183,8 +182,7 @@ impl Sessions {
             }
             goal.publish(&session);
             (
-                cancel,
-                runtime,
+                started,
                 Turn {
                     model: UserInput::text(model),
                     display: UserInput::text(display),
@@ -192,12 +190,13 @@ impl Sessions {
                 },
             )
         };
-        let (cancel, runtime, input) = start;
+        let (started, input) = start;
         let _started = TurnTask {
             session: Arc::clone(&session),
-            runtime,
+            runtime: started.runtime,
+            budget: started.budget,
             stopping: self.stopping.clone(),
-            cancel,
+            cancel: started.cancel,
             limit: None,
         }
         .spawn_goal(input);
