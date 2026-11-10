@@ -85,39 +85,3 @@ fn a_context_reads_back_from_the_environment_it_wrote() {
         vec![(SESSION_DEPTH_ENV, "0".to_owned())]
     );
 }
-
-// Covers: a session a job starts gets no more than that job's context gives
-// (#1780): at least one level deeper than its parent, however shallow it
-// asks to be, and within both scopes, however wide it asks.
-// Owner: caller-context nesting.
-#[test]
-fn a_started_sessions_context_is_bounded_by_its_parents() {
-    let context = |depth, scope| CallerContext { depth, scope };
-    let narrow = scope(Access::Write, only(&["/work"]));
-    let cases = [
-        // (parent, asked, child)
-        (
-            CallerContext::ROOT,
-            CallerContext::ROOT,
-            context(1, Scope::FULL),
-        ),
-        (
-            context(2, narrow.clone()),
-            context(0, Scope::FULL),
-            context(3, narrow.clone()),
-        ),
-        (
-            context(1, Scope::FULL),
-            context(5, scope(Access::Read, only(&["/work/a"]))),
-            context(5, scope(Access::Read, only(&["/work/a"]))),
-        ),
-        (
-            context(u32::MAX, narrow),
-            context(1, scope(Access::Write, only(&["/home"]))),
-            context(u32::MAX, scope(Access::Write, only(&[]))),
-        ),
-    ];
-    for (parent, asked, child) in cases {
-        assert_eq!(parent.child(&asked), child);
-    }
-}

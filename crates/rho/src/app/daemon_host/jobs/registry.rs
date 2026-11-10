@@ -1,6 +1,5 @@
 //! Every job the daemon knows, in memory and in the store.
 
-use crate::caller_context::CallerContext;
 use std::{
     collections::BTreeMap,
     io,
@@ -14,6 +13,7 @@ use super::{
     state::TransitionRefused, unix_now, Admission, JobEvent, JobId, JobRecord, JobState, JobStore,
     JobSubject, TurnEnd, TurnRecord,
 };
+use crate::caller_context::CallerContext;
 
 /// The daemon's jobs: the ones it runs and the records it loaded at
 /// startup. Shared by every request and turn task.
@@ -253,6 +253,16 @@ impl JobRegistry {
             .values()
             .filter(|record| record.state.in_progress())
             .count()
+    }
+
+    /// Records `grant` as job `id`'s, as a session reopened under it has.
+    /// Does nothing for a job the registry does not know.
+    pub(in crate::app::daemon_host) fn set_grant(&self, id: &JobId, grant: CallerContext) {
+        let mut jobs = self.lock();
+        if let Some(record) = jobs.get_mut(id).filter(|record| record.grant != grant) {
+            record.grant = grant;
+            persist(&self.store, record);
+        }
     }
 
     /// The grant job `id`'s record holds, if the job is known.

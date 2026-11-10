@@ -158,10 +158,8 @@ pub struct SessionNewParams {
     /// What the session may do through session control until a prompt
     /// brings another grant; absent, what `environment` carries
     /// (`RHO_SESSION_DEPTH`, `RHO_SESSION_SCOPE`), which is no limit when
-    /// it carries none. The daemon records it on the session's job. When
-    /// `parent` names a session a job of the daemon writes, the daemon
-    /// first narrows it by that job's grant: the new session sits at least
-    /// one level deeper than its parent and may do no more than it.
+    /// it carries none. The daemon records it on the session's job as
+    /// named: it does not check it against `parent`'s.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant: Option<super::SessionGrant>,
 }

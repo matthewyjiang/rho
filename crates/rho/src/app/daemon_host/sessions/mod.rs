@@ -62,7 +62,6 @@ use crate::{
         session_events::LiveEvents,
         session_runtime::{CredentialFailure, SessionHandle, SessionRuntime},
     },
-    caller_context::CallerContext,
     config::Config,
 };
 
@@ -572,18 +571,7 @@ impl Sessions {
         // Resolved before the session opens, so a malformed parent opens
         // nothing.
         let started_by = parent.map(|parent| self.job_writing(&parent)).transpose()?;
-        let asked = grant::asked(grant, &environment)?;
-        // A session a job of this daemon starts gets no more than that
-        // job's record says it may give, whatever the request asks for.
-        let grant = match started_by.as_ref().and_then(Option::as_ref) {
-            Some(parent) => self
-                .jobs
-                .grant_of(parent)
-                .unwrap_or(CallerContext::ROOT)
-                .child(&asked),
-            None => asked,
-        };
-        let with = OpenWith::under(grant, &environment, setup)?;
+        let with = OpenWith::under(grant::asked(grant, &environment)?, &environment, setup)?;
         let job = JobId::generate();
         let opened = open_session(
             Opening::New { workspace, agent },
@@ -723,7 +711,7 @@ impl Sessions {
         // just attached to.
         // Applied only if this attach reopens the session: one the daemon
         // has loaded keeps the environment and setup it opened with.
-        // Its grant is its environment's: only a prompt names one.
+        // Its grant is its environment's: an attach names none.
         let with = OpenWith::under(
             grant::asked(/*named*/ None, &params.environment)?,
             &params.environment,
@@ -872,7 +860,12 @@ impl SessionJobRecord {
                     ),
                 })
             }
-            (Self::Reuse(record), SessionJob::Last(last)) if last.id == record.id => Ok(()),
+            (Self::Reuse(record), SessionJob::Last(last)) if last.id == record.id => {
+                // The session reopens with the grant its environment
+                // carries, so its record says the same.
+                jobs.set_grant(&record.id, record.grant);
+                Ok(())
+            }
             (_, SessionJob::Busy(job)) => Err(writing(&job, session)),
             (Self::Register(_) | Self::Reuse(_), SessionJob::New | SessionJob::Last(_)) => {
                 Err(RpcError::new(

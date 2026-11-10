@@ -268,3 +268,45 @@ fn a_session_reopens_on_its_latest_job_unless_one_writes_it() {
         assert_eq!(registry.session_job(&session), expected, "{name}");
     }
 }
+
+// Covers: a session job's record holds the grant of its turn under way, each
+// turn's replacing the last one's, and a daemon that starts over the records
+// still finds it (#1780).
+// Owner: daemon job registry, session grants.
+#[test]
+fn a_turns_grant_is_kept_on_its_jobs_record_across_daemons() {
+    use crate::caller_context::{Access, CallerContext, Scope, Workspaces};
+    let home = TempDir::new().unwrap();
+    let registry = JobRegistry::open(JobStore::open(home.path()).unwrap());
+    let job = JobRecord::new_session(
+        JobId::generate(),
+        PathBuf::from("/work"),
+        rho_sdk::SessionId::new(),
+    );
+    let id = job.id.clone();
+    registry.register(job).unwrap();
+    let limited = CallerContext {
+        depth: 2,
+        scope: Scope {
+            access: Access::Read,
+            workspaces: Workspaces::Only(vec![PathBuf::from("/work")]),
+        },
+    };
+
+    let opened = registry.grant_of(&id);
+    registry
+        .start_turn(&id, TurnRecord::starting(/*key*/ None), limited.clone())
+        .unwrap();
+    let under_way = registry.grant_of(&id);
+    drop(registry);
+    let restarted = JobRegistry::open(JobStore::open(home.path()).unwrap());
+
+    assert_eq!(
+        (opened, under_way, restarted.grant_of(&id)),
+        (
+            Some(CallerContext::ROOT),
+            Some(limited.clone()),
+            Some(limited)
+        )
+    );
+}

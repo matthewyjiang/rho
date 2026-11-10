@@ -3903,7 +3903,7 @@
               "type": "null"
             }
           ],
-          "description": "What the session may do through session control until a prompt\nbrings another grant; absent, what `environment` carries\n(`RHO_SESSION_DEPTH`, `RHO_SESSION_SCOPE`), which is no limit when\nit carries none. The daemon records it on the session's job. When\n`parent` names a session a job of the daemon writes, the daemon\nfirst narrows it by that job's grant: the new session sits at least\none level deeper than its parent and may do no more than it."
+          "description": "What the session may do through session control until a prompt\nbrings another grant; absent, what `environment` carries\n(`RHO_SESSION_DEPTH`, `RHO_SESSION_SCOPE`), which is no limit when\nit carries none. The daemon records it on the session's job as\nnamed: it does not check it against `parent`'s."
         },
         "parent": {
           "anyOf": [

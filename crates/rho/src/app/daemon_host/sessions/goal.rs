@@ -16,7 +16,6 @@ use super::{
 };
 use crate::{
     app::session_runtime::{SessionRuntime, Turn, TurnStart},
-    caller_context::CallerContext,
     goal::{
         blocked_goal_resumption_prompt, format_human_steps, initial_goal_prompt, GoalDisposition,
         GoalEvaluation, GoalState, EVALUATION_TIMEOUT, GOAL_RETRY_DELAY, MAX_GOAL_CHARS,
@@ -172,10 +171,12 @@ impl Sessions {
                 // configure brings none.
                 environment: session.environment.current(),
                 setup: wire::SessionSetup::default(),
-                grant: self
-                    .jobs
-                    .grant_of(&session.job)
-                    .unwrap_or(CallerContext::ROOT),
+                grant: self.jobs.grant_of(&session.job).ok_or_else(|| {
+                    RpcError::new(
+                        ErrorCode::InternalError,
+                        format!("session's job {} is not recorded", session.job),
+                    )
+                })?,
             };
             let Entered::Started(started) =
                 self.start_turn(&session, &mut slot, &with, /*key*/ None)?

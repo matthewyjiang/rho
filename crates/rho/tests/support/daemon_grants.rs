@@ -5,9 +5,10 @@
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{JobList, SessionNew, SessionPrompt},
+    methods::{JobList, SessionAttach, SessionNew, SessionPrompt},
     Client, ClientEnvironment, ContentBlock, GrantAccess, GrantWorkspaces, JobListParams,
-    JobSummary, SessionGrant, SessionId, SessionNewParams, SessionPromptParams, SessionSetup,
+    JobSummary, SessionAttachParams, SessionGrant, SessionId, SessionNewParams,
+    SessionPromptParams, SessionSetup,
 };
 use serde_json::{json, Value};
 
@@ -79,28 +80,34 @@ async fn seen_in_a_turn(
     (depth.to_owned(), serde_json::from_str(scope).unwrap())
 }
 
+/// A grant that reaches only the sandbox's workspace, at `depth`.
+fn limited_to_the_workspace(sandbox: &Sandbox, depth: u32) -> SessionGrant {
+    SessionGrant {
+        depth,
+        access: GrantAccess::Write,
+        workspaces: GrantWorkspaces::Only(vec![sandbox.workspace.clone()]),
+    }
+}
+
 // Covers: the daemon records the grant a session opens with on its job and
 // writes the session's variables from it, over what the client's
 // environment carried; a session started naming a parent records the
-// parent's job and is held to the parent's recorded grant whatever it asks
-// for; a prompt's grant replaces the record's, and a prompt that names none
-// from an environment that carries none leaves no limit (#1780).
+// parent's job beside the grant it named; a prompt's grant replaces the
+// record's, and a prompt that names none from an environment that carries
+// none leaves no limit (#1780).
 // Owner: daemon job records, session grants.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_daemon_holds_each_sessions_grant_and_parent_on_its_job() {
     let sandbox = Sandbox::new();
     sandbox.set_permission_mode("bypass");
     let client = sandbox.start_daemon("tool-call").await;
-    let limited = SessionGrant {
-        depth: 1,
-        access: GrantAccess::Write,
-        workspaces: GrantWorkspaces::Only(vec![sandbox.workspace.clone()]),
-    };
-    let unlimited = SessionGrant {
-        depth: 0,
-        access: GrantAccess::Write,
+    let opening = limited_to_the_workspace(&sandbox, 1);
+    let prompting = SessionGrant {
+        depth: 2,
+        access: GrantAccess::Read,
         workspaces: GrantWorkspaces::Any,
     };
+    let deeper = limited_to_the_workspace(&sandbox, 2);
     // What the caller's environment claims loses to the grant it names.
     let claiming_deeper = sandbox
         .client_environment()
@@ -113,7 +120,7 @@ async fn the_daemon_holds_each_sessions_grant_and_parent_on_its_job() {
         &client,
         claiming_deeper,
         None,
-        Some(limited.clone()),
+        Some(opening.clone()),
     )
     .await;
     let opened = job_of(&client, &parent).await;
@@ -122,35 +129,80 @@ async fn the_daemon_holds_each_sessions_grant_and_parent_on_its_job() {
         &client,
         sandbox.client_environment(),
         Some(&parent),
-        Some(unlimited),
+        Some(deeper.clone()),
     )
     .await;
     let started = job_of(&client, &child).await;
-    let under_the_grant = seen_in_a_turn(&sandbox, &client, &parent, Some(limited.clone())).await;
+    let under_a_grant = seen_in_a_turn(&sandbox, &client, &parent, Some(prompting.clone())).await;
     let prompted = job_of(&client, &parent).await.grant;
     let by_a_person = seen_in_a_turn(&sandbox, &client, &parent, None).await;
     let afterwards = job_of(&client, &parent).await.grant;
 
-    let scope = json!({"access": "write", "workspaces": {"only": [sandbox.workspace]}});
     assert_eq!(
         (
             (opened.parent.clone(), opened.grant),
             (started.parent, started.grant),
-            (under_the_grant, prompted),
+            (under_a_grant, prompted),
             (by_a_person, afterwards),
         ),
         (
-            (None, Some(limited.clone())),
+            (None, Some(opening)),
+            (Some(opened.id), Some(deeper)),
             (
-                Some(opened.id),
-                Some(SessionGrant {
-                    depth: 2,
-                    ..limited.clone()
-                })
+                (
+                    "2".to_owned(),
+                    json!({"access": "read", "workspaces": "any"})
+                ),
+                Some(prompting)
             ),
-            (("1".to_owned(), scope), Some(limited)),
             (("unset".to_owned(), Value::Null), None),
         ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a session the daemon unloaded and an attach reopens runs under
+// the grant the attaching client's environment carries, and its job says
+// so: the record never keeps a last turn's grant the reopened session's
+// processes no longer see (#1780).
+// Owner: daemon job records, session grants.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reopened_sessions_job_holds_the_grant_it_reopened_under() {
+    let sandbox = Sandbox::new();
+    sandbox.set_permission_mode("bypass");
+    let client = sandbox
+        .start_daemon_with("tool-call", &["--unload-idle-after", "200ms"])
+        .await;
+    let limited = limited_to_the_workspace(&sandbox, 1);
+    let session = open(
+        &sandbox,
+        &client,
+        sandbox.client_environment(),
+        None,
+        Some(limited.clone()),
+    )
+    .await;
+    seen_in_a_turn(&sandbox, &client, &session, Some(limited.clone())).await;
+    let before = job_of(&client, &session).await.grant;
+    sandbox.wait_unloaded(&session, /*times*/ 1).await;
+
+    // Kept attached, so the session stays loaded while its job is read.
+    let (person, _notifications) = sandbox.connect_following().await;
+    person
+        .request::<SessionAttach>(&SessionAttachParams {
+            session: session.clone(),
+            after: None,
+            environment: sandbox.client_environment(),
+            setup: SessionSetup::default(),
+        })
+        .await
+        .unwrap();
+    let reopened = job_of(&client, &session).await.grant;
+
+    assert_eq!(
+        (before, reopened),
+        (Some(limited), None),
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

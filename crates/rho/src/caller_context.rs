@@ -2,22 +2,17 @@
 //! the call that started its turn may let it do (#1765).
 //!
 //! One [`CallerContext`] travels the whole chain:
-//! - the session-control core (`app::session_control`) writes it into the
-//!   environment of every session it starts or prompts, one level deeper and
-//!   with the caller's scope, and the session's processes inherit it, so a
-//!   `rho mcp serve` a session's shell runs reads it from its environment;
+//! - the session-control core (`app::session_control`) names it as the grant
+//!   of every session it starts or prompts, one level deeper and with the
+//!   caller's scope; the daemon records it on the session's job and writes
+//!   it into the session's environment (#1780), which the session's
+//!   processes inherit, so a `rho mcp serve` a session's shell runs reads it
+//!   from its environment;
 //! - rho's MCP client sends the calling session's current context with every
 //!   call to a server that accepts it ([`CallerContext::to_send`]), so a long-running
 //!   server, such as a stdio `rho mcp serve` started when the session loaded,
 //!   or one reached over HTTP, answers for the turn that calls it, not for the
 //!   one that was current when it started.
-//!
-//! The daemon holds each session's context (#1780): the core names it in the
-//! request that starts or prompts the session ([`rho_protocol::SessionGrant`]),
-//! and the daemon records it on the session's job, narrows a new session's
-//! by its parent's, and writes the session's variables from that record. The
-//! variables and `_meta` only carry it on from there to the processes the
-//! session starts.
 //!
 //! The depth guards against runaway recursion and the scope keeps a grant's
 //! limits on the sessions it starts. Neither is a sandbox: a session with a
@@ -152,16 +147,6 @@ impl CallerContext {
     /// Whether this is [`Self::ROOT`], which limits nothing.
     pub(crate) fn is_root(&self) -> bool {
         *self == Self::ROOT
-    }
-
-    /// The context of a session that a job running with `self` starts and
-    /// asks `asked` for: at least one level deeper than its parent, and no
-    /// more than both may do.
-    pub(crate) fn child(&self, asked: &Self) -> Self {
-        Self {
-            depth: asked.depth.max(self.depth.saturating_add(1)),
-            scope: asked.scope.intersect(&self.scope),
-        }
     }
 
     /// The context in an environment, read through `read`: a process's own,

@@ -303,9 +303,7 @@ A session's agent can start, prompt, and watch other sessions through session co
 - `access` is `read` (list, read, and wait for sessions) or `write` (also start, prompt, steer, and cancel them).
 - `workspaces` is `"any"`, or `{"only": [...]}` with the directories it reaches, as canonical paths.
 
-`rho/session/new` and `rho/session/prompt` name it as `grant`. Without one, the daemon reads it from the request's `environment` (`RHO_SESSION_DEPTH`, `RHO_SESSION_SCOPE`), which is no limit when the environment carries none; a value there that does not parse gets `InvalidParams`. The daemon records the grant on the session's job, where `rho/job/list` shows it, and writes those two variables into the session's environment from the record, in place of any the client sent. A prompt's grant replaces the record's when its turn starts, so a session a person prompts afterwards has no limit again.
-
-A new session that names a `parent` whose job the daemon knows is held to that job's recorded grant, whatever it asks for: it sits at least one level deeper than its parent, and may do no more than both grants allow.
+`rho/session/new` and `rho/session/prompt` name it as `grant`. Without one, the daemon reads it from the request's `environment` (`RHO_SESSION_DEPTH`, `RHO_SESSION_SCOPE`), which is no limit when the environment carries none; a value there that does not parse gets `InvalidParams`. The daemon records the grant on the session's job, where `rho/job/list` shows it, and writes those two variables into the session's environment from the record, in place of any the client sent. A prompt's grant replaces the record's when its turn starts, so a session a person prompts afterwards has no limit again; a session reopened by an attach takes the grant of the attaching client's environment. The daemon records a grant as named: session control decides it, one level deeper than its caller and with no more than the caller's scope, and checks it against its own limits.
 
 The grant bounds session control, which enforces it; it does not confine the session, whose commands can reach the daemon's socket themselves.
 

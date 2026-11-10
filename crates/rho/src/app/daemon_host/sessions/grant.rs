@@ -6,7 +6,8 @@
 //! to its client's environment, as a person's `rho run --detach` inside a
 //! session's shell does. Either way the daemon decides the grant once,
 //! records it, and writes the session's `RHO_SESSION_*` variables from it,
-//! so the record and what the session's processes see never differ.
+//! when it opens or reopens the session and when a prompt starts a turn, so
+//! the record and what the session's processes see never differ.
 
 use rho_protocol::{ClientEnvironment, ErrorCode, RpcError, SessionGrant, SessionSetup};
 
@@ -41,16 +42,21 @@ impl OpenWith {
         environment: &ClientEnvironment,
         setup: SessionSetup,
     ) -> Result<Self, RpcError> {
-        let carried = (!grant.is_root())
-            .then(|| grant.env())
-            .into_iter()
-            .flatten()
-            .map(|(name, value)| (name.to_owned(), value));
+        // A grant without limits is carried by no variable.
+        let carried = if grant.is_root() {
+            Vec::new()
+        } else {
+            grant.env()
+        };
         let environment: ClientEnvironment = environment
             .iter()
             .filter(|(name, _)| !ENV_NAMES.contains(name))
             .map(|(name, value)| (name.to_owned(), value.to_owned()))
-            .chain(carried)
+            .chain(
+                carried
+                    .into_iter()
+                    .map(|(name, value)| (name.to_owned(), value)),
+            )
             .collect();
         Ok(Self {
             environment: session_environment(&environment)?,
