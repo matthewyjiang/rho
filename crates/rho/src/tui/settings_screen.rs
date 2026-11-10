@@ -465,7 +465,12 @@ impl App {
         let (tui_values, problems) = match update {
             SettingsUpdate::Loaded(settings) => {
                 let problems = settings.problems();
-                let values = settings.values(SettingsNamespace::Tui).values.clone();
+                let mut values = settings.values(SettingsNamespace::Tui).values.clone();
+                if self.streams.mode_from_shortcut {
+                    values.remove(&SettingKey::new(
+                        super::client_settings::OUTPUT_STREAMING_KEY,
+                    ));
+                }
                 self.daemon_settings = Some(*settings);
                 (Some(values), problems)
             }
@@ -494,6 +499,12 @@ impl App {
             )));
         }
         if let Some(values) = tui_values {
+            // A saved streaming mode replaces the shortcut's.
+            if values.contains_key(&SettingKey::new(
+                super::client_settings::OUTPUT_STREAMING_KEY,
+            )) {
+                self.streams.mode_from_shortcut = false;
+            }
             let next = self.info.services.settings.with_client_values(&values);
             self.apply_tui_settings(next);
         }
@@ -597,3 +608,7 @@ fn applies_status(applies: Applies) -> Option<&'static str> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+#[path = "settings_screen_tests.rs"]
+mod tests;

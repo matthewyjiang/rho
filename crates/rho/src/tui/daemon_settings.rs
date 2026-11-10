@@ -482,4 +482,4 @@ fn capitalized(id: &str) -> String {
 
 #[cfg(test)]
 #[path = "daemon_settings_tests.rs"]
-mod tests;
+pub(super) mod tests;

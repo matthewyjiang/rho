@@ -6,7 +6,6 @@ use ratatui::{
 };
 
 use super::{
-    advisor_status::AdvisorStatus,
     approval_frame,
     composer_chrome::ComposerDividerSlot,
     composer_layout::{content_width, prompt_width, PROMPT_PREFIX},
@@ -121,7 +120,7 @@ impl App {
         // Stay on the top rule in every composer mode so overlays do not hide
         // the reviewer. Follow the rule color; warning only when no model.
         let right = (slot == ComposerDividerSlot::Top)
-            .then(|| AdvisorStatus::from_runtime(&self.info.runtime))
+            .then(|| self.advisor_status())
             .and_then(|status| {
                 DividerCaption::new(
                     status.divider_labels(),

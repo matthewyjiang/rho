@@ -2,11 +2,12 @@
 //! (#1720), and applying an advisor model `/agents` saved to the
 //! in-process runtime.
 
-use rho_protocol::{SettingChange, SettingKey, SettingValue};
+use rho_protocol::{ModelSelection, SettingChange, SettingKey, SettingValue};
 
 use crate::agent::ADVISOR_AGENT_ID;
 
 use super::{
+    advisor_status::AdvisorStatus,
     config_row::ConfigRow,
     daemon_settings::{DaemonSettings, SettingsNamespace},
     settings_screen::ConfigPage,
@@ -54,6 +55,33 @@ impl App {
 }
 
 impl App {
+    /// The advisor as every surface shows it: the daemon's saved settings
+    /// once read, which `/advisor` and `/config` change, and the in-process
+    /// runtime's otherwise.
+    pub(super) fn advisor_status(&self) -> AdvisorStatus {
+        let Some(settings) = &self.daemon_settings else {
+            return AdvisorStatus::from_runtime(&self.info.runtime);
+        };
+        let model = match settings.value(
+            SettingsNamespace::Agent,
+            &SettingKey::new(ADVISOR_MODEL_KEY),
+        ) {
+            Some(SettingValue::Model(ModelSelection::Rho { provider, model })) => {
+                Some(rho_providers::provider::model_reference(provider, model))
+            }
+            Some(SettingValue::Model(ModelSelection::ClaudeCli { model })) => {
+                Some(rho_providers::provider::model_reference(
+                    crate::claude_runtime::models::CLAUDE_CODE_SOURCE_LABEL,
+                    model
+                        .as_deref()
+                        .unwrap_or(crate::claude_runtime::models::CLAUDE_DEFAULT_MODEL_BADGE),
+                ))
+            }
+            _ => None,
+        };
+        AdvisorStatus::of(advisor_on(settings), model)
+    }
+
     /// `/advisor [on|off|model]` in a daemon session.
     pub(super) fn execute_daemon_advisor_command(&mut self, args: &str) {
         let Some(settings) = &self.daemon_settings else {

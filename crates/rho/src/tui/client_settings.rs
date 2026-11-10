@@ -144,6 +144,9 @@ impl TuiSettings {
     }
 }
 
+/// The `tui` setting the streaming shortcut changes without saving.
+pub(super) const OUTPUT_STREAMING_KEY: &str = "output_streaming";
+
 /// The `tui` setting whose lowering deletes saved prompts.
 pub(super) const PROMPT_HISTORY_LIMIT_KEY: &str = "prompt_history_limit";
 
@@ -210,7 +213,7 @@ static SHOW_REASONING_OUTPUT: Setting<TuiSettings, bool> = Setting {
 };
 
 static OUTPUT_STREAMING: Setting<TuiSettings, StreamingMode> = Setting {
-    key: "output_streaming",
+    key: OUTPUT_STREAMING_KEY,
     meta: meta(
         "Output streaming",
         "Reveal text live, by paragraph, or at message boundaries.",

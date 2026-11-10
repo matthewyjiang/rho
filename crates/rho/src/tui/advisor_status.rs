@@ -22,11 +22,18 @@ pub(super) enum AdvisorStatus {
 
 impl AdvisorStatus {
     pub(super) fn new(advisor_mode: bool, model: Option<&InternalAgentModelConfig>) -> Self {
+        Self::of(
+            advisor_mode,
+            model.map(InternalAgentModelConfig::display_reference),
+        )
+    }
+
+    /// The status of `advisor_mode` with the advisor model `model`, as its
+    /// reference reads.
+    pub(super) fn of(advisor_mode: bool, model: Option<String>) -> Self {
         match (advisor_mode, model) {
             (false, _) => Self::Off,
-            (true, Some(selection)) => Self::Reviewing {
-                model: selection.display_reference(),
-            },
+            (true, Some(model)) => Self::Reviewing { model },
             (true, None) => Self::MissingModel,
         }
     }

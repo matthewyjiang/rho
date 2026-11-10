@@ -12,6 +12,7 @@ impl App {
     /// The cycle shortcut's change lasts until rho exits; it is not saved.
     pub(super) fn set_streaming_mode(&mut self, mode: StreamingMode) {
         self.info.services.settings.output_streaming = mode;
+        self.streams.mode_from_shortcut = true;
         self.apply_streaming_mode(mode);
         self.set_status(format!("output streaming: {}", mode.label()));
     }

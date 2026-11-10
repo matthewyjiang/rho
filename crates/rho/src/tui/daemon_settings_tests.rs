@@ -55,7 +55,9 @@ fn models() -> Vec<ModelChoice> {
 }
 
 /// One kind of each, as the daemon would serve them.
-fn settings() -> DaemonSettings {
+/// Settings with the advisor on with `openai/gpt-5.5`, and the `tui`
+/// client's `output_streaming` at `live`.
+pub(in crate::tui) fn settings() -> DaemonSettings {
     let mode = spec(
         "behavior.advisor_mode",
         "Advisor mode",

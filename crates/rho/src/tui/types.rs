@@ -98,6 +98,9 @@ pub(super) struct InteractiveModelSelection {
 #[derive(Default)]
 pub(super) struct StreamUi {
     pub(in crate::tui) mode: super::streaming_mode::StreamingMode,
+    /// The cycle shortcut chose `mode`, which is not saved: reading the
+    /// saved settings again keeps it until a saved change replaces it.
+    pub(in crate::tui) mode_from_shortcut: bool,
     pub(in crate::tui) paragraph_boundary: super::streaming_mode::ParagraphBoundary,
     pub(in crate::tui) assistant_stream: AppendOnlyStream,
     pub(in crate::tui) assistant_stream_code_fence: CodeFenceState,
