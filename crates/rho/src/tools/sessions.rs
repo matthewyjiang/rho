@@ -37,7 +37,13 @@ enum Action {
 }
 
 impl Action {
+    /// Routes `arguments`. An argument given as `null` counts as absent
+    /// everywhere, as models often fill the flat schema's unused arguments,
+    /// which each action's own arguments would refuse.
     fn parse(mut arguments: serde_json::Value) -> serde_json::Result<Self> {
+        if let Some(fields) = arguments.as_object_mut() {
+            fields.retain(|_, value| !value.is_null());
+        }
         #[cfg(unix)]
         if let Some(call) = control::Call::parse(&arguments) {
             return Ok(Self::Control(call));

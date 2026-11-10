@@ -108,3 +108,46 @@ fn control_arguments_carry_their_definitions() {
         "state: {state}"
     );
 }
+
+// Covers: an argument a model fills with `null`, as models do with the flat
+// schema's unused arguments, counts as absent for every action: a history
+// call is not refused for a control argument it does not take, and a `read`
+// with a `null` anchor reads the live session, not history (#1714).
+// Owner: sessions tool's argument routing.
+#[test]
+fn null_arguments_count_as_absent_for_every_action() {
+    let route = |arguments: Value| match Action::parse(arguments) {
+        Ok(Action::Index(_)) => "history",
+        Ok(Action::Recall(_)) => "recall",
+        #[cfg(unix)]
+        Ok(Action::Control(_)) => "control",
+        Err(_) => "refused",
+    };
+    let nulls = json!({
+        "workspace": null, "prompt": null, "timeout_secs": null, "cursor": null,
+        "anchor": null, "scope": null, "recall_id": null,
+    });
+    let with_nulls = |call: Value| {
+        let mut call = call;
+        for (name, null) in nulls.as_object().unwrap() {
+            call.as_object_mut()
+                .unwrap()
+                .entry(name.clone())
+                .or_insert(null.clone());
+        }
+        call
+    };
+
+    let routes: Vec<&str> = [
+        json!({"action": "search", "query": "q"}),
+        json!({"action": "recall", "recall_id": "r"}),
+        json!({"action": "read", "session": "s", "anchor": "a"}),
+        json!({"action": "read", "session": "s"}),
+    ]
+    .into_iter()
+    .map(|call| route(with_nulls(call)))
+    .collect();
+
+    let live_read = if cfg!(unix) { "control" } else { "refused" };
+    assert_eq!(routes, ["history", "recall", "history", live_read]);
+}

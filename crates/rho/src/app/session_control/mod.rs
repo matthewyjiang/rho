@@ -306,11 +306,15 @@ impl SessionControl {
             .filter_map(|job| job.session.as_ref())
             .collect();
         let mut driven = self.driven.lock().unwrap_or_else(PoisonError::into_inner);
-        for sessions in driven.values_mut() {
-            sessions.retain(|session| running.contains(session));
-        }
-        driven.retain(|_, sessions| !sessions.is_empty());
-        let mine = driven.get(holder);
+        // Only the holder's own sessions: its admission lock keeps its own
+        // starts out of `running`'s blind spot, but another holder may have
+        // started a turn since that `running` does not show yet. A holder's
+        // ended sessions so wait for its next admission to leave, at most
+        // `max_sessions` of them.
+        let mine = driven.get_mut(holder).map(|mine| {
+            mine.retain(|session| running.contains(session));
+            &*mine
+        });
         // A session whose turn already runs starts no new one: the daemon
         // refuses that prompt itself.
         let adds = session.is_none_or(|session| mine.is_none_or(|mine| !mine.contains(session)));
