@@ -35,7 +35,10 @@ use crate::{
 };
 
 /// Bounds each wait on an explicit signal; never the way a test syncs.
-const TEST_BUDGET: Duration = Duration::from_secs(5);
+/// A loaded Windows runner took 6.4s for a prompt that takes milliseconds
+/// (neighbouring tests ran 17s in the same job), so the tripwire sits well
+/// clear of that.
+const TEST_BUDGET: Duration = Duration::from_secs(60);
 
 /// What the asking tool got back for its question.
 #[derive(Debug, PartialEq)]
