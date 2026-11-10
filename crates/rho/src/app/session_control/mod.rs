@@ -12,7 +12,9 @@
 //! sessions each holder may have running ([`Limits::max_sessions`]). Every
 //! refusal names its budget, its limit, and the value asked for
 //! ([`Refusal`]). A session the core starts or prompts runs with the
-//! caller's context one level deeper, so the limits follow it down. A
+//! caller's context one level deeper, so the limits follow it down: the core
+//! names that context as the request's grant, and the daemon records it on
+//! the session's job and writes the session's environment from it (#1780). A
 //! session a caller starts from a session of its own, as the native
 //! `sessions` tool's callers do, records the job writing that session as its
 //! parent, and its turns wait for capacity in the daemon-wide agent budget
@@ -42,9 +44,9 @@ use rho_protocol::{
         JobList, SessionCancel, SessionConfigure, SessionList, SessionNew, SessionPrompt,
         SessionSteer,
     },
-    ClientEnvironment, ClientError, ContentBlock, JobId, JobKind, JobListParams, JobState,
-    JobSummary, ModelRef, SessionCancelParams, SessionChange, SessionConfigureParams, SessionId,
-    SessionListParams, SessionNewParams, SessionPromptParams, SessionSetup, SessionSteerParams,
+    ClientError, ContentBlock, JobId, JobKind, JobListParams, JobState, JobSummary, ModelRef,
+    SessionCancelParams, SessionChange, SessionConfigureParams, SessionId, SessionListParams,
+    SessionNewParams, SessionPromptParams, SessionSetup, SessionSteerParams,
 };
 use serde_json::Value;
 
@@ -192,10 +194,11 @@ impl SessionControl {
             .daemon
             .request::<SessionNew>(&SessionNewParams {
                 cwd: workspace.clone(),
-                environment: Self::child_environment(caller),
+                environment: caller.environment.clone(),
                 agent: params.agent,
                 setup: SessionSetup::default(),
                 parent: caller.session.clone(),
+                grant: Some(caller.child_context().into()),
             })
             .await?;
         if let Some(model) = params.model {
@@ -271,7 +274,8 @@ impl SessionControl {
                 session: session.clone(),
                 content,
                 timeout_ms: None,
-                environment: Self::child_environment(caller),
+                environment: caller.environment.clone(),
+                grant: Some(caller.child_context().into()),
                 idempotency_key: None,
             })
             .await?;
@@ -384,25 +388,6 @@ impl SessionControl {
             .request::<JobList>(&JobListParams {})
             .await?
             .jobs)
-    }
-
-    /// The environment a session `caller` starts or prompts runs with: the
-    /// caller's, with its context one level deeper in place of any the
-    /// caller's environment carries.
-    fn child_environment(caller: &Caller) -> ClientEnvironment {
-        caller
-            .environment
-            .iter()
-            .filter(|(name, _)| !crate::caller_context::ENV_NAMES.contains(name))
-            .map(|(name, value)| (name.to_owned(), value.to_owned()))
-            .chain(
-                caller
-                    .child_context()
-                    .env()
-                    .into_iter()
-                    .map(|(name, value)| (name.to_owned(), value)),
-            )
-            .collect()
     }
 }
 

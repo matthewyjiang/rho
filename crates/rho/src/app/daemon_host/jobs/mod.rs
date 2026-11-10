@@ -18,7 +18,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::workflow::RunId;
+use crate::{caller_context::CallerContext, workflow::RunId};
 
 mod registry;
 mod state;
@@ -122,6 +122,13 @@ pub(super) struct JobRecord {
     /// The job that started this one, such as a subagent run's parent; `None`
     /// for a job a client started.
     pub(super) parent: Option<JobId>,
+    /// What a session job's turn under way, or its last, may do through
+    /// session control, as the request that started it said (#1780); before
+    /// the first turn, what the session opened with. The session's
+    /// `RHO_SESSION_*` variables are written from it. Other jobs keep
+    /// [`CallerContext::ROOT`].
+    #[serde(default = "root_grant", skip_serializing_if = "CallerContext::is_root")]
+    pub(super) grant: CallerContext,
     /// How a session job's turns get under way; subagent and workflow jobs
     /// keep [`Admission::Immediate`], their runs taking capacity as
     /// `subagents.rs` says.
@@ -227,6 +234,7 @@ impl JobRecord {
             state,
             workspace,
             parent,
+            grant: CallerContext::ROOT,
             admission: Admission::Immediate,
             created_at: now,
             updated_at: now,
@@ -234,6 +242,11 @@ impl JobRecord {
             turn: None,
         }
     }
+}
+
+/// The grant of a record that names none.
+fn root_grant() -> CallerContext {
+    CallerContext::ROOT
 }
 
 impl Admission {

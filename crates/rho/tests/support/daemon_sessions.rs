@@ -278,6 +278,7 @@ impl Sandbox {
                 agent: None,
                 setup: SessionSetup::default(),
                 parent: None,
+                grant: None,
             })
             .await
             .unwrap()
@@ -321,6 +322,7 @@ impl Sandbox {
                 timeout_ms: None,
                 environment: self.client_environment(),
                 idempotency_key: key.map(IdempotencyKey::new),
+                grant: None,
             })
             .await
             .map(|prompted| prompted.turn)
@@ -361,6 +363,7 @@ impl Sandbox {
                 timeout_ms: None,
                 environment,
                 idempotency_key: None,
+                grant: None,
             })
             .await
             .unwrap();
@@ -711,6 +714,7 @@ async fn a_prompts_image_and_resource_reach_the_model() {
                 timeout_ms: None,
                 environment: sandbox.client_environment(),
                 idempotency_key: None,
+                grant: None,
             })
             .await
             .map(|_| ())
@@ -739,6 +743,7 @@ async fn a_prompts_image_and_resource_reach_the_model() {
             timeout_ms: None,
             environment: sandbox.client_environment(),
             idempotency_key: None,
+            grant: None,
         })
         .await
         .unwrap();

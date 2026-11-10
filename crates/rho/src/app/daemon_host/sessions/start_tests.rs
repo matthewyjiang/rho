@@ -34,6 +34,7 @@ async fn prompt(
         timeout_ms: None,
         environment: std::iter::empty::<(String, String)>().collect(),
         idempotency_key: Some(IdempotencyKey::new(key)),
+        grant: None,
     });
     timeout(TEST_BUDGET, prompted)
         .await
@@ -93,6 +94,7 @@ async fn a_prompt_sent_again_with_its_key_starts_no_second_turn() {
         timeout_ms: None,
         environment: std::iter::empty::<(String, String)>().collect(),
         idempotency_key: Some(IdempotencyKey::new("k3")),
+        grant: None,
     });
     tokio::pin!(unbegun);
     assert!(futures_util::poll!(unbegun.as_mut()).is_pending());

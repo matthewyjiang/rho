@@ -90,7 +90,11 @@ fn a_turn_starts_only_when_none_is_in_progress() {
 
     let start = |job: &JobId| {
         registry
-            .start_turn(job, TurnRecord::starting(/*key*/ None))
+            .start_turn(
+                job,
+                TurnRecord::starting(/*key*/ None),
+                crate::caller_context::CallerContext::ROOT,
+            )
             .map(|moved| moved.state)
     };
     let started = start(&id);
@@ -175,7 +179,11 @@ fn an_upgrade_closes_the_registry_only_while_idle() {
 
     let before = registry.idle().unwrap();
     registry
-        .start_turn(&id, TurnRecord::starting(/*key*/ None))
+        .start_turn(
+            &id,
+            TurnRecord::starting(/*key*/ None),
+            crate::caller_context::CallerContext::ROOT,
+        )
         .unwrap();
     let while_running = registry.idle();
     registry
@@ -186,7 +194,11 @@ fn an_upgrade_closes_the_registry_only_while_idle() {
     let idle = registry.idle().unwrap();
     let still_idle = registry.close_if_still(idle);
     let next_turn = registry
-        .start_turn(&id, TurnRecord::starting(/*key*/ None))
+        .start_turn(
+            &id,
+            TurnRecord::starting(/*key*/ None),
+            crate::caller_context::CallerContext::ROOT,
+        )
         .map(|moved| moved.state);
 
     assert_eq!(
