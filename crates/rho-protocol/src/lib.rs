@@ -65,6 +65,7 @@
 //! from major 1 on.
 
 mod client;
+mod declared;
 pub mod display;
 mod error;
 mod forward;

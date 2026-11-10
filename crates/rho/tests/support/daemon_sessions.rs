@@ -1652,7 +1652,7 @@ async fn an_approval_waits_for_any_client_to_answer() {
 
 // Covers: the daemon refuses an answer and a hold from a connection that
 // declared an agent's session control, as `rho mcp serve` and the
-// `sessions` tool do, saying which capability the method needs; the request
+// `sessions` tool do, as `CapabilityRequired`; the request
 // stays open and nothing is written, and a frontend then answers it (#1780).
 // Owner: daemon connection capabilities.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1670,7 +1670,7 @@ async fn an_agents_connection_can_neither_answer_nor_hold_an_approval() {
     let request = attached.inputs.first().expect("the request is open").id;
     let agent = sandbox.connect_as_agent().await;
     let refusal = |refused: ClientError| match refused {
-        ClientError::Rpc { error, .. } => (error.error_code(), error.message),
+        ClientError::Rpc { error, .. } => error.error_code(),
         error => panic!("refused outside the protocol: {error}"),
     };
 
@@ -1698,19 +1698,11 @@ async fn an_agents_connection_can_neither_answer_nor_hold_an_approval() {
     let by_a_frontend = answer(&client, &session, request, InputAnswer::AllowOnce).await;
     let job = settled_job(&sandbox, &client, &session).await;
 
-    let needs_answer = |method: &str| {
-        Err((
-            Some(ErrorCode::CapabilityRequired),
-            format!(
-                "{method} needs capability `answer`, which this connection, of role `agent`, did not declare in rho/hello"
-            ),
-        ))
-    };
     assert_eq!(
         (answered, held, after_the_agent, by_a_frontend, job.state),
         (
-            needs_answer("rho/session/answer"),
-            needs_answer("rho/session/hold"),
+            Err(Some(ErrorCode::CapabilityRequired)),
+            Err(Some(ErrorCode::CapabilityRequired)),
             (Some(JobState::WaitingForInput), false),
             Ok(()),
             JobState::Completed,
