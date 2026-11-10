@@ -70,7 +70,10 @@ fn capture(request: &ModelRequest<'_>) -> anyhow::Result<ModelResponse> {
         messages: request.messages.to_vec(),
         tools: request.tools.to_vec(),
     };
-    std::fs::write(SNAPSHOT_PATH, serde_json::to_vec(&snapshot)?)?;
+    std::fs::write(
+        super::release::workspace_path(SNAPSHOT_PATH),
+        serde_json::to_vec(&snapshot)?,
+    )?;
     Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
         BASELINE_RESPONSE.into(),
     )]))
@@ -81,7 +84,9 @@ fn verify(
     prompt: &str,
     expected_changes: &[serde_json::Value],
 ) -> anyhow::Result<ModelResponse> {
-    let snapshot: Snapshot = serde_json::from_slice(&std::fs::read(SNAPSHOT_PATH)?)?;
+    let snapshot: Snapshot = serde_json::from_slice(&std::fs::read(
+        super::release::workspace_path(SNAPSHOT_PATH),
+    )?)?;
     ensure!(
         request.tools == snapshot.tools,
         "changing the agent catalog changed the original tool schemas"
