@@ -304,13 +304,22 @@ impl App {
         }
         let in_use =
             target.provider == self.info.runtime.provider && target.auth == self.info.runtime.auth;
+        // A signed-out session moves to the provider just signed in to, as
+        // it does in process. Asked for, the switch counts as made: the
+        // daemon builds the provider from the credential it just saved,
+        // and says so in the session if it cannot.
         if in_use {
             self.info.services.auth_unavailable = None;
-        } else if !self.setup_state().signed_in {
-            // A signed-out session moves to the provider just signed in to,
-            // as it does in process; the daemon's report of the switch
-            // marks it signed in.
-            if let Some(model) = catalog::default_model_for_provider(&target.provider) {
+        }
+        let switched_to = if in_use || self.setup_state().signed_in {
+            None
+        } else {
+            Some(catalog::default_model_for_provider(&target.provider))
+        };
+        let status = match switched_to {
+            Some(Some(model)) => {
+                let reference = rho_providers::provider::model_reference(&target.provider, &model);
+                let asked = self.daemon_option_requests.len();
                 self.configure_daemon(SessionChange::Model {
                     model: rho_protocol::ModelRef {
                         provider: target.provider.clone(),
@@ -318,24 +327,32 @@ impl App {
                     },
                     auth: Some(target.auth.clone()),
                 })?;
+                if self.daemon_option_requests.len() > asked {
+                    self.info.services.auth_unavailable = None;
+                }
+                format!(
+                    "stored credentials for {} and selected {reference}",
+                    target.provider
+                )
             }
-        }
-        self.set_status(if target.auth == rho_providers::provider::KEYLESS_AUTH {
-            format!(
+            Some(None) => format!(
+                "stored credentials for {}, but no cached models are available. Run /refresh-models before switching to it.",
+                target.provider
+            ),
+            None if target.auth == rho_providers::provider::KEYLESS_AUTH => format!(
                 "{} is ready. Switch models with /model when you want to use it.",
                 target.provider
-            )
-        } else if in_use {
-            format!(
+            ),
+            None if in_use => format!(
                 "stored credentials for {}; the session uses them from its next prompt",
                 target.provider
-            )
-        } else {
-            format!(
+            ),
+            None => format!(
                 "stored credentials for {}. Switch models with /model when you want to use it.",
                 target.provider
-            )
-        });
+            ),
+        };
+        self.set_status(status);
         self.announce_held_prompt_after_login();
         self.advance_setup_screen_after_login(terminal);
         self.report_resting_herdr_state().await;
