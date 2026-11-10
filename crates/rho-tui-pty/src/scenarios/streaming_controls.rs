@@ -19,17 +19,33 @@ pub(super) const STREAMING_CONTROLS_SCENARIO: Scenario = Scenario::new(
     "streaming_controls",
     "Hold output by mode and preserve split Markdown across shortcut changes",
     DEFAULT_SIZE,
-    &[
-        Step::WaitText {
-            text: "gpt-5.5",
-            timeout: STARTUP,
-        },
-        Step::Custom(exercise_controls),
-        Step::ExitCommand,
-    ],
+    STEPS,
     /*smoke*/ true,
 )
 .with_setup(setup);
+
+// Covers: the same modes on a daemon session's text, which reaches the TUI
+// as message chunks: off and paragraph hold it, and a switch reveals it.
+// Owner: interactive TUI as a daemon client
+#[cfg(unix)]
+pub(super) const DAEMON_STREAMING_CONTROLS_SCENARIO: Scenario = Scenario::new(
+    "daemon_streaming_controls",
+    "Hold a daemon turn's output by mode across shortcut changes",
+    DEFAULT_SIZE,
+    STEPS,
+    /*smoke*/ false,
+)
+.with_setup(setup)
+.with_env(super::daemon_resume::DAEMON_ENV);
+
+const STEPS: &[Step] = &[
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Custom(exercise_controls),
+    Step::ExitCommand,
+];
 
 fn setup(home: &IsolatedHome) -> Result<()> {
     let mut settings = std::fs::read_to_string(&home.client_settings_path)?;

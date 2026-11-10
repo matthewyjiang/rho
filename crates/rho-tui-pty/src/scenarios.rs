@@ -271,6 +271,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     TRANSCRIPT_SEARCH_SCENARIO,
     TRANSCRIPT_SEARCH_HOLDS_HIT_SCENARIO,
     STREAMING_CONTROLS_SCENARIO,
+    #[cfg(unix)]
+    streaming_controls::DAEMON_STREAMING_CONTROLS_SCENARIO,
     AGENT_PROMPT_SCENARIO,
     Scenario::new(
         "cancel_and_resubmit",
