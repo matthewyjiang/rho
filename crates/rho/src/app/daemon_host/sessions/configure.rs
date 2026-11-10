@@ -118,7 +118,8 @@ impl Sessions {
                 Ok(())
             }
             Ok(Applied::SharedOptions) => {
-                // This session's follow below; the others' in their turn.
+                // Each session's, once its runtime is free; this one's
+                // also follow below.
                 self.refresh_all_options().await;
                 Ok(())
             }
@@ -214,7 +215,12 @@ impl Change {
                     Err(AddDirError::Change(error)) => Err(setting_error(error)),
                 };
             }
-            Self::ModelCatalog => return Ok(Applied::SharedOptions),
+            Self::ModelCatalog => {
+                // Names this process resolved, or failed to, before the
+                // client rewrote the catalogs.
+                rho_providers::model::forget_model_display_names();
+                return Ok(Applied::SharedOptions);
+            }
             Self::Model(model) => {
                 let selection = model_selection(runtime, &model, auths)?;
                 runtime.switch_model(&selection, config).await

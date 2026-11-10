@@ -5,6 +5,7 @@ use rho_protocol::{
 };
 
 use super::Sessions;
+use crate::app::daemon_host::jobs::SessionJob;
 
 impl Sessions {
     pub(in crate::app::daemon_host) async fn inspect(
@@ -22,14 +23,17 @@ impl Sessions {
             .loaded_session(&params.session)
             .await?
             .ok_or_else(not_loaded)?;
-        // A report reads what a turn or a change is changing, and a client
-        // asked to see it now: refused, not queued behind them.
-        let runtime = session.runtime.try_lock().map_err(|_| {
-            RpcError::new(
+        // A report reads what a turn is changing, and a client asked to
+        // see it now: refused, not queued behind the turn. A change or an
+        // options refresh holds the runtime only briefly, so those are
+        // waited for.
+        if let SessionJob::Busy(_) = self.jobs.session_job(&session.id) {
+            return Err(RpcError::new(
                 ErrorCode::SessionBusy,
                 "the session is in a turn; ask again once it ends",
-            )
-        })?;
+            ));
+        }
+        let runtime = session.runtime.lock().await;
         // `None` once the daemon's stop or the idle unload took it.
         let runtime = runtime.as_ref().ok_or_else(not_loaded)?;
         let report = match params.report {
