@@ -162,6 +162,7 @@ async fn a_relayed_login_signs_in_a_running_session() {
             environment: sandbox.client_environment(),
             agent: None,
             setup: SessionSetup::default(),
+            parent: None,
         })
         .await
         .unwrap();

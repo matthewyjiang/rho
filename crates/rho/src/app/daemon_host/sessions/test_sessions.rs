@@ -48,7 +48,9 @@ pub(super) async fn load(sessions: &Sessions, root: &TempDir, load: Load) -> Arc
     let job = record.id.clone();
     sessions.jobs.register(record).unwrap();
     match load {
-        Load::Busy => sessions.jobs.start_turn(&job).unwrap(),
+        Load::Busy => {
+            sessions.jobs.start_turn(&job).unwrap();
+        }
         Load::Saved | Load::Unsaved => {}
     }
     let session = Arc::new(LoadedSession::new(

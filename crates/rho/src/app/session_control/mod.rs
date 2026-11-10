@@ -170,6 +170,7 @@ impl SessionControl {
                 environment: self.child_environment(caller),
                 agent: params.agent,
                 setup: SessionSetup::default(),
+                parent: None,
             })
             .await?;
         if let Some(model) = params.model {

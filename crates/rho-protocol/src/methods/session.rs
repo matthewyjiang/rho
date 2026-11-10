@@ -138,6 +138,16 @@ pub struct SessionNewParams {
     /// The client's choices for the session.
     #[serde(default, skip_serializing_if = "SessionSetup::is_default")]
     pub setup: SessionSetup,
+    /// The session whose turn starts this one, such as the session of an
+    /// agent that starts a peer through session control (#1714). The daemon
+    /// records the job writing that session as the new session's job's
+    /// [`super::JobSummary::parent`], and the new session's turns then wait
+    /// for capacity in the daemon-wide agent budget, as subagent runs do
+    /// ([`super::JobState::Queued`]). A session no job of the daemon writes,
+    /// such as one an in-process rho runs, records no parent, but the new
+    /// session's turns still share the budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<SessionId>,
 }
 
 /// Result of [`SESSION_NEW`]: the session is loaded and its job is
@@ -177,7 +187,9 @@ pub struct SessionPromptParams {
 }
 
 /// Result of [`SESSION_PROMPT`]: the turn began: it saved its prompt, or,
-/// for `/compact`, its compaction started. The turn runs on in the daemon;
+/// for `/compact`, its compaction started; or, for a session another job
+/// started ([`SessionNewParams::parent`]), it queued for capacity in the
+/// daemon-wide agent budget. The turn runs on in the daemon;
 /// [`super::JOB_LIST`] reports how it ends.
 ///
 /// A turn that ends before it began answers with an error

@@ -74,6 +74,7 @@ pub(super) fn job_summary(record: JobRecord, queue: Option<QueuePlace>) -> wire:
         state,
         workspace,
         parent,
+        admission: _,
         created_at,
         updated_at,
         outcome: _,

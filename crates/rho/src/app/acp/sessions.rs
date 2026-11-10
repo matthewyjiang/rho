@@ -323,6 +323,7 @@ impl Adapter {
                 environment: ClientEnvironment::of_this_process(),
                 agent: self.launch.agent.clone(),
                 setup: setup.clone(),
+                parent: None,
             })
             .await?;
         self.open(created.session, setup, Show::Skip).await

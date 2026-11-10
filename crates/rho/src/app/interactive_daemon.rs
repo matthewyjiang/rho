@@ -97,6 +97,7 @@ pub(super) async fn open(
             environment: ClientEnvironment::of_this_process(),
             agent: agent.clone(),
             setup,
+            parent: None,
         }),
         // The resume picker lists sessions from this process's store, which
         // does not hold the daemon's yet.
