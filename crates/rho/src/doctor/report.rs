@@ -50,6 +50,7 @@ pub(crate) enum DoctorSectionId {
     Runtimes,
     Workspace,
     Extensions,
+    Daemon,
 }
 
 impl DoctorSectionId {
@@ -60,6 +61,7 @@ impl DoctorSectionId {
             Self::Runtimes => "Runtimes",
             Self::Workspace => "Workspace",
             Self::Extensions => "Extensions",
+            Self::Daemon => "Daemon",
         }
     }
 }
@@ -86,6 +88,10 @@ pub(crate) enum DoctorCheckId {
     ClipboardImage,
     Mcp,
     Plugins,
+    DaemonProcess,
+    DaemonSocket,
+    DaemonService,
+    DaemonEnvironment,
 }
 
 impl DoctorCheckId {
@@ -108,6 +114,10 @@ impl DoctorCheckId {
                 DoctorSectionId::Workspace
             }
             Self::Mcp | Self::Plugins => DoctorSectionId::Extensions,
+            Self::DaemonProcess
+            | Self::DaemonSocket
+            | Self::DaemonService
+            | Self::DaemonEnvironment => DoctorSectionId::Daemon,
         }
     }
 }
