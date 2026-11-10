@@ -12,7 +12,7 @@ use super::{
     parser::parse_definition,
 };
 use crate::plugins::{PluginAgentFiles, PluginAgentTiers};
-use crate::workspace::ProjectTrust;
+use crate::workspace::{ProjectTrust, ProjectTrusts};
 
 /// The built-in root agent. It is never offered for delegation.
 pub(crate) const DEFAULT_AGENT_ID: &str = "default";
@@ -156,11 +156,14 @@ impl AgentCatalog {
     /// Discovers built-ins, plugin agents, and user/project files. Precedence
     /// is project, `~/.rho/agents`, `~/.agents/agents`, project plugins, user
     /// plugins, then built-ins. Plugin agents cannot claim built-in ids.
-    pub fn discover(cwd: &Path) -> Result<Self, AgentCatalogError> {
+    ///
+    /// Project files load only under `trust`'s agent trust, and project
+    /// plugins' agents under its plugin trust: the session's, or this
+    /// process's for a command acting for its own terminal.
+    pub fn discover(cwd: &Path, trust: ProjectTrusts) -> Result<Self, AgentCatalogError> {
         let home = crate::paths::home_dir();
-        let trust = ProjectTrust::from_agents_env();
-        let plugins = crate::plugins::agent_tiers(cwd, home.as_deref());
-        Self::discover_with_home_and_trust(cwd, home.as_deref(), trust, &plugins)
+        let plugins = crate::plugins::agent_tiers(cwd, home.as_deref(), trust);
+        Self::discover_with_home_and_trust(cwd, home.as_deref(), trust.agents, &plugins)
     }
 
     #[cfg(test)]

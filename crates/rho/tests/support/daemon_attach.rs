@@ -158,8 +158,20 @@ async fn attach_reports_how_the_last_turn_ended() {
         .output()
         .unwrap();
 
+    // Both attaches, the second to the reopened session, report the turn's
+    // end under the id the turn ran with.
+    let turn = events(&lines)
+        .iter()
+        .rev()
+        .nth(1)
+        .map(|ended| &ended["turn"]);
+    assert!(
+        turn.is_some_and(Value::is_string),
+        "the turn's end names its turn: {lines:#?}"
+    );
     let turn_ended = json!({
         "type": "turn_ended",
+        "turn": turn,
         "outcome": {"type": "answered", "text": REPLY, "stop": "end_turn"},
     });
     assert_eq!(
@@ -224,7 +236,11 @@ async fn attach_follows_a_turn_and_detaches_on_ctrl_c() {
     // The fixture holds the turn until it is cancelled.
     let client = sandbox.start_daemon("delay").await;
     let session = sandbox.new_session(&client).await;
-    assert_eq!(sandbox.prompt(&client, &session).await, Ok(()));
+    // The end the attachment reports is this turn's, by its id.
+    let started = sandbox
+        .prompt_keyed(&client, &session, "hello", None)
+        .await
+        .unwrap();
 
     let mut detached = Attach::spawn(&sandbox, "delay", &[session.as_str(), "--output", "jsonl"]);
     // Events flow only once it is attached.
@@ -273,7 +289,11 @@ async fn attach_follows_a_turn_and_detaches_on_ctrl_c() {
                 "exit_code": 1,
                 "message": "the turn was cancelled",
             }),
-            Some(&json!({"type": "turn_ended", "outcome": {"type": "cancelled"}})),
+            Some(&json!({
+                "type": "turn_ended",
+                "turn": started.as_str(),
+                "outcome": {"type": "cancelled"},
+            })),
         ),
         "log:\n{}",
         sandbox.isolated.daemon_log()

@@ -25,6 +25,7 @@ mod paths;
 mod server;
 mod shutdown;
 mod spawn;
+mod spawn_env;
 #[cfg(test)]
 mod test_support;
 

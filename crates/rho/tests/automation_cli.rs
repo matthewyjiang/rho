@@ -284,6 +284,7 @@ fn jsonl_streams_the_sessions_events_between_start_and_end() {
                 "type": "event",
                 "event": {
                     "type": "turn_ended",
+                    "turn": ended_turn(&events),
                     "outcome": {"type": "answered", "text": "answer for automation", "stop": "end_turn"}
                 }
             }),
@@ -385,6 +386,7 @@ fn jsonl_reports_a_failed_turn_and_hides_authentication_text() {
                     "type": "event",
                     "event": {
                         "type": "turn_ended",
+                        "turn": ended_turn(&events),
                         "outcome": {"type": "failed", "error": {"kind": kind, "message": message}}
                     }
                 }),
@@ -798,6 +800,7 @@ fn resolves_slash_commands_and_rejects_the_ones_it_cannot_run() {
         // The prompt ends as the daemon's would, with no model call.
         let turn_ended = json!({
             "type": "turn_ended",
+            "turn": ended_turn(&events),
             "outcome": {"type": "failed", "error": {"kind": "configuration", "message": "could not run /compact: not available in rho run"}}
         });
         assert_eq!(session_events(&events), [&turn_ended], "{prompt}");
@@ -891,6 +894,15 @@ fn session_events(events: &[Value]) -> Vec<&Value> {
         .filter(|line| line["type"] == "event")
         .map(|line| &line["event"])
         .collect()
+}
+
+/// The id the stream's `turn_ended` names its turn by.
+fn ended_turn(events: &[Value]) -> &str {
+    session_events(events)
+        .into_iter()
+        .find(|event| event["type"] == "turn_ended")
+        .and_then(|event| event["turn"].as_str())
+        .expect("the stream's turn_ended names its turn")
 }
 
 /// The reason and exit code of the stream's one `run_ended`, its last line.

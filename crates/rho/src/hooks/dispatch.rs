@@ -70,6 +70,12 @@ pub struct HookEngine {
 }
 
 impl HookEngine {
+    /// The session's project trust, which a reload reads the hooks files
+    /// under, as the start did.
+    pub(crate) fn project_trust(&self) -> crate::workspace::ProjectTrusts {
+        self.environment.project_trust()
+    }
+
     pub fn new(
         catalog: HookCatalog,
         bounds: HookPayloadBounds,

@@ -45,7 +45,11 @@ async fn inventory(view: Inventory<'_>, connect: bool, cli: &Cli) -> anyhow::Res
     let config = config_repository.load()?;
     // Include plugin-provided servers so the inventory matches a session.
     let cwd = std::env::current_dir()?;
-    let plugin_discovery = crate::plugins::discover_mcp(&cwd, crate::paths::home_dir().as_deref());
+    let plugin_discovery = crate::plugins::discover_mcp(
+        &cwd,
+        crate::paths::home_dir().as_deref(),
+        crate::workspace::ProjectTrusts::of_this_process(),
+    );
     crate::plugins::log(&plugin_discovery.report);
     let mut mcp_config = config.mcp.clone();
     mcp_config.merge(plugin_discovery.mcp);

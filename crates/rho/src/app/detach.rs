@@ -210,6 +210,7 @@ async fn start(
             content: vec![ContentBlock::Text { text }],
             timeout_ms,
             environment,
+            idempotency_key: None,
         })
         .await
         .map_err(|error| {

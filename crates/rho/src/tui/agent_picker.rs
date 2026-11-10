@@ -638,7 +638,10 @@ impl super::App {
     /// and failures in the transcript. The composer is left for the caller to
     /// settle.
     pub(super) fn load_agents_or_report(&mut self) -> Option<AgentCatalog> {
-        match AgentCatalog::discover(&self.info.runtime.cwd) {
+        match AgentCatalog::discover(
+            &self.info.runtime.cwd,
+            crate::workspace::ProjectTrusts::of_this_process(),
+        ) {
             Ok(catalog) => {
                 for error in catalog.skipped() {
                     self.insert_entry(&super::Entry::Error(format!(

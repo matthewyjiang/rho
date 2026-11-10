@@ -27,6 +27,7 @@ impl InteractiveRuntime {
                 workspace_path: self.workspace.root().to_path_buf(),
                 usage_recording: self.usage_recording.clone(),
                 session_writes: session_writes.clone(),
+                credentials: Arc::new(crate::credential_store::AppCredentialStore),
             },
         );
         self.tools.set_plan_exit_registered(mode);
@@ -35,7 +36,11 @@ impl InteractiveRuntime {
                 provider: Arc::clone(self.provider.provider()),
                 tools: &self.tools,
                 workspace: self.workspace.clone(),
-                workspace_policy: AppPolicy::for_mode(mode, session_writes.clone()),
+                workspace_policy: AppPolicy::for_mode(
+                    mode,
+                    session_writes.clone(),
+                    std::env::var_os("PATH"),
+                ),
                 approval_session: approval_channel
                     .handler
                     .clone()
@@ -111,12 +116,14 @@ impl InteractiveRuntime {
                         workspace_path: self.workspace.root().to_path_buf(),
                         usage_recording: self.usage_recording.clone(),
                         session_writes: session_writes.clone(),
+                        credentials: Arc::new(crate::credential_store::AppCredentialStore),
                     },
                 );
                 RebuiltPermission {
                     workspace_policy: AppPolicy::for_mode(
                         self.permission_mode,
                         session_writes.clone(),
+                        std::env::var_os("PATH"),
                     ),
                     approval_session: channel.handler.clone().map(ApprovalSession::from_shared),
                     pending: Some((session_writes, channel)),

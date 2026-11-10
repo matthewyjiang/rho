@@ -94,10 +94,13 @@ impl CommandSet {
 
 /// What commands can see of one session. `home` roots user skills and
 /// prompt templates. `permission_mode` is the session's current mode, which
-/// a host can change from the process default.
+/// a host can change from the process default. `project_trust` is the
+/// session's, under which project agents and project plugins' skills are
+/// found.
 pub(crate) struct CommandScope<'a> {
     pub(crate) cwd: &'a Path,
     pub(crate) home: Option<&'a Path>,
+    pub(crate) project_trust: crate::workspace::ProjectTrusts,
     pub(crate) tools: SessionTools<'a>,
     pub(crate) config: &'a Config,
     pub(crate) permission_mode: PermissionMode,
@@ -114,6 +117,7 @@ impl<'a> CommandScope<'a> {
         Self {
             cwd: runtime.cwd(),
             home,
+            project_trust: runtime.project_trust(),
             tools: runtime.tools(),
             config: process_config,
             permission_mode: runtime.permission_mode(),
@@ -130,14 +134,14 @@ impl<'a> CommandScope<'a> {
         AgentCatalog::discover_with_home_and_trust(
             self.cwd,
             self.home,
-            crate::workspace::ProjectTrust::from_agents_env(),
-            &crate::plugins::agent_tiers(self.cwd, self.home),
+            self.project_trust.agents,
+            &crate::plugins::agent_tiers(self.cwd, self.home, self.project_trust),
         )
     }
 
     /// The skills a prompt can mention.
     pub(crate) fn skills(&self) -> Vec<Skill> {
-        crate::skills::discover_with_home(self.cwd, self.home)
+        crate::skills::discover_with_home(self.cwd, self.home, self.project_trust)
     }
 }
 

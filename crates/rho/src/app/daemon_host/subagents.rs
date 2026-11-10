@@ -223,7 +223,7 @@ async fn follow(
         let run = status.borrow_and_update().clone();
         if let Some(event) = next_event(&state, &run, stopping.is_cancelled()) {
             match jobs.record(&job, event) {
-                Ok(next) => state = next,
+                Ok(next) => state = next.state,
                 // Only the daemon's stop moves a subagent job on besides
                 // this task, by recording it interrupted, which no later
                 // event of the run undoes.

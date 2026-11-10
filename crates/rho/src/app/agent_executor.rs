@@ -374,7 +374,7 @@ impl AgentExecutor {
         if questionnaire_target.is_none() {
             capabilities.remove(&ToolCapability::Questionnaire);
         }
-        let bound = AgentBinder::bind_with_model_override(
+        let bound = AgentBinder::bind_with_credentials(
             request.definition,
             AgentInvocation {
                 role: AgentRole::Delegated,
@@ -385,6 +385,7 @@ impl AgentExecutor {
                 .model_override
                 .as_deref()
                 .map(super::agent_binding::ModelOverride::Reference),
+            self.environment.credentials().as_ref(),
         )?;
 
         self.spawn_bound(BoundLaunchRequest {
@@ -543,6 +544,7 @@ impl AgentExecutor {
                 title_agent_id,
                 title_run_id,
                 title_cwd,
+                environment.credentials(),
                 RunTitleSinks {
                     output_file: title_output,
                     status_tx: task_status_tx.clone(),
@@ -816,6 +818,7 @@ fn spawn_run_title(
     agent_id: String,
     run_id: String,
     workspace_path: PathBuf,
+    credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
     sinks: RunTitleSinks,
 ) {
     let model = crate::title::title_model_from_config(config);
@@ -829,6 +832,7 @@ fn spawn_run_title(
             format!("Agent name: {agent_id}\n\nTask assignment:\n{prompt}"),
             session_id,
             workspace_path,
+            credentials,
             usage_recording,
             cancellation,
         )

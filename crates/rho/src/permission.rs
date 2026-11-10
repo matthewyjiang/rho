@@ -230,7 +230,10 @@ impl PermissionMode {
     /// path.
     ///
     /// Snapshots user-instruction and host-owned surfaces at construction
-    /// (HOME / `RHO_HOME` / `PATH`). Bypass returns `None` before that I/O.
+    /// (HOME / `RHO_HOME` / `search_path`). `search_path` is the `PATH` of
+    /// the environment the session's commands run in, a daemon session's
+    /// client's, whose directories the `workflow` tool may read (#1779).
+    /// Bypass returns `None` before that I/O.
     /// The returned policy starts from [`Self::decision_for`] and, for
     /// [`Self::Auto`] and [`Self::AllowEdits`], allows workspace and
     /// added-directory writes to git-tracked files and to paths already
@@ -244,14 +247,18 @@ impl PermissionMode {
     ///
     /// `session_writes` carries the paths whose first write already passed the
     /// gate this session.
-    pub fn workspace_policy(self, session_writes: SessionWriteLog) -> Option<ModePolicy> {
+    pub fn workspace_policy(
+        self,
+        session_writes: SessionWriteLog,
+        search_path: Option<std::ffi::OsString>,
+    ) -> Option<ModePolicy> {
         if matches!(self, Self::Bypass) {
             return None;
         }
         self.workspace_policy_with(
             session_writes,
             crate::paths::UserInstructionSurfaces::from_process(),
-            crate::paths::HostOwnedSurfaces::from_process(),
+            crate::paths::HostOwnedSurfaces::on_search_path(search_path),
         )
     }
 

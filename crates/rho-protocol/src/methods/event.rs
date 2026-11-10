@@ -65,6 +65,26 @@ string_id! {
 }
 
 string_id! {
+    /// Identifies one turn of a session: what a prompt starts, from the
+    /// job leaving rest until it rests again. [`super::SESSION_PROMPT`]
+    /// answers with it, and [`SessionEvent::State`],
+    /// [`SessionEvent::TurnEnded`], and
+    /// [`super::SessionAttachResponse::turn`] carry it, so a client tells
+    /// its own turn from another client's by id. The daemon keeps a
+    /// session's last turn's id with the session's job, so it names the
+    /// same turn after a restart.
+    TurnId
+}
+
+string_id! {
+    /// A client's own name for one prompt, which makes sending it again
+    /// safe ([`super::SessionPromptParams::idempotency_key`]). Any
+    /// non-empty string the client will not reuse for another prompt of
+    /// the session, such as a UUID.
+    IdempotencyKey
+}
+
+string_id! {
     /// One loaded session's event stream. A new daemon, or a reload, starts
     /// a new stream.
     StreamId
@@ -94,7 +114,13 @@ pub struct Cursor {
 pub enum SessionEvent {
     /// The session's job changed state: a turn started (`running`), waits
     /// for input, or ended. An ended turn's [`Self::TurnEnded`] comes first.
-    State { state: JobState },
+    State {
+        state: JobState,
+        /// The turn the state is of: the one under way, or the one that
+        /// ended. Absent only while the session has run no turn.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn: Option<TurnId>,
+    },
     /// A user message, whole.
     UserMessage {
         message: MessageId,
@@ -166,8 +192,11 @@ pub enum SessionEvent {
     /// Input request `id`'s timeout stopped: a client held it with
     /// [`super::SESSION_HOLD`], so it waits for an answer.
     InputHeld { id: InputRequestId },
-    /// The turn ended, and how (#1669).
-    TurnEnded { outcome: super::TurnOutcome },
+    /// Turn `turn` ended, and how (#1669).
+    TurnEnded {
+        turn: TurnId,
+        outcome: super::TurnOutcome,
+    },
     /// The session's options changed, as after [`super::SESSION_CONFIGURE`]
     /// or a plan approval's mode switch: all of them, replacing the last.
     OptionsChanged { options: super::SessionOptions },

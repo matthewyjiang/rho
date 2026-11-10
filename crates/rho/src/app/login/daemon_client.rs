@@ -10,9 +10,12 @@
 //!
 //! A credential variable set in this shell would override what the daemon
 //! saves, in every rho started here, so `rho login` refuses before asking.
+//! The requests carry this shell's environment, so the daemon saves to the
+//! store a `RHO_CREDENTIAL_STORE` here chooses, the one sessions opened from
+//! here read (#1779).
 //!
-//! When neither the daemon's environment nor its config chose a credential
-//! store, `rho login` asks which to use first, offering what the daemon can
+//! When neither this shell, the daemon's environment, nor its config chose
+//! a credential store, `rho login` asks which to use first, offering what the daemon can
 //! reach, since the daemon writes the credential: one a client started from
 //! an SSH login may have no session D-Bus for the OS store even where this
 //! shell has one. The daemon checks the store takes a secret and saves the
@@ -25,8 +28,8 @@
 use anyhow::anyhow;
 use rho_protocol::{
     methods::{AuthChooseStore, AuthKey, AuthLogin, Status},
-    AuthChooseStoreParams, AuthKeyParams, AuthLoginParams, Client, ClientError, DaemonNotification,
-    ErrorCode, LoginOutcome, StatusParams, StoreSelectedBy,
+    AuthChooseStoreParams, AuthKeyParams, AuthLoginParams, Client, ClientEnvironment, ClientError,
+    DaemonNotification, ErrorCode, LoginOutcome, StatusParams, StoreSelectedBy,
 };
 use rho_providers::auth::browser::{self, BrowserAvailability};
 
@@ -81,6 +84,7 @@ async fn save_key(auth: String, entry_label: &str) -> anyhow::Result<()> {
         .request::<AuthKey>(&AuthKeyParams {
             auth: auth.clone(),
             key,
+            environment: ClientEnvironment::of_this_process(),
         })
         .await
         .map_err(|error| refused(error, format!("could not save credentials for {auth}")))?;
@@ -108,6 +112,7 @@ async fn log_in(auth: String, provider_label: &str, device_auth: bool) -> anyhow
         .request::<AuthLogin>(&AuthLoginParams {
             auth: auth.clone(),
             flow: Some(flow),
+            environment: ClientEnvironment::of_this_process(),
         })
         .await
         .map_err(|error| refused(error, format!("could not start the {provider_label} login")))?
@@ -136,8 +141,13 @@ async fn log_in(auth: String, provider_label: &str, device_auth: bool) -> anyhow
 
 /// Asks which credential store to use when nothing chose one for the
 /// daemon, offering the OS store as the daemon reaches it, and has the
-/// daemon keep credentials in the answer.
+/// daemon keep credentials in the answer. A `RHO_CREDENTIAL_STORE` in this
+/// shell already chose the store of what is signed in from here, so nothing
+/// is asked; a value that names no store fails here, as it would there.
 async fn ensure_store(client: &Client) -> anyhow::Result<()> {
+    if credential_store::environment_backend()?.is_some() {
+        return Ok(());
+    }
     let status = client
         .request::<Status>(&StatusParams {})
         .await
@@ -156,14 +166,13 @@ async fn ensure_store(client: &Client) -> anyhow::Result<()> {
         // The daemon checks the file store when it is chosen.
         file_unavailable: None,
     };
-    // A variable in this shell reaches only a daemon started from it, so
-    // name what reaches a running one.
-    let unattended = "the rho daemon's credential store is unset; set it before non-interactive login with `rho credential-store set file` or behavior.credential_store in config.toml, which the daemon reads, or restart the daemon with RHO_CREDENTIAL_STORE=os|file";
+    let unattended = "the rho daemon's credential store is unset; set it before non-interactive login with `rho credential-store set file` or behavior.credential_store in config.toml, which the daemon reads, or set RHO_CREDENTIAL_STORE=os|file in this shell";
     let backend =
         tokio::task::spawn_blocking(move || store_choice::ask(&offers, unattended)).await??;
     client
         .request::<AuthChooseStore>(&AuthChooseStoreParams {
             store: credential_store::wire::kind(backend),
+            environment: ClientEnvironment::of_this_process(),
         })
         .await
         .map_err(|error| {

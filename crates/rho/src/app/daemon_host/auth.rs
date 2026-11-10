@@ -15,18 +15,20 @@
 //! a request's params, and errors that could quote a key have it removed
 //! before they leave [`crate::app::credential_writes`].
 
+use std::sync::Arc;
+
 use rho_protocol::{
-    AuthKeyParams, AuthKeyResponse, AuthKind, AuthListResponse, AuthLogoutParams,
-    AuthLogoutResponse, AuthStatus, AuthSummary, ErrorCode, RpcError, UncheckedKey,
-    UncheckedReason,
+    AuthKeyParams, AuthKeyResponse, AuthKind, AuthListParams, AuthListResponse, AuthLogoutParams,
+    AuthLogoutResponse, AuthStatus, AuthSummary, ClientEnvironment, ErrorCode, RpcError,
+    UncheckedKey, UncheckedReason,
 };
 use rho_providers::{
     auth::login_dispatch::{AuthenticationMethod, ProviderAuthentication},
-    credentials::available_auth_modes,
+    credentials::{available_auth_modes, CredentialStore},
     model::catalog::{self, LoginTarget},
 };
 
-use super::sessions::Sessions;
+use super::sessions::{session_environment, Sessions};
 use crate::{
     app::{
         config_repository::ConfigRepository,
@@ -34,6 +36,16 @@ use crate::{
     },
     credential_store::AppCredentialStore,
 };
+
+/// The credentials of the client that sent `environment` with a sign-in
+/// request: the ones its sessions read (see
+/// [`crate::credential_store::ClientCredentialStore`]), so what it saves or
+/// deletes is what they then find.
+pub(super) fn client_credentials(
+    environment: &ClientEnvironment,
+) -> Result<Arc<dyn CredentialStore>, RpcError> {
+    Ok(session_environment(environment)?.credentials())
+}
 
 /// The config the daemon reads, found as a session open finds it.
 pub(super) fn repository() -> ConfigRepository {
@@ -43,14 +55,15 @@ pub(super) fn repository() -> ConfigRepository {
 /// The auth profiles a client can sign in to: the login targets the TUI's
 /// `/login` picker offers, which are ACP's auth methods too, with the
 /// custom providers of the daemon's config.
-pub(super) async fn list() -> Result<AuthListResponse, RpcError> {
-    let auths = off_workers(|| -> Result<_, CredentialWriteError> {
+pub(super) async fn list(params: AuthListParams) -> Result<AuthListResponse, RpcError> {
+    let credentials = client_credentials(&params.environment)?;
+    let auths = off_workers(move || -> Result<_, CredentialWriteError> {
         credential_writes::load_config_and_store(&repository())?;
         // The TUI and ACP still sign in in their own processes until they
         // become daemon clients (#1667, #1670), so their logins are new to
         // the OS store's cache.
         AppCredentialStore::reread_external_logins();
-        let signed_in = available_auth_modes(&AppCredentialStore);
+        let signed_in = available_auth_modes(credentials.as_ref());
         Ok(catalog::login_targets()
             .into_iter()
             .filter_map(|target| summary(target, &signed_in))
@@ -99,10 +112,16 @@ pub(super) async fn credentials_changed(sessions: &Sessions) {
 /// Checks `params.key` with its provider and saves it. Only the provider's
 /// check runs on the async workers.
 pub(super) async fn save_key(params: AuthKeyParams) -> Result<AuthKeyResponse, RpcError> {
-    let AuthKeyParams { auth, key } = params;
+    let AuthKeyParams {
+        auth,
+        key,
+        environment,
+    } = params;
+    let credentials = client_credentials(&environment)?;
+    let asked = Arc::clone(&credentials);
     let (config, login, key) = off_workers(move || -> Result<_, CredentialWriteError> {
         let config = credential_writes::load_config_and_store(&repository())?;
-        let login = ApiKeyAuth::resolve(&auth)?;
+        let login = ApiKeyAuth::resolve(&auth, asked.as_ref())?;
         let key = key.trim();
         if key.is_empty() {
             return Err(CredentialWriteError::BlankKey);
@@ -112,7 +131,7 @@ pub(super) async fn save_key(params: AuthKeyParams) -> Result<AuthKeyResponse, R
     .await??;
     let check = login.check(&key, &config).await?;
     off_workers(move || {
-        login.save(&key, &AppCredentialStore)?;
+        login.save(&key, credentials.as_ref())?;
         login.record_login(&repository())
     })
     .await??;
@@ -137,9 +156,13 @@ pub(super) async fn save_key(params: AuthKeyParams) -> Result<AuthKeyResponse, R
 
 /// Deletes `params.auth`'s saved credentials.
 pub(super) async fn logout(params: AuthLogoutParams) -> Result<AuthLogoutResponse, RpcError> {
-    let AuthLogoutParams { auth } = params;
+    let AuthLogoutParams { auth, environment } = params;
+    let credentials = client_credentials(&environment)?;
     let signed_out = auth.clone();
-    off_workers(move || credential_writes::sign_out_named(&auth, &repository())).await??;
+    off_workers(move || {
+        credential_writes::sign_out_named(&auth, &repository(), credentials.as_ref())
+    })
+    .await??;
     tracing::info!(auth = %signed_out, "signed out");
     Ok(AuthLogoutResponse {})
 }
@@ -166,9 +189,9 @@ impl From<CredentialWriteError> for RpcError {
             | CredentialWriteError::NotAnApiKey { .. }
             | CredentialWriteError::NoCredentials { .. }
             | CredentialWriteError::BlankKey => ErrorCode::InvalidParams,
-            // A credential in the daemon's own environment wins over a saved
-            // one; the client's environment does not matter, so the message
-            // says where to unset it.
+            // A credential in the asking client's environment wins over a
+            // saved one in that client's sessions, so the message says where
+            // to unset it.
             CredentialWriteError::EnvironmentOverride {
                 auth,
                 variable,
@@ -181,7 +204,7 @@ impl From<CredentialWriteError> for RpcError {
                 return RpcError::new(
                     ErrorCode::EnvironmentOverride,
                     format!(
-                        "'{auth}' reads its credential from {variable} in the daemon's environment; unset it there and restart the daemon to {write}"
+                        "'{auth}' reads its credential from {variable} in this client's environment, which wins over a saved one; unset it there to {write}"
                     ),
                 )
                 .with_data(data);

@@ -12,7 +12,8 @@ use std::{
 };
 
 use rho_providers::{
-    auth::provider_credentials::ApplicationCredentialSource, providers::build_automation_provider,
+    auth::provider_credentials::ApplicationCredentialSource,
+    providers::{build_automation_provider, UnavailableProvider},
 };
 use rho_sdk::{
     provider::ModelProvider, ApprovalRequestReceiver, ApprovalSession, Session, SessionOptions,
@@ -30,8 +31,8 @@ use super::{
     },
 };
 use crate::{
-    config::Config, credential_store::AppCredentialStore, diagnostics::RuntimeDiagnostics,
-    permission::SessionWriteLog, tools::sdk_registry::AppToolSet,
+    config::Config, diagnostics::RuntimeDiagnostics, permission::SessionWriteLog,
+    tools::sdk_registry::AppToolSet,
 };
 
 /// Everything a caller must supply to assemble a session, including the three
@@ -49,6 +50,8 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub tool_source_attach: super::tools_prompt::ToolSourceAttach,
     /// Whether the session starts its workspace's hooks.
     pub hook_start: HookStart,
+    /// Whether the session must sign in to its model.
+    pub sign_in: SignIn,
     pub mcp_authorization: crate::tools::mcp::McpAuthorizationMode,
     pub diagnostics: &'a RuntimeDiagnostics,
     pub agent: &'a BoundAgent,
@@ -72,6 +75,16 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub session_options: Options,
 }
 
+/// Whether an assembled session must sign in to its model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SignIn {
+    /// Assembly fails when the model's credential is missing.
+    Required,
+    /// The session is only read, so it runs no turn: a model that cannot be
+    /// signed in to is stood in for by one that fails every request.
+    NotNeeded,
+}
+
 /// Whether an assembled session starts its workspace's hooks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum HookStart {
@@ -87,6 +100,8 @@ pub(super) struct ApprovalInputs {
     pub workspace_root: PathBuf,
     pub usage_recording: rho_sdk::ProviderRequestUsageRecording,
     pub session_writes: SessionWriteLog,
+    /// The session's credentials, which Auto's classifier signs in with.
+    pub credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
 }
 
 /// Approval wiring for one session: the handler the runtime enforces and, for
@@ -164,6 +179,7 @@ where
         mcp_sampling,
         tool_source_attach,
         hook_start,
+        sign_in,
         mcp_authorization,
         diagnostics,
         agent,
@@ -186,11 +202,18 @@ where
         &*super::endpoint_login::with_disk_login(config, &config_path)?,
         cwd,
     )?;
-    let credentials = ApplicationCredentialSource::new(Arc::new(AppCredentialStore));
+    let credentials = ApplicationCredentialSource::new(environment.credentials());
     // Automation and ACP normally skip the catalog fetch, but catalog-constructed
     // providers need the hydrate before build; a no-op for the rest.
     sdk_options.provider.ensure_catalog_for_construction().await;
-    let provider = build_automation_provider(sdk_options.provider, &credentials)?;
+    let provider = match (
+        build_automation_provider(sdk_options.provider, &credentials),
+        sign_in,
+    ) {
+        (Ok(provider), _) => provider,
+        (Err(error), SignIn::Required) => return Err(error.into()),
+        (Err(error), SignIn::NotNeeded) => Arc::new(UnavailableProvider::new(error)),
+    };
     let live_provider = Arc::clone(&provider);
     let workspace_root = sdk_options.workspace.root.clone();
     let workspace = sdk_options.workspace.build_workspace(added_dirs)?;
@@ -251,7 +274,9 @@ where
         workspace_root: workspace_root.clone(),
         usage_recording: usage_recording.clone(),
         session_writes: session_writes.clone(),
+        credentials: environment.credentials(),
     })?;
+    let search_path = environment.current().path();
     let hooks = match hook_start {
         HookStart::Start => crate::hooks::start_for_cwd(&workspace_root, environment),
         HookStart::Skip => None,
@@ -275,6 +300,7 @@ where
                 workspace_policy: AppPolicy::for_mode(
                     config.permission_mode,
                     session_writes.clone(),
+                    search_path,
                 ),
                 approval_session,
                 system_prompt: prompt.system.clone(),

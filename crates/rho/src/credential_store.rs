@@ -13,9 +13,11 @@ use rho_providers::credentials::{
 
 use crate::config::Config;
 
+mod client;
 mod selection;
 mod startup_notice;
 pub(crate) mod wire;
+pub(crate) use client::ClientCredentialStore;
 pub(crate) use selection::{SelectedBy, StoreSelection};
 pub(crate) use startup_notice::{notifying_store, StartupKeyringNotice};
 
@@ -142,22 +144,33 @@ impl CredentialStore for AppCredentialStore {
     }
 
     fn set_secret(&self, account: &str, secret: &str) -> CredentialResult<()> {
-        let saved = selected_store()?.set_secret(account, secret);
-        // A failed write may still have changed the store, as an OS store
-        // that wrote part of an entry does, so every attempt counts.
-        Self::note_changed();
-        saved
+        tracked_set(selected_store()?.as_ref(), account, secret)
     }
 
     fn delete_secret(&self, account: &str) -> CredentialResult<bool> {
-        let deleted = selected_store()?.delete_secret(account);
-        // Deleting nothing changed nothing a provider could have read; a
-        // failed delete may have removed part of an entry.
-        if !matches!(deleted, Ok(false)) {
-            Self::note_changed();
-        }
-        deleted
+        tracked_delete(selected_store()?.as_ref(), account)
     }
+}
+
+/// Saves `secret` in `store` and moves the credential generation.
+fn tracked_set(store: &dyn CredentialStore, account: &str, secret: &str) -> CredentialResult<()> {
+    let saved = store.set_secret(account, secret);
+    // A failed write may still have changed the store, as an OS store
+    // that wrote part of an entry does, so every attempt counts.
+    AppCredentialStore::note_changed();
+    saved
+}
+
+/// Deletes `account` from `store` and moves the credential generation when
+/// that may have changed something.
+fn tracked_delete(store: &dyn CredentialStore, account: &str) -> CredentialResult<bool> {
+    let deleted = store.delete_secret(account);
+    // Deleting nothing changed nothing a provider could have read; a
+    // failed delete may have removed part of an entry.
+    if !matches!(deleted, Ok(false)) {
+        AppCredentialStore::note_changed();
+    }
+    deleted
 }
 
 /// The credential store [`AppCredentialStore`] reads and writes, for secrets
@@ -347,13 +360,25 @@ pub(crate) async fn build_provider_from_config_ensuring_catalog(
     build_provider_from_config(config, credential_store)
 }
 
+/// A provider for `model` signed in with `credentials`: those of whoever the
+/// provider acts for, a session's own inside one (see
+/// [`crate::session_environment::SessionEnvironment::credentials`]).
 pub(crate) async fn build_provider(
     provider: &str,
     model: &str,
     reasoning: rho_providers::reasoning::ReasoningLevel,
     auth: &str,
+    credentials: Arc<dyn CredentialStore>,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, rho_providers::model::ModelError> {
-    build_provider_on(&Config::default(), provider, model, reasoning, auth).await
+    build_provider_on(
+        &Config::default(),
+        provider,
+        model,
+        reasoning,
+        auth,
+        credentials,
+    )
+    .await
 }
 
 /// [`build_provider`] on `base`'s `[providers]`, so a configured endpoint or
@@ -364,6 +389,7 @@ pub(crate) async fn build_provider_on(
     model: &str,
     reasoning: rho_providers::reasoning::ReasoningLevel,
     auth: &str,
+    credentials: Arc<dyn CredentialStore>,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, rho_providers::model::ModelError> {
     let config = Config {
         provider: provider.into(),
@@ -373,7 +399,7 @@ pub(crate) async fn build_provider_on(
         providers: base.providers.clone(),
         ..Config::default()
     };
-    build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore)).await
+    build_provider_from_config_ensuring_catalog(&config, credentials).await
 }
 
 fn resolve_backend(

@@ -139,8 +139,11 @@ mod unix {
 
     // Covers: with RTK on, the shell must rewrite before authorization, so the
     // approved process is the rewritten one that runs and the run is recorded
-    // for `rtk discover`; with RTK unavailable, nothing is rewritten or
-    // recorded. RTK was silently off for months when this broke.
+    // for `rtk discover`, under the `CLAUDE_CONFIG_DIR` of the environment
+    // the command runs in; with RTK unavailable, or `RTK_DISABLED=1` in that
+    // environment, nothing is rewritten or recorded. RTK was silently off
+    // for months when this broke, and a daemon session's environment is its
+    // client's, not the process's (#1779).
     // Owner: shell tool adapter
     #[tokio::test]
     async fn rtk_rewrites_the_command_before_it_is_approved() {
@@ -152,11 +155,14 @@ mod unix {
              printf 'printf rewritten > out.txt'; exit 3 ;;\n\
              esac\n";
         let unavailable = "exit 127\n";
-        for (script, expected_command, expected_output, expected_records) in [
-            (available, rewritten, "rewritten", 1),
-            (unavailable, original, "original", 0),
+        for (script, disabled, expected_command, expected_output, expected_records) in [
+            (available, None, rewritten, "rewritten", 1),
+            (unavailable, None, original, "original", 0),
+            (available, Some("1"), original, "original", 0),
+            // Only `1` turns it off, as for `rtk` itself.
+            (available, Some("0"), rewritten, "rewritten", 1),
         ] {
-            let outcome = run_with_fake_rtk(script, original).await;
+            let outcome = run_with_fake_rtk(script, original, disabled).await;
             assert_eq!(
                 outcome,
                 FakeRtkOutcome {
@@ -166,7 +172,7 @@ mod unix {
                     output: expected_output.to_owned(),
                     recorded_commands: vec![expected_command.to_owned(); expected_records],
                 },
-                "{script}"
+                "{script}, RTK_DISABLED={disabled:?}"
             );
         }
     }
@@ -179,7 +185,14 @@ mod unix {
         recorded_commands: Vec<String>,
     }
 
-    async fn run_with_fake_rtk(script: &str, command: &str) -> FakeRtkOutcome {
+    /// Runs `command` through the bash tool with a fake `rtk` of `script`,
+    /// in an environment of the process's `PATH`, a `CLAUDE_CONFIG_DIR` of
+    /// its own, and `RTK_DISABLED` as `disabled` gives it.
+    async fn run_with_fake_rtk(
+        script: &str,
+        command: &str,
+        disabled: Option<&str>,
+    ) -> FakeRtkOutcome {
         let root = tempfile::tempdir().unwrap();
         let rtk_dir = tempfile::tempdir().unwrap();
         let fake_rtk = rtk_dir.path().join("rtk.sh");
@@ -187,11 +200,20 @@ mod unix {
         // fail with ETXTBSY while concurrent tests fork.
         std::fs::write(&fake_rtk, script).unwrap();
         let projects_dir = rtk_dir.path().join("projects");
-        let rtk = crate::rtk::Rtk::new(
-            "sh".into(),
-            vec![fake_rtk.into()],
-            Some(projects_dir.clone()),
-        );
+        let rtk = crate::rtk::Rtk::new("sh".into(), vec![fake_rtk.into()]);
+        let environment = rho_sdk::ProcessEnvironment::Explicit {
+            variables: [
+                ("PATH", std::env::var("PATH").unwrap()),
+                (
+                    "CLAUDE_CONFIG_DIR",
+                    rtk_dir.path().to_str().unwrap().to_owned(),
+                ),
+            ]
+            .into_iter()
+            .chain(disabled.map(|value| ("RTK_DISABLED", value.to_owned())))
+            .map(|(name, value)| (name.to_owned(), value))
+            .collect(),
+        };
         let provider = ScriptedProvider::new(
             ModelIdentity::new("scripted", "test", "model"),
             [
@@ -219,7 +241,11 @@ mod unix {
                     .require_process_approval(),
             )
             .approval_handler_shared(approvals.clone())
-            .tool(SdkShellTool::bash(ShellToolOptions::new().rtk_with(rtk)))
+            .tool(SdkShellTool::bash(
+                ShellToolOptions::new()
+                    .environment(environment)
+                    .rtk_with(rtk),
+            ))
             .build()
             .unwrap();
         let session = runtime.session(SessionOptions::default()).await.unwrap();

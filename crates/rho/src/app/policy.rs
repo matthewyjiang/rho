@@ -9,8 +9,14 @@ pub(crate) enum AppPolicy {
 }
 
 impl AppPolicy {
-    pub(crate) fn for_mode(mode: PermissionMode, writes: SessionWriteLog) -> Self {
-        match mode.workspace_policy(writes) {
+    /// The policy of `mode` for a session whose commands find executables
+    /// on `search_path` (see [`PermissionMode::workspace_policy`]).
+    pub(crate) fn for_mode(
+        mode: PermissionMode,
+        writes: SessionWriteLog,
+        search_path: Option<std::ffi::OsString>,
+    ) -> Self {
+        match mode.workspace_policy(writes, search_path) {
             Some(policy) => Self::Mode(policy),
             None => Self::Allow,
         }

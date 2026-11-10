@@ -44,7 +44,7 @@ use rho_protocol::{
     ClientEnvironment, Cursor, ErrorCode, JobState, Replay, SessionAttachParams,
     SessionAttachResponse, SessionCancelParams, SessionChange, SessionConfigureParams,
     SessionDeleteParams, SessionDetachParams, SessionId, SessionNewParams, SessionOptions,
-    SessionSetup, TurnOutcome,
+    SessionSetup, TurnId, TurnOutcome,
 };
 use tokio::{
     sync::{mpsc, oneshot, watch},
@@ -66,8 +66,13 @@ pub(super) enum Control {
     /// Attach again after the cursor, once the last attachment ended;
     /// answered once the replay is through, or with why the attach failed.
     Resume(Replayed),
-    /// A prompt of this host's is about to start; see [`Waiter`].
-    Arm(Waiter),
+    /// A prompt of this host's is about to be sent; see [`Waiter`]. `turn`
+    /// hears the turn the daemon answers it with, and closes unheard when
+    /// the prompt started none. The pump waits for it before it reads on.
+    Arm {
+        waiter: Waiter,
+        turn: oneshot::Receiver<TurnId>,
+    },
     /// The daemon answered a config change with these options. The pump
     /// tells the host what changed, then answers, so the host hears the
     /// update before the response, and only once even when the daemon's
@@ -119,10 +124,10 @@ pub(super) type Accept = Box<dyn FnOnce(MessageId) + Send>;
 
 /// A prompt of this host's, waiting for its turn to end.
 ///
-/// The first user message after arming is the prompt's own: the host
-/// already shows it, so it is not echoed; an ACP v2 prompt's [`Accept`]
-/// reports it instead. The first turn end after that message ends the
-/// prompt. A waiter whose prompt gave up (its receiver is gone) is dropped.
+/// The turn's first user message is the prompt's own: the host already
+/// shows it, so it is not echoed; an ACP v2 prompt's [`Accept`] reports it
+/// instead. The turn's end ends the prompt. A waiter whose prompt gave up
+/// (its receiver is gone) is dropped.
 pub(super) struct Waiter {
     pub(super) outcome: oneshot::Sender<Result<TurnOutcome, AcpError>>,
     pub(super) accept: Arc<Mutex<Option<Accept>>>,

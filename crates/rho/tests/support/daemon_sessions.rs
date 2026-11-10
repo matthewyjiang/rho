@@ -17,12 +17,12 @@ use rho_protocol::{
     },
     AnswerStop, ApprovalAsk, ApprovalSource, Ask, Client, ClientEnvironment, ClientError,
     ClientInfo, CompactionStatus, ContentBlock, Cursor, DaemonNotification, DetachReason,
-    ErrorCode, InputAnswer, InputRequest, InputRequestId, JobId, JobKind, JobListParams, JobState,
-    JobSummary, Notifications, Operation, PathScope, Replay, Resolution, Seq, SessionAnswerParams,
-    SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionDetachParams,
-    SessionDetachedParams, SessionEvent, SessionHoldParams, SessionId, SessionNewParams,
-    SessionPromptParams, SessionSetup, StreamId, ToolCallId, ToolContent, ToolStatus, TurnError,
-    TurnErrorKind, TurnOutcome,
+    ErrorCode, IdempotencyKey, InputAnswer, InputRequest, InputRequestId, JobId, JobKind,
+    JobListParams, JobState, JobSummary, Notifications, Operation, PathScope, Replay, Resolution,
+    Seq, SessionAnswerParams, SessionAttachParams, SessionAttachResponse, SessionCancelParams,
+    SessionDetachParams, SessionDetachedParams, SessionEvent, SessionHoldParams, SessionId,
+    SessionNewParams, SessionPromptParams, SessionSetup, StreamId, ToolCallId, ToolContent,
+    ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome,
 };
 use rho_tui_pty::IsolatedHome;
 use tokio::{
@@ -291,15 +291,30 @@ impl Sandbox {
         session: &SessionId,
         text: &str,
     ) -> Result<(), Option<ErrorCode>> {
+        self.prompt_keyed(client, session, text, None)
+            .await
+            .map(|_| ())
+    }
+
+    /// Prompts `session` with `text`, naming `key`; the turn the daemon
+    /// answers with, or the error code of a refused prompt.
+    pub(super) async fn prompt_keyed(
+        &self,
+        client: &Client,
+        session: &SessionId,
+        text: &str,
+        key: Option<&str>,
+    ) -> Result<TurnId, Option<ErrorCode>> {
         client
             .request::<SessionPrompt>(&SessionPromptParams {
                 session: session.clone(),
                 content: vec![ContentBlock::Text { text: text.into() }],
                 timeout_ms: None,
                 environment: self.client_environment(),
+                idempotency_key: key.map(IdempotencyKey::new),
             })
             .await
-            .map(|_| ())
+            .map(|prompted| prompted.turn)
             .map_err(|error| match error {
                 ClientError::Rpc { error, .. } => error.error_code(),
                 error => panic!("prompt failed outside the protocol: {error}"),
@@ -336,6 +351,7 @@ impl Sandbox {
                 }],
                 timeout_ms: None,
                 environment,
+                idempotency_key: None,
             })
             .await
             .unwrap();
@@ -538,6 +554,19 @@ async fn a_turn_tells_clients_how_it_ended() {
             .iter()
             .map(|(_, event)| event.clone())
             .collect();
+        // The turn's start named it, and its end and the state that
+        // records the end carry the same id.
+        let turn = watcher
+            .events
+            .iter()
+            .find_map(|(_, event)| match event {
+                SessionEvent::State {
+                    state: JobState::Running,
+                    turn,
+                } => turn.clone(),
+                _ => None,
+            })
+            .expect("the turn started");
         let listed = match &outcome {
             TurnOutcome::Failed { error } => Some(error.message.clone()),
             _ => None,
@@ -545,8 +574,14 @@ async fn a_turn_tells_clients_how_it_ended() {
         assert_eq!(
             ending,
             vec![
-                SessionEvent::TurnEnded { outcome },
-                SessionEvent::State { state }
+                SessionEvent::TurnEnded {
+                    turn: turn.clone(),
+                    outcome
+                },
+                SessionEvent::State {
+                    state,
+                    turn: Some(turn)
+                }
             ],
             "{mode}: log:\n{}",
             sandbox.isolated.daemon_log()
@@ -612,6 +647,7 @@ async fn compact_reports_its_compaction_and_answers_with_the_result() {
     let answer = compact_turn.iter().find_map(|(_, event)| match event {
         SessionEvent::TurnEnded {
             outcome: TurnOutcome::Answered { text, stop },
+            ..
         } => Some((text.clone(), *stop)),
         _ => None,
     });
@@ -665,6 +701,7 @@ async fn a_prompts_image_and_resource_reach_the_model() {
                 content: content.clone(),
                 timeout_ms: None,
                 environment: sandbox.client_environment(),
+                idempotency_key: None,
             })
             .await
             .map(|_| ())
@@ -692,6 +729,7 @@ async fn a_prompts_image_and_resource_reach_the_model() {
             ],
             timeout_ms: None,
             environment: sandbox.client_environment(),
+            idempotency_key: None,
         })
         .await
         .unwrap();
@@ -722,6 +760,7 @@ async fn a_prompts_image_and_resource_reach_the_model() {
     let answer = watcher.events.iter().find_map(|(_, event)| match event {
         SessionEvent::TurnEnded {
             outcome: TurnOutcome::Answered { text, .. },
+            ..
         } => Some(text.clone()),
         _ => None,
     });
@@ -953,6 +992,7 @@ async fn a_workflow_command_starts_its_run_without_a_model_turn() {
     let (notice, answer) = match shown.as_slice() {
         [SessionEvent::UserMessage { .. }, SessionEvent::AgentMessageChunk { text, .. }, SessionEvent::TurnEnded {
             outcome: TurnOutcome::Answered { text: answer, .. },
+            ..
         }] => (text.clone(), answer.clone()),
         _ => panic!(
             "the prompt, then the notice, then an answer: {shown:#?}\nlog:\n{}",
@@ -978,8 +1018,11 @@ async fn a_workflow_command_starts_its_run_without_a_model_turn() {
 // within `rho daemon stop`'s wait; a turn whose daemon died (`kill -9`) is
 // recorded interrupted by the next daemon. Either way the session comes back
 // (#1661): an attach reopens it, in its workspace, replaying its saved
-// conversation and its job's state, and the next prompt continues it on the
-// same job.
+// conversation and its job's state, of the turn the prompt was answered
+// with, and the next prompt continues it on the same job. The ended turn's
+// prompt, sent again with its idempotency key, as a client does that never
+// heard the answer, starts no second turn and answers with the same turn,
+// by the next daemon too (#1777).
 // Owner: daemon session hosting and job records.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
@@ -993,11 +1036,10 @@ async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
         // The fixture holds each turn until it is cancelled.
         let (mut daemon, client) = sandbox.spawn_daemon(sandbox.rho("delay"), &[]).await;
         let session = sandbox.new_session(&client).await;
-        assert_eq!(
-            sandbox.prompt(&client, &session).await,
-            Ok(()),
-            "{ending:?}"
-        );
+        let turn = sandbox
+            .prompt_keyed(&client, &session, "hello", Some("k1"))
+            .await
+            .unwrap_or_else(|error| panic!("{ending:?}: the prompt was refused: {error:?}"));
         let jobs_of_session = async |client: &Client| -> Vec<JobId> {
             let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
             jobs.jobs
@@ -1043,6 +1085,18 @@ async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
             }
         };
         let state = settled_job(&sandbox, &client, &session).await.state;
+        let sent_again = sandbox
+            .prompt_keyed(&client, &session, "hello", Some("k1"))
+            .await;
+        // A second turn would run until cancelled, as the fixture holds it.
+        let state_once_sent_again = client
+            .request::<JobList>(&JobListParams {})
+            .await
+            .unwrap()
+            .jobs
+            .into_iter()
+            .find(|job| job.session.as_ref() == Some(&session))
+            .map(|job| job.state);
         let (mut follower, attached) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
         follower
             .read_until(|event| matches!(event, SessionEvent::UserMessage { .. }))
@@ -1052,17 +1106,19 @@ async fn a_turn_ended_early_is_recorded_and_its_session_continues() {
         assert_eq!(
             (
                 state,
+                (sent_again, state_once_sent_again),
                 attached.replay,
                 attached.workspace,
-                attached.state,
+                (attached.state, attached.turn),
                 next_prompt,
                 jobs_of_session(&client).await,
             ),
             (
                 expected_state,
+                (Ok(turn.clone()), Some(expected_state)),
                 Replay::Reset,
                 sandbox.workspace.clone(),
-                expected_state,
+                (expected_state, Some(turn)),
                 Ok(()),
                 job,
             ),
@@ -1328,7 +1384,7 @@ impl Follower {
     }
 }
 
-fn is_state(state: JobState) -> impl Fn(&SessionEvent) -> bool {
+pub(super) fn is_state(state: JobState) -> impl Fn(&SessionEvent) -> bool {
     move |event| matches!(event, SessionEvent::State { state: got, .. } if *got == state)
 }
 
@@ -1421,11 +1477,14 @@ async fn clients_that_leave_and_come_back_see_the_same_turn() {
         "the turn showed its prompt: {:#?}",
         watcher.events
     );
-    assert_eq!(
-        conversation(&watcher.events).last(),
-        Some(&SessionEvent::TurnEnded {
-            outcome: TurnOutcome::Cancelled
-        }),
+    assert!(
+        matches!(
+            conversation(&watcher.events).last(),
+            Some(SessionEvent::TurnEnded {
+                outcome: TurnOutcome::Cancelled,
+                ..
+            })
+        ),
         "the turn ended cancelled"
     );
 

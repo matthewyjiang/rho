@@ -47,7 +47,8 @@ impl SessionRuntime {
         }
         let mut config = model_scoped_config(&self.current_model(), process_config);
         config.permission_mode = mode;
-        ensure_auto_classifier_model(&config)
+        let credentials = self.build.host.environment.credentials();
+        ensure_auto_classifier_model(&config, credentials.as_ref())
             .map_err(|error| SettingChangeError::Unsupported(error.to_string()))?;
 
         let writes = self
@@ -79,8 +80,8 @@ impl SessionRuntime {
     /// set as it stands, with `mode`'s policy and approvals over `writes`
     /// whatever mode `config` names, keeping the session's run shape. The
     /// live runtime is replaced only once the new one holds the session, so
-    /// on error the session keeps its runtime. Callers that change the tool list keep the system prompt
-    /// and tell the model with an appended notice instead.
+    /// on error the session keeps its runtime. Callers that change the tool
+    /// list keep the system prompt and tell the model with an appended notice instead.
     pub(super) async fn rebuild_runtime(
         &mut self,
         config: &Config,
@@ -97,6 +98,7 @@ impl SessionRuntime {
             workspace_root: self.permission.workspace_root.clone(),
             usage_recording: self.built.runtime.usage_recording(),
             session_writes: writes.clone(),
+            credentials: self.build.host.environment.credentials(),
         });
         let workspace = WorkspaceOptions {
             root: self.permission.workspace_root.clone(),
@@ -115,7 +117,11 @@ impl SessionRuntime {
                 provider: std::sync::Arc::clone(&self.built.provider),
                 tools: &self.built.tools,
                 workspace,
-                workspace_policy: AppPolicy::for_mode(mode, writes),
+                workspace_policy: AppPolicy::for_mode(
+                    mode,
+                    writes,
+                    self.build.host.environment.current().path(),
+                ),
                 approval_session: approval.session,
                 system_prompt: self.built.prompt.system.clone(),
                 reasoning: self.built.session.reasoning_level(),
