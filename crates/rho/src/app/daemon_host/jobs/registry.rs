@@ -154,7 +154,9 @@ impl JobRegistry {
     /// Whether job `id` runs a turn alone: `running`, with no job it
     /// started still queued, running, or waiting for input. Only then does
     /// a started session's turn hold its slot in the daemon-wide budget
-    /// (#1714).
+    /// (#1714). A job it started may be one it does not wait on yet; the
+    /// turn lends its slot all the same, since it cannot tell (see
+    /// `sessions::budget`).
     pub(in crate::app::daemon_host) fn runs_alone(&self, id: &JobId) -> bool {
         let jobs = self.lock();
         jobs.get(id)
