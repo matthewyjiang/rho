@@ -697,7 +697,7 @@ impl TurnView for DaemonView {
             self.show(
                 event_receiver,
                 control_sender,
-                cost::TurnCost::new(runtime.current_model()),
+                cost::TurnCost::on(&runtime.current_model()),
             ),
         )
     }
