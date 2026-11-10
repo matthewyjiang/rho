@@ -20,7 +20,11 @@ use serde::{Deserialize, Serialize};
 /// It bounds session control, not the session: the depth stops a runaway
 /// recursion and the scope keeps a caller's limits on the sessions it
 /// starts. Neither is a sandbox for a session that can run commands.
+///
+/// Unknown fields are refused: a newer client's narrowing field must fail at
+/// an older daemon rather than be dropped and record a wider grant.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SessionGrant {
     /// How many sessions started one another to reach this one: 0 for a
     /// session a person drives, 1 for one that session's agent started.
