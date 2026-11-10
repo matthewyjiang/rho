@@ -4,9 +4,12 @@ The versioned JSON-RPC protocol between the [Rho](https://github.com/matthewyjia
 daemon and its frontends: the Rho TUI, rho-ui, the `rho acp` adapter, and MCP.
 
 - Newline-delimited JSON-RPC 2.0 over any `AsyncRead`/`AsyncWrite` stream.
-- Every connection starts with `rho/hello`. Peers are compatible when their
-  protocol majors match; a mismatch returns a typed error that says whether to
-  restart the daemon or update the client.
+- Every connection starts with `rho/hello`. The protocol is unstable while
+  its major is 0: peers are compatible only when their protocol versions are
+  equal. From major 1 on, they are when their majors match. A mismatch
+  returns a typed error that says whether to restart the daemon or update the
+  client, and what a daemon restart would cost: how much work in progress it
+  interrupts and how many other clients it disconnects.
 - After the handshake, the daemon serves a connection's requests concurrently
   and answers each one when it completes, so responses can arrive out of
   order and pair with their requests by id. Requests also run concurrently, so

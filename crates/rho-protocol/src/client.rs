@@ -79,8 +79,9 @@ pub enum ClientError {
     /// the connection.
     #[error("rho daemon sent an invalid message: {0}")]
     InvalidMessage(#[from] ParseError),
-    /// The daemon and this client speak incompatible protocol majors. The
-    /// message says which side to change.
+    /// The daemon and this client speak incompatible protocol versions. The
+    /// message says which side to change and, when that is the daemon, what
+    /// restarting it would cost.
     #[error("{0}")]
     VersionMismatch(VersionMismatch),
     /// The daemon answered with an error. A `null`-id error (the daemon
