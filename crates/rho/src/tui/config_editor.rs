@@ -7,6 +7,7 @@ use {
 };
 
 use super::{
+    client_settings::TuiSettings,
     config_picker,
     line_editor::LineEditor,
     line_editor_view::EditorPresentation,
@@ -45,30 +46,53 @@ pub(super) enum ConfigToggle {
     ShowReasoningOutput,
     ZenMode,
     XaiImageGeneration,
-    /// Flips `[keybindings] editing_mode` between default and vim.
+    /// Flips the client `editing_mode` between default and vim.
     VimMode,
 }
 
 pub(super) fn resolve_web_search_editor_value(
     stored: CredentialResult<Option<String>>,
-    legacy: Option<&str>,
 ) -> (Option<String>, Option<CredentialError>) {
     match stored {
-        Ok(Some(value)) => (Some(value), None),
-        Ok(None) => (legacy.map(str::to_string), None),
-        Err(err) => (legacy.map(str::to_string), Some(err)),
+        Ok(value) => (value, None),
+        Err(err) => (None, Some(err)),
     }
 }
 
+/// Flips one setting and returns its new value. Client settings change
+/// `settings` for this run only; agent settings save to `config.toml`.
 pub(super) fn toggle(
     config_repository: &ConfigRepository,
+    settings: &mut TuiSettings,
     setting: ConfigToggle,
 ) -> anyhow::Result<bool> {
-    config_repository.update(|config| match setting {
-        ConfigToggle::CheckForUpdates => {
-            config.check_for_updates = !config.check_for_updates;
-            config.check_for_updates
+    let client = |flag: &mut bool| {
+        *flag = !*flag;
+        Ok(*flag)
+    };
+    match setting {
+        ConfigToggle::CheckForUpdates => return client(&mut settings.check_for_updates),
+        ConfigToggle::CacheMissNotices => return client(&mut settings.cache_miss_notices),
+        ConfigToggle::ShowHeaderHints => return client(&mut settings.show_header_hints),
+        ConfigToggle::Notifications => return client(&mut settings.notifications),
+        ConfigToggle::ShowReasoningOutput => return client(&mut settings.show_reasoning_output),
+        ConfigToggle::ZenMode => return client(&mut settings.zen_mode),
+        ConfigToggle::VimMode => {
+            let mode = &mut settings.keybindings.editing_mode;
+            let enabled = match *mode {
+                EditingMode::Default => true,
+                EditingMode::Vim => false,
+            };
+            *mode = EditingMode::from_vim_enabled(enabled);
+            return Ok(enabled);
         }
+        ConfigToggle::EnableSubagents
+        | ConfigToggle::WorkspaceRewind
+        | ConfigToggle::KeepCacheWarm
+        | ConfigToggle::AutoCompact
+        | ConfigToggle::XaiImageGeneration => {}
+    }
+    config_repository.update(|config| match setting {
         ConfigToggle::EnableSubagents => {
             config.enable_subagents = !config.enable_subagents;
             config.enable_subagents
@@ -85,39 +109,18 @@ pub(super) fn toggle(
             config.auto_compact = !config.auto_compact;
             config.auto_compact
         }
-        ConfigToggle::CacheMissNotices => {
-            config.cache_miss_notices = !config.cache_miss_notices;
-            config.cache_miss_notices
-        }
-        ConfigToggle::ShowHeaderHints => {
-            config.show_header_hints = !config.show_header_hints;
-            config.show_header_hints
-        }
-        ConfigToggle::Notifications => {
-            config.notifications = !config.notifications;
-            config.notifications
-        }
-        ConfigToggle::ShowReasoningOutput => {
-            config.show_reasoning_output = !config.show_reasoning_output;
-            config.show_reasoning_output
-        }
-        ConfigToggle::ZenMode => {
-            config.zen_mode = !config.zen_mode;
-            config.zen_mode
-        }
         ConfigToggle::XaiImageGeneration => {
             config.xai_image_generation = !config.xai_image_generation;
             config.xai_image_generation
         }
-        ConfigToggle::VimMode => {
-            let mode = &mut config.keybindings.editing_mode;
-            let enabled = match *mode {
-                EditingMode::Default => true,
-                EditingMode::Vim => false,
-            };
-            *mode = EditingMode::from_vim_enabled(enabled);
-            enabled
-        }
+        // Client settings returned above.
+        ConfigToggle::CheckForUpdates
+        | ConfigToggle::CacheMissNotices
+        | ConfigToggle::ShowHeaderHints
+        | ConfigToggle::Notifications
+        | ConfigToggle::ShowReasoningOutput
+        | ConfigToggle::ZenMode
+        | ConfigToggle::VimMode => unreachable!("client settings do not save to config.toml"),
     })
 }
 
@@ -133,11 +136,14 @@ pub(super) enum ConfigNumberSave {
 }
 
 impl ConfigNumberInput {
+    /// Applies the edited number. `max_tool_output_lines` changes `settings`
+    /// for this run only; the rest save to `config.toml`.
     pub(super) fn save(
         &self,
         config_repository: &ConfigRepository,
+        settings: &mut TuiSettings,
     ) -> anyhow::Result<ConfigNumberSave> {
-        let mut saved = match self.key {
+        let saved = match self.key {
             ConfigNumberKey::QuestionnaireTimeout => {
                 let value = self.editor.value.trim();
                 let timeout = if value.is_empty() {
@@ -156,7 +162,9 @@ impl ConfigNumberInput {
                 ConfigNumberSave::MaxOutputBytes(self.parsed_value()?)
             }
             ConfigNumberKey::MaxToolOutputLines => {
-                ConfigNumberSave::MaxToolOutputLines(self.parsed_value()?)
+                let lines = self.parsed_value()?;
+                settings.max_tool_output_lines = lines;
+                return Ok(ConfigNumberSave::MaxToolOutputLines(lines));
             }
             ConfigNumberKey::CompactThresholdPercent => {
                 ConfigNumberSave::CompactThresholdPercent(self.parsed_value()?.clamp(1, 100) as u8)
@@ -175,26 +183,23 @@ impl ConfigNumberInput {
                 ));
             }
         };
+        // A threshold at or below the target is refused when saving.
         config_repository.update(|config| {
-            match &mut saved {
+            match saved {
                 ConfigNumberSave::QuestionnaireTimeout(value) => {
-                    config.questionnaire.timeout_seconds = *value
+                    config.questionnaire.timeout_seconds = value
                 }
-                ConfigNumberSave::MaxOutputBytes(value) => config.max_output_bytes = *value,
-                ConfigNumberSave::MaxToolOutputLines(value) => {
-                    config.max_tool_output_lines = *value
-                }
+                ConfigNumberSave::MaxOutputBytes(value) => config.max_output_bytes = value,
                 ConfigNumberSave::CompactThresholdPercent(value) => {
-                    config.set_compact_threshold_percent(*value);
-                    *value = config.compact_threshold_percent;
+                    config.compact_threshold_percent = value
                 }
                 ConfigNumberSave::CompactTargetPercent(value) => {
-                    config.set_compact_target_percent(*value);
-                    *value = config.compact_target_percent;
+                    config.compact_target_percent = value
                 }
-                ConfigNumberSave::AgentConcurrency(value) => config.set_agent_concurrency(*value),
+                ConfigNumberSave::AgentConcurrency(value) => config.agent_concurrency = value,
                 // Returned before this update.
-                ConfigNumberSave::ScreenAllowThresholdPercent(_) => {}
+                ConfigNumberSave::MaxToolOutputLines(_)
+                | ConfigNumberSave::ScreenAllowThresholdPercent(_) => {}
             }
             saved
         })
@@ -248,7 +253,9 @@ impl ConfigNumberKey {
 
     pub(super) fn max_value(self) -> Option<usize> {
         match self {
-            ConfigNumberKey::PromptHistoryLimit => Some(crate::config::MAX_PROMPT_HISTORY_LIMIT),
+            ConfigNumberKey::PromptHistoryLimit => {
+                Some(super::client_settings::MAX_PROMPT_HISTORY_LIMIT)
+            }
             ConfigNumberKey::AgentConcurrency => Some(crate::config::MAX_AGENT_CONCURRENCY),
             ConfigNumberKey::ScreenAllowThresholdPercent => {
                 Some(*crate::permission_classifier::SCREEN_ALLOW_PERCENT_RANGE.end() as usize)

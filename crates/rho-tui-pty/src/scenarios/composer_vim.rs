@@ -75,8 +75,10 @@ pub(super) const COMPOSER_VIM_SCENARIO: Scenario = Scenario::new(
 
 fn enable_vim(home: &IsolatedHome) -> Result<()> {
     writeln!(
-        OpenOptions::new().append(true).open(&home.config_path)?,
-        "\n[keybindings]\nediting_mode = \"vim\""
+        OpenOptions::new()
+            .append(true)
+            .open(&home.client_settings_path)?,
+        "editing_mode = \"vim\""
     )?;
     Ok(())
 }

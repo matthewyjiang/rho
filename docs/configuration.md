@@ -1,19 +1,79 @@
 # Configuration
 
-Rho stores persistent config at `~/.rho/config.toml` by default.
+Rho keeps agent settings in `~/.rho/config.toml` by default. The interactive TUI reads two more files of its own: `~/.rho/clients/tui.toml` for its display and composer settings, and `~/.rho/tui.toml` for the theme and keybindings. `RHO_HOME` moves all three.
 
 Change day-to-day settings from the TUI with `/config`, `/model`, `/login`, and the other commands below. Use this page for the file layout, CLI overrides, and keys that do not have their own page. A complete sample is in [Configuration file example](/configuration/full-example).
 
 Secrets are never stored in config. See [authentication and models](/authentication-and-models).
 
-Unknown keys in `config.toml` are a load error, so typos fail loudly. Values that Rho clamps or normalizes warn at load time. Both `--save` and `/config` rewrite only the known schema and discard unknown keys, comments, and formatting.
+Unknown keys in any of these files are a load error, so typos and settings from an older layout fail loudly. A value outside its range is an error too, naming the key, the limit, and the value you set; Rho does not clamp. Every bad key is reported at once.
+
+`--save` and `/config` rewrite only the settings that changed. Comments, key order, formatting, and tables Rho does not manage stay as you wrote them. A save that would leave an invalid file, such as a compaction target at or above the threshold, is refused and writes nothing.
+
+## File layout
+
+Agent settings in `config.toml` live in tables; no setting sits at the top level:
+
+```toml
+[model]
+provider = "openai"
+model = "gpt-5.6-sol"
+auth = "api-key"
+reasoning = "medium"
+fast_mode = false
+favorite_models = ["openai/gpt-5.6-sol"]
+
+[behavior]
+permission_mode = "supervised"
+enable_subagents = true
+agent_concurrency = 10
+edit_tool = "auto"
+rtk = true
+
+[compaction]
+auto_compact = true
+
+[output]
+max_output_bytes = 64000
+
+[web_search]
+mode = "auto"
+```
+
+The full set of tables is in [Configuration file example](/configuration/full-example).
+
+The TUI's own settings sit at the top level of `~/.rho/clients/tui.toml`:
+
+```toml
+zen_mode = false
+show_reasoning_output = true
+output_streaming = "live"
+show_header_hints = true
+notifications = true
+cache_miss_notices = false
+max_tool_output_lines = 10
+prompt_history_limit = 1000
+editing_mode = "default"
+check_for_updates = true
+```
+
+`~/.rho/tui.toml` holds the theme and keybinding chords:
+
+```toml
+theme = "terminal"
+
+[keybindings]
+cycle_permission_mode = "alt+m"
+```
+
+The TUI reads both files at startup. Changing one of these settings from `/config` applies to the running TUI and is not written back, so edit the file to keep it.
 
 ## Common settings
 
 | Goal | Where |
 | --- | --- |
 | Provider, model, reasoning | `[model]`, `/model`, or `/config` → **Models** |
-| Theme, zen, reasoning display, output streaming | `[display]` or `/config` → **Appearance**. See [Theme](/interactive-tui/theme), [Transcript display](/interactive-tui/transcript), and [Text streaming](/interactive-tui#text-streaming) |
+| Theme, zen, reasoning display, output streaming | `~/.rho/tui.toml` (theme), `~/.rho/clients/tui.toml`, or `/config` → **Appearance**. See [Theme](/interactive-tui/theme), [Transcript display](/interactive-tui/transcript), and [Text streaming](/interactive-tui#text-streaming) |
 | Permission mode | [Permission modes](/configuration/permissions) |
 | Concurrent agents, subagents, rewind | [Behavior](#behavior) |
 | Questionnaire timeout | [Questionnaire timeout](#questionnaire-timeout) |
@@ -29,13 +89,13 @@ Unknown keys in `config.toml` are a load error, so typos fail loudly. Values tha
 | Per-model context or reasoning | [Local model metadata](#local-model-metadata) |
 | Model aliases | [Model aliases](#model-aliases) |
 | Internal agent models | [Internal agent models](#internal-agent-models) |
-| Keybindings | `[keybindings]`. Restart required |
+| Keybindings | `[keybindings]` in `~/.rho/tui.toml`. Restart required |
 | Update checks | [Update checks](#update-checks) |
 | RTK rewrite | [RTK](/integrations/rtk) |
 
 ## Changing settings
 
-In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a category browser. Type to find a category, Enter to open it, Esc to go back. Space toggles an on/off row in place. Changes save as soon as they change.
+In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a category browser. Type to find a category, Enter to open it, Esc to go back. Space toggles an on/off row in place. Agent settings save to `config.toml` as soon as they change. TUI settings (theme, zen mode, reasoning display, cache miss notices, header hints, notifications, collapsed tool-output lines, output streaming, vim mode, prompt history, update check) change the running TUI only.
 
 | Category | Contains |
 | --- | --- |
@@ -46,12 +106,14 @@ In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#command
 | Tools | Inline shell, edit tool, web search, and SpaceXAI image generation when the conversation provider is SpaceXAI |
 | Providers | Login, logout, model-list refresh, models.dev catalog refresh, startup update check |
 
+Clients of the [daemon](/daemon#configuration-changes) read and change the agent settings, and keep their own, through [`rho/config/*`](/protocol#settings); each setting there says when a change takes effect.
+
 Apply timing:
 
 - Before the next turn: permission mode, edit tool, advisor mode, web search.
 - Immediately, including mid-turn: reasoning, theme, zen, reasoning display, cache miss notices, header hints, notifications, output streaming, vim mode, concurrent agents.
 - Next session: `enable_subagents`, `max_output_bytes`, SpaceXAI image generation.
-- Restart: other keybindings, and any direct edit of `config.toml`.
+- Restart: other keybindings, and any direct edit of `config.toml`, `clients/tui.toml`, or `tui.toml`.
 
 When `cache_miss_notices` is on, a completed turn that re-billed a large uncached prompt, over 20K tokens or $0.10, inserts a transcript notice. `/info` always shows session and latest-request cache hit rates, plus re-billed totals once misses were counted.
 
@@ -117,11 +179,11 @@ rho --config ~/.rho/config.toml
 
 The exact `--provider`, `--auth`, and `--model` combination for each provider is on its [provider page](/authentication-and-models#providers).
 
-`--no-system-prompt`, `--no-tools`, `--no-subagents`, and `--agent` apply only to the current run and are not saved. `--no-system-prompt` and `--no-tools` must come before a subcommand (`rho --no-tools run "..."`). `--no-subagents` and `--agent` may appear before or after the subcommand. `--no-subagents` matches `enable_subagents = false`.
+`--no-system-prompt`, `--no-tools`, `--no-subagents`, and `--agent` apply only to the current run and are not saved. `--no-system-prompt` and `--no-tools` must come before a subcommand (`rho --no-tools run "..."`). `--no-subagents` and `--agent` may appear before or after the subcommand. `--no-subagents` matches `behavior.enable_subagents = false`.
 
 ## Reasoning options
 
-`reasoning` is the thinking level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
+`model.reasoning` is the thinking level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
 
 Rho reads each model's advertised effort values from cached [models.dev](https://models.dev/) metadata and skips the rest in the TUI. `off` stays available for every model. Rho omits reasoning by default, or sends `effort: "none"` when the model advertises that value. Override the list with `supported_reasoning_levels` in `~/.rho/models.toml`. See [Local model metadata](#local-model-metadata).
 
@@ -242,7 +304,7 @@ model = "gpt-5.6-luna"
 auth = "api-key"
 ```
 
-Model aliases work here. Rho still reads the old `[title]` section and flat title settings, and rewrites them as `[internal_agents.session-title]` on the next save.
+Model aliases work here.
 
 The same table sets the model of a read-only [plugin agent](/integrations/plugins#plugin-agent-models); `/agents` writes it when you pick one. An entry applies by ID to any Rho agent Rho does not reserve, so it also reaches an agent file of your own with that ID.
 
@@ -278,9 +340,11 @@ Built-in providers have no per-provider override. They use this table unless you
 | `xai` | `str_replace` | First-party agent tooling uses string replace |
 | all others | `str_replace` | Rho default when no first-party match is known |
 
-Pinned values stay fixed across provider changes. From `/config`, the change applies before the next turn: the tool list rebuilds and the session gets a short notice with the new schema. Auto also switches live when you change providers mid-session. Direct `config.toml` edits need a restart. Rho 3.0 removed the legacy `hashline` format: a config that still sets `edit_tool = "hashline"`, globally or on a custom provider, loads as `str_replace` with a warning. Format details: [Edit formats](/tools-workspace/edit-format).
+Pinned values stay fixed across provider changes. From `/config`, the change applies before the next turn: the tool list rebuilds and the session gets a short notice with the new schema. Auto also switches live when you change providers mid-session. Direct `config.toml` edits need a restart. Rho 3.0 removed the legacy `hashline` format: a config that still sets `edit_tool = "hashline"`, globally or on a custom provider, is a load error. Format details: [Edit formats](/tools-workspace/edit-format).
 
 ## Behavior
+
+These keys live under `[behavior]`.
 
 `enable_subagents` controls the `agent` and `agents` tools. It defaults to `true`. Set it to `false` to remove both tools and tell the model not to delegate. The change applies to the next session. `--no-subagents` does the same for one run.
 
@@ -295,7 +359,7 @@ Pinned values stay fixed across provider changes. From `/config`, the change app
 workspace_rewind = false
 ```
 
-Restart Rho after changing it. The legacy `experimental_workspace_rewind` key is accepted but ignored (including saved `false` defaults), and the next config save removes it. Only `workspace_rewind = false` opts out. Checkpoints from the old experimental version lack pre-turn conversation boundaries and cannot be rewound; they are rejected before any files change.
+Restart Rho after changing it. Checkpoints from the old experimental version lack pre-turn conversation boundaries and cannot be rewound; they are rejected before any files change.
 
 Checkpoints capture original file contents for `write` and the selected native edit tool. Shell (`bash`), process, Git, network, database, service, and other untracked tool effects are **not captured**; recorded untracked effects show a **limited** badge in `/rewind`. `/tree` changes conversation state only. `/rewind` restores captured files and returns the conversation to **before** the selected turn, preserving the old branch. Conflicting or unsupported paths stay unchanged; a partial restore does not select a different conversation state.
 
@@ -321,19 +385,19 @@ Scripts call one tool with `call_tool(name, args)` or run independent calls conc
 
 ## RTK
 
-`rtk` enables built-in [RTK](/integrations/rtk) command rewriting when the `rtk` binary is available. It defaults to `true`. Set `rtk = false` to leave shell commands unchanged.
+`behavior.rtk` enables built-in [RTK](/integrations/rtk) command rewriting when the `rtk` binary is available. It defaults to `true`. Set it to `false` to leave shell commands unchanged.
 
 ## Tool output limit
 
-`max_output_bytes` is how much output Rho keeps from [tool](/tools-workspace) calls such as command output, file reads, and loaded skills. It defaults to `64000`.
+`output.max_output_bytes` is how much output Rho keeps from [tool](/tools-workspace) calls such as command output, file reads, and loaded skills. It defaults to `64000` and must be at least `1`.
 
-`max_tool_output_lines` is how many wrapped screen rows of a tool card show inline before the TUI collapses the rest. It defaults to `10` and is clamped to at least one line on load. Delegated agent prompts use the same limit: they stream from the beginning, then keep a stable collapsed preview. Click the card or press `Ctrl+O` to expand the full prompt while it streams or after launch. Once the agent starts or finishes, run receipts and results appear before the prompt so they remain visible when collapsed.
+`max_tool_output_lines` in `~/.rho/clients/tui.toml` is how many wrapped screen rows of a tool card show inline before the TUI collapses the rest. It defaults to `10` and must be at least `1`. Delegated agent prompts use the same limit: they stream from the beginning, then keep a stable collapsed preview. Click the card or press `Ctrl+O` to expand the full prompt while it streams or after launch. Once the agent starts or finishes, run receipts and results appear before the prompt so they remain visible when collapsed.
 
-`prompt_history_limit` is how many sent composer prompts Rho keeps in `~/.rho/prompt-history.sqlite3` for up-arrow recall across sessions. `$RHO_HOME` moves that file. It defaults to `1000`. `0` disables persistence. Values above `10000` clamp to `10000` on load. `/config` → **Context & limits** edits the cap and can clear saved history. Lowering the cap below the number of stored prompts asks first, then deletes the oldest extras. Clear also asks first. This is separate from `/new` and `/clear`, which reset the conversation, not composer recall.
+`prompt_history_limit` in `~/.rho/clients/tui.toml` is how many sent composer prompts Rho keeps in `~/.rho/prompt-history.sqlite3` for up-arrow recall across sessions. `$RHO_HOME` moves that file. It defaults to `1000`. `0` disables persistence. It must be at most `10000`. `/config` → **Context & limits** edits the cap and can clear saved history. Lowering the cap below the number of stored prompts asks first, then deletes the oldest extras. Clear also asks first. This is separate from `/new` and `/clear`, which reset the conversation, not composer recall.
 
 ## Update checks
 
-`check_for_updates` controls whether Rho checks the latest GitHub release at TUI startup. It defaults to `true`. A newer version shows an update notice in the session header and points to `rho update`. Change it from **Providers** in `/config`.
+`check_for_updates` in `~/.rho/clients/tui.toml` controls whether Rho checks the latest GitHub release at TUI startup. It defaults to `true`. A newer version shows an update notice in the session header and points to `rho update`.
 
 ## Questionnaire timeout
 

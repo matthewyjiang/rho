@@ -81,7 +81,7 @@ impl Sessions {
         let job = last.unwrap_or_else(|| {
             JobRecord::new_session(JobId::generate(), stored.cwd().to_path_buf(), id.clone())
         });
-        let opened = open_to_read(stored, &self.subagents, &job.id).await?;
+        let opened = open_to_read(stored, &self.subagents, &self.settings, &job.id).await?;
         let (feed, _) = opening_feed(
             &job,
             &opened.runtime,

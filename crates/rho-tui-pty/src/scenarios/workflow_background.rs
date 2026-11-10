@@ -128,7 +128,11 @@ fn retry_planned_run(harness: &mut PtyHarness) -> Result<()> {
     // after chat startup so its own classifier setup does not intercept us.
     fs::write(
         &config,
-        format!("permission_mode = \"auto\"\n{original_config}"),
+        original_config.replacen(
+            "[behavior]\n",
+            "[behavior]\npermission_mode = \"auto\"\n",
+            1,
+        ),
     )?;
     harness.submit_text("/workflow")?;
     harness.wait_for_text("Workflows", STREAM)?;
@@ -151,7 +155,11 @@ fn retry_planned_run(harness: &mut PtyHarness) -> Result<()> {
     wait_for_turn_completion_after(harness, &response)?;
     fs::write(
         &config,
-        format!("permission_mode = \"bypass\"\n{original_config}"),
+        original_config.replacen(
+            "[behavior]\n",
+            "[behavior]\npermission_mode = \"bypass\"\n",
+            1,
+        ),
     )?;
 
     harness.set_phase("watch_ready_run_without_launching");

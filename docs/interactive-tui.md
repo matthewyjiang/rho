@@ -108,7 +108,7 @@ See [Mouse](#mouse) for clicking pickers, prompts, panels, and the status line.
 
 ### Vim mode
 
-Turn on `/config` → **Appearance** → **Vim mode**, or set `editing_mode = "vim"` under [`[keybindings]`](/configuration/full-example), to edit the main composer with vim-style modes. The menu toggle applies immediately; a config file edit applies at the next start. The composer rule shows `INSERT` or `NORMAL`. Rho starts each draft in insert mode, where keys type as usual. `esc` switches to normal mode instead of cancelling or aborting; press `esc` again in normal mode for the usual cancel or abort.
+Turn on `/config` → **Appearance** → **Vim mode**, or set `editing_mode = "vim"` in [`~/.rho/clients/tui.toml`](/configuration/full-example), to edit the main composer with vim-style modes. The menu toggle applies immediately; a config file edit applies at the next start. The composer rule shows `INSERT` or `NORMAL`. Rho starts each draft in insert mode, where keys type as usual. `esc` switches to normal mode instead of cancelling or aborting; press `esc` again in normal mode for the usual cancel or abort.
 
 Normal mode supports:
 
@@ -133,7 +133,7 @@ Switching modes reveals text already received through the normal Markdown render
 
 Cancellation and errors reveal held text. A retry discards the failed attempt's pending text.
 
-Both the config menu and shortcut save `[display].output_streaming` in configuration, so the preference applies to later sessions. This does not change provider streaming settings.
+The config menu and shortcut change the running TUI. Set `output_streaming` in `~/.rho/clients/tui.toml` to choose the startup mode. This does not change provider streaming settings.
 
 ## Commands
 
@@ -207,7 +207,7 @@ Short confirmations and some credential prompts use an inline list instead of a 
 
 `/login`, `/logout`, and `/model` behavior, including Claude Code and Cursor handoff, is on [Authentication and models](/authentication-and-models). Logging in does not normally switch the active model. If Rho started without usable auth, a successful login selects that provider's default model.
 
-Press `ctrl-p` on a highlighted picker row to pin or unpin that model. Pins are stored in `favorite_models` and appear first, in pin order, in conversation and internal-agent pickers. From the composer, `ctrl-p` cycles that list forward, and `ctrl-shift-p` cycles backward on terminals that report it. Both are configurable as `cycle_pinned_model` and `cycle_pinned_model_back` under [`[keybindings]`](/configuration/full-example). The picker's pin toggle follows `cycle_pinned_model`. Its all/pinned toggle follows `toggle_tool_output`.
+Press `ctrl-p` on a highlighted picker row to pin or unpin that model. Pins are stored in `model.favorite_models` and appear first, in pin order, in conversation and internal-agent pickers. From the composer, `ctrl-p` cycles that list forward, and `ctrl-shift-p` cycles backward on terminals that report it. Both are configurable as `cycle_pinned_model` and `cycle_pinned_model_back` under [`[keybindings]`](/configuration/full-example) in `~/.rho/tui.toml`. The picker's pin toggle follows `cycle_pinned_model`. Its all/pinned toggle follows `toggle_tool_output`.
 
 The picker opens on the pinned list when any pin has auth. `ctrl-o` switches between pinned and all authenticated models. That view lasts for the session. Unpinning the last visible pin while the pinned list is open returns the picker to all models. Direct `/model provider/model` and `/model @alias` still resolve against the full catalog.
 

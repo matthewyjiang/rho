@@ -165,14 +165,6 @@ impl App {
             self.input_ui.composer(),
             ComposerMode::Picker(picker) if picker.is_config()
         ) {
-            let config = self
-                .info
-                .services
-                .config_repository
-                .load()
-                .unwrap_or_default();
-            self.info.runtime.show_reasoning_output = config.show_reasoning_output;
-            self.info.runtime.zen_mode = config.zen_mode;
             self.refresh_main_config_picker(config_picker::REASONING_VALUE)?;
         }
         match save_result {

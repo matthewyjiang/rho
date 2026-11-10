@@ -42,6 +42,7 @@ use crate::{
     tools::mcp::config::McpConfig,
 };
 
+mod advisor;
 mod agent;
 mod approval_policy;
 mod build;

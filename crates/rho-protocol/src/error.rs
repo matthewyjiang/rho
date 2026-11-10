@@ -161,6 +161,16 @@ error_codes! {
         /// [`crate::ProjectTrustMismatch`] naming the variables that
         /// differ.
         ProjectTrustMismatch = -32020 => crate::ProjectTrustMismatch,
+        /// The settings changed since the revision a `rho/config/set` was
+        /// made against, or another writer holds the file, so the daemon
+        /// wrote nothing. Read them again (`rho/config/get`), then send the
+        /// change again.
+        ConfigConflict = -32021,
+        /// The settings file is not valid TOML, or does not load for keys
+        /// the change leaves alone, so the daemon wrote nothing. Fix the
+        /// file by hand, or change the keys it fails on; `rho/config/get`
+        /// lists where it fails.
+        ConfigInvalid = -32022,
     }
 }
 

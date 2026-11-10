@@ -1,4 +1,4 @@
-//! Web-search routing, backend settings, and config migration.
+//! Web-search routing and backend settings.
 //!
 //! Mode chooses Auto / Backend / Off. Backend is one of OpenAI, Exa, Brave, or
 //! Firecrawl. Auto prefers native chat-provider search when the caller reports
@@ -13,8 +13,6 @@ use url::Url;
 
 #[path = "config_web_search_endpoint.rs"]
 mod endpoint;
-#[path = "config_web_search_migrate.rs"]
-mod migrate;
 
 #[cfg(test)]
 use endpoint::join_api_path;
@@ -23,11 +21,6 @@ pub use endpoint::{
     EXA_MCP_DEFAULT_URL, FIRECRAWL_API_DEFAULT_BASE, OPENAI_API_DEFAULT_BASE,
     OPENAI_CODEX_RESPONSES_URL,
 };
-#[cfg(test)]
-use migrate::migrate_legacy_web_search;
-pub(super) use migrate::{resolve_web_search_settings, PartialWebSearchConfig};
-#[cfg(test)]
-pub(super) use migrate::{ExaSearchPartial, OpenAiSearchPartial};
 
 /// How Rho should pick a web-search path.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

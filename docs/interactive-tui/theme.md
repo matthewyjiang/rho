@@ -65,18 +65,19 @@ Built-in ids are reserved. A custom file named `one-half-dark.json` or
 ## Picker and preview
 
 The theme picker lists terminal, built-in, and custom schemes together, sorted
-by name. Moving the selection previews colors live on the whole UI. Enter saves
-the choice to config and keeps it. Escape restores the previous theme.
+by name. Moving the selection previews colors live on the whole UI. Enter keeps
+the choice for the running TUI. Escape restores the previous theme.
 
 ## Config
 
+Set the startup theme in `~/.rho/tui.toml`:
+
 ```toml
-[display]
 theme = "terminal" # or a built-in id from the table above, or a custom file stem
 ```
 
-Changes from `/theme` or `/config` apply immediately and persist in
-`config.toml`.
+Changes from `/theme` or `/config` apply immediately and last until Rho exits.
+Edit `tui.toml` to keep one.
 
 ## When sampling is unavailable
 

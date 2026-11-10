@@ -1,406 +1,270 @@
-use super::super::ConfigWarning;
-use super::parse_settings;
 use pretty_assertions::assert_eq;
 
-// Covers: saved experimental defaults must not opt out of default-on rewind.
-// Owner: config migration
-#[test]
-fn workspace_rewind_migrates_saved_experimental_defaults() {
-    for (settings, expected) in [
-        ("", true),
-        ("experimental_workspace_rewind = false", true),
-        ("experimental_workspace_rewind = true", true),
-        ("workspace_rewind = false", false),
-        (
-            "experimental_workspace_rewind = true\nworkspace_rewind = false",
-            false,
-        ),
-        (
-            "experimental_workspace_rewind = false\nworkspace_rewind = true",
-            true,
-        ),
-    ] {
-        let (config, _) = parse_settings(&format!("[behavior]\n{settings}\n")).unwrap();
-        assert_eq!(config.workspace_rewind, expected, "{settings}");
-    }
+use super::super::{Config, ConfigWarning};
+
+fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWarning>)> {
+    Config::parse_settings_with_warnings(text)
 }
 
-// Covers: a typo or zero duration must fail closed, not enable auto answers.
-// Owner: persisted questionnaire policy parser.
-#[test]
-fn questionnaire_timeout_requires_positive_whole_seconds() {
-    for value in ["0", "-1", "1.5", "\"10\""] {
-        assert!(parse_settings(&format!("[questionnaire]\ntimeout_seconds = {value}\n")).is_err());
-    }
-    for (text, expected) in [
-        ("", None),
-        ("[questionnaire]\n", None),
-        ("[questionnaire]\ntimeout_seconds = 17\n", Some(17)),
-    ] {
-        let (config, _) = parse_settings(text).unwrap();
-        assert_eq!(
-            config
-                .questionnaire
-                .timeout_seconds
-                .map(std::num::NonZeroU64::get),
-            expected
-        );
-    }
+fn load_error(text: &str) -> String {
+    format!("{:#}", parse_settings(text).unwrap_err())
 }
 
-// Covers: unknown config keys at any level are a hard load error
-// Owner: config load
+// Covers: a typed edit rewrites only the keys it changed; comments, key
+// order, and untouched keys stay as the user wrote them.
+// Owner: config save
 #[test]
-fn unknown_keys_are_rejected() {
-    for (case, toml, field) in [
-        (
-            "top level",
-            "provder = \"openai\"\nmodel = \"gpt-5.5\"\n",
-            "provder",
-        ),
-        (
-            "nested table",
-            "[display]\nmax_tool_output_liness = 3\n",
-            "max_tool_output_liness",
-        ),
-        ("provider name", "[providers]\nunknown = {}\n", "unknown"),
-        (
-            "provider field",
-            "[providers.ollama]\nbad_key = \"x\"\n",
-            "bad_key",
-        ),
-        (
-            "internal agent field",
-            "[internal_agents.reviewer]\nbad_key = \"x\"\n",
-            "bad_key",
-        ),
-    ] {
-        let error = parse_settings(toml).unwrap_err();
-        let message = format!("{error:#}");
-        assert!(
-            message.contains(&format!("unknown field `{field}`")),
-            "{case}: expected unknown field `{field}` in: {message}"
-        );
-    }
-}
-
-// Covers: max_tool_output_lines below 1 clamps with a warning
-// Owner: config load
-#[test]
-fn max_tool_output_lines_clamp_warns() {
-    let (config, warnings) = parse_settings(
-        r#"
-[display]
-max_tool_output_lines = 0
-"#,
-    )
-    .unwrap();
-
-    assert_eq!(config.max_tool_output_lines, 1);
-    assert_eq!(
-        warnings,
-        vec![ConfigWarning::Clamped {
-            key: "display.max_tool_output_lines",
-            from: "0".into(),
-            to: "1".into(),
-        }]
-    );
-}
-
-// Covers: prompt_history_limit parses, defaults, and clamps above the max.
-// Owner: config load
-#[test]
-fn prompt_history_limit_parses_defaults_and_clamps() {
-    let (default_config, warnings) = parse_settings("").unwrap();
-    assert_eq!(default_config.prompt_history_limit, 1000);
-    assert!(warnings.is_empty());
-
-    let (config, warnings) = parse_settings(
-        r#"
-[display]
-prompt_history_limit = 0
-"#,
-    )
-    .unwrap();
-    assert_eq!(config.prompt_history_limit, 0);
-    assert!(warnings.is_empty());
-
-    let (config, warnings) = parse_settings(
-        r#"
-[display]
-prompt_history_limit = 250
-"#,
-    )
-    .unwrap();
-    assert_eq!(config.prompt_history_limit, 250);
-    assert!(warnings.is_empty());
-
-    let (config, warnings) = parse_settings(
-        r#"
-[display]
-prompt_history_limit = 50000
-"#,
-    )
-    .unwrap();
-    assert_eq!(config.prompt_history_limit, 10_000);
-    assert_eq!(
-        warnings,
-        vec![ConfigWarning::Clamped {
-            key: "display.prompt_history_limit",
-            from: "50000".into(),
-            to: "10000".into(),
-        }]
-    );
-}
-
-// Covers: unsupported web_search.provider normalizes to auto with a warning
-// Owner: config load
-#[test]
-fn unsupported_web_search_provider_normalizes_with_warning() {
-    let (config, warnings) = parse_settings(
-        r#"
-[web_search]
-provider = "unknown"
-"#,
-    )
-    .unwrap();
-
-    assert_eq!(config.web_search.mode, super::super::WebSearchMode::Auto);
-    assert_eq!(
-        config.web_search.backend,
-        super::super::SearchBackend::OpenAi
-    );
-    assert_eq!(
-        warnings,
-        vec![
-            ConfigWarning::Normalized {
-                key: "web_search.provider",
-                from: "\"unknown\"".into(),
-                to: "mode=auto, backend=openai".into(),
-            },
-            ConfigWarning::Migrated {
-                key: "web_search.openai.connection",
-                from: "implicit OpenAI transport".into(),
-                to: "api (set web_search.openai.connection to \"api\" or \"codex\")".into(),
-            },
-        ]
-    );
-}
-
-// Covers: each configured edit preference selects its distinct model-facing
-// tool, and the removed hashline format migrates to str_replace with a warning
-// instead of failing startup.
-// Owner: config load
-#[test]
-fn edit_tool_preferences_load_from_behavior_config() {
-    let no_warnings = Vec::<ConfigWarning>::new;
-    for (value, expected, expected_warnings) in [
-        ("auto", super::super::EditTool::Auto, no_warnings()),
-        (
-            "apply_patch",
-            super::super::EditTool::Pinned(rho_tools::EditFormat::ApplyPatch),
-            no_warnings(),
-        ),
-        (
-            "str_replace",
-            super::super::EditTool::Pinned(rho_tools::EditFormat::StrReplace),
-            no_warnings(),
-        ),
-        (
-            "hashline",
-            super::super::EditTool::Pinned(rho_tools::EditFormat::StrReplace),
-            vec![ConfigWarning::Migrated {
-                key: "behavior.edit_tool",
-                from: "\"hashline\"".into(),
-                to: "\"str_replace\" (the hashline edit format was removed)".into(),
-            }],
-        ),
-    ] {
-        let (config, warnings) =
-            parse_settings(&format!("[behavior]\nedit_tool = {value:?}\n")).unwrap();
-
-        assert_eq!(config.edit_tool, expected);
-        assert_eq!(warnings, expected_warnings);
-    }
-}
-
-// Covers: legacy top-level keys remain accepted under deny_unknown_fields
-// Owner: config load
-#[test]
-fn legacy_top_level_keys_still_load() {
-    let (config, warnings) = parse_settings(
-        r#"
-provider = "openai"
+fn writing_a_key_keeps_comments_and_key_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let original = r#"# conversation defaults
+[model]
+provider = "openai" # pinned
 model = "gpt-5.5"
 auth = "api-key"
-max_tool_output_lines = 4
-"#,
-    )
+
+[compaction]
+# when to compact
+compact_threshold_percent = 80 # tuned by hand
+auto_compact = true
+"#;
+    std::fs::write(&path, original).unwrap();
+
+    Config::edit(&path, |config| {
+        config.compact_threshold_percent = 70;
+        config.fast_mode = true;
+    })
     .unwrap();
-    assert_eq!(config.provider, "openai");
-    assert_eq!(config.model, "gpt-5.5");
-    assert_eq!(config.max_tool_output_lines, 4);
-    assert_eq!(warnings, Vec::<ConfigWarning>::new());
-}
 
-// Covers: display.theme loads and defaults to terminal
-// Owner: config load
-#[test]
-fn theme_loads_from_display_group() {
-    let (config, warnings) = parse_settings(
-        r#"
-[display]
-theme = "one-half-dark"
-"#,
-    )
-    .unwrap();
-    assert_eq!(config.theme, "one-half-dark");
-    assert_eq!(warnings, Vec::<ConfigWarning>::new());
-
-    let (padded, padded_warnings) = parse_settings(
-        r#"
-[display]
-theme = "  one-half-light  "
-"#,
-    )
-    .unwrap();
-    assert_eq!(padded.theme, "one-half-light");
-    assert_eq!(padded_warnings, Vec::<ConfigWarning>::new());
-
-    let (blank, blank_warnings) = parse_settings(
-        r#"
-[display]
-theme = "   "
-"#,
-    )
-    .unwrap();
-    assert_eq!(blank.theme, "terminal");
-    assert_eq!(blank_warnings, Vec::<ConfigWarning>::new());
-
-    let (defaulted, default_warnings) = parse_settings("").unwrap();
-    assert_eq!(defaulted.theme, "terminal");
-    assert_eq!(default_warnings, Vec::<ConfigWarning>::new());
-}
-
-// Covers: [model] group provider wins over a top-level provider
-// Owner: config load
-#[test]
-fn model_group_provider_overrides_top_level_provider() {
-    let (config, warnings) = parse_settings(
-        r#"
-provider = "openai"
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        r#"# conversation defaults
+[model]
+provider = "openai" # pinned
+model = "gpt-5.5"
 auth = "api-key"
+fast_mode = true
+
+[compaction]
+# when to compact
+compact_threshold_percent = 70 # tuned by hand
+auto_compact = true
+"#
+    );
+}
+
+// Covers: a scalar edit must not re-encode hand-edited structured tables.
+// Owner: config save
+#[test]
+fn writing_a_scalar_leaves_providers_byte_identical() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let original = r#"[behavior]
+rtk = true
+
+[providers.custom.composer]   # local gateway
+base_url   =   "http://127.0.0.1:8787/v1"   # spacing kept
+"#;
+    std::fs::write(&path, original).unwrap();
+
+    Config::edit(&path, |config| config.rtk = false).unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        original.replace("rtk = true", "rtk = false")
+    );
+}
+
+// Covers: out-of-range values fail loudly instead of being clamped, and the
+// error names the key, the limit, and the asked value.
+// Owner: config load
+#[test]
+fn out_of_range_values_name_the_key_limit_and_value() {
+    for (text, expected) in [
+        (
+            "[compaction]\ncompact_threshold_percent = 101\n",
+            "`compaction.compact_threshold_percent`: must be at most 100; got 101",
+        ),
+        (
+            "[compaction]\ncompact_target_percent = 0\n",
+            "`compaction.compact_target_percent`: must be at least 1; got 0",
+        ),
+        (
+            "[behavior]\nagent_concurrency = 65\n",
+            "`behavior.agent_concurrency`: must be at most 64; got 65",
+        ),
+        (
+            "[output]\nmax_output_bytes = -1\n",
+            "`output.max_output_bytes`: must be at least 1; got -1",
+        ),
+        (
+            "[questionnaire]\ntimeout_seconds = 0\n",
+            "`questionnaire.timeout_seconds`: must be at least 1; got 0",
+        ),
+    ] {
+        assert_eq!(load_error(text), expected, "{text}");
+    }
+}
+
+// Covers: misspelled keys and 2.x spellings fail the load instead of being
+// silently ignored.
+// Owner: config load
+#[test]
+fn unknown_and_2x_keys_are_rejected() {
+    for (text, expected) in [
+        ("provder = \"openai\"\n", "unknown key `provder`"),
+        ("provider = \"openai\"\n", "unknown key `provider`"),
+        ("title_model = \"gpt-5.5\"\n", "unknown key `title_model`"),
+        (
+            "[display]\nzen_mode = true\n",
+            "unknown key `display.zen_mode`",
+        ),
+        (
+            "[display]\ntheme = \"dark\"\n",
+            "unknown key `display.theme`",
+        ),
+        (
+            "[behavior]\ncheck_for_updates = false\n",
+            "unknown key `behavior.check_for_updates`",
+        ),
+        (
+            "[web_search]\nhosted = true\n",
+            "unknown key `web_search.hosted`",
+        ),
+        (
+            "[keybindings]\nopen_editor = \"ctrl+e\"\n",
+            "unknown key `keybindings.open_editor`",
+        ),
+        (
+            "model = \"gpt-5.5\"\n",
+            "`model`: must be a table with provider and model keys",
+        ),
+        (
+            "[behavior]\nedit_tool = \"hashline\"\n",
+            "`behavior.edit_tool`: must be one of auto, str_replace, apply_patch; got \"hashline\"",
+        ),
+    ] {
+        assert_eq!(load_error(text), expected, "{text}");
+    }
+}
+
+// Covers: every bad key in one file is reported at once, not one per load.
+// Owner: config load
+#[test]
+fn every_bad_key_is_reported() {
+    assert_eq!(
+        load_error("zen_mode = true\n[compaction]\ncompact_threshold_percent = 0\n"),
+        "unknown key `zen_mode`\n`compaction.compact_threshold_percent`: must be at least 1; got 0"
+    );
+}
+
+// Covers: the compaction target must stay below the threshold, at load and
+// when an edit would break it (and then nothing is written).
+// Owner: config load
+#[test]
+fn compaction_target_at_or_above_threshold_is_rejected() {
+    assert_eq!(
+        load_error(
+            "[compaction]\ncompact_threshold_percent = 60\ncompact_target_percent = 60\n"
+        ),
+        "`compaction.compact_target_percent`: must be below compaction.compact_threshold_percent (60); got 60"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let original = "[compaction]\ncompact_threshold_percent = 60\ncompact_target_percent = 40\n";
+    std::fs::write(&path, original).unwrap();
+    assert!(Config::edit(&path, |config| config.compact_target_percent = 70).is_err());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+}
+
+// Covers: every registry row saves to the key it loads from, so a config
+// saved from scratch reloads to the same values.
+// Owner: config registry
+#[test]
+fn every_agent_setting_round_trips_through_a_fresh_file() {
+    let (loaded, _) = parse_settings(
+        r#"
 [model]
 provider = "anthropic"
 model = "claude-sonnet-4-5"
 auth = "anthropic-api-key"
-"#,
-    )
-    .unwrap();
-    assert_eq!(config.provider, "anthropic");
-    assert_eq!(config.model, "claude-sonnet-4-5");
-    assert_eq!(config.auth, "anthropic-api-key");
-    assert_eq!(warnings, Vec::<ConfigWarning>::new());
-}
+reasoning = "high"
+fast_mode = true
 
-// Covers: empty [title] is a no-op; legacy title_* keys still apply
-// Owner: config load
-#[test]
-fn empty_title_section_keeps_legacy_title_keys() {
-    let (config, warnings) = parse_settings(
-        r#"
+[behavior]
+permission_mode = "auto"
+advisor_mode = true
+enable_subagents = false
+agent_concurrency = 3
+workspace_rewind = false
+keep_cache_warm = true
+inline_shell = "zsh"
+edit_tool = "apply_patch"
+rtk = false
+credential_store = "file"
+
+[internal_agents.advisor]
 provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-title_provider = "anthropic"
-title_model = "claude-sonnet-4-5"
-title_auth = "anthropic-api-key"
-[title]
+reasoning = "low"
+
+[internal_agents.permission-classifier]
+provider = "openai"
+model = "gpt-5.5-mini"
+auth = "api-key"
+reasoning = "minimal"
+
+[questionnaire]
+timeout_seconds = 30
+
+[compaction]
+auto_compact = false
+compact_threshold_percent = 70
+compact_target_percent = 30
+
+[output]
+max_output_bytes = 4096
+
+[codemode]
+mode = "only"
+
+[web_search]
+mode = "backend"
+backend = "exa"
+openai.connection = "codex"
+openai.api_base_url = "https://openai.example/v1"
+exa.connection = "mcp"
+exa.api_base_url = "https://exa.example"
+exa.mcp_url = "https://exa.example/mcp"
+brave.api_base_url = "https://brave.example"
+firecrawl.api_base_url = "https://firecrawl.example"
+
+[xai]
+image_generation = true
 "#,
     )
     .unwrap();
-    let title = config
-        .internal_agents
-        .get("session-title")
-        .expect("session-title internal agent");
-    assert_eq!(title.expect_rho().provider, "anthropic");
-    assert_eq!(title.expect_rho().model, "claude-sonnet-4-5");
-    assert_eq!(title.expect_rho().auth, "anthropic-api-key");
-    assert_eq!(warnings, Vec::<ConfigWarning>::new());
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    loaded.save(Some(path.clone())).unwrap();
+
+    assert_eq!(
+        format!("{:#?}", Config::load(Some(path)).unwrap()),
+        format!("{loaded:#?}")
+    );
 }
 
-// Covers: `[codemode] mode` loads Pi's on|only, defaults to on, and rejects
-// anything else (including the old boolean `behavior.codemode`).
+// Covers: reading a missing file is the defaults and never creates it.
 // Owner: config load
 #[test]
-fn codemode_mode_loads_like_pi() {
-    use crate::config::CodemodeMode;
-    let (only, warnings) = parse_settings("[codemode]\nmode = \"only\"\n").unwrap();
-    let (defaulted, _) = parse_settings("").unwrap();
-    assert_eq!(
-        (only.codemode.mode, defaulted.codemode.mode, warnings),
-        (
-            CodemodeMode::Only,
-            CodemodeMode::On,
-            Vec::<ConfigWarning>::new()
-        )
-    );
-    for invalid in [
-        "[codemode]\nmode = \"off\"\n",
-        "[codemode]\nmode = \"yolo\"\n",
-        "[behavior]\ncodemode = true\n",
-    ] {
-        assert!(parse_settings(invalid).is_err(), "{invalid}");
-    }
-}
-
-// Covers: agent_concurrency defaults to 10 and clamps 0 / over-max with a warning.
-// Owner: config load
-#[test]
-fn agent_concurrency_defaults_and_clamps() {
-    let (defaulted, warnings) = parse_settings("").unwrap();
-    assert_eq!(
-        defaulted.agent_concurrency,
-        crate::config::DEFAULT_AGENT_CONCURRENCY
-    );
-    assert!(warnings.is_empty());
-
-    let (config, warnings) = parse_settings(
-        r#"
-[behavior]
-agent_concurrency = 0
-"#,
-    )
-    .unwrap();
-    assert_eq!(config.agent_concurrency, 1);
-    assert_eq!(
-        warnings,
-        vec![ConfigWarning::Clamped {
-            key: "behavior.agent_concurrency",
-            from: "0".into(),
-            to: "1".into(),
-        }]
-    );
-
-    let (config, warnings) = parse_settings(
-        r#"
-[behavior]
-agent_concurrency = 1000
-"#,
-    )
-    .unwrap();
-    assert_eq!(
-        config.agent_concurrency,
-        crate::config::MAX_AGENT_CONCURRENCY
-    );
-    assert_eq!(
-        warnings,
-        vec![ConfigWarning::Clamped {
-            key: "behavior.agent_concurrency",
-            from: "1000".into(),
-            to: crate::config::MAX_AGENT_CONCURRENCY.to_string(),
-        }]
-    );
+fn loading_a_missing_file_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    Config::load(Some(path.clone())).unwrap();
+    assert!(!path.exists());
 }
 
 // Covers: Rho-only keys under a delegating entry are reported and dropped, not
@@ -486,6 +350,7 @@ model = "opus"
 fn an_unknown_internal_agent_runtime_falls_back_with_a_warning() {
     let (config, warnings) = parse_settings(
         r#"
+[model]
 provider = "anthropic"
 model = "claude-sonnet-4-5"
 auth = "anthropic-api-key"
@@ -518,29 +383,13 @@ auth = "api-key"
 }
 
 /// The stored Rho provider, model, and auth for one internal agent.
-fn conversation_triple(config: &super::Config, id: &str) -> (String, String, String) {
+fn conversation_triple(config: &Config, id: &str) -> (String, String, String) {
     let selection = config.internal_agent_model(id).unwrap().expect_rho();
     (
         selection.provider.clone(),
         selection.model.clone(),
         selection.auth.clone(),
     )
-}
-
-// Covers: Auto preference resolves EditTool and composes display labels for
-// the active provider.
-// Owner: config EditTool preference
-#[test]
-fn auto_edit_tool_resolves_preferred_format_for_provider() {
-    let config = super::Config {
-        provider: "anthropic".into(),
-        ..super::Config::default()
-    };
-    assert_eq!(
-        config.resolved_edit_tool_for_provider("openai-codex"),
-        rho_tools::EditFormat::ApplyPatch
-    );
-    assert_eq!(config.edit_tool_display_label(), "auto (str_replace)");
 }
 
 // Covers: a catalog (plugin) agent's entry replaces the model its file names,
@@ -646,13 +495,12 @@ base_url = "http://127.0.0.1:8787/v1"
         "https://private-gateway.example/v1",
         "https://opencode.ai/inference/go/v1",
     ] {
-        let error = parse_settings(&format!(
-            "[providers.custom.opencode]\nbase_url = \"{base_url}\"\n"
-        ))
-        .unwrap_err();
         assert!(
-            format!("{error:#}").contains("conflicts with the built-in opencode provider"),
-            "{base_url}: {error:#}"
+            parse_settings(&format!(
+                "[providers.custom.opencode]\nbase_url = \"{base_url}\"\n"
+            ))
+            .is_err(),
+            "{base_url}"
         );
     }
 }

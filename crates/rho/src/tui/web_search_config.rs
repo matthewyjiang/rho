@@ -121,26 +121,18 @@ fn url_badge(field: WebSearchUrlField, settings: &WebSearchSettings) -> String {
 }
 
 fn credential_badge(
-    config: &Config,
     credential_store: &dyn CredentialStore,
     credential: WebSearchCredential,
 ) -> PickerBadge {
-    let configured = web_search_api_key_is_set(
-        load_web_search_api_key(credential_store, credential),
-        config.legacy_web_search_api_key(credential),
-    );
+    let configured =
+        web_search_api_key_is_set(load_web_search_api_key(credential_store, credential));
     badge(if configured { "set" } else { "unset" })
 }
 
-fn web_search_api_key_is_set(
-    stored: CredentialResult<Option<String>>,
-    legacy: Option<&str>,
-) -> bool {
+fn web_search_api_key_is_set(stored: CredentialResult<Option<String>>) -> bool {
     stored
         .ok()
         .flatten()
-        .as_deref()
-        .or(legacy)
         .is_some_and(|value| !value.trim().is_empty())
 }
 
@@ -373,7 +365,6 @@ fn openai_items(config: &Config, credential_store: &dyn CredentialStore) -> Vec<
         "OpenAI API key",
         "Used when Connection is OpenAI API.",
         WebSearchCredential::OpenAi,
-        config,
         credential_store,
         Some("OpenAI API"),
     ));
@@ -398,7 +389,6 @@ fn exa_items(config: &Config, credential_store: &dyn CredentialStore) -> Vec<Pic
         "Exa API key",
         "Used when Connection is Exa API. A stored API key does not select MCP.",
         WebSearchCredential::Exa,
-        config,
         credential_store,
         Some("Exa API"),
     ));
@@ -428,7 +418,6 @@ fn endpoint_items(
         key.label(),
         key_detail,
         key,
-        config,
         credential_store,
         None,
     ));
@@ -467,7 +456,6 @@ fn api_key_item(
     label: &str,
     detail: &str,
     credential: WebSearchCredential,
-    config: &Config,
     credential_store: &dyn CredentialStore,
     section: Option<&str>,
 ) -> PickerItem {
@@ -478,7 +466,7 @@ fn api_key_item(
         None,
         web_search_key_value(credential),
     );
-    item.badge = Some(credential_badge(config, credential_store, credential));
+    item.badge = Some(credential_badge(credential_store, credential));
     item
 }
 

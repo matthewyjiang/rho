@@ -259,7 +259,9 @@ impl App {
                 return Ok(());
             }
             ConfigNumberKey::MaxOutputBytes => config.max_output_bytes,
-            ConfigNumberKey::MaxToolOutputLines => config.max_tool_output_lines,
+            ConfigNumberKey::MaxToolOutputLines => {
+                self.info.services.settings.max_tool_output_lines
+            }
             ConfigNumberKey::CompactThresholdPercent => config.compact_threshold_percent as usize,
             ConfigNumberKey::CompactTargetPercent => config.compact_target_percent as usize,
             ConfigNumberKey::PromptHistoryLimit => {
@@ -290,11 +292,10 @@ impl App {
         &mut self,
         credential: rho_providers::credentials::WebSearchCredential,
     ) -> anyhow::Result<()> {
-        let config = self.info.services.config_repository.load()?;
-        let (value, load_error) = resolve_web_search_editor_value(
-            load_web_search_api_key(self.credential_store.as_ref(), credential),
-            config.legacy_web_search_api_key(credential),
-        );
+        let (value, load_error) = resolve_web_search_editor_value(load_web_search_api_key(
+            self.credential_store.as_ref(),
+            credential,
+        ));
         if let Some(err) = load_error {
             self.insert_entry(&Entry::Error(format!(
                 "could not access {}: {err}",
@@ -352,7 +353,8 @@ impl App {
         filter: String,
     ) -> anyhow::Result<()> {
         let config = self.load_config_for_display()?;
-        let mut root = config_picker::config_picker(&self.info.runtime, &config);
+        let mut root =
+            config_picker::config_picker(&self.info.runtime, &config, &self.info.services.settings);
         let Some(category) = config_picker::category_for_setting(selected_value) else {
             Self::restore_picker_position(&mut root, selected_value, filter);
             self.input_ui.set_composer(ComposerMode::Picker(root));
@@ -361,9 +363,14 @@ impl App {
         };
 
         Self::restore_picker_position(&mut root, category, String::new());
-        let mut picker = config_picker::category_picker(category, &self.info.runtime, &config)
-            .expect("known config category must have a picker")
-            .with_parent(root);
+        let mut picker = config_picker::category_picker(
+            category,
+            &self.info.runtime,
+            &config,
+            &self.info.services.settings,
+        )
+        .expect("known config category must have a picker")
+        .with_parent(root);
         Self::restore_picker_position(&mut picker, selected_value, filter);
         self.set_status_quiet(picker.title.clone());
         self.input_ui.set_composer(ComposerMode::Picker(picker));
@@ -372,8 +379,12 @@ impl App {
 
     pub(super) fn open_config_category(&mut self, category: &str) -> anyhow::Result<()> {
         let config = self.load_config_for_display()?;
-        let Some(picker) = config_picker::category_picker(category, &self.info.runtime, &config)
-        else {
+        let Some(picker) = config_picker::category_picker(
+            category,
+            &self.info.runtime,
+            &config,
+            &self.info.services.settings,
+        ) else {
             return Ok(());
         };
         self.open_child_picker(picker);
@@ -392,7 +403,12 @@ impl App {
         row: BooleanConfigRow,
         apply: impl FnOnce(&mut Self, bool),
     ) -> anyhow::Result<()> {
-        match config_editor::toggle(&self.info.services.config_repository, row.toggle) {
+        let services = &mut self.info.services;
+        match config_editor::toggle(
+            &services.config_repository,
+            &mut services.settings,
+            row.toggle,
+        ) {
             Ok(enabled) => {
                 apply(self, enabled);
                 self.refresh_main_config_picker_if_open(row.picker_value)?;
@@ -424,10 +440,6 @@ impl App {
                 error_noun: "update check",
             },
             |app, check_for_updates| {
-                app.info
-                    .services
-                    .diagnostics
-                    .update_check_for_updates(check_for_updates);
                 if !check_for_updates {
                     app.info.services.update_notice = None;
                 }
@@ -471,13 +483,16 @@ impl App {
         use config_picker::ConfigPage;
         let info = &self.info.runtime;
         Ok(match page {
-            ConfigPage::Root => {
-                config_picker::config_picker(info, &self.load_config_for_display()?)
-            }
+            ConfigPage::Root => config_picker::config_picker(
+                info,
+                &self.load_config_for_display()?,
+                &self.info.services.settings,
+            ),
             ConfigPage::Category(category) => config_picker::category_picker(
                 category.value(),
                 info,
                 &self.load_config_for_display()?,
+                &self.info.services.settings,
             )
             .expect("known config category must have a picker"),
             ConfigPage::WebSearch => config_picker::web_search_config_picker(
@@ -709,17 +724,10 @@ impl App {
         )
     }
 
-    /// Menu and shortcut share this durable preference before changing live output.
+    /// Menu and shortcut share this preference before changing live output.
+    /// It lasts until Rho exits; `clients/tui.toml` is not written.
     pub(super) fn save_streaming_mode(&mut self, mode: crate::config::StreamingMode) -> bool {
-        if let Err(error) = self.info.services.config_repository.update(|config| {
-            config.output_streaming = mode;
-        }) {
-            self.insert_entry(&Entry::Error(format!(
-                "could not save output streaming setting: {error}"
-            )));
-            self.set_status("config save failed");
-            return false;
-        }
+        self.info.services.settings.output_streaming = mode;
         if let Err(error) =
             self.refresh_main_config_picker_if_open(config_picker::OUTPUT_STREAMING_VALUE)
         {

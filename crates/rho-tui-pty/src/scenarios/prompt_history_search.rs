@@ -1,8 +1,6 @@
 //! Ctrl+R searches prompt history and recalls the chosen prompt into the
 //! composer, where Up/Down history navigation continues from it.
 
-use std::{fs::OpenOptions, io::Write};
-
 use anyhow::Result;
 
 use crate::{
@@ -81,9 +79,9 @@ pub(super) const PROMPT_HISTORY_SEARCH_SCENARIO: Scenario = Scenario::new(
 .with_setup(bind_reset);
 
 fn bind_reset(home: &IsolatedHome) -> Result<()> {
-    writeln!(
-        OpenOptions::new().append(true).open(&home.config_path)?,
-        "\n[keybindings]\nreset_conversation = \"alt+n\""
+    std::fs::write(
+        &home.tui_path,
+        "[keybindings]\nreset_conversation = \"alt+n\"\n",
     )?;
     Ok(())
 }
