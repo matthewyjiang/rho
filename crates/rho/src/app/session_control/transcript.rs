@@ -68,7 +68,7 @@ impl Transcript {
                 "waiting for a person to answer input request {}",
                 request.id
             ))),
-            SessionEvent::TurnEnded { outcome } => {
+            SessionEvent::TurnEnded { outcome, .. } => {
                 if let Some(note) = unanswered(outcome) {
                     self.blocks.push(Block::Note(note));
                 }

@@ -3,7 +3,7 @@
 
 use rho_protocol as wire;
 
-use super::jobs::{JobId, JobRecord, JobState, JobSubject, TurnEnd};
+use super::jobs::{JobId, JobRecord, JobState, JobSubject, Moved, TurnEnd};
 use crate::app::agent_concurrency::{Budget, QueuePlace};
 
 /// A session id as the wire sends it.
@@ -58,10 +58,11 @@ fn failure(state: &JobState) -> Option<String> {
     }
 }
 
-/// The event that tells attached clients a session's job is now in `state`.
-pub(super) fn state_event(state: &JobState) -> wire::SessionEvent {
+/// The event that tells attached clients where a session's job is now.
+pub(super) fn state_event(moved: &Moved) -> wire::SessionEvent {
     wire::SessionEvent::State {
-        state: state.into(),
+        state: (&moved.state).into(),
+        turn: moved.turn.clone(),
     }
 }
 
@@ -78,6 +79,7 @@ pub(super) fn job_summary(record: JobRecord, queue: Option<QueuePlace>) -> wire:
         created_at,
         updated_at,
         outcome: _,
+        turn: _,
     } = record;
     let (kind, session, workflow_run) = match subject {
         JobSubject::Session { session } => (wire::JobKind::Session, Some(session), None),

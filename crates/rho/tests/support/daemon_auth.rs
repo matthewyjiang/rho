@@ -90,6 +90,7 @@ provider = "disabled"
                 }],
                 timeout_ms: None,
                 environment: self.sandbox.client_environment(),
+                idempotency_key: None,
             })
             .await
             .map_err(rpc_error)?;

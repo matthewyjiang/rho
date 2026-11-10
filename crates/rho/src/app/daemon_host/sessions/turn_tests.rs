@@ -7,9 +7,9 @@ use std::{
 use pretty_assertions::assert_eq;
 use rho_sdk::UserInput;
 use tempfile::TempDir;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, watch};
 
-use super::{DaemonView, PromptStart, TurnLimit, TurnTask, UNEXPECTED_STOP};
+use super::{DaemonView, PromptStart, StartedTurn, TurnLimit, TurnTask, UNEXPECTED_STOP};
 use crate::app::daemon_host::sessions::{
     queued::Queued,
     test_events::{
@@ -19,7 +19,7 @@ use crate::app::daemon_host::sessions::{
 use crate::{
     app::{
         daemon_host::{
-            jobs::{JobId, JobRecord, JobRegistry, JobState, JobStore, TurnEnd},
+            jobs::{JobId, JobRecord, JobRegistry, JobState, JobStore, TurnEnd, TurnRecord},
             sessions::{open::OpenedSession, t3_wake::WakeDir, LoadedSession},
         },
         session_runtime::{
@@ -46,8 +46,56 @@ fn started_job(jobs: &JobRegistry) -> JobId {
     );
     let job = record.id.clone();
     jobs.register(record).unwrap();
-    jobs.start_turn(&job).unwrap();
+    jobs.start_turn(&job, TurnRecord::starting(/*key*/ None))
+        .unwrap();
     job
+}
+
+/// The id of the turn `job` has under way.
+fn turn_of(jobs: &JobRegistry, job: &JobId) -> rho_protocol::TurnId {
+    jobs.get(job).unwrap().turn.unwrap().id
+}
+
+/// A view of `session`'s turn under way, and where it tells how the turn
+/// began.
+fn view_of(session: Arc<LoadedSession>) -> (DaemonView, watch::Receiver<PromptStart>) {
+    let (started, start) = watch::channel(PromptStart::Pending);
+    let turn = turn_of(&session.jobs, &session.job);
+    (DaemonView::new(session, turn, started), start)
+}
+
+/// The turn `session` has under way, as a prompt starts it, which `cancel`
+/// cancels, and where it tells how it began.
+fn started_turn(
+    session: &LoadedSession,
+    cancel: rho_sdk::CancellationToken,
+) -> (StartedTurn, watch::Receiver<PromptStart>) {
+    let (start, started) = watch::channel(PromptStart::Pending);
+    let turn = StartedTurn {
+        id: turn_of(&session.jobs, &session.job),
+        cancel,
+        runtime: Queued::join(&session.runtime),
+        budget: None,
+        start,
+    };
+    (turn, started)
+}
+
+/// How a turn began, if it has said.
+fn told(start: &watch::Receiver<PromptStart>) -> Option<PromptStart> {
+    Some(start.borrow().clone()).filter(|start| *start != PromptStart::Pending)
+}
+
+/// How a turn began, once it says, or `None` for one that ended without
+/// saying.
+async fn began(mut start: watch::Receiver<PromptStart>) -> Option<PromptStart> {
+    let told = tokio::time::timeout(
+        TEST_BUDGET,
+        start.wait_for(|start| *start != PromptStart::Pending),
+    )
+    .await
+    .expect("the turn answers its prompt");
+    told.ok().map(|start| start.clone())
 }
 
 /// Session `job`, loaded in `root` with a provider that never answers, so
@@ -177,16 +225,12 @@ async fn the_job_waits_for_input_while_any_request_is_open() {
     for case in cases {
         let job = started_job(&jobs);
         let session = loaded_session(root.path(), &jobs, job.clone()).await;
-        let (started, mut start) = oneshot::channel();
-        let mut view = DaemonView::new(session, started);
+        let (mut view, start) = view_of(session);
 
         show(&mut view, case.events).await;
 
         assert_eq!(
-            (
-                jobs.get(&job).map(|record| record.state),
-                start.try_recv().ok()
-            ),
+            (jobs.get(&job).map(|record| record.state), told(&start)),
             (Some(case.state), case.start),
             "{}",
             case.name
@@ -300,8 +344,7 @@ async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
     for case in cases {
         let job = started_job(&jobs);
         let session = loaded_session(root.path(), &jobs, job.clone()).await;
-        let (started, mut start) = oneshot::channel();
-        let mut view = DaemonView::new(session, started);
+        let (mut view, start) = view_of(session);
         show(&mut view, case.events).await;
         let expected_end = case.release.recorded_end();
 
@@ -311,10 +354,7 @@ async fn the_turn_end_is_recorded_once_and_reaches_a_waiting_prompt() {
         }
 
         assert_eq!(
-            (
-                jobs.get(&job).map(|record| record.state),
-                start.try_recv().ok()
-            ),
+            (jobs.get(&job).map(|record| record.state), told(&start)),
             (Some(JobState::Ended(expected_end)), case.start),
             "{}",
             case.name
@@ -337,19 +377,15 @@ async fn a_cancel_before_the_prompt_begins_saves_nothing() {
     let cancel = rho_sdk::CancellationToken::new();
     cancel.cancel();
 
-    let start = TurnTask {
+    let (turn, start) = started_turn(&session, cancel);
+    TurnTask {
         session: Arc::clone(&session),
-        runtime: Queued::join(&session.runtime),
-        budget: None,
+        turn,
         stopping: rho_sdk::CancellationToken::new(),
-        cancel,
         limit: None,
     }
     .spawn(UserInput::text("hello"));
-    let start = tokio::time::timeout(TEST_BUDGET, start)
-        .await
-        .expect("the cancelled turn answers")
-        .ok();
+    let start = began(start).await;
     // Released once the turn recorded its end.
     let messages = session
         .runtime
@@ -437,14 +473,14 @@ async fn the_daemon_times_a_turn_out_at_its_limit() {
         let session = loaded_session(root.path(), &jobs, job.clone()).await;
         let runtime = case.busy.then(|| session.runtime.try_lock().unwrap());
 
-        let start = TurnTask {
+        // The session's own cancel, as a prompt passes it, which the
+        // limit's cancel trips.
+        let cancel = session.turn().cancel.clone();
+        let (turn, start) = started_turn(&session, cancel);
+        TurnTask {
             session: Arc::clone(&session),
-            runtime: Queued::join(&session.runtime),
-            budget: None,
+            turn,
             stopping: rho_sdk::CancellationToken::new(),
-            // The session's own, as a prompt passes it, which the limit's
-            // cancel trips.
-            cancel: session.turn().cancel.clone(),
             limit: Some(TurnLimit::starting_now(case.timeout_ms)),
         }
         .spawn(UserInput::text("hello"));
@@ -456,10 +492,7 @@ async fn the_daemon_times_a_turn_out_at_its_limit() {
             tokio::time::sleep(Duration::from_millis(case.timeout_ms + 1)).await;
             drop(runtime);
         }
-        let start = tokio::time::timeout(TEST_BUDGET, start)
-            .await
-            .expect("the turn answers its prompt")
-            .ok();
+        let start = began(start).await;
         if !case.busy {
             // The prompt is saved and the model call hangs: move the clock
             // to the limit rather than wait for it, then let it run again for

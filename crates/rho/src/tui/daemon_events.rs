@@ -10,7 +10,10 @@
 //!
 //! The job's state says whether a turn runs ([`TurnState`]), which drives
 //! the TUI's busy chrome; steers carry their id, so the TUI's pending panel
-//! drops a steer once the daemon applied it.
+//! drops a steer once the daemon applied it. A replayed state is history:
+//! the attach says which turn the replay ends in, by id, and only that
+//! turn, while under way, shows busy before the replay is over, so the TUI
+//! never times or announces a turn it only read back (#1777).
 //!
 //! Input requests open and close through [`OpenInputs`], which keeps those
 //! still open, so the ones a replay leaves open show once it ends
@@ -18,8 +21,8 @@
 //!
 //! Otherwise it holds only what the events leave implicit: which message the
 //! last text chunk extended, the reply the last turn streamed, each open
-//! call's last card, which a call cut off shows as interrupted, and why the
-//! last turn failed, which its job state leaves out.
+//! call's last card, which a call cut off shows as interrupted, and why a
+//! turn failed, which its job state leaves out.
 
 use std::collections::HashMap;
 
@@ -27,7 +30,7 @@ use rho_protocol::{
     display::{Presentation, ToolCard, ToolCardStatus},
     CompactionStatus, ContentBlock, InputRequest, InputRequestId, JobState, MessageId, PlanEntry,
     PlanStatus, Replay, SessionEvent, SteerId, ToolCallId as WireCallId, ToolCallUpdate,
-    ToolStatus, TurnOutcome,
+    ToolStatus, TurnId, TurnOutcome,
 };
 use rho_sdk::{SteeringId, ToolCallId};
 
@@ -147,8 +150,11 @@ pub(super) struct DaemonEvents {
     called_since_reply: bool,
     /// Each open call's last running card.
     running: HashMap<WireCallId, ToolCard>,
-    /// Why the last turn failed, which its `failed` job state shows.
-    failure: Option<String>,
+    /// Why a turn failed, which that turn's `failed` job state shows.
+    failure: Option<(TurnId, String)>,
+    /// Where the replay under way ends, as its attach answered: the job's
+    /// state, and the turn it is of. `None` once the replay is over.
+    replay_end: Option<(JobState, Option<TurnId>)>,
     inputs: OpenInputs,
 }
 
@@ -166,16 +172,28 @@ impl DaemonEvents {
     }
 
     /// Starts an attachment whose response lists `inputs` as the requests
-    /// open now. Its replay follows, until [`Self::end_replay`]: none of
-    /// its input requests shows before then.
-    pub(super) fn attached(&mut self, inputs: Vec<InputRequest>) {
+    /// open now and says its replay ends with the job in `state`, of turn
+    /// `turn`. The replay follows, until [`Self::end_replay`]: none of its
+    /// input requests shows before then.
+    pub(super) fn attached(
+        &mut self,
+        inputs: Vec<InputRequest>,
+        state: JobState,
+        turn: Option<TurnId>,
+    ) {
         self.inputs.attached(inputs);
+        self.replay_end = Some((state, turn));
     }
 
-    /// The replay is over, ending in the job's `state`, as the attach
-    /// response said: whether a turn runs, then each request still open.
-    pub(super) fn end_replay(&mut self, state: JobState) -> Vec<DaemonView> {
-        let mut views = vec![self.turn(state)];
+    /// The replay is over, ending where the attach said: whether a turn
+    /// runs, then each request still open.
+    pub(super) fn end_replay(&mut self) -> Vec<DaemonView> {
+        let mut views: Vec<_> = self
+            .replay_end
+            .take()
+            .map(|(state, turn)| self.turn(state, turn.as_ref()))
+            .into_iter()
+            .collect();
         views.extend(self.inputs.end_replay());
         views
     }
@@ -247,8 +265,8 @@ impl DaemonEvents {
                 vec![DaemonView::Notice(card_text(title, &plain))]
             }
             SessionEvent::Notice { text } => vec![DaemonView::Notice(text)],
-            SessionEvent::TurnEnded { outcome } => {
-                let views = self.turn_ended(outcome);
+            SessionEvent::TurnEnded { turn, outcome } => {
+                let views = self.turn_ended(turn, outcome);
                 self.end_messages();
                 views
             }
@@ -261,7 +279,17 @@ impl DaemonEvents {
                 DaemonView::Notice(format!("session titled: {title}")),
                 DaemonView::Title(title),
             ],
-            SessionEvent::State { state } => vec![self.turn(state)],
+            SessionEvent::State { state, turn } => match &self.replay_end {
+                // History, unless it is of the turn the replay ends under
+                // way, which shows busy from where its rows start. The
+                // replay's end says the rest.
+                Some((end, under_way))
+                    if !(in_progress(*end) && in_progress(state) && turn == *under_way) =>
+                {
+                    Vec::new()
+                }
+                Some(_) | None => vec![self.turn(state, turn.as_ref())],
+            },
             SessionEvent::InputRequested { request } => {
                 self.inputs.requested(*request).into_iter().collect()
             }
@@ -277,14 +305,11 @@ impl DaemonEvents {
         }
     }
 
-    /// Whether a turn runs once the job is in `state`, as an event or the
-    /// attach response says.
-    fn turn(&mut self, state: JobState) -> DaemonView {
+    /// Whether a turn runs once the job is in `state`, of turn `turn`, as
+    /// an event or the attach response says.
+    fn turn(&mut self, state: JobState, turn: Option<&TurnId>) -> DaemonView {
         let turn = match state {
-            JobState::Running | JobState::Queued => {
-                self.failure = None;
-                TurnState::Running
-            }
+            JobState::Running | JobState::Queued => TurnState::Running,
             JobState::WaitingForInput => TurnState::WaitingForInput,
             JobState::Idle | JobState::Completed => TurnState::Resting(Rest::Ready),
             JobState::Cancelled | JobState::Interrupted => TurnState::Resting(Rest::Interrupted),
@@ -292,7 +317,8 @@ impl DaemonEvents {
                 error: self
                     .failure
                     .take()
-                    .unwrap_or_else(|| "the turn failed".into()),
+                    .filter(|(failed, _)| Some(failed) == turn)
+                    .map_or_else(|| "the turn failed".into(), |(_, error)| error),
             }),
             // `Unknown`, or a state a newer daemon sends: shown at rest
             // rather than as a turn that never ends.
@@ -373,7 +399,7 @@ impl DaemonEvents {
         }
     }
 
-    fn turn_ended(&mut self, outcome: TurnOutcome) -> Vec<DaemonView> {
+    fn turn_ended(&mut self, turn: TurnId, outcome: TurnOutcome) -> Vec<DaemonView> {
         match outcome {
             TurnOutcome::Answered { text, .. } | TurnOutcome::MaxSteps { text } => {
                 // An empty answer: the last step only called tools.
@@ -406,17 +432,25 @@ impl DaemonEvents {
                     "the turn timed out after {}",
                     humantime::format_duration(std::time::Duration::from_millis(timeout_ms))
                 );
-                self.failure = Some(error.clone());
+                self.failure = Some((turn, error.clone()));
                 vec![DaemonView::Error(error)]
             }
             TurnOutcome::Failed { error } => {
-                self.failure = Some(error.message.clone());
+                self.failure = Some((turn, error.message.clone()));
                 vec![DaemonView::Error(error.message)]
             }
             // `Unknown`, or an outcome a newer daemon sends.
             _ => Vec::new(),
         }
     }
+}
+
+/// Whether a job in `state` has a turn under way.
+fn in_progress(state: JobState) -> bool {
+    matches!(
+        state,
+        JobState::Running | JobState::Queued | JobState::WaitingForInput
+    )
 }
 
 /// A steer's id as the TUI's pending panel keys it.

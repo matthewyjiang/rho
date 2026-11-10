@@ -74,6 +74,8 @@ struct FeedState {
     /// The job state the last state event sent, so an attach reports the
     /// state its replay ends in.
     job: wire::JobState,
+    /// The turn `job` is of, as that event named it.
+    turn: Option<wire::TurnId>,
     /// The input requests opened and not yet resolved, so an attach reports
     /// them even once the buffer no longer holds the events that opened
     /// them.
@@ -102,6 +104,8 @@ pub(super) struct Attached {
     pub(super) replay_events: u64,
     /// The job state as of the attach, which the replay ends in.
     pub(super) job: wire::JobState,
+    /// The turn `job` is of.
+    pub(super) turn: Option<wire::TurnId>,
     /// The input requests open as of the attach, oldest first.
     pub(super) inputs: Vec<wire::InputRequest>,
     /// The session's title as of the attach, if it has one.
@@ -114,10 +118,12 @@ pub(super) struct Attached {
 impl Feed {
     /// A stream with nothing saved yet, its job in `job`: idle for a new
     /// session, its last turn's end for a reopened one (#1661), whose saved
-    /// conversation [`Self::end_turn`] then adds. `title` is the one the
-    /// session has saved, if any; the session opened with `options`.
+    /// conversation [`Self::end_turn`] then adds. `turn` is the turn `job`
+    /// is of, and `title` the one the session has saved, if any; the
+    /// session opened with `options`.
     pub(super) fn new(
         job: wire::JobState,
+        turn: Option<wire::TurnId>,
         title: Option<String>,
         options: wire::SessionOptions,
     ) -> Self {
@@ -131,6 +137,7 @@ impl Feed {
                 turn_start_evicted: false,
                 transcript: Vec::new(),
                 job,
+                turn,
                 inputs: BTreeMap::new(),
                 title,
                 options,
@@ -221,6 +228,7 @@ impl Feed {
             replay,
             replay_events,
             job: state.job,
+            turn: state.turn.clone(),
             inputs: state.inputs.values().cloned().collect(),
             title: state.title.clone(),
             options: state.options.clone(),
@@ -260,7 +268,10 @@ impl FeedState {
             return;
         };
         match &event {
-            wire::SessionEvent::State { state, .. } => self.job = *state,
+            wire::SessionEvent::State { state, turn } => {
+                self.job = *state;
+                self.turn.clone_from(turn);
+            }
             wire::SessionEvent::InputRequested { request } => {
                 self.inputs.insert(request.id, (**request).clone());
             }

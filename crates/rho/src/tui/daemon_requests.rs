@@ -6,7 +6,9 @@
 //!
 //! Configure can wait for an active turn (including an approval) to end. Its
 //! response must never own the TUI event loop. Prompts share the queue so a
-//! later prompt cannot overtake a configuration change. Cancel and answers
+//! later prompt cannot overtake a configuration change. A prompt carries an
+//! idempotency key, so one a stopping daemon refused goes again on the
+//! restarted daemon without running twice (#1777). Cancel and answers
 //! deliberately bypass this queue, since they may unblock that change. MCP
 //! inventory reads and goal actions use an independent control worker to stay
 //! usable during the turn: a goal runs as one long turn, which a queued
@@ -16,8 +18,8 @@ use std::{future::Future, sync::Arc};
 
 use rho_protocol::{
     methods::{SessionConfigure, SessionMcp, SessionPrompt},
-    ClientEnvironment, ClientError, ContentBlock, ErrorCode, SessionChange, SessionConfigureParams,
-    SessionGoalAction, SessionId, SessionMcpParams, SessionPromptParams,
+    ClientEnvironment, ClientError, ContentBlock, ErrorCode, IdempotencyKey, SessionChange,
+    SessionConfigureParams, SessionGoalAction, SessionId, SessionMcpParams, SessionPromptParams,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -199,22 +201,29 @@ impl DaemonRequests {
                         // OptionsChanged, not an optimistic local update, is
                         // authoritative. The response describes the same change.
                     }
-                    // Sent once, never resent: a stopping daemon may refuse
-                    // a prompt its turn already saved.
+                    // One key for every send of this prompt: a stopping
+                    // daemon may refuse a prompt its turn already saved,
+                    // and the restarted daemon then answers with that turn
+                    // instead of running the prompt again.
                     Request::Prompt { content, result } => {
-                        let response = match attached(&mut target).await {
-                            Some((link, session)) => {
-                                let answer = link
-                                    .request::<SessionPrompt>(&SessionPromptParams {
-                                        session,
-                                        content,
-                                        timeout_ms: None,
-                                        environment: ClientEnvironment::of_this_process(),
-                                    })
-                                    .await;
+                        let key = IdempotencyKey::new(uuid::Uuid::new_v4().to_string());
+                        let answer = on_attachment(&mut target, |link, session| {
+                            let params = SessionPromptParams {
+                                session,
+                                content: content.clone(),
+                                timeout_ms: None,
+                                environment: ClientEnvironment::of_this_process(),
+                                idempotency_key: Some(key.clone()),
+                            };
+                            async move {
+                                let answer = link.request::<SessionPrompt>(&params).await;
                                 link.fence().await;
-                                answer.map(|_| ()).map_err(anyhow::Error::new)
+                                answer
                             }
+                        })
+                        .await;
+                        let response = match answer {
+                            Some((_, answer)) => answer.map(|_| ()).map_err(anyhow::Error::new),
                             None => Err(anyhow::anyhow!(LOST)),
                         };
                         let _ = result.send(response);
