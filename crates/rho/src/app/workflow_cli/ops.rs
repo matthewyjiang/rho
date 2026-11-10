@@ -164,6 +164,11 @@ impl WorkflowOps {
         Ok(self.service.store().load_run(run_id)?)
     }
 
+    /// Run `run_id`'s revision, read without loading the run.
+    pub(crate) fn run_revision(&self, run_id: RunId) -> anyhow::Result<u64> {
+        Ok(self.service.store().read_run_revision(run_id)?)
+    }
+
     pub(crate) fn load_run_id(&self, run_id: RunId) -> anyhow::Result<StoredRun> {
         Ok(self.service.store().load_run(run_id)?)
     }

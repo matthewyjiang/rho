@@ -21,7 +21,7 @@ use crate::{
     tools::workflow_tracker::start_context_prompts,
 };
 
-/// How a `/workflow:<name>` prompt ended.
+/// How a `/workflow:` prompt ended.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum WorkflowStart {
     /// Cancelled while planning; no run exists.
@@ -41,7 +41,8 @@ impl SessionRuntime {
     /// context, and saves the prompt. `display` is the command as the user
     /// sent it.
     ///
-    /// A cancel stops planning. Once the run exists it keeps going: cancel
+    /// A cancel stops a source's planning; a saved plan and a run have none
+    /// to stop. Once the run exists it keeps going: cancel
     /// it with the `workflow` tool or the CLI, like any background run.
     pub(crate) async fn start_workflow(
         &mut self,
@@ -60,7 +61,8 @@ impl SessionRuntime {
             self.storage.cwd().to_path_buf(),
             Some(self.build.launch.config_path.clone()),
             &environment,
-        )?;
+        )
+        .map_err(|error| anyhow::anyhow!("could not open the workflow store: {error:#}"))?;
         let (run, recovery) = match launch {
             WorkflowLaunch::Source(start) => {
                 let source = start.workflow.relative_path.clone();

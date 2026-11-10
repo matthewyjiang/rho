@@ -100,7 +100,7 @@ The host's command menu lists these. Pick one, or type it at the start of a mess
 | `/prompt:<name> [args]` | Runs a [prompt template](/configuration#prompt-templates). |
 | `/mcp:<server>:<prompt> [args]` | Runs an MCP server prompt. Arguments follow the TUI rules. |
 | `/agent:<name> <task>` | Turns a new, empty session into the [agent](/subagents) `<name>` and runs `<task>`. The session keeps that agent's prompt, tools, and model, including when loaded again. Add `--model <reference> --` before the task to pick the model for this one session. |
-| `/workflow:<name> [inputs JSON]` | Starts a workspace [workflow](/workflows#start-a-workflow-by-name) in the background, such as `/workflow:review {"target": "src"}`. Listed only when the active agent has the `workflow` tool; refused in plan mode. |
+| `/workflow:<name> [inputs JSON]` | Starts a workspace [workflow](/workflows#start-a-workflow-by-name) in the background, such as `/workflow:review {"target": "src"}`. `/workflow:plan/<plan id>` runs a saved plan and `/workflow:run/<run id> [recover]` resumes a run; neither is listed. Listed only when the active agent has the `workflow` tool; refused in plan mode. |
 
 Other TUI commands, such as `/model`, are rejected with an error that names the command; for `/model`, use the host's model picker. Text that is not a known command, such as `/usr/bin`, goes to the model unchanged. The session saves what you typed, not its expansion. Edge cases are in the [host reference](/integrations/acp/reference#commands).
 

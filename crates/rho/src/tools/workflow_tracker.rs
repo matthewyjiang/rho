@@ -48,7 +48,8 @@ pub(crate) struct WorkflowNotification {
     pub(crate) finished: WorkflowFinishedSnapshot,
 }
 
-/// In-memory activity snapshot; drawing never reads the durable workflow store.
+/// One run's row on the workflow rail, held in memory: drawing never reads
+/// the durable workflow store, whoever filled the row in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WorkflowRailSummary {
     pub(crate) run_id: String,
@@ -91,20 +92,20 @@ fn active_task(tasks: &BTreeMap<String, NodeState>) -> Option<String> {
 
 impl WorkflowRailSummary {
     /// The row for `run` as its saved state has it, for a host that does
-    /// not drive the run itself. `failed` says the drive ended in an error;
-    /// `elapsed_seconds` is how long it has gone, or went.
-    pub(crate) fn from_stored(run: &StoredRun, failed: bool, elapsed_seconds: u64) -> Self {
+    /// not drive the run itself and so fills in whether the drive failed
+    /// and how long it has gone.
+    pub(crate) fn from_stored(run: &StoredRun) -> Self {
         let tasks = stored_tasks(run);
         Self {
             run_id: run.manifest.run_id.to_string(),
             workflow_name: run.graph.program.name.as_str().to_owned(),
             lifecycle: run.state.state.lifecycle,
             outcome: run.state.state.outcome(),
-            failed,
+            failed: false,
             completed_tasks: completed_tasks(&tasks),
             total_tasks: tasks.len(),
             active_task: active_task(&tasks),
-            elapsed_seconds,
+            elapsed_seconds: 0,
         }
     }
 

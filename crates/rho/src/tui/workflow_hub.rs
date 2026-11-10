@@ -516,7 +516,8 @@ impl App {
         };
         match run.state.state.lifecycle {
             RunLifecycle::NeedsRecovery => {
-                // Recover in the background, then open the watch screen.
+                // Recover in the background; in process, then open the
+                // watch screen.
                 self.resume_workflow_run(run_id, /*recover_uncertain*/ true, terminal, agent)
                     .await?;
                 // The daemon recovers a daemon session's run once its prompt

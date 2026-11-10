@@ -190,7 +190,7 @@ impl App {
                 || agent
                     .processes()
                     .is_some_and(crate::tools::process::ProcessManager::has_pending_notification)
-                || self.daemon_rail_shows_runs()
+                || self.daemon_rail.shows_runs()
                 || self.pending_subagent_questionnaire.is_some()
                 || self.subagent_inbox.has_queued_questionnaires()
                 || self.subagent_inbox.has_parent_action_requests();
@@ -679,7 +679,7 @@ impl App {
         // costs half-applied.
         let mut changed = self.refresh_exclusive_screen()?;
         // The daemon's jobs feed a daemon session's rail as they arrive
-        // (`daemon_subagents`); this process's manager has no runs of it.
+        // (`daemon_jobs`); this process's manager has no runs of it.
         let panel_changed = if self.info.session.daemon.is_some() {
             self.refresh_daemon_rail();
             false

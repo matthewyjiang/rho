@@ -74,13 +74,21 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         harness.set_phase("codemode");
         harness.submit_text("/codemode only")?;
         harness.wait_for_text("codemode: Only; applies next turn", SETTLE)?;
+        // `/codemode` reads the settings the daemon publishes once it
+        // saved them.
+        let deadline = std::time::Instant::now() + SETTLE.duration;
+        while !std::fs::read_to_string(&home.config_path)
+            .context("read the config")?
+            .contains("mode = \"only\"")
+        {
+            ensure!(
+                std::time::Instant::now() < deadline,
+                "the daemon did not save the mode"
+            );
+            harness.pump(std::time::Duration::from_millis(25));
+        }
         harness.submit_text("/codemode")?;
         harness.wait_for_text("codemode only: tools use codemode", SETTLE)?;
-        let saved = std::fs::read_to_string(&home.config_path).context("read the config")?;
-        ensure!(
-            saved.contains("mode = \"only\""),
-            "the daemon saved the mode: {saved}"
-        );
         let code = harness.quit_with_exit_command()?;
         ensure!(code == 0, "the resumed session exited with code {code}");
         Ok(())

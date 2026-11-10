@@ -484,7 +484,7 @@ async fn compact(
     })
 }
 
-/// Starts `start`'s workflow within `scope`, without a model turn. The
+/// Starts `launch`'s workflow run within `scope`, without a model turn. The
 /// runtime saves the prompt, `display`, with the start's notice as its
 /// reply; clients see both as a reload replays them, and the turn answers
 /// with the notice.
@@ -493,11 +493,11 @@ async fn start_workflow(
     view: &mut DaemonView,
     scope: &PromptScope,
     display: UserInput,
-    start: WorkflowLaunch,
+    launch: WorkflowLaunch,
     config: &Config,
 ) -> anyhow::Result<Ran> {
     let (notice, inserted, reply) = match runtime
-        .start_workflow(scope, &display, start, config)
+        .start_workflow(scope, &display, launch, config)
         .await?
     {
         WorkflowStart::Started {
