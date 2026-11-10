@@ -9,9 +9,11 @@
 //!
 //! 1. The client sends [`methods::HELLO`] with its [`PROTOCOL_VERSION`].
 //!    Any other request first gets [`ErrorCode::HandshakeRequired`].
-//! 2. The daemon accepts when the majors match, or replies
+//! 2. The daemon accepts a compatible version
+//!    ([`ProtocolVersion::is_compatible_with`]), or replies
 //!    [`ErrorCode::VersionMismatch`] with a [`VersionMismatch`] saying which
-//!    side to change.
+//!    side to change and, for a client newer than the daemon, what
+//!    restarting the daemon would cost ([`RestartCost`]).
 //! 3. The client sends requests such as [`methods::DAEMON_STATUS`]. The
 //!    daemon serves them concurrently and answers each one when it completes,
 //!    so responses can arrive out of order; each carries its request's id.
@@ -51,12 +53,16 @@
 //!
 //! # Versioning
 //!
-//! [`PROTOCOL_VERSION`] is independent of this crate's version. A protocol
-//! minor only adds optional fields, methods, notifications, capabilities,
-//! error codes, and values of enums that read unknown values as `Unknown`;
-//! receivers ignore fields they do not know. [`schema::document`] is the
-//! protocol as JSON Schema, committed as `schema/protocol.json`, and CI holds
-//! each release to these rules against the last one's.
+//! [`PROTOCOL_VERSION`] is independent of this crate's version. While its
+//! major is 0 the protocol is unstable: every change to the wire raises the
+//! minor, and a client and daemon work together only when both numbers
+//! match. From major 1 on, a protocol minor only adds optional fields,
+//! methods, notifications, capabilities, error codes, and values of enums
+//! that read unknown values as `Unknown`; receivers ignore fields they do
+//! not know. [`schema::document`] is the protocol as JSON Schema, committed
+//! as `schema/protocol.json`, and CI holds the protocol to these rules: each
+//! change while the major is 0, and each release against the last one's
+//! from major 1 on.
 
 mod client;
 pub mod display;
@@ -122,4 +128,4 @@ pub use methods::{
 };
 pub use server::{serve_connection, ServerInfo, Service, CLOSE_GRACE};
 pub use subscription::{subscription, Published, Publisher, Subscription};
-pub use version::{ProtocolVersion, VersionFix, VersionMismatch, PROTOCOL_VERSION};
+pub use version::{ProtocolVersion, RestartCost, VersionFix, VersionMismatch, PROTOCOL_VERSION};

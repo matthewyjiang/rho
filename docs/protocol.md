@@ -6,7 +6,9 @@ Frontends drive the [daemon](/daemon) with rho's protocol: JSON-RPC 2.0 over the
 
 Connect to the daemon's `daemon.sock` (see [Socket and permissions](/daemon#socket-and-permissions)). Every message is one JSON-RPC 2.0 object on one line, UTF-8, ending with `\n`. A line may be at most 16 MiB; a longer one ends the connection with an `InvalidRequest` error. Request ids are integers or strings, and clients send no notifications.
 
-The first request must be `rho/hello`. Any other request before it gets `HandshakeRequired`. The daemon accepts the handshake when the client's protocol major matches its own, and otherwise answers `VersionMismatch`, whose `data` names both versions and which side has to change (`restart_daemon` or `update_client`).
+The first request must be `rho/hello`. Any other request before it gets `HandshakeRequired`. The daemon accepts the handshake when the client's protocol version is [compatible](#versions-and-compatibility) with its own, and otherwise answers `VersionMismatch`, whose `data` names both versions and which side has to change: `fix` is `restart_daemon` when the daemon is the older side, and `update_client` when the client is. With `restart_daemon`, `restart` says what restarting the daemon would cost at that moment: `in_progress` counts what it would interrupt (jobs queued, running, or waiting for input, logins under way, and sessions with work of their own), and `clients` counts the other connections whose handshake the daemon accepted, which it would disconnect. A client can offer the restart with those counts, and can replace a daemon that reports 0 for both without asking, as rho's own frontends do ([Versions](/daemon#versions)). A refused connection stays open for another `rho/hello`.
+
+A client and a daemon of different versions still have to read this much of each other, so it is held steady at every version, also while the protocol is unstable: the daemon reads `protocol` from a hello before anything else in it, and `protocol` and the `data` of `VersionMismatch` only ever gain optional fields.
 
 After the handshake the daemon runs a connection's requests concurrently and answers each one when it finishes, so responses can arrive out of order; pair them with their requests by id. Send a request that depends on another only after that one's response arrives.
 
@@ -296,7 +298,7 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 | -32602 | `InvalidParams` | The params do not match the method's, or one is invalid, such as a `cwd` that is not a directory. |
 | -32603 | `InternalError` | The daemon failed while handling a valid request. |
 | -32000 | `HandshakeRequired` | A request other than `rho/hello` came before the handshake. |
-| -32001 | `VersionMismatch` | The protocol majors differ; `data` says which side to change. |
+| -32001 | `VersionMismatch` | The protocol versions are incompatible; `data` says which side to change and, when that is the daemon, what restarting it would cost. |
 | -32003 | `SessionNotFound` | No session is saved under the id. |
 | -32004 | `SessionBusy` | The session already has a turn under way (for a prompt or a delete), a settings change waiting or applying (for a delete), a delete under way, or, for a delete, background work running or a run it started unfinished; or another job, such as a subagent run, writes the saved session a prompt, an attach, or a delete would touch. |
 | -32005 | `NotSteerable` | No model request is taking input. |
@@ -316,10 +318,12 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 
 ## Versions and compatibility
 
-The protocol has its own version, `major.minor`, independent of rho's; `rho/hello` and `rho/daemon/status` report it. A client and daemon work together when their majors match.
+The protocol has its own version, `major.minor`, independent of rho's; `rho/hello` and `rho/daemon/status` report it.
+
+Major 0 is the unstable protocol, which is the current one: a minor may change anything, every change to the wire raises the minor, and a client and daemon work together only when their versions are equal. It stays at 0.x until a frontend outside rho's repository has run against it ([#1776](https://github.com/matthewyjiang/rho/issues/1776)). The rest of this section describes majors from 1 on, where a client and daemon work together when their majors match.
 
 A protocol minor only adds: methods, notifications, error codes, optional fields, and values of open enums. In the schema, one variant of an open enum is marked `x-rho-other` and matches every value the enum does not list, so a client generated from it accepts values a later minor adds; read them as unknown. For an event or content block the catch-all matches any object with a string `type`, so schema validation alone does not reject a malformed known variant: pick the variant by its `type`, then decode it. A client should also ignore fields it does not know, and treat an error code it does not know by its message. Anything else, such as removing, retyping, or constraining a field, making a field required or nullable, or adding a value to a closed enum, comes only with a new major.
 
 The daemon omits an optional field that has no value rather than sending `null`.
 
-CI holds the protocol to this. A test fails when `protocol.json` no longer matches the wire types, and a check compares it with the schema of the last rho release: a change a minor does not allow fails unless the major rises, and any other change to the wire, which excludes descriptions and names, needs the minor to rise.
+CI holds the protocol to this. A test fails when `protocol.json` no longer matches the wire types, and a check compares it with the schema of the last rho release: a change a minor does not allow fails unless the major rises, and any other change to the wire, which excludes descriptions and names, needs the minor to rise. While the major is 0, a second check compares each change with the commit before it: any change to the wire needs the minor to rise, and the handshake may only gain optional fields. Two changes made side by side can still take the same number, so builds from different branches may share a version without sharing a wire; builds along the main line do not.

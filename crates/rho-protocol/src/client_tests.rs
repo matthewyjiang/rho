@@ -9,7 +9,7 @@ use crate::{
         SESSION_DETACHED, SESSION_EVENT,
     },
     CredentialStoreKind, CredentialStoreStatus, DaemonStatus, JobListParams, JobListResponse,
-    ProtocolVersion, StatusParams, VersionFix,
+    ProtocolVersion, RestartCost, StatusParams, VersionFix,
 };
 
 fn client_info() -> ClientInfo {
@@ -76,12 +76,24 @@ async fn accept_hello(reader: &mut DaemonReader, write: &mut DaemonWriter) {
 }
 
 // Covers: the wire form of a version mismatch (a rejected hello's error data,
-// or an accepted hello naming another major) becomes a typed error that says
-// which side to fix.
+// or an accepted hello naming an incompatible version) becomes a typed error
+// that says which side to fix and, from an older daemon, what restarting it
+// would cost.
 // Owner: protocol client handshake.
 #[tokio::test]
 async fn handshake_maps_incompatible_daemons_to_version_mismatch() {
     let newer = ProtocolVersion::new(PROTOCOL_VERSION.major + 1, 0);
+    let older = ProtocolVersion::new(0, 0);
+    let mismatch = |daemon, fix, restart| VersionMismatch {
+        daemon,
+        client: PROTOCOL_VERSION,
+        fix,
+        restart,
+    };
+    let in_use = RestartCost {
+        in_progress: 2,
+        clients: 1,
+    };
     let cases = [
         (
             json!({
@@ -97,7 +109,24 @@ async fn handshake_maps_incompatible_daemons_to_version_mismatch() {
                     },
                 },
             }),
-            VersionFix::UpdateClient,
+            mismatch(newer, VersionFix::UpdateClient, None),
+        ),
+        (
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": {
+                    "code": -32001,
+                    "message": "incompatible",
+                    "data": {
+                        "daemon": older,
+                        "client": PROTOCOL_VERSION,
+                        "fix": "restart_daemon",
+                        "restart": {"in_progress": 2, "clients": 1},
+                    },
+                },
+            }),
+            mismatch(older, VersionFix::RestartDaemon, Some(in_use)),
         ),
         (
             json!({
@@ -109,10 +138,10 @@ async fn handshake_maps_incompatible_daemons_to_version_mismatch() {
                     "capabilities": [],
                 },
             }),
-            VersionFix::UpdateClient,
+            mismatch(newer, VersionFix::UpdateClient, None),
         ),
     ];
-    for (reply, fix) in cases {
+    for (reply, expected) in cases {
         let (client, server) = duplex(64 * 1024);
         let daemon = tokio::spawn(async move {
             let (read, mut write) = tokio::io::split(server);
@@ -129,14 +158,7 @@ async fn handshake_maps_incompatible_daemons_to_version_mismatch() {
             .expect("mismatch");
 
         match error {
-            ClientError::VersionMismatch(mismatch) => assert_eq!(
-                mismatch,
-                VersionMismatch {
-                    daemon: newer,
-                    client: PROTOCOL_VERSION,
-                    fix,
-                }
-            ),
+            ClientError::VersionMismatch(mismatch) => assert_eq!(mismatch, expected),
             other => panic!("expected a version mismatch, got {other:?}"),
         }
         daemon.await.unwrap();
