@@ -109,7 +109,7 @@ impl Sessions {
         self.refuse_when_stopping()?;
         let last = match self.jobs.session_job(id) {
             SessionJob::Busy(job) => return Err(writing(&job, id)),
-            SessionJob::Last(record) => Some(record),
+            SessionJob::Last(record) => Some(*record),
             SessionJob::New => None,
         };
         let stored = saved_session(id).await?;

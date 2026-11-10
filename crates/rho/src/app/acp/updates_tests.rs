@@ -247,6 +247,7 @@ fn transcript_events_map_to_acp_updates() {
             rich,
             SessionEvent::State {
                 state: wire::JobState::Running,
+                turn: Some(wire::TurnId::new("t1")),
             },
             vec![],
         ),

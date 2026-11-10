@@ -287,7 +287,7 @@ async fn a_change_sent_during_a_turn_applies_at_its_end_before_the_next_turn() {
         // The turn's end is told under the lock a prompt starts its turn
         // under, so the prompt after it finds no turn under way.
         let ended = next_event(&mut notifications, &session, |event| match event {
-            SessionEvent::TurnEnded { outcome } => Some(outcome),
+            SessionEvent::TurnEnded { outcome, .. } => Some(outcome),
             _ => None,
         })
         .await;

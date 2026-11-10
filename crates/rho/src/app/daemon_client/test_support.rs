@@ -2,15 +2,17 @@
 
 use rho_protocol::{
     JobState, ModelOptions, ModelRef, PermissionMode, PermissionModeOptions, Replay,
-    SessionAttachResponse, SessionOptions, StreamId,
+    SessionAttachResponse, SessionOptions, StreamId, TurnId,
 };
 
 /// An attach's response, on the stream named `"stream"`: a `replay`
-/// replay of `replay_events` events, ending with the job in `state`.
+/// replay of `replay_events` events, ending with the job in `state`, of
+/// the turn named `turn` when it names one.
 pub(crate) fn attach_response(
     replay: Replay,
     replay_events: u64,
     state: JobState,
+    turn: Option<&str>,
 ) -> SessionAttachResponse {
     SessionAttachResponse {
         stream: StreamId::new("stream"),
@@ -18,6 +20,7 @@ pub(crate) fn attach_response(
         replay,
         replay_events,
         state,
+        turn: turn.map(TurnId::new),
         inputs: Vec::new(),
         title: None,
         options: SessionOptions {

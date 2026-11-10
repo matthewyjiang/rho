@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     AnswerStop, JobState, MessageId, Replay, Seq, SessionAttachResponse, SessionEvent, TurnError,
-    TurnErrorKind, TurnOutcome,
+    TurnErrorKind, TurnId, TurnOutcome,
 };
 
 use super::{Ending, Follow};
@@ -14,12 +14,18 @@ fn answered(text: &str) -> TurnOutcome {
     }
 }
 
-fn turn_ended(outcome: TurnOutcome) -> SessionEvent {
-    SessionEvent::TurnEnded { outcome }
+fn turn_ended(turn: &str, outcome: TurnOutcome) -> SessionEvent {
+    SessionEvent::TurnEnded {
+        turn: TurnId::new(turn),
+        outcome,
+    }
 }
 
-fn state(state: JobState) -> SessionEvent {
-    SessionEvent::State { state }
+fn state(state: JobState, turn: &str) -> SessionEvent {
+    SessionEvent::State {
+        state,
+        turn: Some(TurnId::new(turn)),
+    }
 }
 
 fn user(id: &str) -> SessionEvent {
@@ -37,10 +43,9 @@ fn chunk(text: &str) -> SessionEvent {
     }
 }
 
-// Covers: which event ends an attachment. A reset's replay is history, so
-// an earlier turn's `turn_ended` in it ends nothing, and once the replay is
-// over the job's state says whether its last turn already ended; live
-// and tail events end it with their `turn_ended`, or an interrupted state.
+// Covers: which event ends an attachment: the `turn_ended` of the turn it
+// follows, by id, and no other turn's, wherever it arrives. A reset's
+// replay is history, so the end it holds counts once the replay is over.
 // Owner: rho attach follow logic (unit).
 #[test]
 fn an_attachment_ends_with_the_turn_it_follows() {
@@ -60,59 +65,64 @@ fn an_attachment_ends_with_the_turn_it_follows() {
     let cases = [
         Case {
             name: "a reset after the turn ended reports it once the replay is over",
-            response: attach_response(Replay::Reset, 3, JobState::Completed),
+            response: attach_response(Replay::Reset, 3, JobState::Completed, Some("t1")),
             events: vec![
                 chunk("answer"),
-                turn_ended(answered("answer")),
-                state(JobState::Completed),
+                turn_ended("t1", answered("answer")),
+                state(JobState::Completed, "t1"),
             ],
             ends: Some((3, Ending::Turn(answered("answer")))),
         },
         Case {
-            name: "an earlier turn's end in a reset ends nothing; the live one does",
-            response: attach_response(Replay::Reset, 3, JobState::Running),
+            name: "an earlier turn's end in a reset ends nothing; the followed turn's does",
+            response: attach_response(Replay::Reset, 2, JobState::Running, Some("t2")),
             events: vec![
-                turn_ended(answered("earlier")),
-                state(JobState::Completed),
-                state(JobState::Running),
+                turn_ended("t1", answered("earlier")),
+                state(JobState::Running, "t2"),
                 chunk("partial"),
-                turn_ended(failed.clone()),
+                turn_ended("t2", failed.clone()),
             ],
-            ends: Some((5, Ending::Turn(failed.clone()))),
+            ends: Some((4, Ending::Turn(failed.clone()))),
         },
         Case {
             name: "a reset of an ended job that holds no turn end is a daemon bug",
-            response: attach_response(Replay::Reset, 0, JobState::Cancelled),
+            response: attach_response(Replay::Reset, 0, JobState::Cancelled, Some("t1")),
             events: vec![],
             ends: Some((0, Ending::Unreported)),
         },
         Case {
-            name: "a reset whose last turn holds no end does not report an earlier turn's",
-            response: attach_response(Replay::Reset, 2, JobState::Completed),
-            events: vec![turn_ended(answered("earlier")), user("next")],
+            name: "a reset that holds only an earlier turn's end does not report it",
+            response: attach_response(Replay::Reset, 2, JobState::Completed, Some("t2")),
+            events: vec![turn_ended("t1", answered("earlier")), user("next")],
             ends: Some((2, Ending::Unreported)),
         },
         Case {
             name: "an idle session waits for its first turn",
-            response: attach_response(Replay::Reset, 0, JobState::Idle),
-            events: vec![state(JobState::Running), turn_ended(answered("first"))],
+            response: attach_response(Replay::Reset, 0, JobState::Idle, None),
+            events: vec![
+                state(JobState::Running, "t1"),
+                turn_ended("t1", answered("first")),
+            ],
             ends: Some((2, Ending::Turn(answered("first")))),
         },
         Case {
             name: "a turn the daemon's stop cut short ends interrupted",
-            response: attach_response(Replay::Reset, 1, JobState::Running),
-            events: vec![chunk("partial"), state(JobState::Interrupted)],
+            response: attach_response(Replay::Reset, 1, JobState::Running, Some("t1")),
+            events: vec![chunk("partial"), state(JobState::Interrupted, "t1")],
             ends: Some((2, Ending::Interrupted)),
         },
         Case {
             name: "a tail replay's turn end is news",
-            response: attach_response(Replay::Tail, 2, JobState::Completed),
-            events: vec![turn_ended(answered("missed")), state(JobState::Completed)],
+            response: attach_response(Replay::Tail, 2, JobState::Completed, Some("t1")),
+            events: vec![
+                turn_ended("t1", answered("missed")),
+                state(JobState::Completed, "t1"),
+            ],
             ends: Some((1, Ending::Turn(answered("missed")))),
         },
         Case {
             name: "a turn under way runs on",
-            response: attach_response(Replay::Reset, 1, JobState::WaitingForInput),
+            response: attach_response(Replay::Reset, 1, JobState::WaitingForInput, Some("t1")),
             events: vec![chunk("partial"), chunk(" more")],
             ends: None,
         },

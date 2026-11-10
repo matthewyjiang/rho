@@ -675,6 +675,7 @@ impl Service for AttachService {
             replay: Replay::Reset,
             replay_events: 0,
             state: JobState::Idle,
+            turn: None,
             inputs: Vec::new(),
             title: None,
             options: SessionOptions {

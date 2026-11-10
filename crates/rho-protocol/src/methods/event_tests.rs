@@ -22,20 +22,30 @@ fn every_session_event_round_trips_through_its_wire_form() {
         (
             SessionEvent::State {
                 state: JobState::Running,
+                turn: Some(TurnId::new("t1")),
             },
-            json!({"type": "state", "state": "running"}),
+            json!({"type": "state", "state": "running", "turn": "t1"}),
+        ),
+        (
+            SessionEvent::State {
+                state: JobState::Idle,
+                turn: None,
+            },
+            json!({"type": "state", "state": "idle"}),
         ),
         (
             SessionEvent::TurnEnded {
+                turn: TurnId::new("t1"),
                 outcome: TurnOutcome::Answered {
                     text: "done".into(),
                     stop: AnswerStop::EndTurn,
                 },
             },
-            json!({"type": "turn_ended", "outcome": {"type": "answered", "text": "done", "stop": "end_turn"}}),
+            json!({"type": "turn_ended", "turn": "t1", "outcome": {"type": "answered", "text": "done", "stop": "end_turn"}}),
         ),
         (
             SessionEvent::TurnEnded {
+                turn: TurnId::new("t1"),
                 outcome: TurnOutcome::Failed {
                     error: TurnError {
                         kind: TurnErrorKind::Provider,
@@ -43,13 +53,14 @@ fn every_session_event_round_trips_through_its_wire_form() {
                     },
                 },
             },
-            json!({"type": "turn_ended", "outcome": {"type": "failed", "error": {"kind": "provider", "message": "provider down"}}}),
+            json!({"type": "turn_ended", "turn": "t1", "outcome": {"type": "failed", "error": {"kind": "provider", "message": "provider down"}}}),
         ),
         (
             SessionEvent::TurnEnded {
+                turn: TurnId::new("t1"),
                 outcome: TurnOutcome::Cancelled,
             },
-            json!({"type": "turn_ended", "outcome": {"type": "cancelled"}}),
+            json!({"type": "turn_ended", "turn": "t1", "outcome": {"type": "cancelled"}}),
         ),
         (
             SessionEvent::UserMessage {

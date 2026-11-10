@@ -10,7 +10,9 @@
 //! job (#1661). Cancel, steer, unsteer, answer, hold, and configure never
 //! load a session: one that is not loaded has no turn to act on, and a
 //! client attaches before it changes settings. A steer answers with its id,
-//! which a client withdraws it by; see [`steer`].
+//! which a client withdraws it by; see [`steer`]. A prompt answers with its
+//! turn's id, which the turn's states and end carry, and may name a key
+//! that makes sending it again safe; see [`start`].
 //!
 //! A session whose host runs its children as its own threads (T3 Code) is
 //! woken through that host once background work that outlived its turn
@@ -50,6 +52,7 @@ use rho_sdk::{CancellationToken, SessionId};
 use super::{
     jobs::{
         Admission, JobEvent, JobId, JobRecord, JobRegistry, RegisterError, SessionJob, TurnEnd,
+        TurnRecord,
     },
     subagents::Subagents,
     wire::{session_to_wire, state_event},
@@ -186,12 +189,38 @@ struct TurnSlot {
     /// What the session's current or last turn runs, which decides what a
     /// prompt sent while it runs does. A prompt sets it as its turn starts.
     kind: TurnKind,
+    /// The session's current or last turn that a prompt naming a key
+    /// started, which a prompt sent again with that key answers as (see
+    /// [`start`]). A turn starting replaces it.
+    keyed: Option<KeyedTurn>,
     /// Whether the session is in use, idle, or unloaded, as the idle unload
     /// tracks it.
     residency: Residency,
     /// What holds the session, if anything: neither a delete nor the idle
     /// unload takes a held session. Set and freed by [`Held`].
     hold: Option<Hold>,
+}
+
+/// A turn a prompt naming `key` started, as a prompt sent again with the
+/// key finds it.
+struct KeyedTurn {
+    key: rho_protocol::IdempotencyKey,
+    id: rho_protocol::TurnId,
+    /// How the turn began, once it has.
+    start: tokio::sync::watch::Receiver<PromptStart>,
+}
+
+impl KeyedTurn {
+    /// The turn job `job` last ran, as an earlier daemon or an earlier load
+    /// recorded it, if a prompt naming a key started it and it began: one
+    /// that did not begin ran nothing, so its key starts a turn again.
+    fn recorded(job: &JobRecord) -> Option<Self> {
+        let TurnRecord { id, key, began } = job.turn.clone()?;
+        let key = key.filter(|_| began)?;
+        // The sender is dropped: the turn began, and nothing changes that.
+        let (_, start) = tokio::sync::watch::channel(PromptStart::Began);
+        Some(Self { key, id, start })
+    }
 }
 
 /// What a session's turn runs, as far as a prompt sent meanwhile goes.
@@ -312,18 +341,21 @@ fn opening_feed(
     );
     // Titles are not saved with the transcript, so the feed starts with the
     // one the session's file has.
+    let last = job.moved();
     let feed = Feed::new(
-        (&job.state).into(),
+        (&last.state).into(),
+        last.turn.clone(),
         runtime.stored_title(),
         options::daemon_options(runtime, config, auths),
     );
     if let Some(saved) = saved_replay(&mut live, runtime, &job.id) {
         feed.end_turn(saved);
     }
-    if let Some(outcome) = job.outcome.clone() {
+    // An outcome is recorded with the turn it is of.
+    if let (Some(outcome), Some(turn)) = (job.outcome.clone(), last.turn.clone()) {
         feed.publish([
-            rho_protocol::SessionEvent::TurnEnded { outcome },
-            state_event(&job.state),
+            rho_protocol::SessionEvent::TurnEnded { turn, outcome },
+            state_event(&last),
         ]);
     }
     (feed, live)
@@ -347,6 +379,7 @@ impl LoadedSession {
             environment,
         } = opened;
         let (feed, live) = opening_feed(job, &runtime, &config, auths);
+        let keyed = KeyedTurn::recorded(job);
         let job = job.id.clone();
         Self {
             id: runtime.session_id().clone(),
@@ -371,6 +404,7 @@ impl LoadedSession {
             turn: Mutex::new(TurnSlot {
                 cancel: CancellationToken::new(),
                 kind: TurnKind::Prompt,
+                keyed,
                 residency: Residency::InUse,
                 hold: None,
             }),
@@ -415,25 +449,25 @@ impl LoadedSession {
     /// state it left the job in.
     fn record(&self, event: JobEvent) {
         match self.jobs.record(&self.job, event) {
-            Ok(state) => self.feed.publish([state_event(&state)]),
+            Ok(moved) => self.feed.publish([state_event(&moved)]),
             Err(error) => {
                 tracing::warn!(job = %self.job, %error, "could not record a turn's progress");
             }
         }
     }
 
-    /// Records that the turn ended as `end`, keeping `outcome` on the job for
-    /// a later daemon to replay, and tells attached clients `outcome`, if
-    /// any, then the state it left the job in, in one publish, so no
+    /// Records that turn `turn` ended as `end`, keeping `outcome` on the job
+    /// for a later daemon to replay, and tells attached clients `outcome`,
+    /// if any, then the state it left the job in, in one publish, so no
     /// client's replay holds one without the other (#1669).
-    fn end_turn(&self, outcome: Option<TurnOutcome>, end: TurnEnd) {
+    fn end_turn(&self, turn: rho_protocol::TurnId, outcome: Option<TurnOutcome>, end: TurnEnd) {
         let ended = outcome
             .clone()
-            .map(|outcome| rho_protocol::SessionEvent::TurnEnded { outcome });
+            .map(|outcome| rho_protocol::SessionEvent::TurnEnded { turn, outcome });
         match self.jobs.end_turn(&self.job, end, outcome) {
-            Ok(state) => self
+            Ok(moved) => self
                 .feed
-                .publish(ended.into_iter().chain([state_event(&state)])),
+                .publish(ended.into_iter().chain([state_event(&moved)])),
             Err(error) => {
                 tracing::warn!(job = %self.job, %error, "could not record a turn's end");
                 self.feed.publish(ended);
@@ -772,6 +806,7 @@ fn attach_response(workspace: &Path, attached: Attached) -> (SessionAttachRespon
         replay,
         replay_events,
         job,
+        turn,
         inputs,
         title,
         options,
@@ -783,6 +818,7 @@ fn attach_response(workspace: &Path, attached: Attached) -> (SessionAttachRespon
         replay,
         replay_events,
         state: job,
+        turn,
         inputs,
         title,
         options,
