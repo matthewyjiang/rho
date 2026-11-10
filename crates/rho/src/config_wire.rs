@@ -124,6 +124,21 @@ pub(crate) fn apply_agent_changes(
             errors.push(ConfigError::at(setting.key(), message));
         }
     }
+    // Auto runs only with a classifier model: a session opened on it would
+    // fail. Checked only when these changes make it so, so a change
+    // elsewhere still saves on a file already in that state.
+    let auto_without_classifier = |config: &Config| {
+        config.permission_mode == crate::permission::PermissionMode::Auto
+            && config
+                .internal_agent_model(crate::agent::PERMISSION_CLASSIFIER_AGENT_ID)
+                .is_none()
+    };
+    if auto_without_classifier(&after) && !auto_without_classifier(&before) {
+        errors.push(ConfigError::at(
+            "behavior.permission_mode",
+            "auto needs a permission classifier model; choose one first",
+        ));
+    }
     if !errors.is_empty() {
         return Err(AgentChangeError::Refused(errors));
     }

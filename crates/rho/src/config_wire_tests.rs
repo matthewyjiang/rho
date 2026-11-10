@@ -130,8 +130,8 @@ fn rho_model(provider: &str, model: &str) -> SettingValue {
 // A hand edit that no longer loads is repaired by a change to the keys it
 // fails on, and refused as the file's fault otherwise. Resetting an
 // internal agent's model removes its whole entry, so no leftover key keeps
-// it overridden. A value above what the file can store, or the credential
-// store, is refused.
+// it overridden. A value above what the file can store, the credential
+// store, or auto permissions with no classifier model, is refused.
 // Owner: config wire changes.
 #[test]
 fn agent_changes_touch_only_their_keys_and_can_repair_the_file() {
@@ -182,6 +182,21 @@ fn agent_changes_touch_only_their_keys_and_can_repair_the_file() {
             String::new(),
             vec![set("output.max_output_bytes", SettingValue::Integer(u64::MAX))],
             Err(vec!["`output.max_output_bytes`: must be at most 9223372036854775807; got 18446744073709551615"]),
+        ),
+        (
+            "auto needs a classifier model",
+            String::new(),
+            vec![set("behavior.permission_mode", SettingValue::Text("auto".into()))],
+            Err(vec!["`behavior.permission_mode`: auto needs a permission classifier model; choose one first"]),
+        ),
+        (
+            "auto with a classifier model saves",
+            String::new(),
+            vec![
+                set("internal_agents.permission-classifier", rho_model("openai", "gpt-5.5")),
+                set("behavior.permission_mode", SettingValue::Text("auto".into())),
+            ],
+            Ok("[behavior]\npermission_mode = \"auto\"\n\n[internal_agents.permission-classifier]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n".into()),
         ),
         (
             "the credential store is chosen elsewhere",
