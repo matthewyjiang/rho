@@ -63,6 +63,14 @@ struct Fixture {
 
 impl Fixture {
     fn new(delegate_result: Result<ToolOutput, ToolError>) -> Self {
+        Self::with_capabilities(delegate_result, /*capabilities*/ None)
+    }
+
+    /// `capabilities` is T3's optional `orchestrator_capabilities` tool.
+    fn with_capabilities(
+        delegate_result: Result<ToolOutput, ToolError>,
+        capabilities: Option<Result<ToolOutput, ToolError>>,
+    ) -> Self {
         let calls = RecordedCalls::default();
         let mut tools = AppToolSet::disabled();
         tools.add_bundle(StaticToolBundle::new(
@@ -82,6 +90,7 @@ impl Fixture {
                 ),
             ]
             .into_iter()
+            .chain(capabilities.map(|result| ("orchestrator_capabilities", result)))
             .map(|(name, result)| {
                 Arc::new(RecordingTool {
                     name: namespaced_tool_name("t3-code", name),
@@ -132,14 +141,37 @@ fn started_reply() -> ToolOutput {
     }))
 }
 
-// Covers: per-call models must reach the child's rebind, never T3 target.model;
-// the host must not claim an effective selection before that child has bound it.
+// Covers: per-call models must always reach the child's rebind. T3 is asked
+// for a matching target only for a per-call model, and a launch must survive a
+// host that lacks the capabilities tool, fails it, or does not offer the model.
+// The host must not claim an effective selection before that child has bound it.
 // Owner: host agent launch forwarding, including parsed shared tool arguments.
 #[tokio::test]
-async fn model_override_is_forwarded_only_in_the_child_command() {
+async fn model_override_reaches_the_child_command_and_an_offered_target() {
+    const LUNA: &str = "openai-codex/gpt-6-luna";
     let prompt = "\nInspect the parser\n\n--model is literal task text\n";
-    for model in [None, Some("@review"), Some("openai-codex/gpt-6-luna")] {
-        let fixture = Fixture::new(Ok(started_reply()));
+    let offers_luna = || {
+        Some(Ok(ToolOutput::text("capabilities")
+            .with_structured_content(json!({
+                "inheritedProviderInstanceId": "rho",
+                "inheritedOptions": [{"id": "mode", "value": "plan"}],
+                "providers": [{
+                    "providerInstanceId": "rho",
+                    "models": [{"id": LUNA, "options": [{"id": "mode", "values": ["plan"]}]}],
+                }],
+            }))))
+    };
+    let luna_target = json!({"model": LUNA, "options": [{"id": "mode", "value": "plan"}]});
+    let failed = || Some(Err(ToolError::new(ToolErrorKind::Execution, "host down")));
+    for (model, capabilities, target) in [
+        (None, offers_luna(), None),
+        (Some(LUNA), offers_luna(), Some(luna_target)),
+        (Some("@review"), offers_luna(), None),
+        (Some(LUNA), failed(), None),
+        (Some(LUNA), None, None),
+    ] {
+        let asks_host = model.is_some() && capabilities.is_some();
+        let fixture = Fixture::with_capabilities(Ok(started_reply()), capabilities);
         let mut arguments = json!({"agent_id": "host-worker", "prompt": prompt});
         if let Some(model) = model {
             arguments["model"] = json!(model);
@@ -149,14 +181,23 @@ async fn model_override_is_forwarded_only_in_the_child_command() {
             Some(model) => format!("/agent:host-worker --model {model} -- {prompt}"),
             None => format!("/agent:host-worker {prompt}"),
         };
-        assert_eq!(
-            *fixture.calls.lock().unwrap(),
-            vec![(
-                namespaced_tool_name("t3-code", "delegate_task"),
+        let mut delegated = json!({"task": task, "mode": "async"});
+        if let Some(target) = target {
+            delegated["target"] = target;
+        }
+        let call = |name, arguments| {
+            (
+                namespaced_tool_name("t3-code", name),
                 invocation(json!({})).id().clone(),
-                json!({"task": task, "mode": "async"}),
-            )]
-        );
+                arguments,
+            )
+        };
+        let mut expected = Vec::new();
+        if asks_host {
+            expected.push(call("orchestrator_capabilities", json!({"search": model})));
+        }
+        expected.push(call("delegate_task", delegated));
+        assert_eq!(*fixture.calls.lock().unwrap(), expected, "{model:?}");
         assert_eq!(
             output.structured_content(),
             Some(
