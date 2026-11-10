@@ -227,6 +227,7 @@ pub(super) fn title(actor: Actor<'_>, kind: Option<CapabilityKind>) -> String {
         Some(CapabilityKind::Network) => "access the network",
         Some(CapabilityKind::Skill) => "load a skill",
         Some(CapabilityKind::InstructionDiscovery) => "discover instructions",
+        Some(CapabilityKind::SessionControl) => "control another session",
         Some(_) | None => "use a capability",
     };
     format!("{actor} wants to {verb}")
@@ -269,7 +270,38 @@ fn approval_detail_sections(request: &CapabilityRequest) -> ApprovalDetails {
                 meta,
             }
         }
+        CapabilityOperation::ControlSession(target) => session_control_details(
+            target.action.label(),
+            target.session.as_ref().map(rho_sdk::SessionId::as_str),
+            &target.workspace,
+            target.text.as_deref(),
+        ),
         _ => ApprovalDetails::default(),
+    }
+}
+
+/// What a session-control request does, `<action> session <id>` or, for a
+/// session it starts, `<action> session`, then the text it sends, and the
+/// session's workspace.
+pub(super) fn session_control_details(
+    action: &str,
+    session: Option<&str>,
+    workspace: &std::path::Path,
+    text: Option<&str>,
+) -> ApprovalDetails {
+    let action = match session {
+        Some(session) => format!("{action} session {session}"),
+        None => format!("{action} session"),
+    };
+    ApprovalDetails {
+        primary: std::iter::once(action.as_str())
+            .chain(text)
+            .map(sanitize_controls)
+            .collect(),
+        meta: vec![format!(
+            "workspace {}",
+            sanitize_controls(&workspace.to_string_lossy())
+        )],
     }
 }
 

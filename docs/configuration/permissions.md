@@ -12,13 +12,15 @@ Allowed values are `bypass`, `auto`, `allow_edits`, `plan`, and `supervised`. A 
 | --- | --- | --- | --- |
 | Bypass | `bypass` | yes | No policy checks. Every capability is allowed. |
 | Auto | `auto` | no | Same gate as Allow edits. A classifier model decides the rest. |
-| Allow edits | `allow_edits` | no | In-workspace writes to git-tracked files are allowed. Later writes to a path already allowed this session are also allowed. Other new files, processes, outside reads, and unknown capabilities need approval. |
-| Plan | `plan` | no | File writes and process execution are denied. Reads outside the workspace are denied except `~/.rho/AGENTS.md`, skill trees, and agent definitions. |
-| Supervised | `supervised` | no | Writes, process execution, other outside reads, and unknown capabilities need approval. |
+| Allow edits | `allow_edits` | no | In-workspace writes to git-tracked files are allowed. Later writes to a path already allowed this session are also allowed. Other new files, processes, outside reads, session control, and unknown capabilities need approval. |
+| Plan | `plan` | no | File writes, process execution, and session control are denied. Reads outside the workspace are denied except `~/.rho/AGENTS.md`, skill trees, and agent definitions. |
+| Supervised | `supervised` | no | Writes, process execution, other outside reads, session control, and unknown capabilities need approval. |
 
 In Auto, Allow edits, and Supervised, gitignored and untracked paths still ask, as do writes outside the workspace, including writes to global `AGENTS.md`, skill trees, and agent definitions. Plan denies those writes.
 
 These reads are allowed in every checked mode, including Plan: workspace-scoped reads, `~/.rho/AGENTS.md`, skill trees (`~/.rho/skills`, `~/.agents/skills`), and agent definitions (`~/.rho/agents`, `~/.agents/agents`). Auto, Allow edits, and Supervised do not prompt for them. Network access, skills, and instruction discovery do not prompt either. To read another directory without switching mode, add it to the session with [`--add-dir` or `/add-dir`](/tools-workspace#additional-workspace-directories). Added directories count as workspace for reads in every checked mode, and Auto and Allow edits allow writes to git-tracked files there. Supervised still asks before writing to them, and Plan still denies those writes.
+
+*Session control* is acting on another agent session: starting it, prompting it, steering its turn, or cancelling it. Its approval names the action, the session, the text it would send, and the session's workspace. Allowing it for the session covers only that same request again. Watching another session needs no approval in any mode.
 
 The status line shows **Bypass** in warning style. The other modes appear dim.
 

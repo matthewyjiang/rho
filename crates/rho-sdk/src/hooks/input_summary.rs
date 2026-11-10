@@ -46,6 +46,19 @@ pub(super) fn approval(request: &ApprovalRequest) -> String {
             }
         }
         CapabilityOperation::LoadSkill { name, .. } => format!("load skill {name}"),
+        CapabilityOperation::ControlSession(target) => match &target.session {
+            Some(session) => format!(
+                "{} session {} in {}",
+                target.action.label(),
+                session.as_str(),
+                target.workspace.display()
+            ),
+            None => format!(
+                "{} session in {}",
+                target.action.label(),
+                target.workspace.display()
+            ),
+        },
     };
     let summary = match first_line(request.reason()) {
         "" => operation,

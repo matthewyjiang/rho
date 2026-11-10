@@ -363,6 +363,20 @@ fn format_capability_operation(request: &CapabilityRequest) -> anyhow::Result<Ve
             }
             Ok(lines)
         }
+        CapabilityOperation::ControlSession(target) => {
+            let mut lines = vec![field("action", json_str(target.action.label()))];
+            if let Some(session) = &target.session {
+                lines.push(field("session", json_str(session.as_str())));
+            }
+            lines.push(field(
+                "workspace",
+                json_str(&target.workspace.to_string_lossy()),
+            ));
+            if let Some(text) = &target.text {
+                lines.push(field("text", json_str(text)));
+            }
+            Ok(lines)
+        }
         _ => anyhow::bail!("unsupported capability operation for classifier transcript"),
     }
 }

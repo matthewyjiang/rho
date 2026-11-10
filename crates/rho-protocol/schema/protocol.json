@@ -2457,6 +2457,43 @@
           "type": "object"
         },
         {
+          "description": "Act on another agent session: `session` is the session the tool\nacts on, absent for one it starts, `workspace` that session's\nworkspace, and `text` what it sends, absent for a cancel.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/SessionControlAction"
+            },
+            "kind": {
+              "const": "control_session",
+              "type": "string"
+            },
+            "session": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SessionId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspace": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "action",
+            "workspace"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "properties": {
             "kind": {
@@ -3213,6 +3250,36 @@
         "options"
       ],
       "type": "object"
+    },
+    "SessionControlAction": {
+      "anyOf": [
+        {
+          "const": "new",
+          "description": "Start a session with a first prompt.",
+          "type": "string"
+        },
+        {
+          "const": "prompt",
+          "description": "Start a session's next turn.",
+          "type": "string"
+        },
+        {
+          "const": "steer",
+          "description": "Give a running turn input for its next model request.",
+          "type": "string"
+        },
+        {
+          "const": "cancel",
+          "description": "Cancel the turn in progress.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What an [`Operation::ControlSession`] does to the session."
     },
     "SessionDeleteParams": {
       "description": "Params of [`SESSION_DELETE`].",
