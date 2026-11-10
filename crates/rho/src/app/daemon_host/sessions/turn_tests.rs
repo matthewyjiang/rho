@@ -47,8 +47,12 @@ fn started_job(jobs: &JobRegistry) -> JobId {
     );
     let job = record.id.clone();
     jobs.register(record).unwrap();
-    jobs.start_turn(&job, TurnRecord::starting(/*key*/ None))
-        .unwrap();
+    jobs.start_turn(
+        &job,
+        TurnRecord::starting(/*key*/ None),
+        crate::caller_context::CallerContext::ROOT,
+    )
+    .unwrap();
     job
 }
 

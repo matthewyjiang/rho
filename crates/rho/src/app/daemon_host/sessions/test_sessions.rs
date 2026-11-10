@@ -51,7 +51,11 @@ pub(super) async fn load(sessions: &Sessions, root: &TempDir, load: Load) -> Arc
         Load::Busy => {
             sessions
                 .jobs
-                .start_turn(&job, TurnRecord::starting(/*key*/ None))
+                .start_turn(
+                    &job,
+                    TurnRecord::starting(/*key*/ None),
+                    crate::caller_context::CallerContext::ROOT,
+                )
                 .unwrap();
         }
         Load::Saved | Load::Unsaved => {}

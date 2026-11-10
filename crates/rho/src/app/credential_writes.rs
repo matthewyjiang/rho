@@ -1,7 +1,7 @@
 //! Signing in with an API key and signing out, for the daemon, which acts
 //! for a client rather than a person at a terminal (`rho/auth/key`,
-//! `rho/auth/logout`, and the environment check of `rho/auth/login`), and
-//! the shell check of `rho login` (#1662). Unix-only, as the daemon is
+//! `rho/auth/logout`, and the environment and store checks of
+//! `rho/auth/login`), and the shell check of `rho login` (#1662). Unix-only, as the daemon is
 //! (#1665):
 //!
 //! - A request starts with [`load_config_and_store`], so it writes the store
@@ -22,7 +22,7 @@ use anyhow::Context;
 use http::StatusCode;
 use rho_providers::{
     auth::login_dispatch::ProviderAuthentication,
-    credentials::{self, CredentialStore},
+    credentials::{self, CredentialError, CredentialStore},
     model::{
         provider_models::{check_api_key, ProviderModelEndpoint},
         ModelError,
@@ -107,7 +107,7 @@ pub(crate) fn load_config_and_store(
     let config = repository.load().map_err(unloaded)?;
     config.providers.activate().map_err(unloaded)?;
     let path = bootstrap::absolute_config_path(repository).map_err(unloaded)?;
-    credential_store::activate_for_login(&config, &path)
+    credential_store::activate_from_config(&config, &path)
         .context("could not open the credential store")
         .map_err(CredentialWriteError::Store)?;
     Ok(config)
@@ -143,6 +143,34 @@ pub(crate) fn refuse_environment_override(
         }),
         None => Ok(()),
     }
+}
+
+/// An account nothing saves, looked up to ask whether a store answers.
+const REACHABILITY_ACCOUNT: &str = "rho-probe:reachable";
+
+/// Refuses when the store `credentials` are kept in cannot be reached, as
+/// the OS store of a daemon started without a session D-Bus cannot. For a
+/// sign-in the user works for before anything is saved, an interactive
+/// login, so it fails before the provider is asked rather than after the
+/// user approved it. Looks up an account that does not exist, past the OS
+/// store's cache, as [`credentials::check_credential_store`] does for the
+/// daemon's status: it writes nothing, and a locked keyring asks for no
+/// unlock. Only why goes in the error; choosing another store is the
+/// client's advice to give. Blocks.
+pub(crate) fn refuse_unreachable_store(
+    credentials: &dyn CredentialStore,
+) -> Result<(), CredentialWriteError> {
+    credentials
+        .get_secret_fresh(REACHABILITY_ACCOUNT)
+        .map(drop)
+        .map_err(|error| {
+            CredentialWriteError::Store(match error {
+                CredentialError::StoreUnavailable(reason) => {
+                    anyhow::anyhow!("the daemon cannot reach the credential store: {reason}")
+                }
+                error @ CredentialError::InvalidData(_) => error.into(),
+            })
+        })
 }
 
 /// Signs out of auth profile `auth`, which a client named, on the provider

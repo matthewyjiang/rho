@@ -36,15 +36,17 @@ daemon and its frontends: the Rho TUI, rho-ui, the `rho acp` adapter, and MCP.
 - No dependency on `rho-sdk`, so an SDK major never breaks a frontend build.
 
 ```rust
-use rho_protocol::{methods, Client, ClientError, ClientInfo, StatusParams};
+use rho_protocol::{methods, Client, ClientError, ClientHello, ClientInfo, StatusParams};
 use tokio::net::UnixStream;
 
 async fn print_status(stream: UnixStream) -> Result<(), ClientError> {
-    let client_info = ClientInfo {
+    // A frontend answers its sessions' approvals and questions; a command
+    // that answers none says `ClientHello::command`.
+    let me = ClientHello::frontend(ClientInfo {
         name: "my-frontend".into(),
         version: "0.1.0".into(),
-    };
-    let (client, _notifications, hello) = Client::handshake(stream, client_info).await?;
+    });
+    let (client, _notifications, hello) = Client::handshake(stream, me).await?;
     println!("connected to rho {}", hello.daemon.version);
     let status = client.request::<methods::Status>(&StatusParams {}).await?;
     println!("daemon pid {}", status.pid);

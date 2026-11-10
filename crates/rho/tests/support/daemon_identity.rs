@@ -102,6 +102,7 @@ async fn prompt_as(
             timeout_ms: None,
             idempotency_key: None,
             environment,
+            grant: None,
         })
         .await;
     match prompted {
@@ -132,6 +133,7 @@ async fn new_session(
             agent: agent.map(str::to_owned),
             setup: SessionSetup::default(),
             parent: None,
+            grant: None,
         })
         .await
         .map(|opened| opened.session)

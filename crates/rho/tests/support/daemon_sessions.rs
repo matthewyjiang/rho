@@ -16,13 +16,13 @@ use rho_protocol::{
         SessionNew, SessionPrompt,
     },
     AnswerStop, ApprovalAsk, ApprovalSource, Ask, Client, ClientEnvironment, ClientError,
-    ClientInfo, CompactionStatus, ContentBlock, Cursor, DaemonNotification, DetachReason,
-    ErrorCode, IdempotencyKey, InputAnswer, InputRequest, InputRequestId, JobId, JobKind,
-    JobListParams, JobState, JobSummary, Notifications, Operation, PathScope, Replay, Resolution,
-    Seq, SessionAnswerParams, SessionAttachParams, SessionAttachResponse, SessionCancelParams,
-    SessionDetachParams, SessionDetachedParams, SessionEvent, SessionHoldParams, SessionId,
-    SessionNewParams, SessionPromptParams, SessionSetup, StreamId, ToolCallId, ToolContent,
-    ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome,
+    ClientHello, ClientInfo, CompactionStatus, ContentBlock, Cursor, DaemonNotification,
+    DetachReason, ErrorCode, IdempotencyKey, InputAnswer, InputRequest, InputRequestId, JobId,
+    JobKind, JobListParams, JobState, JobSummary, Notifications, Operation, PathScope, Replay,
+    Resolution, Seq, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
+    SessionCancelParams, SessionDetachParams, SessionDetachedParams, SessionEvent,
+    SessionHoldParams, SessionId, SessionNewParams, SessionPromptParams, SessionSetup, StreamId,
+    ToolCallId, ToolContent, ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome,
 };
 use rho_tui_pty::IsolatedHome;
 use tokio::{
@@ -182,14 +182,24 @@ impl Sandbox {
     }
 
     async fn try_connect(&self) -> Option<(Client, Notifications)> {
+        self.try_connect_as(ClientHello::frontend(test_client()))
+            .await
+    }
+
+    /// A connection that declares an agent's session control, as
+    /// `rho mcp serve` and the `sessions` tool do.
+    pub(super) async fn connect_as_agent(&self) -> Client {
+        self.try_connect_as(ClientHello::agent(test_client()))
+            .await
+            .expect("the daemon answers")
+            .0
+    }
+
+    async fn try_connect_as(&self, hello: ClientHello) -> Option<(Client, Notifications)> {
         let stream = UnixStream::connect(self.isolated.daemon_socket()?)
             .await
             .ok()?;
-        let client = ClientInfo {
-            name: "daemon-sessions-test".into(),
-            version: "0".into(),
-        };
-        Client::handshake(stream, client)
+        Client::handshake(stream, hello)
             .await
             .ok()
             .map(|(client, notifications, _)| (client, notifications))
@@ -269,6 +279,7 @@ impl Sandbox {
                 agent: None,
                 setup: SessionSetup::default(),
                 parent: None,
+                grant: None,
             })
             .await
             .unwrap()
@@ -312,6 +323,7 @@ impl Sandbox {
                 timeout_ms: None,
                 environment: self.client_environment(),
                 idempotency_key: key.map(IdempotencyKey::new),
+                grant: None,
             })
             .await
             .map(|prompted| prompted.turn)
@@ -352,6 +364,7 @@ impl Sandbox {
                 timeout_ms: None,
                 environment,
                 idempotency_key: None,
+                grant: None,
             })
             .await
             .unwrap();
@@ -702,6 +715,7 @@ async fn a_prompts_image_and_resource_reach_the_model() {
                 timeout_ms: None,
                 environment: sandbox.client_environment(),
                 idempotency_key: None,
+                grant: None,
             })
             .await
             .map(|_| ())
@@ -730,6 +744,7 @@ async fn a_prompts_image_and_resource_reach_the_model() {
             timeout_ms: None,
             environment: sandbox.client_environment(),
             idempotency_key: None,
+            grant: None,
         })
         .await
         .unwrap();
@@ -1506,6 +1521,13 @@ async fn clients_that_leave_and_come_back_see_the_same_turn() {
     daemon.wait().unwrap();
 }
 
+fn test_client() -> ClientInfo {
+    ClientInfo {
+        name: "daemon-sessions-test".into(),
+        version: "0".into(),
+    }
+}
+
 /// Answers `request` of `session` with `answer` on `client`.
 async fn answer(
     client: &Client,
@@ -1628,6 +1650,68 @@ async fn an_approval_waits_for_any_client_to_answer() {
             Err(Some(ErrorCode::InputNotOpen)),
             JobState::Completed,
             Some("approved".to_owned()),
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: the daemon refuses an answer and a hold from a connection that
+// declared an agent's session control, as `rho mcp serve` and the
+// `sessions` tool do, as `CapabilityRequired`; the request
+// stays open and nothing is written, and a frontend then answers it (#1780).
+// Owner: daemon connection capabilities.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_agents_connection_can_neither_answer_nor_hold_an_approval() {
+    let sandbox = Sandbox::new();
+    let (client, session) = prompt_a_supervised_write(&sandbox).await;
+    let waiting = async || {
+        let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
+        jobs.jobs.into_iter().find(|job| {
+            job.session.as_ref() == Some(&session) && job.state == JobState::WaitingForInput
+        })
+    };
+    sandbox.poll_until("the turn to ask", waiting).await;
+    let (_follower, attached) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let request = attached.inputs.first().expect("the request is open").id;
+    let agent = sandbox.connect_as_agent().await;
+    let refusal = |refused: ClientError| match refused {
+        ClientError::Rpc { error, .. } => error.error_code(),
+        error => panic!("refused outside the protocol: {error}"),
+    };
+
+    let answered = agent
+        .request::<SessionAnswer>(&SessionAnswerParams {
+            session: session.clone(),
+            request,
+            answer: InputAnswer::AllowOnce,
+        })
+        .await
+        .map(drop)
+        .map_err(refusal);
+    let held = agent
+        .request::<SessionHold>(&SessionHoldParams {
+            session: session.clone(),
+            request,
+        })
+        .await
+        .map(drop)
+        .map_err(refusal);
+    let after_the_agent = (
+        waiting().await.map(|job| job.state),
+        sandbox.workspace.join("note.txt").exists(),
+    );
+    let by_a_frontend = answer(&client, &session, request, InputAnswer::AllowOnce).await;
+    let job = settled_job(&sandbox, &client, &session).await;
+
+    assert_eq!(
+        (answered, held, after_the_agent, by_a_frontend, job.state),
+        (
+            Err(Some(ErrorCode::CapabilityRequired)),
+            Err(Some(ErrorCode::CapabilityRequired)),
+            (Some(JobState::WaitingForInput), false),
+            Ok(()),
+            JobState::Completed,
         ),
         "log:\n{}",
         sandbox.isolated.daemon_log()
