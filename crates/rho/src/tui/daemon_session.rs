@@ -468,7 +468,11 @@ mod unix {
             };
             session.pending.push(settings_loaded(settings));
             for change in queued {
-                session.configure(change)?;
+                session
+                    .requests
+                    .as_ref()
+                    .expect("attached session has requests")
+                    .carry(change)?;
             }
             Ok(session)
         }
@@ -553,11 +557,13 @@ mod unix {
             views
         }
 
-        /// Appends every settings change already received, after `views`.
+        /// Appends every settings change and login step already received,
+        /// after `views`: neither waits for the session's events to pause.
         fn take_settings_changes(&mut self, views: &mut Vec<DaemonView>) {
             while let Ok(changed) = self.config_changes.try_recv() {
                 views.push(DaemonView::SettingsChanged(Box::new(changed)));
             }
+            views.extend(auth::take_logins(&mut self.logins).map(DaemonView::Login));
         }
 
         /// What the daemon sent since the last call, mapped, without
@@ -730,9 +736,19 @@ mod unix {
                 DaemonView::Turn(TurnState::Resting(Rest::Unfollowed)),
             ];
             // Its connection is gone, and nothing reads its events now.
-            if self.logins.take().is_some() {
+            // What it already sent still counts: a login that finished
+            // before the connection went was saved.
+            if self.logins.is_some() {
+                let queued: Vec<_> = auth::take_logins(&mut self.logins).collect();
+                let finished = queued
+                    .iter()
+                    .any(|update| matches!(update, LoginUpdate::Finished { .. }));
+                views.extend(queued.into_iter().map(DaemonView::Login));
+                self.logins = None;
                 self.daemon.unroute_login();
-                views.push(DaemonView::Login(LoginUpdate::Lost));
+                if !finished {
+                    views.push(DaemonView::Login(LoginUpdate::Lost));
+                }
             }
             views
         }
