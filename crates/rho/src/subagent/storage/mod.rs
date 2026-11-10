@@ -346,7 +346,12 @@ fn resolve_run_directory_in_root(rho_root: &Path, id: &str) -> anyhow::Result<Pa
             .optional()?;
         if let Some(path) = indexed {
             let path = PathBuf::from(path);
-            validate_run_directory(rho_root, &id, &path)?;
+            // Another process may have recorded the path under another
+            // spelling of this home, as the daemon, which resolves its
+            // home's symlinks, does for a client that does not (macOS
+            // temporary directories): compare what both name.
+            let real = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+            validate_run_directory(&real(rho_root), &id, &real(&path))?;
             if is_trusted_directory(&path) {
                 secure_directory(&path)?;
                 return Ok(path);
