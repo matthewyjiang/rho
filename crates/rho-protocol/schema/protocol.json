@@ -943,7 +943,7 @@
               "type": "null"
             }
           ],
-          "description": "Who makes the changes. A revision stays good for its writer while\nonly the writer's own changes followed it, so a client that sends a\nwrite before [`CONFIG_CHANGED`] for its last one arrives is not\nrefused for that change. Without one, only the current revision is\ngood."
+          "description": "Who makes the changes. A revision stays good for its writer while\nonly the writer's own changes followed it, so a client that sends a\nwrite before [`CONFIG_CHANGED`] for its last one arrives is not\nrefused for that change. A writer still sends each write only once\nthe last one's response came back: writes in flight together may\nland in either order. Without a writer, only the current revision is\ngood."
         }
       },
       "required": [
