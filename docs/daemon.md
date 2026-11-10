@@ -145,7 +145,7 @@ An installer that puts the new version at another path, such as a versioned dire
 
 Every connection begins with a handshake that compares protocol versions, so a frontend and a daemon of different rho builds learn there whether they can work together, rather than at the first request one of them does not understand ([#1776](https://github.com/matthewyjiang/rho/issues/1776)).
 
-The protocol is unstable while its version is 0.x: every change to it raises the version, and a frontend and daemon work together only when their protocol versions are equal. Builds that differ without a protocol change still work together. From protocol 1.0 on, they work together when their major versions match.
+The protocol is unstable while its version is 0.x: a frontend and daemon work together only when their protocol versions are equal. Until the 3.0 beta a change to the protocol does not raise the version, so two builds can report the same version and still differ: run a frontend and a daemon from the same build. From protocol 1.0 on, they work together when their major versions match.
 
 | The frontend finds | What happens |
 | --- | --- |

@@ -349,7 +349,7 @@ class UnstableProtocolTests(unittest.TestCase):
     def check(self, current: dict) -> list[str]:
         return check_protocol_compat.check(self.UNSTABLE, current, "the base")
 
-    def test_any_change_needs_only_a_new_minor(self) -> None:
+    def test_any_change_is_allowed_with_or_without_a_new_minor(self) -> None:
         for name, change in [
             ("an added method", add_method),
             ("a removed method", remove_method),
@@ -357,13 +357,7 @@ class UnstableProtocolTests(unittest.TestCase):
         ]:
             with self.subTest(name):
                 self.assertEqual(self.check(self.at(change, 0, 5)), [])
-                self.assertEqual(
-                    self.check(self.at(change, 0, 4)),
-                    [
-                        "the protocol changed since the base but PROTOCOL_VERSION is still "
-                        "0.4; raise the minor"
-                    ],
-                )
+                self.assertEqual(self.check(self.at(change, 0, 4)), [])
 
     def test_the_handshake_may_only_gain_optional_fields(self) -> None:
         # A client and a daemon of different versions still read these, so a
@@ -395,7 +389,7 @@ class UnstableProtocolTests(unittest.TestCase):
         # would fail the release rules; between two commits it breaks none.
         stable = {**COMMITTED, "protocol": {"major": 1, "minor": 0}}
         for name, baseline, current, expected in [
-            ("both unstable", self.UNSTABLE, self.at(remove_method, 0, 4), 1),
+            ("both unstable", self.UNSTABLE, self.at(remove_method, 0, 3), 1),
             ("entering major 0", stable, self.at(remove_method, 0, 1), 0),
             ("leaving major 0", self.UNSTABLE, self.at(remove_method, 1, 0), 0),
             ("both stable", stable, self.at(add_method, 1, 0), 0),

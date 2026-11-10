@@ -9,12 +9,12 @@ optional, or nullable, adding a required field to an existing object,
 removing a value, or adding one to a closed enum. Any change at all needs a
 new minor, so a client can tell from `rho/hello` what it may receive.
 
-Major 0 is the unstable protocol (#1776): a minor may change anything, and a
-client and daemon work together only when their versions are equal, so there
-any change needs only a new minor. The exception is the handshake a client
-and daemon of different versions still exchange, the version `rho/hello`
-names and the data of the error that refuses it, which a minor may only add
-to at any major.
+Major 0 is the unstable protocol (#1776): it may change anything, and a
+change needs no new minor. Nothing of it is released while 3.0 is built, so
+its version stays put and is set once, at the beta. The exception is the
+handshake a client and daemon of different versions still exchange, the
+version `rho/hello` names and the data of the error that refuses it, which
+may only be added to at any major.
 
 The baseline is the schema the last `rho-coding-agent` release shipped:
 compatibility matters between released daemons and clients, not between
@@ -383,7 +383,8 @@ def check(baseline: dict, current: dict, baseline_name: str) -> list[str]:
         problems = [
             f"{problem} (needs a new protocol major)" for problem in breaking_changes(before, after)
         ]
-    if before != after and new == old:
+    # An unstable protocol changes without a new minor until the beta.
+    if before != after and new == old and new[0] > 0:
         problems.append(
             f"the protocol changed since {baseline_name} but PROTOCOL_VERSION is still "
             f"{new[0]}.{new[1]}; raise the minor"
