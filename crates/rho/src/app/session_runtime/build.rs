@@ -15,7 +15,7 @@ use crate::{
         agent_binding::BoundAgent,
         session_assembly::{
             assemble_session, ApprovalInputs, BuiltSession, HookStart, SessionAssembly,
-            SessionAssemblyOptions,
+            SessionAssemblyOptions, SignIn,
         },
         subagent_messaging::NoticePoster,
         subagent_pool::SubagentPool,
@@ -283,6 +283,10 @@ pub(super) async fn build_session(
         hook_start: match build.host.session_use {
             SessionUse::Run => HookStart::Start,
             SessionUse::Read => HookStart::Skip,
+        },
+        sign_in: match build.host.session_use {
+            SessionUse::Run => SignIn::Required,
+            SessionUse::Read => SignIn::NotNeeded,
         },
         mcp_authorization: build.host.mcp_authorization,
         diagnostics: &build.launch.diagnostics,

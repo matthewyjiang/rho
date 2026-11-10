@@ -355,7 +355,7 @@ pub(crate) fn load_ollama_device_key(
     if !crate::credentials::ollama_device_login_recorded(store)? {
         return Err(missing_credential_error(missing_message));
     }
-    load_ollama_device_key_from(|| OllamaDeviceKey::load_for(store), missing_message)
+    load_ollama_device_key_from(OllamaDeviceKey::load_default, missing_message)
 }
 
 pub(crate) fn load_ollama_device_key_from(

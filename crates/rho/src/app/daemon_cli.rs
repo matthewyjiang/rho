@@ -223,9 +223,11 @@ async fn run_foreground(
     }
     // Likewise for credentials: before #1779 a key here signed every session
     // in. Custom providers' variables are known only once a config is read,
-    // so this names the built-in ones and any `RHO_*_API_KEY`.
+    // so this names the built-in ones, any `RHO_*_API_KEY`, and the ones
+    // no provider owns.
     let credentials: Vec<String> = rho_providers::credential_env_vars()
         .into_iter()
+        .chain(["GITHUB_TOKEN", "GH_TOKEN", "CODEX_ACCOUNT_ID"].map(str::to_owned))
         .filter(|variable| std::env::var_os(variable).is_some())
         .collect();
     if !credentials.is_empty() {

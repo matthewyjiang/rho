@@ -12,7 +12,8 @@ use std::{
 };
 
 use rho_providers::{
-    auth::provider_credentials::ApplicationCredentialSource, providers::build_automation_provider,
+    auth::provider_credentials::ApplicationCredentialSource,
+    providers::{build_automation_provider, UnavailableProvider},
 };
 use rho_sdk::{
     provider::ModelProvider, ApprovalRequestReceiver, ApprovalSession, Session, SessionOptions,
@@ -49,6 +50,8 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub tool_source_attach: super::tools_prompt::ToolSourceAttach,
     /// Whether the session starts its workspace's hooks.
     pub hook_start: HookStart,
+    /// Whether the session must sign in to its model.
+    pub sign_in: SignIn,
     pub mcp_authorization: crate::tools::mcp::McpAuthorizationMode,
     pub diagnostics: &'a RuntimeDiagnostics,
     pub agent: &'a BoundAgent,
@@ -70,6 +73,16 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub approval: Approval,
     /// Chooses the session options once the provider is known.
     pub session_options: Options,
+}
+
+/// Whether an assembled session must sign in to its model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SignIn {
+    /// Assembly fails when the model's credential is missing.
+    Required,
+    /// The session is only read, so it runs no turn: a model that cannot be
+    /// signed in to is stood in for by one that fails every request.
+    NotNeeded,
 }
 
 /// Whether an assembled session starts its workspace's hooks.
@@ -166,6 +179,7 @@ where
         mcp_sampling,
         tool_source_attach,
         hook_start,
+        sign_in,
         mcp_authorization,
         diagnostics,
         agent,
@@ -192,7 +206,14 @@ where
     // Automation and ACP normally skip the catalog fetch, but catalog-constructed
     // providers need the hydrate before build; a no-op for the rest.
     sdk_options.provider.ensure_catalog_for_construction().await;
-    let provider = build_automation_provider(sdk_options.provider, &credentials)?;
+    let provider = match (
+        build_automation_provider(sdk_options.provider, &credentials),
+        sign_in,
+    ) {
+        (Ok(provider), _) => provider,
+        (Err(error), SignIn::Required) => return Err(error.into()),
+        (Err(error), SignIn::NotNeeded) => Arc::new(UnavailableProvider::new(error)),
+    };
     let live_provider = Arc::clone(&provider);
     let workspace_root = sdk_options.workspace.root.clone();
     let workspace = sdk_options.workspace.build_workspace(added_dirs)?;

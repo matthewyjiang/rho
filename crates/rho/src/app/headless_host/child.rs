@@ -114,6 +114,7 @@ pub(crate) async fn run_child(run: ChildRun) -> anyhow::Result<()> {
     } = settle_bound_config(
         bound_config,
         &bound,
+        environment.credentials().as_ref(),
         &ProviderRefreshStatus::NotAttempted,
         rho_providers::model::ReasoningRequestSource::PersistedOrDefault,
     )

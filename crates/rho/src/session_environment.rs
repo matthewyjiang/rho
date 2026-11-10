@@ -94,7 +94,7 @@ impl Ambient {
 
     /// [`Self::credentials`] for secrets no provider reads, such as an MCP
     /// server's OAuth tokens, whose writes rebuild no session's provider.
-    pub(crate) fn untracked_credentials(&self) -> Arc<dyn CredentialStore> {
+    fn untracked_credentials(&self) -> Arc<dyn CredentialStore> {
         match self {
             Self::ThisProcess => Arc::new(crate::credential_store::UntrackedCredentialStore),
             Self::Client(variables) => {
@@ -242,6 +242,13 @@ impl SessionEnvironment {
     /// environment or from another client's.
     pub(crate) fn credentials(&self) -> Arc<dyn CredentialStore> {
         self.opened_with.credentials()
+    }
+
+    /// [`Self::credentials`] for secrets no provider reads, such as an MCP
+    /// server's OAuth tokens: saving or refreshing one rebuilds no session's
+    /// provider (#1662).
+    pub(crate) fn untracked_credentials(&self) -> Arc<dyn CredentialStore> {
+        self.opened_with.untracked_credentials()
     }
 
     /// The environment a child started now sees.

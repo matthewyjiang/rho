@@ -18,6 +18,7 @@ fn an_auto_started_daemon_keeps_only_allowed_variables() {
         ("HOME", "/home/dev"),
         ("PATH", "/usr/bin"),
         ("XDG_RUNTIME_DIR", "/run/user/1000"),
+        ("OLLAMA_DEVICE_KEY_DIR", "/home/dev/.ollama"),
         ("LANG", "C.UTF-8"),
         ("https_proxy", "http://proxy:3128"),
         ("RHO_LOG", "rho=debug"),
@@ -41,7 +42,6 @@ fn an_auto_started_daemon_keeps_only_allowed_variables() {
         ("GITHUB_TOKEN", "ghp-test"),
         ("GH_TOKEN", "ghp-test"),
         ("CODEX_ACCOUNT_ID", "account"),
-        ("OLLAMA_DEVICE_KEY_DIR", "/home/dev/.ollama"),
     ];
     let pairs = |variables: &[(&str, &str)]| -> Vec<(OsString, OsString)> {
         variables

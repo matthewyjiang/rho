@@ -79,8 +79,8 @@ impl ShellToolOptions {
     }
 
     /// Rewrite commands through [RTK](https://github.com/rtk-ai/rtk) when an
-    /// `rtk` 0.23+ binary is on `PATH`. Off by default, and off when the
-    /// process has `RTK_DISABLED=1`.
+    /// `rtk` 0.23+ binary is on `PATH`. Off by default, and off for a
+    /// command whose environment has `RTK_DISABLED=1`.
     ///
     /// The rewrite happens before authorization, so approval and hooks see the
     /// command that runs (`rtk git status`), while start metadata keeps the

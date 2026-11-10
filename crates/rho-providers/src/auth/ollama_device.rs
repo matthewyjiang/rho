@@ -12,8 +12,6 @@ use std::{
 };
 
 use base64::{engine::general_purpose, Engine as _};
-
-use crate::credentials::CredentialStore;
 use signature::Signer;
 use ssh_key::{rand_core::OsRng, Algorithm, LineEnding, PrivateKey};
 
@@ -49,13 +47,6 @@ impl OllamaDeviceKey {
     /// Loads an existing device key from the default Ollama path.
     pub fn load_default() -> Result<Self, OllamaDeviceError> {
         Self::load_from_dir(&default_key_dir()?)
-    }
-
-    /// Loads an existing device key for `store`'s party: from the
-    /// `OLLAMA_DEVICE_KEY_DIR` of its environment, else the default Ollama
-    /// path.
-    pub(crate) fn load_for(store: &dyn CredentialStore) -> Result<Self, OllamaDeviceError> {
-        Self::load_from_dir(&key_dir(|name| store.environment_variable(name))?)
     }
 
     pub fn load_or_create(dir: &Path) -> Result<Self, OllamaDeviceError> {
@@ -241,16 +232,10 @@ pub fn with_ollama_device_key_dir_for_tests<T>(path: PathBuf, f: impl FnOnce() -
 }
 
 fn default_key_dir() -> Result<PathBuf, OllamaDeviceError> {
-    key_dir(|name| std::env::var(name).ok())
-}
-
-/// The directory the device key is kept in, with `OLLAMA_DEVICE_KEY_DIR`
-/// read through `env_value`.
-fn key_dir(env_value: impl Fn(&str) -> Option<String>) -> Result<PathBuf, OllamaDeviceError> {
     if let Some(path) = TEST_KEY_DIR.with(|key_dir| key_dir.borrow().clone()) {
         return Ok(path);
     }
-    if let Some(path) = env_value("OLLAMA_DEVICE_KEY_DIR") {
+    if let Ok(path) = std::env::var("OLLAMA_DEVICE_KEY_DIR") {
         let path = path.trim();
         if !path.is_empty() {
             return Ok(PathBuf::from(path));

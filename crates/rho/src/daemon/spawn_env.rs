@@ -39,6 +39,9 @@ const MACHINE: &[&str] = &[
     // workspace walks.
     "XDG_CONFIG_HOME",
     "GIT_CONFIG_GLOBAL",
+    // Where this machine's Ollama device key is kept: a place, as `HOME`
+    // is, which the daemon creates the key in and every session reads.
+    "OLLAMA_DEVICE_KEY_DIR",
     "LANG",
     "LC_ALL",
     "LC_CTYPE",

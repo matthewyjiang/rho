@@ -408,20 +408,11 @@ async fn an_unloaded_session_replays_as_the_agent_it_was_saved_as() {
 /// The variable that holds the key of the custom `mock` provider.
 const KEY_VARIABLE: &str = "RHO_MOCK_API_KEY";
 
-// Covers: a session signs in with the credentials of the client that opens
-// it, not of the client that started the daemon. On a daemon started by a
-// client whose environment holds a key the provider refuses, that key
-// reaches only that client's own sessions, whose turn the provider fails: a
-// client with the key the provider accepts completes a turn, and a client with no key is told to
-// sign in instead of borrowing the starter's (#1779). The provider checks
-// every key over real HTTP; no fixture stands in.
-// Owner: daemon session credentials.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_session_signs_in_with_its_opening_clients_key() {
-    const STARTERS_KEY: &str = "test-starters-key";
-    const OTHER_KEY: &str = "test-other-clients-key";
-    let address = spawn_provider(Arc::new(Mutex::new(OTHER_KEY.to_owned())));
-    let sandbox = Sandbox::new();
+/// Points `sandbox`'s config at a provider that checks every key over real
+/// HTTP and accepts only `key`, for the custom `mock` provider whose key
+/// [`KEY_VARIABLE`] holds.
+fn reach_provider_accepting(sandbox: &Sandbox, key: &str) {
+    let address = spawn_provider(Arc::new(Mutex::new(key.to_owned())));
     std::fs::write(
         &sandbox.isolated.config_path,
         format!(
@@ -443,11 +434,15 @@ provider = "disabled"
         ),
     )
     .unwrap();
-    // No fixture mode: the daemon's sessions reach the provider itself.
+}
+
+/// Has a client whose environment adds `variables` start `sandbox`'s
+/// daemon, outside fixture mode: its sessions reach the provider itself.
+fn start_daemon_with(sandbox: &Sandbox, variables: &[(&str, &str)]) {
     let started = sandbox
         .rho("fixed")
         .env_remove("RHO_AUTOMATION_TEST_MODE")
-        .env(KEY_VARIABLE, STARTERS_KEY)
+        .envs(variables.iter().copied())
         .args(["daemon", "start"])
         .status()
         .unwrap();
@@ -456,6 +451,22 @@ provider = "disabled"
         "daemon start: {started:?}; log:\n{}",
         sandbox.isolated.daemon_log()
     );
+}
+
+// Covers: a session signs in with the credentials of the client that opens
+// it, not of the client that started the daemon. On a daemon started by a
+// client whose environment holds a key the provider refuses, that key
+// reaches only that client's own sessions, whose turn the provider fails: a
+// client with the key the provider accepts completes a turn, and a client
+// with no key is told to sign in instead of borrowing the starter's (#1779).
+// Owner: daemon session credentials.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_signs_in_with_its_opening_clients_key() {
+    const STARTERS_KEY: &str = "test-starters-key";
+    const OTHER_KEY: &str = "test-other-clients-key";
+    let sandbox = Sandbox::new();
+    reach_provider_accepting(&sandbox, OTHER_KEY);
+    start_daemon_with(&sandbox, &[(KEY_VARIABLE, STARTERS_KEY)]);
     let client = sandbox.connect().await;
 
     let mut signed_in = Vec::new();
@@ -487,6 +498,55 @@ provider = "disabled"
                 Err(format!("open: {:?}", Some(ErrorCode::SignInRequired))),
             ),
         ],
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: reading a saved session needs no sign-in. A session whose only
+// credential was a key in its client's environment is replayed by a daemon
+// that never saw that key, to an observer that sends no environment: it
+// runs no turn, so it asks for no credential.
+// Owner: daemon session observe.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unloaded_session_replays_without_its_clients_key() {
+    const KEY: &str = "test-clients-key";
+    let sandbox = Sandbox::new();
+    reach_provider_accepting(&sandbox, KEY);
+    start_daemon_with(&sandbox, &[]);
+    let client = sandbox.connect().await;
+    let environment = environment_with(&sandbox, &[(KEY_VARIABLE, KEY)]);
+    let session = new_session(&sandbox, &client, None, environment.clone())
+        .await
+        .unwrap();
+    // Its first prompt saves it.
+    prompt_as(&client, &session, "hello", environment)
+        .await
+        .unwrap();
+    let saved = settled_job(&sandbox, &client, &session).await.state;
+    // A new daemon has loaded nothing.
+    let stopped = sandbox
+        .rho("fixed")
+        .args(["daemon", "stop"])
+        .status()
+        .unwrap();
+    assert!(stopped.success(), "daemon stop: {stopped:?}");
+    start_daemon_with(&sandbox, &[]);
+    let client = sandbox.connect().await;
+
+    let observed = client
+        .request::<SessionObserve>(&SessionObserveParams {
+            session,
+            after: None,
+        })
+        .await;
+
+    assert_eq!(
+        (
+            saved,
+            observed.map(|_| ()).map_err(|error| error.to_string())
+        ),
+        (JobState::Completed, Ok(())),
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

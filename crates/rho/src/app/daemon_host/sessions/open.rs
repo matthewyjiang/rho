@@ -289,6 +289,7 @@ async fn open_runtime(
     } = settle_bound_config(
         config,
         &agent,
+        environment.credentials().as_ref(),
         &ProviderRefreshStatus::NotAttempted,
         rho_providers::model::ReasoningRequestSource::PersistedOrDefault,
     )

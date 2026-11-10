@@ -149,11 +149,18 @@ pub(super) async fn connect_server_bounded(
     let environment = &options.environment.current();
     // Authorization runs before the startup clock. It carries its own budgets,
     // and a browser login is a person's pace, not a server's.
-    let http_client =
-        match resolve_http_client(identity, server, options.authorization, environment).await {
-            Ok(http_client) => http_client,
-            Err(error) => return ConnectResult::Failed { error },
-        };
+    let http_client = match resolve_http_client(
+        identity,
+        server,
+        options.authorization,
+        environment,
+        options.environment.untracked_credentials(),
+    )
+    .await
+    {
+        Ok(http_client) => http_client,
+        Err(error) => return ConnectResult::Failed { error },
+    };
 
     let deadline = tokio::time::Instant::now() + MCP_SERVER_STARTUP_BUDGET;
     let progress = McpProgressRouter::new();
@@ -323,12 +330,14 @@ async fn apply_log_level(
 ///
 /// Headers are resolved here and again when the transport is built. Resolution
 /// is a pure read of config plus `environment`, so repeating it costs nothing
-/// and keeps each step's inputs local to it.
+/// and keeps each step's inputs local to it. A server's OAuth tokens are
+/// kept in `tokens`, the session's own store.
 async fn resolve_http_client(
     identity: &str,
     server: &McpServerConfig,
     authorization: McpAuthorizationMode,
     environment: &Ambient,
+    tokens: Arc<dyn rho_providers::credentials::CredentialStore>,
 ) -> anyhow::Result<McpHttpClient> {
     let McpTransport::StreamableHttp {
         url,
@@ -351,9 +360,7 @@ async fn resolve_http_client(
         oauth_config.as_ref(),
         &headers,
         authorization,
-        // MCP tokens feed no model provider, so saving or refreshing them
-        // must not rebuild every session's provider (#1662).
-        environment.untracked_credentials(),
+        tokens,
     )
     .await
 }

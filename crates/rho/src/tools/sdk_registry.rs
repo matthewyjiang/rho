@@ -236,7 +236,16 @@ pub struct AppToolSet {
 }
 
 impl AppToolSet {
-    pub fn disabled() -> Self {
+    /// No tools, for a session that reads this process's own credentials.
+    #[cfg(test)]
+    pub(crate) fn disabled() -> Self {
+        Self::disabled_for(Arc::new(crate::credential_store::AppCredentialStore))
+    }
+
+    /// No tools, for a session whose credentials are `credentials`.
+    pub(crate) fn disabled_for(
+        credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
+    ) -> Self {
         Self {
             inventory: ToolInventory::default(),
             bundles: Vec::new(),
@@ -257,7 +266,7 @@ impl AppToolSet {
             session_search: super::sessions::SessionBinding::default(),
             recall: None,
             todo: super::todo::TodoState::default(),
-            credentials: Arc::new(crate::credential_store::AppCredentialStore),
+            credentials,
         }
     }
 
@@ -271,8 +280,7 @@ impl AppToolSet {
             process_keep_warm,
             environment,
         } = options;
-        let mut tool_set = Self::disabled();
-        tool_set.credentials = environment.credentials();
+        let mut tool_set = Self::disabled_for(environment.credentials());
         tool_set.workflow_tracker = workflow_tracker;
         tool_set.checkpoint_tracker = Arc::new(
             crate::session::workspace_checkpoint::WorkspaceCheckpointTracker::new(

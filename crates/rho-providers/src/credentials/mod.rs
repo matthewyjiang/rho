@@ -532,7 +532,7 @@ pub fn provider_has_env_override(provider: &str) -> bool {
 }
 
 /// [`provider_has_env_override`] against the environment `env_value` reads.
-pub fn provider_has_env_override_from(
+fn provider_has_env_override_from(
     provider: &str,
     env_value: impl Fn(&str) -> Option<String>,
 ) -> bool {

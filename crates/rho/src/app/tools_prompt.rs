@@ -272,7 +272,7 @@ pub(crate) async fn assemble_tools_and_prompt(
     };
     let ToolSourcesOutcome { mcp, openapi } = sources;
     let mut tools = if options.no_tools {
-        AppToolSet::disabled().with_mcp(mcp)
+        AppToolSet::disabled_for(options.environment.credentials()).with_mcp(mcp)
     } else {
         let mut tool_options = ToolSetOptions::new(capabilities)
             .process_keep_warm(options.process_keep_warm)
