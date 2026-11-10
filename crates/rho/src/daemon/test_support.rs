@@ -14,7 +14,8 @@ use rho_protocol::{
     SessionHoldParams, SessionHoldResponse, SessionListParams, SessionListResponse,
     SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
     SessionRenameParams, SessionRenameResponse, SessionSteerParams, SessionSteerResponse,
-    SessionUnsteerParams, SessionUnsteerResponse, StoreSelectedBy, Subscription, PROTOCOL_VERSION,
+    SessionUnsteerParams, SessionUnsteerResponse, SettingsService, StoreSelectedBy, Subscription,
+    PROTOCOL_VERSION,
 };
 
 use super::shutdown::{Ending, Shutdown};
@@ -191,7 +192,9 @@ impl Service for StubHost {
     ) -> Result<AuthChooseStoreResponse, RpcError> {
         Err(no_credential_store())
     }
+}
 
+impl SettingsService for StubHost {
     async fn config_schema(&self) -> Result<ConfigSchema, RpcError> {
         Err(no_settings())
     }

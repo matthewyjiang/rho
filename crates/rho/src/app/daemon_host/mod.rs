@@ -34,8 +34,8 @@ use rho_protocol::{
     SessionHoldParams, SessionHoldResponse, SessionListParams, SessionListResponse,
     SessionNewParams, SessionNewResponse, SessionObserveParams, SessionPromptParams,
     SessionPromptResponse, SessionRenameParams, SessionRenameResponse, SessionSteerParams,
-    SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse, Subscription,
-    PROTOCOL_VERSION,
+    SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse, SettingsService,
+    Subscription, PROTOCOL_VERSION,
 };
 use rho_providers::credentials::CredentialStoreBackend;
 
@@ -420,7 +420,9 @@ impl Service for DaemonHost {
     ) -> Result<AuthChooseStoreResponse, RpcError> {
         store::choose(params, self.store_environment, &self.sessions).await
     }
+}
 
+impl SettingsService for DaemonHost {
     async fn config_schema(&self) -> Result<ConfigSchema, RpcError> {
         Ok(self.sessions.settings().schema())
     }
