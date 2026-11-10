@@ -88,8 +88,11 @@ impl App {
                 DaemonView::Title(title) => self.daemon_title = Some(title),
                 DaemonView::Options(options) => self.show_daemon_options(*options),
                 DaemonView::McpInventory(result) => self.show_daemon_mcp(result),
-                DaemonView::SettingsLoaded(settings) => {
+                DaemonView::SettingsLoaded(Ok(settings)) => {
                     self.show_daemon_settings(SettingsUpdate::Loaded(settings));
+                }
+                DaemonView::SettingsLoaded(Err(error)) => {
+                    self.show_daemon_settings(SettingsUpdate::Unreadable(error));
                 }
                 DaemonView::SettingsChanged(changed) => {
                     self.show_daemon_settings(SettingsUpdate::Changed(changed));

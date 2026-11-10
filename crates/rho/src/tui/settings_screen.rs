@@ -49,6 +49,9 @@ pub(super) enum ConfigPage {
 pub(super) enum SettingsUpdate {
     Loaded(Box<DaemonSettings>),
     Changed(Box<rho_protocol::ConfigChangedParams>),
+    /// A read failed, with why. The connection gets no changes then, so
+    /// the settings read before are dropped rather than kept stale.
+    Unreadable(String),
 }
 
 impl App {
@@ -473,6 +476,15 @@ impl App {
                 }
                 self.daemon_settings = Some(*settings);
                 (Some(values), problems)
+            }
+            SettingsUpdate::Unreadable(error) => {
+                // `/config` keeps the session's own options; the session
+                // still runs.
+                self.daemon_settings = None;
+                self.insert_entry(&Entry::Error(format!(
+                    "could not read the rho settings: {error}"
+                )));
+                return;
             }
             SettingsUpdate::Changed(changed) => {
                 let Some(applied) = self

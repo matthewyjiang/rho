@@ -39,3 +39,16 @@ fn reading_the_settings_again_keeps_the_shortcuts_streaming_mode() {
 
     assert_eq!(app.streams.mode, StreamingMode::Off);
 }
+
+// Covers: a settings read that fails, as after a daemon restart, drops the
+// settings read before, whose revision the restarted daemon no longer
+// tracks and whose changes no longer arrive, instead of showing them stale.
+// Owner: interactive TUI settings screen (pure state).
+#[test]
+fn a_failed_settings_read_drops_the_earlier_settings() {
+    let mut app = test_app();
+    app.show_daemon_settings(SettingsUpdate::Loaded(Box::new(settings())));
+    app.show_daemon_settings(SettingsUpdate::Unreadable("connection lost".into()));
+
+    assert_eq!(app.advisor_status(), AdvisorStatus::Off);
+}

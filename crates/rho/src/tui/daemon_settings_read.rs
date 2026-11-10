@@ -22,13 +22,9 @@ pub(super) fn route_config(daemon: &Daemon) -> mpsc::UnboundedReceiver<ConfigCha
     changes
 }
 
-/// The view of a settings read. Settings that cannot be read leave
-/// `/config` with the session's own options; the session still runs.
+/// The view of a settings read.
 pub(super) fn settings_loaded(settings: anyhow::Result<DaemonSettings>) -> DaemonView {
-    match settings {
-        Ok(settings) => DaemonView::SettingsLoaded(Box::new(settings)),
-        Err(error) => DaemonView::Error(format!("could not read the rho settings: {error:#}")),
-    }
+    DaemonView::SettingsLoaded(settings.map(Box::new).map_err(|error| format!("{error:#}")))
 }
 
 /// Registers the `tui` client's settings, then reads the agent schema
