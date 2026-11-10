@@ -7,6 +7,13 @@
 //! [`Grant::local`]; over HTTP each request's bearer token names its grant
 //! (`tokens.rs`), which the core enforces.
 //!
+//! Each call's caller context (`crate::caller_context`) is the one a rho
+//! session's MCP client sends in the request's `_meta`, which the server
+//! declares it reads. Without one, a stdio call is from the context the
+//! process started in, and an HTTP call from an outside agent's: depth 0,
+//! whatever the listener's own. The context's scope narrows the grant; over
+//! HTTP it can never widen a token's.
+//!
 //! No tool answers a session's approvals or questions: the core has no such
 //! action, and an unknown tool name is refused before anything runs.
 
@@ -22,7 +29,8 @@ use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
 };
 
-use super::session_control::{Access, Action, Grant, SessionControl};
+use super::session_control::{Action, Caller, Grant, SessionControl};
+use crate::caller_context::{Access, CallerContext};
 
 mod http_server;
 pub(crate) mod token_store;
@@ -37,41 +45,56 @@ const INSTRUCTIONS: &str = "Start, drive, and follow rho agent sessions through 
     transcript. A turn that needs an approval or an answer waits for a person in rho: no tool \
     here can answer it.";
 
-/// The MCP handler: every tool call goes to the core under the caller's
-/// grant.
+/// The MCP handler: every tool call goes to the core for its caller.
 #[derive(Clone)]
 pub(super) struct SessionTools {
     control: Arc<SessionControl>,
-    grants: Grants,
+    transport: Transport,
 }
 
-/// Where a call's grant comes from.
+/// Where a call's grant, and its caller context when the request sends
+/// none, come from.
 #[derive(Clone)]
-enum Grants {
-    /// One grant for every call, as over stdio.
-    Fixed(Grant),
+enum Transport {
+    /// The local caller's grant for every call, and the context the process
+    /// started in.
+    Stdio { context: CallerContext },
     /// The grant the HTTP layer put on the request after it checked the
-    /// bearer token. A request without one is refused.
-    PerRequest,
+    /// bearer token, which a request without one lacks and is refused.
+    Http,
 }
 
 impl SessionTools {
-    fn grant(&self, context: &RequestContext<RoleServer>) -> Result<Grant, ErrorData> {
-        match &self.grants {
-            Grants::Fixed(grant) => Ok(grant.clone()),
-            Grants::PerRequest => context
-                .extensions
-                .get::<::http::request::Parts>()
-                .and_then(|parts| parts.extensions.get::<Grant>())
-                .cloned()
-                .ok_or_else(|| ErrorData::invalid_request("the request carries no token", None)),
-        }
+    /// The call's caller: its transport's grant, narrowed by the context
+    /// the request sends or the transport's own.
+    fn caller(&self, context: &RequestContext<RoleServer>) -> Result<Caller, ErrorData> {
+        let sent = CallerContext::from_meta(&context.meta)
+            .map_err(|error| ErrorData::invalid_params(format!("{error:#}"), None))?;
+        let (grant, default) = match &self.transport {
+            Transport::Stdio { context } => (Grant::local(), context.clone()),
+            Transport::Http => {
+                let grant = context
+                    .extensions
+                    .get::<::http::request::Parts>()
+                    .and_then(|parts| parts.extensions.get::<Grant>())
+                    .cloned()
+                    .ok_or_else(|| {
+                        ErrorData::invalid_request("the request carries no token", None)
+                    })?;
+                (grant, CallerContext::ROOT)
+            }
+        };
+        Ok(Caller::new(grant, &sent.unwrap_or(default)))
     }
 }
 
 impl ServerHandler for SessionTools {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+        let capabilities = ServerCapabilities::builder()
+            .enable_tools()
+            .enable_experimental_with(CallerContext::capability())
+            .build();
+        ServerConfig::new(capabilities)
             .with_server_info(Implementation::new("rho", env!("CARGO_PKG_VERSION")))
             .with_instructions(INSTRUCTIONS)
     }
@@ -97,9 +120,9 @@ impl ServerHandler for SessionTools {
                 None,
             ));
         };
-        let grant = self.grant(&context)?;
+        let caller = self.caller(&context)?;
         let arguments = request.arguments.unwrap_or_default();
-        let result = match self.control.call(&grant, action, arguments).await {
+        let result = match self.control.call(&caller, action, arguments).await {
             Ok(value) => {
                 let text = serde_json::to_string_pretty(&value)
                     .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
@@ -120,12 +143,15 @@ fn tool(action: Action) -> Tool {
         .with_annotations(annotations)
 }
 
-/// Serves the tools over stdio for the process's caller until the host
-/// closes stdin.
-pub(super) async fn serve_stdio(control: Arc<SessionControl>) -> anyhow::Result<()> {
+/// Serves the tools over stdio until the host closes stdin, for the
+/// process's caller, in `context` unless a call sends its own.
+pub(super) async fn serve_stdio(
+    control: Arc<SessionControl>,
+    context: CallerContext,
+) -> anyhow::Result<()> {
     let tools = SessionTools {
         control,
-        grants: Grants::Fixed(Grant::local()),
+        transport: Transport::Stdio { context },
     };
     let running = tools.serve(rmcp::transport::stdio()).await?;
     running.waiting().await?;

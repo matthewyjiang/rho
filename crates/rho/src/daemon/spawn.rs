@@ -91,10 +91,12 @@ impl DaemonSpawner for ProcessSpawner {
             .env_remove("JOURNAL_STREAM")
             // A daemon a hook auto-started must not disable hooks for every
             // session; each session's own client decides (#1659).
-            .env_remove(crate::hooks::IN_HOOK_ENV)
-            // Nor run at the depth of the session whose `rho mcp serve`
-            // started it: each session's client sends its own.
-            .env_remove(crate::child_env::SESSION_DEPTH_ENV);
+            .env_remove(crate::hooks::IN_HOOK_ENV);
+        // Nor run at the depth, or under the scope, of the session whose
+        // `rho mcp serve` started it: each session's client sends its own.
+        for name in crate::caller_context::ENV_NAMES {
+            command.env_remove(name);
+        }
         let mut child = command.spawn()?;
         // Reap the daemon if it exits while this process is still running.
         std::thread::spawn(move || child.wait());

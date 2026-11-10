@@ -1139,6 +1139,15 @@ fn daemon_detach_preserves_the_turn_and_resume_hint() {
     assert_pass("daemon_detach");
 }
 
+// Covers: the daemon-hosted TUI reconnects across a daemon restarting in
+// place, keeps its conversation without an error, and its next prompt runs
+// in the restarted daemon (#1713).
+// Owner: interactive daemon session lifecycle
+#[test]
+fn daemon_restart_keeps_the_tui_following_its_session() {
+    assert_pass("daemon_restart");
+}
+
 // Covers: a goal set from the TUI lives in the daemon session: a TUI that
 // reopens the session after quitting sees it blocked and resumes it.
 // Owner: daemon goal controller and the TUI as its client (#1667)

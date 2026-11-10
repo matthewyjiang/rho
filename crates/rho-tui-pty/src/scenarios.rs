@@ -36,6 +36,8 @@ mod daemon_options;
 #[cfg(unix)]
 mod daemon_prompt;
 #[cfg(unix)]
+mod daemon_restart;
+#[cfg(unix)]
 mod daemon_resume;
 mod diff_viewer;
 mod dispatch;
@@ -114,9 +116,8 @@ mod zen_tool_run;
 
 use activity_anchor::{SPINNER_ACTIVITY_ANCHOR_SCENARIO, SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO};
 use advisor::{
-    setup_advisor_ready, setup_advisor_without_model, ADVISOR_COMMAND_STEPS,
-    ADVISOR_MISSING_MODEL_STEPS, ADVISOR_MODEL_COMMAND_STEPS, ADVISOR_REVIEW_STEPS,
-    XAI_AND_POOLSIDE_KEY_ENV, XAI_KEY_ENV,
+    ADVISOR_COMMAND_SCENARIO, ADVISOR_MISSING_MODEL_SCENARIO, ADVISOR_MODEL_COMMAND_SCENARIO,
+    ADVISOR_REVIEW_SCENARIO,
 };
 use agent_prompt::AGENT_PROMPT_SCENARIO;
 use attach_picker::ATTACH_PICKER_SCENARIO;
@@ -676,6 +677,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     daemon_detach::SCENARIO,
     #[cfg(unix)]
+    daemon_restart::SCENARIO,
+    #[cfg(unix)]
     daemon_goal::SCENARIO,
     #[cfg(unix)]
     daemon_mcp::SCENARIO,
@@ -932,44 +935,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
         SCREEN_TEXT_SELECTION_STEPS,
         false,
     ),
-    Scenario::new(
-        "advisor_command",
-        "Choose an advisor model, turn the mode off from config, and turn it on again",
-        DEFAULT_SIZE,
-        ADVISOR_COMMAND_STEPS,
-        /*smoke*/ false,
-    )
-    .with_env(XAI_KEY_ENV),
-    Scenario {
-        id: "advisor_model_command",
-        description: "Swap the advisor model and pick only supported reasoning levels",
-        size: DEFAULT_SIZE,
-        setup: Some(setup_advisor_ready),
-        env: XAI_AND_POOLSIDE_KEY_ENV,
-        args: &[],
-        steps: ADVISOR_MODEL_COMMAND_STEPS,
-        smoke: false,
-    },
-    Scenario {
-        id: "advisor_missing_model",
-        description: "Warn about advisor mode saved without a model and route to a model picker",
-        size: DEFAULT_SIZE,
-        setup: Some(setup_advisor_without_model),
-        env: XAI_KEY_ENV,
-        args: &[],
-        steps: ADVISOR_MISSING_MODEL_STEPS,
-        smoke: false,
-    },
-    Scenario {
-        id: "advisor_review",
-        description: "Consult the advisor during a turn, then survive an advisor failure",
-        size: DEFAULT_SIZE,
-        setup: Some(setup_advisor_ready),
-        env: XAI_KEY_ENV,
-        args: &[],
-        steps: ADVISOR_REVIEW_STEPS,
-        smoke: false,
-    },
+    ADVISOR_COMMAND_SCENARIO,
+    ADVISOR_MODEL_COMMAND_SCENARIO,
+    ADVISOR_MISSING_MODEL_SCENARIO,
+    ADVISOR_REVIEW_SCENARIO,
     Scenario::new(
         "background_agent_questionnaire",
         "Answer a questionnaire raised by a background agent and deliver its completion",

@@ -1,6 +1,6 @@
 //! `rho mcp serve` and `rho mcp token`: the boundary that reads the process
-//! environment (the caller's session depth, the environment sessions run
-//! with) and the credential store, then hands resolved values to
+//! environment (the caller context it started in, the environment sessions
+//! run with) and the credential store, then hands resolved values to
 //! `app::mcp_server` and `app::session_control`.
 
 #[cfg(not(unix))]
@@ -23,7 +23,6 @@ pub(super) use unix::{serve, token};
 mod unix {
     use std::sync::Arc;
 
-    use anyhow::Context;
     use rho_protocol::ClientEnvironment;
 
     use crate::{
@@ -34,8 +33,9 @@ mod unix {
                 tokens::{Rotation, TokenSet},
                 HttpOptions,
             },
-            session_control::{Access, Caller, Limits, SessionControl, SESSION_DEPTH_ENV},
+            session_control::{Limits, SessionControl},
         },
+        caller_context::{Access, CallerContext},
         cli::{Cli, McpServeArgs, McpTokenCommand, McpTokenScope},
         credential_store::UntrackedCredentialStore,
     };
@@ -46,13 +46,15 @@ mod unix {
             max_depth: args.max_depth.unwrap_or(defaults.max_depth),
             max_sessions: args.max_sessions.unwrap_or(defaults.max_sessions),
         };
-        let caller = Caller {
-            depth: caller_depth()?,
-            environment: ClientEnvironment::of_this_process(),
-        };
-        let control = Arc::new(SessionControl::new(caller, limits));
+        let control = Arc::new(SessionControl::new(
+            ClientEnvironment::of_this_process(),
+            limits,
+        ));
         match args.http {
-            None => mcp_server::serve_stdio(control).await,
+            None => {
+                let context = CallerContext::from_env(|name| std::env::var_os(name))?;
+                mcp_server::serve_stdio(control, context).await
+            }
             Some(address) => {
                 // The tokens live in the credential store.
                 open_credential_store(cli)?;
@@ -145,18 +147,6 @@ mod unix {
                 })
                 .collect(),
         )
-    }
-
-    /// The nesting depth of the session that started this process, from
-    /// [`SESSION_DEPTH_ENV`]; 0 when no session did.
-    fn caller_depth() -> anyhow::Result<u32> {
-        match std::env::var(SESSION_DEPTH_ENV) {
-            Ok(depth) => depth
-                .parse()
-                .with_context(|| format!("{SESSION_DEPTH_ENV}={depth:?} is not a depth")),
-            Err(std::env::VarError::NotPresent) => Ok(0),
-            Err(error) => Err(error).context(SESSION_DEPTH_ENV),
-        }
     }
 
     /// Opens the credential store the selected config chooses, as every rho

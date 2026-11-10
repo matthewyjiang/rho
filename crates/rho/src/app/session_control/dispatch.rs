@@ -1,14 +1,14 @@
 //! Actions by name, with JSON in and out, for front ends that expose them
 //! as tools: each action's description and input schema, and one call
-//! path that parses the arguments, runs the action under the caller's
-//! grant, and returns its result as JSON.
+//! path that parses the arguments, runs the action for its caller, and
+//! returns its result as JSON.
 
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{Map, Value};
 
 use super::{
-    Action, CancelParams, ControlError, Grant, ListParams, NewParams, PromptParams, ReadParams,
+    Action, Caller, CancelParams, ControlError, ListParams, NewParams, PromptParams, ReadParams,
     SessionControl, SteerParams, WaitParams,
 };
 
@@ -59,22 +59,22 @@ impl Action {
 }
 
 impl SessionControl {
-    /// Runs `action` with `arguments` under `grant` and returns its result
+    /// Runs `action` with `arguments` for `caller` and returns its result
     /// as JSON.
     pub(crate) async fn call(
         &self,
-        grant: &Grant,
+        caller: &Caller,
         action: Action,
         arguments: Map<String, Value>,
     ) -> Result<Value, ControlError> {
         match action {
-            Action::List => json(self.list(grant, parse(action, arguments)?).await?),
-            Action::Read => json(self.read(grant, parse(action, arguments)?).await?),
-            Action::New => json(self.new_session(grant, parse(action, arguments)?).await?),
-            Action::Prompt => json(self.prompt(grant, parse(action, arguments)?).await?),
-            Action::Steer => json(self.steer(grant, parse(action, arguments)?).await?),
-            Action::Cancel => json(self.cancel(grant, parse(action, arguments)?).await?),
-            Action::Wait => json(self.wait(grant, parse(action, arguments)?).await?),
+            Action::List => json(self.list(caller, parse(action, arguments)?).await?),
+            Action::Read => json(self.read(caller, parse(action, arguments)?).await?),
+            Action::New => json(self.new_session(caller, parse(action, arguments)?).await?),
+            Action::Prompt => json(self.prompt(caller, parse(action, arguments)?).await?),
+            Action::Steer => json(self.steer(caller, parse(action, arguments)?).await?),
+            Action::Cancel => json(self.cancel(caller, parse(action, arguments)?).await?),
+            Action::Wait => json(self.wait(caller, parse(action, arguments)?).await?),
         }
     }
 }
