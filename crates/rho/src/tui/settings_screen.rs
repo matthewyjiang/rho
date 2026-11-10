@@ -173,11 +173,18 @@ impl App {
         }
     }
 
-    /// Re-renders the open config page, as after a settings change.
+    /// Re-renders the open config page, as after a settings change. A
+    /// page the settings no longer make, such as a category once they could
+    /// not be read, gives way to the root page.
     pub(super) fn refresh_open_config_page(&mut self) {
-        let open = matches!(self.input_ui.composer(), ComposerMode::Picker(picker)
-            if picker.config_page().is_some());
-        if !open {
+        let ComposerMode::Picker(picker) = self.input_ui.composer() else {
+            return;
+        };
+        let Some(page) = picker.config_page() else {
+            return;
+        };
+        if self.config_page_picker(&page).is_none() {
+            self.reopen_config_root("");
             return;
         }
         let ComposerMode::Picker(stale) = self.input_ui.take_composer() else {
@@ -484,6 +491,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not read the rho settings: {error}"
                 )));
+                self.refresh_open_config_page();
                 return;
             }
             SettingsUpdate::Changed(changed) => {
