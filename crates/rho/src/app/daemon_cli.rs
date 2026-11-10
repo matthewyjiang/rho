@@ -379,8 +379,9 @@ fn reexec_args(unload_idle_after: Duration, handoff: Handoff) -> Vec<OsString> {
     .collect()
 }
 
-/// Opens the credential store every session's provider reads, once, as the
-/// daemon starts: like every rho process, the daemon opens it at startup.
+/// Opens the credential store every session's provider reads as the
+/// daemon starts, like every rho process; a session open and a sign-in
+/// open the one config selects then.
 /// A config that does not load is logged, and sessions then fail to open
 /// with the same error.
 #[cfg(unix)]
