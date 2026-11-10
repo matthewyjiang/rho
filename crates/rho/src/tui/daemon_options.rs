@@ -88,6 +88,8 @@ impl App {
         // it runs on now is not known to lack credentials, and the daemon
         // says so at the prompt if it does.
         let runtime = &self.info.runtime;
+        let model_changed = runtime.provider != options.model.current.provider
+            || runtime.model != options.model.current.model;
         if runtime.provider != options.model.current.provider || runtime.auth != options.model.auth
         {
             self.info.services.auth_unavailable = None;
@@ -129,6 +131,12 @@ impl App {
         .map(|(metadata, _)| metadata);
         self.daemon_options = Some(options);
         self.refresh_open_config_page();
+        // First-run setup's model step opened on the model the session had:
+        // one it moved to since, as after signing in to another provider,
+        // is the one Enter should confirm.
+        if model_changed && self.setup_step() == Some(super::setup_screen::SetupStep::ChooseModel) {
+            self.show_setup_model_picker();
+        }
     }
 
     pub(super) fn configure_daemon(&mut self, change: SessionChange) -> anyhow::Result<()> {
