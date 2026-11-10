@@ -198,7 +198,7 @@ impl App {
         let _ = terminal.draw(|frame| self.draw(frame));
     }
 
-    fn show_setup_model_picker(&mut self) {
+    pub(super) fn show_setup_model_picker(&mut self) {
         let Some(picker) = self.setup_model_picker() else {
             // Nothing to choose between: keep the configured model rather than
             // showing an empty step. Setup is gone, so the composer must
