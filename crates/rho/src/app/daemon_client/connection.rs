@@ -75,14 +75,13 @@ struct Routes {
     login: Option<mpsc::UnboundedSender<LoginEvent>>,
 }
 
-/// The daemon as this process reaches it.
-#[derive(Default)]
+/// The daemon as this process reaches it. It has no default: each owner
+/// says what its connections declare.
 pub(crate) struct Daemon {
     link: tokio::sync::Mutex<Option<Arc<Link>>>,
     routes: Arc<Mutex<Routes>>,
     reach: daemon_cli::Reach,
-    /// What its connections declare: a person's frontend unless it says
-    /// otherwise.
+    /// What its connections declare.
     connect_as: ConnectAs,
 }
 
@@ -98,13 +97,20 @@ pub(crate) struct Link {
 }
 
 impl Daemon {
+    /// A daemon for a person's frontend, which answers their sessions'
+    /// approvals and questions, started when none runs.
+    pub(crate) fn for_frontend() -> Self {
+        Self::reaching(daemon_cli::Reach::StartIfNeeded, ConnectAs::Frontend)
+    }
+
     /// A daemon reached as `reach` allows, by connections that declare
     /// what `connect_as` does.
     pub(crate) fn reaching(reach: daemon_cli::Reach, connect_as: ConnectAs) -> Self {
         Self {
+            link: tokio::sync::Mutex::default(),
+            routes: Arc::default(),
             reach,
             connect_as,
-            ..Self::default()
         }
     }
 

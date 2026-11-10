@@ -2,7 +2,7 @@
 //! session forwarding, and the single writer every outgoing message goes
 //! through.
 
-use std::{collections::BTreeSet, future::Future, sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -13,6 +13,7 @@ use tokio::{
 };
 
 use crate::{
+    declared::Declared,
     forward::Forwarders,
     jsonrpc,
     login_relay::LoginStream,
@@ -20,13 +21,13 @@ use crate::{
         AuthChooseStore, AuthChooseStoreParams, AuthChooseStoreResponse, AuthKey, AuthKeyParams,
         AuthKeyResponse, AuthList, AuthListParams, AuthListResponse, AuthLogin, AuthLoginCancel,
         AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse,
-        AuthLogout, AuthLogoutParams, AuthLogoutResponse, ClientCapability, ClientInfo, ClientRole,
-        Hello, HelloParams, JobList, JobListParams, JobListResponse, Method, Restart,
-        RestartParams, RestartResponse, SessionAnswer, SessionAnswerParams, SessionAnswerResponse,
-        SessionAttach, SessionAttachParams, SessionAttachResponse, SessionCancel,
-        SessionCancelParams, SessionCancelResponse, SessionConfigure, SessionConfigureParams,
-        SessionConfigureResponse, SessionDelete, SessionDeleteParams, SessionDeleteResponse,
-        SessionDetach, SessionDetachParams, SessionDetachResponse, SessionHold, SessionHoldParams,
+        AuthLogout, AuthLogoutParams, AuthLogoutResponse, ClientInfo, Hello, JobList,
+        JobListParams, JobListResponse, Method, Restart, RestartParams, RestartResponse,
+        SessionAnswer, SessionAnswerParams, SessionAnswerResponse, SessionAttach,
+        SessionAttachParams, SessionAttachResponse, SessionCancel, SessionCancelParams,
+        SessionCancelResponse, SessionConfigure, SessionConfigureParams, SessionConfigureResponse,
+        SessionDelete, SessionDeleteParams, SessionDeleteResponse, SessionDetach,
+        SessionDetachParams, SessionDetachResponse, SessionHold, SessionHoldParams,
         SessionHoldResponse, SessionId, SessionList, SessionListParams, SessionListResponse,
         SessionMcp, SessionMcpInventory, SessionMcpParams, SessionNew, SessionNewParams,
         SessionNewResponse, SessionObserve, SessionObserveParams, SessionPrompt,
@@ -561,12 +562,8 @@ impl<Svc: Service> Drop for Accepted<Svc> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Connection {
     AwaitingHello,
-    /// Its hello was accepted, declaring this role and these capabilities,
-    /// which hold until the connection ends.
-    Ready {
-        role: ClientRole,
-        capabilities: BTreeSet<ClientCapability>,
-    },
+    /// Its hello was accepted, declaring this.
+    Ready(Declared),
 }
 
 /// Where one request's answer comes from.
@@ -619,11 +616,10 @@ impl Connection {
     ///
     /// A hello from an incompatible client is refused, which leaves the
     /// connection awaiting one. A refused newer client is told what
-    /// restarting this daemon would cost, from `refused_newer`. So is a
-    /// hello declaring a capability its role may not.
-    ///
-    /// A method that needs a capability the hello did not declare is
-    /// refused before its params are read, so the service never hears it.
+    /// restarting this daemon would cost, from `refused_newer`. A hello
+    /// declaring a capability its role may not is refused too, and a method
+    /// that needs a capability the hello did not declare is refused before
+    /// its params are read, so the service never hears it ([`Declared`]).
     fn route(
         &mut self,
         method: &str,
@@ -650,54 +646,25 @@ impl Connection {
                             .with_data(encode(&mismatch)?),
                     );
                 }
-                let HelloParams {
-                    protocol: _,
-                    client,
-                    role,
-                    capabilities,
-                } = decode_params::<Hello>(params)?;
-                if let Some(refused) = capabilities
-                    .iter()
-                    .find(|capability| !role.may_declare(**capability))
-                {
-                    return Err(RpcError::new(
-                        ErrorCode::InvalidParams,
-                        format!(
-                            "a connection of role `{}` may not declare capability `{}`",
-                            role.name(),
-                            refused.name()
-                        ),
-                    ));
-                }
+                let (declared, client) = Declared::accept(decode_params::<Hello>(params)?)?;
                 let response = encode_result::<Hello>(&HelloResponse {
                     protocol: PROTOCOL_VERSION,
                     daemon: info.daemon.clone(),
                     capabilities: info.capabilities.clone(),
                 })?;
-                *self = Self::Ready { role, capabilities };
+                *self = Self::Ready(declared);
                 Ok(Route::Hello { response, client })
             }
             (Self::AwaitingHello, method) => Err(RpcError::new(
                 ErrorCode::HandshakeRequired,
                 format!("send {HELLO} before {method}"),
             )),
-            (Self::Ready { .. }, HELLO) => Err(RpcError::new(
+            (Self::Ready(_), HELLO) => Err(RpcError::new(
                 ErrorCode::InvalidRequest,
                 format!("{HELLO} was already accepted on this connection"),
             )),
-            (Self::Ready { role, capabilities }, method) => {
-                if let Some(needed) = ClientCapability::needed_by(method)
-                    .filter(|needed| !capabilities.contains(needed))
-                {
-                    return Err(RpcError::new(
-                        ErrorCode::CapabilityRequired,
-                        format!(
-                            "{method} needs capability `{}`, which this connection, of role `{}`, did not declare in {HELLO}",
-                            needed.name(),
-                            role.name()
-                        ),
-                    ));
-                }
+            (Self::Ready(declared), method) => {
+                declared.permit(method)?;
                 match method {
                     SESSION_ATTACH => decode_params::<SessionAttach>(params)
                         .map(|params| Route::Attach(AttachRequest::Attach(params))),

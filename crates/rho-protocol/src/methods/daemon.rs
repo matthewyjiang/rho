@@ -49,24 +49,6 @@ pub enum ClientRole {
     Agent,
 }
 
-impl ClientRole {
-    /// The role's name on the wire.
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Frontend => "frontend",
-            Self::Agent => "agent",
-        }
-    }
-
-    /// Whether a connection of this role may declare `capability`.
-    pub const fn may_declare(self, capability: ClientCapability) -> bool {
-        match (self, capability) {
-            (Self::Frontend, ClientCapability::Answer) => true,
-            (Self::Agent, ClientCapability::Answer) => false,
-        }
-    }
-}
-
 /// Something a connection declares it does, which the daemon then lets it
 /// do. A method that needs a capability the connection did not declare is
 /// refused with [`crate::ErrorCode::CapabilityRequired`]. The daemon reads
@@ -80,23 +62,6 @@ pub enum ClientCapability {
     /// hold their timeouts: [`super::SESSION_ANSWER`] and
     /// [`super::SESSION_HOLD`].
     Answer,
-}
-
-impl ClientCapability {
-    /// The capability's name on the wire.
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Answer => "answer",
-        }
-    }
-
-    /// The capability `method` needs, if it needs one.
-    pub fn needed_by(method: &str) -> Option<Self> {
-        match method {
-            super::SESSION_ANSWER | super::SESSION_HOLD => Some(Self::Answer),
-            _ => None,
-        }
-    }
 }
 
 /// What a client says of itself in [`HELLO`]: who it is, what it is for,
@@ -146,9 +111,9 @@ pub struct HelloParams {
     pub client: ClientInfo,
     /// What the connection is for. It holds for the connection's life.
     pub role: ClientRole,
-    /// What the connection does, each of which its role must allow
-    /// ([`ClientRole::may_declare`]); one it does not is
-    /// [`crate::ErrorCode::InvalidParams`], and the hello is refused.
+    /// What the connection does, each of which its role must allow; one it
+    /// does not is [`crate::ErrorCode::InvalidParams`], and the hello is
+    /// refused.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub capabilities: BTreeSet<ClientCapability>,
 }

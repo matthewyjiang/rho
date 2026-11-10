@@ -1171,7 +1171,7 @@
       "description": "Params of [`HELLO`].",
       "properties": {
         "capabilities": {
-          "description": "What the connection does, each of which its role must allow\n([`ClientRole::may_declare`]); one it does not is\n[`crate::ErrorCode::InvalidParams`], and the hello is refused.",
+          "description": "What the connection does, each of which its role must allow; one it\ndoes not is [`crate::ErrorCode::InvalidParams`], and the hello is\nrefused.",
           "items": {
             "$ref": "#/$defs/ClientCapability"
           },

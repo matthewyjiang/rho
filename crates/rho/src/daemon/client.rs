@@ -32,11 +32,10 @@ pub(crate) enum ConnectError {
 
 /// What a `rho` process connects to the daemon as, which decides what its
 /// connection may do (#1780).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ConnectAs {
     /// A person's frontend, which answers their sessions' approvals and
     /// questions: the terminal UI, `rho attach`, and `rho acp`.
-    #[default]
     Frontend,
     /// A person's command that answers no session's requests, such as
     /// `rho daemon status`, `rho login`, and `rho run --detach`.
