@@ -34,6 +34,8 @@ pub(super) struct DaemonLogin {
     id: LoginId,
     target: LoginTarget,
     provider_label: &'static str,
+    /// Esc asked the daemon to cancel it; its end has not arrived yet.
+    cancelling: bool,
 }
 
 impl App {
@@ -78,9 +80,16 @@ impl App {
         mode: InteractiveLoginMode,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
-        if self.daemon_login.is_some() {
+        if let Some(login) = &self.daemon_login {
+            // A cancelled login is over once the daemon says how it ended:
+            // one its provider approved first is still saved.
             self.insert_entry(&Entry::Notice(
-                "Interactive login is already in progress.".into(),
+                if login.cancelling {
+                    "The last login is still being cancelled; try again in a moment."
+                } else {
+                    "Interactive login is already in progress."
+                }
+                .into(),
             ));
             return Ok(());
         }
@@ -99,6 +108,7 @@ impl App {
                     id,
                     target,
                     provider_label,
+                    cancelling: false,
                 });
                 self.show_daemon_login(first, terminal).await
             }
@@ -194,9 +204,12 @@ impl App {
     /// Esc on the pending login: the daemon is asked to cancel it, and
     /// says how it ended.
     pub(super) fn cancel_daemon_login(&mut self) {
-        if let Some(login) = &self.daemon_login {
-            self.daemon_session().cancel_login(login.id.clone());
-        }
+        let Some(login) = &mut self.daemon_login else {
+            return;
+        };
+        login.cancelling = true;
+        let id = login.id.clone();
+        self.daemon_session().cancel_login(id);
     }
 
     /// Forgets the login of a session the TUI stops following: closing its
