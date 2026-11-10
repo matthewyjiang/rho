@@ -706,6 +706,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
         /*smoke*/ false,
     )
     .with_setup(setup_prompt_template),
+    #[cfg(unix)]
+    first_run::DAEMON_FIRST_RUN_SETUP_SCENARIO,
+    #[cfg(unix)]
+    first_run::DAEMON_SIGNED_OUT_SCENARIO,
     Scenario::new(
         "login_provider_groups",
         "Group login providers and open readable authentication methods",

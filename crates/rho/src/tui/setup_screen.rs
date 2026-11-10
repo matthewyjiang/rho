@@ -102,11 +102,6 @@ impl App {
     /// that can already list models skips a login that is done. The named
     /// entries override that so either step can be opened on demand.
     pub(super) fn start_setup_screen(&mut self, terminal: &mut super::DefaultTerminal) {
-        // First-run setup is not ported: the daemon-owned session's options
-        // already supply the model, and `/login` signs in through the daemon.
-        if self.info.session.daemon.is_some() {
-            return;
-        }
         let Some(entry) = self.info.services.first_run else {
             return;
         };

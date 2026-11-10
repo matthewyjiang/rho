@@ -261,6 +261,22 @@ fn daemon_init_refuses_plan_permission_mode() {
     assert_pass("daemon_init_plan");
 }
 
+// Covers: with RHO_TUI_DAEMON=1, a first launch walks sign-in and the model
+// step and lands in the daemon session.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_first_run_setup_signs_in_and_picks_a_model() {
+    assert_pass("daemon_first_run_setup");
+}
+
+// Covers: with RHO_TUI_DAEMON=1, a session signed out of its provider says
+// so and routes a prompt to the login picker, holding it.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_signed_out_session_routes_a_prompt_to_login() {
+    assert_pass("daemon_signed_out_setup_state");
+}
+
 // Covers: Plan must reject /init before writing project instructions.
 // Owner: interactive TUI permission gating.
 #[test]

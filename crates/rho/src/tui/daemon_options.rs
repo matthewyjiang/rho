@@ -61,7 +61,7 @@ fn next_choice<T: Copy + PartialEq>(current: T, available: &[T]) -> Option<T> {
 
 fn model_picker(options: &SessionOptions) -> UiPicker {
     UiPicker::models(
-        "Select model",
+        "select model",
         options
             .model
             .available
@@ -82,6 +82,15 @@ fn model_picker(options: &SessionOptions) -> UiPicker {
 
 impl App {
     pub(super) fn show_daemon_options(&mut self, options: SessionOptions) {
+        // The daemon switched the session to another model or auth, so it
+        // has what that one needs.
+        let runtime = &self.info.runtime;
+        if self.daemon_options.is_some()
+            && (runtime.provider != options.model.current.provider
+                || runtime.auth != options.model.auth)
+        {
+            self.info.services.auth_unavailable = None;
+        }
         self.info
             .runtime
             .provider
@@ -158,7 +167,12 @@ impl App {
             return Ok(());
         };
         match model_choice(&options.model, reference) {
-            Ok(model) => self.configure_daemon(SessionChange::Model { model, auth: None }),
+            Ok(model) => {
+                self.configure_daemon(SessionChange::Model { model, auth: None })?;
+                // First-run setup ends with its model, as it does in process.
+                self.finish_setup_screen();
+                Ok(())
+            }
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("could not switch model: {error}")));
                 Ok(())

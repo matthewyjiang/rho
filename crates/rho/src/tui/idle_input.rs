@@ -252,6 +252,15 @@ impl App {
                         self.daemon_command_unavailable(&name);
                         return Ok(());
                     }
+                    if !self.setup_state().signed_in {
+                        // Held as the template's text, which the composer
+                        // sends as it stands once signed in.
+                        let args = slash_command_args(&turn.model).trim().to_string();
+                        if let Some(prompt) = self.resolve_prompt_template(&name, &args) {
+                            turn = TurnPrompt::standard(prompt.clone(), prompt);
+                        }
+                        return self.offer_login_instead_of_turn(turn);
+                    }
                     let media = self
                         .input_ui
                         .take_ready_media()
@@ -299,6 +308,9 @@ impl App {
         // A daemon session runs the turn: it loads the skills the prompt
         // mentions and owns sign-in, tools, and compaction.
         if self.info.session.daemon.is_some() {
+            if !self.setup_state().signed_in {
+                return self.offer_login_instead_of_turn(turn);
+            }
             let media = self
                 .input_ui
                 .take_ready_media()

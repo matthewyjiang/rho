@@ -17,10 +17,10 @@ use rho_protocol::{LoginId, LoginOutcome, SessionChange};
 use rho_providers::{
     auth::{
         browser::{self, BrowserAvailability},
-        login_dispatch::InteractiveLoginMode,
+        login_dispatch::{InteractiveLoginMode, ProviderAuthentication},
         login_prompt::LoginPrompt,
     },
-    model::catalog::LoginTarget,
+    model::{catalog::LoginTarget, registry},
 };
 
 use super::{
@@ -210,6 +210,25 @@ impl App {
         self.daemon_login.is_some()
     }
 
+    /// Marks the session signed out when the logout of `target` left its
+    /// auth without credentials, which the header hints, the statusline,
+    /// and a prompt's detour to `/login` follow (`setup_state`). Reports
+    /// whether it did. The daemon builds the provider; this only says what
+    /// the next prompt would find.
+    fn daemon_session_signed_out(&mut self, target: &LoginTarget) -> bool {
+        let runtime = &self.info.runtime;
+        if runtime.provider != target.provider
+            || runtime.auth != target.auth
+            || ProviderAuthentication::has_credentials(self.credential_store.as_ref(), &target.auth)
+                .unwrap_or(false)
+        {
+            return false;
+        }
+        self.info.services.auth_unavailable =
+            Some(registry::missing_credentials_error(&target.provider).to_string());
+        true
+    }
+
     /// Has the daemon sign out of `target` and reports it.
     pub(super) async fn sign_out_of_daemon(&mut self, target: &LoginTarget) -> anyhow::Result<()> {
         match self.daemon_session().sign_out(&target.auth).await {
@@ -217,7 +236,15 @@ impl App {
                 AppCredentialStore::reread_external_logins();
                 self.refresh_available_auths();
                 self.insert_entry(&Entry::Notice(format!("logged out of {}", target.provider)));
-                self.set_status("logout complete");
+                if !self.daemon_session_signed_out(target) {
+                    self.set_status("logout complete");
+                } else {
+                    self.insert_entry(&Entry::Notice(
+                        "the active provider no longer has credentials. Run /login or switch with /model."
+                            .into(),
+                    ));
+                    self.set_status("no providers configured; run /login");
+                }
             }
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -250,6 +277,9 @@ impl App {
         }
         let in_use =
             target.provider == self.info.runtime.provider && target.auth == self.info.runtime.auth;
+        if in_use {
+            self.info.services.auth_unavailable = None;
+        }
         self.set_status(if target.auth == rho_providers::provider::KEYLESS_AUTH {
             format!(
                 "{} is ready. Switch models with /model when you want to use it.",
