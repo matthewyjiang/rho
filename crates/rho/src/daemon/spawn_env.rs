@@ -90,6 +90,43 @@ fn is_allowed(name: &str) -> bool {
             .any(|prefix| name.starts_with(prefix))
 }
 
+/// What a variable the daemon reads from its own environment describes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VariableKind {
+    /// Where the daemon's files are, who it runs as, and its locale.
+    Machine,
+    /// How the daemon's own requests reach the network.
+    Network,
+    /// A setting of the daemon itself.
+    Setting,
+}
+
+/// The allowed variables, fixture ones aside, whose values differ between
+/// `daemon`, a running daemon's environment, and `client`, a lookup in the
+/// environment of the client asking. One side lacking a variable the other
+/// has differs too. `rho doctor` reports them: a value set where the client
+/// runs reaches only a daemon started from there.
+pub(crate) fn differing_variables(
+    daemon: &[(OsString, OsString)],
+    client: impl Fn(&str) -> Option<OsString>,
+) -> Vec<(&'static str, VariableKind)> {
+    let of_daemon = |name: &str| {
+        daemon
+            .iter()
+            .find(|(variable, _)| variable.to_str() == Some(name))
+            .map(|(_, value)| value)
+    };
+    [
+        (MACHINE, VariableKind::Machine),
+        (NETWORK, VariableKind::Network),
+        (DAEMON_SETTINGS, VariableKind::Setting),
+    ]
+    .into_iter()
+    .flat_map(|(names, kind)| names.iter().map(move |name| (*name, kind)))
+    .filter(|(name, _)| of_daemon(name) != client(name).as_ref())
+    .collect()
+}
+
 /// The environment an auto-started daemon runs with: the allowed variables
 /// of `inherited`, the environment of the client starting it. A variable
 /// whose name is not UTF-8 is not one of them.
