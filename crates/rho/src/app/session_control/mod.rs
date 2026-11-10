@@ -12,15 +12,19 @@
 //! sessions each holder may have running ([`Limits::max_sessions`]). Every
 //! refusal names its budget, its limit, and the value asked for
 //! ([`Refusal`]). A session the core starts or prompts runs with the
-//! caller's context one level deeper, so the limits follow it down. A
+//! caller's context one level deeper, so the limits follow it down: the core
+//! names that context as the request's grant, and the daemon records it on
+//! the session's job and writes the session's environment from it (#1780). A
 //! session a caller starts from a session of its own, as the native
 //! `sessions` tool's callers do, records the job writing that session as its
 //! parent, and its turns wait for capacity in the daemon-wide agent budget
 //! as subagent runs do (#1714).
 //!
-//! No action answers a session's approvals or questions, and the core never
-//! sends `rho/session/answer` or `rho/session/hold`: a turn that asks waits
-//! for a person, and `wait` reports it waiting for input.
+//! No action answers a session's approvals or questions: a turn that asks
+//! waits for a person, and `wait` reports it waiting for input. The daemon
+//! holds the core to that. Its connections declare an agent's role
+//! ([`ConnectAs::Agent`]), which the daemon refuses `rho/session/answer`
+//! and `rho/session/hold` from (#1780).
 //!
 //! The daemon is reached as [`Reach`] allows: `rho mcp serve` starts it
 //! when none runs, as any client does, and the native tool reaches only one
@@ -50,6 +54,7 @@ use super::{
     daemon_cli::Unreachable,
     daemon_client::{Daemon, DaemonError},
 };
+use crate::daemon::ConnectAs;
 
 mod check;
 mod dispatch;
@@ -115,7 +120,7 @@ impl SessionControl {
     /// A core that reaches the daemon as `reach` allows.
     pub(crate) fn new(limits: Limits, reach: Reach) -> Self {
         Self {
-            daemon: Daemon::reaching(reach),
+            daemon: Daemon::reaching(reach, ConnectAs::Agent),
             reach,
             limits,
             driven: Mutex::default(),
@@ -193,6 +198,7 @@ impl SessionControl {
                 agent: params.agent,
                 setup: SessionSetup::default(),
                 parent: caller.session.clone(),
+                grant: Some(caller.child_context().into()),
             })
             .await?;
         if let Some(model) = params.model {
@@ -269,6 +275,7 @@ impl SessionControl {
                 content,
                 timeout_ms: None,
                 environment: Self::child_environment(caller),
+                grant: Some(caller.child_context().into()),
                 idempotency_key: None,
             })
             .await?;
@@ -382,10 +389,13 @@ impl SessionControl {
             .await?
             .jobs)
     }
-
     /// The environment a session `caller` starts or prompts runs with: the
     /// caller's, with its context one level deeper in place of any the
-    /// caller's environment carries.
+    /// caller's environment carries. The daemon writes the same variables
+    /// from the grant the request names; they are set here too because a
+    /// daemon of a build before the grant reports the same protocol version
+    /// until the beta and ignores the field, and would otherwise run the
+    /// session with the caller's own context.
     fn child_environment(caller: &Caller) -> ClientEnvironment {
         caller
             .environment

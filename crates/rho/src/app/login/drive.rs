@@ -37,16 +37,20 @@ pub(in crate::app) fn mode(
     }
 }
 
-/// Starts `auth`'s login in `mode`, opening the browser only where
-/// `availability` allows, hands its prompt to `show`, and waits until the
-/// provider approves it. Dropping the future cancels the login.
+/// Starts `auth`'s login in `mode` for whoever `credentials` belong to,
+/// opening the browser only where `availability` allows, hands its prompt
+/// to `show`, and waits until the provider approves it. Dropping the future
+/// cancels the login.
 pub(in crate::app) async fn approve(
+    credentials: &dyn rho_providers::credentials::CredentialStore,
     auth: &str,
     mode: InteractiveLoginMode,
     availability: BrowserAvailability,
     show: impl FnOnce(LoginPrompt),
 ) -> Result<Approval, AuthenticationError> {
-    let login = ProviderAuthentication::start_interactive_login(auth, mode, availability).await?;
+    let login =
+        ProviderAuthentication::start_interactive_login(credentials, auth, mode, availability)
+            .await?;
     show(login.prompt);
     match login.completion {
         InteractiveLoginCompletion::Confirm(completion) => {

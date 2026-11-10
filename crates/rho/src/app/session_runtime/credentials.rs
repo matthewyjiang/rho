@@ -11,7 +11,8 @@
 //! failed on its credentials (#1662). A save or logout from another client
 //! of the same process (ACP, the daemon) thus applies from the next prompt,
 //! a refusal picks up a `rho login` run elsewhere, and a logout fails the
-//! prompt with the typed provider error, as missing credentials do.
+//! prompt with the typed provider error, as missing credentials do, until a
+//! later prompt finds a login, whichever process saved it.
 
 use rho_providers::model::ModelError;
 
@@ -128,7 +129,8 @@ impl SessionCredentials {
 impl SessionRuntime {
     /// Rebuilds a stale provider for the same model and auth. Still-missing
     /// credentials fail with the typed provider error, which hosts report as
-    /// a sign-in request again.
+    /// a sign-in request again; the caller notes the failure
+    /// ([`Self::note_credential_failure`]), so the next prompt rereads.
     pub(super) async fn renew_stale_credentials(
         &mut self,
         process_config: &Config,
@@ -140,8 +142,9 @@ impl SessionRuntime {
             // This process's writes keep the OS store's cache current, so
             // a moved generation needs no reread.
             SessionCredentials::Read(_) => {}
-            // The login that fixes a refusal may have run in another
-            // process, such as the editor's terminal login.
+            // The login that fixes a refusal, or the credentials a renewal
+            // did not find, may have run in another process, such as the
+            // editor's terminal login.
             SessionCredentials::Refused => AppCredentialStore::reread_external_logins(),
             #[cfg(test)]
             SessionCredentials::Scripted => return Ok(()),
@@ -165,7 +168,7 @@ impl SessionRuntime {
     }
 
     /// Marks the provider stale when `result` failed on its credentials, so
-    /// the next prompt renews it.
+    /// the next prompt renews it from what the store holds then.
     pub(super) fn note_credential_failure<T>(&mut self, result: &anyhow::Result<T>) {
         if result
             .as_ref()
@@ -175,3 +178,7 @@ impl SessionRuntime {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "credentials_tests.rs"]
+mod tests;
