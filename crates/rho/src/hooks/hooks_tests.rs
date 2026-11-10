@@ -13,7 +13,7 @@ use rho_sdk::{
 };
 use tempfile::TempDir;
 
-use super::*;
+use super::{catalog::ProjectTrust, *};
 use crate::session_environment::{Ambient, SessionEnvironment};
 
 /// Fixture workspace whose trusted project hook denies `bash` and whose post

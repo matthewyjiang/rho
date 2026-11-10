@@ -251,6 +251,12 @@ impl SessionRuntime {
         self.storage.cwd()
     }
 
+    /// The session's project trust: what the environment it opened with
+    /// granted.
+    pub(crate) fn project_trust(&self) -> crate::workspace::ProjectTrusts {
+        self.build.host.environment.project_trust()
+    }
+
     /// The root the session's tools resolve paths against: the workspace
     /// as the permission layer canonicalized it.
     pub(crate) fn workspace_root(&self) -> &Path {

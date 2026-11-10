@@ -123,11 +123,11 @@ pub(super) async fn connect_with(reach: Reach) -> Result<daemon::Connection, Unr
         .map_err(|error| unreachable(error.to_string()))
 }
 
-/// Starts the daemon once this process's environment, which it inherits,
-/// passes the checks the daemon makes at startup, so a daemon that would
-/// refuse to start is reported now rather than after the start timeout. A
-/// daemon already running never sees this environment, so only a spawn
-/// checks it.
+/// Starts the daemon once the part of this process's environment it
+/// inherits passes the checks the daemon makes at startup, so a daemon that
+/// would refuse to start is reported now rather than after the start
+/// timeout. A daemon already running never sees this environment, so only a
+/// spawn checks it.
 #[cfg(unix)]
 struct CheckedSpawner(daemon::ProcessSpawner);
 
@@ -213,6 +213,15 @@ async fn run_foreground(
     let store_environment = crate::credential_store::environment_backend()
         .context("RHO_CREDENTIAL_STORE in the daemon's environment")
         .inspect_err(|error| tracing::error!(error = %format!("{error:#}"), "not starting"))?;
+    // Before #1779 these set every session's trust; a unit that still
+    // carries them would otherwise lose it without a word.
+    if crate::workspace::ProjectTrusts::of_this_process()
+        != crate::workspace::ProjectTrusts::UNTRUSTED
+    {
+        tracing::warn!(
+            "RHO_TRUST_PROJECT_* in the daemon's environment grants nothing: each session takes the project trust of the client that opens it"
+        );
+    }
     // A panicking request handler is answered with an internal error, and an
     // auto-spawned daemon's stderr goes nowhere, so the log is the only place
     // the panic can surface.

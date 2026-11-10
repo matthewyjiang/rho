@@ -26,7 +26,7 @@ When RTK is available and enabled:
 
 The tool card and the transcript keep the command the agent wrote. [Hooks](/hooks/protocol) and the Auto classifier see the rewritten command, so a deny hook that anchors on `^git push` misses `rtk git push`. Match the command anywhere in `shell_command`, or strip a leading `rtk ` first.
 
-Commands that already start with `rtk ` are left unchanged. Empty commands are not rewritten. Rewrite is skipped when the process environment sets `RTK_DISABLED=1`.
+Commands that already start with `rtk ` are left unchanged. Empty commands are not rewritten. Rewrite is skipped when the process environment sets `RTK_DISABLED=1`; for a [daemon](/daemon#starting-automatically) session that process is the daemon, which does not take the variable from the frontend that starts it.
 
 Rho does not rewrite:
 

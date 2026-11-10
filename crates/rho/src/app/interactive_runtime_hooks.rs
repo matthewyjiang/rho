@@ -24,7 +24,11 @@ impl InteractiveRuntime {
                 return Ok(crate::hooks::HookReport::disabled());
             }
             let mut discard = |_message: String| {};
-            let catalog = crate::hooks::discover_for_cwd(cwd, &mut discard)?;
+            let catalog = crate::hooks::discover_for_cwd(
+                cwd,
+                crate::workspace::ProjectTrusts::of_this_process(),
+                &mut discard,
+            )?;
             anyhow::ensure!(
                 catalog.is_empty(),
                 "hooks were added since this session started; restart Rho to load them"

@@ -68,6 +68,10 @@ impl fmt::Display for SessionId {
 /// hooks, and OpenAPI sources, its CLI subagents and Claude Code advisor
 /// (credentials included), and the workflow runs it starts. Values are
 /// secrets: the daemon never logs or saves them.
+///
+/// Its `RHO_TRUST_PROJECT_*` variables are the session's project trust
+/// when it opens or reopens the session: the daemon's own environment
+/// grants none. A later prompt's do not change it.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct ClientEnvironment(BTreeMap<String, String>);
@@ -178,7 +182,9 @@ pub struct SessionPromptParams {
     pub timeout_ms: Option<u64>,
     /// The prompting client's environment, which the processes this turn
     /// starts run with, and those of later turns until another prompt
-    /// brings another. Processes already running keep theirs.
+    /// brings another. Processes already running keep theirs. One whose
+    /// project trust is not the session's is refused as
+    /// [`crate::ErrorCode::ProjectTrustMismatch`].
     pub environment: ClientEnvironment,
     /// The client's name for this prompt, which makes sending it again
     /// safe, as after a connection that closed before the answer came. A
@@ -192,6 +198,20 @@ pub struct SessionPromptParams {
     /// An empty key is [`crate::ErrorCode::InvalidParams`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<IdempotencyKey>,
+}
+
+/// The `data` of a [`crate::ErrorCode::ProjectTrustMismatch`] error: the
+/// `RHO_TRUST_PROJECT_*` variables the session's trust and the prompting
+/// client's differ in. At least one list has a name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectTrustMismatch {
+    /// The variables that grant trust the session opened with and the
+    /// prompting client's environment does not, such as
+    /// `RHO_TRUST_PROJECT_HOOKS`.
+    pub session_only: Vec<String>,
+    /// The variables that grant trust the prompting client's environment
+    /// does and the session opened without.
+    pub client_only: Vec<String>,
 }
 
 /// Result of [`SESSION_PROMPT`]: the turn began: it saved its prompt, or,

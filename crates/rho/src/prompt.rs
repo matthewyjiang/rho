@@ -48,9 +48,10 @@ pub struct SystemPrompt {
 
 /// How plugin skills are supplied to system prompt assembly.
 pub(crate) enum PluginSkills {
-    /// Discover loose and plugin skills from the filesystem.
+    /// Discover loose and plugin skills from the filesystem, project
+    /// plugins' under this trust.
     #[allow(dead_code)] // retained so callers can opt into filesystem discovery
-    Discover,
+    Discover(crate::workspace::ProjectTrusts),
     /// Use the already-discovered plugin skill list (including empty).
     Provided(Vec<skills::Skill>),
 }
@@ -105,7 +106,7 @@ pub(crate) fn system_prompt_template_with_home_and_models(
         cwd,
         home,
         models.advisor,
-        PluginSkills::Discover,
+        PluginSkills::Discover(crate::workspace::ProjectTrusts::UNTRUSTED),
     )
 }
 
@@ -229,7 +230,7 @@ Compaction summarizes older turns, so earlier details can drop out of context. W
 
     let skills = if tools.iter().any(|tool| tool.name == "skill") {
         match plugin_skills {
-            PluginSkills::Discover => skills::discover_with_home(cwd, home),
+            PluginSkills::Discover(trust) => skills::discover_with_home(cwd, home, trust),
             PluginSkills::Provided(plugin_skills) => {
                 skills::discover_with_plugin_skills(cwd, home, plugin_skills)
             }
