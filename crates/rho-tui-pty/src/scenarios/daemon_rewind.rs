@@ -15,6 +15,9 @@ use crate::{
     scenario::{Scenario, ScenarioOutcome, ScenarioRunner},
 };
 
+/// The turn the scenario rewinds.
+const PROMPT: &str = "fixture tool";
+
 pub(super) const SCENARIO: Scenario = Scenario::new(
     "daemon_rewind",
     "Rewind the file a daemon session's turn wrote and the conversation with it",
@@ -47,7 +50,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         let written = home.workspace.join(".rho-tui-fixture-output.txt");
         harness.set_phase("a_turn_writes_a_file");
         harness.wait_for_text("gpt-5.5", STARTUP)?;
-        harness.submit_text("fixture tool")?;
+        harness.submit_text(PROMPT)?;
         wait_for_turn_completion_after(&mut harness, "tool lifecycle complete with one result")?;
         ensure!(written.exists(), "the turn wrote no file");
 
@@ -68,8 +71,11 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         harness.wait_for_text("fixture response: hello after", STREAM)?;
         harness.wait_for_text("Type a message", SETTLE)?;
         // Settled by now: the replay that followed the rewind is done.
+        // The turn's prompt goes with its answer: the conversation is the
+        // one from before the prompt was saved.
         ensure!(
-            !harness.screen().contains_text("tool lifecycle complete"),
+            !harness.screen().contains_text("tool lifecycle complete")
+                && !harness.screen().contains_text(PROMPT),
             "the conversation still shows the rewound turn:\n{}",
             harness.screen().debug_dump()
         );

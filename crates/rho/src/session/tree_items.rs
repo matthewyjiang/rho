@@ -47,6 +47,23 @@ impl SessionTree {
             })
     }
 
+    /// The prompt of the turn `node` belongs to: the first user text at
+    /// `node` or before it, whatever the turn saved after its prompt.
+    pub(crate) fn turn_prompt(&self, node: &NodeId) -> Option<String> {
+        let mut at = self.node(node);
+        while let Some(node) = at {
+            let prompt = node
+                .display_messages()
+                .iter()
+                .find_map(|stored| super::super::persistence::user_message_text(&stored.message));
+            if prompt.is_some() {
+                return prompt;
+            }
+            at = node.parent_id().and_then(|parent| self.node(parent));
+        }
+        None
+    }
+
     /// The tree as `/tree` lists it: one row for each prompt and all that
     /// followed it. A node that adds no user message joins the row of the
     /// node before it when nothing branches between them, and the row

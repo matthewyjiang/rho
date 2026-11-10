@@ -81,6 +81,10 @@ impl WorkspaceCheckpointTracker {
         let Some(active) = active else {
             return Ok(None);
         };
+        // The turn saved no node of its own: there is nothing to rewind.
+        if active.open.before_node_id.as_ref() == Some(&node_id) {
+            return Ok(None);
+        }
         active
             .store
             .finalize_for_node(active.open, node_id, revision, outcome)

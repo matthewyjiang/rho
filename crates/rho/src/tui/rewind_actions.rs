@@ -48,22 +48,42 @@ impl App {
             self.set_status("workspace rewind unavailable with --no-save");
             return Ok(());
         }
-        // The daemon holds a daemon session open; its checkpoints and tree
-        // are read from the files both share.
-        let daemon_store = match &self.info.session.daemon {
-            Some(_) => Some(self.daemon_checkpoint_store()?),
-            None => None,
-        };
-        if daemon_store.is_none() && !agent.workspace_rewind_enabled() {
-            self.set_status(
-                "workspace rewind is off; set behavior.workspace_rewind = true and restart Rho",
-            );
-            return Ok(());
-        }
-        let checkpoints = match &daemon_store {
-            Some(Some(store)) => store.list()?,
-            Some(None) => Vec::new(),
-            None => agent.workspace_checkpoints()?,
+        let (checkpoints, prompts) = if self.info.session.daemon.is_some() {
+            // The daemon holds the session open; its checkpoints and tree
+            // are read from the files both share.
+            let checkpoints = match self.daemon_checkpoint_store()? {
+                Some(store) => store.list()?,
+                None => Vec::new(),
+            };
+            // A turn's checkpoint names the node the turn ended on, which
+            // later saves, such as a settings change, may follow.
+            let prompts = match self.current_session_id() {
+                Some(id) => crate::session::Session::turn_prompts_by_id(
+                    &self.info.runtime.cwd,
+                    &id,
+                    checkpoints
+                        .iter()
+                        .map(|checkpoint| checkpoint.node_id.clone()),
+                )?,
+                None => HashMap::new(),
+            };
+            (checkpoints, prompts)
+        } else {
+            if !agent.workspace_rewind_enabled() {
+                self.set_status(
+                    "workspace rewind is off; set behavior.workspace_rewind = true and restart Rho",
+                );
+                return Ok(());
+            }
+            let prompts = agent
+                .stored_session()
+                .map(|storage| storage.tree_turn_items())
+                .transpose()?
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|item| item.first_user_text.map(|prompt| (item.id, prompt)))
+                .collect();
+            (agent.workspace_checkpoints()?, prompts)
         };
         if checkpoints.is_empty() {
             self.set_status("this session has no workspace checkpoints");
@@ -82,33 +102,14 @@ impl App {
             return self.open_rewind_preview(matching[0].node_id.as_str(), agent);
         }
 
-        // A checkpoint names its turn's last node, as a turn's row does.
-        let rows = match (self.current_session_id(), daemon_store.is_some()) {
-            (Some(id), true) => {
-                crate::session::Session::tree_turn_items_by_id(&self.info.runtime.cwd, &id)?
-            }
-            (None, true) => Vec::new(),
-            (_, false) => agent
-                .stored_session()
-                .map(|storage| storage.tree_turn_items())
-                .transpose()?
-                .unwrap_or_default(),
-        };
-        let previews = rows
-            .into_iter()
-            .filter_map(|item| {
-                item.first_user_text
-                    .map(|preview| (item.id.to_string(), preview))
-            })
-            .collect::<HashMap<_, _>>();
         let items = checkpoints
             .into_iter()
             .rev()
             .map(|checkpoint| {
                 let id = checkpoint.node_id.to_string();
                 let short_id = &id[..id.len().min(8)];
-                let preview = previews
-                    .get(&id)
+                let preview = prompts
+                    .get(&checkpoint.node_id)
                     .cloned()
                     .unwrap_or_else(|| format!("turn {short_id}"));
                 PickerItem {
@@ -154,27 +155,22 @@ impl App {
         agent: &InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let node_id = NodeId::from_string(value)?;
-        let (checkpoint, plan) = if self.info.session.daemon.is_some() {
+        let (checkpoint, plan, workspace) = if self.info.session.daemon.is_some() {
             // Planned here against the files as they are; the daemon plans
             // again when it restores.
             let store = self.daemon_checkpoint_store()?.ok_or_else(|| {
                 anyhow::anyhow!("workspace rewind is unavailable for this session")
             })?;
-            let workspace = WorkspaceOptions {
-                root: self.info.runtime.cwd.clone(),
-            }
-            .build_workspace(&self.info.runtime.added_dirs)?;
+            let root = self.info.runtime.cwd.clone();
+            let workspace = WorkspaceOptions { root: root.clone() }
+                .build_workspace(&self.info.runtime.added_dirs)?;
             let planned = PlannedRewind::new(&store, &workspace, &node_id)?;
-            (planned.checkpoint, planned.plan)
+            (planned.checkpoint, planned.plan, root)
         } else {
-            agent.preview_workspace_rewind(&node_id)?
+            let (checkpoint, plan) = agent.preview_workspace_rewind(&node_id)?;
+            (checkpoint, plan, agent.workspace_path().to_path_buf())
         };
-        let workspace = if self.info.session.daemon.is_some() {
-            self.info.runtime.cwd.as_path()
-        } else {
-            agent.workspace_path()
-        };
-        let detail = rewind_preview_text(&checkpoint, &plan, workspace);
+        let detail = rewind_preview_text(&checkpoint, &plan, &workspace);
         let blocked = plan.entries.iter().any(|entry| {
             matches!(
                 entry.classification,

@@ -267,26 +267,30 @@ impl Change {
                 let rewind = runtime
                     .rewind_workspace(&checkpoint, config)
                     .await
-                    .map_err(|RewindError::Refused(error)| invalid(format!("{error:#}")))?;
-                let audit =
-                    |restored| Some(rewind_audit_text(&rewind.audit, runtime.cwd(), restored));
-                return match rewind.conversation {
-                    RewoundConversation::Restored => Ok(Applied::Restarted {
-                        notice: audit(true),
-                    }),
-                    RewoundConversation::Kept => Ok(Applied::Rows {
-                        notice: audit(false),
-                    }),
-                    // The files changed all the same: say so, then why
-                    // the conversation stayed.
-                    RewoundConversation::Failed(error) => Err(RpcError::new(
-                        ErrorCode::InternalError,
-                        format!(
-                            "{}\ncould not restore the conversation: {error}",
-                            audit(false).unwrap_or_default()
+                    .map_err(|error| match error {
+                        RewindError::Refused(error) => invalid(format!("{error:#}")),
+                        RewindError::Failed(error) => RpcError::new(
+                            ErrorCode::InternalError,
+                            format!("could not rewind the workspace: {error:#}"),
                         ),
-                    )),
-                };
+                    })?;
+                let audit = |restored| rewind_audit_text(&rewind.audit, runtime.cwd(), restored);
+                return Ok(match rewind.conversation {
+                    RewoundConversation::Restored => Applied::Restarted {
+                        notice: Some(audit(true)),
+                    },
+                    RewoundConversation::Kept => Applied::Rows {
+                        notice: Some(audit(false)),
+                    },
+                    // The files changed all the same, which every client
+                    // must learn, then why the conversation stayed.
+                    RewoundConversation::Failed(error) => Applied::Rows {
+                        notice: Some(format!(
+                            "{}\ncould not restore the conversation: {error}",
+                            audit(false)
+                        )),
+                    },
+                });
             }
             Self::Model { model, auth } => {
                 let selection = model_selection(runtime, &model, auth.as_deref(), auths)?;
