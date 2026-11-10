@@ -53,6 +53,10 @@ pub(super) fn test_status() -> DaemonStatus {
 }
 
 impl Service for StubHost {
+    fn in_progress(&self) -> u64 {
+        0
+    }
+
     async fn restart(&self) {
         self.shutdown.request(Ending::Restart, |_| {});
     }

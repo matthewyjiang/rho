@@ -77,7 +77,8 @@ pub(super) fn paths() -> anyhow::Result<DaemonPaths> {
 /// Why [`connect`] reached no daemon: the socket path is over the
 /// platform's limit, the daemon could not start or did not accept
 /// connections in time (the reason names its log file), or its protocol
-/// major differs (the reason says which side to update).
+/// is incompatible (the reason says which side to change and, for an older
+/// daemon with work in progress, how much a restart would interrupt).
 #[cfg(unix)]
 #[derive(Debug, thiserror::Error)]
 #[error("could not reach the rho daemon: {reason}; see https://matthewyjiang.github.io/rho/daemon")]
@@ -430,7 +431,7 @@ async fn stop(paths: &DaemonPaths) -> anyhow::Result<()> {
         }
         // An incompatible daemon cannot take requests. SIGTERM triggers the
         // same graceful shutdown, so the version-mismatch advice to run
-        // `rho daemon stop` still works.
+        // `rho daemon restart`, which stops it this way, still works.
         Err(daemon::ConnectError::Handshake(ClientError::VersionMismatch(_))) => {
             daemon::terminate_recorded_daemon(paths)?.ok_or(daemon::ConnectError::NotRunning)?
         }

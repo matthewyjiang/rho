@@ -207,10 +207,27 @@ macro_rules! logs_in_nothing {
     };
 }
 
-/// Answers every request at once.
-struct FakeService;
+/// The count of a test service with nothing a restart would interrupt.
+macro_rules! nothing_in_progress {
+    () => {
+        fn in_progress(&self) -> u64 {
+            0
+        }
+    };
+}
+
+/// Answers every request at once, and reports `in_progress` things a restart
+/// would interrupt.
+#[derive(Default)]
+struct FakeService {
+    in_progress: u64,
+}
 
 impl Service for FakeService {
+    fn in_progress(&self) -> u64 {
+        self.in_progress
+    }
+
     async fn status(&self) -> DaemonStatus {
         test_status()
     }
@@ -230,6 +247,8 @@ fn buggy_status() -> DaemonStatus {
 }
 
 impl Service for PanickingService {
+    nothing_in_progress!();
+
     async fn status(&self) -> DaemonStatus {
         buggy_status()
     }
@@ -261,6 +280,8 @@ impl GatedService {
 }
 
 impl Service for GatedService {
+    nothing_in_progress!();
+
     async fn status(&self) -> DaemonStatus {
         self.release_status.notified().await;
         test_status()
@@ -444,8 +465,81 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
         ),
     ];
     for (name, lines, expected) in cases {
-        assert_eq!(exchange(FakeService, &lines).await, expected, "{name}");
+        assert_eq!(
+            exchange(FakeService::default(), &lines).await,
+            expected,
+            "{name}"
+        );
     }
+}
+
+/// What a daemon with `in_progress` things under way answers the hello of a
+/// client that speaks `protocol`.
+async fn hello_answer(
+    in_progress: u64,
+    protocol: ProtocolVersion,
+) -> Result<HelloResponse, VersionMismatch> {
+    let (client, server) = duplex(64 * 1024);
+    let server = tokio::spawn(async move {
+        let service = Arc::new(FakeService { in_progress });
+        serve_connection(server, &test_info(), service, std::future::pending()).await
+    });
+    let (read, mut write) = tokio::io::split(client);
+    send_lines(&mut write, &[hello_line(1, protocol)]).await;
+    write.shutdown().await.unwrap();
+    let line = tokio::time::timeout(RESPONSE_DEADLINE, MessageReader::new(read).read_line())
+        .await
+        .expect("the daemon answers within RESPONSE_DEADLINE")
+        .unwrap()
+        .expect("an answer to the hello");
+    server.await.unwrap().unwrap();
+    let Message::Response(Response { outcome, .. }) = Message::parse(&line).unwrap() else {
+        panic!("expected a response");
+    };
+    match outcome {
+        Ok(hello) => Ok(serde_json::from_value(hello).unwrap()),
+        Err(refusal) => {
+            assert_eq!(refusal.error_code(), Some(ErrorCode::VersionMismatch));
+            Err(serde_json::from_value(refusal.data.expect("the mismatch")).unwrap())
+        }
+    }
+}
+
+// Covers: the daemon's version-skew policy at the handshake (#1776). A
+// client of its protocol version is accepted. A newer client is refused and
+// told that restarting the daemon is the fix and how many things that would
+// interrupt; an older one is told to change itself, with no count, since no
+// daemon restart helps it.
+// Owner: protocol server handshake.
+#[tokio::test]
+async fn hello_accepts_the_daemons_version_and_tells_any_other_which_side_to_change() {
+    let newer = ProtocolVersion::new(PROTOCOL_VERSION.major, PROTOCOL_VERSION.minor + 1);
+    let older = ProtocolVersion::new(0, 0);
+    let refusal = |client, fix, in_progress| VersionMismatch {
+        daemon: PROTOCOL_VERSION,
+        client,
+        fix,
+        in_progress,
+    };
+
+    assert_eq!(
+        (
+            hello_answer(2, PROTOCOL_VERSION).await,
+            hello_answer(2, newer).await,
+            hello_answer(0, newer).await,
+            hello_answer(2, older).await,
+        ),
+        (
+            Ok(HelloResponse {
+                protocol: PROTOCOL_VERSION,
+                daemon: test_info().daemon,
+                capabilities: Vec::new(),
+            }),
+            Err(refusal(newer, VersionFix::RestartDaemon, Some(2))),
+            Err(refusal(newer, VersionFix::RestartDaemon, Some(0))),
+            Err(refusal(older, VersionFix::UpdateClient, None)),
+        )
+    );
 }
 
 // Covers: a handler that panics still answers its request, with an internal
@@ -538,6 +632,8 @@ impl AttachService {
 }
 
 impl Service for AttachService {
+    nothing_in_progress!();
+
     async fn status(&self) -> DaemonStatus {
         self.release_status.notified().await;
         test_status()
@@ -911,6 +1007,8 @@ fn login_prompt() -> LoginPrompt {
 }
 
 impl Service for LoginService {
+    nothing_in_progress!();
+
     async fn status(&self) -> DaemonStatus {
         test_status()
     }

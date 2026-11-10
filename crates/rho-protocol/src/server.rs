@@ -42,7 +42,7 @@ use crate::{
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
     MessageWriter, Request, RequestId, Response, RpcError, StatusParams, StopParams, StopResponse,
-    VersionMismatch, PROTOCOL_VERSION,
+    VersionFix, VersionMismatch, PROTOCOL_VERSION,
 };
 
 /// The daemon's answers to post-handshake requests, one method per protocol
@@ -75,6 +75,14 @@ pub trait Service: Send + Sync {
     fn hello(&self, client: &ClientInfo) {
         let _ = client;
     }
+
+    /// How many things restarting the daemon would interrupt now: jobs in
+    /// progress, logins under way, and sessions with work of their own. The
+    /// handshake reports it to a newer client it refuses
+    /// ([`VersionMismatch::in_progress`]), which may replace a daemon that
+    /// reports none, so never report fewer than there are. It runs in the
+    /// connection's read loop, so it must return without waiting.
+    fn in_progress(&self) -> u64;
 
     /// Answers `rho/daemon/status`.
     fn status(&self) -> impl Future<Output = DaemonStatus> + Send;
@@ -424,7 +432,7 @@ where
         };
         let response = match Message::parse(&line) {
             Ok(Message::Request(Request { id, method, params })) => {
-                match connection.route(&method, params, info) {
+                match connection.route(&method, params, info, || service.in_progress()) {
                     Ok(Route::Hello { response, client }) => {
                         service.hello(&client);
                         Response {
@@ -578,16 +586,28 @@ enum ServiceCall {
 impl Connection {
     /// Answers the handshake, protocol errors, and detaches in place, and
     /// hands attaches and the other service methods on.
+    ///
+    /// A hello from an incompatible client is refused, which leaves the
+    /// connection awaiting one. A refused newer client is told what
+    /// restarting this daemon would interrupt, from `in_progress`.
     fn route(
         &mut self,
         method: &str,
         params: Option<Value>,
         info: &ServerInfo,
+        in_progress: impl FnOnce() -> u64,
     ) -> Result<Route, RpcError> {
         match (*self, method) {
             (Self::AwaitingHello, HELLO) => {
                 let hello = decode_params::<Hello>(params)?;
                 if let Some(mismatch) = VersionMismatch::between(PROTOCOL_VERSION, hello.protocol) {
+                    let mismatch = match mismatch.fix {
+                        VersionFix::RestartDaemon => VersionMismatch {
+                            in_progress: Some(in_progress()),
+                            ..mismatch
+                        },
+                        VersionFix::UpdateClient => mismatch,
+                    };
                     return Err(
                         RpcError::new(ErrorCode::VersionMismatch, mismatch.to_string())
                             .with_data(encode(&mismatch)?),

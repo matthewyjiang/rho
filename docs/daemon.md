@@ -112,7 +112,7 @@ CLI subagents ([Claude Code](/subagents/claude-cli), [Cursor](/subagents/cursor)
 
 ## Starting automatically
 
-Frontends that use the daemon, such as `rho run --detach` and `rho daemon start`, start it when none is running, so you rarely run `rho daemon` yourself. If several start at once, they agree on a single daemon. A frontend that finds the previous daemon still shutting down waits for it to exit, up to 5 seconds, and then starts the new one; a daemon still holding its lock after that fails the frontend with the limit and the time it waited. The started daemon runs `rho daemon run` from the same `rho` executable in its own process group, so `Ctrl+C` in your terminal does not stop it.
+Frontends that use the daemon, such as `rho run --detach` and `rho daemon start`, start it when none is running, so you rarely run `rho daemon` yourself. If several start at once, they agree on a single daemon. A frontend that finds the previous daemon still shutting down waits for it to exit, up to 5 seconds, and then starts the new one; a daemon still holding its lock after that fails the frontend with the limit and the time it waited. A frontend that finds an idle daemon of an older protocol version replaces it the same way ([Versions](#versions)). The started daemon runs `rho daemon run` from the same `rho` executable in its own process group, so `Ctrl+C` in your terminal does not stop it.
 
 ## Upgrading in place
 
@@ -124,14 +124,24 @@ Updating rho replaces its executable, which leaves a running daemon on the old v
 
 `rho daemon restart` re-executes at once instead, without waiting: it interrupts the turns under way, which are recorded `interrupted` as a stop records them, and the sessions take prompts again once the daemon is back. It runs whatever executable is at the daemon's path, so it also applies an upgrade the daemon has not checked yet. When the restarted daemon is still older than the `rho` you ran it from, `restart` stops it and starts that `rho` instead. That is an ordinary stop and start, not an in-place restart: the pid changes, and a client that connects in between finds no daemon and waits for the new one, as after any stop. If the turns under way do not stop within 4 seconds, the daemon exits instead of re-executing, as a stop does, and the next connection starts a new daemon.
 
-An installer that puts the new version at another path, such as a versioned directory or a symlink switched to it (mise, Homebrew), leaves a frontend-started daemon's path unchanged, so the daemon cannot upgrade itself; it logs that a newer client connected. Run `rho daemon restart` from the new version, which then starts it in the old daemon's place. Windows has no in-place restart yet ([#1665](https://github.com/matthewyjiang/rho/issues/1665)).
+An installer that puts the new version at another path, such as a versioned directory or a symlink switched to it (mise, Homebrew), leaves a frontend-started daemon's path unchanged, so the daemon cannot upgrade itself; it logs that a newer client connected. Run `rho daemon restart` from the new version, which then starts it in the old daemon's place. When the new version also speaks a newer protocol, a frontend replaces an idle daemon itself, as [Versions](#versions) describes. Windows has no in-place restart yet ([#1665](https://github.com/matthewyjiang/rho/issues/1665)).
 
 ## Versions
 
-Every connection begins with a handshake that compares protocol versions. A frontend and daemon work together when their protocol major versions match. Otherwise the frontend reports which side to change:
+Every connection begins with a handshake that compares protocol versions, so a frontend and a daemon of different rho builds learn there whether they can work together, rather than at the first request one of them does not understand ([#1776](https://github.com/matthewyjiang/rho/issues/1776)).
 
-- The daemon is older, for example after you update rho to a new protocol major while it keeps running: run `rho daemon restart`, which stops the old daemon and starts the new version. Within a major the daemon [upgrades itself](#upgrading-in-place).
-- The frontend is older: update rho.
+The protocol is unstable while its version is 0.x: every change to it raises the version, and a frontend and daemon work together only when their protocol versions are equal. Builds that differ without a protocol change still work together. From protocol 1.0 on, they work together when their major versions match.
+
+| The frontend finds | What happens |
+| --- | --- |
+| A daemon of a compatible protocol version | It connects, whatever rho version each side is. A daemon whose executable was replaced [upgrades itself](#upgrading-in-place) once nothing would be cut short. |
+| An older daemon with nothing in progress | A frontend that [starts the daemon](#starting-automatically) stops it and starts its own rho in its place, then connects. That is an ordinary stop and start, which interrupts nothing here. `status`, `stop`, and `attach`, which never start a daemon, report the daemon as the next row does. |
+| An older daemon with work in progress | The frontend fails with the fix and what it costs, for example ``rho daemon speaks protocol 0.1, older than this client's 0.2; run `rho daemon restart` to replace it, which interrupts 2 jobs in progress``. Run it, or wait for the work to end. |
+| A newer daemon | The frontend fails and says to update it, or to restart it if it was updated while running. A TUI left open across an update is such a frontend once the daemon upgrades to a new protocol version: its reattach fails with that message, and reopening it with `--resume` continues the session. A frontend never replaces a newer daemon; only that older rho's own `rho daemon restart` does. |
+
+What counts as in progress is what an [upgrade](#upgrading-in-place) waits for: jobs queued, running, or waiting for input, interactive logins under way, and sessions with work of their own. The daemon reports the count when it refuses the handshake, so it is the count at that moment. A frontend that replaces a daemon stops it as `rho daemon stop` does, so a turn that began after the daemon reported none is recorded `interrupted`, not lost.
+
+`rho daemon stop` and `rho daemon restart` work on a daemon of any protocol version.
 
 What each protocol version may change is described in [Versions and compatibility](/protocol#versions-and-compatibility).
 

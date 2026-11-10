@@ -63,6 +63,22 @@ The full mode runs policy and script checks, Clippy for all targets and features
 
 Development and test profiles use reduced debug information to keep artifacts and link times smaller while retaining line-number backtraces. Set `CARGO_PROFILE_DEV_DEBUG=2` or `CARGO_PROFILE_TEST_DEBUG=2` when a debugging session needs full symbols.
 
+### Changing the daemon protocol
+
+While `PROTOCOL_VERSION` in `crates/rho-protocol/src/version.rs` is 0.x, a change to the wire (anything in `crates/rho-protocol/schema/protocol.json` other than descriptions and names) raises its minor, in the same pull request. The version is how a frontend and a daemon of different builds tell at `rho/hello` that they cannot work together ([Versions](/daemon#versions)), so a change that keeps it lets two builds fail later instead. Regenerate the schema after either edit:
+
+```bash
+cargo run -p rho-protocol --example protocol_schema > crates/rho-protocol/schema/protocol.json
+```
+
+CI compares each pull request with its base, and each push with the commit before it. The full workflow cannot know your base, so run the same check against it before pushing:
+
+```bash
+python3 scripts/check_protocol_compat.py --baseline-ref origin/daemon-v3 --unstable-only
+```
+
+A pull request that raised the minor before another one merged with the same number fails that check once it is updated: raise the minor again.
+
 ## Crate publish preparation
 
 CI runs `scripts/check_crate_publish_prep.sh` before release packaging. That

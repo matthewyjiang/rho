@@ -80,8 +80,10 @@ error_codes! {
         /// A request other than `rho/hello` arrived before the handshake
         /// completed. Send `rho/hello` first.
         HandshakeRequired = -32000,
-        /// `rho/hello` named an incompatible protocol major. `data` is a
-        /// [`crate::VersionMismatch`] saying which side must change.
+        /// `rho/hello` named an incompatible protocol version. `data` is a
+        /// [`crate::VersionMismatch`] saying which side must change and, for
+        /// a client newer than the daemon, what restarting the daemon would
+        /// interrupt.
         VersionMismatch = -32001 => crate::VersionMismatch,
         /// No saved session has that id, in any workspace.
         SessionNotFound = -32003,

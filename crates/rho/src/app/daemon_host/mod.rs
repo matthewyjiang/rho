@@ -208,19 +208,23 @@ impl Service for DaemonHost {
             jobs: u64::try_from(in_progress).unwrap_or(u64::MAX),
             socket: self.socket.clone(),
             credential_store: store::status(self.store_environment).await,
-            upgrade: self.upgrades.pending().map(|version| {
-                let waiting_for =
-                    in_progress + self.logins.under_way() + self.sessions.upgrade_blockers();
-                PendingUpgrade {
-                    version,
-                    waiting_for: u64::try_from(waiting_for).unwrap_or(u64::MAX),
-                }
+            upgrade: self.upgrades.pending().map(|version| PendingUpgrade {
+                version,
+                waiting_for: self.in_progress(),
             }),
         }
     }
 
     fn hello(&self, client: &ClientInfo) {
         self.upgrades.heard(client);
+    }
+
+    /// What an upgrade waits for is what a restart interrupts, so the count
+    /// a refused newer client hears is the one `status` reports pending.
+    fn in_progress(&self) -> u64 {
+        let in_progress =
+            self.jobs.in_progress() + self.logins.under_way() + self.sessions.upgrade_blockers();
+        u64::try_from(in_progress).unwrap_or(u64::MAX)
     }
 
     async fn stop(&self) {

@@ -1092,7 +1092,7 @@
       "description": "Result of [`HELLO`].",
       "properties": {
         "capabilities": {
-          "description": "Optional features this daemon supports. Protocol minors add names\nhere; protocol 1.0 defines none.",
+          "description": "Optional features this daemon supports. Protocol minors add names\nhere from major 1 on; none is defined yet.",
           "items": {
             "type": "string"
           },
@@ -1103,7 +1103,7 @@
         },
         "protocol": {
           "$ref": "#/$defs/ProtocolVersion",
-          "description": "The protocol the daemon speaks. Its major equals the client's."
+          "description": "The protocol the daemon speaks, which is compatible with the\nclient's."
         }
       },
       "required": [
@@ -2258,7 +2258,7 @@
       ]
     },
     "ProtocolVersion": {
-      "description": "A protocol version. Minors add optional fields, methods, and error codes;\nmajors may change anything.",
+      "description": "A protocol version. Major 0 is the unstable protocol: every minor may\nchange anything. From major 1 on, minors add optional fields, methods,\nand error codes, and only majors may change anything.",
       "properties": {
         "major": {
           "format": "uint16",
@@ -4923,18 +4923,18 @@
       "oneOf": [
         {
           "const": "restart_daemon",
-          "description": "The running daemon is older than the client. Stopping it lets the next\nconnection start the daemon from the newer installed binary.",
+          "description": "The running daemon is older than the client. Replacing it with the\nclient's version lets them talk; [`VersionMismatch::in_progress`]\nsays what that interrupts.",
           "type": "string"
         },
         {
           "const": "update_client",
-          "description": "The client is older than the daemon. Update the client.",
+          "description": "The client is older than the daemon. Update the client, or restart\none that was updated while it ran.",
           "type": "string"
         }
       ]
     },
     "VersionMismatch": {
-      "description": "An incompatible handshake. The daemon sends this as the `data` of a\n[`crate::ErrorCode::VersionMismatch`] error; its `Display` is the\nactionable message for users.",
+      "description": "An incompatible handshake. The daemon sends this as the `data` of a\n[`crate::ErrorCode::VersionMismatch`] error; its `Display` is the\nactionable message for users.\n\nBoth sides must read this whatever their versions, so it only ever gains\noptional fields.",
       "properties": {
         "client": {
           "$ref": "#/$defs/ProtocolVersion"
@@ -4944,6 +4944,15 @@
         },
         "fix": {
           "$ref": "#/$defs/VersionFix"
+        },
+        "in_progress": {
+          "description": "How many things restarting the daemon would interrupt: jobs in\nprogress (queued, running, or waiting for input), logins under way,\nand sessions with work of their own, such as a background process.\nThe daemon sends it with [`VersionFix::RestartDaemon`], so a client\ncan say what the restart costs before anyone runs it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [
@@ -5268,8 +5277,8 @@
     }
   },
   "protocol": {
-    "major": 1,
-    "minor": 0
+    "major": 0,
+    "minor": 1
   },
   "title": "rho daemon protocol"
 }

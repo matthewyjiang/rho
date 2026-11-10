@@ -9,9 +9,16 @@ optional, or nullable, adding a required field to an existing object,
 removing a value, or adding one to a closed enum. Any change at all needs a
 new minor, so a client can tell from `rho/hello` what it may receive.
 
+Major 0 is the unstable protocol (#1776): a minor may change anything, and a
+client and daemon work together only when their versions are equal, so there
+any change needs only a new minor.
+
 The baseline is the schema the last `rho-coding-agent` release shipped:
 compatibility matters between released daemons and clients, not between
 commits. Before the first release with a schema there is nothing to compare.
+An unstable protocol has no release to hold it yet, and its users run builds
+of any commit, so CI also compares each change with the commit before it
+(`--baseline-ref HEAD^1 --unstable-only`).
 Descriptions and Rust names are not part of the contract, so changing them
 needs nothing.
 """
@@ -342,17 +349,26 @@ def version(document: dict) -> tuple[int, int]:
     return protocol["major"], protocol["minor"]
 
 
-def check(baseline: dict, current: dict, baseline_name: str) -> list[str]:
-    """Why `current` may not ship after `baseline`; empty when it may."""
-    before, after = facts(baseline), facts(current)
+def check(
+    baseline: dict, current: dict, baseline_name: str, *, unstable_only: bool = False
+) -> list[str]:
+    """Why `current` may not ship after `baseline`; empty when it may.
+
+    `unstable_only` compares only two schemas of protocol major 0, for
+    holding each change to the commit before it: a stable protocol's minors
+    count releases, not changes, and the change that enters or leaves major 0
+    has no rule to break."""
     old, new = version(baseline), version(current)
+    if unstable_only and (old[0], new[0]) != (0, 0):
+        return []
+    before, after = facts(baseline), facts(current)
     if new < old:
         return [f"PROTOCOL_VERSION {new[0]}.{new[1]} is below {baseline_name}'s {old[0]}.{old[1]}"]
     if new[0] > old[0]:
         return []
-    problems = [
-        f"{problem} (needs a new protocol major)" for problem in breaking_changes(before, after)
-    ]
+    # An unstable minor may change anything.
+    breaking = [] if new[0] == 0 else breaking_changes(before, after)
+    problems = [f"{problem} (needs a new protocol major)" for problem in breaking]
     if before != after and new == old:
         problems.append(
             f"the protocol changed since {baseline_name} but PROTOCOL_VERSION is still "
@@ -418,6 +434,12 @@ def main(argv: list[str] | None = None) -> int:
         help=f"git ref to read the baseline from (default: the newest release tag on {REMOTE})",
     )
     parser.add_argument("--current", type=Path, default=ROOT / SCHEMA, help="schema to check")
+    parser.add_argument(
+        "--unstable-only",
+        action="store_true",
+        help="compare only when both schemas are protocol major 0, as when holding each change "
+        "to the commit before it",
+    )
     arguments = parser.parse_args(argv)
 
     if arguments.baseline is not None:
@@ -438,13 +460,13 @@ def main(argv: list[str] | None = None) -> int:
 
     baseline = json.loads(baseline_text)
     current = json.loads(arguments.current.read_text())
-    problems = check(baseline, current, baseline_name)
+    problems = check(baseline, current, baseline_name, unstable_only=arguments.unstable_only)
     for problem in problems:
         print(f"error: {problem}", file=sys.stderr)
     if problems:
         return 1
     new = version(current)
-    print(f"protocol {new[0]}.{new[1]} is compatible with {baseline_name}")
+    print(f"protocol {new[0]}.{new[1]} may follow {baseline_name}")
     return 0
 
 

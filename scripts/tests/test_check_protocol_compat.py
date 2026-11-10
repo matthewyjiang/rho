@@ -7,8 +7,11 @@ from collections.abc import Callable
 
 from scripts import check_protocol_compat
 
-RELEASED = json.loads((check_protocol_compat.ROOT / check_protocol_compat.SCHEMA).read_text())
-MAJOR, MINOR = check_protocol_compat.version(RELEASED)
+COMMITTED = json.loads((check_protocol_compat.ROOT / check_protocol_compat.SCHEMA).read_text())
+# A stable release of the committed schema, whatever version that is at: the
+# rules for minors and majors start at major 1.
+MAJOR, MINOR = 1, 0
+RELEASED = {**COMMITTED, "protocol": {"major": MAJOR, "minor": MINOR}}
 
 
 def changed(change: Callable[[dict], None], *, major: int = 0, minor: int = 1) -> dict:
@@ -312,6 +315,55 @@ class CompatibilityTests(unittest.TestCase):
             check_protocol_compat.check(released, RELEASED, "the release"),
             [f"PROTOCOL_VERSION {MAJOR}.{MINOR} is below the release's {MAJOR}.{MINOR + 3}"],
         )
+
+
+class UnstableProtocolTests(unittest.TestCase):
+    """Major 0, where a minor may change anything (#1776)."""
+
+    UNSTABLE = {**COMMITTED, "protocol": {"major": 0, "minor": 4}}
+
+    def at(self, change: Callable[[dict], None], major: int, minor: int) -> dict:
+        document = copy.deepcopy(self.UNSTABLE)
+        change(document)
+        document["protocol"] = {"major": major, "minor": minor}
+        return document
+
+    def check(self, current: dict, *, unstable_only: bool = False) -> list[str]:
+        return check_protocol_compat.check(
+            self.UNSTABLE, current, "the base", unstable_only=unstable_only
+        )
+
+    def test_any_change_needs_only_a_new_minor(self) -> None:
+        for name, change in [
+            ("an added method", add_method),
+            ("a removed method", remove_method),
+            ("a retyped field", retype_field),
+        ]:
+            with self.subTest(name):
+                self.assertEqual(self.check(self.at(change, 0, 5)), [])
+                self.assertEqual(
+                    self.check(self.at(change, 0, 4)),
+                    [
+                        "the protocol changed since the base but PROTOCOL_VERSION is still "
+                        "0.4; raise the minor"
+                    ],
+                )
+
+    def test_a_change_is_held_to_its_base_only_while_both_are_unstable(self) -> None:
+        # Leaving major 0 without raising the minor of a stable protocol
+        # would fail the release rules; between two commits it breaks none.
+        stable = {**COMMITTED, "protocol": {"major": 1, "minor": 0}}
+        for name, baseline, current, expected in [
+            ("both unstable", self.UNSTABLE, self.at(remove_method, 0, 4), 1),
+            ("entering major 0", stable, self.at(remove_method, 0, 1), 0),
+            ("leaving major 0", self.UNSTABLE, self.at(remove_method, 1, 0), 0),
+            ("both stable", stable, self.at(add_method, 1, 0), 0),
+        ]:
+            with self.subTest(name):
+                problems = check_protocol_compat.check(
+                    baseline, current, "the base", unstable_only=True
+                )
+                self.assertEqual(len(problems), expected, problems)
 
 
 class LatestReleaseTests(unittest.TestCase):
