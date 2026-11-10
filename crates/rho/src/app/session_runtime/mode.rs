@@ -11,6 +11,7 @@ use super::{
     SessionRuntime, SettingChangeError,
 };
 use crate::{
+    added_dirs::AddedDirs,
     app::{
         policy::AppPolicy,
         runtime_builder::{build_runtime_with_max_steps, RuntimeBuildOptions},
@@ -45,15 +46,18 @@ impl SessionRuntime {
         if self.permission.mode == mode {
             return Ok(());
         }
-        self.rebuild_for_mode(mode, process_config).await
+        let added = self.added_dirs.clone();
+        self.rebuild_runtime(mode, added, process_config).await
     }
 
     /// Rebuilds the SDK runtime to serve `mode` over the session's
-    /// workspace and added directories, and rebinds the session onto it.
-    /// On error the session keeps the runtime it had.
-    pub(super) async fn rebuild_for_mode(
+    /// workspace with `added` granted, rebinds the session onto it, and
+    /// records both as the session's. On error the session keeps the
+    /// runtime, mode and directories it had.
+    pub(super) async fn rebuild_runtime(
         &mut self,
         mode: PermissionMode,
+        added: AddedDirs,
         process_config: &Config,
     ) -> Result<(), SettingChangeError> {
         let mut config = model_scoped_config(&self.current_model(), process_config);
@@ -81,7 +85,7 @@ impl SessionRuntime {
             let workspace = WorkspaceOptions {
                 root: self.permission.workspace_root.clone(),
             }
-            .build_workspace(&self.added_dirs)
+            .build_workspace(&added)
             .map_err(|error| SettingChangeError::Apply(error.into()))?;
             // The whole run shape, as when the session opened: a mode change
             // keeps its step limit, attribution and hook labels.
@@ -147,7 +151,9 @@ impl SessionRuntime {
         }
         if let Some(manager) = self.built.tools.subagents() {
             manager.update_permission_mode(mode);
+            manager.update_added_dirs(added.clone());
         }
+        self.added_dirs = added;
         previous.shutdown();
         self.permission = SessionPermission {
             mode,

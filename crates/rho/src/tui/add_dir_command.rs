@@ -11,11 +11,9 @@ impl App {
     ) -> anyhow::Result<()> {
         let raw = invocation.args.trim();
         if raw.is_empty() {
-            // A daemon session's set arrives with its options.
-            let dirs = match self.info.session.daemon {
-                Some(_) => self.info.runtime.added_dirs.as_slice(),
-                None => agent.added_dirs().as_slice(),
-            };
+            // Kept current by each add here, and by a daemon session's
+            // options.
+            let dirs = self.info.runtime.added_dirs.as_slice();
             let listing = if dirs.is_empty() {
                 "none".to_string()
             } else {

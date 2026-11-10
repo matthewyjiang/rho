@@ -47,7 +47,8 @@ impl SessionRuntime {
         {
             return Err(AddDirError::Covered { dir, root });
         }
-        self.install_added_dirs(added.clone(), process_config)
+        let mode = self.permission.mode;
+        self.rebuild_runtime(mode, added.clone(), process_config)
             .await
             .map_err(AddDirError::Change)?;
         let new_files = self
@@ -62,7 +63,7 @@ impl SessionRuntime {
             if let Some(template) = self.built.prompt_template.as_mut() {
                 template.set_added_dirs(&previous);
             }
-            let error = match self.install_added_dirs(previous, process_config).await {
+            let error = match self.rebuild_runtime(mode, previous, process_config).await {
                 Ok(()) => error,
                 Err(rollback) => error.context(format!("rollback failed: {rollback}")),
             };
@@ -70,25 +71,8 @@ impl SessionRuntime {
         }
         Ok(())
     }
-
-    /// Rebinds the session onto a workspace granting `added`, which later
-    /// subagents are launched with too.
-    async fn install_added_dirs(
-        &mut self,
-        added: AddedDirs,
-        process_config: &Config,
-    ) -> Result<(), SettingChangeError> {
-        let previous = std::mem::replace(&mut self.added_dirs, added);
-        if let Err(error) = self
-            .rebuild_for_mode(self.permission.mode, process_config)
-            .await
-        {
-            self.added_dirs = previous;
-            return Err(error);
-        }
-        if let Some(manager) = self.built.tools.subagents() {
-            manager.update_added_dirs(self.added_dirs.clone());
-        }
-        Ok(())
-    }
 }
+
+#[cfg(test)]
+#[path = "added_dirs_tests.rs"]
+mod tests;

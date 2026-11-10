@@ -3,7 +3,7 @@
 
 use rho_protocol::SessionReport;
 
-use super::{App, Entry};
+use super::{App, ComposerMode, Entry};
 
 /// What the person asked to see, for the status line and a refusal.
 fn name(report: SessionReport) -> &'static str {
@@ -39,6 +39,10 @@ impl App {
         report: SessionReport,
         result: Result<serde_json::Value, String>,
     ) {
+        // A late answer must not replace what the person opened meanwhile.
+        if result.is_ok() && !matches!(self.input_ui.composer(), ComposerMode::Input) {
+            return;
+        }
         let shown = result.and_then(|value| match report {
             SessionReport::Context => serde_json::from_value(value)
                 .map(|report| self.show_context_report(report))
@@ -53,6 +57,7 @@ impl App {
                 "could not read {}: {error}",
                 name(report)
             )));
+            self.set_status_quiet(format!("could not read {}", name(report)));
         }
     }
 }
