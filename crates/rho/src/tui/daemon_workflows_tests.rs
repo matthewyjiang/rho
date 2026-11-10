@@ -20,6 +20,8 @@ fn drive(id: &str, run: RunId, created_at: u64) -> JobSummary {
         updated_at: created_at,
         error: None,
         queue: None,
+        grant: None,
+        grant_limit: None,
     }
 }
 
