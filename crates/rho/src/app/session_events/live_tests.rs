@@ -747,6 +747,18 @@ fn streamed_usage_repeats_the_steps_fill() {
         map_all(&mut live, &[streamed(), step(100), streamed()]),
         vec![usage(100), usage(100)]
     );
+
+    // It arrives between a reply's chunks, which stay one message.
+    let reply = map_all(&mut live, &[delta("Hel"), streamed(), delta("lo")]);
+    let messages: Vec<_> = reply
+        .iter()
+        .filter_map(|event| match event {
+            WireEvent::AgentMessageChunk { message, .. } => Some(message),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0], messages[1]);
 }
 
 // Covers: a background result's card carries its body as markdown, with

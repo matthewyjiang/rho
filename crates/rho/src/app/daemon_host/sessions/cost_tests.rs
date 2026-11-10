@@ -45,6 +45,31 @@ fn a_streaming_response_adds_to_the_ledger_only_what_it_has_not_recorded() {
     );
 }
 
+// Covers: a response the provider discards and retries leaves the run's
+// usage, but the cost shown does not fall back while the retry streams;
+// the next ledger read settles it.
+// Owner: daemon session usage pricing.
+#[test]
+fn a_discarded_response_does_not_lower_the_streaming_cost() {
+    let mut cost = turn();
+    cost.read_ledger(Some(5_000_000));
+    let streamed = [
+        cost.streaming(&billed(2_000_000)),
+        // The retry starts over from nothing.
+        cost.streaming(&billed(500_000)),
+        cost.streaming(&billed(2_500_000)),
+    ];
+    cost.read_ledger(Some(9_500_000));
+
+    assert_eq!(
+        (streamed, cost.streaming(&billed(2_500_000))),
+        (
+            [Some(7_000_000), Some(7_000_000), Some(7_500_000)],
+            Some(9_500_000)
+        )
+    );
+}
+
 // Covers: usage nobody can price adds no cost: a session with no priced
 // request still shows none, and one with a cost keeps it.
 // Owner: daemon session usage pricing.
