@@ -9,7 +9,8 @@ use super::daemon_environment;
 // one a daemon once inherited and acted on for every later session: project
 // trust, the hook marker, session depth and scope, the client's journal
 // stream, and its credentials: API keys, tokens, the credential store
-// choice, and the session bus its keyring is on. A variable nobody listed is
+// choice, its Ollama device key directory, and the session bus its keyring
+// is on. A variable nobody listed is
 // dropped too, which a denylist would keep.
 // Owner: daemon auto-spawn environment policy.
 #[test]
@@ -18,7 +19,6 @@ fn an_auto_started_daemon_keeps_only_allowed_variables() {
         ("HOME", "/home/dev"),
         ("PATH", "/usr/bin"),
         ("XDG_RUNTIME_DIR", "/run/user/1000"),
-        ("OLLAMA_DEVICE_KEY_DIR", "/home/dev/.ollama"),
         ("LANG", "C.UTF-8"),
         ("https_proxy", "http://proxy:3128"),
         ("RHO_LOG", "rho=debug"),
@@ -35,6 +35,7 @@ fn an_auto_started_daemon_keeps_only_allowed_variables() {
         ("VIRTUAL_ENV", "/work/.venv"),
         ("SSH_AUTH_SOCK", "/tmp/agent.sock"),
         ("RHO_CREDENTIAL_STORE", "file"),
+        ("OLLAMA_DEVICE_KEY_DIR", "/home/dev/.ollama"),
         ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus"),
         ("OPENAI_API_KEY", "sk-test"),
         ("RHO_CORP_API_KEY", "custom-host-key"),

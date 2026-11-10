@@ -246,6 +246,7 @@ async fn run(
     let auth = target.auth;
     // The client opens the URL, so the daemon launches no browser.
     let approved = drive::approve(
+        target.credentials.as_ref(),
         auth,
         flow_from_wire(flow),
         BrowserAvailability::Headless,
