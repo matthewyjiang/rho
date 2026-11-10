@@ -10,12 +10,12 @@ use std::{
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{AuthChooseStore, AuthKey, AuthLogin, AuthLogout, JobList, SessionPrompt, Status},
+    methods::{AuthChooseStore, AuthKey, AuthLogout, JobList, SessionPrompt, Status},
     AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse,
-    AuthLoginParams, AuthLogoutParams, AuthLogoutResponse, Client, ClientEnvironment, ClientError,
-    ContentBlock, CredentialStoreKind, CredentialStoreStatus, EnvironmentOverride, ErrorCode,
-    JobListParams, JobState, RpcError, SessionId, SessionPromptParams, StatusParams,
-    StoreSelectedBy, TurnError, TurnErrorKind, TurnOutcome,
+    AuthLogoutParams, AuthLogoutResponse, Client, ClientEnvironment, ClientError, ContentBlock,
+    CredentialStoreKind, CredentialStoreStatus, EnvironmentOverride, ErrorCode, JobListParams,
+    JobState, RpcError, SessionId, SessionPromptParams, StatusParams, StoreSelectedBy, TurnError,
+    TurnErrorKind, TurnOutcome,
 };
 use rho_providers::credentials::{CredentialStore, FileCredentialStore};
 use serde_json::Value;
@@ -371,7 +371,7 @@ async fn a_daemon_without_a_session_bus_fails_closed_until_a_client_chooses_the_
         "{headless:?}"
     );
     let login = client
-        .request::<AuthLogin>(&AuthLoginParams {
+        .request::<rho_protocol::methods::AuthLogin>(&rho_protocol::AuthLoginParams {
             auth: "xai-oauth".into(),
             flow: None,
             environment: ClientEnvironment::default(),

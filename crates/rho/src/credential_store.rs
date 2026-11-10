@@ -296,12 +296,20 @@ pub(crate) fn initialize_from_config(
 /// sign-in or sign-out (see `app::credential_writes`), and for a session the
 /// daemon opens, whose config may have chosen another store since the daemon
 /// started. Unlike [`initialize_from_config`] it runs no migrations and
-/// writes nothing, so it is safe beside startup or a live session.
+/// writes nothing, so it is safe beside startup or a live session. A store
+/// that cannot be opened closes the one open before, so reads fail with the
+/// same error instead of going on in a store config no longer selects.
 #[cfg(unix)]
 pub(crate) fn activate_from_config(config: &Config, config_path: &Path) -> anyhow::Result<()> {
     remember_config_path(config_path);
-    activate(resolve_backend(config.credential_store)?)?;
-    Ok(())
+    let opened = resolve_backend(config.credential_store).and_then(activate);
+    if opened.is_err() {
+        process_state()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .store = None;
+    }
+    Ok(opened?)
 }
 
 /// Build a choice request when login still needs an explicit backend

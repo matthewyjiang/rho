@@ -129,7 +129,8 @@ impl SessionCredentials {
 impl SessionRuntime {
     /// Rebuilds a stale provider for the same model and auth. Still-missing
     /// credentials fail with the typed provider error, which hosts report as
-    /// a sign-in request again.
+    /// a sign-in request again; the caller notes the failure
+    /// ([`Self::note_credential_failure`]), so the next prompt rereads.
     pub(super) async fn renew_stale_credentials(
         &mut self,
         process_config: &Config,
@@ -154,17 +155,11 @@ impl SessionRuntime {
         // A keyless login lives in config, which `logout` edits on disk.
         let login_config =
             crate::app::endpoint_login::with_disk_login(&config, &self.build.launch.config_path)?;
-        let built = build_provider_from_config_ensuring_catalog(
+        let provider = build_provider_from_config_ensuring_catalog(
             &login_config,
             self.build.host.environment.credentials(),
         )
-        .await
-        .map_err(anyhow::Error::new);
-        // With nothing to build with, as after a logout, the read above
-        // cached the miss, and the login that fixes it may run in another
-        // process: the next prompt rereads.
-        self.note_credential_failure(&built);
-        let provider = built?;
+        .await?;
         // The model switch path also rebinds the compactor, which holds its
         // own provider. The model is unchanged, so no switch notice is saved.
         self.switch_provider(provider, &config, read)

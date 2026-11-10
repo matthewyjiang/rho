@@ -19,7 +19,10 @@ use rho_protocol::{
 use rho_providers::credentials::CredentialStore;
 use rho_tui_pty::{Key, PtyHarness, PtySize, RhoLaunchPlan, WaitTimeout};
 
-use super::auth::{rpc_error, store_status, Fixture, FIRST_KEY, KEY_ACCOUNT};
+use super::{
+    auth::{rpc_error, store_status, Fixture, FIRST_KEY, KEY_ACCOUNT},
+    sessions::DEADLINE,
+};
 
 /// The variable that chooses a rho process's credential store, which the
 /// sandbox sets for every rho it starts.
@@ -94,14 +97,20 @@ async fn rho_login_from_a_headless_shell_signs_in_the_daemons_next_session() {
 
     at_terminal(&mut |login| {
         login
-            .wait_for_text("input hidden", WaitTimeout::secs(20, "key prompt"))
+            .wait_for_text(
+                "input hidden",
+                WaitTimeout::secs(DEADLINE.as_secs(), "key prompt"),
+            )
             .unwrap();
         login.type_text(FIRST_KEY).unwrap();
         login.inject_key(&Key::Enter).unwrap();
         // The file store is what Enter takes only when the OS store is not
         // offered.
         login
-            .wait_for_text("(default 2)", WaitTimeout::secs(20, "store prompt"))
+            .wait_for_text(
+                "(default 2)",
+                WaitTimeout::secs(DEADLINE.as_secs(), "store prompt"),
+            )
             .unwrap();
     });
     // `rho login` asked the daemon it started about its store, so it answers.
@@ -115,7 +124,7 @@ async fn rho_login_from_a_headless_shell_signs_in_the_daemons_next_session() {
         login.inject_key(&Key::Enter).unwrap();
         exit = Some(
             login
-                .wait_for_exit(WaitTimeout::secs(30, "rho login exits"))
+                .wait_for_exit(WaitTimeout::secs(DEADLINE.as_secs(), "rho login exits"))
                 .unwrap(),
         );
     });

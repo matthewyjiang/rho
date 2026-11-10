@@ -291,7 +291,7 @@ The key travels only over the daemon's socket, which only its user can open, and
 
 A browser login waits on a callback port on the daemon's machine, so a client on another machine should ask for `device_code`; a provider with no device flow, such as OpenRouter, runs its browser login either way. The credential is saved as `rho/auth/key` saves a key, and every session the daemon runs uses it from its next prompt.
 
-One login per auth profile runs at a time, whichever client started it: another gets `LoginBusy` until it ends. A login ends when the provider approves or refuses it, when `rho/auth/login_cancel` cancels it, or when the connection that started it closes; the last sends no `rho/auth/login_finished`, since nobody is left to read it. Once the provider approved, the daemon saves the credential even if the client leaves. `rho/auth/login_cancel` for a login that already ended gets `LoginNotFound`. An `auth` that takes an API key, or none, gets `InvalidParams`.
+One login per auth profile runs at a time, whichever client started it: another gets `LoginBusy` until it ends. A login ends when the provider approves or refuses it, when `rho/auth/login_cancel` cancels it, or when the connection that started it closes; the last sends no `rho/auth/login_finished`, since nobody is left to read it. Once the provider approved, the daemon saves the credential even if the client leaves. `rho/auth/login_cancel` for a login that already ended gets `LoginNotFound`. An `auth` that takes an API key, or none, gets `InvalidParams`. When the daemon cannot reach the store the login would be saved in, `rho/auth/login` refuses with `CredentialStoreUnavailable` before the provider is asked, so no prompt follows.
 
 ### Credential store
 
