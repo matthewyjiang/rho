@@ -82,6 +82,30 @@ fn scan_fallback_resolves_one_nested_run() {
     );
 }
 
+// Covers: a run one process indexed under the home's real path resolves
+// for a process that reaches the same home through a symlink, as a TUI
+// does for the runs its daemon reserves where the temporary directory is
+// one (macOS).
+// Owner: subagent run storage
+#[cfg(unix)]
+#[test]
+fn an_indexed_run_resolves_through_another_spelling_of_the_home() {
+    let temp = TempDir::new().unwrap();
+    let real = temp.path().canonicalize().unwrap().join("real");
+    fs::create_dir(&real).unwrap();
+    let linked = temp.path().join("linked");
+    std::os::unix::fs::symlink(&real, &linked).unwrap();
+    let placement =
+        RunPlacement::for_parent_session("parent", Some(create_session_subagents(&real)));
+    let (id, directory) =
+        reserve_in_default_workspace(&real, &placement, || "abc123".into()).unwrap();
+
+    assert_eq!(
+        resolve_run_directory_in_root(&linked, &id).unwrap(),
+        directory
+    );
+}
+
 #[test]
 fn concurrent_index_initialization_is_idempotent() {
     let temp = TempDir::new().unwrap();
