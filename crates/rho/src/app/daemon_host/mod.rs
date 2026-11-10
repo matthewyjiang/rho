@@ -249,12 +249,14 @@ impl Service for DaemonHost {
             in_progress: self.in_progress(),
             clients: self.clients.load(Ordering::Relaxed),
         };
-        // That client may now stop this daemon, so its log says why.
+        // That client stops this daemon when the restart is free, so the
+        // log says whether it may.
         tracing::info!(
             %client,
             in_progress = cost.in_progress,
             clients = cost.clients,
-            "refused a client of a newer protocol; it replaces a daemon with nothing in progress and no other client"
+            may_replace = cost.is_free(),
+            "refused a client of a newer protocol"
         );
         cost
     }
