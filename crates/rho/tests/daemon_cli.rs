@@ -15,7 +15,8 @@
 //! re-executing the daemon in place, for an upgrade or `rho daemon
 //! restart`, is in [`upgrade`]; what a client of another version hears at
 //! the handshake is in [`skew`]; what a daemon takes from the client that
-//! starts it, and each session's project trust, is in [`identity`].
+//! starts it, and each session's project trust, is in [`identity`]; what
+//! `rho doctor` reports about it is in [`doctor`].
 #![cfg(unix)]
 
 use std::{
@@ -77,6 +78,9 @@ mod identity;
 
 #[path = "support/daemon_grants.rs"]
 mod grants;
+
+#[path = "support/daemon_doctor.rs"]
+mod doctor;
 
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;
