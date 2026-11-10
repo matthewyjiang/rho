@@ -462,6 +462,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     fast_discovery::DAEMON_FAST_DISCOVERY_SCENARIO,
     #[cfg(unix)]
+    fast_discovery::DAEMON_FAST_OFF_SCENARIO,
+    #[cfg(unix)]
     command_palette::DAEMON_TAB_COMPLETE_SCENARIO,
     #[cfg(unix)]
     workspace_rewind::DAEMON_WORKSPACE_REWIND_OFF_SCENARIO,

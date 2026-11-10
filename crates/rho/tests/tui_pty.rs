@@ -1227,6 +1227,7 @@ fn daemon_commands_match_the_in_process_palette_and_replies() {
     for scenario in [
         "daemon_tab_complete_enter_bare_command",
         "daemon_fast_command_discovery",
+        "daemon_fast_off_without_fast_mode",
         "daemon_workspace_rewind_off",
         "daemon_permission_cycle_queued",
     ] {

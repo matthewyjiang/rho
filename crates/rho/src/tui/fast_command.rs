@@ -62,14 +62,7 @@ impl App {
         };
 
         if requested && !supported {
-            let message =
-                if provider == "xai" && model == rho_providers::providers::fast_mode::GROK_4_7 {
-                    "fast mode for xai/grok-4.7 requires SpaceXAI OAuth".to_string()
-                } else {
-                    format!("fast mode is not available for {provider}/{model}")
-                };
-            self.insert_entry(&Entry::Error(message));
-            self.set_status("fast mode unavailable");
+            self.refuse_fast_mode();
             return Ok(false);
         }
 
@@ -94,6 +87,20 @@ impl App {
 
         self.report_fast_mode(requested, supported);
         Ok(false)
+    }
+
+    /// Says the session's model has no fast mode to turn on.
+    pub(super) fn refuse_fast_mode(&mut self) {
+        let provider = &self.info.runtime.provider;
+        let model = &self.info.runtime.model;
+        let message = if provider == "xai" && model == rho_providers::providers::fast_mode::GROK_4_7
+        {
+            "fast mode for xai/grok-4.7 requires SpaceXAI OAuth".to_string()
+        } else {
+            format!("fast mode is not available for {provider}/{model}")
+        };
+        self.insert_entry(&Entry::Error(message));
+        self.set_status("fast mode unavailable");
     }
 
     pub(super) fn report_fast_mode(&mut self, enabled: bool, supported: bool) {

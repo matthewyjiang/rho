@@ -119,10 +119,9 @@ impl App {
         // reasoning level the daemon gave the new model.
         let switched = self.daemon_options.as_ref().is_some_and(|shown| {
             shown.model.current != options.model.current
-                && self
-                    .daemon_option_requests
-                    .iter()
-                    .any(|change| matches!(change, SessionChange::Model { .. }))
+                && self.daemon_option_requests.iter().any(|change| {
+                    matches!(change, SessionChange::Model { model, .. } if *model == options.model.current)
+                })
         });
         if switched {
             self.set_status(format!(
@@ -169,14 +168,11 @@ impl App {
             .expect("daemon setting requires a session");
         match session.configure(change.clone()) {
             Ok(()) => {
-                // Only cycling intent is projected through pending requests.
-                // Visible state remains the daemon's acknowledged options.
-                self.daemon_option_requests.push_back(change);
                 if self.turn.is_provider_turn() {
                     // In the words an in-process turn queues the same
                     // change with.
-                    self.set_status(match self.daemon_option_requests.back() {
-                        Some(SessionChange::PermissionMode { mode }) => {
+                    self.set_status(match &change {
+                        SessionChange::PermissionMode { mode } => {
                             match PermissionMode::try_from(*mode) {
                                 Ok(mode) => format!(
                                     "permission mode {} queued for next turn",
@@ -185,13 +181,16 @@ impl App {
                                 Err(_) => QUEUED_CHANGE.to_owned(),
                             }
                         }
-                        Some(SessionChange::Model { model, .. }) => format!(
+                        SessionChange::Model { model, .. } => format!(
                             "model change to {} queued for after this run",
                             rho_providers::provider::model_reference(&model.provider, &model.model)
                         ),
                         _ => QUEUED_CHANGE.to_owned(),
                     });
                 }
+                // Only cycling intent is projected through pending requests.
+                // Visible state remains the daemon's acknowledged options.
+                self.daemon_option_requests.push_back(change);
             }
             Err(error) => self.insert_entry(&Entry::Error(format!(
                 "could not change the {}: {error}",
@@ -437,19 +436,20 @@ impl App {
                 return Ok(());
             }
         };
-        if enabled && current.is_none() {
-            self.insert_entry(&Entry::Error(format!(
-                "fast mode is not available for {}/{}",
-                self.info.runtime.provider, self.info.runtime.model
-            )));
+        let supported = current.is_some();
+        if enabled && !supported {
+            self.refuse_fast_mode();
             return Ok(());
         }
-        // Off already, on a model with no fast mode: nothing to ask for.
-        let supported = current.is_some();
-        if supported {
-            self.configure_daemon(SessionChange::FastMode { enabled })?;
+        // The preference outlives a switch to a model with no fast mode,
+        // so turning it off is always sent.
+        let asked = self.daemon_option_requests.len();
+        self.configure_daemon(SessionChange::FastMode { enabled })?;
+        // A change that was not sent has said why, and one sent mid-turn
+        // has said it is queued.
+        if self.daemon_option_requests.len() > asked && !self.turn.is_provider_turn() {
+            self.report_fast_mode(enabled, supported);
         }
-        self.report_fast_mode(enabled, supported);
         Ok(())
     }
 
