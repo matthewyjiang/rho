@@ -12,7 +12,7 @@ use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundAgent},
     session_assembly::{
         assemble_session, ApprovalInputs, BuiltSession, HookStart, SessionApproval,
-        SessionAssemblyOptions,
+        SessionAssemblyOptions, SignIn,
     },
     tools_prompt::{McpSamplingSupport, ToolSourceAttach},
 };
@@ -240,6 +240,7 @@ async fn assemble_side_session(launch: &SideChatLaunch) -> anyhow::Result<BuiltS
         mcp_sampling: McpSamplingSupport::Unavailable,
         tool_source_attach: ToolSourceAttach::None,
         hook_start: HookStart::Start,
+        sign_in: SignIn::Required,
         mcp_authorization: crate::tools::mcp::McpAuthorizationMode::NonInteractive,
         diagnostics: &diagnostics,
         agent: &agent,

@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     app::workflow_runtime::RecoveryDecision,
-    session_environment::Ambient,
+    session_environment::SessionEnvironment,
     workflow::{
         normalize_workflow, validate_runtime_budgets, validate_workflow, verify_directory_identity,
         verify_executable_identity, CollectedSources, Digest, FrozenSchedulerSettings,
@@ -17,6 +17,7 @@ use crate::{
         SourceCollector, StoredPlan, StoredRun, WorkflowService, WorkflowStore, WorkflowValue,
         FROZEN_WORKFLOW_SCHEMA_VERSION,
     },
+    workspace::ProjectTrusts,
 };
 
 use super::{
@@ -49,22 +50,30 @@ pub(crate) struct WorkflowOps {
     /// interpreters on, and rechecks find interpreters on again: that of
     /// the environment runs start in (#1659).
     search_path: Option<OsString>,
+    /// The project trust those runs have (#1779): planning finds project
+    /// agents under it, and a recheck holds a plan to it.
+    project_trust: ProjectTrusts,
+    /// The credentials those runs have, which decide the models planning
+    /// binds agent nodes to.
+    credentials: std::sync::Arc<dyn rho_providers::credentials::CredentialStore>,
 }
 
 impl WorkflowOps {
     /// Workflow operations in `workspace`, for runs that start in
-    /// `environment`.
+    /// `environment`: this process's, or a session's snapshot.
     pub(crate) fn open(
         workspace: PathBuf,
         config_path: Option<PathBuf>,
-        environment: &Ambient,
+        environment: &SessionEnvironment,
     ) -> anyhow::Result<Self> {
         let workspace = workspace.canonicalize()?;
         Ok(Self {
             service: WorkflowService::new(WorkflowStore::new(&crate::paths::rho_dir()?)?),
             workspace,
             config_path,
-            search_path: environment.path(),
+            search_path: environment.current().path(),
+            project_trust: environment.project_trust(),
+            credentials: environment.credentials(),
         })
     }
 
@@ -107,6 +116,8 @@ impl WorkflowOps {
             available_tools,
             entry,
             self.search_path.as_deref(),
+            self.project_trust,
+            self.credentials.as_ref(),
         )?;
         self.prepare_from_sources(sources, inputs, &host, limits)
             .await
@@ -206,6 +217,7 @@ impl WorkflowOps {
             &plan.graph,
             self.config_path.clone(),
             self.search_path.as_deref(),
+            self.project_trust,
         )
     }
 
@@ -230,6 +242,7 @@ impl WorkflowOps {
             &run.graph,
             self.config_path.clone(),
             self.search_path.as_deref(),
+            self.project_trust,
         )
     }
 
@@ -362,6 +375,7 @@ fn recheck_frozen_graph(
     graph: &FrozenWorkflow,
     config_path: Option<PathBuf>,
     search_path: Option<&OsStr>,
+    project_trust: ProjectTrusts,
 ) -> anyhow::Result<()> {
     validate_workflow(graph)?;
     validate_runtime_budgets(graph, &planner_worker::planning_limits()?)?;
@@ -386,15 +400,13 @@ fn recheck_frozen_graph(
             ),
             (None, _) => {}
         }
-        if agent.trust_required && !crate::workspace::ProjectTrust::from_agents_env().is_trusted() {
+        if agent.trust_required && !project_trust.agents.is_trusted() {
             anyhow::bail!(
                 "workflow plan requires trusted project agent '{}'; trust is not active",
                 agent.agent_id
             );
         }
-        if agent.plugin_trust_required
-            && !crate::workspace::ProjectTrust::from_plugins_env().is_trusted()
-        {
+        if agent.plugin_trust_required && !project_trust.plugins.is_trusted() {
             anyhow::bail!(
                 "workflow plan requires trusted project plugin agent '{}'; plugin trust is not active",
                 agent.agent_id

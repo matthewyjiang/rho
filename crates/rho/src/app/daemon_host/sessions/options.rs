@@ -6,13 +6,12 @@
 use std::sync::Arc;
 
 use rho_protocol as wire;
-use rho_providers::credentials::available_auth_modes;
+use rho_providers::credentials::{available_auth_modes, CredentialStore};
 
 use super::{turn::DAEMON_COMMANDS, LoadedSession, Sessions};
 use crate::{
     app::{session_options, session_runtime::SessionRuntime},
     config::Config,
-    credential_store::AppCredentialStore,
 };
 
 impl LoadedSession {
@@ -45,13 +44,13 @@ impl Sessions {
     /// refresh there read the auths before the write. The runtime's lock
     /// is fair, so refreshes for later writes queue after this one's.
     pub(in crate::app::daemon_host) async fn refresh_all_options(&self) {
-        let auths: Arc<[String]> = available_auths().await.into();
         let sessions: Vec<Arc<LoadedSession>> = self.loaded().values().cloned().collect();
         for session in sessions {
-            let auths = Arc::clone(&auths);
             tokio::spawn(async move {
                 // `None` once the daemon's stop or the idle unload took it.
                 if let Some(runtime) = session.runtime.lock().await.as_ref() {
+                    // Each session's own: their clients' credentials differ.
+                    let auths = available_auths(runtime.credentials()).await;
                     session.refresh_options(runtime, &auths);
                 }
             });
@@ -59,10 +58,11 @@ impl Sessions {
     }
 }
 
-/// The auths the credential store can use, read off the async workers: a
-/// locked OS keyring blocks its reader, as `daemon_host/auth.rs` notes.
-pub(super) async fn available_auths() -> Vec<String> {
-    match tokio::task::spawn_blocking(|| available_auth_modes(&AppCredentialStore)).await {
+/// The auths `credentials`, a session's, can use, read off the async
+/// workers: a locked OS keyring blocks its reader, as `daemon_host/auth.rs`
+/// notes.
+pub(super) async fn available_auths(credentials: Arc<dyn CredentialStore>) -> Vec<String> {
+    match tokio::task::spawn_blocking(move || available_auth_modes(credentials.as_ref())).await {
         Ok(auths) => auths,
         Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
         // Cancelled before it ran: the runtime is shutting down, and no

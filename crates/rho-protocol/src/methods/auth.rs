@@ -11,6 +11,8 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::ClientEnvironment;
+
 /// List the auth profiles a client can sign the daemon in to. The ACP
 /// adapter's `initialize` reads it for its auth methods (#1670).
 pub const AUTH_LIST: &str = "rho/auth/list";
@@ -21,7 +23,14 @@ pub const AUTH_LOGOUT: &str = "rho/auth/logout";
 
 /// Params of [`AUTH_LIST`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct AuthListParams {}
+pub struct AuthListParams {
+    /// The asking client's environment, whose credential variables and
+    /// `RHO_CREDENTIAL_STORE` are that client's sessions' (#1779): a profile one of its
+    /// variables holds a credential for is listed as signed in.
+    /// An empty one names no store and holds no credential, so the daemon's
+    /// own store is used.
+    pub environment: ClientEnvironment,
+}
 
 /// Result of [`AUTH_LIST`]: every auth profile that takes a credential, as
 /// the TUI's `/login` picker and ACP's auth methods offer them, with the
@@ -89,6 +98,14 @@ pub struct AuthKeyParams {
     pub auth: String,
     /// The API key. Surrounding whitespace is ignored.
     pub key: String,
+    /// The asking client's environment, whose credential variables and
+    /// `RHO_CREDENTIAL_STORE` are that client's sessions' (#1779): the key is saved to the
+    /// store it chooses, and refused as
+    /// [`crate::ErrorCode::EnvironmentOverride`] when one of its variables
+    /// already holds the profile's credential.
+    /// An empty one names no store and holds no credential, so the daemon's
+    /// own store is used.
+    pub environment: ClientEnvironment,
 }
 
 impl fmt::Debug for AuthKeyParams {
@@ -97,6 +114,7 @@ impl fmt::Debug for AuthKeyParams {
             .debug_struct("AuthKeyParams")
             .field("auth", &self.auth)
             .field("key", &"[redacted]")
+            .field("environment", &self.environment)
             .finish()
     }
 }
@@ -156,6 +174,14 @@ pub struct AuthLogoutParams {
     /// The auth profile to sign out of. Its provider's endpoint login, as
     /// Ollama records one, is forgotten too.
     pub auth: String,
+    /// The asking client's environment, whose credential variables and
+    /// `RHO_CREDENTIAL_STORE` are that client's sessions' (#1779): the credential is deleted
+    /// from the store it chooses, and the request refused as
+    /// [`crate::ErrorCode::EnvironmentOverride`] when one of its variables
+    /// holds the profile's credential.
+    /// An empty one names no store and holds no credential, so the daemon's
+    /// own store is used.
+    pub environment: ClientEnvironment,
 }
 
 /// Result of [`AUTH_LOGOUT`]: the auth profile's saved credentials are
@@ -168,7 +194,9 @@ pub struct AuthLogoutResponse {}
 /// The `data` of a [`crate::ErrorCode::EnvironmentOverride`] error.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EnvironmentOverride {
-    /// The variable in the daemon's environment that holds the auth
-    /// profile's credential, such as `OPENAI_API_KEY`.
+    /// The variable in the asking client's environment that holds the auth
+    /// profile's credential, such as `OPENAI_API_KEY`, or the
+    /// `RHO_CREDENTIAL_STORE` that chooses the credential store, in the
+    /// client's environment or the daemon's own.
     pub variable: String,
 }

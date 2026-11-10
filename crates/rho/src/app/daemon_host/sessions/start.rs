@@ -9,8 +9,8 @@
 //! the first one does.
 
 use rho_protocol::{
-    ErrorCode, IdempotencyKey, RpcError, SessionPromptParams, SessionPromptResponse, SessionSetup,
-    TurnId,
+    ErrorCode, IdempotencyKey, ProjectTrustMismatch, RpcError, SessionPromptParams,
+    SessionPromptResponse, SessionSetup, TurnId,
 };
 use rho_sdk::CancellationToken;
 use tokio::sync::watch;
@@ -26,7 +26,10 @@ use super::{
     stopping, Hold, KeyedTurn, LoadedSession, OpenWith, PromptStart, Queued, Sessions, TurnKind,
     TurnLimit, TurnSlot, TurnTask,
 };
-use crate::app::{prompt_content, session_runtime::SessionRuntime};
+use crate::{
+    app::{prompt_content, session_runtime::SessionRuntime},
+    session_environment::TrustMismatch,
+};
 
 /// A turn a prompt started, which its [`TurnTask`] runs.
 pub(super) struct StartedTurn {
@@ -39,6 +42,42 @@ pub(super) struct StartedTurn {
     pub(super) budget: Option<TurnBudget>,
     /// Told how the turn began, once it has (see [`PromptStart`]).
     pub(super) start: watch::Sender<PromptStart>,
+}
+
+/// The error for a prompt whose client's project trust is not its
+/// session's, naming the variables that differ and what the client can do.
+fn trust_mismatch(mismatch: &TrustMismatch) -> RpcError {
+    let TrustMismatch {
+        session_only,
+        other_only,
+    } = mismatch;
+    let mut differences = Vec::new();
+    if !session_only.is_empty() {
+        differences.push(format!(
+            "the session trusts its project through {}, which this client's environment does not set",
+            session_only.join(", ")
+        ));
+    }
+    if !other_only.is_empty() {
+        differences.push(format!(
+            "this client's environment sets {}, which the session was opened without",
+            other_only.join(", ")
+        ));
+    }
+    let names = |variables: &[&str]| variables.iter().map(|&name| name.to_owned()).collect();
+    let data = serde_json::to_value(ProjectTrustMismatch {
+        session_only: names(session_only),
+        client_only: names(other_only),
+    })
+    .expect("a project trust mismatch serializes");
+    RpcError::new(
+        ErrorCode::ProjectTrustMismatch,
+        format!(
+            "{}, so the prompt did not run: open a session of your own, or prompt with the session's RHO_TRUST_PROJECT_* variables",
+            differences.join(", and ")
+        ),
+    )
+    .with_data(data)
 }
 
 /// How a prompt entered its session.
@@ -146,6 +185,11 @@ impl Sessions {
             Some(Hold::Configuring(_)) | None => {}
             Some(Hold::Deleting) => return Err(being_deleted()),
         }
+        // Before anything of the session changes: its job, its feed, and
+        // the clients attached to it stay as they were.
+        if let Some(mismatch) = session.environment.trust_mismatch(&with.environment) {
+            return Err(trust_mismatch(&mismatch));
+        }
         if let Some(sent) = turn
             .keyed
             .as_ref()
@@ -194,7 +238,8 @@ impl Sessions {
             }
         };
         // The turn's processes and hooks, and later turns' until another
-        // prompt, start in the prompting client's environment.
+        // prompt, start in the prompting client's environment, whose
+        // project trust is the session's.
         session.environment.replace(with.environment.clone());
         turn.cancel = CancellationToken::new();
         turn.kind = TurnKind::Prompt;

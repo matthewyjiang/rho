@@ -36,6 +36,8 @@ pub(crate) struct TitleJob {
     sdk_session_id: rho_sdk::SessionId,
     stored_id: String,
     cwd: PathBuf,
+    /// The session's credentials, which the title model signs in with.
+    credentials: std::sync::Arc<dyn rho_providers::credentials::CredentialStore>,
 }
 
 /// How far a runtime got asking to name its session: it asks once, from
@@ -61,6 +63,7 @@ impl TitleJob {
             sdk_session_id,
             stored_id,
             cwd,
+            credentials,
         } = self;
         match StoredSession::title_is_set(&cwd, &stored_id) {
             Ok(true) => return None,
@@ -75,6 +78,7 @@ impl TitleJob {
             input,
             sdk_session_id,
             cwd.clone(),
+            credentials,
             usage_recording,
             CancellationToken::new(),
         )
@@ -115,6 +119,7 @@ impl SessionRuntime {
             sdk_session_id: self.built.session.id().clone(),
             stored_id: stored.id().to_owned(),
             cwd: self.storage.cwd().to_path_buf(),
+            credentials: self.build.host.environment.credentials(),
         });
     }
 

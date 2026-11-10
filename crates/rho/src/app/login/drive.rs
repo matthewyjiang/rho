@@ -20,10 +20,7 @@ use rho_providers::{
     provider::ProviderDescriptor,
 };
 
-use crate::{
-    app::{config_repository::ConfigRepository, endpoint_login},
-    credential_store::AppCredentialStore,
-};
+use crate::app::{config_repository::ConfigRepository, endpoint_login};
 
 /// The flow a login to `auth` runs: the device code when `device_auth`
 /// asks for it, else the one the provider prefers where a browser is
@@ -70,17 +67,18 @@ pub(in crate::app) enum Approval {
 }
 
 impl Approval {
-    /// Saves it to the credential store in use, and records the login of
-    /// `descriptor`'s provider when it is logged in through its endpoint
-    /// (Ollama) in `repository`'s config. Blocks on both.
+    /// Saves it to `credentials`, those of whoever signed in, and records
+    /// the login of `descriptor`'s provider when it is logged in through its
+    /// endpoint (Ollama) in `repository`'s config. Blocks on both.
     pub(in crate::app) fn save(
         self,
         descriptor: ProviderDescriptor,
         repository: &ConfigRepository,
+        credentials: &dyn rho_providers::credentials::CredentialStore,
     ) -> anyhow::Result<()> {
         match self {
-            Self::Confirmed(completed) => completed.save(&AppCredentialStore)?,
-            Self::Unconfirmed(authentication) => authentication.accept(&AppCredentialStore)?,
+            Self::Confirmed(completed) => completed.save(credentials)?,
+            Self::Unconfirmed(authentication) => authentication.accept(credentials)?,
         }
         endpoint_login::record(repository, descriptor)
     }

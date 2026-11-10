@@ -41,6 +41,7 @@ impl SessionRuntime {
                 cancellation,
                 session_id: self.session_id(),
                 workspace_path: self.workspace_root(),
+                credentials: self.build.host.environment.credentials(),
             },
             self.built.runtime.usage_recording(),
         )

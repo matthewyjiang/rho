@@ -72,6 +72,7 @@ pub(super) fn compactor(
         recall: None,
         todo: None,
         code_mode: None,
+        credentials: Arc::new(crate::credential_store::AppCredentialStore),
     })
     .0
 }
@@ -424,6 +425,7 @@ fn tiered_compactor(
         recall,
         todo: None,
         code_mode: None,
+        credentials: Arc::new(crate::credential_store::AppCredentialStore),
     })
     .0;
     (compactor, diagnostics)

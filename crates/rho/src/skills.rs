@@ -17,6 +17,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::workspace::ProjectTrusts;
+
 pub(crate) mod mention;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,9 +82,11 @@ const BUILTIN_SKILLS: &[&str] = &[
     include_str!("builtin_skills/rho-workflow-authoring/SKILL.md"),
 ];
 
-pub fn discover(cwd: &Path) -> Vec<Skill> {
+/// The skills of `cwd`'s workspace and the user's. Project plugins' are
+/// included only under `trust`'s plugin trust.
+pub fn discover(cwd: &Path, trust: ProjectTrusts) -> Vec<Skill> {
     let home = crate::paths::home_dir();
-    discover_with_home(cwd, home.as_deref())
+    discover_with_home(cwd, home.as_deref(), trust)
 }
 
 pub(crate) fn find_builtin(name: &str) -> Option<Skill> {
@@ -91,8 +95,8 @@ pub(crate) fn find_builtin(name: &str) -> Option<Skill> {
         .find(|skill| skill.name == name)
 }
 
-pub fn discover_with_home(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
-    let plugin_skills = crate::plugins::skills_by_precedence(cwd, home);
+pub fn discover_with_home(cwd: &Path, home: Option<&Path>, trust: ProjectTrusts) -> Vec<Skill> {
+    let plugin_skills = crate::plugins::skills_by_precedence(cwd, home, trust);
     discover_with_plugin_skills(cwd, home, plugin_skills)
 }
 
@@ -353,7 +357,7 @@ mod tests {
     #[test]
     fn discovers_embedded_skills() {
         let root = TempDir::new().unwrap();
-        let skills = discover_with_home(root.path(), None);
+        let skills = discover_with_home(root.path(), None, ProjectTrusts::UNTRUSTED);
 
         for (name, disable_model_invocation) in [
             ("rho-config", false),
@@ -396,7 +400,8 @@ mod tests {
             "project desc",
         );
 
-        let skills = discover_with_home(project.path(), Some(home.path()));
+        let skills =
+            discover_with_home(project.path(), Some(home.path()), ProjectTrusts::UNTRUSTED);
 
         let names: Vec<_> = skills.iter().map(|skill| skill.name.as_str()).collect();
         assert_eq!(
@@ -442,7 +447,7 @@ mod tests {
             "child desc",
         );
 
-        let skills = discover_with_home(&child, Some(home.path()));
+        let skills = discover_with_home(&child, Some(home.path()), ProjectTrusts::UNTRUSTED);
 
         assert!(
             skills.iter().any(|skill| skill.name == "project-skill"),
@@ -483,7 +488,8 @@ mod tests {
             std::fs::create_dir_all(&skill_dir).unwrap();
             std::fs::write(skill_dir.join("SKILL.md"), contents).unwrap();
 
-            let skills = discover_with_home(root.path(), Some(root.path()));
+            let skills =
+                discover_with_home(root.path(), Some(root.path()), ProjectTrusts::UNTRUSTED);
             assert_only_builtins_excluding(&skills, rejected);
         }
     }
@@ -505,7 +511,8 @@ mod tests {
             "second desc",
         );
 
-        let skills = discover_with_home(project.path(), Some(home.path()));
+        let skills =
+            discover_with_home(project.path(), Some(home.path()), ProjectTrusts::UNTRUSTED);
 
         let duplicates: Vec<_> = skills
             .iter()

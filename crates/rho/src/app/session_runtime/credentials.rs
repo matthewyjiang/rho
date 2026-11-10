@@ -13,8 +13,6 @@
 //! a refusal picks up a `rho login` run elsewhere, and a logout fails the
 //! prompt with the typed provider error, as missing credentials do.
 
-use std::sync::Arc;
-
 use rho_providers::model::ModelError;
 
 use super::{model_scoped_config, SessionRuntime};
@@ -156,7 +154,7 @@ impl SessionRuntime {
             crate::app::endpoint_login::with_disk_login(&config, &self.build.launch.config_path)?;
         let provider = build_provider_from_config_ensuring_catalog(
             &login_config,
-            Arc::new(AppCredentialStore),
+            self.build.host.environment.credentials(),
         )
         .await?;
         // The model switch path also rebinds the compactor, which holds its

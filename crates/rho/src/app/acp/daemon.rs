@@ -47,6 +47,7 @@ pub(super) fn daemon_error(error: &ClientError) -> AcpError {
             | ErrorCode::SessionInUse
             | ErrorCode::LoginBusy
             | ErrorCode::EnvironmentOverride
+            | ErrorCode::ProjectTrustMismatch
             | ErrorCode::InvalidRequest,
         ) => AcpError::invalid_request(),
         Some(ErrorCode::DaemonStopping) => {

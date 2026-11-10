@@ -13,7 +13,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
     cli::{Cli, WorkflowCommand, WorkflowDocumentFormat, WorkflowRunFormat},
-    session_environment::Ambient,
+    session_environment::SessionEnvironment,
     workflow::{
         CollectedSources, Diagnostic, InputName, PlanInventory, PlanInventoryItem,
         PlanningLimitValues, PlanningLimits, RunInventory, RunInventoryItem, SourceManifest,
@@ -149,7 +149,7 @@ fn run_list(
     let ops = WorkflowOps::open(
         std::env::current_dir()?,
         /*config_path*/ None,
-        &Ambient::ThisProcess,
+        &SessionEnvironment::default(),
     )?;
     let include_plans = plans_only || !runs_only;
     let include_runs = runs_only || !plans_only;
@@ -339,7 +339,7 @@ async fn run_plan(
     let ops = WorkflowOps::open(
         std::env::current_dir()?,
         cli.config.clone(),
-        &Ambient::ThisProcess,
+        &SessionEnvironment::default(),
     )?;
     let stored = ops.store_plan(&prepared)?;
     write_plan(&stored, output)
@@ -377,7 +377,11 @@ async fn prepare_plan(
     let limits = planning_limits()?;
     // `rho workflow` plans, and later runs, in the terminal's environment,
     // this process's (#1659).
-    let ops = WorkflowOps::open(workspace, cli.config.clone(), &Ambient::ThisProcess)?;
+    let ops = WorkflowOps::open(
+        workspace,
+        cli.config.clone(),
+        &SessionEnvironment::default(),
+    )?;
     ops.prepare_local(file, supplied_inputs, &config, &available_tools, &limits)
         .await
 }
@@ -421,7 +425,7 @@ async fn run_frozen_plan(
     let ops = WorkflowOps::open(
         std::env::current_dir()?,
         config_path.clone(),
-        &Ambient::ThisProcess,
+        &SessionEnvironment::default(),
     )?;
     let plan = ops.prepare_run(prefix)?;
     confirm_exact_plan(
@@ -493,7 +497,7 @@ async fn run_resume(
     let ops = WorkflowOps::open(
         std::env::current_dir()?,
         config_path.clone(),
-        &Ambient::ThisProcess,
+        &SessionEnvironment::default(),
     )?;
     let run = ops.load_run_prefix(prefix)?;
     let recovery = ops.prepare_resume(&run, recover_uncertain)?;
@@ -512,7 +516,11 @@ fn print_recovery_preview(
     output: Option<WorkflowRunFormat>,
     config_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let ops = WorkflowOps::open(std::env::current_dir()?, config_path, &Ambient::ThisProcess)?;
+    let ops = WorkflowOps::open(
+        std::env::current_dir()?,
+        config_path,
+        &SessionEnvironment::default(),
+    )?;
     let run_id = ops.load_run_prefix(prefix)?.manifest.run_id;
     let preview =
         crate::app::workflow_runtime::preview_recovery(&crate::paths::rho_dir()?, run_id)?;

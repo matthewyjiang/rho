@@ -23,7 +23,7 @@ use std::{
 };
 
 use rho_protocol::{
-    AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse,
+    AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse, AuthListParams,
     AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
     AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, ClientInfo, DaemonStatus,
     DetachReason, JobListResponse, LoginStream, PendingUpgrade, ProtocolVersion, RestartCost,
@@ -393,8 +393,8 @@ impl Service for DaemonHost {
         Ok(logged_out)
     }
 
-    async fn list_auths(&self) -> Result<AuthListResponse, RpcError> {
-        auth::list().await
+    async fn list_auths(&self, params: AuthListParams) -> Result<AuthListResponse, RpcError> {
+        auth::list(params).await
     }
 
     async fn login(

@@ -26,6 +26,9 @@ pub(crate) trait PlanHost: Send + Sync {
     fn config(&self) -> &crate::config::Config;
     fn catalog(&self) -> &crate::agent::AgentCatalog;
     fn available_tools(&self) -> &crate::agent::AgentCapabilities;
+    /// The credentials of whoever the run will act for, which decide the
+    /// models its agent nodes can use.
+    fn credentials(&self) -> &dyn rho_providers::credentials::CredentialStore;
 
     fn resolve_executable(&self, executable: &str)
         -> anyhow::Result<(PathBuf, ExecutableIdentity)>;
@@ -40,20 +43,24 @@ pub(crate) struct DiscoveringPlanHost<'a> {
     /// The `PATH` bare executables and `#!/usr/bin/env` interpreters are
     /// found on: that of the environment the run will start in (#1659).
     search_path: Option<&'a OsStr>,
+    credentials: &'a dyn rho_providers::credentials::CredentialStore,
 }
 
 impl<'a> DiscoveringPlanHost<'a> {
-    /// A host finding bare executables on `search_path`.
+    /// A host finding bare executables on `search_path` and project agents
+    /// under `trust`, and binding agents with `credentials`, all of the
+    /// environment the run will start in.
     pub(crate) fn new(
         workspace: &'a Path,
         config: &'a crate::config::Config,
         available_tools: &'a crate::agent::AgentCapabilities,
         workflow_entry: &Path,
         search_path: Option<&'a OsStr>,
+        trust: crate::workspace::ProjectTrusts,
+        credentials: &'a dyn rho_providers::credentials::CredentialStore,
     ) -> anyhow::Result<Self> {
         let home = crate::paths::home_dir();
-        let trust = crate::workspace::ProjectTrust::from_agents_env();
-        let plugins = crate::plugins::agent_tiers(workspace, home.as_deref());
+        let plugins = crate::plugins::agent_tiers(workspace, home.as_deref(), trust);
         Ok(Self {
             workspace,
             config,
@@ -61,11 +68,12 @@ impl<'a> DiscoveringPlanHost<'a> {
                 workspace,
                 workflow_entry,
                 home.as_deref(),
-                trust,
+                trust.agents,
                 &plugins,
             )?,
             available_tools,
             search_path,
+            credentials,
         })
     }
 }
@@ -87,6 +95,10 @@ impl PlanHost for DiscoveringPlanHost<'_> {
         self.available_tools
     }
 
+    fn credentials(&self) -> &dyn rho_providers::credentials::CredentialStore {
+        self.credentials
+    }
+
     fn resolve_executable(
         &self,
         executable: &str,
@@ -104,6 +116,7 @@ pub(crate) struct AuthorizedPlanHost<'a> {
     catalog: &'a crate::agent::AgentCatalog,
     available_tools: &'a crate::agent::AgentCapabilities,
     executables: &'a BTreeMap<String, ExecutableIdentity>,
+    credentials: &'a dyn rho_providers::credentials::CredentialStore,
 }
 
 impl<'a> AuthorizedPlanHost<'a> {
@@ -113,6 +126,7 @@ impl<'a> AuthorizedPlanHost<'a> {
         catalog: &'a crate::agent::AgentCatalog,
         available_tools: &'a crate::agent::AgentCapabilities,
         executables: &'a BTreeMap<String, ExecutableIdentity>,
+        credentials: &'a dyn rho_providers::credentials::CredentialStore,
     ) -> Self {
         Self {
             workspace,
@@ -120,6 +134,7 @@ impl<'a> AuthorizedPlanHost<'a> {
             catalog,
             available_tools,
             executables,
+            credentials,
         }
     }
 }
@@ -139,6 +154,10 @@ impl PlanHost for AuthorizedPlanHost<'_> {
 
     fn available_tools(&self) -> &crate::agent::AgentCapabilities {
         self.available_tools
+    }
+
+    fn credentials(&self) -> &dyn rho_providers::credentials::CredentialStore {
+        self.credentials
     }
 
     fn resolve_executable(
@@ -210,13 +229,15 @@ pub(crate) fn resolve_nodes_with_host(
             let resolved = match &node.execution {
                 NodeExecution::Agent(agent) => {
                     let entry = host.catalog().find(&agent.agent)?;
-                    let bound = AgentBinder::bind(
+                    let bound = AgentBinder::bind_with_credentials(
                         Arc::new(entry.definition.clone()),
                         AgentInvocation {
                             role: AgentRole::Workflow,
                             available_tools: host.available_tools().clone(),
                         },
                         host.config(),
+                        /*model_override*/ None,
+                        host.credentials(),
                     )?;
                     ResolvedNode::Agent(Box::new(resolve_agent(entry, bound, host)?))
                 }

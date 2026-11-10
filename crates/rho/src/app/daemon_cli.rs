@@ -123,11 +123,12 @@ pub(super) async fn connect_with(reach: Reach) -> Result<daemon::Connection, Unr
         .map_err(|error| unreachable(error.to_string()))
 }
 
-/// Starts the daemon once this process's environment, which it inherits,
-/// passes the checks the daemon makes at startup, so a daemon that would
-/// refuse to start is reported now rather than after the start timeout. A
-/// daemon already running never sees this environment, so only a spawn
-/// checks it.
+/// Starts the daemon once this process's own credential store choice is one
+/// rho knows. The daemon does not inherit `RHO_CREDENTIAL_STORE` (#1779),
+/// but it refuses every session and sign-in of a client whose environment
+/// names an unknown store, so a daemon is not started for one: the mistake
+/// is reported here, at once. A client of a running daemon hears it from
+/// that daemon at its first such request.
 #[cfg(unix)]
 struct CheckedSpawner(daemon::ProcessSpawner);
 
@@ -139,9 +140,7 @@ impl daemon::DaemonSpawner for CheckedSpawner {
             .map_err(|error| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    format!(
-                        "RHO_CREDENTIAL_STORE in this environment, which it would inherit: {error}"
-                    ),
+                    format!("RHO_CREDENTIAL_STORE in this environment: {error}"),
                 )
             })
     }
@@ -213,6 +212,30 @@ async fn run_foreground(
     let store_environment = crate::credential_store::environment_backend()
         .context("RHO_CREDENTIAL_STORE in the daemon's environment")
         .inspect_err(|error| tracing::error!(error = %format!("{error:#}"), "not starting"))?;
+    // Before #1779 these set every session's trust; a unit that still
+    // carries them would otherwise lose it without a word.
+    if crate::workspace::ProjectTrusts::of_this_process()
+        != crate::workspace::ProjectTrusts::UNTRUSTED
+    {
+        tracing::warn!(
+            "RHO_TRUST_PROJECT_* in the daemon's environment grants nothing: each session takes the project trust of the client that opens it"
+        );
+    }
+    // Likewise for credentials: before #1779 a key here signed every session
+    // in. Custom providers' variables are known only once a config is read,
+    // so this names the built-in ones, any `RHO_*_API_KEY`, and the ones
+    // no provider owns.
+    let credentials: Vec<String> = rho_providers::credential_env_vars()
+        .into_iter()
+        .chain(["GITHUB_TOKEN", "GH_TOKEN", "CODEX_ACCOUNT_ID"].map(str::to_owned))
+        .filter(|variable| std::env::var_os(variable).is_some())
+        .collect();
+    if !credentials.is_empty() {
+        tracing::warn!(
+            variables = credentials.join(", "),
+            "credential variables in the daemon's environment sign in no session: each session reads those of the client that opens it, else the credential store"
+        );
+    }
     // A panicking request handler is answered with an internal error, and an
     // auto-spawned daemon's stderr goes nowhere, so the log is the only place
     // the panic can surface.

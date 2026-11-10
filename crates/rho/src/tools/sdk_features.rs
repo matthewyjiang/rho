@@ -16,8 +16,16 @@ use rho_sdk::{
 };
 use rho_tools::{sdk_support::required_string, tool::truncate};
 
-pub(super) fn skill_bundle(max_output_bytes: usize) -> super::sdk_registry::StaticToolBundle {
-    super::sdk_registry::StaticToolBundle::new(vec![Arc::new(SdkSkillTool::new(max_output_bytes))])
+/// The `skill` tool, which finds a project plugin's skills only under the
+/// session's `project_trust`.
+pub(super) fn skill_bundle(
+    max_output_bytes: usize,
+    project_trust: crate::workspace::ProjectTrusts,
+) -> super::sdk_registry::StaticToolBundle {
+    super::sdk_registry::StaticToolBundle::new(vec![Arc::new(SdkSkillTool {
+        max_output_bytes,
+        project_trust,
+    })])
 }
 
 pub(super) fn questionnaire_bundle() -> super::sdk_registry::StaticToolBundle {
@@ -40,10 +48,6 @@ pub(crate) fn message_parent_bundle(
 }
 
 impl SdkSkillTool {
-    pub(super) fn new(max_output_bytes: usize) -> Self {
-        Self { max_output_bytes }
-    }
-
     /// Shared preparation for filesystem-backed skills: loose `File` skills
     /// and plugin skills. The workspace grants only the skill directory, so
     /// resource access stays inside the skill's permitted root.
@@ -101,6 +105,8 @@ impl SdkSkillTool {
 
 pub(super) struct SdkSkillTool {
     max_output_bytes: usize,
+    /// The session's project trust.
+    project_trust: crate::workspace::ProjectTrusts,
 }
 
 impl SdkTool for SdkSkillTool {
@@ -148,7 +154,7 @@ impl SdkTool for SdkSkillTool {
                 Some(skill) => skill,
                 None => {
                     let workspace = preparation_workspace(&context)?;
-                    crate::skills::discover(workspace.root())
+                    crate::skills::discover(workspace.root(), self.project_trust)
                         .into_iter()
                         .find(|skill| skill.name == name)
                         .ok_or_else(|| {

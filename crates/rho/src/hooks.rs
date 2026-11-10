@@ -44,9 +44,12 @@ mod protocol;
 
 use std::sync::Arc;
 
-use crate::session_environment::{Ambient, SessionEnvironment};
+use crate::{
+    session_environment::{Ambient, SessionEnvironment},
+    workspace::ProjectTrusts,
+};
 
-pub use catalog::{HookCatalog, ProjectTrust, TRUST_PROJECT_HOOKS_ENV};
+pub use catalog::{HookCatalog, TRUST_PROJECT_HOOKS_ENV};
 pub use config::HookConfigError;
 pub(crate) use diagnostics::HookContractView;
 pub use diagnostics::{contract_views, HookInspector, HookReport};
@@ -188,7 +191,7 @@ impl HookPipeline {
     /// tell the user to restart.
     pub fn reload_for_cwd(&self, cwd: &std::path::Path) -> Result<(), HookConfigError> {
         let mut discard = |_message: String| {};
-        let catalog = discover_for_cwd(cwd, &mut discard)?;
+        let catalog = discover_for_cwd(cwd, self.engine.project_trust(), &mut discard)?;
         if catalog.has_blocking_hooks() && self.gate.is_none() {
             return Err(HookConfigError::at_file(
                 cwd,
@@ -229,8 +232,8 @@ pub fn running_inside_hook(environment: &Ambient) -> bool {
 pub const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Starts hooks for the workspace containing `cwd`, run in `environment`, the
-/// session's; none when the session is a hook program's own (see
-/// [`HookPipeline::start`]).
+/// session's, and trusted as it trusts the project; none when the session is
+/// a hook program's own (see [`HookPipeline::start`]).
 ///
 /// A hooks file that fails validation must not take the session down. The
 /// failure is logged and the session runs without hooks, which is the same
@@ -240,7 +243,7 @@ pub fn start_for_cwd(
     environment: SessionEnvironment,
 ) -> Option<HookPipeline> {
     let mut report = |message: String| tracing::info!(target: "rho::hooks", "{message}");
-    match discover_for_cwd(cwd, &mut report) {
+    match discover_for_cwd(cwd, environment.project_trust(), &mut report) {
         Ok(catalog) => HookPipeline::start(catalog, environment, rho_sdk::CancellationToken::new()),
         Err(error) => {
             tracing::warn!(target: "rho::hooks", "hooks are disabled: {error}");
@@ -251,19 +254,20 @@ pub fn start_for_cwd(
 
 /// Discovers the hooks that apply to the workspace containing `cwd`.
 ///
-/// Hook recursion is the caller's decision (see [`running_inside_hook`]).
-/// Reports any skipped untrusted project file through `report` so a host can
-/// show it once instead of on every dispatch.
+/// The project's hooks file loads only under `trust`'s hook trust, the
+/// session's. Hook recursion is the caller's decision (see
+/// [`running_inside_hook`]). Reports any skipped untrusted project file
+/// through `report` so a host can show it once instead of on every dispatch.
 pub fn discover_for_cwd(
     cwd: &std::path::Path,
+    trust: ProjectTrusts,
     report: &mut dyn FnMut(String),
 ) -> Result<HookCatalog, HookConfigError> {
     let project_root = crate::workspace::project_ancestor_dirs(cwd)
         .into_iter()
         .next();
     let rho_home = crate::paths::rho_dir().ok();
-    let trust = ProjectTrust::from_hooks_env();
-    let catalog = HookCatalog::discover(rho_home.as_deref(), project_root.as_deref(), trust)?;
+    let catalog = HookCatalog::discover(rho_home.as_deref(), project_root.as_deref(), trust.hooks)?;
     if let Some(skipped) = catalog.skipped_untrusted() {
         report(format!(
             "ignoring {} because this workspace is not trusted; set {TRUST_PROJECT_HOOKS_ENV}=1 to load it",

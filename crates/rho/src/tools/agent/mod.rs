@@ -24,6 +24,7 @@ use serde_json::{json, Value};
 use {
     crate::agent::{AdvertisedAgents, AgentCatalog},
     crate::app::subagent_manager::ValidatedMessage,
+    crate::workspace::ProjectTrusts,
     rho_sdk::tool::{
         OperationKind, PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation,
         ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolResource,
@@ -51,6 +52,8 @@ pub struct AgentTool {
     max_output_bytes: usize,
     /// Directory definitions are rediscovered from at each launch.
     cwd: PathBuf,
+    /// The session's project trust, which each rediscovery reads under.
+    project_trust: ProjectTrusts,
     /// Fixed at construction so the spec never rewrites what the caller was
     /// told; later corrections are appended to the conversation instead.
     advertised: AdvertisedAgents,
@@ -62,13 +65,18 @@ impl AgentTool {
         manager: SubagentManager,
         cwd: &Path,
         catalog: Option<Arc<AgentCatalog>>,
+        project_trust: ProjectTrusts,
     ) -> Self {
         let catalog = catalog.unwrap_or_else(|| {
-            Arc::new(AgentCatalog::discover(cwd).expect("agent catalog was validated at startup"))
+            Arc::new(
+                AgentCatalog::discover(cwd, project_trust)
+                    .expect("agent catalog was validated at startup"),
+            )
         });
         Self {
             manager,
             cwd: cwd.to_path_buf(),
+            project_trust,
             advertised: AdvertisedAgents::from_catalog(&catalog),
             mutation_observer: Arc::new(()),
             max_output_bytes: rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
@@ -96,7 +104,7 @@ impl AgentTool {
         // Resolve from disk, not the startup snapshot: the user may have
         // deleted or edited the definition (for example in `/agents`) since
         // the session began. The spec's agent list stays stable on purpose.
-        let catalog = AgentCatalog::discover(&self.cwd).map_err(|error| {
+        let catalog = AgentCatalog::discover(&self.cwd, self.project_trust).map_err(|error| {
             ToolError::new(
                 ToolErrorKind::Execution,
                 format!("could not reload agent definitions: {error}"),
@@ -550,13 +558,18 @@ pub(super) fn sdk_bundle(
         options.cwd.clone(),
         options.pool,
     )
-    .with_environment(options.environment);
+    .with_environment(options.environment.clone());
     let mut tools = Vec::<Arc<dyn rho_sdk::tool::Tool>>::new();
     let mut advertised = None;
     if options.tools.launches() {
-        let tool = AgentTool::new(manager.clone(), &options.cwd, options.catalog)
-            .with_max_output_bytes(config.max_output_bytes)
-            .with_mutation_observer(mutation_observer);
+        let tool = AgentTool::new(
+            manager.clone(),
+            &options.cwd,
+            options.catalog,
+            options.environment.project_trust(),
+        )
+        .with_max_output_bytes(config.max_output_bytes)
+        .with_mutation_observer(mutation_observer);
         advertised = Some(tool.advertised.clone());
         tools.push(Arc::new(tool));
     }

@@ -11,8 +11,9 @@
 //! them, in [`login`]; `rho mcp serve` driving its sessions is in [`mcp`],
 //! and the sessions a session starts, as its children, in [`started`];
 //! re-executing the daemon in place, for an upgrade or `rho daemon
-//! restart`, is in [`upgrade`], and what a client of another version hears
-//! at the handshake in [`skew`].
+//! restart`, is in [`upgrade`]; what a client of another version hears at
+//! the handshake is in [`skew`]; what a daemon takes from the client that
+//! starts it, and each session's project trust, is in [`identity`].
 #![cfg(unix)]
 
 use std::{
@@ -63,6 +64,9 @@ mod upgrade;
 
 #[path = "support/daemon_skew.rs"]
 mod skew;
+
+#[path = "support/daemon_identity.rs"]
+mod identity;
 
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;
@@ -186,9 +190,9 @@ fn daemon_start_is_idempotent() {
 }
 
 // Covers: a client whose environment sets an unknown RHO_CREDENTIAL_STORE
-// refuses to start a daemon, which would inherit it and stop, naming the
-// variable at once instead of waiting out the start timeout; with a daemon
-// already running, which never sees the client's environment, it connects.
+// starts no daemon, which would refuse its sessions and sign-ins for it,
+// and names the variable at once; with a daemon already running it
+// connects, and that daemon refuses what needs the store.
 // Owner: CLI process (daemon ensure-running path).
 #[test]
 fn an_unknown_credential_store_stops_only_a_daemon_start() {

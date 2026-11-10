@@ -56,7 +56,7 @@ impl SessionRuntime {
 
         // One snapshot for planning and the run: the run must verify its
         // frozen executables on the `PATH` planning found them on (#1659).
-        let environment = self.build.host.environment.current();
+        let environment = self.build.host.environment.snapshot();
         let ops = WorkflowOps::open(
             self.storage.cwd().to_path_buf(),
             Some(self.build.launch.config_path.clone()),

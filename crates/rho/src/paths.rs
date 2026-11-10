@@ -235,8 +235,11 @@ pub(crate) struct HostOwnedSurfaces {
 }
 
 impl HostOwnedSurfaces {
-    pub(crate) fn from_process() -> Self {
-        Self::from_env(rho_dir().ok().as_deref(), std::env::var_os("PATH"))
+    /// The surfaces of this process's rho home and the directories on
+    /// `search_path`, the `PATH` of the environment a session's commands run
+    /// in.
+    pub(crate) fn on_search_path(search_path: Option<OsString>) -> Self {
+        Self::from_env(rho_dir().ok().as_deref(), search_path)
     }
 
     pub(crate) fn from_env(rho_home: Option<&Path>, path_var: Option<OsString>) -> Self {
