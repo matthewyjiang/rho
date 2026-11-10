@@ -59,10 +59,12 @@ struct HttpServer {
     sessions: Arc<Sessions>,
 }
 
-/// Serves the tools on `options.address` until the process is stopped.
+/// Serves the tools on `options.address` until the process is stopped,
+/// the sessions they start running with `environment`.
 pub(crate) async fn serve_http(
     control: Arc<SessionControl>,
     options: HttpOptions,
+    environment: rho_protocol::ClientEnvironment,
 ) -> anyhow::Result<()> {
     if !options.address.ip().is_loopback() {
         anyhow::bail!(
@@ -89,6 +91,7 @@ pub(crate) async fn serve_http(
             Ok(SessionTools {
                 control: Arc::clone(&control),
                 transport: Transport::Http,
+                environment: environment.clone(),
             })
         },
         Arc::clone(&sessions),

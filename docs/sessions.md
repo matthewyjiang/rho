@@ -248,6 +248,66 @@ not index web sidecars or nested subagent run traces. Symlinked session paths ar
 not read. A deleted Git worktree first encountered after deletion cannot be
 reliably assigned to its former repository; use `scope: all` in that case.
 
+## Starting and driving other sessions
+
+Through the [daemon](/daemon), the `sessions` tool also lets an agent start
+peer sessions and drive them, the way a person does from another terminal. A
+peer session keeps running after the turn that started it, can run in another
+workspace, and can be picked up later by the agent or by a person. For work
+whose result comes back into this turn, the `agent` tool's
+[subagents](/subagents) remain the better fit.
+
+| Action | What it does |
+| --- | --- |
+| `list` | The daemon's sessions, most recently changed first, with each one's workspace, state, and the `parent` session that started it. Filter by `workspace` or `state`. |
+| `new` | Starts a session in `workspace`, an absolute path, with a first `prompt`; `agent` and `model` are optional. Returns its `session` id at once. |
+| `prompt` | Starts a session's next turn with `text`. |
+| `steer` | Gives the running turn `text` for its next model request. |
+| `cancel` | Stops the session's turn in progress. |
+| `wait` | Waits up to `timeout_secs` (30 by default, at most 50) for the turn to end or to stop for a person, and returns its state, its outcome with the final answer once it ended, and a `cursor` to pass to the next `wait` while `done` is false. |
+| `read` | Without an `anchor`, pages through a daemon session's transcript by `start` and `chars`, its turn in progress included. |
+
+```json
+{"action":"new","workspace":"/home/me/other-project","prompt":"Run the test suite and summarize failures"}
+{"action":"wait","session":"<returned id>","timeout_secs":50}
+```
+
+These actions are the [MCP server](/mcp-server)'s tools, with the same
+arguments and results, and the same core enforces the same policy:
+
+- Its turns share the daemon-wide
+  [agent budget](/daemon#sessions-other-sessions-start), so it may wait
+  `queued` for a slot. Started from a session the daemon runs, it also
+  records that session as its `parent`, so `list` and `rho/job/list` show who
+  started what; a rho that runs its session itself has no daemon session to
+  name, so its starts show no parent.
+- It runs one level deeper than the agent's session. Starting or prompting a
+  session at depth 4 or deeper is refused, naming the budget, its limit, and
+  the depth asked for, as the [MCP server's limits](/mcp-server#limits) are.
+  Each session may have 10 sessions it started or prompted running at once.
+- It runs in the permission mode the target workspace's configuration
+  gives, as when a person starts rho there, not in the agent's session's
+  mode: approving a `new` approves a session that may run under a looser
+  mode than the agent's.
+- It runs with the agent's session's environment. The target workspace's
+  project agents, plugins, and hooks load only as the daemon's
+  `RHO_TRUST_PROJECT_*` variables allow, as for any session the daemon opens
+  ([Environment](/daemon#environment)): starting a session there grants it
+  no trust.
+- No action answers another session's approvals or questions. A session that
+  asks for one waits in `waiting_for_input`, which `wait` reports with the
+  open requests, until a person answers it from a rho frontend.
+
+`new`, `prompt`, `steer`, and `cancel` act on a session, so they ask for the
+session-control capability, whose approval names the action, the session, its
+workspace, and the text sent; `plan` mode refuses them. `list`, `read`, and
+`wait` only watch, but they show other sessions' transcripts, so they ask for
+the same read of the session store as searching history does. The tool only
+reaches a daemon already running: in a rho that runs its session itself with
+no daemon running, these actions report that and start none. The daemon is
+not supported on Windows yet, so there the tool has only its history
+actions.
+
 ## Resuming a session
 
 ```mermaid

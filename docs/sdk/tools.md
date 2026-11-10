@@ -146,6 +146,7 @@ Registering a tool exposes its schema but grants no sensitive authority. The ind
 | Network access | Denied |
 | Load a skill | Denied |
 | Discover workspace instructions | Denied |
+| Control another agent session | Denied |
 | Host approval | Denied when no handler is configured |
 | Workspace root | Absent |
 

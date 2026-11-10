@@ -29,6 +29,8 @@ use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
 };
 
+use rho_protocol::ClientEnvironment;
+
 use super::session_control::{Action, Caller, Grant, SessionControl};
 use crate::caller_context::{Access, CallerContext};
 
@@ -50,6 +52,9 @@ const INSTRUCTIONS: &str = "Start, drive, and follow rho agent sessions through 
 pub(super) struct SessionTools {
     control: Arc<SessionControl>,
     transport: Transport,
+    /// The environment the sessions a call starts or prompts run with, the
+    /// call's context set in it: this process's.
+    environment: ClientEnvironment,
 }
 
 /// Where a call's grant, and its caller context when the request sends
@@ -84,7 +89,11 @@ impl SessionTools {
                 (grant, CallerContext::ROOT)
             }
         };
-        Ok(Caller::new(grant, &sent.unwrap_or(default)))
+        Ok(Caller::new(
+            grant,
+            &sent.unwrap_or(default),
+            self.environment.clone(),
+        ))
     }
 }
 
@@ -144,14 +153,17 @@ fn tool(action: Action) -> Tool {
 }
 
 /// Serves the tools over stdio until the host closes stdin, for the
-/// process's caller, in `context` unless a call sends its own.
+/// process's caller, in `context` unless a call sends its own, the sessions
+/// they start running with `environment`.
 pub(super) async fn serve_stdio(
     control: Arc<SessionControl>,
     context: CallerContext,
+    environment: ClientEnvironment,
 ) -> anyhow::Result<()> {
     let tools = SessionTools {
         control,
         transport: Transport::Stdio { context },
+        environment,
     };
     let running = tools.serve(rmcp::transport::stdio()).await?;
     running.waiting().await?;

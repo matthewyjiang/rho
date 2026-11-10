@@ -83,6 +83,7 @@ struct Routes {
 pub(crate) struct Daemon {
     link: tokio::sync::Mutex<Option<Arc<Link>>>,
     routes: Arc<Mutex<Routes>>,
+    reach: daemon_cli::Reach,
 }
 
 /// One open connection.
@@ -97,6 +98,14 @@ pub(crate) struct Link {
 }
 
 impl Daemon {
+    /// A daemon reached as `reach` allows.
+    pub(crate) fn reaching(reach: daemon_cli::Reach) -> Self {
+        Self {
+            reach,
+            ..Self::default()
+        }
+    }
+
     /// The open connection, connecting first when there is none or the last
     /// one closed. The error names what failed, such as a daemon that could
     /// not start, with its log file.
@@ -109,7 +118,7 @@ impl Daemon {
             client,
             notifications,
             hello,
-        } = daemon_cli::connect().await?;
+        } = daemon_cli::connect_with(self.reach).await?;
         let closed = CancellationToken::new();
         let (fences, fence_receiver) = mpsc::unbounded_channel();
         tokio::spawn(tokio::task::unconstrained(route(

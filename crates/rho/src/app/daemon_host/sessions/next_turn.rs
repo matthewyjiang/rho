@@ -57,7 +57,9 @@ impl LoadedSession {
             return current;
         }
         let mut next = (*current).clone();
-        let changes = next.take_next_turn_settings(&global);
+        // Only what changed globally: a re-read that changed nothing, or
+        // changed other settings, leaves the agent's own values alone.
+        let changes = next.take_next_turn_settings(&applied, &global);
         let mut notices = Vec::new();
         let mut failed = false;
         // Compaction first: the advisor's rebuild reads `next`, which must

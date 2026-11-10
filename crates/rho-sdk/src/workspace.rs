@@ -18,7 +18,7 @@ pub(crate) use authorization::{authorize_for_call, AuthorizationScope, Authoriza
 pub use capability::{
     CapabilityKind, CapabilityOperation, CapabilityRequest, CapabilitySource, EnvironmentVariables,
     ExecutableSelection, NetworkTarget, PathScope, ProcessEnvironment, ProcessExecution,
-    ProcessInvocation, ProcessOutputLimits,
+    ProcessInvocation, ProcessOutputLimits, SessionControlAction, SessionControlTarget,
 };
 pub use path::{
     ResolvedWorkspacePath, Workspace, WorkspacePathError, WorkspacePathErrorKind,
@@ -91,6 +91,13 @@ impl ScopedWorkspacePolicy {
         self
     }
 
+    /// Allows starting, prompting, steering, and cancelling other agent
+    /// sessions, wherever their workspace is.
+    pub fn allow_session_control(mut self) -> Self {
+        self.allowed.insert(CapabilityKind::SessionControl);
+        self
+    }
+
     /// Allows capability checks for paths outside the primary workspace. This
     /// covers roots attached through [`Workspace::with_granted_root`] and broad
     /// path resolution enabled by [`Workspace::with_unrestricted_file_access`].
@@ -125,6 +132,10 @@ impl ScopedWorkspacePolicy {
 
     pub fn require_process_approval(self) -> Self {
         self.require_approval_for(CapabilityKind::Process)
+    }
+
+    pub fn require_session_control_approval(self) -> Self {
+        self.require_approval_for(CapabilityKind::SessionControl)
     }
 
     pub fn require_network_approval(self) -> Self {

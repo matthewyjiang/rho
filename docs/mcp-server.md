@@ -1,6 +1,6 @@
 # MCP server
 
-`rho mcp serve` serves the [daemon](/daemon)'s sessions as a [Model Context Protocol](https://modelcontextprotocol.io/) server, so another agent, such as Claude Code, Codex, or a rho session, can start rho sessions in any workspace, follow their turns, and read what they answered. It is a daemon client like `rho attach`, and it starts the daemon on its first tool call when none is running.
+`rho mcp serve` serves the [daemon](/daemon)'s sessions as a [Model Context Protocol](https://modelcontextprotocol.io/) server, so another agent, such as Claude Code, Codex, or a rho session, can start rho sessions in any workspace, follow their turns, and read what they answered. It is a daemon client like `rho attach`, and it starts the daemon on its first tool call when none is running. A rho agent gets the same tools, with the same results and policy, as actions of its own [`sessions` tool](/sessions#starting-and-driving-other-sessions).
 
 It serves over stdio by default, for a host that starts it as a command. `rho mcp serve --http` serves streamable HTTP on a loopback address instead, for hosts that reach MCP servers by URL; see [Over HTTP](#over-http).
 
@@ -10,7 +10,7 @@ The daemon, and so this server, is not supported on Windows yet ([#1665](https:/
 
 | Tool | What it does | Needs |
 | --- | --- | --- |
-| `list` | The daemon's sessions, most recently changed first: each one's id, workspace, state, and when it last changed. Filter by `workspace` or `state`; `limit` is 20 by default and at most 1000. | read |
+| `list` | The daemon's sessions, most recently changed first: each one's id, workspace, state, when it last changed, and the `parent` session whose agent started it, if one did. Filter by `workspace` or `state`; `limit` is 20 by default and at most 1000. | read |
 | `read` | A session's transcript as text: who said what, and the tools it called. Pages by characters: `start` (0 by default) and `chars` (4096 by default, at most 64000); pass the result's `next_start` to read on. | read |
 | `new` | Starts a session in `workspace`, an absolute path to an existing directory, with a first `prompt`. `agent` picks one of the workspace's agents by id and `model` one of its models, as `provider/model` or a model id only one provider offers; both default to the workspace's. | write |
 | `prompt` | Starts a session's next turn with `text`. | write |
@@ -47,6 +47,8 @@ The "Needs" column matters only [over HTTP](#over-http), where each token has re
 The 50-second cap keeps a `wait` inside the shortest per-call timeout of the hosts rho knows: Codex gives an MCP tool call 60 seconds by default. A longer turn takes several `wait` calls, each resuming from the last one's cursor.
 
 `read` returns the whole conversation so far, and `outcome.text` only the final answer.
+
+Every tool that names a `session` refuses one the daemon does not know, naming it, whichever workspaces the token may reach.
 
 ## Approvals stay with people
 
