@@ -600,21 +600,30 @@ impl DaemonView {
         self.ended = true;
         match start {
             Some(PromptStart::Began) => self.began(),
-            Some(start) => self.tell_start(start),
-            None => {}
+            Some(start @ PromptStart::Ended(_)) => self.tell_start(start),
+            Some(PromptStart::Pending) | None => {}
         }
     }
 
     /// Tells the request that sent the prompt, if it still waits, that the
     /// turn began (see [`PromptStart::Began`]), and records it on the job,
     /// so a later daemon still knows the prompt as one that ran.
+    ///
+    /// Nothing a turn does before this needs a client: `rho acp` reads none
+    /// of the session's events while its prompt waits for this answer.
     pub(super) fn began(&mut self) {
         // Recorded before the request is answered, so a daemon killed right
-        // after its answer still left the turn recorded as begun.
-        if *self.start.borrow() == PromptStart::Pending {
-            self.session.jobs.turn_began(&self.session.job);
-            self.tell_start(PromptStart::Began);
-        }
+        // after its answer still left the turn recorded as begun. The
+        // registry records it once, and only on this turn.
+        self.session.jobs.turn_began(&self.session.job, &self.turn);
+        self.tell_start(PromptStart::Began);
+    }
+
+    /// Tells the request that sent the prompt that the turn began, though
+    /// it only waits for capacity: it has run nothing, so the job does not
+    /// record it begun until it does ([`Self::began`]).
+    pub(super) fn accepted(&mut self) {
+        self.tell_start(PromptStart::Began);
     }
 
     /// Takes the model turn's events until it drops its sender, opening

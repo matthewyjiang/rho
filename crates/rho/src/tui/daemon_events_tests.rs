@@ -496,19 +496,39 @@ fn job_states_and_steers_map_to_turn_views() {
             ],
         ),
         (
-            "a replayed turn that ran and ended shows only where the replay ends",
+            "a reset's turn that ran and ended shows only where the replay ends",
             vec![
+                Step::Reset,
                 Step::Attached(Vec::new(), JobState::Completed),
                 state(JobState::Running),
                 state(JobState::WaitingForInput),
                 state(JobState::Completed),
                 Step::ReplayEnded,
             ],
-            vec![resting(Rest::Ready)],
+            vec![DaemonView::Clear, resting(Rest::Ready)],
         ),
         (
-            "a replay shows the turn it ends under way from where its rows start, and no earlier turn",
+            "a tail's states are news: the turn the TUI watched ends before another's shows",
             vec![
+                state(JobState::Running),
+                Step::Tail,
+                Step::Attached(Vec::new(), JobState::Running),
+                state(JobState::Completed),
+                state_of("t2", JobState::Running),
+                Step::ReplayEnded,
+            ],
+            vec![
+                DaemonView::Turn(TurnState::Running),
+                DaemonView::InputsReset,
+                resting(Rest::Ready),
+                DaemonView::Turn(TurnState::Running),
+                DaemonView::Turn(TurnState::Running),
+            ],
+        ),
+        (
+            "a reset shows the turn it ends under way from where its rows start, and no earlier turn",
+            vec![
+                Step::Reset,
                 Step::Attached(Vec::new(), JobState::Running),
                 state_of("t0", JobState::Running),
                 state_of("t0", JobState::Completed),
@@ -517,6 +537,7 @@ fn job_states_and_steers_map_to_turn_views() {
                 Step::ReplayEnded,
             ],
             vec![
+                DaemonView::Clear,
                 DaemonView::Turn(TurnState::Running),
                 DaemonView::User("now".into()),
                 DaemonView::Turn(TurnState::Running),

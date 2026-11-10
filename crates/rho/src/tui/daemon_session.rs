@@ -334,8 +334,6 @@ mod unix {
         events: DaemonEvents,
         /// Which of the attachment's events are its replay.
         position: StreamPosition,
-        /// Whether the attachment's replay is still arriving.
-        replaying: bool,
         /// Views made outside the event stream, shown with the next views:
         /// the attach response's, such as the reset replay's
         /// [`DaemonView::Clear`], and a refused answer's or hold's.
@@ -386,7 +384,7 @@ mod unix {
                 session: id.clone(),
             });
             let mut events = DaemonEvents::default();
-            let (pending, replaying) = begin_replay(&mut events, &response);
+            let pending = begin_replay(&mut events, &response);
             Ok(Self {
                 position: StreamPosition::attached(&response),
                 daemon,
@@ -399,7 +397,6 @@ mod unix {
                 target,
                 options: Some(response.options.clone()),
                 events,
-                replaying,
                 pending,
                 ended: false,
                 requests: Some(DaemonRequests::new(requests)),
@@ -490,9 +487,7 @@ mod unix {
                     self.options = Some(response.options.clone());
                     self.saved |= response.title.is_some();
                     self.workspace = response.workspace.clone();
-                    let (replay, replaying) = begin_replay(&mut self.events, &response);
-                    self.replaying = replaying;
-                    views.extend(replay);
+                    views.extend(begin_replay(&mut self.events, &response));
                 }
                 Err(error) => {
                     views.extend(self.end(DaemonView::Error(format!(
@@ -530,9 +525,7 @@ mod unix {
                         }
                         views.extend(self.events.map(event));
                         if let Part::Replayed { left: 0, .. } = part {
-                            if std::mem::take(&mut self.replaying) {
-                                views.extend(self.events.end_replay());
-                            }
+                            views.extend(self.events.end_replay());
                         }
                     }
                     Some(Routed::Detached(DetachReason::Lagged)) => {
@@ -845,11 +838,11 @@ mod unix {
 
     /// A tail keeps message/card state, but open prompts are rebuilt from
     /// the attach snapshot and replay, just as for a reset. Returns the
-    /// views the response makes, and whether a replay follows it.
+    /// views the response makes.
     fn begin_replay(
         events: &mut DaemonEvents,
         response: &SessionAttachResponse,
-    ) -> (Vec<DaemonView>, bool) {
+    ) -> Vec<DaemonView> {
         let mut views = vec![events.replay(response.replay)];
         views.push(DaemonView::Options(Box::new(response.options.clone())));
         if let Some(title) = &response.title {
@@ -860,11 +853,10 @@ mod unix {
             response.state,
             response.turn.clone(),
         );
-        let replaying = response.replay_events > 0;
-        if !replaying {
+        if response.replay_events == 0 {
             views.extend(events.end_replay());
         }
-        (views, replaying)
+        views
     }
 
     /// Why a steer, or its withdrawal, was refused, as the TUI says it.

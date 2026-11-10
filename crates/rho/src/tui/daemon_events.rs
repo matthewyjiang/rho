@@ -10,7 +10,7 @@
 //!
 //! The job's state says whether a turn runs ([`TurnState`]), which drives
 //! the TUI's busy chrome; steers carry their id, so the TUI's pending panel
-//! drops a steer once the daemon applied it. A replayed state is history:
+//! drops a steer once the daemon applied it. A reset's replayed state is history:
 //! the attach says which turn the replay ends in, by id, and only that
 //! turn, while under way, shows busy before the replay is over, so the TUI
 //! never times or announces a turn it only read back (#1777).
@@ -155,6 +155,9 @@ pub(super) struct DaemonEvents {
     /// Where the replay under way ends, as its attach answered: the job's
     /// state, and the turn it is of. `None` once the replay is over.
     replay_end: Option<(JobState, Option<TurnId>)>,
+    /// Whether the last replay is a reset: history, where a tail holds
+    /// only events the TUI has yet to see.
+    reset: bool,
     inputs: OpenInputs,
 }
 
@@ -164,10 +167,16 @@ impl DaemonEvents {
     pub(super) fn replay(&mut self, replay: Replay) -> DaemonView {
         match replay {
             Replay::Reset => {
-                *self = Self::default();
+                *self = Self {
+                    reset: true,
+                    ..Self::default()
+                };
                 DaemonView::Clear
             }
-            Replay::Tail => DaemonView::InputsReset,
+            Replay::Tail => {
+                self.reset = false;
+                DaemonView::InputsReset
+            }
         }
     }
 
@@ -280,11 +289,13 @@ impl DaemonEvents {
                 DaemonView::Title(title),
             ],
             SessionEvent::State { state, turn } => match &self.replay_end {
-                // History, unless it is of the turn the replay ends under
-                // way, which shows busy from where its rows start. The
-                // replay's end says the rest.
+                // A reset's is history, unless it is of the turn the
+                // replay ends under way, which shows busy from where its
+                // rows start; the replay's end says the rest. A tail's is
+                // news, as live.
                 Some((end, under_way))
-                    if !(in_progress(*end) && in_progress(state) && turn == *under_way) =>
+                    if self.reset
+                        && !(in_progress(*end) && in_progress(state) && turn == *under_way) =>
                 {
                     Vec::new()
                 }

@@ -142,7 +142,7 @@ impl JobRegistry {
             let mut jobs = registry.lock();
             registry.interrupt_unfinished(&mut jobs);
             // A record written before turns had ids (#1777) names its last
-            // turn from here on, for this daemon's clients.
+            // turn from here on.
             for record in jobs.values_mut() {
                 let ran_turns = matches!(record.subject, JobSubject::Session { .. })
                     && record.state != JobState::Idle;
@@ -151,6 +151,7 @@ impl JobRegistry {
                         began: true,
                         ..TurnRecord::starting(/*key*/ None)
                     });
+                    persist(&registry.store, record);
                 }
             }
         }
@@ -276,16 +277,20 @@ impl JobRegistry {
         let was_in_progress = record.state.in_progress();
         // A turn starts from every state but those of a turn under way.
         apply(record, event).map_err(|_| StartTurnError::Busy)?;
+        // The outcome kept was the last turn's.
+        record.outcome = None;
         record.turn = Some(turn);
         Ok(self.wrote(record, was_in_progress))
     }
 
-    /// Records that job `id`'s turn began, so a later daemon still answers
-    /// a prompt sent again with the turn's key instead of running it.
-    pub(in crate::app::daemon_host) fn turn_began(&self, id: &JobId) {
+    /// Records that job `id`'s turn `turn` began, so a later daemon still
+    /// answers a prompt sent again with the turn's key instead of running
+    /// it. Does nothing once it is recorded, or once another turn started.
+    pub(in crate::app::daemon_host) fn turn_began(&self, id: &JobId, turn: &rho_protocol::TurnId) {
         let mut jobs = self.lock();
         if let Some(record) = jobs.get_mut(id) {
-            if let Some(turn) = record.turn.as_mut().filter(|turn| !turn.began) {
+            let current = record.turn.as_mut();
+            if let Some(turn) = current.filter(|current| current.id == *turn && !current.began) {
                 turn.began = true;
                 persist(&self.store, record);
             }
