@@ -180,8 +180,9 @@ pub(crate) fn read_record(paths: &DaemonPaths) -> Option<DaemonRecord> {
 pub(crate) enum LockHolder {
     /// No daemon runs.
     Nobody,
-    /// A daemon between taking the lock and writing its record.
-    Starting,
+    /// A daemon with no record: one still starting, before it wrote it,
+    /// or one stopping, which removes it while its turns save.
+    Unrecorded,
     Daemon(DaemonRecord),
 }
 
@@ -190,7 +191,7 @@ impl LockHolder {
     pub(crate) fn record(self) -> Option<DaemonRecord> {
         match self {
             Self::Daemon(record) => Some(record),
-            Self::Nobody | Self::Starting => None,
+            Self::Nobody | Self::Unrecorded => None,
         }
     }
 }
@@ -202,7 +203,7 @@ pub(crate) fn holder(paths: &DaemonPaths) -> LockHolder {
     if !is_held(paths).unwrap_or(false) {
         return LockHolder::Nobody;
     }
-    read_record(paths).map_or(LockHolder::Starting, LockHolder::Daemon)
+    read_record(paths).map_or(LockHolder::Unrecorded, LockHolder::Daemon)
 }
 
 /// Sends SIGTERM to the recorded daemon, for a daemon that cannot take a

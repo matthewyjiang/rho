@@ -142,8 +142,9 @@ async fn ask(paths: &DaemonPaths, deadline: Duration) -> (DaemonProcess, DaemonS
 fn not_answering(paths: &DaemonPaths) -> (DaemonProcess, DaemonStore) {
     let record = match daemon::lock_holder(paths) {
         LockHolder::Nobody => return (DaemonProcess::NotRunning, DaemonStore::NotRunning),
-        LockHolder::Starting => {
-            let reason = "it is still starting; run `rho doctor` again in a moment".to_owned();
+        LockHolder::Unrecorded => {
+            let reason =
+                "it is starting or stopping; run `rho doctor` again in a moment".to_owned();
             return (
                 DaemonProcess::Unanswered(reason.clone()),
                 DaemonStore::Unanswered(reason),
