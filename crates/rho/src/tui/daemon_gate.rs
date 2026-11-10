@@ -37,7 +37,8 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Skills
         | CommandId::Mcp
         // Read from this process's disk and config, which the daemon
-        // shares, or written through the session (`/title`, `/remember`).
+        // shares, written through the session (`/title`, `/remember`), or
+        // run beside it on a copy of its transcript (`/side`).
         | CommandId::Info
         | CommandId::Doctor
         | CommandId::Limits
@@ -51,8 +52,8 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Sessions => CommandRoute::Ui,
         // Session navigation and deletion need daemon methods;
         // config/provider/auth editors, agents and the advisor still own
-        // in-process state. Hubs (/workflow, /attach, /side) likewise
-        // describe the wrong runtime, even when opened read-only.
+        // in-process state. Hubs (/workflow, /attach) likewise describe
+        // the wrong runtime, even when opened read-only.
         CommandId::AddDir
         | CommandId::Advisor
         | CommandId::Login

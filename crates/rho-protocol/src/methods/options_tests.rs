@@ -59,7 +59,7 @@ fn options_changed_leaves_out_what_the_model_lacks() {
     let event = SessionEvent::OptionsChanged {
         options: Box::new(SessionOptions {
             model: ModelOptions {
-                auth: None,
+                auth: "api-key".into(),
                 current: gpt.clone(),
                 available: vec![ModelChoice {
                     model: gpt,
@@ -94,6 +94,7 @@ fn options_changed_leaves_out_what_the_model_lacks() {
         "options": {
             "model": {
                 "current": {"provider": "openai", "model": "gpt-5.5"},
+                "auth": "api-key",
                 "available": [{"model": {"provider": "openai", "model": "gpt-5.5"}, "label": "GPT-5.5"}],
             },
             "permission_mode": {"current": "plan", "available": ["plan", "supervised"]},

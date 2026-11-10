@@ -21,7 +21,8 @@
 //! for the restarted daemon, and resets; one that had saved nothing, which
 //! the restarted daemon cannot reopen, is replaced by a new session. A
 //! failed reattach ends following. The exit receipt offers to resume a session
-//! once it is saved: resumed, titled, or past its first prompt.
+//! once it is saved: resumed, titled, past its first prompt, or given
+//! context (`/remember`, a `!` command's output).
 //!
 //! Off unix there is no daemon (#1665): the type is uninhabited, so the
 //! TUI's daemon paths compile everywhere and never run there.
@@ -505,7 +506,16 @@ mod unix {
         /// The session's id, once a resume, saved title, or catalog lookup
         /// confirmed it has something to resume.
         pub(crate) fn saved_id(&self) -> Option<&str> {
-            self.saved.then_some(self.id.as_str())
+            self.is_saved().then_some(self.id.as_str())
+        }
+
+        /// Whether the daemon has a file for the session.
+        fn is_saved(&self) -> bool {
+            self.saved
+                || self
+                    .requests
+                    .as_ref()
+                    .is_some_and(DaemonRequests::saved_rows)
         }
 
         /// The directory the session works in, as the daemon reports it.
@@ -658,7 +668,7 @@ mod unix {
                             opened: self
                                 .opened
                                 .clone()
-                                .filter(|_| !self.saved)
+                                .filter(|_| !self.is_saved())
                                 .map(|opened| (opened, self.options.clone())),
                         };
                         self.reattach = Some(Box::pin(async move {

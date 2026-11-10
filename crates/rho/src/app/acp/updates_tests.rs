@@ -350,7 +350,7 @@ fn session_options(mode: wire::PermissionMode, fast: bool) -> wire::SessionOptio
     };
     wire::SessionOptions {
         model: wire::ModelOptions {
-            auth: None,
+            auth: "api-key".into(),
             current: current.clone(),
             available: vec![wire::ModelChoice {
                 model: current,

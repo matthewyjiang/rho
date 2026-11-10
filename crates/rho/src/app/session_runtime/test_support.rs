@@ -274,4 +274,10 @@ impl SessionRuntime {
     pub(in crate::app) fn history_for_tests(&self) -> Vec<rho_sdk::model::Message> {
         self.built.session.history()
     }
+
+    /// Whether the session keeps its settings with its file rather than
+    /// following the config, as it does from its first settings change on.
+    pub(in crate::app) fn keeps_settings_for_tests(&self) -> bool {
+        matches!(self.settings, super::saved_settings::SettingsPolicy::Keep)
+    }
 }

@@ -91,26 +91,39 @@ impl Sessions {
         // before this ran first, and one queued after runs once this is
         // done, so the options this publishes are never older than one.
         let auths = available_auths(runtime.credentials()).await;
-        let applied = change
-            .apply(runtime, &session.config, &auths)
-            .await
-            .and_then(|()| {
-                runtime.keep_settings().map_err(|error| {
-                    RpcError::new(
-                        ErrorCode::InternalError,
-                        format!("could not save the session's settings: {error:#}"),
-                    )
-                })
-            });
-        // What the change saved joins the transcript a reset replays; no
-        // turn's end would move it there before the next prompt.
-        super::turn::save_transcript(&session, runtime);
+        let applied = change.apply(runtime, &session.config, &auths).await;
+        let applied = match applied {
+            // The session keeps a setting with its file from its first
+            // change on.
+            Ok(Applied::Setting) => runtime.keep_settings().map_err(|error| {
+                RpcError::new(
+                    ErrorCode::InternalError,
+                    format!("could not save the session's settings: {error:#}"),
+                )
+            }),
+            // What it saved joins the transcript a reset replays; no turn's
+            // end would move it there before the next prompt. The turn
+            // before it stops replaying its end, as when a turn follows.
+            Ok(Applied::Rows) => {
+                super::turn::save_transcript(&session, runtime);
+                Ok(())
+            }
+            Err(error) => Err(error),
+        };
         // Even after a failure: a model switch can fail partway, after it
         // changed what the session reports.
         let options = session.refresh_options(runtime, &auths);
         drop(held);
         applied.map(|()| SessionConfigureResponse { options })
     }
+}
+
+/// What applying a change left to do.
+enum Applied {
+    /// A setting changed, which the session now keeps.
+    Setting,
+    /// Rows were saved, which the transcript takes.
+    Rows,
 }
 
 impl Change {
@@ -139,8 +152,19 @@ impl Change {
         runtime: &mut SessionRuntime,
         config: &Config,
         auths: &[String],
-    ) -> Result<(), RpcError> {
+    ) -> Result<Applied, RpcError> {
         let applied = match self {
+            Self::Context { text, display } => {
+                return runtime
+                    .append_context(text, Message::user_text(display), [])
+                    .map(|_| Applied::Rows)
+                    .map_err(|error| {
+                        RpcError::new(
+                            ErrorCode::InternalError,
+                            format!("could not save the context: {error:#}"),
+                        )
+                    })
+            }
             Self::Model(model) => {
                 let selection = model_selection(runtime, &model, auths)?;
                 runtime.switch_model(&selection, config).await
@@ -148,12 +172,8 @@ impl Change {
             Self::Reasoning(level) => runtime.set_reasoning_level(level, config),
             Self::FastMode { enabled } => runtime.set_fast_mode(enabled),
             Self::PermissionMode(mode) => runtime.set_permission_mode(mode, config).await,
-            Self::Context { text, display } => runtime
-                .append_context(text, Message::user_text(display), [])
-                .map(|_| ())
-                .map_err(SettingChangeError::Apply),
         };
-        applied.map_err(setting_error)
+        applied.map(|()| Applied::Setting).map_err(setting_error)
     }
 }
 
