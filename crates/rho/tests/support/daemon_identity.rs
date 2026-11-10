@@ -29,6 +29,16 @@ description: Fixture agent the project defines
 Review.
 ";
 
+/// Where the workspace defines [`PROJECT_AGENT`], as agent `project-probe`.
+const PROJECT_AGENT_FILE: &str = ".agents/agents/project-probe.md";
+
+/// Writes `contents` to `file` in the sandbox's workspace.
+fn write_project_file(sandbox: &Sandbox, file: &str, contents: &str) {
+    let path = sandbox.workspace.join(file);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, contents).unwrap();
+}
+
 /// Has a client whose environment adds `extra` start the sandbox's daemon,
 /// as any client does when none runs, and connects to it.
 async fn started_by_client(sandbox: &Sandbox, mode: &str, extra: &[(&str, &str)]) -> Client {
@@ -122,22 +132,17 @@ async fn a_started_daemon_gets_only_the_allowed_part_of_its_starters_environment
 // as a project agent and its session runs no project hook; a client with
 // trust does both, and its session keeps its hooks when a client without
 // trust prompts it, as the other stays without when a trusting one does.
-// The trusted session's replay is still readable once no client's
-// environment is there to trust the project.
 // Owner: daemon session open.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_sessions_project_trust_is_its_opening_clients() {
     let sandbox = Sandbox::new();
     sandbox.set_permission_mode("bypass");
-    let project = |file: &str| {
-        let path = sandbox.workspace.join(file);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        path
-    };
-    std::fs::write(project(".agents/agents/project-probe.md"), PROJECT_AGENT).unwrap();
+    write_project_file(&sandbox, PROJECT_AGENT_FILE, PROJECT_AGENT);
     let ran = sandbox.workspace.parent().unwrap().join("project-hook.txt");
-    std::fs::write(
-        project(".rho/hooks.toml"),
+    write_project_file(
+        &sandbox,
+        ".rho/hooks.toml",
+        &
         format!(
             r#"version = 1
 
@@ -154,8 +159,7 @@ timeout = "10s"
                 ran.display()
             ),
         ),
-    )
-    .unwrap();
+    );
     // The first client, which starts the daemon, trusts the project.
     let client = started_by_client(&sandbox, "tool-call", &TRUST).await;
     let clients = [("untrusting", &[][..]), ("trusting", &TRUST[..])];
@@ -189,26 +193,6 @@ timeout = "10s"
         }
         opened_as_project_agent.push((opener, as_project_agent));
     }
-    let saved = opened_as_project_agent[1].1.clone();
-    // A daemon nobody's trust reached reads the saved session unloaded.
-    let stopped = sandbox
-        .rho("tool-call")
-        .args(["daemon", "stop"])
-        .status()
-        .unwrap();
-    assert!(stopped.success(), "daemon stop: {stopped:?}");
-    let client = started_by_client(&sandbox, "tool-call", &[]).await;
-    let replayed = match &saved {
-        Ok(session) => client
-            .request::<SessionObserve>(&SessionObserveParams {
-                session: session.clone(),
-                after: None,
-            })
-            .await
-            .map(|_| ())
-            .map_err(|error| error.to_string()),
-        Err(code) => Err(format!("no session to replay: {code:?}")),
-    };
 
     assert_eq!(
         (
@@ -217,7 +201,6 @@ timeout = "10s"
                 .map(|(opener, opened)| (opener, opened.map(|_| ())))
                 .collect::<Vec<_>>(),
             std::fs::read_to_string(&ran).unwrap_or_default(),
-            replayed,
         ),
         (
             vec![
@@ -225,8 +208,65 @@ timeout = "10s"
                 ("trusting", Ok(())),
             ],
             "trusting session, untrusting prompt\ntrusting session, trusting prompt\n".to_owned(),
-            Ok(()),
         ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: an unloaded session replays as the agent it was saved as. Observing
+// carries no client environment, so no trust to find a project's agent
+// with: a session saved as one still replays, and one saved as a built-in
+// agent is not handed a project file of the same name that appeared since.
+// Owner: daemon session observe.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unloaded_session_replays_as_the_agent_it_was_saved_as() {
+    let sandbox = Sandbox::new();
+    write_project_file(&sandbox, PROJECT_AGENT_FILE, PROJECT_AGENT);
+    let client = started_by_client(&sandbox, "fixed", &[]).await;
+    let mut saved = Vec::new();
+    for (label, agent, trust) in [
+        ("a project's agent", Some("project-probe"), &TRUST[..]),
+        ("a built-in agent the project shadows since", None, &[][..]),
+    ] {
+        let session = new_session(&sandbox, &client, agent, environment_with(&sandbox, trust))
+            .await
+            .unwrap_or_else(|code| panic!("{label} opens: {code:?}"));
+        // Its first prompt saves it.
+        sandbox.prompt(&client, &session).await.unwrap();
+        settled_job(&sandbox, &client, &session).await;
+        saved.push((label, session));
+    }
+    write_project_file(&sandbox, ".agents/agents/default.md", PROJECT_AGENT);
+    // A new daemon has loaded nothing.
+    let stopped = sandbox
+        .rho("fixed")
+        .args(["daemon", "stop"])
+        .status()
+        .unwrap();
+    assert!(stopped.success(), "daemon stop: {stopped:?}");
+    let client = started_by_client(&sandbox, "fixed", &[]).await;
+
+    let mut replayed = Vec::new();
+    for (label, session) in saved {
+        let observed = client
+            .request::<SessionObserve>(&SessionObserveParams {
+                session,
+                after: None,
+            })
+            .await;
+        replayed.push((
+            label,
+            observed.map(|_| ()).map_err(|error| error.to_string()),
+        ));
+    }
+
+    assert_eq!(
+        replayed,
+        [
+            ("a project's agent", Ok(())),
+            ("a built-in agent the project shadows since", Ok(())),
+        ],
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

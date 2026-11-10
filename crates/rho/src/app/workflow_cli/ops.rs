@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     app::workflow_runtime::RecoveryDecision,
-    session_environment::Ambient,
+    session_environment::SessionEnvironment,
     workflow::{
         normalize_workflow, validate_runtime_budgets, validate_workflow, verify_directory_identity,
         verify_executable_identity, CollectedSources, Digest, FrozenSchedulerSettings,
@@ -50,25 +50,25 @@ pub(crate) struct WorkflowOps {
     /// interpreters on, and rechecks find interpreters on again: that of
     /// the environment runs start in (#1659).
     search_path: Option<OsString>,
-    /// The project trust of that environment (#1779): planning finds
-    /// project agents under it, and a recheck holds a plan to it.
+    /// The project trust those runs have (#1779): planning finds project
+    /// agents under it, and a recheck holds a plan to it.
     project_trust: ProjectTrusts,
 }
 
 impl WorkflowOps {
     /// Workflow operations in `workspace`, for runs that start in
-    /// `environment`.
+    /// `environment`: this process's, or a session's snapshot.
     pub(crate) fn open(
         workspace: PathBuf,
         config_path: Option<PathBuf>,
-        environment: &Ambient,
+        environment: &SessionEnvironment,
     ) -> anyhow::Result<Self> {
         let workspace = workspace.canonicalize()?;
         Ok(Self {
             service: WorkflowService::new(WorkflowStore::new(&crate::paths::rho_dir()?)?),
             workspace,
             config_path,
-            search_path: environment.path(),
+            search_path: environment.current().path(),
             project_trust: environment.project_trust(),
         })
     }

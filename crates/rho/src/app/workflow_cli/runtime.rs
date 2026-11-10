@@ -29,7 +29,7 @@ use crate::{
     config::Config,
     permission::{remember_allowed_workspace_writes, PermissionMode, SessionWriteLog},
     permission_classifier_handler::ClassifierApprovalHandler,
-    session_environment::{Ambient, SessionEnvironment},
+    session_environment::SessionEnvironment,
     tools::workflow_tracker::WorkflowRunTracker,
     workflow::{ResolvedNode, RunId, StoredRun, WorkflowOutcome},
 };
@@ -263,7 +263,7 @@ pub(crate) async fn execute_run(
         SubagentPool::Own,
         // A run driven from the terminal, `rho workflow run` or `resume`,
         // runs in this process's environment (#1659).
-        Ambient::ThisProcess,
+        SessionEnvironment::default(),
     )?;
     let custom_providers = runtime.custom_providers.clone();
     rho_providers::provider::scope_custom_openai_compatible_providers(
@@ -315,11 +315,11 @@ pub(crate) struct BackgroundRun {
     /// Delivers the run's completion to the starting session.
     pub(crate) tracker: WorkflowRunTracker,
     /// The environment the run's hooks, agent nodes, and commands run in
-    /// (#1659): the starting session's when it started or resumed the run,
-    /// the snapshot planning or the resume recheck used. Later prompts do
-    /// not change it. It is never saved, so a run resumed later takes the
-    /// environment of whatever resumes it.
-    pub(crate) environment: Ambient,
+    /// (#1659), with its project trust (#1779): the starting session's when
+    /// it started or resumed the run, the snapshot planning or the resume
+    /// recheck used. Later prompts do not change it. It is never saved, so
+    /// a run resumed later takes the environment of whatever resumes it.
+    pub(crate) environment: SessionEnvironment,
 }
 
 /// Starts a workflow run on a detached task and returns immediately.
@@ -458,14 +458,13 @@ impl WorkflowRuntime {
         config_path: Option<std::path::PathBuf>,
         approval_mode: WorkflowApprovalMode,
         nodes: SubagentPool,
-        environment: Ambient,
-    ) -> anyhow::Result<Self> {
         // The run's own handle, which nothing replaces: its command
         // executables, their `#!/usr/bin/env` interpreters, and CLI agent
         // binaries were frozen on one `PATH`, and must verify on that `PATH`
         // when each node starts, not on whichever client prompted the
         // session since (#1659).
-        let environment = SessionEnvironment::new(environment);
+        environment: SessionEnvironment,
+    ) -> anyhow::Result<Self> {
         let cwd = cwd.canonicalize()?;
         let repository = ConfigRepository::new(config_path);
         let config_path = absolute_config_path(&repository)?;

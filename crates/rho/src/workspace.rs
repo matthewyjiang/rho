@@ -119,6 +119,49 @@ mod tests {
         );
     }
 
+    // Covers: each `RHO_TRUST_PROJECT_*` variable grants its own feature and
+    // no other, so trusting a project's agents never activates its hooks.
+    // Owner: workspace trust policy.
+    #[test]
+    fn each_trust_variable_grants_only_its_feature() {
+        use ProjectTrust::Trusted;
+        const UNTRUSTED: ProjectTrusts = ProjectTrusts::UNTRUSTED;
+        let cases = [
+            (
+                TRUST_PROJECT_HOOKS_ENV,
+                ProjectTrusts {
+                    hooks: Trusted,
+                    ..UNTRUSTED
+                },
+            ),
+            (
+                TRUST_PROJECT_AGENTS_ENV,
+                ProjectTrusts {
+                    agents: Trusted,
+                    ..UNTRUSTED
+                },
+            ),
+            (
+                TRUST_PROJECT_PLUGINS_ENV,
+                ProjectTrusts {
+                    plugins: Trusted,
+                    ..UNTRUSTED
+                },
+            ),
+            (
+                TRUST_PROJECT_OPENAPI_ENV,
+                ProjectTrusts {
+                    openapi: Trusted,
+                    ..UNTRUSTED
+                },
+            ),
+        ];
+        for (variable, expected) in cases {
+            let granted = ProjectTrusts::read(|name| (name == variable).then(|| "1".to_owned()));
+            assert_eq!(granted, expected, "{variable}");
+        }
+    }
+
     // Covers: only the exact value `1` grants trust, matching the
     // RHO_TRUST_PROJECT_* family contract used by hooks, agents, and plugins.
     // Owner: workspace trust policy.

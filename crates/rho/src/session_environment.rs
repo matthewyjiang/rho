@@ -5,11 +5,12 @@
 //! Antigravity), and each takes the environment current when it starts a
 //! child or reads a variable. A workflow run the session starts or resumes
 //! instead gets its own handle of the environment current then, which no
-//! later prompt replaces.
+//! later prompt replaces (see [`SessionEnvironment::snapshot`]).
 //!
 //! Project trust (`RHO_TRUST_PROJECT_*`) is read from the same environment,
 //! once: a session keeps the trust of the environment it opened with, whatever
-//! later prompts bring (#1779).
+//! later prompts bring, and so do the workflow runs it starts (#1779). Only a
+//! [`SessionEnvironment`] says what is trusted; an [`Ambient`] is variables.
 
 use std::{
     collections::BTreeMap,
@@ -20,7 +21,7 @@ use std::{
 
 use rho_sdk::ProcessEnvironment;
 
-use crate::workspace::{ProjectTrust, ProjectTrusts};
+use crate::workspace::ProjectTrusts;
 
 /// The environment a session's children see (#1659): this process's own,
 /// or a daemon client's variables.
@@ -67,14 +68,6 @@ impl Ambient {
                 command.env_clear().envs(variables.iter());
             }
         }
-    }
-
-    /// The project trust this environment grants, for a host about to fix
-    /// it: one opening a session ([`SessionEnvironment::new`] does this) or
-    /// planning and starting a workflow run from one snapshot. A session
-    /// already open answers with [`SessionEnvironment::project_trust`].
-    pub(crate) fn project_trust(&self) -> ProjectTrusts {
-        ProjectTrusts::read(|name| self.read(name))
     }
 
     /// The `PATH` executables are looked up on.
@@ -154,32 +147,32 @@ impl SessionEnvironment {
     pub(crate) fn new(ambient: Ambient) -> Self {
         Self {
             process: ambient.process_environment().into(),
-            project_trust: ambient.project_trust(),
+            project_trust: ProjectTrusts::read(|name| ambient.read(name)),
             ambient: Arc::new(RwLock::new(ambient)),
         }
     }
 
+    /// This environment as it is now, on a handle of its own that no later
+    /// prompt replaces, with the session's project trust: what a workflow
+    /// run the session starts or resumes runs in (#1659).
+    pub(crate) fn snapshot(&self) -> Self {
+        Self {
+            project_trust: self.project_trust,
+            ..Self::new(self.current())
+        }
+    }
+
     /// The environment of a session opened only to read what it saved: no
-    /// client's variables, since nothing of the session starts.
-    ///
-    /// It reads the project's agents and plugins as trusted, so a session
-    /// saved as a project agent can still be read. That activates nothing:
-    /// a read starts no hooks, tool sources, or turns, and the session was
-    /// saved by a client that trusted them.
+    /// client's variables, since nothing of the session starts, and the
+    /// `project_trust` its host reads the project's definitions under.
     #[cfg_attr(
         not(unix),
         allow(dead_code, reason = "only the Unix daemon reads sessions")
     )]
-    pub(crate) fn for_reading() -> Self {
-        let ambient = Ambient::Client(Arc::default());
+    pub(crate) fn for_reading(project_trust: ProjectTrusts) -> Self {
         Self {
-            process: ambient.process_environment().into(),
-            project_trust: ProjectTrusts {
-                agents: ProjectTrust::Trusted,
-                plugins: ProjectTrust::Trusted,
-                ..ProjectTrusts::UNTRUSTED
-            },
-            ambient: Arc::new(RwLock::new(ambient)),
+            project_trust,
+            ..Self::new(Ambient::Client(Arc::default()))
         }
     }
 
@@ -210,6 +203,13 @@ impl SessionEnvironment {
         allow(dead_code, reason = "only the Unix daemon replaces it")
     )]
     pub(crate) fn replace(&self, ambient: Ambient) {
+        if ProjectTrusts::read(|name| ambient.read(name)) != self.project_trust {
+            // Why a client's `RHO_TRUST_PROJECT_*` seem ignored.
+            tracing::info!(
+                kept = ?self.project_trust,
+                "the session keeps the project trust it opened with; this client's environment grants another"
+            );
+        }
         let mut current = self.ambient.write().unwrap_or_else(PoisonError::into_inner);
         self.process.replace(ambient.process_environment());
         *current = ambient;

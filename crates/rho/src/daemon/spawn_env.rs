@@ -34,6 +34,10 @@ const MACHINE: &[&str] = &[
     "XDG_RUNTIME_DIR",
     // Model catalog caches.
     "XDG_CACHE_HOME",
+    // The global ignore file of the `git` the write gate asks, and of
+    // workspace walks.
+    "XDG_CONFIG_HOME",
+    "GIT_CONFIG_GLOBAL",
     "LANG",
     "LC_ALL",
     "LC_CTYPE",
@@ -57,7 +61,7 @@ const NETWORK: &[&str] = &[
     "RHO_SSRF_ALLOW_RANGES",
 ];
 
-/// Settings of the daemon itself, read once when it starts.
+/// Settings of the daemon itself, which hold for every session.
 const DAEMON_SETTINGS: &[&str] = &[
     "RHO_LOG",
     "RHO_CLAUDE_AGENT_CONCURRENCY",
@@ -75,6 +79,7 @@ const CREDENTIAL_INPUTS: &[&str] = &[
     crate::credential_store::ENV_BACKEND,
     "DBUS_SESSION_BUS_ADDRESS",
     "CODEX_ACCOUNT_ID",
+    "OLLAMA_DEVICE_KEY_DIR",
     "GITHUB_TOKEN",
     "GH_TOKEN",
 ];

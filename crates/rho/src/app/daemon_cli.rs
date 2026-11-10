@@ -184,6 +184,15 @@ async fn run_foreground(
     let store_environment = crate::credential_store::environment_backend()
         .context("RHO_CREDENTIAL_STORE in the daemon's environment")
         .inspect_err(|error| tracing::error!(error = %format!("{error:#}"), "not starting"))?;
+    // Before #1779 these set every session's trust; a unit that still
+    // carries them would otherwise lose it without a word.
+    if crate::workspace::ProjectTrusts::of_this_process()
+        != crate::workspace::ProjectTrusts::UNTRUSTED
+    {
+        tracing::warn!(
+            "RHO_TRUST_PROJECT_* in the daemon's environment grants nothing: each session takes the project trust of the client that opens it"
+        );
+    }
     // A panicking request handler is answered with an internal error, and an
     // auto-spawned daemon's stderr goes nowhere, so the log is the only place
     // the panic can surface.

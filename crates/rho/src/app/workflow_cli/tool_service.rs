@@ -15,7 +15,7 @@ use rho_sdk::{
 use crate::{
     agent::AgentCapabilities,
     app::{subagent_pool::SubagentPool, workflow_runtime::RecoveryDecision},
-    session_environment::{Ambient, SessionEnvironment},
+    session_environment::SessionEnvironment,
     tools::{
         workflow::{
             WorkflowArtifactSummary, WorkflowCancellationStateSummary, WorkflowDiagnosticSummary,
@@ -90,12 +90,7 @@ impl AppWorkflowToolService {
             &rho_home,
             crate::paths::home_dir().as_deref(),
             &executable,
-            // As the request's own snapshot reads it when it runs.
-            self.environment
-                .current()
-                .project_trust()
-                .agents
-                .is_trusted(),
+            self.environment.project_trust().agents.is_trusted(),
         )
     }
 
@@ -274,7 +269,7 @@ impl AppWorkflowToolService {
         // One snapshot across this request's awaits: a run verifies its
         // frozen executables on the `PATH` they were frozen or rechecked on
         // (#1659).
-        let environment = self.environment.current();
+        let environment = self.environment.snapshot();
         match request {
             WorkflowToolRequest::Validate { file, inputs } => {
                 match self
@@ -397,7 +392,7 @@ impl AppWorkflowToolService {
         &self,
         run: StoredRun,
         recovery: RecoveryDecision,
-        environment: Ambient,
+        environment: SessionEnvironment,
     ) -> Result<WorkflowToolResult, ToolError> {
         if !self.tracker.register_start(
             run.manifest.run_id.to_string(),
@@ -427,17 +422,17 @@ impl AppWorkflowToolService {
     }
 
     /// Workflow operations for runs that start or resume in `environment`.
-    fn ops(&self, environment: &Ambient) -> anyhow::Result<WorkflowOps> {
+    fn ops(&self, environment: &SessionEnvironment) -> anyhow::Result<WorkflowOps> {
         WorkflowOps::open(self.cwd.clone(), self.config_path.clone(), environment)
     }
 
     /// Plans `file`, finding bare executables on `environment`'s `PATH` and
-    /// project agents under its project trust.
+    /// project agents under the session's project trust.
     async fn prepare(
         &self,
         file: &Path,
         inputs: BTreeMap<String, serde_json::Value>,
-        environment: &Ambient,
+        environment: &SessionEnvironment,
         context: &ToolContext,
     ) -> anyhow::Result<super::PreparedPlan> {
         let catalog = self
@@ -464,7 +459,7 @@ impl AppWorkflowToolService {
             .authorize_node_resolution_reads(
                 launchable,
                 &catalog,
-                environment.path().as_deref(),
+                environment.current().path().as_deref(),
                 context,
             )
             .await?;

@@ -1,7 +1,6 @@
 //! Connecting to the daemon, starting one first when none is running.
 
 use std::{
-    ffi::OsString,
     fs::{File, OpenOptions},
     io,
     os::unix::{fs::OpenOptionsExt, process::CommandExt},
@@ -70,17 +69,12 @@ pub(crate) trait DaemonSpawner: Send + Sync {
 /// there.
 pub(crate) struct ProcessSpawner {
     executable: PathBuf,
-    /// The whole environment the daemon starts with, but for `RHO_HOME`.
-    environment: Vec<(OsString, OsString)>,
 }
 
 impl ProcessSpawner {
-    /// A spawner of this executable, giving the daemon the allowed part of
-    /// this process's environment.
     pub(crate) fn current_exe() -> io::Result<Self> {
         Ok(Self {
             executable: std::env::current_exe()?,
-            environment: daemon_environment(std::env::vars_os()),
         })
     }
 }
@@ -98,7 +92,7 @@ impl DaemonSpawner for ProcessSpawner {
             // each session in that session's own workspace.
             .current_dir("/")
             .env_clear()
-            .envs(self.environment.iter().map(|(name, value)| (name, value)))
+            .envs(daemon_environment(std::env::vars_os()))
             .env("RHO_HOME", &paths.home)
             .stdin(Stdio::null())
             .stdout(Stdio::null())

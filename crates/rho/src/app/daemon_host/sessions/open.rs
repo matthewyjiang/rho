@@ -53,7 +53,7 @@ use crate::{
     session::{Session as StoredSession, SessionPersistence},
     session_environment::{Ambient, SessionEnvironment},
     tools::mcp::McpAuthorizationMode,
-    workspace::ProjectTrusts,
+    workspace::{ProjectTrust, ProjectTrusts},
 };
 
 /// The directory a session works in: an existing directory, canonicalized.
@@ -177,19 +177,31 @@ pub(super) async fn open_session(
     .map_err(open_failed)
 }
 
+/// The project trust a read falls back to when the agents a session was
+/// saved as are not found without any: the project's agents and plugins.
+/// A read only parses them: it starts no hooks, tool sources, or turns.
+pub(super) const READ_PROJECT_AGENTS: ProjectTrusts = ProjectTrusts {
+    agents: ProjectTrust::Trusted,
+    plugins: ProjectTrust::Trusted,
+    ..ProjectTrusts::UNTRUSTED
+};
+
 /// Opens `stored` only to read what it saved, its turns recorded on job
 /// `job`: it starts none of its MCP servers, OpenAPI sources, or hooks, sees
 /// no client's environment (see [`SessionEnvironment::for_reading`]), and
-/// takes no setup but what its file keeps. Fails as [`open_session`] does.
+/// takes no setup but what its file keeps. Its agents are found under
+/// `project_trust`, which no client is there to grant: see
+/// [`READ_PROJECT_AGENTS`]. Fails as [`open_session`] does.
 pub(super) async fn open_to_read(
     stored: StoredSession,
+    project_trust: ProjectTrusts,
     subagents: &Subagents,
     job: &JobId,
 ) -> Result<OpenedSession, RpcError> {
     let setup = Setup::resolve(&SessionSetup::default(), stored.cwd(), Some(&stored))?;
     open_runtime(
         Opening::Saved(stored),
-        SessionEnvironment::for_reading(),
+        SessionEnvironment::for_reading(project_trust),
         setup,
         SessionUse::Read,
         subagents,
@@ -200,8 +212,7 @@ pub(super) async fn open_to_read(
 }
 
 /// [`open_session`] and [`open_to_read`] once the setup resolved. The
-/// session's agent is found under `environment`'s project trust, the
-/// opening client's (#1779).
+/// session's agent is found under `environment`'s project trust (#1779).
 async fn open_runtime(
     opening: Opening,
     environment: SessionEnvironment,
