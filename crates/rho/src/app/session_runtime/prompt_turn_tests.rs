@@ -55,11 +55,13 @@ async fn plan_mode_runtime(
     built.tools = AppToolSet::disabled().with_plan_exit_host(config, PlanExitHost::Permission);
     let mut runtime = SessionRuntime::for_tests(built, SessionStorage::saved(stored), config);
     // Entering plan mode rebuilds the SDK runtime with the tools, as a
-    // host's mode change does.
+    // host's mode change does, and the session keeps the mode with its
+    // file from then on.
     runtime
         .set_permission_mode(PermissionMode::Plan, config)
         .await
         .unwrap();
+    runtime.keep_settings().unwrap();
     runtime
 }
 
