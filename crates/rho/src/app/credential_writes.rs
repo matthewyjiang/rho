@@ -225,8 +225,8 @@ impl ApiKeyAuth {
         let ProviderAuthKind::ApiKey { .. } = mode.auth_kind else {
             return Err(CredentialWriteError::NotAnApiKey { auth: auth.into() });
         };
-        // The variable wins over a saved key, so saving one would change
-        // nothing and the check would test the variable's key instead.
+        // The variable wins over a saved key in that party's sessions, so
+        // saving one would change nothing for them.
         refuse_environment_override(auth, CredentialWrite::SignIn, credentials)?;
         Ok(Self {
             auth: mode.id,
