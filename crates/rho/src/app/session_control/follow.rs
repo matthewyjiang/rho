@@ -18,7 +18,10 @@ use super::{
     transcript::Transcript,
     ControlError,
 };
-use crate::{app::daemon_cli, daemon::Connection};
+use crate::{
+    app::daemon_cli::{self, Reach},
+    daemon::Connection,
+};
 
 /// An observation of one session, on its own connection.
 struct Attached {
@@ -28,8 +31,12 @@ struct Attached {
 }
 
 impl Attached {
-    async fn open(session: &SessionId, after: Option<Cursor>) -> Result<Self, ControlError> {
-        let connection = daemon_cli::connect().await?;
+    async fn open(
+        reach: Reach,
+        session: &SessionId,
+        after: Option<Cursor>,
+    ) -> Result<Self, ControlError> {
+        let connection = daemon_cli::connect_with(reach).await?;
         let response = connection
             .client
             .request::<SessionObserve>(&SessionObserveParams {
@@ -81,8 +88,8 @@ impl Attached {
 
 /// The session's transcript as text: its saved turns, then the turn in
 /// progress.
-pub(super) async fn transcript(session: &SessionId) -> Result<String, ControlError> {
-    let mut attached = Attached::open(session, None).await?;
+pub(super) async fn transcript(reach: Reach, session: &SessionId) -> Result<String, ControlError> {
+    let mut attached = Attached::open(reach, session, None).await?;
     let mut transcript = Transcript::default();
     for _ in 0..attached.response.replay_events {
         match attached.next().await? {
@@ -97,12 +104,13 @@ pub(super) async fn transcript(session: &SessionId) -> Result<String, ControlErr
 /// Follows the session from `after` until its turn stops running or
 /// `timeout` passes, and reports where it is.
 pub(super) async fn wait(
+    reach: Reach,
     session: SessionId,
     after: Option<Cursor>,
     timeout: Duration,
 ) -> Result<WaitResult, ControlError> {
     let deadline = tokio::time::Instant::now() + timeout;
-    let mut attached = Attached::open(&session, after.clone()).await?;
+    let mut attached = Attached::open(reach, &session, after.clone()).await?;
     let response = &attached.response;
     // A tail resumes the caller's cursor; a reset starts the stream over.
     let resumed = after

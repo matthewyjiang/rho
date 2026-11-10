@@ -2,10 +2,11 @@
 //! their input schemas and return the results as JSON, so every front end
 //! answers the same call the same way.
 
-use std::{num::NonZeroUsize, path::PathBuf, time::Duration};
+use std::{collections::HashMap, num::NonZeroUsize, path::PathBuf, time::Duration};
 
 use rho_protocol::{
-    Cursor, InputRequest, JobState, JobSummary, Seq, SessionId, SteerId, StreamId, TurnOutcome,
+    Cursor, InputRequest, JobId, JobState, JobSummary, Seq, SessionId, SteerId, StreamId,
+    TurnOutcome,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -80,12 +81,17 @@ pub(crate) struct SessionEntry {
     pub(crate) updated_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) error: Option<String>,
+    /// The session whose agent started this one (#1714).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) parent: Option<SessionId>,
 }
 
 impl SessionEntry {
-    /// The entry for a session job; `None` for a job that writes no session.
-    pub(super) fn of_job(job: JobSummary) -> Option<Self> {
+    /// The entry for a session job, whose parent is the session `writers`
+    /// says its parent job writes; `None` for a job that writes no session.
+    pub(super) fn of_job(job: JobSummary, writers: &HashMap<JobId, SessionId>) -> Option<Self> {
         Some(Self {
+            parent: job.parent.and_then(|parent| writers.get(&parent).cloned()),
             session: job.session?,
             workspace: job.workspace,
             state: job.state,

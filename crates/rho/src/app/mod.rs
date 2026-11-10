@@ -59,7 +59,7 @@ mod session_assembly;
 mod session_commands;
 // Session control through the rho daemon, which is unix-only (#1665).
 #[cfg(unix)]
-mod session_control;
+pub(crate) mod session_control;
 mod session_events;
 mod session_mcp;
 mod session_options;
