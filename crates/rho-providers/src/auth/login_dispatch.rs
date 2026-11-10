@@ -227,7 +227,13 @@ impl ProviderAuthentication {
     /// so [`InteractiveLogin::prompt`] already has the authorize URL. The
     /// browser opens only when `availability` is
     /// [`BrowserAvailability::Graphical`].
+    ///
+    /// `store` is the credentials of whoever signs in, the store the login
+    /// is later saved to. A login that keeps something outside it reads
+    /// where from their environment through it: the Ollama Cloud device key
+    /// is created in their `OLLAMA_DEVICE_KEY_DIR`.
     pub async fn start_interactive_login(
+        store: &dyn CredentialStore,
         provider_or_auth: &str,
         mode: InteractiveLoginMode,
         availability: BrowserAvailability,
@@ -246,7 +252,7 @@ impl ProviderAuthentication {
             ProviderAuthKind::KimiOAuth { .. } => start_kimi().await?,
             ProviderAuthKind::MetaOAuth { .. } => start_meta().await?,
             ProviderAuthKind::XaiOAuth { .. } => start_xai(mode).await?,
-            ProviderAuthKind::OllamaDeviceKey { .. } => start_ollama_device().await?,
+            ProviderAuthKind::OllamaDeviceKey { .. } => start_ollama_device(store).await?,
             ProviderAuthKind::BearerCredential { acquisition, .. } => match acquisition {
                 BearerCredentialAcquisition::BrowserOAuth(BrowserOAuthFlow::OpenRouter) => {
                     // OpenRouter has no device-code grant. `--device-auth` still
@@ -584,8 +590,10 @@ async fn start_xai(mode: InteractiveLoginMode) -> Result<StartedLogin, Authentic
     })
 }
 
-async fn start_ollama_device() -> Result<StartedLogin, AuthenticationError> {
-    let login = ollama_device::start_ollama_device_login()
+async fn start_ollama_device(
+    store: &dyn CredentialStore,
+) -> Result<StartedLogin, AuthenticationError> {
+    let login = ollama_device::start_ollama_device_login(store)
         .await
         .map_err(flow_error)?;
     Ok(StartedLogin {

@@ -36,6 +36,7 @@ fn a_prompt_carries_its_message_as_content_blocks() {
         timeout_ms: None,
         environment: ClientEnvironment::from_iter([("HOME".to_owned(), "/home/u".to_owned())]),
         idempotency_key: Some(IdempotencyKey::new("k1")),
+        grant: None,
     };
     let wire = json!({
         "session": "s1",

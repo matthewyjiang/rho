@@ -85,7 +85,7 @@ impl SessionRuntime {
                         start.inputs,
                         process_config,
                         &available_tools,
-                    ) => prepared.map_err(&failed)?,
+                    ) => prepared.map_err(failed)?,
                 };
                 let run = ops.create_launch_run(&prepared).map_err(failed)?;
                 (run, RecoveryDecision::NormalResume)

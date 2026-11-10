@@ -46,17 +46,21 @@ impl App {
             InteractiveLoginMode::Device => format!("starting {provider_label} device login"),
         });
         terminal.draw(|frame| self.draw(frame))?;
-        let login =
-            match ProviderAuthentication::start_interactive_login(&target.auth, mode, availability)
-                .await
-            {
-                Ok(login) => login,
-                Err(err) => {
-                    self.insert_entry(&Entry::Error(err.to_string()));
-                    self.set_status("login failed");
-                    return Ok(());
-                }
-            };
+        let login = match ProviderAuthentication::start_interactive_login(
+            self.credential_store.as_ref(),
+            &target.auth,
+            mode,
+            availability,
+        )
+        .await
+        {
+            Ok(login) => login,
+            Err(err) => {
+                self.insert_entry(&Entry::Error(err.to_string()));
+                self.set_status("login failed");
+                return Ok(());
+            }
+        };
 
         let provider_label = login.provider_label;
         let device_flow = login.prompt.user_code.is_some();

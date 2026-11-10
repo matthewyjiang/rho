@@ -42,7 +42,7 @@ pub(super) async fn run(
     };
     let availability = BrowserAvailability::from_process();
     let mode = drive::mode(&auth, device_auth, availability);
-    let approval = drive::approve(&auth, mode, availability, |prompt| {
+    let approval = drive::approve(&AppCredentialStore, &auth, mode, availability, |prompt| {
         eprint_login_prompt(provider_label, &prompt);
     })
     .await?;

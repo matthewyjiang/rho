@@ -7,8 +7,9 @@
 //! variables allowed here, which say where its files are, how it reaches the
 //! network, and how the daemon itself is set up. Everything a session needs
 //! from a client arrives with that client's requests instead (see
-//! [`crate::session_environment`]): its API keys and its choice of
-//! credential store among them, so none is listed here.
+//! [`crate::session_environment`]): its API keys, its choice of credential
+//! store, and where it keeps its Ollama device key among them, so none is
+//! listed here.
 //!
 //! A variable belongs here only when it describes the daemon or the machine,
 //! the same for every client. One that could differ between two clients of
@@ -39,9 +40,6 @@ const MACHINE: &[&str] = &[
     // workspace walks.
     "XDG_CONFIG_HOME",
     "GIT_CONFIG_GLOBAL",
-    // Where this machine's Ollama device key is kept: a place, as `HOME`
-    // is, which the daemon creates the key in and every session reads.
-    "OLLAMA_DEVICE_KEY_DIR",
     "LANG",
     "LC_ALL",
     "LC_CTYPE",

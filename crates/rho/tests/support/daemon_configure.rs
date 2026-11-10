@@ -120,6 +120,7 @@ async fn a_change_reaches_attached_clients_and_the_next_turn() {
             agent: None,
             setup: SessionSetup::default(),
             parent: None,
+            grant: None,
         })
         .await
         .unwrap();

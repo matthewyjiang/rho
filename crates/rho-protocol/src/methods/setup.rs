@@ -109,7 +109,9 @@ pub enum SessionPart {
     Subagents,
     /// Questions to the user: the session has no questionnaire tool, and an
     /// MCP server's question is declined, for a client that cannot show
-    /// [`crate::Ask::Question`].
+    /// [`crate::Ask::Question`]. It only shapes what the session offers its
+    /// model: which connections may answer a request is decided by the
+    /// [`crate::ClientCapability::Answer`] each declared, not by this.
     Questions,
     /// The session's file, as with `--no-save`: the session lives in the
     /// daemon's memory alone. The daemon keeps it while a client follows it

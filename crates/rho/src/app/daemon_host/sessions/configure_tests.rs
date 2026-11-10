@@ -71,6 +71,7 @@ async fn a_prompt_sent_while_a_change_waits_runs_after_it() {
         timeout_ms: None,
         environment: std::iter::empty::<(String, String)>().collect(),
         idempotency_key: None,
+        grant: None,
     });
     tokio::pin!(prompt);
     // Pending until its turn, behind the change, saves the prompt.

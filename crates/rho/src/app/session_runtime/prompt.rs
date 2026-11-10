@@ -80,7 +80,12 @@ impl SessionRuntime {
             return Err(super::UnsavedCompaction.into());
         }
         let scope = PromptScope::begin(&self.handle);
-        self.renew_stale_credentials(process_config).await?;
+        let renewed = self.renew_stale_credentials(process_config).await;
+        // With nothing to renew from, as after a logout, the renewal's read
+        // cached the miss in the OS store, and the login that fixes it may
+        // run in another process: the next prompt rereads.
+        self.note_credential_failure(&renewed);
+        renewed?;
         Ok(scope)
     }
 }
