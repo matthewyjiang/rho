@@ -10,6 +10,12 @@
 //! budget, and once it runs alone again it takes a slot again, in line, and
 //! works on meanwhile. A slot is therefore only ever held by a turn that
 //! waits on no other job's slot, and the budget cannot deadlock on itself.
+//!
+//! A turn that lent its slot is not paused: nothing gates its next model
+//! request on a slot. So the budget bounds turns that run alone, not every
+//! running agent: each started session with work of its own under way can
+//! run one agent beyond it, as many as session control's depth and session
+//! caps let agents start.
 
 use std::{convert::Infallible, future::Future, pin::Pin};
 
