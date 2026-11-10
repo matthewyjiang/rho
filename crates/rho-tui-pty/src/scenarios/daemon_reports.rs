@@ -73,8 +73,10 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         harness.set_phase("resume_keeps_the_directory");
         harness.wait_for_text("fixture response: hello first", STREAM)?;
         harness.submit_text("/add-dir")?;
-        // The replayed row names the directory too: the listing must.
-        harness.wait_for_text("usage: /add-dir <path>", SETTLE)?;
+        // The replayed row names the directory too: the listing must. A
+        // long path wraps the usage that follows it, so wait for the
+        // listing's start.
+        harness.wait_for_text("added directories:", SETTLE)?;
         ensure!(
             !harness.screen().contains_text("added directories: none"),
             "the reopened session lists no added directory"
