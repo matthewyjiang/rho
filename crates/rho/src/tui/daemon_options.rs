@@ -111,10 +111,14 @@ impl App {
             .as_ref()
             .and_then(|reasoning| reasoning_from_wire(reasoning.current))
             .unwrap_or(rho_providers::reasoning::ReasoningLevel::Off);
-        self.info.set_reasoning(
-            reasoning,
-            rho_providers::model::ReasoningRequestSource::Explicit,
-        );
+        // A level that moved with the model is the daemon's rounding, not
+        // one the user asked for; otherwise it is as explicit as it was.
+        let source = if model_changed && reasoning != self.info.runtime.reasoning {
+            rho_providers::model::ReasoningRequestSource::PersistedOrDefault
+        } else {
+            self.info.runtime.reasoning_source
+        };
+        self.info.set_reasoning(reasoning, source);
         // A switch this TUI asked for says where it landed, with the
         // reasoning level the daemon gave the new model.
         let switched = self.daemon_options.as_ref().is_some_and(|shown| {
@@ -225,6 +229,26 @@ impl App {
         };
         match model_choice(&options.model, reference) {
             Ok(model) => {
+                // The daemon rounds a level the model lacks, as a pin cycle
+                // wants. A model picked by name keeps a level the user
+                // asked for, or is refused, as in process.
+                let capabilities = rho_providers::model::models_dev::current_reasoning_capabilities(
+                    &model.provider,
+                    &model.model,
+                );
+                if let Err(requested) = super::reasoning_metadata::resolve_model_switch_reasoning(
+                    &capabilities,
+                    self.info.runtime.reasoning,
+                    self.info.runtime.reasoning_source,
+                    super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
+                ) {
+                    self.insert_entry(&Entry::Error(format!(
+                        "could not switch to {}: reasoning level '{requested}' is not supported",
+                        rho_providers::provider::model_reference(&model.provider, &model.model)
+                    )));
+                    self.set_status("model switch rejected");
+                    return Ok(());
+                }
                 let asked = self.daemon_option_requests.len();
                 self.configure_daemon(SessionChange::Model { model, auth: None })?;
                 // First-run setup ends with its model, once the daemon was
@@ -253,12 +277,11 @@ impl App {
         let favorites = rho_providers::model::favorites::normalized_favorite_models(
             &self.info.runtime.favorite_models,
         );
-        let available: Vec<_> = options
-            .model
-            .available
+        // In pin order, as the in-process cycle goes.
+        let available: Vec<_> = favorites
             .iter()
-            .filter(|choice| {
-                favorites.iter().any(|favorite| {
+            .filter_map(|favorite| {
+                options.model.available.iter().find(|choice| {
                     favorite.provider == choice.model.provider
                         && favorite.model == choice.model.model
                 })
@@ -315,6 +338,9 @@ impl App {
             .unwrap_or(reasoning.current);
         if let Some(level) = next_choice(current, &available) {
             self.configure_daemon(SessionChange::Reasoning { level })?;
+            // Asked for by name: a later `/model` keeps it or is refused.
+            self.info.runtime.reasoning_source =
+                rho_providers::model::ReasoningRequestSource::Explicit;
         }
         Ok(())
     }

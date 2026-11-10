@@ -91,7 +91,7 @@ fn resolve_display_version(matrix: bool, override_version: Option<&str>, package
 /// `/model` and internal-agent model pickers have rows without a network
 /// refresh.
 #[cfg(debug_assertions)]
-pub(super) fn seed_matrix_model_cache() {
+pub(crate) fn seed_matrix_model_cache() {
     if matrix_enabled() {
         use rho_providers::model::provider_models::{
             replace_cached_provider_models_for_tests, ProviderModel,

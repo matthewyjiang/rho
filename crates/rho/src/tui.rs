@@ -524,6 +524,8 @@ pub(crate) use daemon_launch::{DaemonLaunch, DaemonTarget, InitialSettings, Laun
 pub(crate) use daemon_session::DaemonSession;
 pub(crate) use exit_receipt::{print_exit_receipt, ExitReceipt};
 pub use herdr_resume::ResumeLaunchOptions;
+#[cfg(debug_assertions)]
+pub(crate) use smoke_injection::seed_matrix_model_cache;
 
 pub(crate) async fn run(
     agent: &mut InteractiveRuntime,
