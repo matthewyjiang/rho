@@ -652,6 +652,63 @@ fn a_discarded_response_drops_what_it_proposed() {
     );
 }
 
+// Covers: a call opens while the provider still streams its arguments, once
+// it has an id, a name, and arguments to show; starting it keeps the call's
+// id rather than closing the streamed card as failed; and a discarded
+// response closes the calls its stream opened.
+// Owner: session event live mapping
+#[test]
+fn a_streamed_call_opens_pending_and_keeps_its_id_when_it_starts() {
+    let tool_set = AppToolSet::disabled();
+    let mut live = live(&tool_set);
+    let streamed = |id: Option<&str>, arguments: &str| {
+        SessionEvent::Run(RunEvent::ToolCallUpdated {
+            index: 0,
+            id: id.map(str::to_owned),
+            name: id.map(|_| "bash".to_owned()),
+            arguments_delta: arguments.to_owned(),
+        })
+    };
+    let events = [
+        // Named before it has arguments: nothing to show yet.
+        streamed(Some("call-1"), ""),
+        streamed(None, r#"{"command":"ls"#),
+        proposed("call-1", "ls"),
+        started("call-1", ToolMetadata::default()),
+        step(100),
+        streamed(Some("call-2"), r#"{"command":"pwd"#),
+        SessionEvent::Run(RunEvent::ProviderStreamReset {
+            reason: ProviderStreamResetReason::InvalidResponse,
+            detail: "retry".into(),
+        }),
+    ];
+    let seen: Vec<_> = map_all(&mut live, &events)
+        .into_iter()
+        .filter_map(|event| match event {
+            WireEvent::ToolCall(update) => Some((
+                update.id.as_str().to_owned(),
+                update.status,
+                update.display.is_some(),
+            )),
+            WireEvent::ResponseDiscarded => Some(("discarded".to_owned(), None, false)),
+            _ => None,
+        })
+        .collect();
+    let (first, second) = (seen[0].0.clone(), seen[2].0.clone());
+
+    assert_eq!(
+        seen,
+        [
+            (first.clone(), Some(ToolStatus::Pending), true),
+            (first.clone(), Some(ToolStatus::InProgress), true),
+            (second.clone(), Some(ToolStatus::Pending), true),
+            (second.clone(), Some(ToolStatus::Failed), false),
+            ("discarded".to_owned(), None, false),
+        ]
+    );
+    assert_ne!(first, second);
+}
+
 // Covers: usage reports the context window the session's model is
 // configured with, when the mapper was given one.
 // Owner: session event live mapping
