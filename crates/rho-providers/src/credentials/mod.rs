@@ -154,7 +154,8 @@ pub enum CredentialError {
 
 pub type CredentialResult<T> = Result<T, CredentialError>;
 
-/// Stores provider credentials under stable rho account names.
+/// Stores provider credentials under stable rho account names, for one
+/// party: by default whoever runs this process.
 ///
 /// Implementors should treat the `account` argument as an opaque key within the
 /// rho service namespace and return `Ok(None)` or `Ok(false)` for missing
@@ -162,6 +163,20 @@ pub type CredentialResult<T> = Result<T, CredentialError>;
 /// should be reported as `CredentialError` values instead of panicking.
 pub trait CredentialStore: Send + Sync {
     fn get_secret(&self, account: &str) -> CredentialResult<Option<String>>;
+
+    /// Environment variable `name` of the party these credentials belong
+    /// to, which holds a credential that wins over a stored one, such as
+    /// `OPENAI_API_KEY`. Every credential lookup that has a store reads the
+    /// environment through it, never from the process directly.
+    ///
+    /// The default is this process's environment, right for a process that
+    /// acts for one user. A store that serves another party, as a daemon
+    /// session's serves its client, answers from that party's environment
+    /// instead, and decorators must forward this method to the store they
+    /// wrap.
+    fn environment_variable(&self, name: &str) -> Option<String> {
+        std::env::var(name).ok()
+    }
 
     /// Reads the backing store without consulting or populating a read cache.
     ///
@@ -516,7 +531,8 @@ pub fn provider_has_env_override(provider: &str) -> bool {
     provider_has_env_override_from(provider, |env_var| std::env::var(env_var).ok())
 }
 
-fn provider_has_env_override_from(
+/// [`provider_has_env_override`] against the environment `env_value` reads.
+pub fn provider_has_env_override_from(
     provider: &str,
     env_value: impl Fn(&str) -> Option<String>,
 ) -> bool {
@@ -592,7 +608,7 @@ pub fn provider_has_credentials(
     store: &dyn CredentialStore,
     provider: &str,
 ) -> CredentialResult<bool> {
-    if provider_has_env_override(provider) {
+    if provider_has_env_override_from(provider, |name| store.environment_variable(name)) {
         return Ok(true);
     }
     let Some(descriptor) = provider_descriptor_from_reference(provider) else {
@@ -607,7 +623,7 @@ pub fn provider_has_credentials(
 }
 
 pub fn auth_has_credentials(store: &dyn CredentialStore, auth: &str) -> CredentialResult<bool> {
-    if auth_has_env_override(auth) {
+    if auth_has_env_override_from(auth, |name| store.environment_variable(name)) {
         return Ok(true);
     }
     let Some((_, mode)) = provider::resolve_auth_mode(auth) else {
