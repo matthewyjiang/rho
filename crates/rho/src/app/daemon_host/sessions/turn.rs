@@ -21,13 +21,8 @@ use tokio::{
 };
 
 use super::{
-    super::{jobs::TurnEnd, wire::state_event},
-    budget, cost,
-    inputs::Inputs,
-    options::available_auths,
-    saved_replay,
-    start::StartedTurn,
-    LoadedSession,
+    super::jobs::TurnEnd, budget, cost, inputs::Inputs, options::available_auths, saved_replay,
+    start::StartedTurn, LoadedSession,
 };
 use crate::{
     app::{
@@ -300,9 +295,9 @@ pub(super) fn save_transcript(session: &LoadedSession, runtime: &SessionRuntime)
 /// Replaces the feed's transcript with the rows the session's file replays
 /// now that its conversation moved to another node of its tree, and
 /// detaches the session's clients to replay it (see [`Feed::restart`]).
-/// The new stream then says what a reopened session's does: how the job's
-/// last turn ended, so a replay still ends in the state an attach reports,
-/// and how full the context is now.
+/// The new stream then says that the session rests with no turn to show,
+/// since the job's last turn may not be part of the conversation any more
+/// and its answer must not show over it, and how full the context is now.
 ///
 /// [`Feed::restart`]: super::feed::Feed::restart
 pub(super) async fn restart_transcript(session: &LoadedSession, runtime: &SessionRuntime) {
@@ -315,20 +310,12 @@ pub(super) async fn restart_transcript(session: &LoadedSession, runtime: &Sessio
         )
     };
     let usage = cost::priced(vec![usage], &session.id).await;
-    let last_turn = session.jobs.get(&session.job).and_then(|job| {
-        let last = job.moved();
-        Some([
-            wire::SessionEvent::TurnEnded {
-                turn: last.turn.clone()?,
-                outcome: job.outcome?,
-            },
-            state_event(&last),
-        ])
-    });
     session.feed.restart(saved);
-    session
-        .feed
-        .publish(last_turn.into_iter().flatten().chain(usage));
+    let rests = wire::SessionEvent::State {
+        state: wire::JobState::Idle,
+        turn: None,
+    };
+    session.feed.publish([rests].into_iter().chain(usage));
 }
 
 /// Generates the title the session's first answered turn asked for, which

@@ -200,7 +200,7 @@ impl JobRegistry {
                 .any(|record| record.parent.as_ref() == Some(id) && record.state.in_progress())
     }
 
-    /// Job `id` as it stands.
+    #[cfg(test)]
     pub(in crate::app::daemon_host) fn get(&self, id: &JobId) -> Option<JobRecord> {
         self.lock().get(id).cloned()
     }
