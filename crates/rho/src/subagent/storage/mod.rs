@@ -350,8 +350,12 @@ fn resolve_run_directory_in_root(rho_root: &Path, id: &str) -> anyhow::Result<Pa
             // spelling of this home, as the daemon, which resolves its
             // home's symlinks, does for a client that does not (macOS
             // temporary directories): compare what both name.
-            let real = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-            validate_run_directory(&real(rho_root), &id, &real(&path))?;
+            // A stale row's directory is gone and has nothing to resolve;
+            // it is checked as written.
+            match (rho_root.canonicalize(), path.canonicalize()) {
+                (Ok(root), Ok(real)) => validate_run_directory(&root, &id, &real)?,
+                _ => validate_run_directory(rho_root, &id, &path)?,
+            }
             if is_trusted_directory(&path) {
                 secure_directory(&path)?;
                 return Ok(path);
