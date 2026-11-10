@@ -35,6 +35,7 @@ use crate::{
 };
 
 /// A call of a core action: the action and its arguments, `action` removed.
+#[derive(Debug, PartialEq)]
 pub(super) struct Call {
     action: Action,
     arguments: Map<String, Value>,
@@ -43,9 +44,11 @@ pub(super) struct Call {
 impl Call {
     /// The core call `arguments` make, if their action is the core's: every
     /// action but `search` and `recall`, and `read` without an `anchor`,
-    /// which reads saved history instead.
+    /// which reads saved history instead. An argument given as `null` counts
+    /// as absent, as models often fill the flat schema's unused arguments.
     pub(super) fn parse(arguments: &Value) -> Option<Self> {
         let mut arguments = arguments.as_object()?.clone();
+        arguments.retain(|_, value| !value.is_null());
         let action = Action::from_name(arguments.get("action")?.as_str()?)?;
         if action == Action::Read && arguments.contains_key("anchor") {
             return None;
@@ -277,3 +280,7 @@ fn tool_error(error: ControlError) -> ToolError {
     };
     ToolError::new(kind, error.to_string())
 }
+
+#[cfg(test)]
+#[path = "control_tests.rs"]
+mod tests;
