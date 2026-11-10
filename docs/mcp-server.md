@@ -52,7 +52,7 @@ Every tool that names a `session` refuses one the daemon does not know, naming i
 
 ## Approvals stay with people
 
-No tool answers a session's approvals or questions, and the server has no other way to. A turn that asks for one stops `wait` with `done: true`, `state: "waiting_for_input"`, and the open requests in `inputs`. A person answers them from a rho frontend, such as `rho attach <session>` or the TUI, and the next `wait` follows the turn on.
+No tool answers a session's approvals or questions, and the server has no other way to: it connects to the daemon as an agent's session control, and the daemon refuses an answer from such a connection ([`CapabilityRequired`](/protocol#errors)). A turn that asks for one stops `wait` with `done: true`, `state: "waiting_for_input"`, and the open requests in `inputs`. A person answers them from a rho frontend, such as `rho attach <session>` or the TUI, and the next `wait` follows the turn on.
 
 To let a session work unattended, give it a [permission mode](/configuration/permissions) that does not ask, as you would for `rho run`.
 

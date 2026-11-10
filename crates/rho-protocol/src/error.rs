@@ -161,6 +161,13 @@ error_codes! {
         /// [`crate::ProjectTrustMismatch`] naming the variables that
         /// differ.
         ProjectTrustMismatch = -32020 => crate::ProjectTrustMismatch,
+        /// The method needs a [`crate::ClientCapability`] this connection's
+        /// `rho/hello` did not declare, such as `rho/session/answer` from an
+        /// agent's session control, whose role may not declare it. Nothing
+        /// was done. A connection keeps what it declared: connect again as a
+        /// client that declares the capability.
+        // -32021 and -32022 are left for the settings methods (#1771).
+        CapabilityRequired = -32023,
     }
 }
 

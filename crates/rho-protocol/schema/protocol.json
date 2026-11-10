@@ -531,6 +531,16 @@
       ],
       "type": "object"
     },
+    "ClientCapability": {
+      "description": "Something a connection declares it does, which the daemon then lets it\ndo. A method that needs a capability the connection did not declare is\nrefused with [`crate::ErrorCode::CapabilityRequired`]. The daemon reads\nit, so it has no `Unknown`.",
+      "oneOf": [
+        {
+          "const": "answer",
+          "description": "Answer a session's open requests, its approvals and questions, and\nhold their timeouts: [`super::SESSION_ANSWER`] and\n[`super::SESSION_HOLD`].",
+          "type": "string"
+        }
+      ]
+    },
     "ClientEnvironment": {
       "additionalProperties": {
         "type": "string"
@@ -539,7 +549,7 @@
       "type": "object"
     },
     "ClientInfo": {
-      "description": "Who is connecting. Logged by the daemon; never used for authorization.",
+      "description": "Who is connecting. Logged by the daemon; never used for authorization,\nwhich goes by [`ClientRole`] and [`ClientCapability`].",
       "properties": {
         "name": {
           "description": "Frontend name, for example `rho-cli` or `rho-ui`.",
@@ -555,6 +565,21 @@
         "version"
       ],
       "type": "object"
+    },
+    "ClientRole": {
+      "description": "What a connection is for, which bounds the capabilities it may declare.\nThe daemon reads it, so it has no `Unknown`: a role this daemon does not\nknow is [`crate::ErrorCode::InvalidParams`].\n\nA role is declared, not proven: the socket is private to the daemon's\nuser, and any process of that user may declare any role. It keeps a\nwell-behaved client to its part, so an agent's session-control client\ncannot answer the approvals of the sessions it drives; it is not a\nsandbox for a process that can open the socket itself.",
+      "oneOf": [
+        {
+          "const": "frontend",
+          "description": "A person's frontend, such as the terminal UI, `rho attach`, an ACP\nhost's `rho acp`, or a `rho` command. It may declare any capability.",
+          "type": "string"
+        },
+        {
+          "const": "agent",
+          "description": "An agent's session control: `rho mcp serve` and the `sessions` tool,\nwhich start, prompt, and watch sessions for a model. It may not\ndeclare [`ClientCapability::Answer`]: a turn that asks waits for a\nperson.",
+          "type": "string"
+        }
+      ]
     },
     "CodeWindow": {
       "anyOf": [
@@ -1103,17 +1128,30 @@
     "HelloParams": {
       "description": "Params of [`HELLO`].",
       "properties": {
+        "capabilities": {
+          "description": "What the connection does, each of which its role must allow\n([`ClientRole::may_declare`]); one it does not is\n[`crate::ErrorCode::InvalidParams`], and the hello is refused.",
+          "items": {
+            "$ref": "#/$defs/ClientCapability"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
         "client": {
           "$ref": "#/$defs/ClientInfo"
         },
         "protocol": {
           "$ref": "#/$defs/ProtocolVersion",
           "description": "The protocol the client speaks."
+        },
+        "role": {
+          "$ref": "#/$defs/ClientRole",
+          "description": "What the connection is for. It holds for the connection's life."
         }
       },
       "required": [
         "protocol",
-        "client"
+        "client",
+        "role"
       ],
       "type": "object"
     },
@@ -3919,7 +3957,7 @@
         },
         {
           "const": "questions",
-          "description": "Questions to the user: the session has no questionnaire tool, and an\nMCP server's question is declined, for a client that cannot show\n[`crate::Ask::Question`].",
+          "description": "Questions to the user: the session has no questionnaire tool, and an\nMCP server's question is declined, for a client that cannot show\n[`crate::Ask::Question`]. It only shapes what the session offers its\nmodel: which connections may answer a request is decided by the\n[`crate::ClientCapability::Answer`] each declared, not by this.",
           "type": "string"
         }
       ]
@@ -5232,6 +5270,9 @@
       },
       "name": "ProjectTrustMismatch"
     },
+    "-32023": {
+      "name": "CapabilityRequired"
+    },
     "-32600": {
       "name": "InvalidRequest"
     },
@@ -5482,7 +5523,7 @@
   },
   "protocol": {
     "major": 0,
-    "minor": 4
+    "minor": 7
   },
   "title": "rho daemon protocol"
 }

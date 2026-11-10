@@ -17,7 +17,7 @@ use {
         daemon_host::{DaemonHost, JobRecords, UNLOAD_IDLE_AFTER},
     },
     crate::daemon::{
-        self, cli_client_info, DaemonPaths, Ending, Executable, Handoff, Served, Shutdown,
+        self, ConnectAs, DaemonPaths, Ending, Executable, Handoff, Served, Shutdown,
         DAEMON_RESTART_TIMEOUT,
     },
     crate::logging::{self, LogSink},
@@ -99,26 +99,30 @@ pub(crate) enum Reach {
 }
 
 /// Connects to this rho home's daemon, starting one when none runs, for
-/// the commands that are its clients: `rho run --detach`, `rho login`,
-/// `rho acp`, `rho mcp serve`, and `rho daemon start`.
+/// the commands that answer no session's requests: `rho run --detach`,
+/// `rho login`, and `rho daemon start`.
 #[cfg(unix)]
 pub(super) async fn connect() -> Result<daemon::Connection, Unreachable> {
-    connect_with(Reach::StartIfNeeded).await
+    connect_with(Reach::StartIfNeeded, ConnectAs::Command).await
 }
 
-/// Connects to this rho home's daemon as `reach` allows.
+/// Connects to this rho home's daemon as `reach` allows, declaring what
+/// `connect_as` does.
 #[cfg(unix)]
-pub(super) async fn connect_with(reach: Reach) -> Result<daemon::Connection, Unreachable> {
+pub(super) async fn connect_with(
+    reach: Reach,
+    connect_as: ConnectAs,
+) -> Result<daemon::Connection, Unreachable> {
     let unreachable = |reason: String| Unreachable { reason };
     let paths = paths().map_err(|error| unreachable(format!("{error:#}")))?;
     if reach == Reach::Running {
-        return daemon::connect(&paths, cli_client_info())
+        return daemon::connect(&paths, connect_as.hello())
             .await
             .map_err(|error| unreachable(error.to_string()));
     }
     let spawner = daemon::ProcessSpawner::current_exe()
         .map_err(|error| unreachable(format!("could not find the rho executable: {error}")))?;
-    daemon::connect_or_spawn(&paths, cli_client_info(), &CheckedSpawner(spawner))
+    daemon::connect_or_spawn(&paths, connect_as.hello(), &CheckedSpawner(spawner))
         .await
         .map_err(|error| unreachable(error.to_string()))
 }
@@ -426,7 +430,9 @@ async fn start() -> anyhow::Result<()> {
 
 #[cfg(unix)]
 async fn status(paths: &DaemonPaths, json: bool) -> anyhow::Result<()> {
-    let client = daemon::connect(paths, cli_client_info()).await?.client;
+    let client = daemon::connect(paths, ConnectAs::Command.hello())
+        .await?
+        .client;
     let status = client.request::<methods::Status>(&StatusParams {}).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&status)?);
@@ -472,7 +478,7 @@ fn status_text(status: &DaemonStatus) -> String {
 
 #[cfg(unix)]
 async fn stop(paths: &DaemonPaths) -> anyhow::Result<()> {
-    let pid = match daemon::connect(paths, cli_client_info()).await {
+    let pid = match daemon::connect(paths, ConnectAs::Command.hello()).await {
         Ok(connection) => {
             connection
                 .client
@@ -512,7 +518,7 @@ async fn restart(paths: &DaemonPaths) -> anyhow::Result<()> {
         client,
         mut notifications,
         hello,
-    } = match daemon::connect(paths, cli_client_info()).await {
+    } = match daemon::connect(paths, ConnectAs::Command.hello()).await {
         Ok(connection) => connection,
         Err(daemon::ConnectError::NotRunning) => {
             let started = connect().await?;
@@ -540,7 +546,7 @@ async fn restart(paths: &DaemonPaths) -> anyhow::Result<()> {
         // it does waits in the socket's backlog.
         while notifications.recv().await.is_some() {}
         drop(client);
-        daemon::connect(paths, cli_client_info()).await
+        daemon::connect(paths, ConnectAs::Command.hello()).await
     })
     .await;
     match restarted {

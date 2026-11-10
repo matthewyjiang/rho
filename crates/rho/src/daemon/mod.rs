@@ -29,9 +29,7 @@ mod spawn_env;
 #[cfg(test)]
 mod test_support;
 
-pub(crate) use client::{
-    cli_client_info, connect, ConnectError, Connection, DAEMON_RESTART_TIMEOUT,
-};
+pub(crate) use client::{connect, ConnectAs, ConnectError, Connection, DAEMON_RESTART_TIMEOUT};
 pub(crate) use executable::{Executable, FileIdentity, ProbeError};
 pub(crate) use handoff::{take as take_handoff, Handoff};
 pub(crate) use lock::{

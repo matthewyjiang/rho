@@ -23,7 +23,7 @@ use crate::{
         SessionDetachedParams, SessionEventNotification, SessionEventParams, AUTH_LOGIN_FINISHED,
         AUTH_LOGIN_PROMPT, SESSION_DETACHED, SESSION_EVENT,
     },
-    ClientInfo, ErrorCode, FrameError, HelloParams, HelloResponse, Message, MessageReader,
+    ClientHello, ErrorCode, FrameError, HelloParams, HelloResponse, Message, MessageReader,
     MessageWriter, ParseError, Request, RequestId, Response, RpcError, VersionMismatch,
     PROTOCOL_VERSION,
 };
@@ -127,8 +127,9 @@ impl ClientError {
 type Write = (Message, oneshot::Sender<Result<(), FrameError>>);
 
 impl Client {
-    /// Sends `rho/hello` and returns the connection once the daemon accepts
-    /// this client's protocol, with its notifications.
+    /// Sends `rho/hello` as `hello` and returns the connection once the
+    /// daemon accepts this client's protocol, with its notifications. The
+    /// connection keeps the role and capabilities `hello` declares.
     ///
     /// An incompatible daemon yields [`ClientError::VersionMismatch`], whether
     /// the daemon rejects the hello or reports an incompatible version.
@@ -139,7 +140,7 @@ impl Client {
     /// run in spawned tasks.
     pub async fn handshake<S>(
         stream: S,
-        client: ClientInfo,
+        hello: ClientHello,
     ) -> Result<(Self, Notifications, HelloResponse), ClientError>
     where
         S: AsyncRead + AsyncWrite + Send + 'static,
@@ -161,9 +162,16 @@ impl Client {
             writes,
             next_id: AtomicI64::new(1),
         };
+        let ClientHello {
+            client,
+            role,
+            capabilities,
+        } = hello;
         let params = HelloParams {
             protocol: PROTOCOL_VERSION,
             client,
+            role,
+            capabilities,
         };
         let hello = match this.request::<Hello>(&params).await {
             Ok(hello) => hello,

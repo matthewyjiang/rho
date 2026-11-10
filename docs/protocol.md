@@ -8,6 +8,13 @@ Connect to the daemon's `daemon.sock` (see [Socket and permissions](/daemon#sock
 
 The first request must be `rho/hello`. Any other request before it gets `HandshakeRequired`. The daemon accepts the handshake when the client's protocol version is [compatible](#versions-and-compatibility) with its own, and otherwise answers `VersionMismatch`, whose `data` names both versions and which side has to change: `fix` is `restart_daemon` when the daemon is the older side, and `update_client` when the client is. With `restart_daemon`, `restart` says what restarting the daemon would cost at that moment: `in_progress` counts what it would interrupt (jobs queued, running, or waiting for input, logins under way, and sessions with work of their own), and `clients` counts the other connections whose handshake the daemon accepted, which it would disconnect. A client can offer the restart with those counts, and can replace a daemon that reports 0 for both without asking, as rho's own frontends do ([Versions](/daemon#versions)). A refused connection stays open for another `rho/hello`.
 
+A hello also declares what the connection is for and what it does ([#1780](https://github.com/matthewyjiang/rho/issues/1780)), which hold for the connection's life:
+
+- `role` is `frontend`, a person's client such as a terminal UI or an editor's agent host, or `agent`, session control that starts, prompts, and watches sessions for a model, as `rho mcp serve` and the `sessions` tool do.
+- `capabilities` lists what the connection does. The only one is `answer`: answering a session's approvals and questions with `rho/session/answer`, and holding their timeouts with `rho/session/hold`. Either method from a connection that did not declare it gets `CapabilityRequired`, and nothing is done.
+
+A role bounds the capabilities a hello may declare: an `agent` may not declare `answer`, and a hello that does gets `InvalidParams` and is not accepted. So a turn that asks waits for a person, whichever agent drives the session. A role is declared, not proven. The socket is private to its user and any of that user's processes may declare any role, so this keeps a client to its part; it does not confine a process that can open the socket itself.
+
 A client and a daemon of different versions still have to read this much of each other, so it is held steady at every version, also while the protocol is unstable: the daemon reads `protocol` from a hello before anything else in it, and `protocol` and the `data` of `VersionMismatch` only ever gain optional fields.
 
 After the handshake the daemon runs a connection's requests concurrently and answers each one when it finishes, so responses can arrive out of order; pair them with their requests by id. Send a request that depends on another only after that one's response arrives.
@@ -18,7 +25,7 @@ When the client stops sending, the daemon answers every request it has already r
 
 | Method | Params | Result |
 | --- | --- | --- |
-| `rho/hello` | `protocol` (`{major, minor}`), `client` (`{name, version}`) | The daemon's `protocol`, `daemon` (`{version, pid}`), and `capabilities`. |
+| `rho/hello` | `protocol` (`{major, minor}`), `client` (`{name, version}`), `role` (`frontend` or `agent`), `capabilities` (optional; `answer`) | The daemon's `protocol`, `daemon` (`{version, pid}`), and `capabilities`. |
 | `rho/daemon/status` | | `pid`, `version`, `protocol`, `started_at`, `uptime_secs`, `jobs` (jobs queued, running, or waiting for input), `socket`, `credential_store`: the [credential store](#credential-store) the daemon keeps provider credentials in, and `upgrade`, present once the daemon's executable was replaced: the replacement's `version` and `waiting_for`, how many things the [upgrade](/daemon#upgrading-in-place) waits for: jobs in progress, logins under way, and sessions with work of their own. |
 | `rho/daemon/stop` | | `{}`; the daemon then shuts down as [described](/daemon#commands). |
 | `rho/daemon/restart` | | `{}`; the daemon then [re-executes in place](/daemon#upgrading-in-place), interrupting the turns under way. |
@@ -177,7 +184,7 @@ A client that resets finds, after the saved conversation, the `turn_ended` of ea
 
 A turn that needs a person, for an approval, a plan approval, or questions, opens an input request and sends `input_requested` to every attached client. The job is `waiting_for_input` while any request is open. A request waits for as long as it takes: it is never denied because no client is attached, and only a [timeout](#timeouts) the user configured answers it for them. A client that attaches later finds every open request in the attach response's `inputs`, even when the replay no longer holds the event that opened it; the replay may repeat some, so key requests by `id`. The session's [`input_requested` hooks](/hooks#events) run too, so a user away from every client can be told.
 
-Any connected client may answer with `rho/session/answer`, whether or not it follows the session. The first answer wins and every attached client receives `input_resolved` with `answered`; a later answer, or one to a request the turn withdrew, gets `InputNotOpen`. A turn withdraws its open requests, with `withdrawn`, when it is cancelled or ends, and a plan approval when the tool that asked stops waiting; a turn that stops waiting just as an answer wins, or just as a timeout fires, ignores it. Request ids are unique within the session for as long as the daemon has it loaded.
+Any connected client whose hello declared the `answer` capability may answer with `rho/session/answer`, whether or not it follows the session. The first answer wins and every attached client receives `input_resolved` with `answered`; a later answer, or one to a request the turn withdrew, gets `InputNotOpen`. A turn withdraws its open requests, with `withdrawn`, when it is cancelled or ends, and a plan approval when the tool that asked stops waiting; a turn that stops waiting just as an answer wins, or just as a timeout fires, ignores it. Request ids are unique within the session for as long as the daemon has it loaded.
 
 Each request's `ask` has a `kind`, which decides the answers it takes; any other answer gets `InvalidParams` and leaves the request open:
 
@@ -322,6 +329,7 @@ Errors use the JSON-RPC `code` and `message`. The first five codes are JSON-RPC'
 | -32018 | `LoginNotFound` | No login under way has the id: it ended, or never started. |
 | -32019 | `SignInRequired` | The daemon could not open the session because its model's auth profile has no usable credentials: none are saved or set, they could not be read, or the provider refused them. Sign in, then try again. |
 | -32020 | `ProjectTrustMismatch` | The prompting client's project trust (the `RHO_TRUST_PROJECT_*` variables in its `environment`) is not the session's, so no turn started and the session is as it was. `data` names the variables only the session's trust has (`session_only`) and those only the client's has (`client_only`). Open another session, or prompt with the session's trust. |
+| -32023 | `CapabilityRequired` | The method needs a capability this connection's `rho/hello` did not declare, such as `rho/session/answer` from a connection of role `agent`. Nothing was done; a connection keeps what it declared. |
 
 ## Versions and compatibility
 

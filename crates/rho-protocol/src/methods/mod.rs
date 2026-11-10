@@ -78,9 +78,9 @@ pub use catalog::{
     SESSION_RENAME,
 };
 pub use daemon::{
-    ClientInfo, DaemonInfo, DaemonStatus, HelloParams, HelloResponse, PendingUpgrade,
-    RestartParams, RestartResponse, StatusParams, StopParams, StopResponse, DAEMON_RESTART,
-    DAEMON_STATUS, DAEMON_STOP, HELLO,
+    ClientCapability, ClientHello, ClientInfo, ClientRole, DaemonInfo, DaemonStatus, HelloParams,
+    HelloResponse, PendingUpgrade, RestartParams, RestartResponse, StatusParams, StopParams,
+    StopResponse, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, HELLO,
 };
 pub use event::{
     CardTone, CompactionId, CompactionStatus, ContentBlock, Cursor, IdempotencyKey, Location,

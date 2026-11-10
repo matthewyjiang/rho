@@ -27,7 +27,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     app::daemon_cli::{self, Unreachable},
-    daemon::Connection,
+    daemon::{ConnectAs, Connection},
 };
 
 /// Why a request to the daemon failed.
@@ -81,6 +81,9 @@ pub(crate) struct Daemon {
     link: tokio::sync::Mutex<Option<Arc<Link>>>,
     routes: Arc<Mutex<Routes>>,
     reach: daemon_cli::Reach,
+    /// What its connections declare: a person's frontend unless it says
+    /// otherwise.
+    connect_as: ConnectAs,
 }
 
 /// One open connection.
@@ -95,10 +98,12 @@ pub(crate) struct Link {
 }
 
 impl Daemon {
-    /// A daemon reached as `reach` allows.
-    pub(crate) fn reaching(reach: daemon_cli::Reach) -> Self {
+    /// A daemon reached as `reach` allows, by connections that declare
+    /// what `connect_as` does.
+    pub(crate) fn reaching(reach: daemon_cli::Reach, connect_as: ConnectAs) -> Self {
         Self {
             reach,
+            connect_as,
             ..Self::default()
         }
     }
@@ -115,7 +120,7 @@ impl Daemon {
             client,
             notifications,
             hello,
-        } = daemon_cli::connect_with(self.reach).await?;
+        } = daemon_cli::connect_with(self.reach, self.connect_as).await?;
         let closed = CancellationToken::new();
         let (fences, fence_receiver) = mpsc::unbounded_channel();
         tokio::spawn(tokio::task::unconstrained(route(
