@@ -69,9 +69,6 @@ impl App {
             media,
             paste_segments,
         } = submission;
-        if self.refuse_daemon_command(&invocation) {
-            return Ok(());
-        }
         if self.info.session.daemon.is_some() {
             match super::daemon_gate::command_route(invocation.id) {
                 super::daemon_gate::CommandRoute::Options => {
@@ -87,9 +84,6 @@ impl App {
                         .await;
                 }
                 super::daemon_gate::CommandRoute::Ui => {}
-                super::daemon_gate::CommandRoute::Unavailable => {
-                    unreachable!("gate refused unported command")
-                }
             }
         }
         match invocation.id {

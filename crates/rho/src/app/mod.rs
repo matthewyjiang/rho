@@ -57,6 +57,7 @@ mod runtime_builder;
 pub(crate) mod sdk_config;
 mod session_assembly;
 mod session_commands;
+pub(crate) mod workspace_rewind;
 // Session control through the rho daemon, which is unix-only (#1665).
 #[cfg(unix)]
 pub(crate) mod session_control;

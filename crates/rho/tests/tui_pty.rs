@@ -1253,6 +1253,14 @@ fn daemon_runs_the_workflow_the_hub_starts() {
     assert_pass("daemon_workflow");
 }
 
+// Covers: a daemon session's turn is checkpointed, and `/rewind` has the
+// daemon put its file and the conversation back.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_rewinds_a_turns_file_and_conversation() {
+    assert_pass("daemon_rewind");
+}
+
 // Covers: `/tree` in a daemon session restores an earlier turn, the daemon
 // continues from it, and a reopened session shows that branch.
 // Owner: interactive TUI as a daemon client (#1667)
@@ -1275,13 +1283,6 @@ fn daemon_tui_switches_the_session_it_follows() {
 #[test]
 fn daemon_subagent_shows_on_the_rail_and_attaches() {
     assert_pass("daemon_subagent_rail");
-}
-
-// Covers: an unported command refuses visibly and the next prompt still runs.
-// Owner: interactive TUI daemon command boundary.
-#[test]
-fn daemon_unported_commands_refuse_and_keep_the_session_usable() {
-    assert_pass("daemon_gated_command");
 }
 
 // Covers: MCP inventory belongs to the daemon session even when the new client's

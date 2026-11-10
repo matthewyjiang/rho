@@ -19,6 +19,7 @@ use super::{
     title::TitleState,
     PromptScope, QuestionSupport, SessionRuntime,
 };
+use crate::session::workspace_checkpoint::CheckpointOutcome;
 use crate::{app::subagent_manager::SubagentManager, config::Config};
 
 /// A model turn: `model` is what the run sends, `display` the prompt as the
@@ -190,10 +191,16 @@ impl SessionRuntime {
         let checkpoint = checkpoint?;
         // The prompt is durable before anything runs, so a host that dies
         // mid-turn still replays it.
-        let result = match self.insert_user_message(&checkpoint) {
-            Ok(inserted) => {
+        // The workspace checkpoint opens first, while the conversation's
+        // leaf is still the one a rewind of this turn returns to.
+        let begun = self.begin_workspace_checkpoint().and_then(|paused| {
+            self.insert_user_message(&checkpoint)
+                .map(|inserted| (paused, inserted))
+        });
+        let result = match begun {
+            Ok((paused, inserted)) => {
                 io.emit(SessionEvent::MessageInserted(inserted));
-                if let Some(text) = self.reopen_notice.take() {
+                for text in self.reopen_notice.take().into_iter().chain(paused) {
                     io.emit(SessionEvent::Notice { text });
                 }
                 self.drive_run(prompt, &checkpoint, input, displays, io)
@@ -201,6 +208,14 @@ impl SessionRuntime {
             }
             Err(error) => Err(error),
         };
+        let ended = match &result {
+            Ok(TurnOutcome::Completed(_)) => CheckpointOutcome::Completed,
+            Ok(TurnOutcome::Cancelled) => CheckpointOutcome::Cancelled,
+            Err(_) => CheckpointOutcome::Failed,
+        };
+        for text in self.finalize_workspace_checkpoint(ended) {
+            io.emit(SessionEvent::Notice { text });
+        }
         // The run is over, so the session is idle again.
         if let Err(error) = self.built.session.set_checkpoint_store(None) {
             tracing::warn!(%error, "could not remove turn checkpoint store");

@@ -356,9 +356,6 @@ impl App {
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
-        if self.refuse_daemon_command(&invocation) {
-            return Ok(());
-        }
         if self.info.session.daemon.is_some() {
             match super::daemon_gate::command_route(invocation.id) {
                 super::daemon_gate::CommandRoute::Options => {
@@ -373,9 +370,6 @@ impl App {
                     return self.queue_prompt(prompt.clone(), prompt, Vec::new(), Vec::new());
                 }
                 super::daemon_gate::CommandRoute::Ui => {}
-                super::daemon_gate::CommandRoute::Unavailable => {
-                    unreachable!("gate refused unported command")
-                }
             }
         }
         match invocation.id {

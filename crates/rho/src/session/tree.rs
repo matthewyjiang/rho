@@ -261,15 +261,6 @@ pub(crate) struct SessionTreeItem {
     pub(crate) is_last_sibling: bool,
 }
 
-/// What a row of [`SessionTree::collect_items`] stands for.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Rows {
-    /// One saved node.
-    Nodes,
-    /// A prompt's node and the nodes that carry its turn on.
-    Turns,
-}
-
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SessionTree {
     nodes: HashMap<NodeId, RestoredNode>,
@@ -487,19 +478,6 @@ impl SessionTree {
         }
     }
 
-    pub(crate) fn items(&self) -> anyhow::Result<Vec<SessionTreeItem>> {
-        self.collect_items(Rows::Nodes)
-    }
-
-    /// [`Self::items`] with one row for each prompt and all that followed
-    /// it: a node that adds no user message joins the row of the node
-    /// before it when nothing branches between them. The row names the
-    /// last node of its run, the conversation once the turn ended, since
-    /// some hosts save a turn as several nodes, one for each step.
-    pub(crate) fn turn_items(&self) -> anyhow::Result<Vec<SessionTreeItem>> {
-        self.collect_items(Rows::Turns)
-    }
-
     /// The node after `node`, when exactly one follows it.
     fn only_child(&self, node: &RestoredNode) -> Option<&RestoredNode> {
         match self.children.get(node.id()).map(Vec::as_slice) {
@@ -518,7 +496,13 @@ impl SessionTree {
                 .any(|stored| super::persistence::user_message_text(&stored.message).is_some())
     }
 
-    fn collect_items(&self, rows: Rows) -> anyhow::Result<Vec<SessionTreeItem>> {
+    /// The tree as `/tree` lists it: one row for each prompt and all that
+    /// followed it. A node that adds no user message joins the row of the
+    /// node before it when nothing branches between them, and the row
+    /// names the last node of its run, the conversation once the turn
+    /// ended, since some hosts save a turn as several nodes, one for each
+    /// step.
+    pub(crate) fn turn_items(&self) -> anyhow::Result<Vec<SessionTreeItem>> {
         let active_path: HashSet<_> = self
             .active_path()?
             .into_iter()
@@ -542,13 +526,13 @@ impl SessionTree {
                 .node(&id)
                 .ok_or_else(|| anyhow::anyhow!("session tree is missing node '{id}'"))?;
             let kind = match node.kind() {
-                // Classify from durable state, not missing user text: assistant-only
-                // commits are still turns, while an empty root is the session start.
+                // Classify from durable state, not missing user text: a root
+                // that shows nothing is the session start.
                 SessionNodeKind::Commit
                     if node.parent_id().is_none()
-                        // A host that saves the session before its first
-                        // prompt saves the system prompt with it.
-                        && (node.facts().model_len == 0 || rows == Rows::Turns)
+                        // Whatever the model holds: a host that saves the
+                        // session before its first prompt saves the system
+                        // prompt with it.
                         && node.display_messages().is_empty() =>
                 {
                     SessionTreeItemKind::SessionStart
@@ -588,14 +572,12 @@ impl SessionTree {
             // the active leaf.
             let mut last = node;
             let mut active = self.active_leaf_id() == Some(node.id());
-            if rows == Rows::Turns {
-                while let Some(next) = self
-                    .only_child(last)
-                    .filter(|next| Self::continues_turn(next))
-                {
-                    last = next;
-                    active |= self.active_leaf_id() == Some(last.id());
-                }
+            while let Some(next) = self
+                .only_child(last)
+                .filter(|next| Self::continues_turn(next))
+            {
+                last = next;
+                active |= self.active_leaf_id() == Some(last.id());
             }
             let id = last.id().clone();
             traversal.push(SessionTreeItem {

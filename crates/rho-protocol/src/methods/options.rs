@@ -84,6 +84,14 @@ pub enum SessionChange {
     /// session that has saved nothing, is
     /// [`crate::ErrorCode::InvalidParams`].
     SelectNode { node: String },
+    /// Put back the files the turn of workspace checkpoint `checkpoint`
+    /// changed, as far as they still hold what that turn left, and, when
+    /// every one was put back, continue the conversation from before that
+    /// turn, as [`Self::SelectNode`] does. Clients see what became of each
+    /// file as a [`super::SessionEvent::Notice`]. A checkpoint the session
+    /// does not have, a session in plan mode, or one with nothing saved is
+    /// [`crate::ErrorCode::InvalidParams`].
+    RewindWorkspace { checkpoint: String },
 }
 
 /// Result of [`SESSION_CONFIGURE`], once the change applied, after the turn

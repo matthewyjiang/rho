@@ -3374,6 +3374,23 @@
             "node"
           ],
           "type": "object"
+        },
+        {
+          "description": "Put back the files the turn of workspace checkpoint `checkpoint`\nchanged, as far as they still hold what that turn left, and, when\nevery one was put back, continue the conversation from before that\nturn, as [`Self::SelectNode`] does. Clients see what became of each\nfile as a [`super::SessionEvent::Notice`]. A checkpoint the session\ndoes not have, a session in plan mode, or one with nothing saved is\n[`crate::ErrorCode::InvalidParams`].",
+          "properties": {
+            "checkpoint": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "rewind_workspace",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "checkpoint"
+          ],
+          "type": "object"
         }
       ]
     },

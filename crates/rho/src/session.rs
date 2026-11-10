@@ -415,6 +415,20 @@ impl Session {
         store.resolve(id_prefix)?.tree()?.turn_items()
     }
 
+    /// Session `id_prefix`'s workspace checkpoints, reached without opening
+    /// the session, which another process may hold.
+    pub(crate) fn workspace_checkpoint_store_by_id(
+        cwd: &Path,
+        id_prefix: &str,
+    ) -> anyhow::Result<Option<workspace_checkpoint::WorkspaceCheckpointStore>> {
+        let resolved = SessionStore::new(&session_root()?, cwd).resolve(id_prefix)?;
+        workspace_checkpoint::WorkspaceCheckpointStore::at(
+            &resolved.path,
+            &resolved.id,
+            workspace_checkpoint::CheckpointLimits::default(),
+        )
+    }
+
     pub fn export_by_id(cwd: &Path, id_prefix: &str) -> anyhow::Result<SessionExport> {
         Self::export_by_id_in_root(&session_root()?, cwd, id_prefix)
     }

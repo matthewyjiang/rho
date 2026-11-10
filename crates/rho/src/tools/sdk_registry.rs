@@ -703,6 +703,16 @@ impl AppToolSet {
         &self.workflow_tracker
     }
 
+    /// Makes a tool set built without a config take workspace checkpoints.
+    #[cfg(test)]
+    pub(crate) fn take_checkpoints_for_tests(&mut self) {
+        self.checkpoint_tracker = Arc::new(
+            crate::session::workspace_checkpoint::WorkspaceCheckpointTracker::new(
+                /*enabled*/ true,
+            ),
+        );
+    }
+
     pub fn checkpoint_tracker(
         &self,
     ) -> &Arc<crate::session::workspace_checkpoint::WorkspaceCheckpointTracker> {

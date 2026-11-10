@@ -48,6 +48,7 @@ pub(super) fn setting_name(change: &SessionChange) -> &'static str {
         SessionChange::AddDirectory { .. } => "added directories",
         SessionChange::ModelCatalog => "model lists",
         SessionChange::SelectNode { .. } => "conversation state",
+        SessionChange::RewindWorkspace { .. } => "workspace",
         // `SessionChange` is non-exhaustive; the TUI sends only the above.
         _ => "session setting",
     }

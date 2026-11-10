@@ -95,36 +95,3 @@ pub(super) const PERMISSION_MODE: Scenario = Scenario::new(
 )
 .with_setup(write_daemon_config)
 .with_env(ENV);
-
-// Covers: an unported command gets a visible daemon-specific refusal and
-// leaves the session usable for the next prompt.
-// Owner: interactive TUI daemon command boundary
-pub(super) const GATED_COMMAND: Scenario = Scenario::new(
-    "daemon_gated_command",
-    "Refuse unported commands and keep the daemon session usable",
-    DEFAULT_SIZE,
-    &[
-        Step::WaitText {
-            text: "Bypass ·",
-            timeout: STARTUP,
-        },
-        Step::SubmitText("/rewind"),
-        Step::WaitText {
-            text: "/rewind is not available with RHO_TUI_DAEMON yet",
-            timeout: SETTLE,
-        },
-        Step::SubmitText("hello after refusal"),
-        Step::WaitText {
-            text: "fixture response: hello after refusal",
-            timeout: STREAM,
-        },
-        Step::WaitText {
-            text: "Type a message",
-            timeout: SETTLE,
-        },
-        Step::ExitCommand,
-    ],
-    /*smoke*/ false,
-)
-.with_setup(write_daemon_config)
-.with_env(ENV);
