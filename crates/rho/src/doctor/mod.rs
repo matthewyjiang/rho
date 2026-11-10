@@ -5,6 +5,11 @@
 //! id and feeds [`probe_checks`] back through [`DoctorReport::replace_checks`].
 
 mod checks;
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, reason = "the daemon is unix-only (#1665)")
+)]
+pub(crate) mod daemon;
 mod daemon_store;
 mod probes;
 mod report;
