@@ -43,8 +43,13 @@ impl SessionRuntime {
     ) -> Result<(), AddDirError> {
         let previous = self.added_dirs.clone();
         let mut added = previous.clone();
-        if let Insertion::Covered(root) = added.insert(&self.permission.workspace_root, dir.clone())
-        {
+        // `dir` is canonical, so the workspace it is checked against must
+        // be: one opened through a symlink still covers what is under it.
+        let workspace = &self.permission.workspace_root;
+        let workspace = workspace
+            .canonicalize()
+            .unwrap_or_else(|_| workspace.clone());
+        if let Insertion::Covered(root) = added.insert(&workspace, dir.clone()) {
             return Err(AddDirError::Covered { dir, root });
         }
         self.install_added_dirs(added.clone(), process_config)
