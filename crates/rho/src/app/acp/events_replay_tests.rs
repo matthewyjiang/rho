@@ -381,3 +381,56 @@ fn replayed_calls_take_their_kind_from_the_session_tools() {
         ]
     );
 }
+
+// Covers: a process call's title says what it runs, as a shell call's does:
+// a start is titled by its bare command, which Zed shows as an execute
+// card's command, and a poll or stop names the process it acts on. Replay
+// and live calls share the title, from the metadata the real tool reports.
+// Owner: ACP tool titles, through the registered process tool
+#[test]
+fn process_call_titles_name_what_they_run() {
+    let config = Config::default();
+    let tool_set = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::new(AgentCapabilities::new([ToolCapability::Process].into())),
+    );
+    let command = "cd /work/app && .venv/bin/python -m unittest tests.test_app";
+    let messages = saved_rows(&[Message::assistant(AssistantMessage::from_content(vec![
+        named_call_block(
+            "a",
+            "process",
+            json!({"action": "start", "command": command}),
+        ),
+        named_call_block(
+            "b",
+            "process",
+            json!({"action": "poll", "process_id": "process-1"}),
+        ),
+        named_call_block(
+            "c",
+            "process",
+            json!({"action": "stop", "process_id": "process-1"}),
+        ),
+    ]))]);
+    let titles: Vec<(ToolKind, String)> = history(
+        &SessionId::new("s1"),
+        &messages,
+        std::path::Path::new("/work"),
+        &tool_set,
+    )
+    .into_iter()
+    .filter_map(|notification| match notification.update {
+        SessionUpdate::ToolCall(call) => Some((call.kind, call.title)),
+        _ => None,
+    })
+    .collect();
+    assert_eq!(
+        titles,
+        vec![
+            (ToolKind::Execute, command.to_owned()),
+            (ToolKind::Execute, "process(poll process-1)".to_owned()),
+            (ToolKind::Execute, "process(stop process-1)".to_owned()),
+        ]
+    );
+}

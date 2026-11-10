@@ -207,7 +207,11 @@ pub(super) fn preview_card(
         ToolKind::PowerShell => shell_card("PS", arguments, status),
         ToolKind::Process => {
             let action = string_arg(arguments, "action");
-            let primary = action.clone().or_else(|| string_arg(arguments, "command"));
+            // A poll or stop names the process it acts on.
+            let primary = match (action.as_deref(), string_arg(arguments, "process_id")) {
+                (Some(action @ ("poll" | "stop")), Some(id)) => Some(format!("{action} {id}")),
+                _ => action.clone().or_else(|| string_arg(arguments, "command")),
+            };
             let mut card = kind_card(status, kind, ToolHeader::call("process", primary));
             if action.as_deref() == Some("start") {
                 if let Some(command) = string_arg(arguments, "command") {

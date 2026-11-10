@@ -47,6 +47,12 @@ async fn process_actions_prepare_with_audited_policies() {
         start.execution_policy(),
         ToolExecutionPolicy::Exclusive
     ));
+    // A live start announces its command, as replay does, so ACP hosts
+    // title the call with it.
+    assert_eq!(
+        start.start_metadata().command_line_text(),
+        Some("echo test")
+    );
 
     let poll = tool
         .prepare(
