@@ -132,6 +132,14 @@ pub(super) async fn open(
             "--provider, --model, --auth, --reasoning, and --permission-mode need a session id with --resume"
         );
     }
+    // A session the daemon still has loaded keeps the setup it opened
+    // with, so it would go on saving while this TUI treated it as unsaved,
+    // and cancel its turn on quit.
+    if *no_save && matches!(startup, StartupSession::ById(_) | StartupSession::Latest(_)) {
+        anyhow::bail!(
+            "--no-save cannot be combined with --resume or --continue: a resumed session keeps saving"
+        );
+    }
     let target = match startup {
         StartupSession::Fresh | StartupSession::Picker => tui::DaemonTarget::New,
         // Resolve as in process, but never take the writer lease from
