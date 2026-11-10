@@ -55,8 +55,7 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Resume
         | CommandId::Sessions => CommandRoute::Ui,
         // Session navigation and deletion need daemon methods;
-        // config/provider/auth editors, agents and the advisor still own
-        // in-process state. Hubs (/workflow, /attach) likewise describe
+        // provider/auth editors and agents still own in-process state. Hubs (/workflow, /attach) likewise describe
         // the wrong runtime, even when opened read-only.
         CommandId::AddDir
         | CommandId::Login
