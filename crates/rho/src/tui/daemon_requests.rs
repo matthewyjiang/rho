@@ -8,13 +8,12 @@
 //! control worker to stay usable during the turn: a goal runs as one long
 //! turn, which a queued change would otherwise hold `/goal clear` behind.
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use rho_protocol::{
     methods::{ConfigSet, SessionConfigure, SessionMcp, SessionPrompt},
-    ClientEnvironment, ConfigNamespace, ConfigRevision, ConfigSetParams, ContentBlock, ErrorCode,
-    SessionChange, SessionConfigureParams, SessionGoalAction, SessionId, SessionMcpParams,
-    SessionPromptParams,
+    ClientEnvironment, ConfigSetParams, ContentBlock, ErrorCode, SessionChange,
+    SessionConfigureParams, SessionGoalAction, SessionId, SessionMcpParams, SessionPromptParams,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -40,64 +39,6 @@ enum Control {
     },
 }
 
-/// The revisions this TUI's own writes produced in each namespace, so a
-/// write sent before the daemon's `rho/config/changed` for the last one
-/// reached the cache does not repeat a stale revision and get refused as a
-/// conflict with the TUI's own change. While the cache holds any revision
-/// of the chain, everything after it is this TUI's own, so the write is
-/// sent against the latest. A change by anyone else breaks the chain: the
-/// next own write that still saves starts a new one, and the daemon
-/// refuses any write made against the older state. Revisions are content
-/// hashes, so another client can land the cache on one the chain holds;
-/// the remapped write is then refused and the chain dropped.
-#[derive(Default)]
-struct OwnWrites(HashMap<ConfigNamespace, OwnChain>);
-
-struct OwnChain {
-    /// Every revision of the chain, oldest first; the last is the latest.
-    revisions: Vec<ConfigRevision>,
-}
-
-impl OwnWrites {
-    /// The revision to send a write the TUI stamped `stamped` against.
-    fn revision_for(
-        &mut self,
-        namespace: &ConfigNamespace,
-        stamped: ConfigRevision,
-    ) -> ConfigRevision {
-        let Some(chain) = self.0.get_mut(namespace) else {
-            return stamped;
-        };
-        let Some(seen) = chain
-            .revisions
-            .iter()
-            .position(|revision| *revision == stamped)
-        else {
-            return stamped;
-        };
-        // The cache has seen up to `seen`; nothing before it is needed.
-        chain.revisions.drain(..seen);
-        chain.revisions.last().cloned().unwrap_or(stamped)
-    }
-
-    /// Drops the chain of a namespace whose write was refused, so a
-    /// stale tip is never sent again.
-    fn forget(&mut self, namespace: &ConfigNamespace) {
-        self.0.remove(namespace);
-    }
-
-    /// Records that a write sent against `sent` saved `saved`.
-    fn saved(&mut self, namespace: ConfigNamespace, sent: ConfigRevision, saved: ConfigRevision) {
-        let chain = self.0.entry(namespace).or_insert_with(|| OwnChain {
-            revisions: Vec::new(),
-        });
-        if chain.revisions.last() != Some(&sent) {
-            chain.revisions = vec![sent];
-        }
-        chain.revisions.push(saved);
-    }
-}
-
 pub(super) struct DaemonRequests {
     sender: mpsc::UnboundedSender<Request>,
     pub(super) views: mpsc::UnboundedReceiver<DaemonView>,
@@ -117,7 +58,6 @@ impl DaemonRequests {
         let control_views = views.clone();
         // Control requests bypass configure, which can wait for a turn to end.
         let control_task = tokio::spawn(async move {
-            let mut writes = OwnWrites::default();
             while let Some(request) = control_requests.recv().await {
                 match request {
                     Control::Mcp => {
@@ -148,23 +88,14 @@ impl DaemonRequests {
                             )));
                         }
                     }
-                    Control::SetConfig { mut params, label } => {
+                    Control::SetConfig { params, label } => {
                         // `rho/config/changed`, not this response, updates
-                        // what the TUI shows; the response only lets the
-                        // next write build on this one.
-                        params.revision =
-                            writes.revision_for(&params.namespace, params.revision.clone());
+                        // what the TUI shows.
                         let view = match control_link.request::<ConfigSet>(&params).await {
-                            Ok(response) => {
-                                writes.saved(params.namespace, params.revision, response.revision);
-                                continue;
-                            }
+                            Ok(_) => continue,
                             Err(error) if error.error_code() == Some(ErrorCode::ConfigConflict) => {
-                                // Another client's change. Revisions are
-                                // content hashes, so the cache can hold one
-                                // the chain saw without it being this TUI's;
-                                // the retry goes out against the cache.
-                                writes.forget(&params.namespace);
+                                // Another client's change, or a hand edit:
+                                // this TUI's own never conflict.
                                 DaemonView::Status("settings changed; try again".into())
                             }
                             Err(error) => {
@@ -273,7 +204,3 @@ fn goal_verb(action: &SessionGoalAction) -> &'static str {
         _ => "change",
     }
 }
-
-#[cfg(test)]
-#[path = "daemon_requests_tests.rs"]
-mod tests;
