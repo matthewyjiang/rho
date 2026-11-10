@@ -93,6 +93,11 @@ pub(super) enum DaemonView {
     Login(LoginUpdate),
     /// The daemon's jobs, asked for to refresh the subagent rail.
     Jobs(Result<Vec<rho_protocol::JobSummary>, String>),
+    /// The daemon's settings, read once the session attached and again on
+    /// each reconnect, or why they could not be read.
+    SettingsLoaded(Result<Box<super::daemon_settings::DaemonSettings>, String>),
+    /// Settings of a namespace the TUI read changed.
+    SettingsChanged(Box<rho_protocol::ConfigChangedParams>),
     /// One background configure request finished, successfully or otherwise.
     ConfigureFinished,
     /// Whether a turn runs, as the job's state says.

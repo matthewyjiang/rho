@@ -31,7 +31,7 @@ impl DaemonSession {
     }
 
     /// Ask for a report on the session, which arrives as
-    /// [`DaemonView::Report`]; the daemon refuses during a turn.
+    /// `DaemonView::Report`; the daemon refuses during a turn.
     pub(in crate::tui) fn inspect(
         &self,
         report: rho_protocol::SessionReport,
@@ -46,7 +46,7 @@ impl DaemonSession {
     }
 
     /// Ask for the daemon's jobs without waiting for the active turn;
-    /// they arrive as [`DaemonView::Jobs`].
+    /// they arrive as `DaemonView::Jobs`.
     pub(in crate::tui) fn request_jobs(&self) -> anyhow::Result<()> {
         if self.ended {
             anyhow::bail!(LOST);
@@ -67,6 +67,22 @@ impl DaemonSession {
             .as_ref()
             .expect("attached session has requests")
             .rename(title)
+    }
+
+    /// Writes settings without waiting for the active turn; a refusal
+    /// arrives as a view, and the change itself as `SettingsChanged`.
+    pub(in crate::tui) fn set_config(
+        &self,
+        params: rho_protocol::ConfigSetParams,
+        label: String,
+    ) -> anyhow::Result<()> {
+        if self.ended {
+            anyhow::bail!(LOST);
+        }
+        self.requests
+            .as_ref()
+            .expect("attached session has requests")
+            .set_config(params, label)
     }
 
     /// Queue a change without waiting for the active turn to release it.

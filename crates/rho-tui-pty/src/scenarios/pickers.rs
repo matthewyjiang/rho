@@ -43,11 +43,12 @@ pub(super) const OPEN_MODEL_PICKER_STEPS: &[Step] = &[
 pub(super) fn setup_pinned_models(home: &IsolatedHome) -> Result<()> {
     std::fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 favorite_models = ["openai/gpt-5.5", "xai/grok-4.6"]
 
 [behavior]

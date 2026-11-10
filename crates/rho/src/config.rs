@@ -1,23 +1,17 @@
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt, fs, path::PathBuf, str::FromStr};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use {
-    crate::compaction::CompactionConfig,
-    crate::credential_store::UntrackedCredentialStore,
-    crate::keybindings::Keybindings,
-    crate::model_aliases::ModelAliases,
-    crate::paths,
-    crate::permission::PermissionMode,
-    crate::tools::mcp::config::McpConfig,
-    rho_providers::credentials::{
-        load_web_search_api_key, save_web_search_api_key, CredentialStore, CredentialStoreBackend,
-        WebSearchCredential,
-    },
-    rho_providers::model::catalog,
-    rho_providers::model::favorites::{favorite_model_values, normalized_favorite_models},
-    rho_providers::provider,
-    rho_providers::reasoning::ReasoningLevel,
+    crate::compaction::CompactionConfig, crate::model_aliases::ModelAliases, crate::paths,
+    crate::permission::PermissionMode, crate::tools::mcp::config::McpConfig,
+    rho_providers::credentials::CredentialStoreBackend, rho_providers::model::catalog,
+    rho_providers::provider, rho_providers::reasoning::ReasoningLevel,
 };
 
 #[path = "provider_config.rs"]
@@ -34,27 +28,67 @@ pub use internal_agent::{
     InternalAgentModelConfig, InternalAgentTarget, ModelKind, RhoInternalAgentModel,
 };
 
-#[path = "config_format.rs"]
-mod format;
-use format::write_config;
+#[path = "config_document.rs"]
+mod document;
+pub(crate) use document::ConfigDocument;
+
+#[path = "config_setting.rs"]
+mod setting;
+pub(crate) use setting::{
+    any_value, load_settings, unknown_keys, AnySetting, Apply, ConfigError, IntegerSpec, Setting,
+    SettingMeta,
+};
+
+#[path = "config_registry.rs"]
+mod registry;
+
+#[path = "config_wire.rs"]
+mod wire;
 #[cfg(test)]
-pub use format::{EffectiveModelConfig, EffectiveModelSource};
-pub(crate) use format::{CLAUDE_CLI_RUNTIME_KEY, CURSOR_RUNTIME_KEY, RHO_RUNTIME_KEY};
+pub(crate) use wire::default_fits_kind;
+pub(crate) use wire::{
+    agent_schema, agent_values, apply_agent_changes, client_specs_problem, spec_values,
+    write_changes, AgentChangeError,
+};
+
+#[path = "config_migrate_2x.rs"]
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "install and upgrade call it from #1666")
+)]
+mod migrate_2x;
+
+/// `runtime` value that selects the Claude Code CLI for an internal agent.
+/// Matches the agent frontmatter vocabulary (`runtime: claude-cli`).
+pub(crate) const CLAUDE_CLI_RUNTIME_KEY: &str = "claude-cli";
+pub(crate) const RHO_RUNTIME_KEY: &str = "rho";
+pub(crate) const CURSOR_RUNTIME_KEY: &str = "cursor";
+
+/// The conversation model a fresh install starts on.
+pub(crate) const DEFAULT_PROVIDER: &str = "openai";
+pub(crate) const DEFAULT_MODEL: &str = "gpt-5.5";
+pub(crate) const DEFAULT_AUTH: &str = "api-key";
+
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectiveModelConfig {
+    pub provider: String,
+    pub model: String,
+    pub auth: String,
+    pub source: EffectiveModelSource,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EffectiveModelSource {
+    Conversation,
+    Override,
+}
 
 /// Non-fatal issue found while loading config.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ConfigWarning {
-    Clamped {
-        key: &'static str,
-        from: String,
-        to: String,
-    },
     Normalized {
-        key: &'static str,
-        from: String,
-        to: String,
-    },
-    Migrated {
         key: &'static str,
         from: String,
         to: String,
@@ -68,14 +102,8 @@ pub(crate) enum ConfigWarning {
 impl ConfigWarning {
     pub(crate) fn message(&self) -> String {
         match self {
-            Self::Clamped { key, from, to } => {
-                format!("config `{key}` value {from} is out of range; using {to}")
-            }
             Self::Normalized { key, from, to } => {
                 format!("config `{key}` value {from} is unsupported; using {to}")
-            }
-            Self::Migrated { key, from, to } => {
-                format!("config `{key}` {from} now maps to {to}")
             }
             Self::ShadowedCustomProvider { name } => format!(
                 "config `providers.custom.{name}` is ignored: {name} is now a built-in provider; remove the table"
@@ -86,9 +114,9 @@ impl ConfigWarning {
 
 #[path = "config_web_search.rs"]
 mod web_search;
-pub(crate) use web_search::{
-    parse_search_endpoint_url, web_search_route, EXA_MCP_DEFAULT_URL, OPENAI_CODEX_RESPONSES_URL,
-};
+#[cfg(test)]
+pub(crate) use web_search::OPENAI_CODEX_RESPONSES_URL;
+pub(crate) use web_search::{parse_search_endpoint_url, web_search_route};
 pub use web_search::{
     ExaSearchConnection, OpenAiSearchConnection, SearchBackend, WebSearchMode, WebSearchRoute,
     WebSearchSettings,
@@ -96,13 +124,12 @@ pub use web_search::{
 
 #[path = "config_load.rs"]
 mod load;
+pub(crate) use load::resolve as resolve_document;
 
 pub(crate) use provider_config::ProviderConfigs;
 
 /// Keep in lockstep with [`rho_tools::DEFAULT_MAX_OUTPUT_BYTES`].
 pub(crate) const DEFAULT_MAX_OUTPUT_BYTES: usize = rho_tools::DEFAULT_MAX_OUTPUT_BYTES;
-pub(crate) const DEFAULT_PROMPT_HISTORY_LIMIT: usize = 1000;
-pub(crate) const MAX_PROMPT_HISTORY_LIMIT: usize = 10_000;
 /// Default live delegated-agent slots.
 ///
 /// Receipt: 4 serialized a 6-way background fan-out behind a permit queue.
@@ -119,9 +146,12 @@ pub const MAX_AGENT_CONCURRENCY: usize = 64;
 ///
 /// This type is not part of the SDK contract. Convert it through
 /// `app::sdk_config::SdkBootstrapOptions`, then acquire credentials separately
-/// through the application credential adapter. Provider credentials are never
-/// stored in these fields; legacy web-search values are migrated to the OS
-/// credential store and redact their `Debug` representation.
+/// through the application credential adapter. Credentials are never stored
+/// in these fields.
+///
+/// `config_registry` maps each setting to its `config.toml` key; the
+/// structured tables (`providers`, `mcp`, ...) load in `config_load`. Client
+/// display settings live with their client, not here.
 #[derive(Clone, Debug)]
 pub struct Config {
     pub questionnaire: QuestionnaireConfig,
@@ -135,10 +165,6 @@ pub struct Config {
     /// selection no longer matches the alias table.
     pub model_alias: Option<String>,
     pub max_output_bytes: usize,
-    pub max_tool_output_lines: usize,
-    /// Sent composer prompts kept in the shared prompt-history database.
-    /// `0` disables persistence.
-    pub prompt_history_limit: usize,
     pub auth: String,
     pub reasoning: ReasoningLevel,
     /// Faster serving for models that support `/fast`.
@@ -146,24 +172,9 @@ pub struct Config {
     /// Codex sends a priority service tier. xAI OAuth `grok-4.7` keeps that
     /// model selected and sends `grok-4.7-build-fast`.
     pub fast_mode: bool,
-    pub show_reasoning_output: bool,
-    /// Hide tool cards, reasoning, and activity chrome so only message text remains.
-    pub zen_mode: bool,
-    /// Reveal received text live, by paragraph, or at response completion.
-    pub output_streaming: StreamingMode,
-    /// Interactive TUI color theme id (`terminal`, built-in, or custom file stem).
-    pub theme: String,
     pub auto_compact: bool,
     pub compact_threshold_percent: u8,
     pub compact_target_percent: u8,
-    /// Show a transcript notice after a turn that re-billed a large uncached prompt.
-    pub cache_miss_notices: bool,
-    /// Show the keyboard hint block in the session header. Signed-out sessions
-    /// keep their `/login` hints regardless.
-    pub show_header_hints: bool,
-    /// Notify through the terminal (OSC 9 or BEL) when a turn finishes or
-    /// needs the user while the terminal is unfocused. Ignored under Herdr.
-    pub notifications: bool,
     /// Optional model selections for reserved internal agents, keyed by stable agent ID.
     pub internal_agents: BTreeMap<String, InternalAgentModelConfig>,
     pub favorite_models: Vec<String>,
@@ -175,7 +186,6 @@ pub struct Config {
     ///
     /// [`EditTool::Auto`] resolves a concrete format from the active provider.
     pub edit_tool: EditTool,
-    pub check_for_updates: bool,
     pub enable_subagents: bool,
     /// Maximum delegated agents that may execute at once, including background.
     pub agent_concurrency: usize,
@@ -190,10 +200,8 @@ pub struct Config {
     pub permission_mode: PermissionMode,
     /// Explicit credential backend. `None` means unset; runtime defaults to OS.
     pub credential_store: Option<CredentialStoreBackend>,
-    pub(crate) legacy_web_search_credentials: LegacyWebSearchCredentials,
     pub rtk: bool,
     pub inline_shell: String,
-    pub keybindings: Keybindings,
     pub prompt_templates: crate::prompt_templates::PromptTemplates,
     pub(crate) providers: ProviderConfigs,
     pub(crate) mcp: McpConfig,
@@ -223,32 +231,22 @@ impl Default for Config {
         Self {
             questionnaire: QuestionnaireConfig::default(),
             codemode: CodemodeConfig::default(),
-            provider: "openai".into(),
-            model: "gpt-5.5".into(),
+            provider: DEFAULT_PROVIDER.into(),
+            model: DEFAULT_MODEL.into(),
             model_aliases: ModelAliases::default(),
             model_alias: None,
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
-            max_tool_output_lines: 10,
-            prompt_history_limit: DEFAULT_PROMPT_HISTORY_LIMIT,
-            auth: "api-key".into(),
+            auth: DEFAULT_AUTH.into(),
             reasoning: ReasoningLevel::Medium,
             fast_mode: false,
-            show_reasoning_output: true,
-            zen_mode: false,
-            output_streaming: StreamingMode::default(),
-            theme: "terminal".into(),
             auto_compact: compaction.auto_compact,
             compact_threshold_percent: compaction.threshold_percent,
             compact_target_percent: compaction.target_percent,
-            cache_miss_notices: false,
-            show_header_hints: true,
-            notifications: true,
             internal_agents: BTreeMap::new(),
             favorite_models: Vec::new(),
             web_search: WebSearchSettings::default(),
             xai_image_generation: true,
             edit_tool: EditTool::default(),
-            check_for_updates: true,
             enable_subagents: true,
             agent_concurrency: DEFAULT_AGENT_CONCURRENCY,
             advisor_mode: false,
@@ -256,10 +254,8 @@ impl Default for Config {
             keep_cache_warm: true,
             permission_mode: PermissionMode::Bypass,
             credential_store: None,
-            legacy_web_search_credentials: LegacyWebSearchCredentials::default(),
             rtk: true,
             inline_shell: default_inline_shell(),
-            keybindings: Keybindings::default(),
             prompt_templates: Default::default(),
             providers: ProviderConfigs::default(),
             mcp: McpConfig::default(),
@@ -274,12 +270,6 @@ impl Default for Config {
 pub struct CodemodeConfig {
     #[serde(default)]
     pub mode: CodemodeMode,
-}
-
-impl CodemodeConfig {
-    pub(crate) fn is_default(&self) -> bool {
-        *self == Self::default()
-    }
 }
 
 /// How the always-registered `codemode` tool presents other tools (Pi's
@@ -319,12 +309,6 @@ impl CodemodeMode {
 pub struct QuestionnaireConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_seconds: Option<std::num::NonZeroU64>,
-}
-
-impl QuestionnaireConfig {
-    pub(crate) fn is_disabled(&self) -> bool {
-        self.timeout_seconds.is_none()
-    }
 }
 
 /// Configured file-edit preference.
@@ -379,16 +363,6 @@ impl EditTool {
     }
 }
 
-/// Whether a configured edit tool names the hashline format Rho 3.0 removed.
-/// Loaders replace it with `str_replace` and a [`ConfigWarning::Migrated`]
-/// carrying [`REMOVED_HASHLINE_REPLACEMENT`], so saved configs keep starting.
-fn is_removed_hashline_edit_tool(value: &str) -> bool {
-    value.trim().eq_ignore_ascii_case("hashline")
-}
-
-/// Migration target text for a removed hashline edit tool setting.
-const REMOVED_HASHLINE_REPLACEMENT: &str = "\"str_replace\" (the hashline edit format was removed)";
-
 impl Config {
     /// Resolves the edit preference for the configured provider.
     pub(crate) fn resolved_edit_tool(&self) -> rho_tools::EditFormat {
@@ -405,17 +379,6 @@ impl Config {
                 .auto_edit_format(provider)
                 .unwrap_or_else(|| preferred_edit_format_for_provider(provider)),
             EditTool::Pinned(format) => format,
-        }
-    }
-
-    pub(crate) fn edit_tool_display_label(&self) -> String {
-        self.edit_tool_display_label_for_provider(&self.provider)
-    }
-
-    pub(crate) fn edit_tool_display_label_for_provider(&self, provider: &str) -> String {
-        match self.edit_tool {
-            EditTool::Auto => format!("auto ({})", self.resolved_edit_tool_for_provider(provider)),
-            EditTool::Pinned(format) => format.label().into(),
         }
     }
 }
@@ -485,101 +448,21 @@ impl<'de> Deserialize<'de> for EditTool {
     }
 }
 
-#[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
-pub(crate) struct LegacyWebSearchCredentials {
-    #[serde(
-        default,
-        rename = "web_search_openai_api_key",
-        skip_serializing_if = "Option::is_none"
-    )]
-    openai: Option<String>,
-    #[serde(
-        default,
-        rename = "web_search_exa_api_key",
-        skip_serializing_if = "Option::is_none"
-    )]
-    exa: Option<String>,
-    #[serde(
-        default,
-        rename = "web_search_brave_api_key",
-        skip_serializing_if = "Option::is_none"
-    )]
-    brave: Option<String>,
-}
-
-impl fmt::Debug for LegacyWebSearchCredentials {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("LegacyWebSearchCredentials")
-            .field("openai", &self.openai.as_ref().map(|_| "[REDACTED]"))
-            .field("exa", &self.exa.as_ref().map(|_| "[REDACTED]"))
-            .field("brave", &self.brave.as_ref().map(|_| "[REDACTED]"))
-            .finish()
-    }
-}
-
-impl LegacyWebSearchCredentials {
-    fn get(&self, credential: WebSearchCredential) -> Option<&str> {
-        match credential {
-            WebSearchCredential::OpenAi => self.openai.as_deref(),
-            WebSearchCredential::Exa => self.exa.as_deref(),
-            WebSearchCredential::Brave => self.brave.as_deref(),
-            // Firecrawl never had a plaintext config key.
-            WebSearchCredential::Firecrawl => None,
-        }
-    }
-
-    fn clear(&mut self, credential: WebSearchCredential) {
-        match credential {
-            WebSearchCredential::OpenAi => self.openai = None,
-            WebSearchCredential::Exa => self.exa = None,
-            WebSearchCredential::Brave => self.brave = None,
-            WebSearchCredential::Firecrawl => {}
-        }
-    }
-}
-
 impl Config {
     pub fn default_path() -> anyhow::Result<PathBuf> {
         Ok(paths::rho_dir()?.join("config.toml"))
     }
 
+    /// Reads `config.toml`. A missing file is the defaults; reading never
+    /// writes. Every bad key is reported, not just the first.
     pub fn load(path: Option<PathBuf>) -> anyhow::Result<Self> {
         let path = path.map(Ok).unwrap_or_else(Self::default_path)?;
-        // Settings only. Open/migrate the credential store once at process
-        // startup via credential_store::initialize_from_config.
-        Self::load_settings_only(path)
-    }
-
-    /// Load config settings without opening the credential store.
-    pub(crate) fn load_settings_only(path: PathBuf) -> anyhow::Result<Self> {
-        if !path.exists() {
-            let default = Config::default();
-            default.write_settings(path.clone())?;
-            return Ok(default);
-        }
-        Self::parse_file(path)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn load_with_store(
-        path: PathBuf,
-        store: &dyn CredentialStore,
-    ) -> anyhow::Result<Self> {
-        let mut cfg = Self::load_settings_only(path.clone())?;
-        if matches!(cfg.migrate_legacy_web_search_credentials(store), Ok(true)) {
-            let _cleanup_result = write_config(&path, &cfg);
-        }
-        Ok(cfg)
-    }
-
-    fn parse_file(path: PathBuf) -> anyhow::Result<Self> {
-        let text = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read config file {}", path.display()))?;
-        let (cfg, warnings) = Self::parse_settings_with_warnings(&text)
-            .with_context(|| format!("failed to parse config file {}", path.display()))?;
+        let doc = ConfigDocument::read(&path)?;
+        let (config, warnings) = load::resolve(&doc).map_err(|errors| {
+            load::errors_error(&errors).context(format!("invalid config file {}", path.display()))
+        })?;
         load::emit_warnings(&path.display().to_string(), &warnings);
-        Ok(cfg)
+        Ok(config)
     }
 
     pub(crate) fn parse_settings(text: &str) -> anyhow::Result<Self> {
@@ -589,42 +472,42 @@ impl Config {
     pub(crate) fn parse_settings_with_warnings(
         text: &str,
     ) -> anyhow::Result<(Self, Vec<ConfigWarning>)> {
-        load::parse_settings(text)
+        load::resolve(&ConfigDocument::parse(text)?).map_err(|errors| load::errors_error(&errors))
     }
 
-    pub fn save(&self, path: Option<PathBuf>) -> anyhow::Result<()> {
+    /// Applies `edit` to the config saved at `path` and writes back only the
+    /// keys whose values changed, keeping the rest of the file as written.
+    ///
+    /// Holds the file's edit lock throughout and fails without waiting when
+    /// another writer holds it. Nothing is written when the file does not
+    /// load before the edit, or would not load after it.
+    pub(crate) fn edit<T>(path: &Path, edit: impl FnOnce(&mut Config) -> T) -> anyhow::Result<T> {
+        let _lock = crate::config_writer::edit_lock::acquire_edit_lock(path)
+            .with_context(|| format!("could not save config file {}", path.display()))?;
+        let mut doc = ConfigDocument::read(path)?;
+        let original = doc.text();
+        let invalid = |errors: Vec<ConfigError>| {
+            load::errors_error(&errors).context(format!("invalid config file {}", path.display()))
+        };
+        let (before, _) = load::resolve(&doc).map_err(invalid)?;
+        let mut after = before.clone();
+        let value = edit(&mut after);
+        load::save_diff(&before, &after, &mut doc)?;
+        load::resolve(&doc)
+            .map_err(|errors| load::errors_error(&errors).context("the change was not saved"))?;
+        if doc.text() != original {
+            doc.write(path)?;
+        }
+        Ok(value)
+    }
+
+    /// Saves every value of this config that differs from the file, keeping
+    /// the rest of the file as written. Production writers go through
+    /// [`Self::edit`] or `ConfigRepository`.
+    #[cfg(test)]
+    pub(crate) fn save(&self, path: Option<PathBuf>) -> anyhow::Result<()> {
         let path = path.map(Ok).unwrap_or_else(Self::default_path)?;
-        // Saving migrates web-search keys only, which feed no provider.
-        self.save_with_store(path, &UntrackedCredentialStore)
-    }
-
-    /// Write config without opening or migrating credentials.
-    pub(crate) fn write_settings(&self, path: PathBuf) -> anyhow::Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut config = self.clone();
-        config.normalize_compaction_percentages();
-        config.favorite_models =
-            favorite_model_values(&normalized_favorite_models(&config.favorite_models));
-        write_config(&path, &config)
-    }
-
-    pub(crate) fn save_with_store(
-        &self,
-        path: PathBuf,
-        store: &dyn CredentialStore,
-    ) -> anyhow::Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut config = self.clone();
-        config.normalize_compaction_percentages();
-        config.favorite_models =
-            favorite_model_values(&normalized_favorite_models(&config.favorite_models));
-        let _migration_result = config.migrate_legacy_web_search_credentials(store);
-        write_config(&path, &config)?;
-        Ok(())
+        Self::edit(&path, |saved| *saved = self.clone())
     }
 
     fn validate_model_aliases(&self) -> anyhow::Result<()> {
@@ -767,56 +650,72 @@ impl Config {
             && target.provider.as_deref().unwrap_or(&self.provider) == self.provider)
             .then_some(name)
     }
+}
 
-    pub fn set_compact_threshold_percent(&mut self, value: u8) {
-        self.compact_threshold_percent = clamp_percent(value);
-        self.normalize_compaction_percentages();
-    }
+/// Which hooks [`Config::take_next_turn_settings`] calls for.
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, reason = "the unix-only daemon applies them")
+)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct NextTurnChanges {
+    /// Advisor mode, model, or reasoning changed.
+    pub(crate) advisor: bool,
+    /// An automatic compaction setting changed.
+    pub(crate) compaction: bool,
+}
 
-    pub fn set_agent_concurrency(&mut self, value: usize) {
-        self.agent_concurrency = value.clamp(1, MAX_AGENT_CONCURRENCY);
-    }
-
-    pub fn set_compact_target_percent(&mut self, value: u8) {
-        self.compact_target_percent = clamp_percent(value);
-        self.normalize_compaction_percentages();
-    }
-
-    pub(crate) fn legacy_web_search_api_key(
-        &self,
-        credential: WebSearchCredential,
-    ) -> Option<&str> {
-        self.legacy_web_search_credentials.get(credential)
-    }
-
-    pub(crate) fn migrate_legacy_web_search_credentials(
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, reason = "the unix-only daemon applies them")
+)]
+impl Config {
+    /// Takes every setting that reaches a loaded session at its next turn
+    /// (`Apply::NextTurn` in the registry) and changed in the global config
+    /// from `was` to `now`, keeping the rest of this session's config,
+    /// its agent's own values included, and reports what changed here.
+    pub(crate) fn take_next_turn_settings(
         &mut self,
-        store: &dyn CredentialStore,
-    ) -> rho_providers::credentials::CredentialResult<bool> {
-        let mut changed = false;
-        for credential in WebSearchCredential::ALL {
-            let Some(secret) = self
-                .legacy_web_search_credentials
-                .get(credential)
-                .map(str::to_string)
-            else {
-                continue;
-            };
-            if load_web_search_api_key(store, credential)?.is_none() {
-                save_web_search_api_key(store, credential, &secret)?;
+        was: &Config,
+        now: &Config,
+    ) -> NextTurnChanges {
+        use crate::agent::ADVISOR_AGENT_ID;
+        let advisor = |config: &Config| {
+            (
+                config.advisor_mode,
+                config.internal_agents.get(ADVISOR_AGENT_ID).cloned(),
+            )
+        };
+        let compaction = |config: &Config| {
+            (
+                config.auto_compact,
+                config.compact_threshold_percent,
+                config.compact_target_percent,
+            )
+        };
+        let mut changes = NextTurnChanges::default();
+        if advisor(was) != advisor(now) {
+            changes.advisor = advisor(self) != advisor(now);
+            self.advisor_mode = now.advisor_mode;
+            match now.internal_agents.get(ADVISOR_AGENT_ID) {
+                Some(selection) => {
+                    self.internal_agents
+                        .insert(ADVISOR_AGENT_ID.into(), selection.clone());
+                }
+                None => {
+                    self.internal_agents.remove(ADVISOR_AGENT_ID);
+                }
             }
-            self.legacy_web_search_credentials.clear(credential);
-            changed = true;
         }
-        Ok(changed)
-    }
-
-    fn normalize_compaction_percentages(&mut self) {
-        self.compact_threshold_percent = clamp_percent(self.compact_threshold_percent);
-        self.compact_target_percent = normalized_compact_target_percent(
-            self.compact_threshold_percent,
-            self.compact_target_percent,
-        );
+        if compaction(was) != compaction(now) {
+            changes.compaction = compaction(self) != compaction(now);
+            (
+                self.auto_compact,
+                self.compact_threshold_percent,
+                self.compact_target_percent,
+            ) = compaction(now);
+        }
+        changes
     }
 }
 
@@ -844,20 +743,6 @@ impl From<&Config> for CompactionConfig {
             target_percent: config.compact_target_percent,
             summarizer,
         }
-    }
-}
-
-fn clamp_percent(value: u8) -> u8 {
-    value.clamp(1, 100)
-}
-
-fn normalized_compact_target_percent(threshold_percent: u8, target_percent: u8) -> u8 {
-    let threshold_percent = clamp_percent(threshold_percent);
-    let target_percent = clamp_percent(target_percent);
-    if threshold_percent == 1 {
-        1
-    } else {
-        target_percent.min(threshold_percent - 1)
     }
 }
 

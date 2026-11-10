@@ -596,7 +596,6 @@ impl App {
             | ComposerMode::Panel(_)
             | ComposerMode::Side
             | ComposerMode::SecretInput(_)
-            | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
             | ComposerMode::TranscriptSearch(_)
             | ComposerMode::InteractivePending(_)

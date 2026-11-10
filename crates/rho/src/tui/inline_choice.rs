@@ -106,11 +106,12 @@ pub(super) enum InlineChoicePending {
     DeleteWorkflowRun {
         run_id: String,
     },
-    PromptHistoryLimit {
-        new_limit: usize,
-    },
     ClearPromptHistory,
-    TestWebSearch,
+    /// `change` lowers the prompt history limit, which deletes older
+    /// prompts, so it waits for a yes.
+    LowerPromptHistoryLimit {
+        change: rho_protocol::SettingChange,
+    },
 }
 
 impl InlineChoiceModal {

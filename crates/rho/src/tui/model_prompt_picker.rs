@@ -60,7 +60,8 @@ pub(crate) async fn select(
         .iter()
         .position(|entry| entry.provider == current_provider && entry.model == current.model)
         .unwrap_or(0);
-    let Some(selected) = standalone::select(picker, &config.keybindings, &config.theme).await?
+    let settings = super::TuiSettings::load(&crate::paths::rho_dir()?)?;
+    let Some(selected) = standalone::select(picker, &settings.keybindings, &settings.theme).await?
     else {
         return Ok(None);
     };

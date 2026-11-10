@@ -47,11 +47,12 @@ fn login_shows_provider_picker_before_credential_store_choice() {
     // provider login must choose a store after the group picker.
     std::fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 "#,
     )
     .unwrap();
@@ -185,11 +186,12 @@ fn login_claude_code_skips_credential_store_when_unset() {
     // Leave credential_store unset. Claude login must never ask for it.
     std::fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 "#,
     )
     .unwrap();
@@ -241,11 +243,12 @@ fn login_claude_code_cancel_stays_in_rho() {
     let home = IsolatedHome::new().unwrap();
     std::fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 
 [behavior]
 credential_store = "file"
@@ -473,8 +476,8 @@ fn ollama_is_refreshed_and_listed_only_after_login() {
     std::fs::write(
         &home.config_path,
         original_config.replacen(
-            "provider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"",
-            "provider = \"ollama\"\nmodel = \"llama-pty:latest\"\nauth = \"none\"",
+            "[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n",
+            "[model]\nprovider = \"ollama\"\nmodel = \"llama-pty:latest\"\nauth = \"none\"\n",
             1,
         ),
     )
@@ -547,7 +550,7 @@ fn rho_login_without_a_session_bus_falls_back_to_the_file_store_it_offers() {
     // The key check reaches the discard port, so the key saves unchecked.
     std::fs::write(
         &home.config_path,
-        "provider = \"mock\"\nmodel = \"mock-model\"\nauth = \"mock-api-key\"\ncheck_for_updates = false\n\n[providers.custom.mock]\nbase_url = \"http://127.0.0.1:9/v1\"\n",
+        "[model]\nprovider = \"mock\"\nmodel = \"mock-model\"\nauth = \"mock-api-key\"\n\n[providers.custom.mock]\nbase_url = \"http://127.0.0.1:9/v1\"\n",
     )
     .unwrap();
     let plan = RhoLaunchPlan::matrix(

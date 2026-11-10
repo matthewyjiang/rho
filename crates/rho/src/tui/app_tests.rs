@@ -84,7 +84,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
         },
         services: ApplicationServices {
             config_repository: ConfigRepository::temporary_for_tests().unwrap(),
-            theme: "terminal".into(),
+            settings: crate::tui::TuiSettings::default(),
             first_run: None,
             auth_unavailable: None,
             update_notice: None,
@@ -550,47 +550,6 @@ fn favorite_save_failure_keeps_model_picker_open() {
     assert_eq!(app.active_picker_value().as_deref(), Some(selected_value));
     assert!(app.info.runtime.favorite_models.is_empty());
     assert!(matches!(app.history.last(), Some(Entry::Error(_))));
-}
-
-#[test]
-fn esc_from_nested_web_search_config_returns_to_tools_category() {
-    let config_dir = tempfile::tempdir().unwrap();
-    let mut app = test_app();
-    app.info.services.config_repository =
-        ConfigRepository::new(Some(config_dir.path().join("config.toml")));
-    let config = app.info.services.config_repository.load().unwrap();
-    let mut root = config_picker::config_picker(&app.info.runtime, &config);
-    App::restore_picker_position(
-        &mut root,
-        config_picker::TOOLS_CATEGORY_VALUE,
-        String::new(),
-    );
-    let mut parent = config_picker::category_picker(
-        config_picker::TOOLS_CATEGORY_VALUE,
-        &app.info.runtime,
-        &config,
-    )
-    .unwrap()
-    .with_parent(root);
-    App::restore_picker_position(&mut parent, config_picker::WEB_SEARCH_VALUE, "web".into());
-    app.input_ui.set_composer(ComposerMode::Picker(parent));
-    let child = config_picker::web_search_config_picker(
-        &config,
-        &app.info.runtime.provider,
-        &app.info.runtime.model,
-    );
-    app.open_child_picker(child);
-
-    app.handle_picker_escape(/*running*/ false).unwrap();
-
-    let ComposerMode::Picker(picker) = app.input_ui.composer() else {
-        panic!("expected picker after nested config escape");
-    };
-    assert_eq!(
-        picker.selected_item().unwrap().value,
-        config_picker::WEB_SEARCH_VALUE
-    );
-    assert_eq!(picker.filter, "web");
 }
 
 #[test]

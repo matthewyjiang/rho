@@ -7,7 +7,7 @@ use crate::tui::DefaultTerminal;
 use rho_providers::model::catalog;
 
 use super::{
-    config_picker,
+    config_row::ConfigRow,
     login_target::SignInTarget,
     model_picker,
     picker::{ConfigParentRow, DuringTurnSelect, PickerAction, PickerTurn},
@@ -58,14 +58,7 @@ impl App {
             return Ok(());
         };
 
-        let return_picker = self.take_picker_parent_after_selection(&action);
-        // Idle SelectModel restores its config parent inside the model arm
-        // (`request_model_selection_from_config_picker`). Every other path
-        // restores after the commit, including during-turn SelectModel.
-        let (idle_model_parent, restore_parent) = match (turn, &action) {
-            (PickerTurn::Idle, PickerAction::SelectModel) => (return_picker, None),
-            _ => (None, return_picker),
-        };
+        let restore_parent = self.take_picker_parent_after_selection(&action);
 
         if let PickerTurn::DuringTurn = turn {
             match action.during_turn_select() {
@@ -94,7 +87,7 @@ impl App {
         }
 
         let result = self
-            .execute_picker_action(action, &value, &mut commit, idle_model_parent)
+            .execute_picker_action(action, &value, &mut commit)
             .await;
         if result.is_ok() {
             let preserve_status = matches!(turn, PickerTurn::Idle);
@@ -108,24 +101,14 @@ impl App {
         action: PickerAction,
         value: &str,
         commit: &mut PickerCommit<'_>,
-        idle_model_parent: Option<(UiPicker, &'static str)>,
     ) -> anyhow::Result<()> {
         match action {
-            PickerAction::SelectModel => {
-                self.commit_select_model(value, commit, idle_model_parent)
-                    .await
-            }
+            PickerAction::SelectModel => self.commit_select_model(value, commit).await,
             PickerAction::SelectInternalAgentModel => {
                 let PickerCommit::Idle { agent, .. } = commit else {
                     unreachable!("internal agent model commit is idle-only");
                 };
                 self.commit_internal_agent_model(value, agent).await
-            }
-            PickerAction::SelectAdvisorReasoning => {
-                let PickerCommit::Idle { agent, .. } = commit else {
-                    unreachable!("advisor reasoning commit is idle-only");
-                };
-                self.commit_advisor_reasoning(value, *agent).await
             }
             PickerAction::LoginGroup => {
                 let PickerCommit::Idle { terminal, agent } = commit else {
@@ -166,18 +149,6 @@ impl App {
                     self.logout_provider(&provider, agent).await
                 }
             },
-            PickerAction::SwitchAuthMode => {
-                let PickerCommit::Idle { agent, .. } = commit else {
-                    unreachable!("auth-mode commit is idle-only");
-                };
-                self.switch_active_auth_mode(value, agent).await
-            }
-            PickerAction::RefreshModelList => {
-                let PickerCommit::Idle { terminal, .. } = commit else {
-                    unreachable!("refresh-model-list commit is idle-only");
-                };
-                self.refresh_model_lists(value, terminal).await
-            }
             PickerAction::InsertSkillCommand => {
                 if matches!(commit.turn(), PickerTurn::Idle) {
                     self.input_ui.set_shell_mode(None);
@@ -236,12 +207,8 @@ impl App {
                 self.submit_rewind_confirmation(value, terminal, agent)
                     .await
             }
-            PickerAction::Config => match commit {
-                PickerCommit::Idle { terminal, agent } => {
-                    self.submit_config_selection(value, agent, terminal).await
-                }
-                PickerCommit::DuringTurn => self.submit_config_selection_during_turn(value).await,
-            },
+            // Only a daemon session opens config pages.
+            PickerAction::Config => self.commit_daemon_config(value),
             PickerAction::SelectTheme => self.submit_theme_selection(value),
             PickerAction::ViewAgent => self.submit_view_agent_selection(value),
             PickerAction::EditAgent => {
@@ -269,11 +236,9 @@ impl App {
         &mut self,
         value: &str,
         commit: &mut PickerCommit<'_>,
-        idle_model_parent: Option<(UiPicker, &'static str)>,
     ) -> anyhow::Result<()> {
         if self.info.session.daemon.is_some() {
-            self.select_daemon_model(value)?;
-            return self.restore_config_parent(idle_model_parent, /*preserve_status*/ true);
+            return self.select_daemon_model(value);
         }
         self.refresh_available_auths();
         match self.resolve_model_selection(
@@ -282,18 +247,9 @@ impl App {
             &self.info.runtime.auth,
         ) {
             Ok(selection) => match commit {
+                // In process no config page opens the model picker.
                 PickerCommit::Idle { agent, .. } => {
-                    if let Some((picker, selected_value)) = idle_model_parent {
-                        self.request_model_selection_from_config_picker(
-                            selection,
-                            picker,
-                            selected_value,
-                            agent,
-                        )
-                        .await
-                    } else {
-                        self.request_model_selection(selection, agent).await
-                    }
+                    self.request_model_selection(selection, agent).await
                 }
                 PickerCommit::DuringTurn => self.queue_model_selection(selection),
             },
@@ -391,7 +347,7 @@ impl App {
     fn take_picker_parent_after_selection(
         &mut self,
         action: &PickerAction,
-    ) -> Option<(UiPicker, &'static str)> {
+    ) -> Option<(UiPicker, String)> {
         let selected_value = config_parent_value(action.config_parent_row()?);
         match self.input_ui.composer_mut() {
             ComposerMode::Picker(picker) => {
@@ -403,22 +359,17 @@ impl App {
 
     fn restore_config_parent(
         &mut self,
-        return_picker: Option<(UiPicker, &'static str)>,
+        return_picker: Option<(UiPicker, String)>,
         preserve_status: bool,
     ) -> anyhow::Result<()> {
         let Some((picker, selected_value)) = return_picker else {
             return Ok(());
         };
         let feedback = preserve_status.then(|| self.status().to_string());
-        if self.info.session.daemon.is_some() {
-            // The daemon's settings page, not the local config editor.
-            let filter = picker.filter.clone();
-            let mut parent = self.refreshed_config_page(picker);
-            Self::restore_picker_position(&mut parent, selected_value, filter);
-            self.input_ui.set_composer(ComposerMode::Picker(parent));
-        } else {
-            self.open_main_config_picker(selected_value, picker.filter)?;
-        }
+        let filter = picker.filter.clone();
+        let mut parent = self.refreshed_config_page(picker);
+        Self::restore_picker_position(&mut parent, &selected_value, filter);
+        self.input_ui.set_composer(ComposerMode::Picker(parent));
         if let Some(feedback) = feedback.filter(|feedback| !feedback.is_empty()) {
             self.set_status(feedback);
         }
@@ -436,13 +387,10 @@ impl App {
             PickerAction::ViewAgent => self.prompt_delete_selected_agent(),
             PickerAction::SelectModel
             | PickerAction::SelectInternalAgentModel
-            | PickerAction::SelectAdvisorReasoning
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LoginFlow(_)
             | PickerAction::LogoutProvider
-            | PickerAction::SwitchAuthMode
-            | PickerAction::RefreshModelList
             | PickerAction::InsertSkillCommand
             | PickerAction::RecallPrompt
             | PickerAction::ViewMcpServers
@@ -466,16 +414,6 @@ impl App {
         );
         if leaving_edit_agent {
             return self.handle_edit_agent_escape();
-        }
-
-        let leaving_advisor_reasoning = matches!(
-            self.input_ui.composer(),
-            ComposerMode::Picker(picker) if picker.is_advisor_reasoning()
-        );
-        if leaving_advisor_reasoning {
-            self.input_ui.set_composer(ComposerMode::Input);
-            self.report_advisor_reasoning_unchanged();
-            return Ok(());
         }
 
         let leaving_theme = matches!(
@@ -508,8 +446,7 @@ impl App {
                 self.sessions_hub_state.clear();
             }
             self.input_ui.set_composer(ComposerMode::Input);
-            if !self.cancel_advisor_model_prompt()
-                && !self.cancel_permission_classifier_model_prompt(/*restore_input*/ true)
+            if !self.cancel_permission_classifier_model_prompt(/*restore_input*/ true)
                 && !self.cancel_screen_model_prompt(/*restore_input*/ true)
             {
                 self.set_status(if running { "running" } else { "ready" });
@@ -523,12 +460,11 @@ impl App {
     }
 }
 
-fn config_parent_value(row: ConfigParentRow) -> &'static str {
+/// The row of the `/config` root a child page returns to.
+fn config_parent_value(row: ConfigParentRow) -> String {
     match row {
-        ConfigParentRow::ConversationModel => config_picker::CONVERSATION_MODEL_VALUE,
-        ConfigParentRow::Theme => config_picker::THEME_VALUE,
-        ConfigParentRow::LogoutProvider => config_picker::PROVIDER_LOGOUT_VALUE,
-        ConfigParentRow::SwitchAuthMode => config_picker::SWITCH_AUTH_MODE_VALUE,
-        ConfigParentRow::RefreshModelList => config_picker::REFRESH_MODEL_LIST_VALUE,
+        ConfigParentRow::ConversationModel => ConfigRow::SessionModel,
+        ConfigParentRow::Theme => ConfigRow::Theme,
     }
+    .encode()
 }

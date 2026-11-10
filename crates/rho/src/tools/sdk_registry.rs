@@ -709,37 +709,6 @@ impl AppToolSet {
         &self.checkpoint_tracker
     }
 
-    /// Replace only search, retaining content storage and all other live tools.
-    pub(crate) fn replace_web_search(&mut self, config: &Config) -> Option<Arc<dyn Tool>> {
-        let replacement = if self.web_search_capable {
-            super::web::sdk_web_search(
-                config,
-                self.web_access.clone(),
-                config.max_output_bytes,
-                self.credentials(),
-            )
-        } else {
-            None
-        };
-        self.inventory.mutate(|tools| {
-            let previous = tools
-                .iter()
-                .position(|tool| tool.spec().name == super::web::WEB_SEARCH_TOOL_NAME)
-                .map(|index| tools.remove(index));
-            if let Some(tool) = replacement {
-                tools.push(Arc::new(tool));
-            }
-            previous
-        })
-    }
-
-    pub(crate) fn restore_web_search(&mut self, previous: Option<Arc<dyn Tool>>) {
-        self.inventory.mutate(|tools| {
-            tools.retain(|tool| tool.spec().name != super::web::WEB_SEARCH_TOOL_NAME);
-            tools.extend(previous);
-        });
-    }
-
     pub fn web_access(&self) -> &super::web::WebAccessStore {
         &self.web_access
     }

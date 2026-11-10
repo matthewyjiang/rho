@@ -14,7 +14,6 @@ use crate::{
         daemon_host::jobs::{JobEvent, JobId, JobRegistry, JobState, JobStore, TurnEnd},
         subagent_pool::{StartedSubagent, SubagentPool},
     },
-    config::Config,
     subagent::{RunState, RunStatus},
 };
 
@@ -123,10 +122,7 @@ async fn a_child_job_reports_its_queue_place_until_it_runs() {
     let registry = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
     let stopping = CancellationToken::new();
     let subagents = Subagents::new(Arc::clone(&registry), stopping.clone());
-    subagents.set_limit(&Config {
-        agent_concurrency: 1,
-        ..Config::default()
-    });
+    subagents.concurrency().set_total(1);
     let SubagentPool::Shared {
         concurrency,
         observer,

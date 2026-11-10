@@ -15,13 +15,13 @@ fn generated_title_reaches_the_host() {
     let home = IsolatedHome::new().unwrap();
     std::fs::write(
         &home.config_path,
-        r#"provider = "xai"
+        r#"[model]
+provider = "xai"
 model = "grok-fixture"
 auth = "xai-oauth"
 
 [web_search]
-hosted = false
-provider = "disabled"
+mode = "off"
 "#,
     )
     .unwrap();

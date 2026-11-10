@@ -274,34 +274,49 @@ fn fake_claude_runtime_end_to_end_error() {
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
-/// Full Claude Code advisor path: picker selection -> config -> advisor tool
-/// call -> `claude-agent-acp` one-shot with no tools -> advice in the card.
-/// Never touches a real Claude install or the network.
+/// Full Claude Code advisor path in a daemon session: `/advisor on` picker
+/// selection -> the daemon's settings -> advisor tool call ->
+/// `claude-agent-acp` one-shot with no tools -> advice in the card. Never
+/// touches a real Claude install or the network.
 #[test]
 fn fake_claude_advisor_reviews_the_session() {
     let home = IsolatedHome::new().unwrap();
     fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 
 [behavior]
 credential_store = "file"
-advisor_mode = true
 "#,
     )
     .unwrap();
     let (fake, path) = install_fake(&home, "success.json");
-    let mut harness = launch(&home, path, 32, "fake_claude_advisor");
+    let plan = RhoLaunchPlan::matrix(
+        PathBuf::from(env!("CARGO_BIN_EXE_rho")),
+        &home,
+        PtySize {
+            rows: 32,
+            cols: 120,
+        },
+    )
+    .with_env("PATH", path)
+    .with_env("RHO_TUI_DAEMON", "1")
+    .with_env("OPENAI_API_KEY", "sk-test-matrix");
+    let mut harness = PtyHarness::spawn_named(&plan, "fake_claude_advisor").unwrap();
+    harness
+        .wait_for_text("Bypass ·", WaitTimeout::secs(20, "startup"))
+        .unwrap();
 
     // Picking a Claude Code row is the only step: it selects the runtime too.
     harness.submit_text("/advisor on").unwrap();
     harness
         .wait_for_text(
-            "select model for advisor",
+            "Advisor model · Type to search",
             WaitTimeout::secs(10, "advisor model picker"),
         )
         .unwrap();
@@ -312,7 +327,7 @@ advisor_mode = true
     harness.inject_key(&Key::Enter).unwrap();
     harness
         .wait_for_text(
-            "advisor mode is on: claude-code/opus reviews the session",
+            "advisor: on; applies next turn",
             WaitTimeout::secs(10, "advisor turned on"),
         )
         .unwrap();

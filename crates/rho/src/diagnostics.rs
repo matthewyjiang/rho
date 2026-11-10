@@ -83,7 +83,6 @@ impl RuntimeIdentity {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct SanitizedConfig {
     pub max_output_bytes: usize,
-    pub max_tool_output_lines: usize,
     pub auto_compact: bool,
     pub compact_threshold_percent: u8,
     pub compact_target_percent: u8,
@@ -91,7 +90,6 @@ pub struct SanitizedConfig {
     pub web_search_backend: String,
     pub xai_image_generation: bool,
     pub edit_tool: String,
-    pub check_for_updates: bool,
     pub enable_subagents: bool,
     pub agent_concurrency: usize,
     pub advisor_mode: bool,
@@ -104,7 +102,6 @@ impl From<&Config> for SanitizedConfig {
     fn from(config: &Config) -> Self {
         Self {
             max_output_bytes: config.max_output_bytes,
-            max_tool_output_lines: config.max_tool_output_lines,
             auto_compact: config.auto_compact,
             compact_threshold_percent: config.compact_threshold_percent,
             compact_target_percent: config.compact_target_percent,
@@ -112,7 +109,6 @@ impl From<&Config> for SanitizedConfig {
             web_search_backend: config.web_search.backend.as_str().into(),
             xai_image_generation: config.xai_image_generation,
             edit_tool: config.edit_tool.as_str().into(),
-            check_for_updates: config.check_for_updates,
             enable_subagents: config.enable_subagents,
             agent_concurrency: config.agent_concurrency,
             advisor_mode: config.advisor_mode,
@@ -362,25 +358,11 @@ impl RuntimeDiagnostics {
         }
     }
 
-    pub(crate) fn update_web_search(&self, settings: &crate::config::WebSearchSettings) {
-        let mut state = self.write();
-        state.config.web_search_mode = settings.mode.as_str().into();
-        state.config.web_search_backend = settings.backend.as_str().into();
-    }
-
     pub fn update_compaction_config(&self, config: &CompactionConfig) {
         let mut state = self.write();
         state.config.auto_compact = config.auto_compact;
         state.config.compact_threshold_percent = config.threshold_percent;
         state.config.compact_target_percent = config.target_percent;
-    }
-
-    pub fn update_max_tool_output_lines(&self, max_tool_output_lines: usize) {
-        self.write().config.max_tool_output_lines = max_tool_output_lines;
-    }
-
-    pub fn update_check_for_updates(&self, check_for_updates: bool) {
-        self.write().config.check_for_updates = check_for_updates;
     }
 
     /// Advisor mode applies to the next turn rather than the next process, so
@@ -399,12 +381,6 @@ impl RuntimeDiagnostics {
     /// pool rather than the process startup snapshot.
     pub fn update_agent_concurrency(&self, agent_concurrency: usize) {
         self.write().config.agent_concurrency = agent_concurrency;
-    }
-
-    /// Edit tool selection can change mid-session, so the mirror follows the
-    /// live value rather than the process startup snapshot.
-    pub fn update_edit_tool(&self, edit_tool: &str) {
-        self.write().config.edit_tool = edit_tool.into();
     }
 
     pub fn update_prompt_sources(&self, sources: Vec<crate::prompt::PromptSource>) {

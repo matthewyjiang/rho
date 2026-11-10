@@ -89,7 +89,7 @@ When multiple login methods exist, prefer choosing Device Key in the TUI, or ens
 
 ## Models and compatibility
 
-Use `/config` and choose **Refresh model lists** to fetch the current Ollama Cloud catalog. Hosted model ids can change as Ollama adds or retires cloud models; refresh before selecting a newly published model.
+Run `/refresh-models` to fetch the current Ollama Cloud catalog. Hosted model ids can change as Ollama adds or retires cloud models; refresh before selecting a newly published model.
 
 Ollama Cloud uses the same OpenAI-compatible chat path as local Ollama. Prefer models with reliable tool-call support for coding work. Rho does not claim that every hosted model supports tools, images, reasoning controls, parallel calls, or usage data.
 

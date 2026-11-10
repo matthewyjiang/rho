@@ -1,5 +1,4 @@
 use super::*;
-use rho_providers::auth::login_dispatch::ProviderAuthentication;
 use rho_providers::model::decision_models::{
     lists_decision_models, refresh_decision_models_with_store,
 };
@@ -74,85 +73,6 @@ impl App {
         self.apply_auto_edit_tool_for_provider(&provider, agent)
             .await;
         Ok(outcome)
-    }
-
-    pub(super) async fn switch_active_auth_mode(
-        &mut self,
-        auth: &str,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let provider_name = self.info.runtime.provider.clone();
-        let Some(descriptor) = rho_providers::provider::provider_descriptor(&provider_name) else {
-            self.insert_entry(&Entry::Error(format!(
-                "unsupported provider '{provider_name}'"
-            )));
-            self.set_status("auth switch failed");
-            return Ok(());
-        };
-        let Some(mode) = descriptor.auth_mode(auth) else {
-            self.insert_entry(&Entry::Error(format!(
-                "auth mode '{auth}' does not belong to {provider_name}"
-            )));
-            self.set_status("auth switch failed");
-            return Ok(());
-        };
-        if !ProviderAuthentication::has_credentials(self.credential_store.as_ref(), mode.id)? {
-            self.insert_entry(&Entry::Error(format!(
-                "credentials for {} are unavailable. Run /login {} to sign in again.",
-                mode.login_label, mode.id
-            )));
-            self.set_status("auth switch failed");
-            return Ok(());
-        }
-        if self.info.runtime.auth == mode.id {
-            self.set_status(format!("active auth: {}", mode.login_label));
-            return Ok(());
-        }
-
-        let model = self.info.runtime.model.clone();
-        let reasoning = self.info.runtime.reasoning;
-        let new_provider = match self
-            .build_provider_for_selection(&provider_name, &model, reasoning, mode.id)
-            .await
-        {
-            Ok(provider) => provider,
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not switch to {}: {err}. Run /login {} to sign in again.",
-                    mode.login_label, mode.id
-                )));
-                self.set_status("auth switch failed");
-                return Ok(());
-            }
-        };
-
-        let activation = ProviderActivation {
-            provider: provider_name,
-            model,
-            reasoning: reasoning_metadata::ModelSwitchReasoningResolution {
-                effective: reasoning,
-                source: self.info.runtime.reasoning_source,
-            },
-            auth: mode.id.into(),
-            replacement: new_provider,
-        };
-        let outcome = self.activate_provider(activation, agent).await?;
-        self.refresh_available_auths();
-        match outcome {
-            ProviderActivationOutcome::Saved => {
-                self.set_status(format!(
-                    "switched {} to {}",
-                    descriptor.display_name, mode.login_label
-                ));
-            }
-            ProviderActivationOutcome::ConfigSaveFailed(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "auth mode switched, but saving config failed: {err}"
-                )));
-                self.set_status("config save failed");
-            }
-        }
-        Ok(())
     }
 
     /// Writes the login target's auth profile so a stored custom key is not
@@ -287,5 +207,54 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Saves the running provider, model, auth, and reasoning as the
+    /// defaults new sessions start with.
+    pub(super) fn save_current_config(&self) -> anyhow::Result<()> {
+        self.info.services.config_repository.update(|config| {
+            config.provider = self.info.runtime.provider.clone();
+            config.model = self.info.runtime.model.clone();
+            config.auth = self.info.runtime.auth.clone();
+            config.reasoning = self.info.runtime.reasoning;
+        })
+    }
+
+    /// When the edit tool preference is Auto, advertises the preferred
+    /// format for `provider`. Nothing is saved; a failure shows as an error
+    /// row and leaves the switch.
+    pub(super) async fn apply_auto_edit_tool_for_provider(
+        &mut self,
+        provider: &str,
+        agent: &mut InteractiveRuntime,
+    ) {
+        let config = match self.info.services.config_repository.load() {
+            Ok(config) => config,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not follow auto edit tool: {error}"
+                )));
+                return;
+            }
+        };
+        if config.edit_tool != crate::config::EditTool::Auto {
+            return;
+        }
+        let resolved = config.resolved_edit_tool_for_provider(provider);
+        match agent.set_edit_tool(resolved, config.max_output_bytes).await {
+            Ok(Some(change)) => {
+                // Leave the caller's status alone: a model switch keeps its
+                // own feedback.
+                self.info
+                    .services
+                    .diagnostics
+                    .update_tools(&agent.tool_specs());
+                self.insert_entry(&Entry::Notice(change.display));
+            }
+            Ok(None) => {}
+            Err(error) => self.insert_entry(&Entry::Error(format!(
+                "could not follow auto edit tool: {error}"
+            ))),
+        }
     }
 }

@@ -116,7 +116,7 @@ as `/model`: `provider/model`, an unambiguous catalog model ID, or `@alias`.
 Only the first slash separates provider and model: `myproxy/vendor/model` selects
 `vendor/model` on `myproxy`. A bare alias target keeps the parent's provider.
 Custom/discovered models must already be in the local model cache; refresh model
-lists through `/config` if necessary. Delegation does not discover or invent models.
+lists with `/refresh-models` if necessary. Delegation does not discover or invent models.
 
 Compatible available parent auth is preferred; otherwise selection uses an
 available login for the target model/provider. Definition auth pins do not carry
@@ -212,7 +212,7 @@ Messages sent through `agents` action `message` show the task title first, then 
 run has no generated title yet, its first nonempty prompt line identifies the task.
 This keeps different tasks using the same agent role distinguishable.
 
-The excerpt uses your `display.max_tool_output_lines` setting. Press `Ctrl+O` or click
+The excerpt uses your `max_tool_output_lines` setting. Press `Ctrl+O` or click
 the card to see the complete message, full task title, and run ID.
 Surrounding whitespace is trimmed to match the text accepted for delivery. The
 durable receipt remains plain text for ACP clients and exported transcripts.

@@ -13,7 +13,10 @@
 //!
 //! The TUI prompts, cancels, steers, and withdraws steers through it
 //! (`daemon_turn`), and answers and holds input requests (`daemon_answers`);
-//! configures options through a background request queue. Quitting closes
+//! configures options through a background request queue. Once attached,
+//! it registers the `tui` client's settings and reads the daemon's
+//! (`daemon_settings`), whose changes then arrive with the session's views;
+//! settings writes bypass that queue. Quitting closes
 //! the connection, which detaches the session without cancelling its turn.
 //! A lagged attachment resumes after its last cursor, preserving the
 //! transcript for a tail replay or replacing it for a reset. One the daemon
@@ -95,8 +98,8 @@ mod unix {
             SessionAnswer, SessionAttach, SessionCancel, SessionConfigure, SessionHold, SessionNew,
             SessionSteer, SessionUnsteer,
         },
-        ClientEnvironment, ContentBlock, DetachReason, ErrorCode, InputAnswer, InputRequestId,
-        JobState, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
+        ClientEnvironment, ConfigChangedParams, ContentBlock, DetachReason, ErrorCode, InputAnswer,
+        InputRequestId, JobState, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
         SessionCancelParams, SessionChange, SessionConfigureParams, SessionHoldParams, SessionId,
         SessionNewParams, SessionOptions, SessionSteerParams, SessionUnsteerParams, SteerId,
         UnsteerOutcome,
@@ -109,6 +112,8 @@ mod unix {
         daemon_inputs::AnswerRefusal,
         daemon_options::setting_name,
         daemon_requests::{DaemonRequests, Target},
+        daemon_settings::DaemonSettings,
+        daemon_settings_read::{load_settings, route_config, settings_loaded},
     };
     use super::{DaemonLaunch, DaemonTarget, InitialSettings};
     use crate::{
@@ -141,6 +146,10 @@ mod unix {
         routed: mpsc::UnboundedReceiver<Routed>,
         /// The session's id: a new one when the old one had saved nothing.
         session: SessionId,
+        /// The settings, read again: the restarted daemon knows neither
+        /// this connection's subscription nor the TUI's registration.
+        config_changes: mpsc::UnboundedReceiver<ConfigChangedParams>,
+        settings: anyhow::Result<DaemonSettings>,
     }
 
     /// Attaching a session again once the daemon restarted.
@@ -198,12 +207,14 @@ mod unix {
                 old.closed().await;
             }
             let routed = route(&daemon, &params.session);
+            let config_changes = route_config(&daemon);
             // A daemon that failed to come back resets the connections that
             // waited for it; the second try starts a new daemon.
             let link = match daemon.link().await {
                 Ok(link) => link,
                 Err(_) => daemon.link().await?,
             };
+            let settings = load_settings(&link).await;
             match link.request::<SessionAttach>(&params).await {
                 Ok(response) => Ok(Reattached {
                     response,
@@ -211,6 +222,8 @@ mod unix {
                         link,
                         routed,
                         session: params.session,
+                        config_changes,
+                        settings,
                     }),
                 }),
                 Err(error) => match opened {
@@ -240,6 +253,8 @@ mod unix {
                                 link,
                                 routed,
                                 session,
+                                config_changes,
+                                settings,
                             }),
                         })
                     }
@@ -320,6 +335,9 @@ mod unix {
         opened: Option<SessionNewParams>,
         workspace: PathBuf,
         routed: mpsc::UnboundedReceiver<Routed>,
+        /// `rho/config/changed` for the settings last read, on the
+        /// connection the session is attached on.
+        config_changes: mpsc::UnboundedReceiver<ConfigChangedParams>,
         /// Where the session's requests go.
         target: watch::Sender<Target>,
         /// The session's options as the daemon last reported them.
@@ -419,13 +437,16 @@ mod unix {
                     None
                 }
             };
+            // Routed before the reads, so no change after them is dropped.
+            let config_changes = route_config(&daemon);
+            let settings = load_settings(&link).await;
             let (target, requests) = watch::channel(Target::Attached {
                 link,
                 session: id.clone(),
             });
             let mut events = DaemonEvents::default();
             let pending = begin_replay(&mut events, &response);
-            let session = Self {
+            let mut session = Self {
                 position: StreamPosition::attached(&response),
                 daemon,
                 id,
@@ -434,6 +455,7 @@ mod unix {
                 opened,
                 workspace: response.workspace,
                 routed,
+                config_changes,
                 target,
                 options: Some(changed.unwrap_or_else(|| response.options.clone())),
                 events,
@@ -443,6 +465,7 @@ mod unix {
                 reattach: None,
                 logins: None,
             };
+            session.pending.push(settings_loaded(settings));
             for change in queued {
                 session.configure(change)?;
             }
@@ -496,22 +519,44 @@ mod unix {
             if self.ended {
                 return std::future::pending().await;
             }
-            if let Some(views) = self.finish_reattach().await {
+            if let Some(mut views) = self.finish_reattach().await {
+                self.take_settings_changes(&mut views);
                 return views;
             }
-            let first = tokio::select! {
+            // Views already queued, such as the settings first read, go
+            // out before anything that arrives later, so a change never
+            // lands before the settings it changes. Taken only once the
+            // wait below ends, so cancelling it loses nothing.
+            if !self.pending.is_empty() {
+                let mut views = std::mem::take(&mut self.pending);
+                self.take_settings_changes(&mut views);
+                return views;
+            }
+            let mut views = Vec::new();
+            tokio::select! {
                 biased;
-                routed = self.routed.recv() => routed,
+                routed = self.routed.recv() => self.read(routed, &mut views),
                 Some(error) = self.requests.as_mut().expect("attached session has requests").views.recv() => {
-                    return vec![error];
+                    views.push(error);
                 }
-                Some(event) = auth::next_login(&mut self.logins) => {
-                    return vec![DaemonView::Login(event)];
+                Some(changed) = self.config_changes.recv() => {
+                    views.push(DaemonView::SettingsChanged(Box::new(changed)));
                 }
-            };
-            let mut views = std::mem::take(&mut self.pending);
-            self.read(first, &mut views);
+                Some(update) = auth::next_login(&mut self.logins) => {
+                    views.push(DaemonView::Login(update));
+                }
+            }
+            // A settings change that arrived meanwhile rides along, so a
+            // streaming turn's events never hold it back.
+            self.take_settings_changes(&mut views);
             views
+        }
+
+        /// Appends every settings change already received, after `views`.
+        fn take_settings_changes(&mut self, views: &mut Vec<DaemonView>) {
+            while let Ok(changed) = self.config_changes.try_recv() {
+                views.push(DaemonView::SettingsChanged(Box::new(changed)));
+            }
         }
 
         /// What the daemon sent since the last call, mapped, without
@@ -523,6 +568,7 @@ mod unix {
                     views.push(error);
                 }
             }
+            self.take_settings_changes(&mut views);
             if !self.ended && self.reattach.is_none() {
                 if let Ok(first) = self.routed.try_recv() {
                     self.read(Some(first), &mut views);
@@ -544,8 +590,12 @@ mod unix {
                         link,
                         routed,
                         session,
+                        config_changes,
+                        settings,
                     }) = relinked
                     {
+                        self.config_changes = config_changes;
+                        views.push(settings_loaded(settings));
                         let status = format!("reconnected to rho daemon {}", link.daemon().version);
                         views.push(DaemonView::Status(if session == self.id {
                             status

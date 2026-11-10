@@ -417,7 +417,10 @@ fn reach_provider_accepting(sandbox: &Sandbox, key: &str) {
     std::fs::write(
         &sandbox.isolated.config_path,
         format!(
-            r#"provider = "mock"
+            r#"web_search.mode = "off"
+
+[model]
+provider = "mock"
 model = "mock-model"
 auth = "mock-api-key"
 
@@ -425,12 +428,7 @@ auth = "mock-api-key"
 base_url = "http://{address}/v1"
 
 [behavior]
-check_for_updates = false
 credential_store = "file"
-
-[web_search]
-hosted = false
-provider = "disabled"
 "#
         ),
     )

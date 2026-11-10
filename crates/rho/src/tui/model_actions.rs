@@ -11,9 +11,9 @@ use crate::agent::{
 };
 
 use super::{
-    agent_picker::InternalAgentModelPickerOrigin, catalog, config_picker, favorites, provider,
-    provider_picker, reasoning_metadata, App, CommandInvocation, ComposerMode, Entry,
-    InteractiveModelSelection, InteractiveRuntime, ModelSelection,
+    agent_picker::InternalAgentModelPickerOrigin, catalog, favorites, provider, provider_picker,
+    reasoning_metadata, App, CommandInvocation, ComposerMode, Entry, InteractiveModelSelection,
+    InteractiveRuntime, ModelSelection,
 };
 
 pub(super) fn refresh_auth_for_provider(
@@ -47,9 +47,9 @@ impl App {
     /// without stacking identical transcript rows.
     pub(super) fn report_missing_cached_provider_models(&mut self) {
         let notice = if self.turn.is_busy() {
-            "no cached provider models. Open /config > Providers > Refresh model lists after the current turn ends."
+            "no cached provider models. Run /refresh-models after the current turn ends."
         } else {
-            "no cached provider models. Open /config > Providers > Refresh model lists."
+            "no cached provider models. Run /refresh-models."
         };
         let last_notice =
             self.streams
@@ -524,47 +524,6 @@ impl App {
                 self.execute_agents_command()?;
                 self.set_status(status);
             }
-            InternalAgentModelPickerOrigin::AdvisorCommand => {
-                self.internal_agent_model_target = None;
-                self.finish_advisor_model_selection(selected, agent).await?;
-            }
-            InternalAgentModelPickerOrigin::AdvisorModelCommand => {
-                self.internal_agent_model_target = None;
-                self.finish_advisor_model_command_selection(selected, agent)
-                    .await;
-            }
-            InternalAgentModelPickerOrigin::AdvisorConfigRow => {
-                self.internal_agent_model_target = None;
-                self.finish_advisor_model_selection(selected, agent).await?;
-                let status = self.status().to_string();
-                self.open_main_config_picker_selected(config_picker::ADVISOR_MODE_VALUE)?;
-                self.set_status(status);
-            }
-            InternalAgentModelPickerOrigin::AdvisorModelConfigRow => {
-                self.internal_agent_model_target = None;
-                if selected && self.info.runtime.advisor_mode {
-                    self.sync_advisor_runtime(agent).await;
-                }
-                let status = self.status().to_string();
-                self.open_main_config_picker_selected(config_picker::ADVISOR_MODEL_VALUE)?;
-                self.set_status(status);
-            }
-            InternalAgentModelPickerOrigin::PermissionModeConfigRow => {
-                let origin = target.origin;
-                self.internal_agent_model_target = None;
-                self.finish_permission_classifier_model_selection(selected, origin, agent)
-                    .await?;
-                let status = self.status().to_string();
-                self.open_main_config_picker_selected(config_picker::PERMISSION_MODE_VALUE)?;
-                self.set_status(status);
-                if selected
-                    && self.info.runtime.permission_mode == crate::permission::PermissionMode::Auto
-                {
-                    self.open_screen_model_picker(
-                        InternalAgentModelPickerOrigin::PermissionScreenSetupConfigRow,
-                    );
-                }
-            }
             InternalAgentModelPickerOrigin::PermissionModeCommand => {
                 let origin = target.origin;
                 self.internal_agent_model_target = None;
@@ -584,39 +543,11 @@ impl App {
                 self.finish_permission_classifier_model_selection(selected, origin, agent)
                     .await?;
             }
-            InternalAgentModelPickerOrigin::PermissionScreenModelConfigRow
-            | InternalAgentModelPickerOrigin::PermissionScreenSetupConfigRow => {
-                self.internal_agent_model_target = None;
-                if selected {
-                    self.sync_internal_agents_runtime_config(agent);
-                }
-                let status = self.status().to_string();
-                self.open_main_config_picker_selected(match target.origin {
-                    InternalAgentModelPickerOrigin::PermissionScreenModelConfigRow => {
-                        config_picker::PERMISSION_SCREEN_MODEL_VALUE
-                    }
-                    _ => config_picker::PERMISSION_MODE_VALUE,
-                })?;
-                self.set_status(status);
-            }
             InternalAgentModelPickerOrigin::PermissionScreenSetupCommand => {
                 self.internal_agent_model_target = None;
                 if selected {
                     self.sync_internal_agents_runtime_config(agent);
                 }
-            }
-            InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow => {
-                self.internal_agent_model_target = None;
-                if selected
-                    && self.info.runtime.permission_mode == crate::permission::PermissionMode::Auto
-                {
-                    self.sync_internal_agents_runtime_config(agent);
-                }
-                let status = self.status().to_string();
-                self.open_main_config_picker_selected(
-                    config_picker::PERMISSION_CLASSIFIER_MODEL_VALUE,
-                )?;
-                self.set_status(status);
             }
         }
         Ok(())

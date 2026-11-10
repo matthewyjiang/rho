@@ -13,13 +13,13 @@ fn server() -> (IsolatedHome, AcpServer) {
     let home = IsolatedHome::new().unwrap();
     std::fs::write(
         &home.config_path,
-        r#"provider = "xai"
+        r#"[model]
+provider = "xai"
 model = "grok-4.7"
 auth = "xai-oauth"
 
 [web_search]
-hosted = false
-provider = "disabled"
+mode = "off"
 "#,
     )
     .unwrap();

@@ -59,8 +59,7 @@ color.
 
 Rho 3.0 removed the legacy `hashline` format and its `edit` tool. A config
 that still sets `edit_tool = "hashline"`, under `[behavior]` or a
-`[providers.custom.<name>]` table, loads as `str_replace` and prints a warning;
-the next save writes `str_replace`. Saved sessions that contain `edit` calls
+`[providers.custom.<name>]` table, is a load error naming the key. Saved sessions that contain `edit` calls
 still resume, and those calls render as generic tool cards.
 
 ## Related

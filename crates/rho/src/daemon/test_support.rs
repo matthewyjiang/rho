@@ -5,15 +5,17 @@ use std::sync::Arc;
 use rho_protocol::{
     AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse, AuthListParams,
     AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
-    AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, CredentialStoreKind,
-    CredentialStoreStatus, DaemonStatus, ErrorCode, JobListResponse, LoginStream, RpcError,
-    Service, SessionAnswerParams, SessionAnswerResponse, SessionAttachParams,
-    SessionAttachResponse, SessionCancelParams, SessionCancelResponse, SessionConfigureParams,
-    SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse, SessionHoldParams,
-    SessionHoldResponse, SessionListParams, SessionListResponse, SessionNewParams,
-    SessionNewResponse, SessionPromptParams, SessionPromptResponse, SessionRenameParams,
-    SessionRenameResponse, SessionSteerParams, SessionSteerResponse, SessionUnsteerParams,
-    SessionUnsteerResponse, StoreSelectedBy, Subscription, PROTOCOL_VERSION,
+    AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, ConfigGetParams, ConfigRegisterParams,
+    ConfigRegisterResponse, ConfigSchema, ConfigSetParams, ConfigSetResponse, ConfigWatch,
+    CredentialStoreKind, CredentialStoreStatus, DaemonStatus, ErrorCode, JobListResponse,
+    LoginStream, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
+    SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
+    SessionConfigureParams, SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse,
+    SessionHoldParams, SessionHoldResponse, SessionListParams, SessionListResponse,
+    SessionNewParams, SessionNewResponse, SessionPromptParams, SessionPromptResponse,
+    SessionRenameParams, SessionRenameResponse, SessionSteerParams, SessionSteerResponse,
+    SessionUnsteerParams, SessionUnsteerResponse, SettingsService, StoreSelectedBy, Subscription,
+    PROTOCOL_VERSION,
 };
 
 use super::shutdown::{Ending, Shutdown};
@@ -197,6 +199,31 @@ impl Service for StubHost {
     ) -> Result<AuthChooseStoreResponse, RpcError> {
         Err(no_credential_store())
     }
+}
+
+impl SettingsService for StubHost {
+    async fn config_schema(&self) -> Result<ConfigSchema, RpcError> {
+        Err(no_settings())
+    }
+
+    async fn register_config(
+        &self,
+        _: ConfigRegisterParams,
+    ) -> Result<ConfigRegisterResponse, RpcError> {
+        Err(no_settings())
+    }
+
+    async fn get_config(&self, _: ConfigGetParams) -> Result<ConfigWatch, RpcError> {
+        Err(no_settings())
+    }
+
+    async fn set_config(&self, _: ConfigSetParams) -> Result<ConfigSetResponse, RpcError> {
+        Err(no_settings())
+    }
+}
+
+fn no_settings() -> RpcError {
+    RpcError::new(ErrorCode::MethodNotFound, "the stub keeps no settings")
 }
 
 fn no_sessions() -> RpcError {

@@ -45,8 +45,10 @@ pub(super) const ZEN_TOOL_RUN_SUMMARY_SCENARIO: Scenario = Scenario::new(
 
 fn setup_zen(home: &IsolatedHome) -> Result<()> {
     writeln!(
-        OpenOptions::new().append(true).open(&home.config_path)?,
-        "\n[display]\nzen_mode = true"
+        OpenOptions::new()
+            .append(true)
+            .open(&home.client_settings_path)?,
+        "zen_mode = true"
     )?;
     Ok(())
 }
