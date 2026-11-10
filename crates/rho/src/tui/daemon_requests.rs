@@ -249,6 +249,7 @@ impl DaemonRequests {
                                 timeout_ms: None,
                                 environment: ClientEnvironment::of_this_process(),
                                 idempotency_key: Some(key.clone()),
+                                grant: None,
                             };
                             async move {
                                 let answer = link.request::<SessionPrompt>(&params).await;

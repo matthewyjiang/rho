@@ -73,6 +73,7 @@ impl Adapter {
             timeout_ms: None,
             environment: ClientEnvironment::of_this_process(),
             idempotency_key: None,
+            grant: None,
         };
         let outcome = match link.request::<SessionPrompt>(&params).await {
             Ok(response) => {

@@ -40,6 +40,7 @@ async fn new_session(
             agent: agent.map(str::to_owned),
             setup,
             parent: None,
+            grant: None,
         })
         .await
         .map(|opened| opened.session)

@@ -98,6 +98,7 @@ pub(super) async fn open(
             agent: agent.clone(),
             setup,
             parent: None,
+            grant: None,
         }),
         // The resume picker lists sessions from this process's store, which
         // does not hold the daemon's yet.

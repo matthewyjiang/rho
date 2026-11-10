@@ -105,6 +105,13 @@ pub struct JobSummary {
     /// The job that started this one; `None` for a job a client started.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<JobId>,
+    /// What the turn under way, or the last one, of a
+    /// [`JobKind::Session`] job may do through session control, as the
+    /// daemon recorded it from the request that started the turn; before
+    /// the first turn, what the session opened with. Absent for a turn
+    /// without limits, as a person's own are, and for other jobs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<super::SessionGrant>,
     /// The Rho session the job writes; `None` for a subagent run on another
     /// runtime (Claude, Cursor, Antigravity), which keeps its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]

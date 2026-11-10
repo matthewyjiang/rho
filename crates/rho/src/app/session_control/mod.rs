@@ -12,7 +12,9 @@
 //! sessions each holder may have running ([`Limits::max_sessions`]). Every
 //! refusal names its budget, its limit, and the value asked for
 //! ([`Refusal`]). A session the core starts or prompts runs with the
-//! caller's context one level deeper, so the limits follow it down. A
+//! caller's context one level deeper, so the limits follow it down: the core
+//! names that context as the request's grant, and the daemon records it on
+//! the session's job and writes the session's environment from it (#1780). A
 //! session a caller starts from a session of its own, as the native
 //! `sessions` tool's callers do, records the job writing that session as its
 //! parent, and its turns wait for capacity in the daemon-wide agent budget
@@ -196,6 +198,7 @@ impl SessionControl {
                 agent: params.agent,
                 setup: SessionSetup::default(),
                 parent: caller.session.clone(),
+                grant: Some(caller.child_context().into()),
             })
             .await?;
         if let Some(model) = params.model {
@@ -272,6 +275,7 @@ impl SessionControl {
                 content,
                 timeout_ms: None,
                 environment: Self::child_environment(caller),
+                grant: Some(caller.child_context().into()),
                 idempotency_key: None,
             })
             .await?;
@@ -385,10 +389,13 @@ impl SessionControl {
             .await?
             .jobs)
     }
-
     /// The environment a session `caller` starts or prompts runs with: the
     /// caller's, with its context one level deeper in place of any the
-    /// caller's environment carries.
+    /// caller's environment carries. The daemon writes the same variables
+    /// from the grant the request names; they are set here too because a
+    /// daemon of a build before the grant reports the same protocol version
+    /// until the beta and ignores the field, and would otherwise run the
+    /// session with the caller's own context.
     fn child_environment(caller: &Caller) -> ClientEnvironment {
         caller
             .environment

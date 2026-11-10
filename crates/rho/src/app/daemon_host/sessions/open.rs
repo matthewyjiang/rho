@@ -48,6 +48,7 @@ use crate::{
             SessionOpening, SessionRole, SessionRuntime, SessionUse,
         },
     },
+    caller_context::CallerContext,
     config::Config,
     session::{Session as StoredSession, SessionPersistence},
     session_environment::{Ambient, SessionEnvironment},
@@ -114,6 +115,9 @@ pub(super) struct OpenWith {
     pub(super) environment: Ambient,
     /// The client's choices for the session.
     pub(super) setup: SessionSetup,
+    /// What a turn the request starts may do through session control, which
+    /// `environment` carries too (see `grant.rs`).
+    pub(super) grant: CallerContext,
 }
 
 /// A session, open, and the config it runs with.

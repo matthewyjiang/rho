@@ -113,13 +113,18 @@ impl Sessions {
             SessionJob::New => None,
         };
         let stored = saved_session(id).await?;
+        // The session opens under the grant `with` brings, whatever its
+        // last turn ran under, so its record never says another than its
+        // environment carries.
         let record = match last {
-            Some(record) => SessionJobRecord::Reuse(record),
-            None => SessionJobRecord::Register(JobRecord::new_session(
-                JobId::generate(),
-                stored.cwd().to_path_buf(),
-                id.clone(),
-            )),
+            Some(record) => SessionJobRecord::Reuse(JobRecord {
+                grant: with.grant.clone(),
+                ..record
+            }),
+            None => SessionJobRecord::Register(JobRecord {
+                grant: with.grant.clone(),
+                ..JobRecord::new_session(JobId::generate(), stored.cwd().to_path_buf(), id.clone())
+            }),
         };
         let job = record.job().id.clone();
         let opened = open_session(
