@@ -712,6 +712,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     daemon_prompt::DAEMON_CANCEL_SCENARIO,
     #[cfg(unix)]
+    daemon_prompt::DAEMON_STREAM_COST_SCENARIO,
+    #[cfg(unix)]
     daemon_approval::DAEMON_APPROVAL_SCENARIO,
     #[cfg(unix)]
     daemon_approval::DAEMON_APPROVAL_DENY_SCENARIO,

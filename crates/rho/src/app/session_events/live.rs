@@ -69,7 +69,8 @@ const UNFINISHED_COMPACTION: &str = "compaction ended without a result";
 /// The session's checklist goes out as a plan whenever a finished tool
 /// changed it. Each model step reports its context fill as usage, as do a
 /// finished compaction and the run's end; the daemon adds the session's
-/// cost.
+/// cost. Usage the provider counts while a response streams repeats the
+/// step's fill, so the daemon can price the response under way.
 ///
 /// It also replays the session's saved rows ([`Self::replay`]), so a call
 /// id a provider reuses is numbered the same way live and replayed, and the
@@ -97,6 +98,9 @@ pub(crate) struct LiveEvents {
     presenter: InteractiveToolPresenter,
     /// The run's announced calls, by provider call id.
     announced: BTreeMap<String, AnnouncedCall>,
+    /// The context fill last reported, which a usage report between steps
+    /// repeats.
+    context: Option<ContextEstimate>,
     /// The calls the model step under way is still streaming, by their
     /// place in the provider's output.
     streamed: HashMap<usize, StreamedCall>,
@@ -184,6 +188,7 @@ impl LiveEvents {
             proposed: HashMap::new(),
             announced: BTreeMap::new(),
             streamed: HashMap::new(),
+            context: None,
             call_ids: CallIds::default(),
             replayed_ids: CallIds::default(),
             replayed_rows: 0,
@@ -516,10 +521,17 @@ impl LiveEvents {
             RunEvent::HostInputRequested { .. } | RunEvent::ToolHostInputRequested { .. } => {
                 Vec::new()
             }
-            // Retries, diagnostics, token accounting and model-call metrics
-            // land as later minors.
-            RunEvent::UsageUpdated { .. }
-            | RunEvent::ProviderContextUpdated { .. }
+            // The provider counted more of the response under way. The
+            // context is as the step reported it; the daemon prices the
+            // session anew.
+            RunEvent::UsageUpdated { .. } => self
+                .context
+                .map(|context| self.usage(context))
+                .into_iter()
+                .collect(),
+            // Retries, diagnostics and model-call metrics land as later
+            // minors.
+            RunEvent::ProviderContextUpdated { .. }
             | RunEvent::ProviderDiagnostic { .. }
             | RunEvent::WebSearch { .. }
             | RunEvent::ProviderRequestRetry
@@ -535,6 +547,7 @@ impl LiveEvents {
     /// Context fill from `estimate`, against the configured window, else
     /// the one the provider reported with it. The daemon prices it.
     fn usage(&mut self, estimate: ContextEstimate) -> WireEvent {
+        self.context = Some(estimate);
         self.window = context_window(self.configured_window, estimate);
         WireEvent::Usage {
             used_tokens: estimate.tokens(),

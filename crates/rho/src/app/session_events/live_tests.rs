@@ -730,6 +730,25 @@ fn usage_reports_the_configured_window() {
     );
 }
 
+// Covers: usage the provider counts while a response streams goes out as
+// the step's context fill again, for the daemon to price; before any step
+// there is no fill to report.
+// Owner: session event live mapping
+#[test]
+fn streamed_usage_repeats_the_steps_fill() {
+    let tool_set = AppToolSet::disabled();
+    let mut live = live(&tool_set);
+    let streamed = || {
+        SessionEvent::Run(RunEvent::UsageUpdated {
+            usage: rho_sdk::model::ModelUsage::default(),
+        })
+    };
+    assert_eq!(
+        map_all(&mut live, &[streamed(), step(100), streamed()]),
+        vec![usage(100), usage(100)]
+    );
+}
+
 // Covers: a background result's card carries its body as markdown, with
 // output fenced, and as plain text, unfenced, and reads as its card's
 // tone, so a client can show an error card as failed.

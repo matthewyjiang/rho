@@ -658,10 +658,11 @@ impl DaemonView {
         &mut self,
         mut events: mpsc::UnboundedReceiver<SessionEvent>,
         control: mpsc::UnboundedSender<TurnControl>,
+        mut cost: cost::TurnCost,
     ) {
         while let Some(event) = events.recv().await {
             let wire = self.session.live().map(&event);
-            let wire = cost::priced(wire, &self.session.id).await;
+            let wire = cost.priced(&event, wire, &self.session.id).await;
             self.session.feed.publish(wire);
             if matches!(event, SessionEvent::MessageInserted(_)) {
                 self.began();
@@ -687,13 +688,17 @@ impl Drop for DaemonView {
 impl TurnView for DaemonView {
     fn open_turn<'v>(
         &'v mut self,
-        _runtime: &SessionRuntime,
+        runtime: &SessionRuntime,
     ) -> (TurnIo, impl Future<Output = ()> + Send + use<'v>) {
         let (events, event_receiver) = mpsc::unbounded_channel();
         let (control_sender, control) = mpsc::unbounded_channel();
         (
             TurnIo { events, control },
-            self.show(event_receiver, control_sender),
+            self.show(
+                event_receiver,
+                control_sender,
+                cost::TurnCost::new(runtime.current_model()),
+            ),
         )
     }
 
