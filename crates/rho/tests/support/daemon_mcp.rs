@@ -3,7 +3,8 @@
 //! follows it, reading a session starts nothing of it, no tool can answer
 //! the session's approvals, the core's caps refuse with their budgets, and
 //! the HTTP transport refuses requests its tokens and origin rules do not
-//! allow.
+//! allow. How a session's caller context carries depth and scope through
+//! the server into the sessions it starts is in [`caller`].
 
 use std::{path::PathBuf, process::Stdio};
 
@@ -22,6 +23,9 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use super::sessions::{Follower, Sandbox, DEADLINE};
+
+#[path = "daemon_mcp_caller.rs"]
+mod caller;
 
 type McpClient = RunningService<RoleClient, ()>;
 
@@ -470,12 +474,18 @@ async fn the_caps_refuse_starts_past_their_limits() {
     );
 }
 
-/// `rho mcp serve --http` on a free loopback port; returns the process and
-/// its endpoint URL once it listens.
-async fn http_server(sandbox: &Sandbox) -> (tokio::process::Child, String) {
+/// `rho mcp serve --http` on a free loopback port, with `args` and `env`;
+/// returns the process and its endpoint URL once it listens.
+async fn http_server(
+    sandbox: &Sandbox,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> (tokio::process::Child, String) {
     let mut command = tokio::process::Command::from(sandbox.rho("tool-call"));
     command
         .args(["mcp", "serve", "--http", "127.0.0.1:0"])
+        .args(args)
+        .envs(env.iter().copied())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     let mut server = command.spawn().unwrap();
@@ -565,7 +575,7 @@ async fn http_sessions_belong_to_the_token_that_initialized_them() {
         "Bearer {}",
         rotate(&sandbox, "other", &["--workspace", &allowed])
     );
-    let (_server, url) = http_server(&sandbox).await;
+    let (_server, url) = http_server(&sandbox, &[], &[]).await;
     let response = initialize(&url, &[("Authorization", &owner)]).await;
     assert_eq!(response.status().as_u16(), 200);
     let session = response.headers()["mcp-session-id"]
@@ -667,7 +677,7 @@ async fn http_refuses_what_its_tokens_do_not_allow() {
         "writer",
         &["--scope", "write", "--workspace", &allowed],
     );
-    let (_server, url) = http_server(&sandbox).await;
+    let (_server, url) = http_server(&sandbox, &[], &[]).await;
     let bearer = |token: &str| format!("Bearer {token}");
 
     let statuses = [

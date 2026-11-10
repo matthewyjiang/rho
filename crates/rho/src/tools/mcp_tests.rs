@@ -41,7 +41,7 @@ fn test_options() -> McpSessionOptions {
         McpRoots::default(),
         // No test may open a browser.
         crate::tools::mcp::McpAuthorizationMode::NonInteractive,
-        crate::session_environment::Ambient::ThisProcess,
+        crate::session_environment::SessionEnvironment::default(),
     )
 }
 
@@ -588,6 +588,7 @@ open(sys.argv[1], "w").close()
         remote_name: "echo/value".into(),
         arguments: serde_json::Map::new(),
         expectation: ResultExpectation::default(),
+        caller: None,
     };
     let cancellation = CancellationToken::new();
     let rendered = call_remote_tool(echo_call(), &cancellation, None, 12_000)

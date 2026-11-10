@@ -7,8 +7,10 @@ use super::*;
 fn token(access: Access, allowed: &[&str]) -> Grant {
     Grant {
         holder: Holder::Token("remote".into()),
-        access,
-        workspaces: Workspaces::Only(allowed.iter().map(PathBuf::from).collect()),
+        scope: Scope {
+            access,
+            workspaces: Workspaces::Only(allowed.iter().map(PathBuf::from).collect()),
+        },
     }
 }
 

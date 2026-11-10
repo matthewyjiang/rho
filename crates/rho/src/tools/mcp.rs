@@ -14,7 +14,7 @@ use std::{
 use rho_sdk::tool::Tool;
 
 use super::{code_mode::ContextExposure, sdk_registry::ToolBundle};
-use crate::session_environment::Ambient;
+use crate::session_environment::SessionEnvironment;
 use config::{McpConfig, McpServerConfig};
 
 pub(crate) mod catalog;
@@ -70,8 +70,8 @@ pub(crate) enum McpSessionPlan {
 ///
 /// The two server-to-client services default to off, so a caller that cannot
 /// serve them, such as the `rho mcp` inventory pass, gets the safe shape without
-/// saying anything. Every caller names the environment servers start in, so
-/// none falls back to this process's by omission (#1659).
+/// saying anything. Every caller names the session environment servers start
+/// in, so none falls back to this process's by omission (#1659).
 #[derive(Clone, Debug)]
 pub(crate) struct McpSessionOptions {
     pub(crate) max_output_bytes: usize,
@@ -80,20 +80,20 @@ pub(crate) struct McpSessionOptions {
     /// Whether a server that needs OAuth may open a browser login.
     pub(crate) authorization: McpAuthorizationMode,
     services: session::McpSessionServices,
-    /// The environment servers start in and read `env_from_env` and
-    /// `headers_from_env` from.
-    environment: Ambient,
+    /// The session's environment: servers start in, and read `env_from_env`
+    /// and `headers_from_env` from, the one current when they connect, and
+    /// each tool call sends the caller context current when it runs.
+    environment: SessionEnvironment,
 }
 
 impl McpSessionOptions {
-    /// Options for servers that start in, and read `env_from_env` and
-    /// `headers_from_env` from, `environment`: a session's, or this
-    /// process's for a caller without one.
+    /// Options for servers of a session whose environment is `environment`:
+    /// a session's, or this process's for a caller without one.
     pub(crate) fn new(
         max_output_bytes: usize,
         roots: McpRoots,
         authorization: McpAuthorizationMode,
-        environment: Ambient,
+        environment: SessionEnvironment,
     ) -> Self {
         Self {
             max_output_bytes: max_output_bytes.max(1),
@@ -215,7 +215,7 @@ impl McpBundle {
         // BTreeMap iteration order is preserved by join_all input order.
         let connect_results = futures_util::future::join_all(connect_jobs).await;
 
-        let mut bundle = McpBundleBuilder::new(options.max_output_bytes);
+        let mut bundle = McpBundleBuilder::new(options.max_output_bytes, &options.environment);
         for (identity, server, transport, result) in connect_results {
             let connected = match result {
                 ConnectResult::Ready(connected) => connected,
@@ -295,6 +295,7 @@ impl ToolBundle for McpBundle {
 /// finish connecting, so `connect` stays a readable pass over the results.
 struct McpBundleBuilder {
     max_output_bytes: usize,
+    environment: SessionEnvironment,
     tools: Vec<Arc<dyn Tool>>,
     sessions: Vec<McpSession>,
     maintenance: Vec<tokio::task::JoinHandle<()>>,
@@ -303,9 +304,10 @@ struct McpBundleBuilder {
 }
 
 impl McpBundleBuilder {
-    fn new(max_output_bytes: usize) -> Self {
+    fn new(max_output_bytes: usize, environment: &SessionEnvironment) -> Self {
         Self {
             max_output_bytes,
+            environment: environment.clone(),
             tools: Vec::new(),
             sessions: Vec::new(),
             maintenance: Vec::new(),
@@ -352,6 +354,7 @@ impl McpBundleBuilder {
                 calls: calls.clone(),
                 transport: server.transport.clone(),
                 max_output_bytes: self.max_output_bytes,
+                environment: self.environment.clone(),
             }));
             exported.push(McpToolReport {
                 remote_name,

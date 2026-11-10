@@ -10,20 +10,20 @@
 //! prompt and outcome to the login waiting on them, and settings changes to
 //! the settings route. When the daemon closes
 //! the connection, every route hears [`Routed::Lost`], and the next request
-//! connects again.
+//! connects again. A session the daemon detached as restarting routes
+//! itself again once the connection closed ([`Link::closed`]), then attaches
+//! on the next one, which waits for the restarted daemon.
 
 use std::{
     collections::HashMap,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex, PoisonError,
-    },
+    sync::{Arc, Mutex, PoisonError},
 };
 
 use rho_protocol::{
-    methods::Method, Client, ClientError, ConfigChangedParams, DaemonNotification, DetachReason,
-    LoginId, LoginOutcome, LoginPrompt, Notifications, Seq, SessionEvent, SessionId,
+    methods::Method, Client, ClientError, ConfigChangedParams, DaemonInfo, DaemonNotification,
+    DetachReason, LoginId, LoginOutcome, LoginPrompt, Notifications, Seq, SessionEvent, SessionId,
 };
+use rho_sdk::CancellationToken;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
@@ -88,7 +88,11 @@ pub(crate) struct Daemon {
 /// One open connection.
 pub(crate) struct Link {
     client: Client,
-    alive: Arc<AtomicBool>,
+    /// The daemon process the connection's hello reached.
+    daemon: DaemonInfo,
+    /// Cancelled by the router once the connection closed, after it handed
+    /// every route [`Routed::Lost`].
+    closed: CancellationToken,
     fences: mpsc::UnboundedSender<oneshot::Sender<()>>,
 }
 
@@ -104,19 +108,20 @@ impl Daemon {
         let Connection {
             client,
             notifications,
-            ..
+            hello,
         } = daemon_cli::connect().await?;
-        let alive = Arc::new(AtomicBool::new(true));
+        let closed = CancellationToken::new();
         let (fences, fence_receiver) = mpsc::unbounded_channel();
         tokio::spawn(tokio::task::unconstrained(route(
             notifications,
             fence_receiver,
             Arc::clone(&self.routes),
-            Arc::clone(&alive),
+            closed.clone(),
         )));
         let link = Arc::new(Link {
             client,
-            alive,
+            daemon: hello.daemon,
+            closed,
             fences,
         });
         *current = Some(Arc::clone(&link));
@@ -169,8 +174,20 @@ impl Daemon {
 }
 
 impl Link {
-    fn is_alive(&self) -> bool {
-        self.alive.load(Ordering::Acquire)
+    pub(crate) fn is_alive(&self) -> bool {
+        !self.closed.is_cancelled()
+    }
+
+    /// Resolves once the connection closed and the router handed every
+    /// route it had [`Routed::Lost`], so a route installed after belongs to
+    /// the next connection.
+    pub(crate) async fn closed(&self) {
+        self.closed.cancelled().await;
+    }
+
+    /// The daemon process this connection reached.
+    pub(crate) fn daemon(&self) -> &DaemonInfo {
+        &self.daemon
     }
 
     pub(crate) async fn request<M: Method>(
@@ -204,7 +221,7 @@ async fn route(
     mut notifications: Notifications,
     mut fences: mpsc::UnboundedReceiver<oneshot::Sender<()>>,
     routes: Arc<Mutex<Routes>>,
-    alive: Arc<AtomicBool>,
+    closed: CancellationToken,
 ) {
     loop {
         tokio::select! {
@@ -225,7 +242,7 @@ async fn route(
         sessions, login, ..
     } = {
         let mut routes = lock(&routes);
-        alive.store(false, Ordering::Release);
+        closed.cancel();
         std::mem::take(&mut *routes)
     };
     for route in sessions.into_values() {

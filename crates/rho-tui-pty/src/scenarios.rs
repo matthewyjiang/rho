@@ -38,6 +38,8 @@ mod daemon_options;
 #[cfg(unix)]
 mod daemon_prompt;
 #[cfg(unix)]
+mod daemon_restart;
+#[cfg(unix)]
 mod daemon_resume;
 mod diff_viewer;
 mod dispatch;
@@ -116,10 +118,7 @@ mod write_stream;
 mod zen_tool_run;
 
 use activity_anchor::{SPINNER_ACTIVITY_ANCHOR_SCENARIO, SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO};
-use advisor::{
-    setup_advisor_ready, setup_advisor_without_model, ADVISOR_MISSING_MODEL_STEPS,
-    ADVISOR_REVIEW_STEPS, XAI_KEY_ENV,
-};
+use advisor::{ADVISOR_MISSING_MODEL_SCENARIO, ADVISOR_REVIEW_SCENARIO};
 use agent_prompt::AGENT_PROMPT_SCENARIO;
 use attach_picker::ATTACH_PICKER_SCENARIO;
 use attach_view::{
@@ -670,6 +669,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     daemon_detach::SCENARIO,
     #[cfg(unix)]
+    daemon_restart::SCENARIO,
+    #[cfg(unix)]
     daemon_goal::SCENARIO,
     #[cfg(unix)]
     daemon_mcp::SCENARIO,
@@ -927,26 +928,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
         SCREEN_TEXT_SELECTION_STEPS,
         false,
     ),
-    Scenario {
-        id: "advisor_missing_model",
-        description: "Warn about advisor mode saved without a model",
-        size: DEFAULT_SIZE,
-        setup: Some(setup_advisor_without_model),
-        env: XAI_KEY_ENV,
-        args: &[],
-        steps: ADVISOR_MISSING_MODEL_STEPS,
-        smoke: false,
-    },
-    Scenario {
-        id: "advisor_review",
-        description: "Consult the advisor during a turn, then survive an advisor failure",
-        size: DEFAULT_SIZE,
-        setup: Some(setup_advisor_ready),
-        env: XAI_KEY_ENV,
-        args: &[],
-        steps: ADVISOR_REVIEW_STEPS,
-        smoke: false,
-    },
+    ADVISOR_MISSING_MODEL_SCENARIO,
+    ADVISOR_REVIEW_SCENARIO,
     Scenario::new(
         "background_agent_questionnaire",
         "Answer a questionnaire raised by a background agent and deliver its completion",
