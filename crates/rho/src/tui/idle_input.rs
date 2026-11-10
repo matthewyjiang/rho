@@ -240,6 +240,16 @@ impl App {
 
         match self.parse_input_command() {
             Ok(Some(invocation)) => {
+                // A command the daemon runs as a prompt needs credentials
+                // as any prompt does: held for `/login` the same way.
+                if self.info.session.daemon.is_some()
+                    && super::daemon_gate::command_route(invocation.id)
+                        == super::daemon_gate::CommandRoute::Prompt
+                    && self.daemon_prompt_command_available(&invocation.name)
+                    && self.daemon_prompt_needs_login()
+                {
+                    return self.offer_login_instead_of_turn(turn);
+                }
                 let submission = self.take_command_submission(invocation, turn);
                 self.execute_command(submission, terminal, agent).await?;
                 return Ok(());

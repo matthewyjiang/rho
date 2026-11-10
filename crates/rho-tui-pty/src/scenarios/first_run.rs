@@ -82,6 +82,18 @@ const DAEMON_SIGNED_OUT_STEPS: &[Step] = &[
         text: "/prompt:greet with a trailing note",
         timeout: SETTLE,
     },
+    Step::Key(Key::Ctrl('c')),
+    Step::Phase("prompt_command_is_held"),
+    Step::SubmitText("/init"),
+    Step::WaitText {
+        text: "Select provider to login",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "/init",
+        timeout: SETTLE,
+    },
     Step::Phase("exit"),
     Step::Key(Key::Ctrl('c')),
     Step::ExitCommand,
