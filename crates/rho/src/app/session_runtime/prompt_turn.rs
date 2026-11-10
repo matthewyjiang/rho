@@ -171,6 +171,12 @@ impl SessionRuntime {
                 ended: proposal,
             };
         }
+        if let Err(error) = self.save_changed_settings() {
+            return PlanHandoff::Kept {
+                notice: format!("could not execute approved plan: {error:#}"),
+                ended: proposal,
+            };
+        }
         // A permission prompt carries no feedback, so the decision has none.
         let input = UserInput::text(IMPLEMENT_PLAN);
         PlanHandoff::Switched(Turn {

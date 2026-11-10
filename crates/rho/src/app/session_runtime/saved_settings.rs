@@ -122,6 +122,17 @@ impl SessionRuntime {
         self.save_state()
     }
 
+    /// Saves the settings as a change no host asked for left them, such as
+    /// a plan approval's mode switch, when the session keeps them: its next
+    /// save records them, and one that changes them must be a revision of
+    /// its own.
+    pub(super) fn save_changed_settings(&mut self) -> anyhow::Result<()> {
+        match self.settings {
+            SettingsPolicy::Keep => self.save_state(),
+            SettingsPolicy::FollowConfig => Ok(()),
+        }
+    }
+
     /// Applies the settings the session's file keeps, if any host recorded
     /// them, through the same cores a host's changes use. A setting the
     /// session can no longer take, such as a model whose credentials are
