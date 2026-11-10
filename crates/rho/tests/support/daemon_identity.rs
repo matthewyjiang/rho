@@ -83,6 +83,7 @@ async fn new_session(
             environment,
             agent: agent.map(str::to_owned),
             setup: SessionSetup::default(),
+            parent: None,
         })
         .await
         .map(|opened| opened.session)
