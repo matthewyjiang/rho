@@ -20,7 +20,7 @@ use crate::{
     doctor::{
         daemon::{
             environment_check, process_check, service_check, socket_check, DaemonEnvironment,
-            DaemonProcess, DaemonService, DaemonSocket,
+            DaemonProcess, DaemonService, DaemonSocket, LAUNCHD_LABEL, SYSTEMD_UNIT,
         },
         daemon_store_check, DaemonStore, DoctorCheck,
     },
@@ -38,12 +38,15 @@ pub(super) async fn checks(deadline: Duration) -> Vec<DoctorCheck> {
     let (process, store, socket, environment) = match super::daemon_cli::paths() {
         Ok(paths) => {
             let (process, store) = ask(&paths, deadline).await;
-            let environment = match daemon_pid(&process) {
-                None => DaemonEnvironment::NotRunning,
-                Some(pid) => match read_environment(pid) {
+            let environment = match (&process, daemon_pid(&process)) {
+                (DaemonProcess::NotRunning, _) => DaemonEnvironment::NotRunning,
+                (_, Some(pid)) => match read_environment(pid) {
                     Ok(daemon) => compare_environments(&daemon, |name| std::env::var_os(name)),
                     Err(reason) => DaemonEnvironment::Unknown(reason),
                 },
+                (_, None) => {
+                    DaemonEnvironment::Unknown("the daemon did not say which process it is".into())
+                }
             };
             (process, store, inspect_socket(&paths), environment)
         }
@@ -79,9 +82,7 @@ async fn ask(paths: &DaemonPaths, deadline: Duration) -> (DaemonProcess, DaemonS
     let ask = async {
         let connection = match daemon::connect(paths, daemon::ConnectAs::Command.hello()).await {
             Ok(connection) => connection,
-            Err(ConnectError::NotRunning) => {
-                return (DaemonProcess::NotRunning, DaemonStore::NotRunning)
-            }
+            Err(ConnectError::NotRunning) => return not_answering(paths),
             Err(ConnectError::Handshake(ClientError::VersionMismatch(mismatch))) => {
                 let recorded =
                     daemon::running_record(paths).map(|record| (record.pid, record.version));
@@ -111,11 +112,37 @@ async fn ask(paths: &DaemonPaths, deadline: Duration) -> (DaemonProcess, DaemonS
     }
 }
 
+/// What to report when nothing listens on this process's socket: a daemon
+/// that holds the home's lock all the same is one listening on a socket of
+/// another runtime directory, or one still starting or stopping.
+fn not_answering(paths: &DaemonPaths) -> (DaemonProcess, DaemonStore) {
+    let Some(record) = daemon::running_record(paths) else {
+        return (DaemonProcess::NotRunning, DaemonStore::NotRunning);
+    };
+    let (process, reason) = if record.socket == paths.socket {
+        let reason = format!(
+            "pid {} holds the daemon lock but does not listen yet or any more",
+            record.pid
+        );
+        (DaemonProcess::Unanswered(reason.clone()), reason)
+    } else {
+        (
+            DaemonProcess::OtherSocket {
+                pid: record.pid,
+                socket: record.socket.display().to_string(),
+                expected: paths.socket.display().to_string(),
+            },
+            "it listens on another socket".to_owned(),
+        )
+    };
+    (process, DaemonStore::Unanswered(reason))
+}
+
 /// The pid of the daemon running now, when the handshake or its info file
 /// named one.
 fn daemon_pid(process: &DaemonProcess) -> Option<u32> {
     match process {
-        DaemonProcess::Running { pid, .. } => Some(*pid),
+        DaemonProcess::Running { pid, .. } | DaemonProcess::OtherSocket { pid, .. } => Some(*pid),
         DaemonProcess::Incompatible { recorded, .. } => recorded.as_ref().map(|(pid, _)| *pid),
         DaemonProcess::NotRunning | DaemonProcess::Unanswered(_) => None,
     }
@@ -126,7 +153,9 @@ fn inspect_socket(paths: &DaemonPaths) -> DaemonSocket {
     match paths.inspect_socket() {
         Ok(SocketFound::Missing) => DaemonSocket::Missing { socket },
         Ok(SocketFound::Private) => DaemonSocket::Private { socket },
-        Err(error @ DaemonPathError::Io { .. }) => DaemonSocket::Unknown(error.to_string()),
+        Err(error @ (DaemonPathError::Io { .. } | DaemonPathError::Unreadable { .. })) => {
+            DaemonSocket::Unknown(error.to_string())
+        }
         Err(
             error @ (DaemonPathError::SocketPathTooLong { .. }
             | DaemonPathError::NotADirectory { .. }
@@ -139,56 +168,41 @@ fn inspect_socket(paths: &DaemonPaths) -> DaemonSocket {
     }
 }
 
-/// Looks for the service `docs/daemon.md` has the user save, under the name
-/// it gives, in the user's own unit directory. This reads files only, so it
-/// also answers where no user service manager can be asked, as in an SSH
-/// login without a session bus.
-#[cfg(target_os = "linux")]
+/// Looks for the service `docs/daemon.md` has the user save, under the names
+/// it gives: the systemd user unit, then the LaunchAgent. Each is looked for
+/// on every platform, as the other's file is simply not there. This reads
+/// files only, so it also answers where no user service manager can be
+/// asked, as in an SSH login without a session bus.
 fn find_service(home: &Path, xdg_config_home: Option<PathBuf>) -> DaemonService {
     // XDG: a relative value is invalid and must be ignored.
     let units = xdg_config_home
         .filter(|dir| dir.is_absolute())
         .unwrap_or_else(|| home.join(".config"))
         .join("systemd/user");
-    use crate::doctor::daemon::SYSTEMD_UNIT;
-
-    if !units.join(SYSTEMD_UNIT).exists() {
-        return DaemonService::NotInstalled;
+    if units.join(SYSTEMD_UNIT).exists() {
+        // Enabled when a target's `.wants` or `.requires` directory links
+        // to the unit, which is what `systemctl --user enable` creates.
+        let enabled = std::fs::read_dir(&units).is_ok_and(|entries| {
+            entries.flatten().any(|entry| {
+                let dir = entry.path();
+                let pulls_in_units = dir
+                    .extension()
+                    .is_some_and(|extension| extension == "wants" || extension == "requires");
+                // The link's target may be anywhere, so only its own
+                // existence counts.
+                pulls_in_units && dir.join(SYSTEMD_UNIT).symlink_metadata().is_ok()
+            })
+        });
+        return DaemonService::Systemd { enabled };
     }
-    // Enabled when a target's `.wants` or `.requires` directory links to
-    // the unit, which is what `systemctl --user enable` creates.
-    let enabled = std::fs::read_dir(&units).is_ok_and(|entries| {
-        entries.flatten().any(|entry| {
-            let dir = entry.path();
-            let pulls_in_units = dir
-                .extension()
-                .is_some_and(|extension| extension == "wants" || extension == "requires");
-            // The link's target may be anywhere, so only its own existence
-            // counts.
-            pulls_in_units && dir.join(SYSTEMD_UNIT).symlink_metadata().is_ok()
-        })
-    });
-    DaemonService::Systemd { enabled }
-}
-
-/// Looks for the LaunchAgent `docs/daemon.md` has the user save, under the
-/// label it gives.
-#[cfg(target_os = "macos")]
-fn find_service(home: &Path, _xdg_config_home: Option<PathBuf>) -> DaemonService {
-    let plist = home
+    let agent = home
         .join("Library/LaunchAgents")
-        .join(format!("{}.plist", crate::doctor::daemon::LAUNCHD_LABEL));
-    if plist.exists() {
+        .join(format!("{LAUNCHD_LABEL}.plist"));
+    if agent.exists() {
         DaemonService::Launchd
     } else {
         DaemonService::NotInstalled
     }
-}
-
-/// The docs cover no service setup for this platform.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn find_service(_home: &Path, _xdg_config_home: Option<PathBuf>) -> DaemonService {
-    DaemonService::NotInstalled
 }
 
 /// Sorts the variables that differ between `daemon`'s environment and the

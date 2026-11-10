@@ -88,6 +88,44 @@ async fn a_daemon_of_another_protocol_is_reported_as_incompatible() {
     );
 }
 
+// Covers: a daemon that holds this home's lock but listens in another
+// runtime directory is reported as on another socket, with the pid and both
+// paths, instead of as not running: `rho daemon start` from here would fail,
+// not start one.
+// Owner: doctor daemon observation (lock and info file).
+#[tokio::test]
+async fn a_daemon_on_another_socket_is_not_reported_as_down() {
+    let root = TempDir::new().unwrap();
+    let paths = paths(&root);
+    let _lock = daemon::acquire_lock(&paths).unwrap();
+    std::fs::write(
+        &paths.info_file,
+        serde_json::json!({
+            "pid": 4242,
+            "version": "3.0.0",
+            "protocol": PROTOCOL_VERSION,
+            "started_at": 0,
+            "socket": "/run/user/1000/rho/id/daemon.sock",
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let answer = ask(&paths, DEADLINE).await;
+
+    assert_eq!(
+        answer,
+        (
+            DaemonProcess::OtherSocket {
+                pid: 4242,
+                socket: "/run/user/1000/rho/id/daemon.sock".into(),
+                expected: paths.socket.display().to_string(),
+            },
+            DaemonStore::Unanswered("it listens on another socket".into())
+        )
+    );
+}
+
 // Covers: a socket or runtime directory someone else can reach is reported
 // as exposed, naming the path and mode, and a private pair is not.
 // Owner: doctor daemon observation (filesystem permissions).
@@ -132,11 +170,8 @@ async fn a_socket_others_can_reach_is_reported_as_exposed() {
 // once a target's `.wants` directory links to it, as `systemctl --user
 // enable` leaves it.
 // Owner: doctor daemon observation (service files).
-#[cfg(target_os = "linux")]
 #[test]
 fn the_systemd_unit_is_installed_once_saved_and_enabled_once_wanted() {
-    use crate::doctor::daemon::SYSTEMD_UNIT;
-
     let home = TempDir::new().unwrap();
     let default_units = home.path().join(".config/systemd/user");
     let xdg = home.path().join("xdg");
@@ -169,7 +204,6 @@ fn the_systemd_unit_is_installed_once_saved_and_enabled_once_wanted() {
 
 // Covers: the LaunchAgent the docs have the user save is found by its label.
 // Owner: doctor daemon observation (service files).
-#[cfg(target_os = "macos")]
 #[test]
 fn the_launch_agent_is_installed_once_saved() {
     let home = TempDir::new().unwrap();

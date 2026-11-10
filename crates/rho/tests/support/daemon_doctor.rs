@@ -64,7 +64,7 @@ fn rows(statuses: [&str; 4]) -> Vec<(String, String)> {
 }
 
 // Covers: `rho doctor --json` reports every daemon check without starting a
-// daemon; a running one is reported with its pid, version, and protocol, a
+// daemon; a running one is reported with its pid, version, and protocol
 // and a private socket; a daemon setting this shell
 // changed after the daemon started warns; and a socket opened to others
 // fails.

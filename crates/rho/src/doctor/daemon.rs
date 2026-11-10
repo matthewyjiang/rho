@@ -4,7 +4,7 @@
 //! from this shell's. `rho doctor` observes each from outside, never starting
 //! a daemon; the credential store row is in `daemon_store`.
 
-use rho_protocol::{ProtocolVersion, VersionMismatch};
+use rho_protocol::{ProtocolVersion, RestartCost, VersionFix, VersionMismatch};
 
 use super::report::{DoctorCheck, DoctorCheckId, DoctorStatus};
 
@@ -31,6 +31,14 @@ pub(crate) enum DaemonProcess {
     Incompatible {
         mismatch: VersionMismatch,
         recorded: Option<(u32, String)>,
+    },
+    /// A daemon holds this home's lock but listens on `socket`, not on
+    /// `expected`, the socket this process resolves: it started with another
+    /// `XDG_RUNTIME_DIR`, so no client started from here can reach it.
+    OtherSocket {
+        pid: u32,
+        socket: String,
+        expected: String,
     },
     /// Something is there but did not complete the handshake. The text says
     /// why.
@@ -86,9 +94,10 @@ pub(crate) enum DaemonEnvironment {
 }
 
 /// The row saying whether the daemon runs, with its pid, rho version and
-/// protocol. An incompatible protocol fails: this `rho` cannot use that
-/// daemon. A rho version other than `client_version`, this `rho`'s, only
-/// warns, since the protocol matches.
+/// protocol. A daemon this `rho` cannot reach or talk to fails, unless it is
+/// an older one nobody is using, which the next client replaces by itself. A
+/// rho version other than `client_version`, this `rho`'s, only warns, since
+/// the protocol matches.
 pub(crate) fn process_check(process: &DaemonProcess, client_version: &str) -> DoctorCheck {
     let row = |status, summary: String| {
         DoctorCheck::new(DoctorCheckId::DaemonProcess, "Daemon", status, summary)
@@ -104,15 +113,37 @@ pub(crate) fn process_check(process: &DaemonProcess, client_version: &str) -> Do
                 Some((pid, version)) => format!("pid {pid}, version {version}, "),
                 None => String::new(),
             };
+            // What a client's connect checks before replacing a daemon.
+            let replaceable = mismatch.fix == VersionFix::RestartDaemon
+                && mismatch.restart.is_some_and(RestartCost::is_free);
+            let (status, hint) = if replaceable {
+                (
+                    DoctorStatus::Warn,
+                    "older than this rho and unused, so the next client replaces it; `rho daemon restart` does it now".to_owned(),
+                )
+            } else {
+                (DoctorStatus::Fail, mismatch.to_string())
+            };
             row(
-                DoctorStatus::Fail,
+                status,
                 format!(
                     "{who}protocol {} incompatible with this rho's {}",
                     mismatch.daemon, mismatch.client
                 ),
             )
-            .with_hint(mismatch.to_string())
+            .with_hint(hint)
         }
+        DaemonProcess::OtherSocket {
+            pid,
+            socket,
+            expected,
+        } => row(
+            DoctorStatus::Fail,
+            format!("pid {pid} listens on another socket"),
+        )
+        .with_hint(format!(
+            "it listens on {socket}, not {expected}: this shell has another XDG_RUNTIME_DIR than the one the daemon started with; set it to match"
+        )),
         DaemonProcess::Running {
             pid,
             version,
@@ -135,7 +166,9 @@ pub(crate) fn process_check(process: &DaemonProcess, client_version: &str) -> Do
 }
 
 /// The row for the socket's permissions. A socket or directory someone else
-/// can reach fails: clients refuse to connect through it.
+/// can reach fails: the socket is all that keeps other users from the
+/// daemon, and a client refuses to start one in a directory that is not
+/// private.
 pub(crate) fn socket_check(socket: &DaemonSocket) -> DoctorCheck {
     let row = |status, summary: &str, hint: &str| {
         DoctorCheck::new(

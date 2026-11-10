@@ -77,6 +77,8 @@ pub(crate) enum DaemonPathError {
     InsecureMode { path: PathBuf, mode: u32 },
     #[error("could not prepare rho daemon directory {path}: {message}")]
     Io { path: PathBuf, message: String },
+    #[error("could not read {path}: {message}")]
+    Unreadable { path: PathBuf, message: String },
     #[error(
         "{path} is not a socket; run `rho daemon stop`, remove it, and let the next client start the daemon"
     )]
@@ -158,7 +160,7 @@ impl DaemonPaths {
     /// else, as [`DaemonPaths::prepare_runtime_dir`] and the daemon's bind
     /// leave them. `rho doctor` reports the result.
     pub(crate) fn inspect_socket(&self) -> Result<SocketFound, DaemonPathError> {
-        let io_error = |path: &Path, error: io::Error| DaemonPathError::Io {
+        let io_error = |path: &Path, error: io::Error| DaemonPathError::Unreadable {
             path: path.to_path_buf(),
             message: error.to_string(),
         };

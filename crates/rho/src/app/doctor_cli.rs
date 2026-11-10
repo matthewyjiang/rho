@@ -90,22 +90,14 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
         .into_iter()
         .map(|id| (id.clone(), tokio::spawn(run_probe(id, store.clone()))))
         .collect();
-    #[cfg(unix)]
     let (outcomes, daemon_checks) = tokio::join!(
         collect_probes(handles, PROBE_DEADLINE),
-        super::doctor_daemon::checks(PROBE_DEADLINE)
+        daemon_checks(PROBE_DEADLINE)
     );
-    #[cfg(not(unix))]
-    let outcomes = collect_probes(handles, PROBE_DEADLINE).await;
     for outcome in outcomes {
         report.replace_checks(probe_checks(&outcome, &config.provider));
     }
-    #[cfg(unix)]
     report.replace_checks(daemon_checks);
-    #[cfg(not(unix))]
-    report.replace_checks(vec![crate::doctor::daemon::unsupported_check(
-        super::daemon_cli::UNSUPPORTED,
-    )]);
 
     if json {
         println!(
@@ -143,6 +135,20 @@ fn apply_doctor_overrides(
         },
     )?;
     Ok(())
+}
+
+/// The daemon rows, asking the running daemon for at most `deadline`.
+#[cfg(unix)]
+async fn daemon_checks(deadline: Duration) -> Vec<crate::doctor::DoctorCheck> {
+    super::doctor_daemon::checks(deadline).await
+}
+
+/// The one row saying this platform has no daemon.
+#[cfg(not(unix))]
+async fn daemon_checks(_deadline: Duration) -> Vec<crate::doctor::DoctorCheck> {
+    vec![crate::doctor::daemon::unsupported_check(
+        super::daemon_cli::UNSUPPORTED,
+    )]
 }
 
 /// Collect every spawned probe under one shared deadline. A probe that
