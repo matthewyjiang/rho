@@ -15,7 +15,6 @@ use ratatui::layout::{Position, Rect};
 use super::{
     app_state::PointerAction,
     composer_attachments::attachment_target_at,
-    config_picker::{permission_mode_picker, PERMISSION_MODE_VALUE},
     screen_layout::{terminal_meets_minimum, ScreenLayout},
     statusline::{StatusClick, FIELDS_ROW},
     App, ComposerMode,
@@ -108,21 +107,17 @@ impl App {
         self.statusline.set_hovered_column(column);
     }
 
-    /// Open the permission mode chooser under its config row, so Esc walks
-    /// back through config like picking the row by hand. Mid-turn it still
-    /// opens; committing a change is what a turn blocks, and the config
-    /// commit path reports that.
+    /// Opens the permission mode chooser of a daemon session. In process,
+    /// where `/config` is gone, says how to change the mode instead.
     fn open_permission_mode_picker(&mut self) {
         if self.info.session.daemon.is_some() {
             self.open_daemon_permission_picker();
-            return;
+        } else {
+            self.set_status(format!(
+                "permission mode: {}; /permissions <mode> changes it",
+                self.info.runtime.permission_mode.as_str()
+            ));
         }
-        if let Err(error) = self.open_main_config_picker_selected(PERMISSION_MODE_VALUE) {
-            self.set_status(format!("could not open config: {error}"));
-            return;
-        }
-        let child = permission_mode_picker(self.info.runtime.permission_mode);
-        self.open_child_picker(child);
     }
 
     /// Drop text selections and drags a chrome press supersedes.

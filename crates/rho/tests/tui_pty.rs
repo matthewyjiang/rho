@@ -617,20 +617,16 @@ fn tab_completion_keeps_enter_on_the_bare_command() {
     assert_pass("tab_complete_enter_bare_command");
 }
 
-// Covers: advisor mode must ask for a model before it claims to be on, keep the
-// chosen model across off and on, warn when a saved mode has no model, and bring
-// the advisor's answer back to the executor without ending the turn on failure.
+// Covers: a saved advisor mode with no model warns instead of claiming to run.
 // Owner: interactive TUI
-#[test]
-fn advisor_command() {
-    assert_pass("advisor_command");
-}
-
 #[test]
 fn advisor_missing_model() {
     assert_pass("advisor_missing_model");
 }
 
+// Covers: the advisor's answer comes back to the executor without ending the
+// turn on failure.
+// Owner: interactive TUI
 #[test]
 fn advisor_review() {
     assert_pass("advisor_review");
@@ -1075,13 +1071,6 @@ fn pinned_model_cycles_normalize_reasoning() {
     }
 }
 
-// Covers: web search routing and self-hosted endpoints can be configured,
-// reset, and a connection test cancelled. Owner: interactive config UX
-#[test]
-fn web_search_settings_configure_and_reset() {
-    assert_pass("web_search_config");
-}
-
 // Covers: dual-grant OAuth offers browser or device-code even with a browser.
 // Owner: interactive login UX
 #[test]
@@ -1195,6 +1184,38 @@ fn daemon_approval_denies_the_turns_write() {
 #[test]
 fn daemon_permission_changes_do_not_block_the_turn() {
     assert_pass("daemon_permission_mode");
+}
+
+// Covers: in process, `/config` and `/advisor` say they need the daemon.
+// Owner: interactive TUI settings commands in process.
+#[test]
+fn settings_commands_need_the_daemon_in_process() {
+    assert_pass("settings_need_the_daemon");
+}
+
+// Covers: `/config` saves through the daemon: a client setting takes effect
+// live, vim mode turns on and back off from the default row, an agent setting
+// shows its saved value once confirmed and a refused one says why, and
+// lowering the prompt history limit asks first.
+// Owner: interactive TUI settings screen as a daemon client.
+#[test]
+fn daemon_config_changes_settings_through_the_daemon() {
+    assert_pass("daemon_config");
+}
+
+// Covers: `/advisor on` without a model asks for one, Space filters its page,
+// the session's next turn takes the advisor, and `/advisor off` turns it off.
+// Owner: interactive TUI `/advisor` as a daemon client.
+#[test]
+fn daemon_advisor_reaches_the_next_turn() {
+    assert_pass("daemon_advisor");
+}
+
+// Covers: hidden header hints come back live from the daemon `/config`.
+// Owner: interactive TUI header as a daemon client.
+#[test]
+fn header_hints_toggle_live() {
+    assert_pass("header_hints_toggle");
 }
 
 // Covers: an unported command refuses visibly without changing instructions.

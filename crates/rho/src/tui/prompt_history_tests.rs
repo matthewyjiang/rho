@@ -18,61 +18,23 @@ fn store_for(app: &super::super::App) -> PromptHistoryStore {
     PromptHistoryStore::open_path(app.prompt_history.store_path().unwrap()).unwrap()
 }
 
-// Covers: lowering the cap below stored rows asks before deleting them.
+// Covers: a lower limit, as the daemon serves the `tui` setting, trims the
+// store immediately.
 // Owner: tui prompt-history config
 #[test]
-fn lowering_limit_below_stored_count_confirms() {
-    let (_directory, mut app) = app_with_store();
-    let store = store_for(&app);
-    store.append("one", 10).unwrap();
-    store.append("two", 10).unwrap();
-
-    app.propose_prompt_history_limit(1).unwrap();
-    app.settle_prompt_history();
-
-    assert!(matches!(
-        app.input_ui.composer(),
-        ComposerMode::InlineChoice(modal)
-            if matches!(modal.pending, InlineChoicePending::PromptHistoryLimit { new_limit: 1 })
-    ));
-}
-
-// Covers: confirming a lower cap trims the store immediately.
-// Owner: tui prompt-history config
-#[test]
-fn confirmed_lower_limit_trims_store() {
+fn lower_limit_trims_store() {
     let (_directory, mut app) = app_with_store();
     let store = store_for(&app);
     store.append("one", 10).unwrap();
     store.append("two", 10).unwrap();
     store.append("three", 10).unwrap();
 
-    app.submit_prompt_history_limit_choice("confirm", 1)
-        .unwrap();
+    app.apply_prompt_history_limit(1);
     app.settle_prompt_history();
 
     let store = store_for(&app);
     assert_eq!(store.load_tail(10).unwrap(), vec!["three".to_string()]);
     assert_eq!(app.prompt_history.limit(), 1);
-}
-
-// Covers: cancelling a destructive limit change does not trim.
-// Owner: tui prompt-history config
-#[test]
-fn cancelled_lower_limit_leaves_store() {
-    let (_directory, mut app) = app_with_store();
-    let store = store_for(&app);
-    store.append("one", 10).unwrap();
-    store.append("two", 10).unwrap();
-
-    app.submit_prompt_history_limit_choice("cancel", 1).unwrap();
-    app.settle_prompt_history();
-
-    let store = store_for(&app);
-    assert_eq!(
-        store.load_tail(10).unwrap(),
-        vec!["one".to_string(), "two".to_string()]
-    );
 }
 
 // Covers: clear asks first, then wipes ring and store.
@@ -147,10 +109,6 @@ fn count_and_clear_do_not_create_missing_store() {
     app.prompt_clear_prompt_history().unwrap();
     app.settle_prompt_history();
     assert!(!path.exists());
-
-    app.propose_prompt_history_limit(10).unwrap();
-    app.settle_prompt_history();
-    assert!(!path.exists());
 }
 
 // Covers: enabling persistence mid-session starts writing without a restart.
@@ -160,8 +118,7 @@ fn enabling_after_zero_persists_later_appends() {
     let (_directory, mut app) = app_with_store();
     app.prompt_history.set_limit(0);
     app.push_input_history("skipped");
-    app.submit_prompt_history_limit_choice("confirm", 10)
-        .unwrap();
+    app.apply_prompt_history_limit(10);
     app.settle_prompt_history();
     app.push_input_history("kept");
     app.settle_prompt_history();

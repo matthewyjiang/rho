@@ -57,7 +57,6 @@ fn runtime_updates_do_not_replace_restart_only_config() {
         ..Config::default()
     };
     let diagnostics = RuntimeDiagnostics::new(&config);
-    diagnostics.update_edit_tool("str_replace");
     diagnostics.update_compaction_config(&CompactionConfig {
         auto_compact: true,
         threshold_percent: 70,
@@ -82,7 +81,7 @@ fn runtime_updates_do_not_replace_restart_only_config() {
             "agent_concurrency": 10,
             "advisor_mode": false,
             "codemode_mode": "on",
-            "edit_tool": "str_replace",
+            "edit_tool": "auto",
             "rtk": true,
             "source": "live values used by this process; restart-only settings may differ from saved config"
         })

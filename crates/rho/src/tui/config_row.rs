@@ -1,142 +1,107 @@
-//! Typed `/config` picker rows.
+//! What choosing a `/config` row does, as its picker value carries it,
+//! and the permission-mode page the root and `/permissions` share.
 //!
-//! Parse from the existing picker string values so the generic picker can keep
-//! `PickerItem.value` as a [`String`].
+//! Every row of every settings page, the session rows, the local rows, the
+//! daemon's settings, and the `/advisor on` models, is one [`ConfigRow`]
+//! with one encoding, so choosing a row is one exhaustive match.
 
-use crate::tui::DefaultTerminal;
+use rho_protocol::{SettingKey, SettingValue};
+use serde::{Deserialize, Serialize};
 
 use super::{
-    config_editor::ConfigNumberKey, config_picker, web_search_config::WebSearchAction,
-    InteractiveRuntime,
+    daemon_settings::SettingsNamespace, PickerBadge, PickerBadgeTone, PickerItem, UiPicker,
 };
+use crate::permission::PermissionMode;
 
-/// Idle vs during-turn commit context for one config row.
-pub(super) enum ConfigCommitCtx<'a> {
-    Idle {
-        agent: &'a mut InteractiveRuntime,
-        terminal: &'a mut DefaultTerminal,
-    },
-    DuringTurn,
-}
-
-/// Every `/config` picker value currently dispatched by the TUI.
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "row", rename_all = "snake_case")]
 pub(super) enum ConfigRow {
-    Category(String),
-    ConversationModel,
-    RefreshModelList,
-    RefreshModelsDev,
-    ProviderLogin,
-    ProviderLogout,
-    SwitchAuthMode,
-    PermissionMode,
-    PermissionModeChoice(String),
-    Reasoning,
-    ShowReasoningOutput,
-    ZenMode,
-    OutputStreaming,
+    /// Opens the session's model page.
+    SessionModel,
+    /// Cycles the session's reasoning level.
+    SessionReasoning,
+    /// Flips the session's fast mode.
+    SessionFastMode,
+    /// Opens the session's permission-mode page.
+    SessionPermissionMode,
+    /// Sets the session's permission mode.
+    SetPermissionMode { mode: PermissionMode },
+    /// Opens the theme picker, local to this terminal.
     Theme,
-    CheckForUpdates,
-    EnableSubagents,
-    WorkspaceRewind,
-    KeepCacheWarm,
-    AdvisorMode,
-    AdvisorModel,
-    AdvisorReasoning,
-    PermissionClassifierModel,
-    PermissionClassifierReasoning,
-    PermissionScreenModel,
-    AutoCompact,
-    CacheMissNotices,
-    ShowHeaderHints,
-    Notifications,
-    Number(ConfigNumberKey),
+    /// Asks, then deletes every saved composer prompt.
     ClearPromptHistory,
-    InlineShell,
-    EditTool,
-    EditToolChoice(String),
-    InlineShellChoice(String),
-    WebSearch,
-    WebSearchAction(WebSearchAction),
-    XaiImageGeneration,
-    VimMode,
+    /// Opens category `id`'s page.
+    Category {
+        namespace: SettingsNamespace,
+        id: String,
+    },
+    /// Changes setting `key`: a bool flips, other kinds open an editor.
+    Setting {
+        namespace: SettingsNamespace,
+        key: SettingKey,
+    },
+    /// Writes `value` to `key`.
+    Set {
+        namespace: SettingsNamespace,
+        key: SettingKey,
+        value: SettingValue,
+    },
+    /// Removes `key` from the file.
+    Reset {
+        namespace: SettingsNamespace,
+        key: SettingKey,
+    },
+    /// Turns the advisor on with `model`, in one write.
+    EnableAdvisor { model: SettingValue },
 }
+
+const PREFIX: &str = "config:";
 
 impl ConfigRow {
+    pub(super) fn encode(&self) -> String {
+        let json = serde_json::to_string(self).expect("config rows serialize");
+        format!("{PREFIX}{json}")
+    }
+
     pub(super) fn parse(value: &str) -> Option<Self> {
-        if config_picker::is_category(value) {
-            return Some(Self::Category(value.to_string()));
+        serde_json::from_str(value.strip_prefix(PREFIX)?).ok()
+    }
+}
+
+pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
+    UiPicker::config(
+        "Permission mode",
+        PermissionMode::ALL
+            .into_iter()
+            .map(|candidate| PickerItem {
+                detail: Some(permission_mode_description(candidate).into()),
+                badge: (candidate == mode).then_some(PickerBadge {
+                    text: "selected".into(),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                ..PickerItem::new(
+                    candidate.label().into(),
+                    ConfigRow::SetPermissionMode { mode: candidate }.encode(),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn permission_mode_description(mode: PermissionMode) -> &'static str {
+    match mode {
+        PermissionMode::Bypass => "No permission checks.",
+        PermissionMode::Auto => {
+            "Classifier reviews new files, processes, and outside-workspace reads; tracked and already-approved workspace edits are free."
         }
-        if let Some(mode) = value.strip_prefix(config_picker::PERMISSION_MODE_PREFIX) {
-            return Some(Self::PermissionModeChoice(mode.to_string()));
+        PermissionMode::AllowEdits => {
+            "Tracked and already-approved workspace edits are free; ask before new files, processes, and outside-workspace reads."
         }
-        if let Some(tool) = value.strip_prefix(config_picker::EDIT_TOOL_PREFIX) {
-            return Some(Self::EditToolChoice(tool.to_string()));
+        PermissionMode::Plan => {
+            "Investigate the workspace; writes, processes, and outside-workspace reads are denied."
         }
-        if let Some(shell) = value.strip_prefix(config_picker::INLINE_SHELL_PREFIX) {
-            return Some(Self::InlineShellChoice(shell.to_string()));
+        PermissionMode::Supervised => {
+            "Ask before writes, processes, and outside-workspace reads."
         }
-        if let Some(action) = WebSearchAction::parse(value) {
-            return Some(Self::WebSearchAction(action));
-        }
-        Some(match value {
-            config_picker::QUESTIONNAIRE_TIMEOUT_VALUE => {
-                Self::Number(ConfigNumberKey::QuestionnaireTimeout)
-            }
-            config_picker::CONVERSATION_MODEL_VALUE => Self::ConversationModel,
-            config_picker::REFRESH_MODEL_LIST_VALUE => Self::RefreshModelList,
-            config_picker::REFRESH_MODELS_DEV_VALUE => Self::RefreshModelsDev,
-            config_picker::PROVIDER_LOGIN_VALUE => Self::ProviderLogin,
-            config_picker::PROVIDER_LOGOUT_VALUE => Self::ProviderLogout,
-            config_picker::SWITCH_AUTH_MODE_VALUE => Self::SwitchAuthMode,
-            config_picker::PERMISSION_MODE_VALUE => Self::PermissionMode,
-            config_picker::REASONING_VALUE => Self::Reasoning,
-            config_picker::SHOW_REASONING_OUTPUT_VALUE => Self::ShowReasoningOutput,
-            config_picker::ZEN_MODE_VALUE => Self::ZenMode,
-            config_picker::OUTPUT_STREAMING_VALUE => Self::OutputStreaming,
-            config_picker::THEME_VALUE => Self::Theme,
-            config_picker::CHECK_FOR_UPDATES_VALUE => Self::CheckForUpdates,
-            config_picker::ENABLE_SUBAGENTS_VALUE => Self::EnableSubagents,
-            config_picker::WORKSPACE_REWIND_VALUE => Self::WorkspaceRewind,
-            config_picker::KEEP_CACHE_WARM_VALUE => Self::KeepCacheWarm,
-            config_picker::AGENT_CONCURRENCY_VALUE => {
-                Self::Number(ConfigNumberKey::AgentConcurrency)
-            }
-            config_picker::ADVISOR_MODE_VALUE => Self::AdvisorMode,
-            config_picker::ADVISOR_MODEL_VALUE => Self::AdvisorModel,
-            config_picker::ADVISOR_REASONING_VALUE => Self::AdvisorReasoning,
-            config_picker::PERMISSION_CLASSIFIER_MODEL_VALUE => Self::PermissionClassifierModel,
-            config_picker::PERMISSION_CLASSIFIER_REASONING_VALUE => {
-                Self::PermissionClassifierReasoning
-            }
-            config_picker::PERMISSION_SCREEN_MODEL_VALUE => Self::PermissionScreenModel,
-            config_picker::SCREEN_ALLOW_THRESHOLD_VALUE => {
-                Self::Number(ConfigNumberKey::ScreenAllowThresholdPercent)
-            }
-            config_picker::AUTO_COMPACT_VALUE => Self::AutoCompact,
-            config_picker::CACHE_MISS_NOTICES_VALUE => Self::CacheMissNotices,
-            config_picker::SHOW_HEADER_HINTS_VALUE => Self::ShowHeaderHints,
-            config_picker::NOTIFICATIONS_VALUE => Self::Notifications,
-            config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
-                Self::Number(ConfigNumberKey::CompactThresholdPercent)
-            }
-            config_picker::COMPACT_TARGET_PERCENT_VALUE => {
-                Self::Number(ConfigNumberKey::CompactTargetPercent)
-            }
-            config_picker::MAX_OUTPUT_BYTES_VALUE => Self::Number(ConfigNumberKey::MaxOutputBytes),
-            config_picker::MAX_TOOL_OUTPUT_LINES_VALUE => {
-                Self::Number(ConfigNumberKey::MaxToolOutputLines)
-            }
-            config_picker::PROMPT_HISTORY_LIMIT_VALUE => {
-                Self::Number(ConfigNumberKey::PromptHistoryLimit)
-            }
-            config_picker::CLEAR_PROMPT_HISTORY_VALUE => Self::ClearPromptHistory,
-            config_picker::INLINE_SHELL_VALUE => Self::InlineShell,
-            config_picker::EDIT_TOOL_VALUE => Self::EditTool,
-            config_picker::WEB_SEARCH_VALUE => Self::WebSearch,
-            config_picker::XAI_IMAGE_GENERATION_VALUE => Self::XaiImageGeneration,
-            config_picker::VIM_MODE_VALUE => Self::VimMode,
-            _ => return None,
-        })
     }
 }

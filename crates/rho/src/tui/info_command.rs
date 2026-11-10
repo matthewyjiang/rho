@@ -140,8 +140,7 @@ impl App {
             model: identity.model.to_string(),
             reasoning: identity.reasoning.to_string(),
             permission_mode: self.info.runtime.permission_mode.as_str().into(),
-            advisor: super::advisor_status::AdvisorStatus::from_runtime(&self.info.runtime)
-                .detail(),
+            advisor: self.advisor_status().detail(),
             billing: BillingInfo::from_provider_auth(
                 &self.info.runtime.provider,
                 &self.info.runtime.auth,

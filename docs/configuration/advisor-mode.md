@@ -60,13 +60,15 @@ Ways to enable it:
 - `/advisor` or `/advisor on` in the [interactive TUI](/interactive-tui#commands).
   Without a model, the command opens a model picker first. The mode turns on after you
   select one. `esc` leaves the mode off. `/advisor off` turns it off.
-- `/advisor model` to change the advisor model without changing the mode. When
-  the model has selectable reasoning levels, a second picker lists only those
-  levels. Models without a reasoning choice skip that picker.
-- `/config` → **Agent behavior** → **Advisor mode**, **Advisor model**, and
+- `/advisor model` to change the advisor model without changing the mode.
+- `/config` → **Agent** → **Advisor mode**, **Advisor model**, and
   **Advisor reasoning**
 - `/agents`, then choose the `advisor` internal agent and pick a model
 - a hand edit of `~/.rho/config.toml`
+
+`/advisor` and `/config` save through the [daemon](/daemon#configuration-changes),
+so they need a TUI following a daemon session; the change reaches loaded
+sessions at their next turn.
 
 ```toml
 [behavior]
