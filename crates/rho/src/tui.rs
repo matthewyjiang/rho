@@ -70,6 +70,8 @@ mod daemon_requests;
 mod daemon_session;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod daemon_settings;
+#[cfg(unix)]
+mod daemon_settings_read;
 mod daemon_transcript;
 mod daemon_turn;
 mod diff_pane;

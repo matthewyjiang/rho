@@ -138,15 +138,14 @@ mod unix {
     use rho_protocol::ClientError;
     use rho_protocol::{
         methods::{
-            ConfigGet, ConfigRegister, ConfigSchemaMethod, SessionAnswer, SessionAttach,
-            SessionCancel, SessionConfigure, SessionHold, SessionNew, SessionSteer, SessionUnsteer,
+            SessionAnswer, SessionAttach, SessionCancel, SessionConfigure, SessionHold, SessionNew,
+            SessionSteer, SessionUnsteer,
         },
-        ClientEnvironment, ConfigChangedParams, ConfigGetParams, ConfigRegisterParams,
-        ConfigSchemaParams, ConfigSetParams, ContentBlock, DetachReason, ErrorCode, InputAnswer,
-        InputRequestId, JobState, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
-        SessionCancelParams, SessionChange, SessionConfigureParams, SessionHoldParams, SessionId,
-        SessionNewParams, SessionOptions, SessionSetup, SessionSteerParams, SessionUnsteerParams,
-        SteerId, UnsteerOutcome,
+        ClientEnvironment, ConfigChangedParams, ConfigSetParams, ContentBlock, DetachReason,
+        ErrorCode, InputAnswer, InputRequestId, JobState, SessionAnswerParams, SessionAttachParams,
+        SessionAttachResponse, SessionCancelParams, SessionChange, SessionConfigureParams,
+        SessionHoldParams, SessionId, SessionNewParams, SessionOptions, SessionSetup,
+        SessionSteerParams, SessionUnsteerParams, SteerId, UnsteerOutcome,
     };
     use rho_sdk::SteeringId;
     use tokio::sync::{mpsc, oneshot, watch};
@@ -155,7 +154,8 @@ mod unix {
         daemon_events::{DaemonEvents, DaemonView, Rest, TurnState},
         daemon_inputs::AnswerRefusal,
         daemon_requests::{DaemonRequests, Target},
-        daemon_settings::{tui_client, DaemonSettings, SettingsNamespace},
+        daemon_settings::DaemonSettings,
+        daemon_settings_read::{load_settings, route_config, settings_loaded},
     };
     use crate::{
         app::daemon_client::{Daemon, Link, Part, Routed, StreamPosition},
@@ -917,54 +917,6 @@ mod unix {
                 }
             }
         }
-    }
-
-    /// Routes `rho/config/changed` to the receiver this returns, replacing
-    /// any earlier route.
-    fn route_config(daemon: &Daemon) -> mpsc::UnboundedReceiver<ConfigChangedParams> {
-        let (sender, changes) = mpsc::unbounded_channel();
-        daemon.route_config(sender);
-        changes
-    }
-
-    /// The view of a settings read. Settings that cannot be read leave
-    /// `/config` with the session's own options; the session still runs.
-    fn settings_loaded(settings: anyhow::Result<DaemonSettings>) -> DaemonView {
-        match settings {
-            Ok(settings) => DaemonView::SettingsLoaded(Box::new(settings)),
-            Err(error) => DaemonView::Error(format!("could not read the rho settings: {error:#}")),
-        }
-    }
-
-    /// Registers the `tui` client's settings, then reads the agent schema
-    /// and both namespaces' values, which subscribes this connection to
-    /// their changes.
-    async fn load_settings(link: &Link) -> anyhow::Result<DaemonSettings> {
-        let tui_specs = crate::tui::client_settings::tui_setting_specs();
-        link.request::<ConfigRegister>(&ConfigRegisterParams {
-            client: tui_client(),
-            settings: tui_specs.clone(),
-        })
-        .await?;
-        let schema = link
-            .request::<ConfigSchemaMethod>(&ConfigSchemaParams {})
-            .await?;
-        let agent = link
-            .request::<ConfigGet>(&ConfigGetParams {
-                namespace: SettingsNamespace::Agent.wire(),
-            })
-            .await?;
-        let tui = link
-            .request::<ConfigGet>(&ConfigGetParams {
-                namespace: SettingsNamespace::Tui.wire(),
-            })
-            .await?;
-        Ok(DaemonSettings::new(
-            schema,
-            tui_specs,
-            agent.into(),
-            tui.into(),
-        ))
     }
 
     /// A tail keeps message/card state, but open prompts are rebuilt from
