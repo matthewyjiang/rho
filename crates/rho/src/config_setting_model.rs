@@ -208,7 +208,9 @@ impl SettingType for ModelSetting {
     }
 }
 
-/// A model that is unset until chosen, such as an internal agent's.
+/// An internal agent's model, unset until chosen. Unset, the agent has no
+/// entry: its other keys, such as `kind`, only qualify a chosen model, and
+/// any of them left behind would make an entry again.
 impl SettingType for Option<ModelSetting> {
     type Spec = ModelSpec;
     fn kind(spec: &ModelSpec) -> SettingKind {
@@ -220,11 +222,11 @@ impl SettingType for Option<ModelSetting> {
     fn write(&self, doc: &mut ConfigDocument, key: &str) {
         match self {
             Some(model) => write_model(model, doc, key),
-            None => remove_model(doc, key),
+            None => doc.remove(key),
         }
     }
     fn remove(doc: &mut ConfigDocument, key: &str) {
-        remove_model(doc, key);
+        doc.remove(key);
     }
     fn owns(key: &str, path: &[String]) -> bool {
         owns_model_leaf(key, path)

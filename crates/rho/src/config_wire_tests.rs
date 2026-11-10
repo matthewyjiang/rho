@@ -128,8 +128,10 @@ fn rho_model(provider: &str, model: &str) -> SettingValue {
 // another's entry, which inherits the conversation model, as written; a
 // set to the default value is written, so it outlasts a later default.
 // A hand edit that no longer loads is repaired by a change to the keys it
-// fails on, and refused as the file's fault otherwise. A value above what
-// the file can store, or the credential store, is refused.
+// fails on, and refused as the file's fault otherwise. Resetting an
+// internal agent's model removes its whole entry, so no leftover key keeps
+// it overridden. A value above what the file can store, or the credential
+// store, is refused.
 // Owner: config wire changes.
 #[test]
 fn agent_changes_touch_only_their_keys_and_can_repair_the_file() {
@@ -150,6 +152,12 @@ fn agent_changes_touch_only_their_keys_and_can_repair_the_file() {
             judge.to_owned(),
             vec![set("internal_agents.advisor", rho_model("openai", "gpt-5.5"))],
             Ok(format!("{judge}\n[internal_agents.advisor]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\nauth = \"api-key\"\n")),
+        ),
+        (
+            "an internal agent's reset leaves no entry",
+            "[internal_agents.permission-classifier]\nprovider = \"openai\"\nmodel = \"gpt-5.5-mini\"\nauth = \"api-key\"\nkind = \"text\"\nallow_threshold_percent = 80\nreasoning = \"minimal\"\n".into(),
+            vec![reset("internal_agents.permission-classifier")],
+            Ok(String::new()),
         ),
         (
             "a set to the default is written",
