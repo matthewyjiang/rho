@@ -95,7 +95,7 @@ fn a_turn_starts_only_when_none_is_in_progress() {
                 TurnRecord::starting(/*key*/ None),
                 crate::caller_context::CallerContext::ROOT,
             )
-            .map(|moved| moved.state)
+            .map(|(moved, _)| moved.state)
     };
     let started = start(&id);
     let while_running = start(&id);
@@ -199,7 +199,7 @@ fn an_upgrade_closes_the_registry_only_while_idle() {
             TurnRecord::starting(/*key*/ None),
             crate::caller_context::CallerContext::ROOT,
         )
-        .map(|moved| moved.state);
+        .map(|(moved, _)| moved.state);
 
     assert_eq!(
         (while_running, after_a_turn, still_idle, next_turn),
@@ -308,5 +308,133 @@ fn a_turns_grant_is_kept_on_its_jobs_record_across_daemons() {
             Some(limited.clone()),
             Some(limited)
         )
+    );
+}
+
+// Covers: a job with a grant limit, as a session an agent started has, never records more than the limit: a turn that asks for no limit, as
+// a person's prompt does, gets the limit; one that asks for less gets less;
+// a reopen is held the same; a daemon that starts over the records still
+// holds it; and a job without a limit takes each grant as asked (#1796).
+// Owner: daemon job registry, session grants.
+#[test]
+fn a_jobs_grant_never_exceeds_its_limit() {
+    use crate::caller_context::{Access, CallerContext, Scope, Workspaces};
+    let only = |root: &str| Workspaces::Only(vec![PathBuf::from(root)]);
+    let limit = CallerContext {
+        depth: 2,
+        scope: Scope {
+            access: Access::Write,
+            workspaces: only("/work"),
+        },
+    };
+    let narrower = CallerContext {
+        depth: 3,
+        scope: Scope {
+            access: Access::Read,
+            workspaces: only("/work/deep"),
+        },
+    };
+    let home = TempDir::new().unwrap();
+    let registry = JobRegistry::open(JobStore::open(home.path()).unwrap());
+    let session = || {
+        JobRecord::new_session(
+            JobId::generate(),
+            PathBuf::from("/work"),
+            rho_sdk::SessionId::new(),
+        )
+    };
+    let child = JobRecord {
+        grant: limit.clone(),
+        grant_limit: Some(limit.clone()),
+        ..session()
+    };
+    let top_level = session();
+    let (child, top_level) = {
+        let ids = (child.id.clone(), top_level.id.clone());
+        registry.register(child).unwrap();
+        registry.register(top_level).unwrap();
+        ids
+    };
+    let turn = |registry: &JobRegistry, job: &JobId, asked: &CallerContext| {
+        let (_, granted) = registry
+            .start_turn(job, TurnRecord::starting(/*key*/ None), asked.clone())
+            .unwrap();
+        registry
+            .record(job, JobEvent::TurnEnded(TurnEnd::Completed))
+            .unwrap();
+        (granted, registry.grant_of(job).unwrap())
+    };
+
+    let by_a_person = turn(&registry, &child, &CallerContext::ROOT);
+    let asking_less = turn(&registry, &child, &narrower);
+    registry.set_grant(&child, CallerContext::ROOT);
+    let reopened = registry.grant_of(&child).unwrap();
+    let unlimited = turn(&registry, &top_level, &CallerContext::ROOT);
+    drop(registry);
+    let restarted = JobRegistry::open(JobStore::open(home.path()).unwrap());
+    let after_a_restart = turn(&restarted, &child, &CallerContext::ROOT);
+
+    assert_eq!(
+        (
+            by_a_person,
+            asking_less,
+            reopened,
+            unlimited,
+            after_a_restart
+        ),
+        (
+            (limit.clone(), limit.clone()),
+            (narrower.clone(), narrower),
+            limit.clone(),
+            (CallerContext::ROOT, CallerContext::ROOT),
+            (limit.clone(), limit),
+        )
+    );
+}
+
+// Covers: the grant a session started from a subagent's or a workflow
+// node's session is held under is that of the session whose turn runs
+// them, not the unlimited one their own jobs keep (#1796).
+// Owner: daemon job registry, session grants.
+#[test]
+fn a_run_a_session_started_is_under_that_sessions_grant() {
+    use crate::caller_context::{Access, CallerContext, Scope, Workspaces};
+    let home = TempDir::new().unwrap();
+    let registry = JobRegistry::open(JobStore::open(home.path()).unwrap());
+    let limited = CallerContext {
+        depth: 1,
+        scope: Scope {
+            access: Access::Read,
+            workspaces: Workspaces::Any,
+        },
+    };
+    let session = JobRecord {
+        grant: limited.clone(),
+        ..JobRecord::new_session(
+            JobId::generate(),
+            PathBuf::from("/work"),
+            rho_sdk::SessionId::new(),
+        )
+    };
+    let workflow = JobRecord::new_workflow(
+        session.id.clone(),
+        PathBuf::from("/work"),
+        crate::workflow::RunId::new(),
+    );
+    let node = JobRecord::new_subagent(workflow.id.clone(), PathBuf::from("/work"), None);
+    let orphan = JobRecord::new_subagent(JobId::generate(), PathBuf::from("/work"), None);
+    let ids = [&session, &workflow, &node, &orphan].map(|record| record.id.clone());
+    for record in [session, workflow, node, orphan] {
+        registry.register(record).unwrap();
+    }
+
+    assert_eq!(
+        ids.map(|id| registry.session_grant(&id)),
+        [
+            Some(limited.clone()),
+            Some(limited.clone()),
+            Some(limited),
+            None
+        ]
     );
 }

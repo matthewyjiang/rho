@@ -19,6 +19,7 @@ fn job(id: &str, kind: JobKind, parent: Option<&str>, session: Option<&str>) -> 
         error: None,
         queue: None,
         grant: None,
+        grant_limit: None,
     }
 }
 

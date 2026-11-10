@@ -1915,7 +1915,18 @@
               "type": "null"
             }
           ],
-          "description": "What the turn under way, or the last one, of a\n[`JobKind::Session`] job may do through session control, as the\ndaemon recorded it from the request that started the turn; before\nthe first turn, what the session opened with. Absent for a turn\nwithout limits, as a person's own are, and for other jobs."
+          "description": "What the turn under way, or the last one, of a\n[`JobKind::Session`] job may do through session control: what the\nrequest that started the turn asked for, held to `grant_limit`;\nbefore the first turn, what the session opened with. Absent for a\nturn without limits, as a person's own are, and for other jobs."
+        },
+        "grant_limit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionGrant"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The most `grant` may be, for a session that opened under a limit, as\none an agent starts through session control does: the grant it\nopened with. The daemon holds every later grant to it, whoever\nprompts the session: no shallower `depth`, no wider `access` or\n`workspaces`. Absent for a session that opened without a limit, as\na person's own does."
         },
         "id": {
           "$ref": "#/$defs/JobId"
@@ -4337,7 +4348,7 @@
               "type": "null"
             }
           ],
-          "description": "What the session may do through session control until a prompt\nbrings another grant; absent, what `environment` carries\n(`RHO_SESSION_DEPTH`, `RHO_SESSION_SCOPE`), which is no limit when\nit carries none. The daemon records it on the session's job as\nnamed: it does not check it against `parent`'s."
+          "description": "What the session may do through session control until a prompt\nbrings another grant; absent, what `environment` carries\n(`RHO_SESSION_DEPTH`, `RHO_SESSION_SCOPE`), which is no limit when\nit carries none. With a `parent` whose session a job of the daemon\nwrites, the session opens with no more than a session that job's\nturn starts may have: at least one level deeper than its grant,\nwith no access or workspace it lacks. A session that opens with a\nlimit keeps it as its job's [`super::JobSummary::grant_limit`]."
         },
         "parent": {
           "anyOf": [
@@ -4506,7 +4517,7 @@
               "type": "null"
             }
           ],
-          "description": "What this turn, and later turns until another prompt, may do\nthrough session control; absent, what `environment` carries, as for\n[`SessionNewParams::grant`]. The daemon records it on the session's\njob when the turn starts."
+          "description": "What this turn, and later turns until another prompt, may do\nthrough session control; absent, what `environment` carries, as for\n[`SessionNewParams::grant`]. The daemon records it on the session's\njob when the turn starts, held to the job's\n[`super::JobSummary::grant_limit`]: a prompt that asks for more than\nthe limit is not refused, its turn runs under the limit."
         },
         "idempotency_key": {
           "anyOf": [

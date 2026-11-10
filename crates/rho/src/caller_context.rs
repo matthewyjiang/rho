@@ -149,6 +149,23 @@ impl CallerContext {
         *self == Self::ROOT
     }
 
+    /// The context of a session this one's turn starts: one level deeper,
+    /// with the same scope.
+    pub(crate) fn child(&self) -> Self {
+        Self {
+            depth: self.depth.saturating_add(1),
+            scope: self.scope.clone(),
+        }
+    }
+
+    /// This context held to `limit`: no shallower, and with no more scope.
+    pub(crate) fn within(&self, limit: &Self) -> Self {
+        Self {
+            depth: self.depth.max(limit.depth),
+            scope: self.scope.intersect(&limit.scope),
+        }
+    }
+
     /// The context in an environment, read through `read`: a process's own,
     /// or a session's. A variable that is set but does not parse is an
     /// error, never the unlimited default.

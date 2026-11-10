@@ -106,12 +106,20 @@ pub struct JobSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<JobId>,
     /// What the turn under way, or the last one, of a
-    /// [`JobKind::Session`] job may do through session control, as the
-    /// daemon recorded it from the request that started the turn; before
-    /// the first turn, what the session opened with. Absent for a turn
-    /// without limits, as a person's own are, and for other jobs.
+    /// [`JobKind::Session`] job may do through session control: what the
+    /// request that started the turn asked for, held to `grant_limit`;
+    /// before the first turn, what the session opened with. Absent for a
+    /// turn without limits, as a person's own are, and for other jobs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant: Option<super::SessionGrant>,
+    /// The most `grant` may be, for a session that opened under a limit, as
+    /// one an agent starts through session control does: the grant it
+    /// opened with. The daemon holds every later grant to it, whoever
+    /// prompts the session: no shallower `depth`, no wider `access` or
+    /// `workspaces`. Absent for a session that opened without a limit, as
+    /// a person's own does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_limit: Option<super::SessionGrant>,
     /// The Rho session the job writes; `None` for a subagent run on another
     /// runtime (Claude, Cursor, Antigravity), which keeps its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]

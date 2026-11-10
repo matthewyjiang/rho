@@ -588,7 +588,15 @@ impl Sessions {
         // Resolved before the session opens, so a malformed parent opens
         // nothing.
         let started_by = parent.map(|parent| self.job_writing(&parent)).transpose()?;
-        let with = OpenWith::under(grant::asked(grant, &environment)?, &environment, setup)?;
+        // A session another one starts opens with no more than its
+        // parent's turn could give. A subagent run writing the parent runs
+        // under its session's grant.
+        let parents = started_by
+            .as_ref()
+            .and_then(Option::as_ref)
+            .and_then(|job| self.jobs.session_grant(job));
+        let opening = grant::opening(grant::asked(grant, &environment)?, parents.as_ref());
+        let with = OpenWith::under(opening, &environment, setup)?;
         let job = JobId::generate();
         let opened = open_session(
             Opening::New { workspace, agent },
@@ -607,6 +615,9 @@ impl Sessions {
                 None => Admission::Immediate,
             },
             parent: started_by.flatten(),
+            // A session that opens under a limit keeps it: no later
+            // prompt widens it (#1796).
+            grant_limit: (!with.grant.is_root()).then(|| with.grant.clone()),
             grant: with.grant,
             ..JobRecord::new_session(
                 job.clone(),
@@ -881,7 +892,8 @@ impl SessionJobRecord {
             }
             (Self::Reuse(record), SessionJob::Last(last)) if last.id == record.id => {
                 // The session reopens with the grant its environment
-                // carries, so its record says the same.
+                // carries, held to the job's limit, so its record says the
+                // same.
                 jobs.set_grant(&record.id, record.grant);
                 Ok(())
             }

@@ -123,12 +123,20 @@ pub(super) struct JobRecord {
     /// for a job a client started.
     pub(super) parent: Option<JobId>,
     /// What a session job's turn under way, or its last, may do through
-    /// session control, as the request that started it said (#1780); before
-    /// the first turn, what the session opened with. The session's
-    /// `RHO_SESSION_*` variables are written from it. Other jobs keep
-    /// [`CallerContext::ROOT`].
+    /// session control, as the request that started it said (#1780), held
+    /// to `grant_limit`; before the first turn, what the session opened
+    /// with. The session's `RHO_SESSION_*` variables are written from it.
+    /// Other jobs keep [`CallerContext::ROOT`].
     #[serde(default = "root_grant", skip_serializing_if = "CallerContext::is_root")]
     pub(super) grant: CallerContext,
+    /// The most `grant` may ever be, for a session that opened under a
+    /// limit, as one an agent starts through session control does (#1796):
+    /// the grant it opened with, which is no more than a session its
+    /// parent's turn starts may have. Set once, when the session opens.
+    /// `None` for a session that opened without a limit, as a person's
+    /// does, which each prompt grants anew, and for other jobs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) grant_limit: Option<CallerContext>,
     /// How a session job's turns get under way; subagent and workflow jobs
     /// keep [`Admission::Immediate`], their runs taking capacity as
     /// `subagents.rs` says.
@@ -220,6 +228,16 @@ impl JobRecord {
         )
     }
 
+    /// The grant a request that asks for `asked` gets on this job: `asked`
+    /// held to the job's limit, if it has one. Every grant the record takes
+    /// after it opens goes through here.
+    pub(super) fn held(&self, asked: CallerContext) -> CallerContext {
+        match &self.grant_limit {
+            Some(limit) => asked.within(limit),
+            None => asked,
+        }
+    }
+
     fn new(
         id: JobId,
         subject: JobSubject,
@@ -235,6 +253,7 @@ impl JobRecord {
             workspace,
             parent,
             grant: CallerContext::ROOT,
+            grant_limit: None,
             admission: Admission::Immediate,
             created_at: now,
             updated_at: now,
