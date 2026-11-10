@@ -1485,6 +1485,13 @@
           ],
           "description": "Where the job waits for capacity, when its state is\n[`JobState::Queued`]."
         },
+        "run": {
+          "description": "The id of the subagent run a [`JobKind::Subagent`] job follows, which\nnames the run's artifact directory under the daemon's rho home.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "session": {
           "anyOf": [
             {
@@ -2874,6 +2881,19 @@
             "kind",
             "text",
             "display"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Read the workspace's agent definitions again and tell the model, from\nits next turn on, which agents it can now delegate to. A client sends\nit after it wrote or removed a definition. Clients see a\n[`super::SessionEvent::Notice`] when the model had to be told.",
+          "properties": {
+            "kind": {
+              "const": "agent_catalog",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
           ],
           "type": "object"
         }

@@ -71,6 +71,7 @@ mod daemon_prompt;
 #[cfg(unix)]
 mod daemon_requests;
 mod daemon_session;
+mod daemon_subagents;
 mod daemon_switch;
 mod daemon_transcript;
 mod daemon_turn;
@@ -668,6 +669,8 @@ struct App {
     daemon_options: Option<rho_protocol::SessionOptions>,
     daemon_option_requests: std::collections::VecDeque<rho_protocol::SessionChange>,
     daemon_title: Option<String>,
+    /// The subagent rail's job-list polling for the daemon session.
+    daemon_rail: daemon_subagents::DaemonRail,
     /// Set by `/title` so auto-title generation cannot overwrite a manual name.
     session_title_locked: bool,
     /// Latest native checklist, mirrored for commands while a turn is running.

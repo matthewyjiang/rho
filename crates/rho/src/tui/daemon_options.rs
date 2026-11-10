@@ -44,6 +44,7 @@ pub(super) fn setting_name(change: &SessionChange) -> &'static str {
         SessionChange::FastMode { .. } => "fast mode",
         SessionChange::PermissionMode { .. } => "permission mode",
         SessionChange::Context { .. } => "session context",
+        SessionChange::AgentCatalog => "agent catalog",
         // `SessionChange` is non-exhaustive; the TUI sends only the above.
         _ => "session setting",
     }

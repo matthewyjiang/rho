@@ -45,14 +45,20 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Title
         | CommandId::Remember
         | CommandId::Side
+        // Reads run artifacts the daemon writes to the shared rho home.
+        | CommandId::Attach
+        // Agent definitions are files; the daemon is told when they change,
+        // and the creator runs as a prompt in its session.
+        | CommandId::Agents
+        | CommandId::CreateAgent
         // The daemon opens the session these follow next.
         | CommandId::New
         | CommandId::Resume
         | CommandId::Sessions => CommandRoute::Ui,
-        // Session navigation and deletion need daemon methods;
-        // config/provider/auth editors, agents and the advisor still own
-        // in-process state. Hubs (/workflow, /attach, /side) likewise
-        // describe the wrong runtime, even when opened read-only.
+        // The conversation tree and rewind need daemon methods;
+        // provider/auth editors and the advisor still own in-process
+        // state. The /workflow hub likewise describes the wrong runtime,
+        // even when opened read-only.
         CommandId::AddDir
         | CommandId::Advisor
         | CommandId::Login
@@ -62,11 +68,8 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Tree
         | CommandId::Context
         | CommandId::Hooks
-        | CommandId::Agents
-        | CommandId::Attach
         | CommandId::Codemode
-        | CommandId::Workflow
-        | CommandId::CreateAgent => CommandRoute::Unavailable,
+        | CommandId::Workflow => CommandRoute::Unavailable,
     }
 }
 

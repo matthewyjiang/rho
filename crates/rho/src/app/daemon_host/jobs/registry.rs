@@ -227,6 +227,7 @@ impl JobRegistry {
                 JobSubject::Session { session: written } if written == session => true,
                 JobSubject::Subagent {
                     session: Some(written),
+                    run: _,
                 } if written == session => false,
                 JobSubject::Session { .. }
                 | JobSubject::Subagent { .. }

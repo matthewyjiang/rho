@@ -85,6 +85,7 @@ impl App {
         self.daemon_option_requests.clear();
         self.daemon_title = None;
         self.daemon_answers = Default::default();
+        self.reset_daemon_rail();
         self.info.session.session_id = opened.saved_id().map(str::to_owned);
         // The session followed until now detaches as its connection drops.
         self.info.session.daemon = Some(opened);

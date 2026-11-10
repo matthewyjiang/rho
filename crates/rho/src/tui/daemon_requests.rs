@@ -17,10 +17,10 @@
 use std::{future::Future, sync::Arc};
 
 use rho_protocol::{
-    methods::{SessionConfigure, SessionMcp, SessionPrompt, SessionRename},
-    ClientEnvironment, ClientError, ContentBlock, ErrorCode, IdempotencyKey, SessionChange,
-    SessionConfigureParams, SessionGoalAction, SessionId, SessionMcpParams, SessionPromptParams,
-    SessionRenameParams,
+    methods::{JobList, SessionConfigure, SessionMcp, SessionPrompt, SessionRename},
+    ClientEnvironment, ClientError, ContentBlock, ErrorCode, IdempotencyKey, JobListParams,
+    SessionChange, SessionConfigureParams, SessionGoalAction, SessionId, SessionMcpParams,
+    SessionPromptParams, SessionRenameParams,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -105,6 +105,7 @@ enum Control {
     Mcp,
     Goal(SessionGoalAction),
     Rename(String),
+    Jobs,
 }
 
 pub(super) struct DaemonRequests {
@@ -167,6 +168,19 @@ impl DaemonRequests {
                         let _ = control_views.send(DaemonView::Error(format!(
                             "could not {verb} the goal: {error}"
                         )));
+                    }
+                    Control::Jobs => {
+                        let answer = on_attachment(&mut control_target, |link, _| async move {
+                            link.request::<JobList>(&JobListParams {}).await
+                        })
+                        .await;
+                        let jobs = match answer {
+                            Some((_, answer)) => answer
+                                .map(|answer| answer.jobs)
+                                .map_err(|error| error.to_string()),
+                            None => Err(LOST.to_owned()),
+                        };
+                        let _ = control_views.send(DaemonView::Jobs(jobs));
                     }
                     Control::Rename(title) => {
                         let answer = on_attachment(&mut control_target, |link, session| {
@@ -273,6 +287,12 @@ impl DaemonRequests {
     pub(super) fn goal(&self, action: SessionGoalAction) -> anyhow::Result<()> {
         self.control
             .send(Control::Goal(action))
+            .map_err(|_| anyhow::anyhow!(LOST))
+    }
+
+    pub(super) fn request_jobs(&self) -> anyhow::Result<()> {
+        self.control
+            .send(Control::Jobs)
             .map_err(|_| anyhow::anyhow!(LOST))
     }
 

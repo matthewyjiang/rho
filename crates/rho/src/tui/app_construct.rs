@@ -149,6 +149,7 @@ impl App {
             daemon_options: None,
             daemon_option_requests: std::collections::VecDeque::new(),
             daemon_title: None,
+            daemon_rail: Default::default(),
             session_title_locked: false,
             todo_list: None,
             clipboard: Box::new(SystemClipboard::default()),

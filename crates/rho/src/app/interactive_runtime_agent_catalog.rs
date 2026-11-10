@@ -1,26 +1,12 @@
 //! Keep the model's view of the delegable agent catalog current by appending
 //! corrections, never by rewriting the tool schema or prior history.
 
-use rho_sdk::model::{ContentBlock, Message};
-
-use crate::agent::{AdvertisedAgents, AdvertisedChange, AgentCatalog};
+use crate::{
+    agent::{AdvertisedAgents, AgentCatalog},
+    app::session_runtime::agent_catalog::{recorded_changes, CONTEXT_PREFIX, DISPLAY},
+};
 
 use super::InteractiveRuntime;
-
-const CONTEXT_PREFIX: &str = "[agent catalog updated]\n";
-const DISPLAY: &str = "agent catalog updated for future delegated calls";
-
-/// Corrections a recorded notice carried. Matches only the exact single-text
-/// shape [`Message::user_text`] writes, so ordinary prompts stay prompts.
-fn recorded_changes(message: &Message) -> Option<Vec<AdvertisedChange>> {
-    let Message::User(blocks) = message else {
-        return None;
-    };
-    let [ContentBlock::Text(text)] = blocks.as_slice() else {
-        return None;
-    };
-    serde_json::from_str(text.strip_prefix(CONTEXT_PREFIX)?).ok()
-}
 
 impl InteractiveRuntime {
     /// The catalog as the model last saw it: the `agent` tool spec plus every

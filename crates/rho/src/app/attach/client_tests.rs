@@ -13,6 +13,7 @@ fn job(id: &str, kind: JobKind, parent: Option<&str>, session: Option<&str>) -> 
         workspace: PathBuf::from(format!("/work/{id}")),
         parent: parent.map(JobId::new),
         session: session.map(SessionId::new),
+        run: None,
         workflow_run: None,
         created_at: 0,
         updated_at: 0,

@@ -1,5 +1,6 @@
 //! The event pump for one turn: SDK run events, approval requests, plan
-//! approvals, questions for the user, and applied background results,
+//! approvals, questions for the user, the session's subagents' questions
+//! among them, and applied background results,
 //! reported to the host in arrival order as [`SessionEvent`]s, with the
 //! host's [`TurnControl`] answers routed back to whatever asked.
 //!
@@ -19,7 +20,7 @@ use rho_sdk::{
     hooks::HookDispatcher, ApprovalRequestReceiver, CancellationToken, HostInputId,
     HostInputRefusal, HostInputResponse, PendingApproval, RunEvent, SessionId, UserInput,
 };
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
 use super::{
     delegation::OfferedDisplays,
@@ -32,6 +33,7 @@ use super::{
     QuestionSupport,
 };
 use crate::{
+    app::subagent_host_input::SubagentHostInputRequest,
     display_transcript::DisplayTranscript,
     tools::plan_exit::{PlanPermissionAnswer, PlanPermissionReceiver, PlanPermissionRequest},
 };
@@ -116,6 +118,9 @@ pub(super) struct PumpSources<'a> {
     /// client finds it open.
     pub(super) hooks: HookDispatcher,
     pub(super) session: &'a SessionId,
+    /// Questions the session's subagents ask, which wait for the same
+    /// person; `None` when the session runs no subagents of its own.
+    pub(super) child_questions: Option<&'a mut mpsc::Receiver<SubagentHostInputRequest>>,
 }
 
 /// Background results handed to the model during one turn. Each is shown
@@ -151,9 +156,15 @@ struct Pending {
     approvals: BTreeMap<ApprovalId, PendingApproval>,
     plans: BTreeMap<PlanApprovalId, oneshot::Sender<PlanPermissionAnswer>>,
     questions: BTreeSet<HostInputId>,
+    /// Where each open subagent question's answer goes. Dropping one tells
+    /// the subagent nobody will answer.
+    child_questions: BTreeMap<HostInputId, ChildReply>,
     next_approval: u64,
     next_plan: u64,
 }
+
+/// Takes a subagent's answer to its question.
+type ChildReply = oneshot::Sender<Result<HostInputResponse, rho_sdk::Error>>;
 
 /// Runs the turn's sources until the run's events end and no approval waits
 /// on the host. Fails only when the host reports it could not deliver
@@ -168,6 +179,7 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
         mut displays,
         hooks,
         session,
+        mut child_questions,
     } = sources;
     let mut cancelled = cancel.is_cancelled();
     let mut events_open = true;
@@ -194,13 +206,13 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                     io.emit(SessionEvent::PlanApprovalWithdrawn { id });
                 }
                 // The run's cancellation ends the questions themselves.
-                withdraw_questions(&mut pending.questions, io);
+                withdraw_questions(&mut pending, io);
             }
 
             event = events.next(), if events_open => {
                 let Some(event) = event else {
                     events_open = false;
-                    withdraw_questions(&mut pending.questions, io);
+                    withdraw_questions(&mut pending, io);
                     io.emit(SessionEvent::RunClosed);
                     continue;
                 };
@@ -260,6 +272,35 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                 pending.approvals.insert(id, approval);
             }
 
+            asked = next_child_question(child_questions.as_deref_mut()), if events_open => {
+                let Some(asked) = asked else {
+                    child_questions = None;
+                    continue;
+                };
+                // Dropping the reply tells the subagent nobody will answer:
+                // the turn is ending, or its host cannot ask a person.
+                if cancelled || questions == QuestionSupport::Unavailable {
+                    continue;
+                }
+                let SubagentHostInputRequest {
+                    run_id,
+                    agent_id,
+                    parent_session_id: _,
+                    request,
+                    response,
+                } = asked;
+                io.emit(SessionEvent::Notice {
+                    text: format!("agent {run_id} ({agent_id}) asks: {}", request.title()),
+                });
+                io.emit(SessionEvent::QuestionAsked {
+                    id: request.id().clone(),
+                    call_id: None,
+                    request: request.clone(),
+                });
+                hooks.question_requested(session, &request);
+                pending.child_questions.insert(request.id().clone(), response);
+            }
+
             request = next_plan_approval(plan_approvals.as_deref_mut()), if events_open => {
                 let Some(request) = request else {
                     plan_approvals = None;
@@ -299,6 +340,18 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                 Some(TurnControl::AnswerQuestion { id, answer }) => {
                     if pending.questions.remove(&id) {
                         events.answer(id, answer);
+                    } else if let Some(reply) = pending.child_questions.remove(&id) {
+                        let _ = reply.send(answer.map_err(|refusal| rho_sdk::Error::Interrupted {
+                            message: match refusal {
+                                HostInputRefusal::Declined => {
+                                    "delegated questionnaire declined by user"
+                                }
+                                // `Dismissed`, or a refusal added later.
+                                _ => "delegated questionnaire cancelled by user",
+                            }
+                            .into(),
+                            source: None,
+                        }));
                     }
                 }
                 Some(TurnControl::HostFailed { message }) => return Err(anyhow::Error::msg(message)),
@@ -319,9 +372,23 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
     }
 }
 
-fn withdraw_questions(questions: &mut BTreeSet<HostInputId>, io: &TurnIo) {
-    for id in std::mem::take(questions) {
+/// Stops waiting on every open question, the run's and its subagents'.
+fn withdraw_questions(pending: &mut Pending, io: &TurnIo) {
+    let children = std::mem::take(&mut pending.child_questions).into_keys();
+    for id in std::mem::take(&mut pending.questions)
+        .into_iter()
+        .chain(children)
+    {
         io.emit(SessionEvent::QuestionWithdrawn { id });
+    }
+}
+
+async fn next_child_question(
+    questions: Option<&mut mpsc::Receiver<SubagentHostInputRequest>>,
+) -> Option<SubagentHostInputRequest> {
+    match questions {
+        Some(questions) => questions.recv().await,
+        None => std::future::pending().await,
     }
 }
 

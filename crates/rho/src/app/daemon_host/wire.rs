@@ -81,11 +81,12 @@ pub(super) fn job_summary(record: JobRecord, queue: Option<QueuePlace>) -> wire:
         outcome: _,
         turn: _,
     } = record;
-    let (kind, session, workflow_run) = match subject {
-        JobSubject::Session { session } => (wire::JobKind::Session, Some(session), None),
-        JobSubject::Subagent { session } => (wire::JobKind::Subagent, session, None),
+    let (kind, session, run, workflow_run) = match subject {
+        JobSubject::Session { session } => (wire::JobKind::Session, Some(session), None, None),
+        JobSubject::Subagent { session, run } => (wire::JobKind::Subagent, session, run, None),
         JobSubject::Workflow { workflow_run } => (
             wire::JobKind::Workflow,
+            None,
             None,
             Some(workflow_run.to_string()),
         ),
@@ -97,6 +98,7 @@ pub(super) fn job_summary(record: JobRecord, queue: Option<QueuePlace>) -> wire:
         workspace,
         parent: parent.as_ref().map(Into::into),
         session: session.map(session_to_wire),
+        run,
         workflow_run,
         created_at,
         updated_at,

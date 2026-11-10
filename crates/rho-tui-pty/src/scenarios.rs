@@ -685,6 +685,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     daemon_switch::SCENARIO,
     #[cfg(unix)]
+    subagent_rail::DAEMON_SUBAGENT_RAIL_SCENARIO,
+    #[cfg(unix)]
     daemon_restart::SCENARIO,
     #[cfg(unix)]
     daemon_goal::SCENARIO,

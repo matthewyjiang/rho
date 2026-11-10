@@ -32,13 +32,15 @@ use crate::{
     permission::PermissionMode,
 };
 
-/// A change this daemon knows how to apply.
+/// A change this daemon knows how to apply. Applying one may leave a notice
+/// to tell the session's clients.
 enum Change {
     Model(wire::ModelRef),
     Reasoning(ReasoningLevel),
     FastMode { enabled: bool },
     PermissionMode(PermissionMode),
     Context { text: String, display: String },
+    AgentCatalog,
 }
 
 impl Sessions {
@@ -94,7 +96,11 @@ impl Sessions {
         let applied = change
             .apply(runtime, &session.config, &auths)
             .await
-            .and_then(|()| {
+            .and_then(|notice| {
+                // Told live; a later reset replays the row it saved.
+                session
+                    .feed
+                    .publish(notice.map(|text| wire::SessionEvent::Notice { text: text.into() }));
                 runtime.keep_settings().map_err(|error| {
                     RpcError::new(
                         ErrorCode::InternalError,
@@ -128,6 +134,7 @@ impl Change {
                 Err(invalid("context to add must not be empty"))
             }
             wire::SessionChange::Context { text, display } => Ok(Self::Context { text, display }),
+            wire::SessionChange::AgentCatalog => Ok(Self::AgentCatalog),
             // A change of a later protocol minor fails to decode before it
             // gets here; the arm keeps the match open to new variants.
             _ => Err(invalid("unknown change")),
@@ -139,8 +146,13 @@ impl Change {
         runtime: &mut SessionRuntime,
         config: &Config,
         auths: &[String],
-    ) -> Result<(), RpcError> {
+    ) -> Result<Option<&'static str>, RpcError> {
         let applied = match self {
+            Self::AgentCatalog => {
+                return runtime
+                    .sync_agent_catalog()
+                    .map_err(|error| setting_error(SettingChangeError::Apply(error)))
+            }
             Self::Model(model) => {
                 let selection = model_selection(runtime, &model, auths)?;
                 runtime.switch_model(&selection, config).await
@@ -153,7 +165,7 @@ impl Change {
                 .map(|_| ())
                 .map_err(SettingChangeError::Apply),
         };
-        applied.map_err(setting_error)
+        applied.map(|()| None).map_err(setting_error)
     }
 }
 

@@ -215,6 +215,7 @@ fn a_session_reopens_on_its_latest_job_unless_one_writes_it() {
             JobId::generate(),
             PathBuf::from("/work"),
             Some(session.clone()),
+            "run".into(),
         )
     };
     let other = JobRecord::new_session(
