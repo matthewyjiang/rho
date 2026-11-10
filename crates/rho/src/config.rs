@@ -681,10 +681,15 @@ pub(crate) struct NextTurnChanges {
     allow(dead_code, reason = "the unix-only daemon applies them")
 )]
 impl Config {
-    /// Takes from `global` every setting that reaches a loaded session at
-    /// its next turn (`Apply::NextTurn` in the registry), keeping the rest of
-    /// this session's config, and reports what changed.
-    pub(crate) fn take_next_turn_settings(&mut self, global: &Config) -> NextTurnChanges {
+    /// Takes every setting that reaches a loaded session at its next turn
+    /// (`Apply::NextTurn` in the registry) and changed in the global config
+    /// from `was` to `now`, keeping the rest of this session's config,
+    /// its agent's own values included, and reports what changed here.
+    pub(crate) fn take_next_turn_settings(
+        &mut self,
+        was: &Config,
+        now: &Config,
+    ) -> NextTurnChanges {
         use crate::agent::ADVISOR_AGENT_ID;
         let advisor = |config: &Config| {
             (
@@ -699,25 +704,28 @@ impl Config {
                 config.compact_target_percent,
             )
         };
-        let changes = NextTurnChanges {
-            advisor: advisor(self) != advisor(global),
-            compaction: compaction(self) != compaction(global),
-        };
-        self.advisor_mode = global.advisor_mode;
-        match global.internal_agents.get(ADVISOR_AGENT_ID) {
-            Some(selection) => {
-                self.internal_agents
-                    .insert(ADVISOR_AGENT_ID.into(), selection.clone());
-            }
-            None => {
-                self.internal_agents.remove(ADVISOR_AGENT_ID);
+        let mut changes = NextTurnChanges::default();
+        if advisor(was) != advisor(now) {
+            changes.advisor = advisor(self) != advisor(now);
+            self.advisor_mode = now.advisor_mode;
+            match now.internal_agents.get(ADVISOR_AGENT_ID) {
+                Some(selection) => {
+                    self.internal_agents
+                        .insert(ADVISOR_AGENT_ID.into(), selection.clone());
+                }
+                None => {
+                    self.internal_agents.remove(ADVISOR_AGENT_ID);
+                }
             }
         }
-        (
-            self.auto_compact,
-            self.compact_threshold_percent,
-            self.compact_target_percent,
-        ) = compaction(global);
+        if compaction(was) != compaction(now) {
+            changes.compaction = compaction(self) != compaction(now);
+            (
+                self.auto_compact,
+                self.compact_threshold_percent,
+                self.compact_target_percent,
+            ) = compaction(now);
+        }
         changes
     }
 }

@@ -531,7 +531,7 @@ reasoning = "high"
     );
 
     let mut session = session;
-    let changes = session.take_next_turn_settings(&global);
+    let changes = session.take_next_turn_settings(&Config::default(), &global);
     let missed = next_turn
         .iter()
         .filter(|setting| setting.differs(&session, &global))
@@ -544,5 +544,44 @@ reasoning = "high"
             advisor: true,
             compaction: true,
         }
+    );
+}
+
+// Covers: a loaded session takes only the next-turn settings the global
+// config changed: a re-read that changed nothing, or changed only other
+// settings, keeps the session's own values, such as its agent's; a group
+// that changed globally replaces the session's (#1720).
+// Owner: config registry.
+#[test]
+fn next_turn_settings_take_only_what_changed_globally() {
+    let parse = |text: &str| Config::parse_settings(text).unwrap();
+    let was = parse("[compaction]\ncompact_threshold_percent = 70\n");
+    // The session's agent runs its own threshold and the advisor.
+    let own =
+        parse("[behavior]\nadvisor_mode = true\n[compaction]\ncompact_threshold_percent = 60\n");
+    let threshold = |config: &Config| (config.advisor_mode, config.compact_threshold_percent);
+    let take = |now: &Config| {
+        let mut session = own.clone();
+        let changes = session.take_next_turn_settings(&was, now);
+        (threshold(&session), changes)
+    };
+    let changed = |advisor, compaction| super::NextTurnChanges {
+        advisor,
+        compaction,
+    };
+
+    assert_eq!(
+        [
+            take(&was.clone()),
+            take(&parse(
+                "[behavior]\nrtk = false\n[compaction]\ncompact_threshold_percent = 70\n"
+            )),
+            take(&parse("[compaction]\ncompact_threshold_percent = 80\n")),
+        ],
+        [
+            ((true, 60), changed(false, false)),
+            ((true, 60), changed(false, false)),
+            ((true, 80), changed(false, true)),
+        ]
     );
 }
