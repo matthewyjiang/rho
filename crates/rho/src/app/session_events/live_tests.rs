@@ -735,6 +735,43 @@ fn usage_reports_the_configured_window() {
     );
 }
 
+// Covers: a streamed card held back for its arguments to grow is the
+// host's to send when the stream pauses, once, under the call's id.
+// Owner: session event live mapping
+#[test]
+fn a_held_streamed_card_goes_out_when_the_host_asks() {
+    let tool_set = AppToolSet::disabled();
+    let mut live = live(&tool_set);
+    let streamed = |arguments: &str| {
+        SessionEvent::Run(RunEvent::ToolCallUpdated {
+            index: 0,
+            id: Some("call-1".to_owned()),
+            name: Some("bash".to_owned()),
+            arguments_delta: arguments.to_owned(),
+        })
+    };
+    let opened = map_all(&mut live, &[streamed(r#"{"command":"l"#)]);
+    let [WireEvent::ToolCall(opened)] = opened.as_slice() else {
+        panic!("expected the call to open: {opened:?}");
+    };
+    // Too little more to send by itself.
+    assert_eq!(map_all(&mut live, &[streamed("s")]), Vec::new());
+    assert!(live.holds_previews());
+
+    let held = live.held_previews();
+    let [WireEvent::ToolCall(update)] = held.as_slice() else {
+        panic!("expected the held card: {held:?}");
+    };
+    assert_eq!(
+        (&update.id, update.status, update.display.is_some()),
+        (&opened.id, None, true)
+    );
+    assert_eq!(
+        (live.holds_previews(), live.held_previews()),
+        (false, Vec::new())
+    );
+}
+
 // Covers: a host that prices a streaming response gets the step's context
 // fill again, and none before any step reported one.
 // Owner: session event live mapping

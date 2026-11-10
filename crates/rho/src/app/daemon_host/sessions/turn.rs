@@ -660,7 +660,24 @@ impl DaemonView {
         control: mpsc::UnboundedSender<TurnControl>,
         mut cost: cost::TurnCost,
     ) {
-        while let Some(event) = events.recv().await {
+        loop {
+            // A streamed card held back for more arguments goes out when
+            // the stream pauses instead.
+            let event = if self.session.live().holds_previews() {
+                match tokio::time::timeout(PREVIEW_PAUSE, events.recv()).await {
+                    Ok(event) => event,
+                    Err(_) => {
+                        let held = self.session.live().held_previews();
+                        self.session.feed.publish(held);
+                        continue;
+                    }
+                }
+            } else {
+                events.recv().await
+            };
+            let Some(event) = event else {
+                break;
+            };
             let wire = {
                 let mut live = self.session.live();
                 let mut wire = live.map(&event);
@@ -679,6 +696,12 @@ impl DaemonView {
         }
     }
 }
+
+/// How long a model's stream may pause before the card of what it wrote
+/// last is sent though its arguments grew little: long enough that a card
+/// per pause stays at four a second for a stream that only trickles, short
+/// enough to read as the stream itself.
+const PREVIEW_PAUSE: std::time::Duration = std::time::Duration::from_millis(250);
 
 impl Drop for DaemonView {
     fn drop(&mut self) {
