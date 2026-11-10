@@ -64,6 +64,7 @@ mod daemon_goal;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod daemon_inputs;
 mod daemon_jobs;
+mod daemon_launch;
 mod daemon_login;
 mod daemon_options;
 mod daemon_prompt;
@@ -518,9 +519,9 @@ pub struct ApplicationServices {
     pub herdr: HerdrReporter,
 }
 pub(crate) use attachment::translate_run_event;
-pub(crate) use daemon_session::DaemonSession;
 #[cfg(unix)]
-pub(crate) use daemon_session::{DaemonLaunch, DaemonTarget, InitialSettings};
+pub(crate) use daemon_launch::{DaemonLaunch, DaemonTarget, InitialSettings, LaunchChange};
+pub(crate) use daemon_session::DaemonSession;
 pub(crate) use exit_receipt::{print_exit_receipt, ExitReceipt};
 pub use herdr_resume::ResumeLaunchOptions;
 

@@ -654,17 +654,16 @@ async fn a_session_opened_without_saving_leaves_no_file() {
         without: BTreeSet::from([SessionPart::Saving]),
         ..SessionSetup::default()
     };
-    let kept = new_session(&sandbox, &client, None, SessionSetup::default())
-        .await
-        .unwrap();
-    let ephemeral = new_session(&sandbox, &client, None, unsaved.clone())
-        .await
-        .unwrap();
+    // Each prompted as it opens: one that sits unprompted is discarded.
+    let mut opened = Vec::new();
     let mut answered = Vec::new();
-    for session in [&kept, &ephemeral] {
-        let (outcome, _events) = turn(&sandbox, &client, session, "hello").await;
+    for setup in [SessionSetup::default(), unsaved.clone()] {
+        let session = new_session(&sandbox, &client, None, setup).await.unwrap();
+        let (outcome, _events) = turn(&sandbox, &client, &session, "hello").await;
         answered.push(matches!(outcome, TurnOutcome::Answered { .. }));
+        opened.push(session);
     }
+    let [kept, ephemeral] = <[SessionId; 2]>::try_from(opened).unwrap();
     let listed: Vec<_> = client
         .request::<SessionList>(&SessionListParams::default())
         .await

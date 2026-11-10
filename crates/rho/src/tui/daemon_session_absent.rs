@@ -1,7 +1,7 @@
 //! The daemon session where there is no daemon (#1665): uninhabited, so the
 //! TUI's daemon paths compile and never run.
 
-use super::{DaemonTarget, DaemonView};
+use super::{super::daemon_launch::DaemonTarget, DaemonView};
 
 pub(crate) enum DaemonSession {}
 

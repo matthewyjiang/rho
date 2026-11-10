@@ -66,6 +66,21 @@ impl SavedAgent {
     }
 }
 
+/// Whether `definition` is the agent the session file at `path` was saved
+/// as.
+pub(super) fn validate(
+    path: &Path,
+    definition: &crate::agent::AgentDefinition,
+) -> anyhow::Result<()> {
+    let selected_id = definition.id.as_str();
+    let Some((id, fingerprint)) = read_agent_identity(path)? else {
+        anyhow::bail!(
+            "cannot resume this session as agent '{selected_id}': the session has no stored agent definition identity"
+        );
+    };
+    SavedAgent { id, fingerprint }.validate(definition)
+}
+
 fn read_header(path: &Path) -> anyhow::Result<SessionEntry> {
     let file = fs::File::open(path)?;
     let line = BufReader::new(file)

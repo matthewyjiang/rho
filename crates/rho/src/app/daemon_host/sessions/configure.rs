@@ -27,7 +27,7 @@ use rho_sdk::{model::Message, ReasoningLevel};
 use super::{being_deleted, options::available_auths, queued::Queued, stopping, Held, Sessions};
 use crate::{
     app::{
-        session_options::{reasoning_from_wire, resolve_model, resolve_model_on},
+        session_options::{reasoning_from_wire, resolve_model, AuthPick},
         session_runtime::{
             AddDirError, RewindError, RewoundConversation, SelectNodeError, SessionRuntime,
             SettingChangeError,
@@ -312,12 +312,14 @@ fn model_selection(
     auth: Option<&str>,
     auths: &[String],
 ) -> Result<ModelSelection, RpcError> {
-    let current = runtime.current_model();
-    let resolved = match auth {
-        Some(auth) => resolve_model_on(&model.provider, &model.model, auth, &current),
-        None => resolve_model(&model.provider, &model.model, &current, auths),
-    };
-    resolved.map_err(|refused| invalid(refused.to_string()))
+    let auth = auth.map_or(AuthPick::AnyOf(auths), AuthPick::Named);
+    resolve_model(
+        &model.provider,
+        &model.model,
+        &runtime.current_model(),
+        auth,
+    )
+    .map_err(|refused| invalid(refused.to_string()))
 }
 
 /// The error a refused change answers; the session keeps its old setting.

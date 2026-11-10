@@ -17,13 +17,13 @@ pub(super) const NO_SAVE_SESSION_SCENARIO: Scenario = Scenario::new(
     "Keep startup and subsequent prompts unsaved across /new",
     SIZE,
     STEPS,
-    true,
+    /*smoke*/ true,
 )
 .with_args(ARGS);
 
 // Covers: the same boundary when the session runs in the daemon, which
-// keeps it in memory alone: nothing of it reaches disk, and /new opens
-// another unsaved session.
+// keeps it in memory alone: no file under the Rho home holds a prompt or an
+// answer, and /new opens another unsaved session.
 // Owner: interactive TUI as a daemon client
 #[cfg(unix)]
 pub(super) const DAEMON_NO_SAVE_SESSION_SCENARIO: Scenario = Scenario::new(
@@ -129,5 +129,28 @@ fn assert_no_conversation_files(harness: &mut PtyHarness) -> Result<()> {
             entry.path().display()
         );
     }
+    // Wherever a file is, it holds none of the conversation: every prompt
+    // and answer of the scenario says `private`.
+    let mut pending = vec![root];
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(directory)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                pending.push(entry.path());
+            } else if entry.file_type()?.is_file() {
+                let held = std::fs::read(entry.path())?;
+                ensure!(
+                    !held
+                        .windows(CONVERSATION.len())
+                        .any(|bytes| bytes == CONVERSATION),
+                    "--no-save wrote the conversation to {}",
+                    entry.path().display()
+                );
+            }
+        }
+    }
     Ok(())
 }
+
+/// What every prompt and answer of the scenario holds.
+const CONVERSATION: &[u8] = b"private ";

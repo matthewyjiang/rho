@@ -42,7 +42,7 @@ pub(super) async fn open(
 ) -> anyhow::Result<tui::DaemonSession> {
     use rho_protocol::{ChildThreads, ModelRef, SessionChange, SessionPart, SessionSetup};
 
-    use crate::{app::session_options::reasoning_to_wire, session::Session};
+    use crate::{app::session_options::reasoning_to_wire, session::Session, tui::LaunchChange};
 
     let Cli {
         provider,
@@ -75,27 +75,33 @@ pub(super) async fn open(
     }
 
     // A model first, since it decides which reasoning levels it may take.
-    // `--auth` may name another provider's profile, which the launch's
-    // config then holds.
     let mut changes = Vec::new();
-    if provider.is_some() || model.is_some() || auth.is_some() {
-        changes.push(SessionChange::Model {
-            model: ModelRef {
-                provider: config.provider.clone(),
-                model: config.model.clone(),
-            },
+    let launch_model = || ModelRef {
+        provider: config.provider.clone(),
+        model: config.model.clone(),
+    };
+    match (provider.is_some() || model.is_some(), auth) {
+        (true, _) => changes.push(LaunchChange::Change(SessionChange::Model {
+            model: launch_model(),
             auth: auth.is_some().then(|| config.auth.clone()),
-        });
+        })),
+        // The flag may name another provider's profile, which the launch's
+        // config then holds.
+        (false, Some(_)) => changes.push(LaunchChange::Auth {
+            auth: config.auth.clone(),
+            on: launch_model(),
+        }),
+        (false, None) => {}
     }
     if reasoning.is_some() {
-        changes.push(SessionChange::Reasoning {
+        changes.push(LaunchChange::Change(SessionChange::Reasoning {
             level: reasoning_to_wire(config.reasoning),
-        });
+        }));
     }
     if permission_mode.is_some() {
-        changes.push(SessionChange::PermissionMode {
+        changes.push(LaunchChange::Change(SessionChange::PermissionMode {
             mode: config.permission_mode.into(),
-        });
+        }));
     }
 
     let without = [
@@ -148,7 +154,10 @@ fn resumed(
     bound: &BoundAgent,
 ) -> anyhow::Result<tui::DaemonTarget> {
     if agent.is_some() {
-        crate::session::Session::validate_saved_agent(&session, bound.definition())?;
+        crate::session::Session::validate_agent_definition_identity_of(
+            &session,
+            bound.definition(),
+        )?;
     }
     Ok(tui::DaemonTarget::Resume(rho_protocol::SessionId::new(
         session.id,

@@ -103,9 +103,6 @@ fn reasoning_and_plan_exit(request: &Value) -> (String, bool) {
 // the daemon runs; a permission-mode and a reasoning change each answer
 // with the options as they are now, which an attached client receives as
 // `options_changed`, and the next turn's model request runs with both. A
-// model change that names an auth runs the switch on that auth, which fails
-// here for want of its key, and is invalid params when the provider does
-// not take the auth. A
 // change the session cannot take, or one this daemon does not know, is
 // refused as invalid params and changes nothing (#1667, #1670).
 // Owner: daemon session settings.
@@ -184,14 +181,7 @@ async fn a_change_reaches_attached_clients_and_the_next_turn() {
     assert_eq!(reasoned, Ok(expected.clone()));
     assert_eq!(next_options(&mut notifications, &session).await, expected);
 
-    let on_auth = |auth: &str| SessionChange::Model {
-        model: before.model.current.clone(),
-        auth: Some(auth.to_owned()),
-    };
     let refused = [
-        // The session runs on `xai-oauth`; the sandbox holds no xAI key.
-        on_auth("xai-api-key"),
-        on_auth("codex"),
         SessionChange::FastMode { enabled: true },
         SessionChange::PermissionMode {
             mode: PermissionMode::Unknown,
@@ -204,14 +194,6 @@ async fn a_change_reaches_attached_clients_and_the_next_turn() {
     assert_eq!(
         errors,
         [
-            Err(RpcError::new(
-                ErrorCode::InternalError,
-                "could not change the session's settings: missing SpaceXAI API key; run /login xai in the TUI or set XAI_API_KEY as a CI/dev override",
-            )),
-            Err(RpcError::new(
-                ErrorCode::InvalidParams,
-                "provider 'xai' does not take auth 'codex' (value 'xai/grok-fixture')",
-            )),
             Err(RpcError::new(
                 ErrorCode::InvalidParams,
                 "fast mode is not available for xai/grok-fixture",
@@ -227,6 +209,59 @@ async fn a_change_reaches_attached_clients_and_the_next_turn() {
     assert_eq!(
         reasoning_and_plan_exit(&next_request(&mut notifications, &session).await),
         ("high".to_owned(), true),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a model change that names an auth moves the session to it, as
+// `--auth` asks, and one the model does not run on is invalid params and
+// changes nothing.
+// Owner: daemon session settings.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_model_change_runs_the_session_on_the_auth_it_names() {
+    let sandbox = Sandbox::new();
+    let client = sandbox.start_daemon("inspect").await;
+    // The session runs on `xai-oauth`; its client also holds an xAI key.
+    let environment = sandbox
+        .isolated
+        .command_env()
+        .into_iter()
+        .chain([("XAI_API_KEY".into(), "sk-test".into())])
+        .collect();
+    let opened = client
+        .request::<SessionNew>(&SessionNewParams {
+            cwd: sandbox.workspace.clone(),
+            environment,
+            agent: None,
+            setup: SessionSetup::default(),
+            parent: None,
+            grant: None,
+        })
+        .await
+        .unwrap();
+    let on_auth = |auth: &str| SessionChange::Model {
+        model: opened.options.model.current.clone(),
+        auth: Some(auth.to_owned()),
+    };
+
+    let refused = configure(&client, &opened.session, on_auth("codex")).await;
+    let moved = configure(&client, &opened.session, on_auth("xai-api-key")).await;
+
+    assert_eq!(
+        (
+            opened.options.model.auth.as_str(),
+            refused,
+            moved.map(|options| options.model.auth),
+        ),
+        (
+            "xai-oauth",
+            Err(RpcError::new(
+                ErrorCode::InvalidParams,
+                "model 'xai/grok-fixture' does not run on auth 'codex'",
+            )),
+            Ok("xai-api-key".to_owned()),
+        ),
         "log:\n{}",
         sandbox.isolated.daemon_log()
     );

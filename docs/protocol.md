@@ -108,9 +108,9 @@ A prompt with no blocks gets `InvalidParams`, as does one with an image whose `d
 
 The session keeps its directories and the parts it leaves out, other than `questions`, in its file, so they outlast the daemon unloading it. A prompt or attach that reopens a saved session opens it with the directories it saved that still exist and the parts it saved as left out, plus those its own `setup` names: a later client can narrow a session further, never widen it. MCP servers, `questions`, and `child_threads` belong to the client, since a server's `env` and `headers` may hold secrets and `host` child threads go through the client's MCP server: the daemon never saves them, so a reopened session has only those of the attach that reopens it, and none when a prompt reopens it, since a prompt carries no setup. A saved directory that no longer exists is dropped, and the daemon logs a warning naming it. A session `rho run` or `rho acp` saved keeps what their `--no-*` flags left out the same way; one the TUI started leaves nothing out.
 
-A new session opened without `saving` lives in the daemon's memory alone: `rho/session/list` never lists it, the daemon keeps it while a client follows it or it has work under way and discards it once it sits idle, and a daemon restart loses it. A saved session cannot be reopened without `saving`; the request gets `InvalidParams`.
-
 That guarantee holds across the daemon's reopens, so it covers `rho acp` sessions, which run in the daemon. The TUI, which opens a session file in its own process, keeps what a session saved but does not save its own `--no-*` flags; it becomes a daemon client in [#1667](https://github.com/matthewyjiang/rho/issues/1667).
+
+A new session opened without `saving` lives in the daemon's memory alone, and so do its job's record and those of the jobs it starts: `rho/session/list` never lists it, the daemon keeps it while a client follows it or it has work under way and discards it once it sits idle, and a daemon restart loses it. `saving` is read when a session opens: a request that reopens a saved session without it gets `InvalidParams`.
 
 ## Following a session
 

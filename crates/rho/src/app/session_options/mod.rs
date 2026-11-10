@@ -29,7 +29,7 @@ mod models;
 mod reasoning;
 
 pub(crate) use commands::available_commands;
-pub(crate) use models::{resolve_model, resolve_model_on};
+pub(crate) use models::{resolve_model, AuthPick};
 pub(crate) use reasoning::{reasoning_from_wire, reasoning_to_wire};
 
 /// `runtime`'s options now: the choices `process_config` gives it, the

@@ -51,8 +51,8 @@ use rho_sdk::{CancellationToken, SessionId};
 
 use super::{
     jobs::{
-        Admission, JobEvent, JobId, JobRecord, JobRegistry, RegisterError, SessionJob, TurnEnd,
-        TurnRecord,
+        Admission, JobEvent, JobId, JobRecord, JobRegistry, Keeping, RegisterError, SessionJob,
+        TurnEnd, TurnRecord,
     },
     subagents::Subagents,
     wire::{session_to_wire, state_event},
@@ -616,6 +616,10 @@ impl Sessions {
                 None => Admission::Immediate,
             },
             parent: started_by.flatten(),
+            keeping: match opened.runtime.persistence() {
+                crate::session::SessionPersistence::Saved => Keeping::Stored,
+                crate::session::SessionPersistence::Ephemeral => Keeping::MemoryOnly,
+            },
             // A session that opens under a limit keeps it: no later
             // prompt widens it (#1796).
             grant_limit: (!with.grant.is_root()).then(|| with.grant.clone()),

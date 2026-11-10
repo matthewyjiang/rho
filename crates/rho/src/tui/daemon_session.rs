@@ -23,7 +23,8 @@
 //! detached as restarting, for an upgrade or `rho daemon restart` (#1713),
 //! attaches again on a new connection once the old one closed, which waits
 //! for the restarted daemon, and resets; one that had saved nothing, which
-//! the restarted daemon cannot reopen, is replaced by a new session. A
+//! the restarted daemon cannot reopen, is replaced by a new session, as is
+//! one opened without saving, whose conversation is lost with it. A
 //! failed reattach ends following. The exit receipt offers to resume a session
 //! once it is saved: resumed, titled, past its first prompt, or given
 //! context (`/remember`, a `!` command's output).
@@ -35,37 +36,6 @@
 pub(crate) use unix::DaemonSession;
 
 use super::daemon_events::DaemonView;
-
-/// What a launch opens its sessions with: the one it starts in, and each
-/// `/new` after it.
-#[derive(Clone)]
-pub(crate) struct DaemonLaunch {
-    pub(crate) cwd: std::path::PathBuf,
-    /// The agent a new session runs as; a resumed one runs as it was saved.
-    pub(crate) agent: Option<String>,
-    pub(crate) setup: rho_protocol::SessionSetup,
-}
-
-/// Which session the TUI follows.
-pub(crate) enum DaemonTarget {
-    /// A new session the daemon opens.
-    New,
-    /// The saved session with this id, which the daemon reopens unless it
-    /// has it loaded.
-    Resume(rho_protocol::SessionId),
-}
-
-/// The settings a session starts to be followed with.
-pub(crate) enum InitialSettings {
-    /// As the daemon opened it.
-    Kept,
-    /// Changes the launch asked for; one the daemon refuses fails the open,
-    /// unless the session has a turn under way, which they wait for.
-    Required(Vec<rho_protocol::SessionChange>),
-    /// The settings of the session it replaces; one the daemon refuses
-    /// keeps its default.
-    Carried(Box<rho_protocol::SessionOptions>),
-}
 
 /// What the followed session changed since the last call, waiting until it
 /// changes; never ready without a session.
@@ -107,6 +77,7 @@ mod unix {
     use rho_sdk::SteeringId;
     use tokio::sync::{mpsc, oneshot, watch};
 
+    use super::super::daemon_launch::{DaemonLaunch, DaemonTarget, InitialSettings, LaunchChange};
     use super::super::{
         daemon_events::{DaemonEvents, DaemonView, LoginUpdate, Rest, TurnState},
         daemon_inputs::AnswerRefusal,
@@ -115,7 +86,6 @@ mod unix {
         daemon_settings::DaemonSettings,
         daemon_settings_read::{load_settings, route_config, settings_loaded},
     };
-    use super::{DaemonLaunch, DaemonTarget, InitialSettings};
     use crate::{
         app::daemon_client::{Daemon, Link, LoginEvent, Part, Routed, StreamPosition},
         daemon::DAEMON_RESTART_TIMEOUT,
@@ -326,9 +296,13 @@ mod unix {
         /// detaches the session.
         daemon: Arc<Daemon>,
         id: SessionId,
-        /// Whether the session is saved, so the exit receipt offers to
-        /// resume it: it was resumed, has a title, or took a prompt.
+        /// Whether the session has something to resume, so the exit
+        /// receipt offers to: it was resumed, has a title, or took a
+        /// prompt. One that keeps no file never has (see `keeps_file`).
         saved: bool,
+        /// Whether the daemon saves the session: not one opened without
+        /// saving, as `--no-save` opens them.
+        keeps_file: bool,
         /// What `/new` and a resume from here open their session with.
         launch: DaemonLaunch,
         /// What opened the session, while it was opened new: a restarted
@@ -415,14 +389,20 @@ mod unix {
             // this client: those go through the request queue once the
             // session is followed, and a refusal shows as a row.
             let mut queued = Vec::new();
+            let required = |changes: Vec<LaunchChange>| -> Vec<SessionChange> {
+                changes
+                    .into_iter()
+                    .map(|change| change.of(&response.options))
+                    .collect()
+            };
             let changed = match settings {
                 InitialSettings::Kept => None,
                 InitialSettings::Required(changes) if !at_rest => {
-                    queued = changes;
+                    queued = required(changes);
                     None
                 }
                 InitialSettings::Required(changes) => {
-                    match configure_all(&link, &id, changes).await {
+                    match configure_all(&link, &id, required(changes)).await {
                         Ok(options) => options,
                         Err(refused) => {
                             let Refused { change, error } = *refused;
@@ -453,6 +433,12 @@ mod unix {
                 daemon,
                 id,
                 saved: opened.is_none() || response.title.is_some(),
+                keeps_file: !opened.as_ref().is_some_and(|opened| {
+                    opened
+                        .setup
+                        .without
+                        .contains(&rho_protocol::SessionPart::Saving)
+                }),
                 launch,
                 opened,
                 workspace: response.workspace,
@@ -497,15 +483,9 @@ mod unix {
             self.is_saved().then_some(self.id.as_str())
         }
 
-        /// Whether the daemon has a file for the session, which one opened
-        /// without saving never has.
+        /// Whether the daemon has a file for the session.
         fn is_saved(&self) -> bool {
-            let keeps_file = !self
-                .launch
-                .setup
-                .without
-                .contains(&rho_protocol::SessionPart::Saving);
-            keeps_file
+            self.keeps_file
                 && (self.saved
                     || self
                         .requests
@@ -593,6 +573,7 @@ mod unix {
             let reattached = self.reattach.as_mut()?.await;
             self.reattach = None;
             let mut views = std::mem::take(&mut self.pending);
+            let mut lost_conversation = false;
             match reattached {
                 Ok(Reattached { response, relinked }) => {
                     if let Some(Relinked {
@@ -603,6 +584,9 @@ mod unix {
                         settings,
                     }) = relinked
                     {
+                        // A session with no file that took a prompt: the
+                        // new session in its place has none of it.
+                        lost_conversation = session != self.id && self.saved && !self.keeps_file;
                         self.config_changes = config_changes;
                         views.push(settings_loaded(settings));
                         let status = format!("reconnected to rho daemon {}", link.daemon().version);
@@ -621,6 +605,12 @@ mod unix {
                     self.saved |= response.title.is_some();
                     self.workspace = response.workspace.clone();
                     views.extend(begin_replay(&mut self.events, &response));
+                    if lost_conversation {
+                        // After the replay, which clears the transcript.
+                        views.push(DaemonView::Notice(
+                            "the daemon restarted, and this unsaved session's conversation went with it; this is a new session".into(),
+                        ));
+                    }
                 }
                 Err(error) => {
                     views.extend(self.end(DaemonView::Error(format!(

@@ -51,7 +51,8 @@ pub struct SessionSetup {
     /// `--no-system-prompt`, and `--no-subagents` leave them out, and
     /// questions a client cannot show. The session saves all but
     /// [`SessionPart::Questions`] and [`SessionPart::Saving`]; a reopen
-    /// leaves out the saved parts and these.
+    /// leaves out the saved parts and these, except
+    /// [`SessionPart::Saving`], which only a new session takes.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub without: BTreeSet<SessionPart>,
     /// Who runs the children the session's `agent` tool starts: the daemon,

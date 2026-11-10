@@ -107,62 +107,74 @@ fn model_labels(entries: &[ModelCatalogEntry]) -> Vec<String> {
 #[error("{0}")]
 pub(crate) struct ModelRefused(String);
 
-/// The selection for `provider`'s `model`: the session's current model and
-/// auth as they are, so an advertised current value always resolves even
-/// off-catalog, else the catalog's, with an auth from `available_auths`.
+/// The auth a model pick runs on.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum AuthPick<'a> {
+    /// This profile, as `--auth` names one, which the model must take.
+    /// Whether it has credentials is the switch's to find out.
+    Named(&'a str),
+    /// The session's own when the model takes it, else one of these, the
+    /// profiles that have credentials.
+    AnyOf(&'a [String]),
+}
+
+/// The selection for `provider`'s `model` on `auth`: the session's current
+/// model as it is, so an advertised current value always resolves even
+/// off-catalog, else the catalog's.
 pub(crate) fn resolve_model(
     provider: &str,
     model: &str,
     current: &CurrentModel,
-    available_auths: &[String],
+    auth: AuthPick<'_>,
 ) -> Result<ModelSelection, ModelRefused> {
     let asked = model_reference(provider, model);
-    if asked == model_reference(&current.provider, &current.model) {
-        return Ok(ModelSelection {
-            provider: current.provider.clone(),
-            model: current.model.clone(),
-            auth: current.auth.clone(),
-            from_catalog: false,
-        });
-    }
-    catalog::resolve_model_selection_for_provider(
-        provider,
-        model,
-        SelectionAuthContext {
+    let is_current = asked == model_reference(&current.provider, &current.model);
+    let kept = |auth: &str| ModelSelection {
+        provider: current.provider.clone(),
+        model: current.model.clone(),
+        auth: auth.to_owned(),
+        from_catalog: false,
+    };
+    let listed = |context| {
+        catalog::resolve_model_selection_for_provider(provider, model, context)
+            .map_err(|error| ModelRefused(refusal(error, &asked)))
+    };
+    let selection = match auth {
+        AuthPick::AnyOf(_) if is_current => kept(&current.auth),
+        AuthPick::AnyOf(available) => listed(SelectionAuthContext {
             current: Some(&current.auth),
-            available: available_auths,
-        },
-    )
-    .map_err(|error| ModelRefused(refusal(error, &asked)))
+            available,
+        })?,
+        // No catalog entry says which auths an off-catalog model takes;
+        // its provider's do.
+        AuthPick::Named(named) if is_current => {
+            let takes = provider_descriptor(&current.provider)
+                .is_some_and(|descriptor| descriptor.auth_mode(named).is_some());
+            if takes {
+                kept(named)
+            } else {
+                return Err(not_on_auth(&asked, named));
+            }
+        }
+        AuthPick::Named(named) => {
+            let available = [named.to_owned()];
+            // The catalog picks another auth when the model does not take
+            // this one.
+            let selection = listed(SelectionAuthContext {
+                current: Some(named),
+                available: &available,
+            })?;
+            if selection.auth != named {
+                return Err(not_on_auth(&asked, named));
+            }
+            selection
+        }
+    };
+    Ok(selection)
 }
 
-/// [`resolve_model`] for a pick that names its auth profile, as `--auth`
-/// does: the selection runs on `auth`, which the model's provider must
-/// take. Whether `auth` has credentials is the switch's to find out.
-pub(crate) fn resolve_model_on(
-    provider: &str,
-    model: &str,
-    auth: &str,
-    current: &CurrentModel,
-) -> Result<ModelSelection, ModelRefused> {
-    // As if the session ran on `auth` and had no other: the current model
-    // keeps it, and the catalog picks it for a model that takes it.
-    let on_auth = CurrentModel {
-        auth: auth.to_owned(),
-        ..current.clone()
-    };
-    let selection = resolve_model(provider, model, &on_auth, &[auth.to_owned()])?;
-    let takes_auth = selection.auth == auth
-        && provider_descriptor(&selection.provider)
-            .is_some_and(|descriptor| descriptor.auth_mode(auth).is_some());
-    if !takes_auth {
-        return Err(ModelRefused(format!(
-            "provider '{}' does not take auth '{auth}' (value '{}')",
-            selection.provider,
-            model_reference(provider, model)
-        )));
-    }
-    Ok(selection)
+fn not_on_auth(asked: &str, auth: &str) -> ModelRefused {
+    ModelRefused(format!("model '{asked}' does not run on auth '{auth}'"))
 }
 
 fn refusal(error: ModelSelectionError, asked: &str) -> String {

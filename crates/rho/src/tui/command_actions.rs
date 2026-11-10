@@ -208,7 +208,7 @@ impl App {
     ) -> anyhow::Result<()> {
         if self.info.session.daemon.is_some() {
             match self
-                .switch_daemon_session(super::daemon_session::DaemonTarget::New, terminal)
+                .switch_daemon_session(super::daemon_launch::DaemonTarget::New, terminal)
                 .await
             {
                 Ok(()) => self.set_status("new session"),

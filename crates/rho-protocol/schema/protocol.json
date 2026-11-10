@@ -4778,7 +4778,7 @@
           "type": "array"
         },
         "without": {
-          "description": "Parts of the session left out, as `rho`'s `--no-tools`,\n`--no-system-prompt`, and `--no-subagents` leave them out, and\nquestions a client cannot show. The session saves all but\n[`SessionPart::Questions`] and [`SessionPart::Saving`]; a reopen\nleaves out the saved parts and these.",
+          "description": "Parts of the session left out, as `rho`'s `--no-tools`,\n`--no-system-prompt`, and `--no-subagents` leave them out, and\nquestions a client cannot show. The session saves all but\n[`SessionPart::Questions`] and [`SessionPart::Saving`]; a reopen\nleaves out the saved parts and these, except\n[`SessionPart::Saving`], which only a new session takes.",
           "items": {
             "$ref": "#/$defs/SessionPart"
           },
