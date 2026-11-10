@@ -192,6 +192,13 @@ impl SessionRuntime {
         }
         .build_workspace(&self.added_dirs)
         .map_err(|error| Failed(error.into()))?;
+        // A journal that cannot be read is a failure, not a checkpoint the
+        // session does not have.
+        store.get(target).map_err(Failed)?.ok_or_else(|| {
+            Refused(anyhow::anyhow!(
+                "workspace checkpoint '{target}' was not found"
+            ))
+        })?;
         let planned = PlannedRewind::new(&store, &workspace, target).map_err(Refused)?;
         let before = rewind_boundary(&planned.checkpoint)
             .map_err(Refused)?
