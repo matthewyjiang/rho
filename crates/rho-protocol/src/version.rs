@@ -20,7 +20,7 @@ pub struct ProtocolVersion {
 /// outside this repository has run against it (#1776), so every change to
 /// the wire raises the minor; CI checks each change against the commit
 /// before it.
-pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::new(0, 1);
+pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::new(0, 2);
 
 impl ProtocolVersion {
     pub const fn new(major: u16, minor: u16) -> Self {

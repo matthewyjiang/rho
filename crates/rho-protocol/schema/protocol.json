@@ -5399,7 +5399,7 @@
   },
   "protocol": {
     "major": 0,
-    "minor": 1
+    "minor": 2
   },
   "title": "rho daemon protocol"
 }
