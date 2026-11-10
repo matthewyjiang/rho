@@ -38,7 +38,10 @@ pub(super) async fn checks(deadline: Duration) -> Vec<DoctorCheck> {
     let (process, store, socket, environment) = match super::daemon_cli::paths() {
         Ok(paths) => {
             let (process, store) = ask(&paths, deadline).await;
-            let environment = match (&process, daemon_pid(&process)) {
+            // A daemon that did not answer still wrote its record.
+            let pid = daemon_pid(&process)
+                .or_else(|| daemon::running_record(&paths).map(|record| record.pid));
+            let environment = match (&process, pid) {
                 (DaemonProcess::NotRunning, _) => DaemonEnvironment::NotRunning,
                 (_, Some(pid)) => match read_environment(pid) {
                     Ok(daemon) => compare_environments(&daemon, |name| std::env::var_os(name)),
@@ -48,7 +51,22 @@ pub(super) async fn checks(deadline: Duration) -> Vec<DoctorCheck> {
                     DaemonEnvironment::Unknown("the daemon did not say which process it is".into())
                 }
             };
-            (process, store, inspect_socket(&paths), environment)
+            // The socket that matters is the one the daemon listens on.
+            let socket = match &process {
+                DaemonProcess::OtherSocket { socket, .. } => {
+                    let socket = PathBuf::from(socket);
+                    inspect_socket(&DaemonPaths {
+                        runtime_dir: socket.parent().unwrap_or(&socket).to_path_buf(),
+                        socket,
+                        ..paths.clone()
+                    })
+                }
+                DaemonProcess::NotRunning
+                | DaemonProcess::Running { .. }
+                | DaemonProcess::Incompatible { .. }
+                | DaemonProcess::Unanswered(_) => inspect_socket(&paths),
+            };
+            (process, store, socket, environment)
         }
         Err(error) => {
             let reason = format!("{error:#}");
