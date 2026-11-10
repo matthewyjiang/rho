@@ -47,17 +47,21 @@ impl SessionTree {
             })
     }
 
-    /// The prompt of the turn `node` belongs to: the first user text at
-    /// `node` or before it, whatever the turn saved after its prompt.
+    /// The prompt of the turn `node` belongs to: the text of the first
+    /// user message at `node` or before it, whatever the turn saved after
+    /// its prompt. `None` for a prompt with no text, such as an image
+    /// alone, rather than an earlier turn's.
     pub(crate) fn turn_prompt(&self, node: &NodeId) -> Option<String> {
         let mut at = self.node(node);
         while let Some(node) = at {
-            let prompt = node
-                .display_messages()
-                .iter()
-                .find_map(|stored| super::super::persistence::user_message_text(&stored.message));
-            if prompt.is_some() {
-                return prompt;
+            let mut prompts = node.display_messages().iter().filter(|stored| {
+                matches!(
+                    stored.message.semantic(),
+                    rho_sdk::model::SemanticMessage::User(_)
+                )
+            });
+            if let Some(prompt) = prompts.next() {
+                return super::super::persistence::user_message_text(&prompt.message);
             }
             at = node.parent_id().and_then(|parent| self.node(parent));
         }
