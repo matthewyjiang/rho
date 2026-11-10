@@ -53,6 +53,7 @@ async fn open_session(fixture: &Fixture, client: &Client) -> Result<SessionId, O
             agent: None,
             setup: SessionSetup::default(),
             parent: None,
+            grant: None,
         })
         .await
         .map(|opened| opened.session)
