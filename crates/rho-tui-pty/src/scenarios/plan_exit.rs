@@ -297,7 +297,7 @@ pub(super) const DAEMON_APPROVE_SCENARIO: Scenario = Scenario::new(
 )
 .with_setup(setup)
 .with_args(&["--permission-mode", "plan"])
-.with_env(super::DAEMON_ENV);
+.with_env(super::daemon_resume::DAEMON_ENV);
 
 const APPROVE_STEPS: &[Step] = &[
     Step::WaitText {

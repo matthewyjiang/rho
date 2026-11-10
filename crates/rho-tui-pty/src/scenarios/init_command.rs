@@ -113,7 +113,7 @@ pub(super) const DAEMON_INIT_PLAN_SCENARIO: Scenario = Scenario::new(
 )
 .with_setup(setup_nested_repository)
 .with_args(&["--permission-mode", "plan"])
-.with_env(super::DAEMON_ENV);
+.with_env(super::daemon_resume::DAEMON_ENV);
 
 const INIT_PLAN_STEPS: &[Step] = &[
     Step::WaitText {
