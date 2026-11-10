@@ -143,7 +143,8 @@ async fn the_stop_answers_a_queued_change() {
 
 // Covers: context a client adds between turns reaches the model's history
 // as sent and joins the transcript a later attach replays as the row that
-// displays it, though no turn ran to save it; empty context is refused.
+// displays it, though no turn ran to save it; it is no settings change, so
+// the session goes on following the config; empty context is refused.
 // Owner: daemon session settings.
 #[tokio::test]
 async fn added_context_reaches_the_model_and_a_later_replay() {
@@ -177,22 +178,21 @@ async fn added_context_reaches_the_model_and_a_later_replay() {
             _ => None,
         })
         .collect();
-    let read_by_model = session
-        .runtime
-        .try_lock()
-        .unwrap()
-        .as_ref()
-        .unwrap()
+    let runtime = session.runtime.try_lock().unwrap();
+    let runtime = runtime.as_ref().unwrap();
+    let read_by_model = runtime
         .history_for_tests()
         .contains(&rho_sdk::model::Message::user_text("Apply it: be brief"));
+    let follows_config = !runtime.keeps_settings_for_tests();
     assert_eq!(
-        (refused, added, replayed, read_by_model),
+        (refused, added, replayed, read_by_model, follows_config),
         (
             Err(wire::ErrorCode::InvalidParams.code()),
             Ok(()),
             vec![vec![ContentBlock::Text {
                 text: "remembered in AGENTS.md".into(),
             }]],
+            true,
             true,
         )
     );

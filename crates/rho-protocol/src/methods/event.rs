@@ -200,7 +200,7 @@ pub enum SessionEvent {
     /// The session's options changed, as after [`super::SESSION_CONFIGURE`]
     /// or a plan approval's mode switch: all of them, replacing the last.
     OptionsChanged {
-        /// Boxed so the largest event stays small on every queue.
+        // Boxed so the largest event stays small on every queue.
         options: Box<super::SessionOptions>,
     },
     /// The provider already took steer `id` mid-request: it can no longer

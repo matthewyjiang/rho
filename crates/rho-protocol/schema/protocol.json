@@ -1751,10 +1751,7 @@
       "properties": {
         "auth": {
           "description": "The auth profile `current` runs on, which names how its use is\nbilled.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "string"
         },
         "available": {
           "description": "The user's favorites first, then the rest; always includes `current`.",
@@ -1769,6 +1766,7 @@
       },
       "required": [
         "current",
+        "auth",
         "available"
       ],
       "type": "object"
@@ -3370,8 +3368,7 @@
           "description": "The session's options changed, as after [`super::SESSION_CONFIGURE`]\nor a plan approval's mode switch: all of them, replacing the last.",
           "properties": {
             "options": {
-              "$ref": "#/$defs/SessionOptions",
-              "description": "Boxed so the largest event stays small on every queue."
+              "$ref": "#/$defs/SessionOptions"
             },
             "type": {
               "const": "options_changed",
