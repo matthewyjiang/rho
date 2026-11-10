@@ -182,8 +182,24 @@ pub struct SessionPromptParams {
     pub timeout_ms: Option<u64>,
     /// The prompting client's environment, which the processes this turn
     /// starts run with, and those of later turns until another prompt
-    /// brings another. Processes already running keep theirs.
+    /// brings another. Processes already running keep theirs. One whose
+    /// project trust is not the session's is refused as
+    /// [`crate::ErrorCode::ProjectTrustMismatch`].
     pub environment: ClientEnvironment,
+}
+
+/// The `data` of a [`crate::ErrorCode::ProjectTrustMismatch`] error: the
+/// `RHO_TRUST_PROJECT_*` variables the session's trust and the prompting
+/// client's differ in. At least one list has a name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectTrustMismatch {
+    /// The variables that grant trust the session opened with and the
+    /// prompting client's environment does not, such as
+    /// `RHO_TRUST_PROJECT_HOOKS`.
+    pub session_only: Vec<String>,
+    /// The variables that grant trust the prompting client's environment
+    /// does and the session opened without.
+    pub client_only: Vec<String>,
 }
 
 /// Result of [`SESSION_PROMPT`]: the turn began: it saved its prompt, or,

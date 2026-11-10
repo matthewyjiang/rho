@@ -114,13 +114,13 @@ pub use options::{
 };
 pub use outcome::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome};
 pub use session::{
-    ClientEnvironment, DetachReason, Replay, SessionAttachParams, SessionAttachResponse,
-    SessionCancelParams, SessionCancelResponse, SessionDetachParams, SessionDetachResponse,
-    SessionDetachedParams, SessionEventParams, SessionId, SessionNewParams, SessionNewResponse,
-    SessionObserveParams, SessionPromptParams, SessionPromptResponse, SessionSteerParams,
-    SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse, UnsteerOutcome,
-    SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH, SESSION_DETACHED, SESSION_EVENT, SESSION_NEW,
-    SESSION_OBSERVE, SESSION_PROMPT, SESSION_STEER, SESSION_UNSTEER,
+    ClientEnvironment, DetachReason, ProjectTrustMismatch, Replay, SessionAttachParams,
+    SessionAttachResponse, SessionCancelParams, SessionCancelResponse, SessionDetachParams,
+    SessionDetachResponse, SessionDetachedParams, SessionEventParams, SessionId, SessionNewParams,
+    SessionNewResponse, SessionObserveParams, SessionPromptParams, SessionPromptResponse,
+    SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
+    UnsteerOutcome, SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH, SESSION_DETACHED,
+    SESSION_EVENT, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT, SESSION_STEER, SESSION_UNSTEER,
 };
 pub use setup::{ChildThreads, McpServer, SecretMap, SessionPart, SessionSetup};
 pub use store::{

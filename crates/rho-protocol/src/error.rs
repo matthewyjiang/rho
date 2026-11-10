@@ -149,6 +149,16 @@ error_codes! {
         /// store could not read them, or the provider refused them. Sign in
         /// (`rho/auth/login` or `rho/auth/key`), then try again.
         SignInRequired = -32019,
+        /// The prompting client's project trust (the `RHO_TRUST_PROJECT_*`
+        /// variables in its [`crate::ClientEnvironment`]) is not the trust
+        /// the session opened with, so the daemon started no turn (#1779):
+        /// the session would run the prompt with trust this client did not
+        /// grant, or without trust it did. The session, its turns, and its
+        /// attached clients are left as they were. Open a session of the
+        /// client's own, or prompt with the session's trust. `data` is a
+        /// [`crate::ProjectTrustMismatch`] naming the variables that
+        /// differ.
+        ProjectTrustMismatch = -32020 => crate::ProjectTrustMismatch,
     }
 }
 

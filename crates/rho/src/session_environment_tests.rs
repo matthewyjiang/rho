@@ -1,8 +1,11 @@
 use pretty_assertions::assert_eq;
 use rho_sdk::ProcessEnvironment;
 
-use super::{Ambient, SessionEnvironment};
-use crate::workspace::{ProjectTrust, ProjectTrusts, TRUST_PROJECT_AGENTS_ENV};
+use super::{Ambient, SessionEnvironment, TrustMismatch};
+use crate::workspace::{
+    ProjectTrust, ProjectTrusts, TRUST_PROJECT_AGENTS_ENV, TRUST_PROJECT_HOOKS_ENV,
+    TRUST_PROJECT_OPENAPI_ENV, TRUST_PROJECT_PLUGINS_ENV,
+};
 
 fn explicit(variables: &[(&str, &str)]) -> ProcessEnvironment {
     ProcessEnvironment::Explicit {
@@ -105,6 +108,67 @@ fn a_session_keeps_its_opening_trust_through_prompts_and_snapshots() {
                 expected,
                 Some(prompting[prompting.len() - 1].1.into())
             ),
+            "{name}"
+        );
+    }
+}
+
+// Covers: an environment's project trust is compared with the session's by
+// what each grants, not by the variables' text, and a difference names the
+// variables on each side, so a host can refuse a prompt it would otherwise
+// run with trust its client did not grant, or without trust it did (#1779).
+// Owner: unit (session environment)
+#[test]
+fn a_trust_mismatch_names_the_variables_only_one_side_grants() {
+    const HOOKS: &str = TRUST_PROJECT_HOOKS_ENV;
+    const AGENTS: &str = TRUST_PROJECT_AGENTS_ENV;
+    const PLUGINS: &str = TRUST_PROJECT_PLUGINS_ENV;
+    const OPENAPI: &str = TRUST_PROJECT_OPENAPI_ENV;
+    let mismatch = |session_only: &[&'static str], other_only: &[&'static str]| {
+        Some(TrustMismatch {
+            session_only: session_only.to_vec(),
+            other_only: other_only.to_vec(),
+        })
+    };
+    let cases = [
+        ("neither trusts", &[][..], &[("PATH", "/bin")][..], None),
+        (
+            "the same trust, other variables",
+            &[(HOOKS, "1"), ("PATH", "/a")][..],
+            &[(HOOKS, "1"), ("PATH", "/b")][..],
+            None,
+        ),
+        (
+            "a value that grants nothing is no trust",
+            &[][..],
+            &[(AGENTS, "true"), (PLUGINS, "0")][..],
+            None,
+        ),
+        (
+            "the other trusts less",
+            &[(HOOKS, "1"), (AGENTS, "1"), (OPENAPI, "1")][..],
+            &[(AGENTS, "1")][..],
+            mismatch(&[HOOKS, OPENAPI], &[]),
+        ),
+        (
+            "the other trusts more",
+            &[][..],
+            &[(PLUGINS, "1")][..],
+            mismatch(&[], &[PLUGINS]),
+        ),
+        (
+            "each trusts what the other does not",
+            &[(HOOKS, "1"), (PLUGINS, "1")][..],
+            &[(PLUGINS, "1"), (AGENTS, "1")][..],
+            mismatch(&[HOOKS], &[AGENTS]),
+        ),
+    ];
+    for (name, opening, prompting, expected) in cases {
+        let session = SessionEnvironment::new(Ambient::client(opening));
+
+        assert_eq!(
+            session.trust_mismatch(&Ambient::client(prompting)),
+            expected,
             "{name}"
         );
     }

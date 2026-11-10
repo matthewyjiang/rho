@@ -2257,6 +2257,30 @@
         }
       ]
     },
+    "ProjectTrustMismatch": {
+      "description": "The `data` of a [`crate::ErrorCode::ProjectTrustMismatch`] error: the\n`RHO_TRUST_PROJECT_*` variables the session's trust and the prompting\nclient's differ in. At least one list has a name.",
+      "properties": {
+        "client_only": {
+          "description": "The variables that grant trust the prompting client's environment\ndoes and the session opened without.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "session_only": {
+          "description": "The variables that grant trust the session opened with and the\nprompting client's environment does not, such as\n`RHO_TRUST_PROJECT_HOOKS`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "session_only",
+        "client_only"
+      ],
+      "type": "object"
+    },
     "ProtocolVersion": {
       "description": "A protocol version. Minors add optional fields, methods, and error codes;\nmajors may change anything.",
       "properties": {
@@ -3764,7 +3788,7 @@
         },
         "environment": {
           "$ref": "#/$defs/ClientEnvironment",
-          "description": "The prompting client's environment, which the processes this turn\nstarts run with, and those of later turns until another prompt\nbrings another. Processes already running keep theirs."
+          "description": "The prompting client's environment, which the processes this turn\nstarts run with, and those of later turns until another prompt\nbrings another. Processes already running keep theirs. One whose\nproject trust is not the session's is refused as\n[`crate::ErrorCode::ProjectTrustMismatch`]."
         },
         "session": {
           "$ref": "#/$defs/SessionId"
@@ -5018,6 +5042,12 @@
     },
     "-32019": {
       "name": "SignInRequired"
+    },
+    "-32020": {
+      "data": {
+        "$ref": "#/$defs/ProjectTrustMismatch"
+      },
+      "name": "ProjectTrustMismatch"
     },
     "-32600": {
       "name": "InvalidRequest"

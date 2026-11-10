@@ -8,9 +8,11 @@
 //! later prompt replaces (see [`SessionEnvironment::snapshot`]).
 //!
 //! Project trust (`RHO_TRUST_PROJECT_*`) is read from the same environment,
-//! once: a session keeps the trust of the environment it opened with, whatever
-//! later prompts bring, and so do the workflow runs it starts (#1779). Only a
-//! [`SessionEnvironment`] says what is trusted; an [`Ambient`] is variables.
+//! once: a session keeps the trust of the environment it opened with, and so
+//! do the workflow runs it starts (#1779). A host refuses a prompt whose
+//! environment grants other trust (see [`SessionEnvironment::trust_mismatch`])
+//! instead of running it under the session's. Only a [`SessionEnvironment`]
+//! says what is trusted; an [`Ambient`] is variables.
 
 use std::{
     collections::BTreeMap,
@@ -196,24 +198,45 @@ impl SessionEnvironment {
         self.process.clone()
     }
 
+    /// How the project trust `ambient` grants differs from the session's,
+    /// or `None` when they agree. A host asks before a client's prompt
+    /// replaces the environment, and refuses the prompt on a difference: the
+    /// session cannot change its trust while it is open, and would otherwise
+    /// run the prompt with trust that client did not grant, or without
+    /// trust it did (#1779).
+    #[cfg_attr(not(unix), allow(dead_code, reason = "only the Unix daemon asks"))]
+    pub(crate) fn trust_mismatch(&self, ambient: &Ambient) -> Option<TrustMismatch> {
+        let theirs = ProjectTrusts::read(|name| ambient.read(name));
+        (theirs != self.project_trust).then(|| TrustMismatch {
+            session_only: self.project_trust.variables_beyond(theirs),
+            other_only: theirs.variables_beyond(self.project_trust),
+        })
+    }
+
     /// Makes `ambient` the environment every later child sees, process
-    /// tools' included. The session's project trust stays as it opened.
+    /// tools' included. The session's project trust stays as it opened, so
+    /// a host first refuses an `ambient` with a [`Self::trust_mismatch`].
     #[cfg_attr(
         not(unix),
         allow(dead_code, reason = "only the Unix daemon replaces it")
     )]
     pub(crate) fn replace(&self, ambient: Ambient) {
-        if ProjectTrusts::read(|name| ambient.read(name)) != self.project_trust {
-            // Why a client's `RHO_TRUST_PROJECT_*` seem ignored.
-            tracing::info!(
-                kept = ?self.project_trust,
-                "the session keeps the project trust it opened with; this client's environment grants another"
-            );
-        }
         let mut current = self.ambient.write().unwrap_or_else(PoisonError::into_inner);
         self.process.replace(ambient.process_environment());
         *current = ambient;
     }
+}
+
+/// How an environment's project trust differs from a session's (see
+/// [`SessionEnvironment::trust_mismatch`]), as the `RHO_TRUST_PROJECT_*`
+/// variables that grant what only one of them trusts. At least one list has
+/// a name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TrustMismatch {
+    /// What the session trusts and the other environment does not.
+    pub(crate) session_only: Vec<&'static str>,
+    /// What the other environment trusts and the session does not.
+    pub(crate) other_only: Vec<&'static str>,
 }
 
 /// Shows the current [`Ambient`]'s redacted form, never a variable's value.

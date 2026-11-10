@@ -69,6 +69,23 @@ impl ProjectTrusts {
         }
     }
 
+    /// The variables that grant what `self` trusts and `other` does not, in
+    /// the order the struct lists the features.
+    pub fn variables_beyond(self, other: Self) -> Vec<&'static str> {
+        [
+            (TRUST_PROJECT_HOOKS_ENV, self.hooks, other.hooks),
+            (TRUST_PROJECT_AGENTS_ENV, self.agents, other.agents),
+            (TRUST_PROJECT_PLUGINS_ENV, self.plugins, other.plugins),
+            (TRUST_PROJECT_OPENAPI_ENV, self.openapi, other.openapi),
+        ]
+        .into_iter()
+        .filter(|(_, own, others)| {
+            *own == ProjectTrust::Trusted && *others != ProjectTrust::Trusted
+        })
+        .map(|(variable, _, _)| variable)
+        .collect()
+    }
+
     /// The trust this process's environment grants, for a command that acts
     /// for the terminal it runs in. A daemon session takes its client's
     /// instead (see [`crate::session_environment::SessionEnvironment`]).

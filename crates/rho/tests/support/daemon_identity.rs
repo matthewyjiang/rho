@@ -1,16 +1,18 @@
 //! What a daemon takes from the client that starts it, through the real
 //! binary (#1779): an allowed part of its environment and nothing else, so
-//! each session's project trust is its own client's.
+//! each session's project trust is its own client's, and a prompt from a
+//! client with other trust is refused.
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::{SessionNew, SessionObserve},
-    Client, ClientEnvironment, ClientError, ErrorCode, SessionId, SessionNewParams,
-    SessionObserveParams, SessionSetup,
+    methods::{SessionNew, SessionObserve, SessionPrompt},
+    Client, ClientEnvironment, ClientError, ContentBlock, ErrorCode, JobState,
+    ProjectTrustMismatch, SessionEvent, SessionId, SessionNewParams, SessionObserveParams,
+    SessionPromptParams, SessionSetup,
 };
 use serde_json::json;
 
-use super::sessions::{settled_job, Sandbox};
+use super::sessions::{is_state, settled_job, Follower, Sandbox};
 
 /// Every variable that grants a workspace's project files.
 const TRUST: [(&str, &str); 4] = [
@@ -67,6 +69,44 @@ fn environment_with(sandbox: &Sandbox, extra: &[(&str, &str)]) -> ClientEnvironm
                 .map(|(name, value)| ((*name).to_owned(), (*value).to_owned())),
         )
         .collect()
+}
+
+/// Why the daemon refused a prompt.
+#[derive(Debug, PartialEq)]
+enum Refusal {
+    /// The prompting client's project trust is not the session's.
+    TrustMismatch(ProjectTrustMismatch),
+    Other(Option<ErrorCode>),
+}
+
+/// Prompts `session` with `text` from a client whose environment is
+/// `environment`; returns once the turn saved the prompt, or why the daemon
+/// refused it.
+async fn prompt_as(
+    client: &Client,
+    session: &SessionId,
+    text: &str,
+    environment: ClientEnvironment,
+) -> Result<(), Refusal> {
+    let prompted = client
+        .request::<SessionPrompt>(&SessionPromptParams {
+            session: session.clone(),
+            content: vec![ContentBlock::Text { text: text.into() }],
+            timeout_ms: None,
+            environment,
+        })
+        .await;
+    match prompted {
+        Ok(_) => Ok(()),
+        Err(ClientError::Rpc { error, .. }) => Err(match error.error_code() {
+            Some(ErrorCode::ProjectTrustMismatch) => Refusal::TrustMismatch(
+                serde_json::from_value(error.data.expect("a trust mismatch says what differs"))
+                    .unwrap(),
+            ),
+            code => Refusal::Other(code),
+        }),
+        Err(error) => panic!("prompt failed outside the protocol: {error}"),
+    }
 }
 
 /// Opens a session as `agent` for a client with `environment`; the error
@@ -128,11 +168,13 @@ async fn a_started_daemon_gets_only_the_allowed_part_of_its_starters_environment
 }
 
 // Covers: a session's project trust (`RHO_TRUST_PROJECT_*`) is that of the
-// client that opened it, not of the client that started the daemon. On a
-// daemon a trusting client started, a client without trust opens no session
-// as a project agent and its session runs no project hook; a client with
-// trust does both, and its session keeps its hooks when a client without
-// trust prompts it, as the other stays without when a trusting one does.
+// client that opened it, not of the client that started the daemon, and a
+// prompt from a client with other trust is refused, naming the variables
+// that differ, instead of run under the session's. On a daemon a trusting
+// client started, a client without trust opens no session as a project
+// agent and its session runs no project hook; a client with trust does
+// both; and neither's session takes the other's prompt, so no project hook
+// runs for a client that did not trust it.
 // Owner: daemon session open.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_sessions_project_trust_is_its_opening_clients() {
@@ -143,8 +185,7 @@ async fn a_sessions_project_trust_is_its_opening_clients() {
     write_project_file(
         &sandbox,
         ".rho/hooks.toml",
-        &
-        format!(
+        &format!(
             r#"version = 1
 
 [[hook]]
@@ -164,9 +205,10 @@ timeout = "10s"
     // The first client, which starts the daemon, trusts the project.
     let client = started_by_client(&sandbox, "tool-call", &TRUST).await;
     let clients = [("untrusting", &[][..]), ("trusting", &TRUST[..])];
-    let call = json!({"id": "bash", "name": "bash", "arguments": {"command": "true"}});
+    let call = json!({"id": "bash", "name": "bash", "arguments": {"command": "true"}}).to_string();
 
     let mut opened_as_project_agent = Vec::new();
+    let mut prompted = Vec::new();
     for (opener, trust) in clients {
         let as_project_agent = new_session(
             &sandbox,
@@ -187,20 +229,18 @@ timeout = "10s"
             let probe = format!("{opener} session, {prompter} prompt");
             let environment =
                 environment_with(&sandbox, &[trust, &[("PROBE", probe.as_str())]].concat());
-            sandbox
-                .prompt_tool_call_with_environment(&client, &session, &call, environment)
-                .await;
+            let answer = prompt_as(&client, &session, &call, environment).await;
             settled_job(&sandbox, &client, &session).await;
+            prompted.push((probe, answer));
         }
-        opened_as_project_agent.push((opener, as_project_agent));
+        opened_as_project_agent.push((opener, as_project_agent.map(|_| ())));
     }
 
+    let every_variable = || TRUST.map(|(variable, _)| variable.to_owned()).to_vec();
     assert_eq!(
         (
-            opened_as_project_agent
-                .into_iter()
-                .map(|(opener, opened)| (opener, opened.map(|_| ())))
-                .collect::<Vec<_>>(),
+            opened_as_project_agent,
+            prompted,
             std::fs::read_to_string(&ran).unwrap_or_default(),
         ),
         (
@@ -208,9 +248,87 @@ timeout = "10s"
                 ("untrusting", Err(Some(ErrorCode::SessionOpenFailed))),
                 ("trusting", Ok(())),
             ],
-            "trusting session, untrusting prompt\ntrusting session, trusting prompt\n".to_owned(),
+            vec![
+                ("untrusting session, untrusting prompt".to_owned(), Ok(())),
+                (
+                    "untrusting session, trusting prompt".to_owned(),
+                    Err(Refusal::TrustMismatch(ProjectTrustMismatch {
+                        session_only: Vec::new(),
+                        client_only: every_variable(),
+                    })),
+                ),
+                (
+                    "trusting session, untrusting prompt".to_owned(),
+                    Err(Refusal::TrustMismatch(ProjectTrustMismatch {
+                        session_only: every_variable(),
+                        client_only: Vec::new(),
+                    })),
+                ),
+                ("trusting session, trusting prompt".to_owned(), Ok(())),
+            ],
+            "trusting session, trusting prompt\n".to_owned(),
         ),
         "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: a prompt refused for its client's project trust changes nothing
+// of the session. A client that trusts less than the session may still
+// attach to it and observe it; its prompt starts no turn, tells the
+// attached clients nothing, and detaches none of them; and the session's
+// own client prompts it next as if nothing was asked.
+// Owner: daemon session prompt.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_prompt_refused_for_its_trust_leaves_the_session_and_its_viewers_alone() {
+    let sandbox = Sandbox::new();
+    let client = started_by_client(&sandbox, "fixed", &[]).await;
+    let trusting = environment_with(&sandbox, &TRUST);
+    let session = new_session(&sandbox, &client, None, trusting.clone())
+        .await
+        .unwrap();
+    // Attached from an environment without the session's trust.
+    let (mut viewer, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+
+    let refused = prompt_as(&client, &session, "hello", sandbox.client_environment()).await;
+    let observed = client
+        .request::<SessionObserve>(&SessionObserveParams {
+            session: session.clone(),
+            after: None,
+        })
+        .await
+        .map(|observed| observed.state)
+        .map_err(|error| error.to_string());
+    let accepted = prompt_as(&client, &session, "hello", trusting).await;
+    // Any word of the refused prompt, or a detach, would arrive first.
+    viewer.read_until(is_state(JobState::Completed)).await;
+    let (states, prompts): (Vec<_>, Vec<_>) = viewer
+        .events
+        .iter()
+        .filter_map(|(_, event)| match event {
+            SessionEvent::State { state, .. } => Some((Some(*state), None)),
+            SessionEvent::UserMessage { .. } => Some((None, Some(()))),
+            _ => None,
+        })
+        .unzip();
+
+    assert_eq!(
+        (
+            refused.map_err(|refusal| matches!(refusal, Refusal::TrustMismatch(_))),
+            observed,
+            accepted,
+            states.into_iter().flatten().collect::<Vec<_>>(),
+            prompts.into_iter().flatten().count(),
+        ),
+        (
+            Err(true),
+            Ok(JobState::Idle),
+            Ok(()),
+            vec![JobState::Running, JobState::Completed],
+            1,
+        ),
+        "events: {:#?}\nlog:\n{}",
+        viewer.events,
         sandbox.isolated.daemon_log()
     );
 }
@@ -234,7 +352,14 @@ async fn an_unloaded_session_replays_as_the_agent_it_was_saved_as() {
             .await
             .unwrap_or_else(|code| panic!("{label} opens: {code:?}"));
         // Its first prompt saves it.
-        sandbox.prompt(&client, &session).await.unwrap();
+        prompt_as(
+            &client,
+            &session,
+            "hello",
+            environment_with(&sandbox, trust),
+        )
+        .await
+        .unwrap();
         settled_job(&sandbox, &client, &session).await;
         saved.push((label, session));
     }
