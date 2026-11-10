@@ -405,8 +405,9 @@ pub struct ConfigSetParams {
     pub revision: ConfigRevision,
     /// Who makes the changes. A revision stays good for its writer while
     /// only the writer's own changes followed it, so a client that sends a
-    /// write before it hears back about its last one is not refused for
-    /// that change. Without one, only the current revision is good.
+    /// write before [`CONFIG_CHANGED`] for its last one arrives is not
+    /// refused for that change. Without one, only the current revision is
+    /// good.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub writer: Option<ConfigWriter>,
     /// Applied in order, so a setting another belongs to, such as an

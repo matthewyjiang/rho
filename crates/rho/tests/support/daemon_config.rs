@@ -60,6 +60,34 @@ async fn set_by(
         })
 }
 
+/// The `tui` client's namespace.
+fn tui() -> ConfigNamespace {
+    ConfigNamespace::Client {
+        name: ClientName::new("tui").unwrap(),
+    }
+}
+
+/// Registers the `tui` client with one setting, `zen_mode`.
+async fn register_tui(client: &Client) {
+    client
+        .request::<ConfigRegister>(&ConfigRegisterParams {
+            client: ClientName::new("tui").unwrap(),
+            settings: vec![SettingSpec {
+                key: SettingKey::new("zen_mode"),
+                kind: SettingKind::Bool,
+                default: Some(SettingValue::Bool(false)),
+                category: "display".into(),
+                section: None,
+                label: "Zen mode".into(),
+                help: "Show only message text.".into(),
+                applies: Applies::Immediately,
+                overridable_per_project: false,
+            }],
+        })
+        .await
+        .unwrap();
+}
+
 fn change(key: &str, value: SettingValue) -> SettingChange {
     SettingChange::Set {
         key: SettingKey::new(key),
@@ -278,13 +306,16 @@ async fn a_stale_or_refused_change_writes_nothing() {
 // Covers: a writer's changes sent before it hears back about its last one,
 // all against the revision it last read, each land, since only its own
 // changes followed that revision; another writer's change against it is
-// refused as a conflict (#1720).
+// refused as a conflict; a client's own namespace keeps the same rule
+// (#1720).
 // Owner: daemon settings store.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_writers_quick_changes_do_not_conflict_with_each_other() {
     let sandbox = Sandbox::new();
     let client = sandbox.start_daemon("fixed").await;
     let read = get(&client, ConfigNamespace::Agent).await.revision;
+    register_tui(&client).await;
+    let tui_read = get(&client, tui()).await.revision;
 
     let mut sent = Vec::new();
     for (writer, key) in [
@@ -302,13 +333,25 @@ async fn a_writers_quick_changes_do_not_conflict_with_each_other() {
         .await;
         sent.push(result.map(drop));
     }
+    for zen in [true, false] {
+        let result = set_by(
+            &client,
+            Some("tui-a"),
+            tui(),
+            &tui_read,
+            vec![change("zen_mode", SettingValue::Bool(zen))],
+        )
+        .await;
+        sent.push(result.map(drop));
+    }
     let state = get(&client, ConfigNamespace::Agent).await;
 
     assert_eq!(
         (
             sent,
             value(&state, "behavior.rtk"),
-            value(&state, "behavior.workspace_rewind")
+            value(&state, "behavior.workspace_rewind"),
+            value(&get(&client, tui()).await, "zen_mode"),
         ),
         (
             vec![
@@ -318,7 +361,10 @@ async fn a_writers_quick_changes_do_not_conflict_with_each_other() {
                     ErrorCode::ConfigConflict,
                     "the settings changed since that revision; read them again",
                 )),
+                Ok(()),
+                Ok(()),
             ],
+            global(SettingValue::Bool(false)),
             global(SettingValue::Bool(false)),
             global(SettingValue::Bool(false)),
         )
@@ -451,30 +497,8 @@ async fn a_change_skips_a_held_file_and_a_no_op_writes_nothing() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_clients_settings_outlast_the_daemon() {
     let sandbox = Sandbox::new();
-    let tui = || ConfigNamespace::Client {
-        name: ClientName::new("tui").unwrap(),
-    };
-    let register = async |client: &Client| {
-        client
-            .request::<ConfigRegister>(&ConfigRegisterParams {
-                client: ClientName::new("tui").unwrap(),
-                settings: vec![SettingSpec {
-                    key: SettingKey::new("zen_mode"),
-                    kind: SettingKind::Bool,
-                    default: Some(SettingValue::Bool(false)),
-                    category: "display".into(),
-                    section: None,
-                    label: "Zen mode".into(),
-                    help: "Show only message text.".into(),
-                    applies: Applies::Immediately,
-                    overridable_per_project: false,
-                }],
-            })
-            .await
-            .unwrap();
-    };
     let client = sandbox.start_daemon("fixed").await;
-    register(&client).await;
+    register_tui(&client).await;
     let state = get(&client, tui()).await;
     set(
         &client,
@@ -492,7 +516,7 @@ async fn a_clients_settings_outlast_the_daemon() {
     assert!(stop.success(), "log:\n{}", sandbox.isolated.daemon_log());
 
     let client = sandbox.start_daemon("fixed").await;
-    register(&client).await;
+    register_tui(&client).await;
     assert_eq!(
         value(&get(&client, tui()).await, "zen_mode"),
         global(SettingValue::Bool(true))
