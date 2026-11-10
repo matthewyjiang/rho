@@ -11,8 +11,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ContentBlock, Cursor, InputRequest, JobState, Seq, SessionEvent, SessionSetup, SteerId,
-    StreamId,
+    ContentBlock, Cursor, IdempotencyKey, InputRequest, JobState, Seq, SessionEvent, SessionSetup,
+    SteerId, StreamId, TurnId,
 };
 
 /// Open a new session in a workspace, before its first prompt.
@@ -186,6 +186,18 @@ pub struct SessionPromptParams {
     /// project trust is not the session's is refused as
     /// [`crate::ErrorCode::ProjectTrustMismatch`].
     pub environment: ClientEnvironment,
+    /// The client's name for this prompt, which makes sending it again
+    /// safe, as after a connection that closed before the answer came. A
+    /// prompt whose key is that of the session's latest turn starts none:
+    /// it answers as the first one does, with that turn's id once the turn
+    /// began, even after the turn ended or the daemon restarted. The daemon
+    /// compares only the key, never the content. It keeps the latest turn's
+    /// key alone, so a prompt is safe to send again until another turn
+    /// starts on the session. A turn that ended before it began ran
+    /// nothing and frees its key: sending the prompt again starts a turn.
+    /// An empty key is [`crate::ErrorCode::InvalidParams`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<IdempotencyKey>,
 }
 
 /// The `data` of a [`crate::ErrorCode::ProjectTrustMismatch`] error: the
@@ -212,8 +224,14 @@ pub struct ProjectTrustMismatch {
 /// instead: [`crate::ErrorCode::TurnEnded`], whose `data` is the turn's
 /// [`crate::TurnOutcome`], or [`crate::ErrorCode::DaemonStopping`] when the
 /// daemon stopped it.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct SessionPromptResponse {}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionPromptResponse {
+    /// The turn the prompt started, or, for a prompt sent again with its
+    /// [`SessionPromptParams::idempotency_key`], the turn it started the
+    /// first time. The turn's [`SessionEvent::State`]s and its
+    /// [`SessionEvent::TurnEnded`] carry it.
+    pub turn: TurnId,
+}
 
 /// Params of [`SESSION_CANCEL`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -340,12 +358,16 @@ pub struct SessionAttachResponse {
     /// [`SESSION_EVENT`] notifications after this response replay what the
     /// client missed, and the rest are live (#1669). A reset replays the
     /// last turn's [`super::SessionEvent::TurnEnded`] until the next turn
-    /// saves, so a client tells how the turn it attached after ended only
-    /// once it knows where the replay stops.
+    /// saves, under that turn's id.
     pub replay_events: u64,
     /// The session's job state when the attachment began, which the replay
     /// ends in.
     pub state: JobState,
+    /// The turn `state` is of: the one under way, or the last one, whose
+    /// end a reset's replay holds as the [`super::SessionEvent::TurnEnded`]
+    /// carrying this id. Absent only while the session has run no turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<TurnId>,
     /// The input requests open when the attachment began, oldest first:
     /// what a client may answer even when the replay no longer holds the
     /// events that opened them (#1660). The replay may repeat some; an

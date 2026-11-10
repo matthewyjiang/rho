@@ -105,7 +105,9 @@ impl<'a> HeadlessView<'a> {
             ..
         }) = &mut self.jsonl
         {
-            stream.event(&WireEvent::TurnEnded { outcome });
+            // The stream holds one turn, which nothing else names.
+            let turn = rho_protocol::TurnId::new(uuid::Uuid::new_v4().hyphenated().to_string());
+            stream.event(&WireEvent::TurnEnded { turn, outcome });
         }
     }
 

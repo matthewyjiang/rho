@@ -1,5 +1,5 @@
 use pretty_assertions::assert_eq;
-use rho_protocol::{ToolCallUpdate, TurnError, TurnErrorKind};
+use rho_protocol::{ToolCallUpdate, TurnError, TurnErrorKind, TurnId};
 
 use super::*;
 
@@ -41,6 +41,7 @@ fn a_turn_reads_as_who_said_what() {
         tool(Some("ls"), Some(ToolStatus::InProgress)),
         tool(None, Some(ToolStatus::Completed)),
         SessionEvent::TurnEnded {
+            turn: TurnId::new("t1"),
             outcome: TurnOutcome::Failed {
                 error: TurnError {
                     kind: TurnErrorKind::Provider,

@@ -93,6 +93,7 @@ async fn prompt_as(
             session: session.clone(),
             content: vec![ContentBlock::Text { text: text.into() }],
             timeout_ms: None,
+            idempotency_key: None,
             environment,
         })
         .await;

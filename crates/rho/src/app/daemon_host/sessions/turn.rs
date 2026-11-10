@@ -16,17 +16,13 @@ use std::{
 use rho_protocol as wire;
 use rho_sdk::{CancellationToken, UserInput};
 use tokio::{
-    sync::{mpsc, oneshot},
+    sync::{mpsc, watch},
     time::Instant,
 };
 
 use super::{
-    super::{jobs::TurnEnd, subagents::TurnBudget},
-    budget, cost,
-    inputs::Inputs,
-    options::available_auths,
-    queued::Queued,
-    saved_replay, LoadedSession,
+    super::jobs::TurnEnd, budget, cost, inputs::Inputs, options::available_auths, saved_replay,
+    start::StartedTurn, LoadedSession,
 };
 use crate::{
     app::{
@@ -44,12 +40,14 @@ use crate::{
 };
 use wake::WakePrompt;
 
-/// How a prompt's turn began, as the request that sent the prompt learns
-/// it. A turn that completed `Began`. A turn the daemon's stop interrupted
-/// before it began sends no answer: the request answers `DaemonStopping`
-/// once the stop begins.
+/// How a prompt's turn began, as the request that sent the prompt, and one
+/// that sends it again with its key, learn it. A turn that completed
+/// `Began`. A turn the daemon's stop interrupted before it began stays
+/// `Pending`: the request answers `DaemonStopping` once the stop begins.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum PromptStart {
+    /// The turn has neither begun nor ended yet.
+    Pending,
     /// The turn began: it saved its prompt, or, for `/compact`, its
     /// compaction started; or it must wait for capacity in the daemon-wide
     /// budget (see [`TurnTask::budget`]). It runs on.
@@ -117,46 +115,43 @@ enum TurnInput {
 /// One turn of a session whose job already recorded the turn's start.
 pub(super) struct TurnTask {
     pub(super) session: Arc<LoadedSession>,
-    /// The turn's place in the queue on the session's runtime, joined as
-    /// the turn started (see `Sessions::prompt`).
-    pub(super) runtime: Queued<Option<SessionRuntime>>,
-    /// The turn's place in the daemon-wide budget's line, for a session
-    /// another session started (#1714, see `budget`); `None` runs at once.
-    pub(super) budget: Option<TurnBudget>,
+    /// The turn as it started: its id, its cancel, which a cancel sent for
+    /// this turn trips even before the turn began its prompt, and its
+    /// places in the queue on the session's runtime and, for a session
+    /// another session started (#1714, see `budget`), in the daemon-wide
+    /// budget's line.
+    pub(super) turn: StartedTurn,
     /// Cancelled once the daemon stops: a turn cancelled then was
     /// interrupted, not cancelled by a client.
     pub(super) stopping: CancellationToken,
-    /// Tripped by a cancel sent for this turn, even one sent before the
-    /// turn began its prompt.
-    pub(super) cancel: CancellationToken,
     /// When the daemon cancels the turn as timed out; `None` sets no limit.
     pub(super) limit: Option<TurnLimit>,
 }
 
 impl TurnTask {
-    /// Runs the turn of `input` in a daemon task. The receiver learns how
-    /// the turn began; it closes without an answer only once the daemon
-    /// stops (see [`PromptStart`]).
-    pub(super) fn spawn(self, input: UserInput) -> oneshot::Receiver<PromptStart> {
-        let (started, start) = oneshot::channel();
-        tokio::spawn(self.run(TurnInput::Prompt(input), started));
-        start
+    /// Runs the turn of `input` in a daemon task, which tells
+    /// [`StartedTurn::start`] how the turn began.
+    pub(super) fn spawn(self, input: UserInput) {
+        tokio::spawn(self.run(TurnInput::Prompt(input)));
     }
 
     /// Start a host-constructed goal turn without parsing its displayed command.
-    pub(super) fn spawn_goal(self, input: Turn) -> oneshot::Receiver<PromptStart> {
-        let (started, start) = oneshot::channel();
-        tokio::spawn(self.run(TurnInput::Goal(input), started));
-        start
+    pub(super) fn spawn_goal(self, input: Turn) {
+        tokio::spawn(self.run(TurnInput::Goal(input)));
     }
 
-    async fn run(self, input: TurnInput, started: oneshot::Sender<PromptStart>) {
+    async fn run(self, input: TurnInput) {
         let Self {
             session,
-            runtime,
-            budget,
+            turn:
+                StartedTurn {
+                    id,
+                    cancel,
+                    runtime,
+                    budget,
+                    start,
+                },
             stopping,
-            cancel,
             limit,
         } = self;
         // Locked for the whole turn and released only after the turn's end
@@ -167,7 +162,7 @@ impl TurnTask {
         let mut runtime = runtime.acquire().await;
         // Declared after the lock, so even a panic records the end (see
         // `DaemonView`'s drop) before the lock is released.
-        let mut view = DaemonView::new(Arc::clone(&session), started);
+        let mut view = DaemonView::new(Arc::clone(&session), id, start);
         // With the limit, in milliseconds, when it cancelled the turn: not
         // when a client's cancel came first and the turn was still winding
         // down at the deadline.
@@ -542,20 +537,39 @@ attach reopens it from its file";
 /// [`UNEXPECTED_STOP`].
 pub(super) struct DaemonView {
     pub(super) session: Arc<LoadedSession>,
-    /// Answered `Began` once the turn began (see [`PromptStart::Began`]),
-    /// or with how the turn ended if it ends first.
-    started: Option<oneshot::Sender<PromptStart>>,
+    /// The turn's id, which its end is told under.
+    turn: wire::TurnId,
+    /// Told `Began` once the turn began (see [`PromptStart::Began`]), or
+    /// how the turn ended if it ends first.
+    start: watch::Sender<PromptStart>,
     /// Whether the turn's end is recorded.
     ended: bool,
 }
 
 impl DaemonView {
-    fn new(session: Arc<LoadedSession>, started: oneshot::Sender<PromptStart>) -> Self {
+    fn new(
+        session: Arc<LoadedSession>,
+        turn: wire::TurnId,
+        start: watch::Sender<PromptStart>,
+    ) -> Self {
         Self {
             session,
-            started: Some(started),
+            turn,
+            start,
             ended: false,
         }
+    }
+
+    /// Tells whoever waits for the turn to begin that it began as `start`,
+    /// unless they were told already.
+    fn tell_start(&self, start: PromptStart) {
+        self.start.send_if_modified(|told| {
+            let first = *told == PromptStart::Pending;
+            if first {
+                *told = start;
+            }
+            first
+        });
     }
 
     /// Records that the turn ended as `end`, telling clients `outcome`
@@ -567,7 +581,8 @@ impl DaemonView {
     /// Tells clients the turn ended with `outcome`, if any, records it as
     /// `end`, and tells a request still waiting for the turn to begin.
     fn finish(&mut self, outcome: Option<wire::TurnOutcome>, end: TurnEnd) {
-        // How the turn began, if it had not reported beginning yet.
+        // How the turn began, if it had not reported beginning yet. A
+        // turn that completed began, and is recorded so (see `began`).
         let start = match end {
             TurnEnd::Completed => Some(PromptStart::Began),
             TurnEnd::Interrupted => None,
@@ -580,20 +595,35 @@ impl DaemonView {
         {
             // See `prompt`: the next turn's `running` cannot come before this.
             let _turn = self.session.turn();
-            self.session.end_turn(outcome, end);
+            self.session.end_turn(self.turn.clone(), outcome, end);
         }
         self.ended = true;
-        if let (Some(started), Some(start)) = (self.started.take(), start) {
-            let _ = started.send(start);
+        match start {
+            Some(PromptStart::Began) => self.began(),
+            Some(start @ PromptStart::Ended(_)) => self.tell_start(start),
+            Some(PromptStart::Pending) | None => {}
         }
     }
 
     /// Tells the request that sent the prompt, if it still waits, that the
-    /// turn began (see [`PromptStart::Began`]).
+    /// turn began (see [`PromptStart::Began`]), and records it on the job,
+    /// so a later daemon still knows the prompt as one that ran.
+    ///
+    /// Nothing a turn does before this needs a client: `rho acp` reads none
+    /// of the session's events while its prompt waits for this answer.
     pub(super) fn began(&mut self) {
-        if let Some(started) = self.started.take() {
-            let _ = started.send(PromptStart::Began);
-        }
+        // Recorded before the request is answered, so a daemon killed right
+        // after its answer still left the turn recorded as begun. The
+        // registry records it once, and only on this turn.
+        self.session.jobs.turn_began(&self.session.job, &self.turn);
+        self.tell_start(PromptStart::Began);
+    }
+
+    /// Tells the request that sent the prompt that the turn began, though
+    /// it only waits for capacity: it has run nothing, so the job does not
+    /// record it begun until it does ([`Self::began`]).
+    pub(super) fn accepted(&mut self) {
+        self.tell_start(PromptStart::Began);
     }
 
     /// Takes the model turn's events until it drops its sender, opening

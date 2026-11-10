@@ -1113,6 +1113,10 @@
       ],
       "type": "object"
     },
+    "IdempotencyKey": {
+      "description": "A client's own name for one prompt, which makes sending it again\nsafe ([`super::SessionPromptParams::idempotency_key`]). Any\nnon-empty string the client will not reuse for another prompt of\nthe session, such as a UUID.",
+      "type": "string"
+    },
     "InputAnswer": {
       "description": "An answer to an input request. Each [`Ask`] lists the answers it takes;\nany other is [`crate::ErrorCode::InvalidParams`].",
       "oneOf": [
@@ -2665,7 +2669,7 @@
           "$ref": "#/$defs/Replay"
         },
         "replay_events": {
-          "description": "How many events the replay holds: the first this many\n[`SESSION_EVENT`] notifications after this response replay what the\nclient missed, and the rest are live (#1669). A reset replays the\nlast turn's [`super::SessionEvent::TurnEnded`] until the next turn\nsaves, so a client tells how the turn it attached after ended only\nonce it knows where the replay stops.",
+          "description": "How many events the replay holds: the first this many\n[`SESSION_EVENT`] notifications after this response replay what the\nclient missed, and the rest are live (#1669). A reset replays the\nlast turn's [`super::SessionEvent::TurnEnded`] until the next turn\nsaves, under that turn's id.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -2684,6 +2688,17 @@
             "string",
             "null"
           ]
+        },
+        "turn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TurnId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The turn `state` is of: the one under way, or the last one, whose\nend a reset's replay holds as the [`super::SessionEvent::TurnEnded`]\ncarrying this id. Absent only while the session has run no turn."
         },
         "workspace": {
           "description": "The directory the session works in: the one it was saved in, for a\nsession the daemon reopened (#1661).",
@@ -2949,6 +2964,17 @@
           "properties": {
             "state": {
               "$ref": "#/$defs/JobState"
+            },
+            "turn": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TurnId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The turn the state is of: the one under way, or the one that\nended. Absent only while the session has run no turn."
             },
             "type": {
               "const": "state",
@@ -3263,10 +3289,13 @@
           "type": "object"
         },
         {
-          "description": "The turn ended, and how (#1669).",
+          "description": "Turn `turn` ended, and how (#1669).",
           "properties": {
             "outcome": {
               "$ref": "#/$defs/TurnOutcome"
+            },
+            "turn": {
+              "$ref": "#/$defs/TurnId"
             },
             "type": {
               "const": "turn_ended",
@@ -3275,6 +3304,7 @@
           },
           "required": [
             "type",
+            "turn",
             "outcome"
           ],
           "type": "object"
@@ -3879,6 +3909,17 @@
           "$ref": "#/$defs/ClientEnvironment",
           "description": "The prompting client's environment, which the processes this turn\nstarts run with, and those of later turns until another prompt\nbrings another. Processes already running keep theirs. One whose\nproject trust is not the session's is refused as\n[`crate::ErrorCode::ProjectTrustMismatch`]."
         },
+        "idempotency_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IdempotencyKey"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The client's name for this prompt, which makes sending it again\nsafe, as after a connection that closed before the answer came. A\nprompt whose key is that of the session's latest turn starts none:\nit answers as the first one does, with that turn's id once the turn\nbegan, even after the turn ended or the daemon restarted. The daemon\ncompares only the key, never the content. It keeps the latest turn's\nkey alone, so a prompt is safe to send again until another turn\nstarts on the session. A turn that ended before it began ran\nnothing and frees its key: sending the prompt again starts a turn.\nAn empty key is [`crate::ErrorCode::InvalidParams`]."
+        },
         "session": {
           "$ref": "#/$defs/SessionId"
         },
@@ -3901,6 +3942,15 @@
     },
     "SessionPromptResponse": {
       "description": "Result of [`SESSION_PROMPT`]: the turn began: it saved its prompt, or,\nfor `/compact`, its compaction started; or, for a session another job\nstarted ([`SessionNewParams::parent`]), it queued for capacity in the\ndaemon-wide agent budget. The turn runs on in the daemon;\n[`super::JOB_LIST`] reports how it ends.\n\nA turn that ends before it began answers with an error\ninstead: [`crate::ErrorCode::TurnEnded`], whose `data` is the turn's\n[`crate::TurnOutcome`], or [`crate::ErrorCode::DaemonStopping`] when the\ndaemon stopped it.",
+      "properties": {
+        "turn": {
+          "$ref": "#/$defs/TurnId",
+          "description": "The turn the prompt started, or, for a prompt sent again with its\n[`SessionPromptParams::idempotency_key`], the turn it started the\nfirst time. The turn's [`SessionEvent::State`]s and its\n[`SessionEvent::TurnEnded`] carry it."
+        }
+      },
+      "required": [
+        "turn"
+      ],
       "type": "object"
     },
     "SessionRenameParams": {
@@ -4853,6 +4903,10 @@
       ],
       "description": "What kind of failure ended a turn."
     },
+    "TurnId": {
+      "description": "Identifies one turn of a session: what a prompt starts, from the\njob leaving rest until it rests again. [`super::SESSION_PROMPT`]\nanswers with it, and [`SessionEvent::State`],\n[`SessionEvent::TurnEnded`], and\n[`super::SessionAttachResponse::turn`] carry it, so a client tells\nits own turn from another client's by id. The daemon keeps a\nsession's last turn's id with the session's job, so it names the\nsame turn after a restart.",
+      "type": "string"
+    },
     "TurnOutcome": {
       "anyOf": [
         {
@@ -5399,7 +5453,7 @@
   },
   "protocol": {
     "major": 0,
-    "minor": 2
+    "minor": 3
   },
   "title": "rho daemon protocol"
 }

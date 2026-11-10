@@ -5,7 +5,7 @@ use tempfile::TempDir;
 
 use super::{JobRegistry, RegisterError, SessionJob, StartTurnError};
 use crate::app::daemon_host::jobs::{
-    Admission, JobEvent, JobId, JobRecord, JobState, JobStore, TurnEnd,
+    Admission, JobEvent, JobId, JobRecord, JobState, JobStore, TurnEnd, TurnRecord,
 };
 
 fn states(records: Vec<JobRecord>) -> Vec<(JobId, JobState)> {
@@ -88,13 +88,18 @@ fn a_turn_starts_only_when_none_is_in_progress() {
     registry.register(job).unwrap();
     registry.register(started_by).unwrap();
 
-    let started = registry.start_turn(&id);
-    let while_running = registry.start_turn(&id);
+    let start = |job: &JobId| {
+        registry
+            .start_turn(job, TurnRecord::starting(/*key*/ None))
+            .map(|moved| moved.state)
+    };
+    let started = start(&id);
+    let while_running = start(&id);
     registry.record(&id, JobEvent::InputOpened).unwrap();
-    let while_waiting = registry.start_turn(&id);
-    let unknown = registry.start_turn(&JobId::generate());
-    let queued = registry.start_turn(&child);
-    let while_queued = registry.start_turn(&child);
+    let while_waiting = start(&id);
+    let unknown = start(&JobId::generate());
+    let queued = start(&child);
+    let while_queued = start(&child);
 
     assert_eq!(
         [
@@ -169,7 +174,9 @@ fn an_upgrade_closes_the_registry_only_while_idle() {
     registry.register(job).unwrap();
 
     let before = registry.idle().unwrap();
-    registry.start_turn(&id).unwrap();
+    registry
+        .start_turn(&id, TurnRecord::starting(/*key*/ None))
+        .unwrap();
     let while_running = registry.idle();
     registry
         .record(&id, JobEvent::TurnEnded(TurnEnd::Completed))
@@ -178,7 +185,9 @@ fn an_upgrade_closes_the_registry_only_while_idle() {
     let after_a_turn = registry.close_if_still(before);
     let idle = registry.idle().unwrap();
     let still_idle = registry.close_if_still(idle);
-    let next_turn = registry.start_turn(&id);
+    let next_turn = registry
+        .start_turn(&id, TurnRecord::starting(/*key*/ None))
+        .map(|moved| moved.state);
 
     assert_eq!(
         (while_running, after_a_turn, still_idle, next_turn),
@@ -225,7 +234,7 @@ fn a_session_reopens_on_its_latest_job_unless_one_writes_it() {
         (
             "two session jobs",
             vec![newer.clone(), older.clone(), wrote],
-            SessionJob::Last(newer.clone()),
+            SessionJob::Last(Box::new(newer.clone())),
         ),
         (
             "a running turn",

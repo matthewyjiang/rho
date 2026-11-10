@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     AnswerStop, CardTone, CompactionId, CompactionStatus, ContentBlock, MessageId, SessionEvent,
-    ToolCallId, ToolCallUpdate, ToolStatus, TurnOutcome,
+    ToolCallId, ToolCallUpdate, ToolStatus, TurnId, TurnOutcome,
 };
 
 use super::TextView;
@@ -69,6 +69,7 @@ fn text_output_streams_the_conversation_and_tells_the_rest_on_stderr() {
         },
         chunk("Done."),
         SessionEvent::TurnEnded {
+            turn: TurnId::new("t1"),
             outcome: TurnOutcome::Answered {
                 text: "Looking Done.".into(),
                 stop: AnswerStop::EndTurn,

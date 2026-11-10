@@ -35,6 +35,7 @@ fn a_prompt_carries_its_message_as_content_blocks() {
         ],
         timeout_ms: None,
         environment: ClientEnvironment::from_iter([("HOME".to_owned(), "/home/u".to_owned())]),
+        idempotency_key: Some(IdempotencyKey::new("k1")),
     };
     let wire = json!({
         "session": "s1",
@@ -51,6 +52,7 @@ fn a_prompt_carries_its_message_as_content_blocks() {
             {"type": "resource_link", "uri": "file:///w/c", "name": "c"},
         ],
         "environment": {"HOME": "/home/u"},
+        "idempotency_key": "k1",
     });
     assert_eq!(serde_json::to_value(&params).unwrap(), wire);
     assert_eq!(

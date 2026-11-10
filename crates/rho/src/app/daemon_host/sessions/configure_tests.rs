@@ -3,7 +3,6 @@ use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     self as wire, ContentBlock, SessionChange, SessionConfigureParams, SessionPromptParams,
-    SessionPromptResponse,
 };
 use tempfile::TempDir;
 use tokio::time::timeout;
@@ -71,11 +70,13 @@ async fn a_prompt_sent_while_a_change_waits_runs_after_it() {
         }],
         timeout_ms: None,
         environment: std::iter::empty::<(String, String)>().collect(),
+        idempotency_key: None,
     });
     tokio::pin!(prompt);
     // Pending until its turn, behind the change, saves the prompt.
     assert!(futures_util::poll!(prompt.as_mut()).is_pending());
-    let started = sessions.jobs.get(&session.job).map(|job| job.state);
+    let job = sessions.jobs.get(&session.job).unwrap();
+    let (started, turn) = (job.state, job.turn.map(|turn| turn.id));
     drop(ended_turn);
     let changed = timeout(TEST_BUDGET, configure)
         .await
@@ -83,7 +84,8 @@ async fn a_prompt_sent_while_a_change_waits_runs_after_it() {
         .map(|changed| changed.options.permission_mode.current);
     let prompted = timeout(TEST_BUDGET, prompt)
         .await
-        .expect("the turn saves its prompt once the change applied");
+        .expect("the turn saves its prompt once the change applied")
+        .map(|prompted| Some(prompted.turn));
 
     let seen: Vec<_> = session
         .feed
@@ -106,9 +108,10 @@ async fn a_prompt_sent_while_a_change_waits_runs_after_it() {
         (queued, started, changed, prompted, seen),
         (
             Some(Hold::Configuring(NonZeroUsize::MIN)),
-            Some(JobState::Running),
+            JobState::Running,
             Ok(wire::PermissionMode::Plan),
-            Ok(SessionPromptResponse {}),
+            // The prompt answers with the turn its job recorded.
+            Ok(turn),
             vec![Seen::Options(wire::PermissionMode::Plan), Seen::Prompt],
         )
     );

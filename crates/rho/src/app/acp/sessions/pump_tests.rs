@@ -16,7 +16,7 @@ use agent_client_protocol::{
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     self as wire, AnswerStop, Cursor, DetachReason, JobState, Replay, Seq, SessionAttachResponse,
-    SessionEvent, SessionId, SessionSetup, TurnOutcome,
+    SessionEvent, SessionId, SessionSetup, TurnId, TurnOutcome,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -137,8 +137,19 @@ fn answered(text: &str) -> TurnOutcome {
     }
 }
 
-fn ended(outcome: TurnOutcome) -> SessionEvent {
-    SessionEvent::TurnEnded { outcome }
+fn ended(turn: &str, outcome: TurnOutcome) -> SessionEvent {
+    SessionEvent::TurnEnded {
+        turn: TurnId::new(turn),
+        outcome,
+    }
+}
+
+/// Turn `turn` started.
+fn running(turn: &str) -> SessionEvent {
+    SessionEvent::State {
+        state: JobState::Running,
+        turn: Some(TurnId::new(turn)),
+    }
 }
 
 /// A prompt of this host's, armed on the pump.
@@ -168,10 +179,10 @@ struct Pump {
 }
 
 impl Pump {
-    fn start(state: JobState, script: Script) -> Self {
+    fn start(state: JobState, turn: Option<&str>, script: Script) -> Self {
         let host = Arc::new(Host::default());
         let script = Arc::new(script);
-        let response = attach_response(Replay::Reset, 0, state);
+        let response = attach_response(Replay::Reset, 0, state, turn);
         let shared = Arc::new(Shared {
             options: Mutex::new(response.options.clone()),
             attachment: watch::channel(Attachment::Stale).0,
@@ -230,7 +241,12 @@ impl Pump {
         });
     }
 
-    fn arm(&self) -> Prompt {
+    /// Arms a prompt the daemon answered with turn `turn`, or refused.
+    fn arm(&self, turn: Option<&str>) -> Prompt {
+        let (began, answered) = oneshot::channel();
+        if let Some(turn) = turn {
+            began.send(TurnId::new(turn)).unwrap();
+        }
         let (outcome, receiver) = oneshot::channel();
         let accepted = Arc::new(Mutex::new(None));
         let heard = Arc::clone(&accepted);
@@ -240,7 +256,10 @@ impl Pump {
             accept: Arc::new(Mutex::new(Some(accept))),
         };
         self.inbound
-            .send(Inbound::Control(Control::Arm(waiter)))
+            .send(Inbound::Control(Control::Arm {
+                waiter,
+                turn: answered,
+            }))
             .unwrap();
         Prompt {
             outcome: receiver,
@@ -263,8 +282,10 @@ impl Pump {
 }
 
 /// What a test drives a pump with.
+#[derive(Clone)]
 enum Step {
-    Arm,
+    /// A prompt the daemon answered with this turn, or refused.
+    Arm(Option<&'static str>),
     Live(SessionEvent),
 }
 
@@ -276,18 +297,26 @@ struct Seen {
     echoed: Vec<String>,
 }
 
-// Covers: the first user message after arming is the prompt's (accepted,
-// not echoed) and the first turn end after it ends the prompt; a turn end
-// before it, such as a cancelled turn's, does not; other clients' messages
-// are echoed.
+// Covers: a prompt is matched to its turn by the id the daemon answered it
+// with: that turn's user message is the prompt's (accepted, not echoed) and
+// that turn's end ends the prompt, while another client's turn, started
+// and ended in between, does neither and is echoed; a prompt the daemon
+// refused waits on no turn.
 // Owner: ACP session pump
 #[tokio::test]
 async fn armed_prompts_match_their_own_turn() {
     use Step::{Arm, Live};
+    let own_turn = || {
+        vec![
+            Live(running("t1")),
+            Live(user("m1")),
+            Live(ended("t1", answered("a"))),
+        ]
+    };
     let cases = [
         (
             "own turn",
-            vec![Arm, Live(user("m1")), Live(ended(answered("a")))],
+            [vec![Arm(Some("t1"))], own_turn()].concat(),
             Seen {
                 outcome: Some(Ok(answered("a"))),
                 accepted: Some("m1".into()),
@@ -295,27 +324,17 @@ async fn armed_prompts_match_their_own_turn() {
             },
         ),
         (
-            "an earlier turn's end is not the prompt's",
-            vec![
-                Arm,
-                Live(ended(TurnOutcome::Cancelled)),
-                Live(user("m1")),
-                Live(ended(answered("a"))),
-            ],
-            Seen {
-                outcome: Some(Ok(answered("a"))),
-                accepted: Some("m1".into()),
-                echoed: vec![],
-            },
-        ),
-        (
-            "another client's prompt before arming",
-            vec![
-                Live(user("m0")),
-                Arm,
-                Live(user("m1")),
-                Live(ended(answered("a"))),
-            ],
+            "another client's turn after arming is not the prompt's",
+            [
+                vec![
+                    Arm(Some("t1")),
+                    Live(running("t0")),
+                    Live(user("m0")),
+                    Live(ended("t0", TurnOutcome::Cancelled)),
+                ],
+                own_turn(),
+            ]
+            .concat(),
             Seen {
                 outcome: Some(Ok(answered("a"))),
                 accepted: Some("m1".into()),
@@ -324,20 +343,29 @@ async fn armed_prompts_match_their_own_turn() {
         ),
         (
             "turn still running",
-            vec![Arm, Live(user("m1"))],
+            vec![Arm(Some("t1")), Live(running("t1")), Live(user("m1"))],
             Seen {
                 outcome: None,
                 accepted: Some("m1".into()),
                 echoed: vec![],
             },
         ),
+        (
+            "a refused prompt waits on no turn, so every message is another client's",
+            [vec![Arm(None)], own_turn()].concat(),
+            Seen {
+                outcome: None,
+                accepted: None,
+                echoed: vec!["m1".into()],
+            },
+        ),
     ];
     for (label, steps, expected) in cases {
-        let mut pump = Pump::start(JobState::Idle, Script::default());
+        let mut pump = Pump::start(JobState::Idle, None, Script::default());
         let mut prompt = None;
         for step in steps {
             match step {
-                Arm => prompt = Some(pump.arm()),
+                Arm(turn) => prompt = Some(pump.arm(turn)),
                 Live(event) => pump.live(event),
             }
         }
@@ -354,8 +382,9 @@ async fn armed_prompts_match_their_own_turn() {
 
 // Covers: an attachment that fell behind is resumed after the cursor at
 // once; a tail's missed events act as live, and a reset's skipped replay
-// settles the armed prompt by how it ends: its turn ended with the job
-// idle, or its user message began the running turn (C9).
+// settles the armed prompt by its turn's id: the turn's end ends it, the
+// turn's user message accepts it, another turn's does neither, and a
+// replay that no longer holds the turn's end fails it (C9).
 // Owner: ACP session pump
 #[tokio::test]
 async fn lagged_attachments_resume_and_settle_the_prompt() {
@@ -370,14 +399,17 @@ async fn lagged_attachments_resume_and_settle_the_prompt() {
         resumed_after: Option<Seq>,
         expected: Seen,
     }
+    let unreplayed = AcpError::internal_error().data(
+        "the prompt's turn ended while this client was behind, and the rho daemon no longer replays how",
+    );
     let cases = [
         Case {
             label: "tail holds the turn's end",
-            before: vec![user("m1")],
-            resumed: attach_response(Replay::Tail, 1, JobState::Completed),
-            replay: vec![(2, ended(answered("a")))],
+            before: vec![running("t1"), user("m1")],
+            resumed: attach_response(Replay::Tail, 1, JobState::Completed, Some("t1")),
+            replay: vec![(3, ended("t1", answered("a")))],
             after: vec![],
-            resumed_after: Some(Seq(1)),
+            resumed_after: Some(Seq(2)),
             expected: Seen {
                 outcome: Some(Ok(answered("a"))),
                 accepted: Some("m1".into()),
@@ -386,16 +418,16 @@ async fn lagged_attachments_resume_and_settle_the_prompt() {
         },
         Case {
             label: "reset after the prompt's turn ended",
-            before: vec![user("m1")],
-            resumed: attach_response(Replay::Reset, 4, JobState::Completed),
+            before: vec![running("t1"), user("m1")],
+            resumed: attach_response(Replay::Reset, 4, JobState::Completed, Some("t1")),
             replay: vec![
                 (0, user("m0")),
-                (0, ended(answered("old"))),
                 (0, user("m1")),
-                (2, ended(answered("a"))),
+                (2, ended("t0", answered("old"))),
+                (3, ended("t1", answered("a"))),
             ],
             after: vec![],
-            resumed_after: Some(Seq(1)),
+            resumed_after: Some(Seq(2)),
             expected: Seen {
                 outcome: Some(Ok(answered("a"))),
                 accepted: Some("m1".into()),
@@ -405,13 +437,14 @@ async fn lagged_attachments_resume_and_settle_the_prompt() {
         Case {
             label: "reset while the prompt's turn runs",
             before: vec![],
-            resumed: attach_response(Replay::Reset, 3, JobState::Running),
+            resumed: attach_response(Replay::Reset, 4, JobState::Running, Some("t1")),
             replay: vec![
                 (0, user("m0")),
-                (0, ended(answered("old"))),
-                (1, user("m1")),
+                (1, ended("t0", answered("old"))),
+                (2, running("t1")),
+                (3, user("m1")),
             ],
-            after: vec![ended(answered("a"))],
+            after: vec![ended("t1", answered("a"))],
             resumed_after: None,
             expected: Seen {
                 outcome: Some(Ok(answered("a"))),
@@ -420,14 +453,14 @@ async fn lagged_attachments_resume_and_settle_the_prompt() {
             },
         },
         Case {
-            label: "reset before the prompt's turn began",
-            before: vec![],
-            resumed: attach_response(Replay::Reset, 1, JobState::Idle),
-            replay: vec![(0, user("m0"))],
-            after: vec![user("m1")],
-            resumed_after: None,
+            label: "reset once another turn began: the prompt's end is no longer replayed",
+            before: vec![running("t1"), user("m1")],
+            resumed: attach_response(Replay::Reset, 3, JobState::Running, Some("t2")),
+            replay: vec![(0, user("m1")), (4, running("t2")), (5, user("m2"))],
+            after: vec![ended("t2", answered("another client's"))],
+            resumed_after: Some(Seq(2)),
             expected: Seen {
-                outcome: None,
+                outcome: Some(Err(unreplayed)),
                 accepted: Some("m1".into()),
                 echoed: vec![],
             },
@@ -436,8 +469,8 @@ async fn lagged_attachments_resume_and_settle_the_prompt() {
     for case in cases {
         let script = Script::default();
         script.answers.lock().unwrap().push_back(Ok(case.resumed));
-        let mut pump = Pump::start(JobState::Running, script);
-        let mut prompt = pump.arm();
+        let mut pump = Pump::start(JobState::Idle, None, script);
+        let mut prompt = pump.arm(Some("t1"));
         for event in case.before {
             pump.live(event);
         }
@@ -513,14 +546,14 @@ async fn ended_attachments_fail_the_prompt_and_release_job_waits() {
     for (label, ending, answer, error, attachment) in cases {
         let script = Script::default();
         script.answers.lock().unwrap().extend(answer);
-        let mut pump = Pump::start(JobState::Running, script);
-        let mut prompt = pump.arm();
+        let mut pump = Pump::start(JobState::Running, Some("t1"), script);
+        let mut prompt = pump.arm(Some("t1"));
         // The pump marks the session attached before it reads anything.
         pump.flush().await;
         assert!(pump.attachment().busy(), "{label}");
         pump.routed(ending);
         pump.live(user("m9"));
-        let mut late = pump.arm();
+        let mut late = pump.arm(Some("t2"));
         pump.flush().await;
         assert_eq!(
             (

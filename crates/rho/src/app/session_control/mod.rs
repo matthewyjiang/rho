@@ -269,6 +269,7 @@ impl SessionControl {
                 content,
                 timeout_ms: None,
                 environment: Self::child_environment(caller),
+                idempotency_key: None,
             })
             .await?;
         self.driven

@@ -138,7 +138,8 @@ starting at 1, and a `type`:
 | `event` | Each of the session's events. | `event`: a [daemon protocol session event](/protocol#following-a-session) of the conversation, as a client attached to a daemon session receives it. A run has no job, and nobody answers its requests, so the stream holds no `state` or `input_*` events, and `usage` carries no `cost_usd_micros`. |
 | `run_ended` | Last, unless writing to stdout failed: then the stream stops, and the run exits 1 with the write error on stderr. | `reason`, `exit_code` (the process's [exit status](#exit-status)), and a `message` unless the run completed. |
 
-Once the session opened, its last event is `turn_ended`, whose `outcome` says
+Once the session opened, its last event is `turn_ended`, which names the
+turn by an id, `turn`, and whose `outcome` says
 how the prompt ended ([outcomes](/protocol#how-a-turn-ends)), as a daemon
 session's would:
 

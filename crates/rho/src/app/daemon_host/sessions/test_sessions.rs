@@ -7,7 +7,7 @@ use tempfile::TempDir;
 use super::{open::OpenedSession, LoadedSession, Sessions};
 use crate::{
     app::{
-        daemon_host::jobs::{JobId, JobRecord},
+        daemon_host::jobs::{JobId, JobRecord, TurnRecord},
         session_runtime::{
             unattended_runtime_on, unsaved_unattended_runtime_on, HangUntilCancel, QuestionSupport,
         },
@@ -49,7 +49,10 @@ pub(super) async fn load(sessions: &Sessions, root: &TempDir, load: Load) -> Arc
     sessions.jobs.register(record).unwrap();
     match load {
         Load::Busy => {
-            sessions.jobs.start_turn(&job).unwrap();
+            sessions
+                .jobs
+                .start_turn(&job, TurnRecord::starting(/*key*/ None))
+                .unwrap();
         }
         Load::Saved | Load::Unsaved => {}
     }
