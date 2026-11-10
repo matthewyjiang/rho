@@ -45,6 +45,8 @@ jobs:
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
       - name: Check protocol compatibility with the last release
         run: python3 scripts/check_protocol_compat.py
+      - name: Check an unstable protocol's version against the commit before
+        run: python3 scripts/check_protocol_compat.py --baseline-ref HEAD^1 --unstable-only
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:
