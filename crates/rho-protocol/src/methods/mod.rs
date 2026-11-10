@@ -63,6 +63,7 @@ mod config;
 mod daemon;
 mod event;
 mod goal;
+mod grant;
 mod input;
 mod job;
 mod login;
@@ -102,6 +103,7 @@ pub use event::{
     ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnId,
 };
 pub use goal::{SessionGoal, SessionGoalAction, SessionGoalPhase, SessionGoalStep};
+pub use grant::{GrantAccess, GrantWorkspaces, SessionGrant};
 pub use input::{
     ApprovalAsk, ApprovalSource, Ask, Choice, DefaultAnswer, DefaultStyle, InputAnswer,
     InputRequest, InputRequestId, InputTimeout, Operation, PathScope, PermissionMode,

@@ -50,6 +50,7 @@ async fn open_session(sandbox: &Sandbox, client: &Client, cwd: PathBuf) -> Sessi
             agent: None,
             setup: SessionSetup::default(),
             parent: None,
+            grant: None,
         },
     )
     .await

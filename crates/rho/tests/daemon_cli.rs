@@ -71,6 +71,9 @@ mod skew;
 #[path = "support/daemon_identity.rs"]
 mod identity;
 
+#[path = "support/daemon_grants.rs"]
+mod grants;
+
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;
 

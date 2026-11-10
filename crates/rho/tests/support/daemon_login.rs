@@ -223,6 +223,7 @@ async fn a_relayed_login_signs_in_a_running_session() {
             agent: None,
             setup: SessionSetup::default(),
             parent: None,
+            grant: None,
         })
         .await
         .unwrap();

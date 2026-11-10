@@ -71,6 +71,7 @@ mod configure;
 mod cost;
 mod feed;
 mod goal;
+mod grant;
 mod inputs;
 mod mcp;
 mod next_turn;
@@ -580,19 +581,18 @@ impl Sessions {
             agent,
             setup,
             parent,
+            grant,
         } = params;
         self.refuse_when_stopping()?;
         let workspace = Workspace::parse(&cwd)?;
         // Resolved before the session opens, so a malformed parent opens
         // nothing.
         let started_by = parent.map(|parent| self.job_writing(&parent)).transpose()?;
+        let with = OpenWith::under(grant::asked(grant, &environment)?, &environment, setup)?;
         let job = JobId::generate();
         let opened = open_session(
             Opening::New { workspace, agent },
-            &OpenWith {
-                environment: session_environment(&environment)?,
-                setup,
-            },
+            &with,
             &self.subagents,
             &self.settings,
             &job,
@@ -607,6 +607,7 @@ impl Sessions {
                 None => Admission::Immediate,
             },
             parent: started_by.flatten(),
+            grant: with.grant,
             ..JobRecord::new_session(
                 job.clone(),
                 opened.runtime.workspace_root().to_path_buf(),
@@ -729,10 +730,12 @@ impl Sessions {
         // just attached to.
         // Applied only if this attach reopens the session: one the daemon
         // has loaded keeps the environment and setup it opened with.
-        let with = OpenWith {
-            environment: session_environment(&params.environment)?,
-            setup: params.setup,
-        };
+        // Its grant is its environment's: an attach names none.
+        let with = OpenWith::under(
+            grant::asked(/*named*/ None, &params.environment)?,
+            &params.environment,
+            params.setup,
+        )?;
         let (session, attached) = self
             .enter_session(&params.session, &with, |session, _turn| {
                 Ok(session.feed.attach(params.after.as_ref()))
@@ -876,7 +879,12 @@ impl SessionJobRecord {
                     ),
                 })
             }
-            (Self::Reuse(record), SessionJob::Last(last)) if last.id == record.id => Ok(()),
+            (Self::Reuse(record), SessionJob::Last(last)) if last.id == record.id => {
+                // The session reopens with the grant its environment
+                // carries, so its record says the same.
+                jobs.set_grant(&record.id, record.grant);
+                Ok(())
+            }
             (_, SessionJob::Busy(job)) => Err(writing(&job, session)),
             (Self::Register(_) | Self::Reuse(_), SessionJob::New | SessionJob::Last(_)) => {
                 Err(RpcError::new(

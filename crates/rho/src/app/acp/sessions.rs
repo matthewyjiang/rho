@@ -329,6 +329,7 @@ impl Adapter {
                 agent: self.launch.agent.clone(),
                 setup: setup.clone(),
                 parent: None,
+                grant: None,
             })
             .await?;
         self.open(created.session, setup, Show::Skip).await

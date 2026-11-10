@@ -2,10 +2,12 @@
 //! the call that started its turn may let it do (#1765).
 //!
 //! One [`CallerContext`] travels the whole chain:
-//! - the session-control core (`app::session_control`) writes it into the
-//!   environment of every session it starts or prompts, one level deeper and
-//!   with the caller's scope, and the session's processes inherit it, so a
-//!   `rho mcp serve` a session's shell runs reads it from its environment;
+//! - the session-control core (`app::session_control`) names it as the grant
+//!   of every session it starts or prompts, one level deeper and with the
+//!   caller's scope; the daemon records it on the session's job and writes
+//!   it into the session's environment (#1780), which the session's
+//!   processes inherit, so a `rho mcp serve` a session's shell runs reads it
+//!   from its environment;
 //! - rho's MCP client sends the calling session's current context with every
 //!   call to a server that accepts it ([`CallerContext::to_send`]), so a long-running
 //!   server, such as a stdio `rho mcp serve` started when the session loaded,
@@ -142,6 +144,11 @@ impl CallerContext {
         scope: Scope::FULL,
     };
 
+    /// Whether this is [`Self::ROOT`], which limits nothing.
+    pub(crate) fn is_root(&self) -> bool {
+        *self == Self::ROOT
+    }
+
     /// The context in an environment, read through `read`: a process's own,
     /// or a session's. A variable that is set but does not parse is an
     /// error, never the unlimited default.
@@ -223,6 +230,49 @@ impl CallerContext {
     /// The experimental capability a server that reads the context declares.
     pub(crate) fn capability() -> rmcp::model::ExperimentalCapabilities {
         [(META_KEY.to_owned(), serde_json::Map::new())].into()
+    }
+}
+
+impl From<rho_protocol::SessionGrant> for CallerContext {
+    fn from(grant: rho_protocol::SessionGrant) -> Self {
+        let rho_protocol::SessionGrant {
+            depth,
+            access,
+            workspaces,
+        } = grant;
+        Self {
+            depth,
+            scope: Scope {
+                access: match access {
+                    rho_protocol::GrantAccess::Read => Access::Read,
+                    rho_protocol::GrantAccess::Write => Access::Write,
+                },
+                workspaces: match workspaces {
+                    rho_protocol::GrantWorkspaces::Any => Workspaces::Any,
+                    rho_protocol::GrantWorkspaces::Only(roots) => Workspaces::Only(roots),
+                },
+            },
+        }
+    }
+}
+
+impl From<CallerContext> for rho_protocol::SessionGrant {
+    fn from(context: CallerContext) -> Self {
+        let CallerContext {
+            depth,
+            scope: Scope { access, workspaces },
+        } = context;
+        Self {
+            depth,
+            access: match access {
+                Access::Read => rho_protocol::GrantAccess::Read,
+                Access::Write => rho_protocol::GrantAccess::Write,
+            },
+            workspaces: match workspaces {
+                Workspaces::Any => rho_protocol::GrantWorkspaces::Any,
+                Workspaces::Only(roots) => rho_protocol::GrantWorkspaces::Only(roots),
+            },
+        }
     }
 }
 
