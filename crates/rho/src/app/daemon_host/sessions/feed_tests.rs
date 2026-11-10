@@ -45,6 +45,7 @@ fn options(mode: wire::PermissionMode) -> wire::SessionOptions {
 fn idle_feed() -> Feed {
     Feed::new(
         wire::JobState::Idle,
+        /*turn*/ None,
         /*title*/ None,
         options(wire::PermissionMode::Bypass),
     )
@@ -183,14 +184,21 @@ fn a_turn_larger_than_the_buffer_resets_with_a_notice_instead_of_its_start() {
 }
 
 #[test]
-fn an_attach_reports_the_job_state_its_replay_ends_in() {
+fn an_attach_reports_the_job_state_its_replay_ends_in_and_its_turn() {
     let feed = idle_feed();
-    assert_eq!(feed.attach(None).job, wire::JobState::Idle);
+    let idle = feed.attach(None);
+    assert_eq!((idle.job, idle.turn), (wire::JobState::Idle, None));
+    let turn = wire::TurnId::new("t1");
     feed.publish([wire::SessionEvent::State {
         state: wire::JobState::Running,
+        turn: Some(turn.clone()),
     }]);
     feed.publish(notices(&["a reply"]));
-    assert_eq!(feed.attach(None).job, wire::JobState::Running);
+    let running = feed.attach(None);
+    assert_eq!(
+        (running.job, running.turn),
+        (wire::JobState::Running, Some(turn))
+    );
 }
 
 // Covers: an attach reports the session's title, the saved one a reopened
@@ -201,6 +209,7 @@ fn an_attach_reports_the_job_state_its_replay_ends_in() {
 fn an_attach_reports_the_saved_title_until_a_title_change() {
     let feed = Feed::new(
         wire::JobState::Idle,
+        /*turn*/ None,
         Some("Saved title".into()),
         options(wire::PermissionMode::Bypass),
     );

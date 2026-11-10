@@ -3,14 +3,29 @@ use rho_protocol::{AnswerStop, Ask, InputRequestId, Question, QuestionAsk, Resol
 
 use super::*;
 
-fn watch(state: JobState) -> Watch {
+/// A watch of a job in `state`, of turn `turn`.
+fn watch(state: JobState, turn: &str) -> Watch {
     Watch {
         stream: StreamId::new("stream"),
         seq: Seq(0),
         state,
-        outcome: None,
-        outcome_checkpoint: None,
+        turn: Some(TurnId::new(turn)),
+        ended: None,
         inputs: Vec::new(),
+    }
+}
+
+fn turn_ended(turn: &str, outcome: TurnOutcome) -> SessionEvent {
+    SessionEvent::TurnEnded {
+        turn: TurnId::new(turn),
+        outcome,
+    }
+}
+
+fn state(state: JobState, turn: &str) -> SessionEvent {
+    SessionEvent::State {
+        state,
+        turn: Some(TurnId::new(turn)),
     }
 }
 
@@ -21,42 +36,21 @@ fn answered(text: &str) -> TurnOutcome {
     }
 }
 
-// Covers: a reset's replay of the last turn's end does not pass for the
-// running turn's, which `wait` reports once that turn ends, with a cursor at
-// the last event seen.
+// Covers: a turn's outcome is reported by the turn's id: a reset's replay
+// of the turn before's end does not pass for the running turn's, which
+// `wait` reports once that turn ends, with a cursor at the last event seen.
 // Owner: session-control wait.
 #[test]
 fn only_the_turn_that_ended_reports_an_outcome() {
-    let mut watching = watch(JobState::Running);
+    let mut watching = watch(JobState::Running, "t2");
     // The replay: the last turn's end, then the new turn starting.
-    watching.push(
-        Seq(0),
-        &SessionEvent::TurnEnded {
-            outcome: answered("old"),
-        },
-    );
-    watching.push(
-        Seq(7),
-        &SessionEvent::State {
-            state: JobState::Running,
-        },
-    );
-    watching.finish_replay(Replay::Reset, JobState::Running);
-    let mut ended = watch(JobState::Running);
+    watching.push(Seq(0), &turn_ended("t1", answered("old")));
+    watching.push(Seq(7), &state(JobState::Running, "t2"));
+    watching.finish_replay(JobState::Running, Some(TurnId::new("t2")));
+    let mut ended = watch(JobState::Running, "t2");
     ended.seq = watching.seq;
-    ended.push(
-        Seq(8),
-        &SessionEvent::TurnEnded {
-            outcome: answered("new"),
-        },
-    );
-    ended.push(
-        Seq(9),
-        &SessionEvent::State {
-            state: JobState::Completed,
-        },
-    );
-    ended.finish_replay(Replay::Tail, JobState::Completed);
+    ended.push(Seq(8), &turn_ended("t2", answered("new")));
+    ended.push(Seq(9), &state(JobState::Completed, "t2"));
 
     assert_eq!(
         (
@@ -84,28 +78,16 @@ fn only_the_turn_that_ended_reports_an_outcome() {
     );
 }
 
-// Covers: a live wait or tail replay ending between TurnEnded and State
-// must not acknowledge an outcome it has not returned. A running reset
-// still discards the saved previous turn's outcome.
-// Owner: session-control wait checkpoint and replay reconciliation.
+// Covers: a wait that ends between the running turn's end and its terminal
+// state does not acknowledge an outcome it has not returned; the end of
+// another turn, as a reset replays, holds the cursor back for nothing.
+// Owner: session-control wait checkpoint.
 #[test]
 fn a_wait_boundary_does_not_skip_an_unreturned_outcome() {
-    for (replay, checkpoint) in [
-        (None, "stream:7"),
-        (Some(Replay::Tail), "stream:7"),
-        (Some(Replay::Reset), "stream:8"),
-    ] {
-        let mut watching = watch(JobState::Running);
+    for (ended, checkpoint) in [("t2", "stream:7"), ("t1", "stream:8")] {
+        let mut watching = watch(JobState::Running, "t2");
         watching.seq = Seq(7);
-        watching.push(
-            Seq(8),
-            &SessionEvent::TurnEnded {
-                outcome: answered("final answer"),
-            },
-        );
-        if let Some(replay) = replay {
-            watching.finish_replay(replay, JobState::Running);
-        }
+        watching.push(Seq(8), &turn_ended(ended, answered("final answer")));
         assert_eq!(
             watching.finish(SessionId::new("s")),
             WaitResult {
@@ -116,7 +98,7 @@ fn a_wait_boundary_does_not_skip_an_unreturned_outcome() {
                 inputs: Vec::new(),
                 cursor: Some(checkpoint.into()),
             },
-            "replay: {replay:?}"
+            "the end of turn {ended}"
         );
     }
 }
@@ -145,7 +127,7 @@ fn a_turn_waiting_for_input_reports_its_open_requests() {
         tool_call: None,
         timeout: None,
     };
-    let mut watching = watch(JobState::Running);
+    let mut watching = watch(JobState::Running, "t1");
     for event in [
         SessionEvent::InputRequested {
             request: Box::new(request(1)),
@@ -157,9 +139,7 @@ fn a_turn_waiting_for_input_reports_its_open_requests() {
             id: InputRequestId(1),
             resolution: Resolution::Answered,
         },
-        SessionEvent::State {
-            state: JobState::WaitingForInput,
-        },
+        state(JobState::WaitingForInput, "t1"),
     ] {
         watching.push(Seq(1), &event);
     }

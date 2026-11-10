@@ -83,9 +83,9 @@ pub use daemon::{
     DAEMON_STATUS, DAEMON_STOP, HELLO,
 };
 pub use event::{
-    CardTone, CompactionId, CompactionStatus, ContentBlock, Cursor, Location, MessageId, PlanEntry,
-    PlanStatus, Seq, SessionEvent, SteerId, StreamId, ToolCallId, ToolCallUpdate, ToolContent,
-    ToolKind, ToolStatus,
+    CardTone, CompactionId, CompactionStatus, ContentBlock, Cursor, IdempotencyKey, Location,
+    MessageId, PlanEntry, PlanStatus, Seq, SessionEvent, SteerId, StreamId, ToolCallId,
+    ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnId,
 };
 pub use goal::{SessionGoal, SessionGoalAction, SessionGoalPhase, SessionGoalStep};
 pub use input::{

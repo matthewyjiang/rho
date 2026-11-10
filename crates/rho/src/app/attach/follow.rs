@@ -1,17 +1,17 @@
 //! Where an attachment stands in a session's events, and whether the turn
 //! it follows has ended.
 //!
-//! `rho attach` follows the session's turn under way, or reports its last
-//! turn when none is. A reset's replay is history, so it ends the turn only
-//! once it is over, by what it held of the last turn and the job's state
-//! ([`ResetReplay`]). A tail replay holds only events the client has not
-//! seen, so they end the turn as live ones do.
+//! `rho attach` follows one turn, by its id: the one the attach found
+//! under way, the session's last when none is, or, on a session that has
+//! run none, the first to start. That turn's `turn_ended` ends the
+//! attachment, wherever it arrives: live, in a tail replay, or in a
+//! reset's, which is history and so ends it only once it is over.
 
 use rho_protocol::{
-    Cursor, JobState, Replay, Seq, SessionAttachResponse, SessionEvent, TurnOutcome,
+    Cursor, JobState, Replay, Seq, SessionAttachResponse, SessionEvent, TurnId, TurnOutcome,
 };
 
-use crate::app::daemon_client::{Part, ReplayedTurn, ResetReplay, StreamPosition};
+use crate::app::daemon_client::{Part, StreamPosition};
 
 /// How the turn an attachment followed ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,42 +20,56 @@ pub(super) enum Ending {
     Turn(TurnOutcome),
     /// The daemon stopped before the turn ended.
     Interrupted,
-    /// A reset's replay ended in a finished job, but its last turn held no
-    /// `turn_ended`, which the daemon promises it does: a daemon bug.
+    /// A reset's replay ended in a finished job, but held no `turn_ended`
+    /// of the job's last turn, which the daemon promises it does: a daemon
+    /// bug.
     Unreported,
 }
 
 /// One attachment's place in its session's events.
 pub(super) struct Follow {
     position: StreamPosition,
-    /// The last attach's replay, read as far as its events came; what it
-    /// holds counts only when the replay is a reset.
-    replay: ResetReplay,
+    /// The turn followed; `None` until a session that has run none starts
+    /// its first.
+    turn: Option<TurnId>,
+    /// The job state the last reset ends in, as its attach answered.
+    state: JobState,
+    /// How the followed turn ended, as a reset's replay held it, until
+    /// that replay is over.
+    replayed: Option<Ending>,
 }
 
 impl Follow {
     /// Starts following from the first attach's response. Returns how the
     /// turn ended when the response alone says it.
     pub(super) fn attached(response: &SessionAttachResponse) -> (Self, Option<Ending>) {
-        let follow = Self {
+        let mut follow = Self {
             position: StreamPosition::attached(response),
-            replay: ResetReplay::new(response.state),
+            turn: response.turn.clone(),
+            state: response.state,
+            replayed: None,
         };
         let ending = follow.settled_by(response);
         (follow, ending)
     }
 
     /// Starts over from a reattach's response, keeping the cursor unless it
-    /// resets. Returns how the turn ended when the response alone says it.
+    /// resets. A tail goes on with the turn followed; a reset follows the
+    /// turn it ends in. Returns how the turn ended when the response alone
+    /// says it.
     pub(super) fn reattached(&mut self, response: &SessionAttachResponse) -> Option<Ending> {
         self.position.reattached(response);
-        self.replay = ResetReplay::new(response.state);
+        if response.replay == Replay::Reset {
+            self.turn.clone_from(&response.turn);
+            self.state = response.state;
+            self.replayed = None;
+        }
         self.settled_by(response)
     }
 
     /// How the turn ended when `response` alone says it: a reset with
     /// nothing to replay.
-    fn settled_by(&self, response: &SessionAttachResponse) -> Option<Ending> {
+    fn settled_by(&mut self, response: &SessionAttachResponse) -> Option<Ending> {
         match (response.replay, response.replay_events) {
             (Replay::Reset, 0) => self.settled(),
             _ => None,
@@ -65,12 +79,30 @@ impl Follow {
     /// Observes the session's next event, numbered `seq`. Returns how the
     /// turn ended once it has.
     pub(super) fn observe(&mut self, seq: Seq, event: &SessionEvent) -> Option<Ending> {
-        match self.position.observe(seq) {
+        let part = self.position.observe(seq);
+        let ending = match event {
+            SessionEvent::TurnEnded { turn, outcome } if self.follows(turn) => {
+                Some(Ending::Turn(outcome.clone()))
+            }
+            SessionEvent::State {
+                state: JobState::Interrupted,
+                turn: Some(turn),
+            } if self.follows(turn) => Some(Ending::Interrupted),
+            // The first turn of a session that had run none.
+            SessionEvent::State {
+                turn: Some(turn), ..
+            } if self.turn.is_none() => {
+                self.turn = Some(turn.clone());
+                None
+            }
+            _ => None,
+        };
+        match part {
             Part::Replayed {
                 replay: Replay::Reset,
                 left,
             } => {
-                self.replay.observe(event);
+                self.replayed = ending.or(self.replayed.take());
                 if left == 0 {
                     self.settled()
                 } else {
@@ -81,13 +113,7 @@ impl Follow {
                 replay: Replay::Tail,
                 ..
             }
-            | Part::Live => match event {
-                SessionEvent::TurnEnded { outcome } => Some(Ending::Turn(outcome.clone())),
-                SessionEvent::State {
-                    state: JobState::Interrupted,
-                } => Some(Ending::Interrupted),
-                _ => None,
-            },
+            | Part::Live => ending,
         }
     }
 
@@ -101,15 +127,16 @@ impl Follow {
         self.position.cursor()
     }
 
-    /// How the job's last turn ended, once a reset's replay is over, if the
-    /// job is not running one.
-    fn settled(&self) -> Option<Ending> {
-        match self.replay.state {
+    fn follows(&self, turn: &TurnId) -> bool {
+        self.turn.as_ref() == Some(turn)
+    }
+
+    /// How the followed turn ended, once a reset's replay is over, if the
+    /// job is not running it.
+    fn settled(&mut self) -> Option<Ending> {
+        match self.state {
             JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::TimedOut => {
-                Some(match &self.replay.turn {
-                    ReplayedTurn::Ended(outcome) => Ending::Turn(outcome.clone()),
-                    ReplayedTurn::Unseen | ReplayedTurn::Began(_) => Ending::Unreported,
-                })
+                Some(self.replayed.take().unwrap_or(Ending::Unreported))
             }
             JobState::Interrupted => Some(Ending::Interrupted),
             // A session job is idle before its first prompt: the attachment
@@ -118,7 +145,7 @@ impl Follow {
                 None
             }
             // `JobState` is non-exhaustive; a state a newer daemon sends is
-            // followed until a turn ends.
+            // followed until the turn ends.
             _ => None,
         }
     }

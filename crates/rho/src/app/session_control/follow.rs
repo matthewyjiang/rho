@@ -10,7 +10,7 @@ use rho_protocol::{
     methods::{SessionDetach, SessionObserve},
     Cursor, DaemonNotification, InputRequest, JobState, Notifications, Replay, Seq,
     SessionAttachResponse, SessionDetachParams, SessionEvent, SessionId, SessionObserveParams,
-    StreamId, TurnOutcome,
+    StreamId, TurnId, TurnOutcome,
 };
 
 use super::{
@@ -120,8 +120,8 @@ pub(super) async fn wait(
         stream: response.stream.clone(),
         seq: resumed,
         state: response.state,
-        outcome: None,
-        outcome_checkpoint: None,
+        turn: response.turn.clone(),
+        ended: None,
         inputs: response.inputs.clone(),
     };
     // The replay arrives at once and ends in the state the attach reported;
@@ -138,7 +138,7 @@ pub(super) async fn wait(
             }
         }
     }
-    watch.finish_replay(attached.response.replay, attached.response.state);
+    watch.finish_replay(attached.response.state, attached.response.turn.clone());
     while !detached && turn_runs(watch.state) {
         match tokio::time::timeout_at(deadline, attached.next()).await {
             Err(_elapsed) => break,
@@ -166,39 +166,43 @@ struct Watch {
     stream: StreamId,
     seq: Seq,
     state: JobState,
-    /// How the last turn ended, until another starts.
-    outcome: Option<TurnOutcome>,
-    /// The checkpoint before an outcome we cannot return until State arrives.
-    outcome_checkpoint: Option<Seq>,
+    /// The turn `state` is of.
+    turn: Option<TurnId>,
+    /// The last turn end seen.
+    ended: Option<Ended>,
     inputs: Vec<InputRequest>,
 }
 
+/// A turn's end, as its `turn_ended` told it.
+struct Ended {
+    turn: TurnId,
+    outcome: TurnOutcome,
+    /// The last seq seen before it: where a wait that cannot return the
+    /// outcome yet resumes, so the next one reads it again.
+    before: Seq,
+}
+
 impl Watch {
-    /// Reconciles replayed events with the attach's authoritative snapshot.
-    fn finish_replay(&mut self, replay: Replay, state: JobState) {
+    /// The replay is over: the attach's snapshot says where the job is.
+    fn finish_replay(&mut self, state: JobState, turn: Option<TurnId>) {
         self.state = state;
-        if replay == Replay::Reset && turn_runs(state) {
-            // Only a reset can replay the saved previous turn's outcome.
-            // A tail's pending outcome must retain its checkpoint until State.
-            self.outcome = None;
-            self.outcome_checkpoint = None;
-        }
+        self.turn = turn;
     }
 
     fn push(&mut self, seq: Seq, event: &SessionEvent) {
         let before = self.seq;
         self.seq = self.seq.max(seq);
         match event {
-            SessionEvent::State { state } => {
+            SessionEvent::State { state, turn } => {
                 self.state = *state;
-                if turn_runs(*state) {
-                    self.outcome = None;
-                    self.outcome_checkpoint = None;
-                }
+                self.turn.clone_from(turn);
             }
-            SessionEvent::TurnEnded { outcome } => {
-                self.outcome = Some(outcome.clone());
-                self.outcome_checkpoint = Some(before);
+            SessionEvent::TurnEnded { turn, outcome } => {
+                self.ended = Some(Ended {
+                    turn: turn.clone(),
+                    outcome: outcome.clone(),
+                    before,
+                });
             }
             SessionEvent::InputRequested { request } => {
                 if !self.inputs.iter().any(|open| open.id == request.id) {
@@ -213,18 +217,23 @@ impl Watch {
     fn finish(self, session: SessionId) -> WaitResult {
         let done = !turn_runs(self.state);
         let ended = done && self.state != JobState::WaitingForInput;
-        // A deadline or detach may split TurnEnded from its terminal State.
-        // Replay the outcome next time rather than acknowledging and losing it.
-        let checkpoint = if ended {
-            self.seq
-        } else {
-            self.outcome_checkpoint.unwrap_or(self.seq)
+        // Only the end of the turn the job's state is of counts: a reset
+        // replays the turn before's.
+        let end = self
+            .ended
+            .filter(|end| Some(&end.turn) == self.turn.as_ref());
+        // A deadline or detach may split a turn's end from its terminal
+        // state. Replay the outcome next time rather than acknowledging and
+        // losing it.
+        let checkpoint = match &end {
+            Some(end) if !ended => end.before,
+            Some(_) | None => self.seq,
         };
         WaitResult {
             session,
             state: self.state,
             done,
-            outcome: self.outcome.filter(|_| ended),
+            outcome: end.filter(|_| ended).map(|end| end.outcome),
             inputs: if self.state == JobState::WaitingForInput {
                 self.inputs
             } else {

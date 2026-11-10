@@ -24,7 +24,7 @@ mod registry;
 mod state;
 mod store;
 
-pub(super) use registry::{JobRegistry, RegisterError, SessionJob, StartTurnError};
+pub(super) use registry::{JobRegistry, Moved, RegisterError, SessionJob, StartTurnError};
 pub(super) use state::{JobEvent, JobState, TurnEnd};
 pub(super) use store::JobStore;
 
@@ -137,6 +137,38 @@ pub(super) struct JobRecord {
     /// interrupted, and for jobs other than a session's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) outcome: Option<rho_protocol::TurnOutcome>,
+    /// A session job's turn under way, or its last one, which `state` and
+    /// `outcome` are of. `None` before the job's first turn and for jobs
+    /// other than a session's. Kept in the record so a later daemon names
+    /// the turn by the same id and still answers a prompt sent again with
+    /// its key (#1777).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) turn: Option<TurnRecord>,
+}
+
+/// One turn of a session job, as its record keeps it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct TurnRecord {
+    pub(super) id: rho_protocol::TurnId,
+    /// The key the prompt that started the turn named, if it named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) key: Option<rho_protocol::IdempotencyKey>,
+    /// Whether the turn began, as its prompt's request was answered (see
+    /// `sessions::turn::PromptStart`). A turn that did not begin ran
+    /// nothing, so a prompt sent again with its key starts a turn.
+    #[serde(default)]
+    pub(super) began: bool,
+}
+
+impl TurnRecord {
+    /// A turn about to start, under a new id, for a prompt that named `key`.
+    pub(super) fn starting(key: Option<rho_protocol::IdempotencyKey>) -> Self {
+        Self {
+            id: rho_protocol::TurnId::new(uuid::Uuid::new_v4().hyphenated().to_string()),
+            key,
+            began: false,
+        }
+    }
 }
 
 impl JobRecord {
@@ -199,6 +231,7 @@ impl JobRecord {
             created_at: now,
             updated_at: now,
             outcome: None,
+            turn: None,
         }
     }
 }

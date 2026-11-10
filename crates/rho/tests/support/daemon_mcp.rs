@@ -145,7 +145,7 @@ async fn a_host_drives_a_session_in_another_workspace_over_mcp() {
         .iter()
         .rev()
         .find_map(|(_, event)| match event {
-            SessionEvent::TurnEnded { outcome } => Some(serde_json::to_value(outcome).unwrap()),
+            SessionEvent::TurnEnded { outcome, .. } => Some(serde_json::to_value(outcome).unwrap()),
             _ => None,
         });
     // The session takes the host's next turn.
