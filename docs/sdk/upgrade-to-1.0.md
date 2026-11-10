@@ -97,7 +97,7 @@ This separation is intentional so adding the library does not implicitly grant s
 
 ## Config migration
 
-`~/.rho/config.toml` remains application-owned. Rho accepts the grouped format documented in [configuration](/configuration) and continues to read the previous flat format, rewriting it into groups when it saves.
+`~/.rho/config.toml` remains application-owned. Rho reads the grouped format documented in [configuration](/configuration); since 3.0 a key in the previous flat format is a load error.
 
 The SDK does not:
 

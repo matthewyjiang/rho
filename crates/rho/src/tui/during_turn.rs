@@ -96,10 +96,7 @@ impl App {
         if self.handle_questionnaire_key(key)? {
             return Ok(());
         }
-        if self.handle_running_config_number_key(key, terminal)? {
-            return Ok(());
-        }
-        if self.handle_running_text_input_key(key).await? {
+        if self.handle_text_input_key(key)? {
             return Ok(());
         }
         if self.handle_running_picker_key(key, terminal).await? {
@@ -384,7 +381,10 @@ impl App {
         match invocation.id {
             CommandId::Exit => self.execute_exit_command(),
             CommandId::Theme => self.open_theme_picker(),
-            CommandId::Config => self.execute_config_command(terminal),
+            CommandId::Config => {
+                self.execute_config_command();
+                Ok(())
+            }
             CommandId::Info => self.execute_info_command(),
             CommandId::Help => self.execute_help_command(),
             CommandId::Skills => self.execute_skills_command(),
@@ -410,8 +410,12 @@ impl App {
                 self.set_status("agent creation is unavailable while a model turn is running");
                 Ok(())
             }
+            // In process, as when idle: only the daemon saves settings.
+            CommandId::Advisor => {
+                self.needs_daemon("advisor");
+                Ok(())
+            }
             CommandId::AddDir
-            | CommandId::Advisor
             | CommandId::Codemode
             | CommandId::Context
             | CommandId::Permissions
@@ -436,28 +440,6 @@ impl App {
                 Ok(())
             }
         }
-    }
-
-    pub(super) fn handle_running_config_number_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer(), ComposerMode::ConfigNumberInput(_)) {
-            return Ok(false);
-        }
-        self.handle_config_number_key(key, terminal)
-    }
-
-    pub(super) async fn handle_running_text_input_key(
-        &mut self,
-        key: KeyEvent,
-    ) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer(), ComposerMode::TextInput(_)) {
-            return Ok(false);
-        }
-        self.handle_text_input_key(key, super::config_row::ConfigCommitCtx::DuringTurn)
-            .await
     }
 
     pub(super) fn next_running_frame_deadline(

@@ -1,5 +1,5 @@
-//! `display.show_header_hints` hides the session header hint block at startup,
-//! and the Appearance toggle brings it back live.
+//! `show_header_hints` in `clients/tui.toml` hides the session header hint block at startup,
+//! and the daemon `/config` toggle brings it back live.
 
 use std::{fs::OpenOptions, io::Write};
 
@@ -8,11 +8,13 @@ use anyhow::Result;
 use crate::{
     env::IsolatedHome,
     harness::PtyHarness,
-    keys::Key,
     scenario::{Scenario, Step},
 };
 
-use super::{DEFAULT_SIZE, SETTLE, STARTUP};
+use super::{
+    daemon_config::toggle_display_setting, daemon_resume::write_daemon_config, DEFAULT_SIZE,
+    SETTLE, STARTUP,
+};
 
 /// A ready-session hint line; present only while header hints are shown.
 const HINT_TEXT: &str = "Show available commands";
@@ -20,15 +22,15 @@ const HINT_TEXT: &str = "Show available commands";
 const BRAND_TEXT: &str = "rho  v";
 
 // Covers: config-disabled header hints stay off at startup, and the /config
-// Appearance toggle restores them without a restart.
+// Display toggle restores them without a restart.
 // Owner: interactive TUI. The header cache must rebuild on the toggle.
 pub(super) const HEADER_HINTS_SCENARIO: Scenario = Scenario::new(
     "header_hints_toggle",
-    "Hide header hints from config at startup, then show them from Appearance",
+    "Hide header hints from config at startup, then show them from /config",
     DEFAULT_SIZE,
     &[
         Step::WaitText {
-            text: "gpt-5.5",
+            text: "Bypass ·",
             timeout: STARTUP,
         },
         Step::Phase("hidden_at_startup"),
@@ -39,12 +41,19 @@ pub(super) const HEADER_HINTS_SCENARIO: Scenario = Scenario::new(
     ],
     /*smoke*/ false,
 )
-.with_setup(setup_hidden_hints);
+.with_setup(setup_hidden_hints)
+.with_env(&[
+    ("RHO_TUI_DAEMON", "1"),
+    ("OPENAI_API_KEY", "sk-test-matrix"),
+]);
 
 fn setup_hidden_hints(home: &IsolatedHome) -> Result<()> {
+    write_daemon_config(home)?;
     writeln!(
-        OpenOptions::new().append(true).open(&home.config_path)?,
-        "\n[display]\nshow_header_hints = false"
+        OpenOptions::new()
+            .append(true)
+            .open(&home.client_settings_path)?,
+        "show_header_hints = false"
     )?;
     Ok(())
 }
@@ -56,21 +65,6 @@ fn assert_hints_hidden(harness: &mut PtyHarness) -> Result<()> {
 }
 
 fn toggle_hints_on(harness: &mut PtyHarness) -> Result<()> {
-    harness.submit_text("/config")?;
-    harness.wait_for_text("Config · saves automatically", SETTLE)?;
-    harness.inject_key(&Key::Down)?;
-    harness.inject_key(&Key::Enter)?;
-    harness.wait_for_text("Config / Appearance", SETTLE)?;
-    // Theme, Zen, Cache miss notices, Output streaming, Show reasoning output,
-    // then Header hints.
-    for _ in 0..5 {
-        harness.inject_key(&Key::Down)?;
-    }
-    harness.inject_key(&Key::Char(' '))?;
-    harness.wait_for_text("header hints: shown", SETTLE)?;
-    harness.inject_key(&Key::Esc)?;
-    harness.wait_for_text("Config · saves automatically", SETTLE)?;
-    harness.inject_key(&Key::Esc)?;
-    harness.wait_for_text_gone("Config · saves automatically", SETTLE)?;
+    toggle_display_setting(harness, "header", "header hints: on")?;
     harness.wait_for_text(HINT_TEXT, SETTLE)
 }

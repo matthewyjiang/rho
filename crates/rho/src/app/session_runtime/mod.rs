@@ -42,6 +42,7 @@ use crate::{
     tools::mcp::config::McpConfig,
 };
 
+mod advisor;
 mod agent;
 pub(in crate::app) mod agent_catalog;
 mod approval_policy;

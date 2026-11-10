@@ -32,6 +32,14 @@ impl DaemonSession {
         match *self {}
     }
 
+    pub(in crate::tui) fn set_config(
+        &self,
+        _params: rho_protocol::ConfigSetParams,
+        _label: String,
+    ) -> anyhow::Result<()> {
+        match *self {}
+    }
+
     pub(in crate::tui) fn id(&self) -> &str {
         match *self {}
     }

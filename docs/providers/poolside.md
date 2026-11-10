@@ -52,7 +52,7 @@ Rho sends the key as a Bearer token. Do not put the key in `config.toml` or comm
 
 ## Models and reasoning
 
-Use `/config` and choose **Refresh model lists** to fetch the current models for your Poolside account. Poolside reasoning models expose a binary thinking control. Rho shows `Off` and `Max` as the available reasoning levels:
+Run `/refresh-models` to fetch the current models for your Poolside account. Poolside reasoning models expose a binary thinking control. Rho shows `Off` and `Max` as the available reasoning levels:
 
 - `Off` sends `chat_template_kwargs.enable_thinking` as `false`.
 - `Max` leaves `chat_template_kwargs` unset, which uses Poolside's default thinking mode.

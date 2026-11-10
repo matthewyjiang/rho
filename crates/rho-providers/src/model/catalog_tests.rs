@@ -291,7 +291,7 @@ fn github_copilot_requires_cached_models() {
             ModelSelectionError::UnavailableModel {
                 provider: "github-copilot".into(),
                 model: "gpt-4.1".into(),
-                hint: "Open /config and choose Refresh model lists to update available models.",
+                hint: "Run /refresh-models to update available models.",
             }
         );
     });
@@ -357,7 +357,7 @@ fn bare_ambiguous_model_returns_error() {
 // Owner: model catalog
 #[test]
 fn selection_rejections_report_the_failing_rule() {
-    let refresh_hint = "Open /config and choose Refresh model lists to update available models.";
+    let refresh_hint = "Run /refresh-models to update available models.";
     for (input, current_provider, auth, available, expected) in [
         (
             "brand-new-model",

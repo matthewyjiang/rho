@@ -12,6 +12,7 @@ use super::{
     daemon_events::{DaemonView, Rest, TurnState},
     event_adapter::ViewModelEvent,
     program_status::ProgramStatus,
+    settings_screen::SettingsUpdate,
     App, DefaultTerminal, Entry, HerdrState, StreamKind,
 };
 
@@ -88,6 +89,15 @@ impl App {
                 DaemonView::Options(options) => self.show_daemon_options(*options),
                 DaemonView::McpInventory(result) => self.show_daemon_mcp(result),
                 DaemonView::Jobs(jobs) => self.show_daemon_jobs(jobs),
+                DaemonView::SettingsLoaded(Ok(settings)) => {
+                    self.show_daemon_settings(SettingsUpdate::Loaded(settings));
+                }
+                DaemonView::SettingsLoaded(Err(error)) => {
+                    self.show_daemon_settings(SettingsUpdate::Unreadable(error));
+                }
+                DaemonView::SettingsChanged(changed) => {
+                    self.show_daemon_settings(SettingsUpdate::Changed(changed));
+                }
                 DaemonView::ConfigureFinished => {
                     self.daemon_option_requests.pop_front();
                 }

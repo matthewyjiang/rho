@@ -469,7 +469,7 @@ fn decision_model_host_is_refused_as_the_chat_provider() {
     }
 
     let error = Config::parse_settings(
-        "provider = \"typesafe\"\nmodel = \"jev-latest\"\nauth = \"typesafe-api-key\"\n",
+        "[model]\nprovider = \"typesafe\"\nmodel = \"jev-latest\"\nauth = \"typesafe-api-key\"\n",
     )
     .unwrap_err();
     assert_eq!(format!("{error:#}"), refused, "config");

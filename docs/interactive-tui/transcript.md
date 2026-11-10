@@ -28,7 +28,7 @@ flowchart TD
 | `ctrl-end` (default) | Jump back to the live bottom |
 | Left-click and drag | Select text; copy on release |
 
-The jump binding is `keybindings.jump_to_bottom` in config (default `ctrl+end`).
+The jump binding is `keybindings.jump_to_bottom` in `~/.rho/tui.toml` (default `ctrl+end`).
 It must differ from `open_editor`. Restart Rho after keybinding changes.
 
 ### Live bottom vs manual scroll
@@ -70,7 +70,7 @@ opens right away and lays out the rest in the background; the prompt shows
 `indexing` until every row is searchable, and matches in older rows appear as
 they are reached.
 
-The binding is `keybindings.search_transcript` in config (default `ctrl+f`).
+The binding is `keybindings.search_transcript` in `~/.rho/tui.toml` (default `ctrl+f`).
 
 ## Markdown and structure
 
@@ -139,7 +139,7 @@ When reasoning is hidden, the TUI shows `Thinking...` until that phase finishes,
 
 If a response interleaves answer text and reasoning, Rho keeps those segments in arrival order. Hidden reasoning leaves its `Thought for …` receipt between answer segments. Zen mode hides that receipt too. Toggling either setting does not merge or reorder stored segments.
 
-`zen_mode`, under `/config` → **Appearance**, hides tool cards, reasoning blocks, and the `Thinking...` placeholder so the transcript shows message text. Each run of consecutive tool calls collapses into one dim summary row, such as `⋯ 3 tool calls`, so answer text written before and after tool use stays visibly separate. The [activity rail](/interactive-tui/activity) stays visible. Tools and reasoning still run. The status row displays `zen`. The setting applies immediately, including during the current turn.
+`zen_mode`, under `/config` → **Display**, hides tool cards, reasoning blocks, and the `Thinking...` placeholder so the transcript shows message text. Each run of consecutive tool calls collapses into one dim summary row, such as `⋯ 3 tool calls`, so answer text written before and after tool use stays visibly separate. The [activity rail](/interactive-tui/activity) stays visible. Tools and reasoning still run. The status row displays `zen`. The setting applies immediately, including during the current turn.
 
 Image thumbnails from `read_file` paint in supporting terminals. Details:
 [Documents and images](/tools-workspace/documents-and-images).

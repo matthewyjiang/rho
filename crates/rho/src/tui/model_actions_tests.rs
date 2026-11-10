@@ -450,6 +450,21 @@ fn with_empty_provider_models_cache<T>(f: impl FnOnce() -> T) -> T {
     with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), f)
 }
 
+/// Opens the model picker as idle `/model` does, past its redraw: with no
+/// cached models, it reports them missing instead.
+fn open_idle_model_picker(app: &mut crate::tui::App) {
+    app.refresh_available_auths();
+    if app.conversation_model_picker().items.is_empty() {
+        app.report_missing_cached_provider_models();
+    }
+}
+
+/// `/model` with no argument while a turn runs.
+fn open_model_picker_during_turn(app: &mut crate::tui::App) {
+    let invocation = parse_command("/model").unwrap().unwrap();
+    app.execute_model_command_during_turn(invocation).unwrap();
+}
+
 fn last_notice(app: &crate::tui::App) -> &str {
     if let Some(notice) = app.streams.pending_notices.last() {
         return notice;
@@ -460,14 +475,14 @@ fn last_notice(app: &crate::tui::App) -> &str {
     }
 }
 
-// Covers: an empty /config model picker persists one transcript notice (not a
+// Covers: an empty /model picker persists one transcript notice (not a
 // toast only), and repeating the row re-toasts instead of stacking notices.
 // Owner: tui model picker
 #[test]
 fn empty_model_picker_leaves_one_transcript_notice() {
     with_empty_provider_models_cache(|| {
         let mut app = test_app();
-        app.open_config_conversation_model_picker();
+        open_idle_model_picker(&mut app);
 
         assert!(
             matches!(
@@ -480,7 +495,7 @@ fn empty_model_picker_leaves_one_transcript_notice() {
         assert!(!app.status().is_empty());
         assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
 
-        app.open_config_conversation_model_picker();
+        open_idle_model_picker(&mut app);
 
         assert!(
             matches!(app.history.entries(), [Entry::Notice(_)]),
@@ -498,7 +513,7 @@ fn empty_model_picker_wait_clause_follows_busy_session() {
     with_empty_provider_models_cache(|| {
         let idle = {
             let mut app = test_app();
-            app.open_config_conversation_model_picker();
+            open_idle_model_picker(&mut app);
             last_notice(&app).to_string()
         };
         let notices = [
@@ -514,7 +529,7 @@ fn empty_model_picker_wait_clause_follows_busy_session() {
         .map(|(name, setup)| {
             let mut app = test_app();
             setup(&mut app);
-            app.open_config_conversation_model_picker_during_turn();
+            open_model_picker_during_turn(&mut app);
             assert!(app.streams.pending_notices.is_empty());
             (name, last_notice(&app).to_string())
         });
@@ -541,9 +556,8 @@ fn empty_model_picker_during_turn_does_not_split_a_live_stream() {
         app.streams
             .push_delta(StreamKind::Assistant, "held assistant tail", Instant::now());
 
-        let invocation = parse_command("/model").unwrap().unwrap();
-        app.execute_model_command_during_turn(invocation).unwrap();
-        app.open_config_conversation_model_picker_during_turn();
+        open_model_picker_during_turn(&mut app);
+        open_model_picker_during_turn(&mut app);
 
         assert!(app.history.entries().is_empty());
         assert_eq!(app.streams.pending_notices.len(), 1);

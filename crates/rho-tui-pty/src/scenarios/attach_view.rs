@@ -35,14 +35,15 @@ fn release_parent_approval(harness: &mut PtyHarness) -> anyhow::Result<()> {
 fn setup_supervised(home: &IsolatedHome) -> anyhow::Result<()> {
     std::fs::write(
         &home.config_path,
-        r#"provider = "openai"
+        r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
-permission_mode = "supervised"
 
 [behavior]
+permission_mode = "supervised"
 credential_store = "file"
 "#,
     )?;

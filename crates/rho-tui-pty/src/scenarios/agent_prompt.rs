@@ -33,11 +33,11 @@ pub(super) const AGENT_PROMPT_SCENARIO: Scenario = Scenario::new(
 .with_setup(setup);
 
 fn setup(home: &IsolatedHome) -> Result<()> {
-    let mut config = std::fs::read_to_string(&home.config_path)?;
+    let mut settings = std::fs::read_to_string(&home.client_settings_path)?;
     // Three display rows expose the wrapped first instruction but must hide
     // the tail. This deliberately differs from the default cap.
-    config.push_str("\n[display]\nmax_tool_output_lines = 3\noutput_streaming = \"live\"\n");
-    std::fs::write(&home.config_path, config)?;
+    settings.push_str("max_tool_output_lines = 3\noutput_streaming = \"live\"\n");
+    std::fs::write(&home.client_settings_path, settings)?;
     Ok(())
 }
 
