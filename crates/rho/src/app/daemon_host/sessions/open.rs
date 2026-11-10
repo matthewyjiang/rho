@@ -269,6 +269,13 @@ async fn open_runtime(
     // The last config read publishes its custom providers to the daemon,
     // as each rho process publishes its own at startup.
     global.providers.activate()?;
+    // And its credential store: `rho credential-store set` and an edit of
+    // `config.toml` choose one from outside the daemon, as the way out of
+    // an OS store it cannot reach. A store that cannot be opened fails the
+    // credential reads below with the same error.
+    if let Err(error) = crate::credential_store::activate_from_config(&global, &config_path) {
+        tracing::warn!(error = %format!("{error:#}"), "could not open the credential store");
+    }
     let config = (*global).clone();
     let available_tools = root_host_tools(
         &config,

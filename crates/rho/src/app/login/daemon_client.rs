@@ -209,11 +209,16 @@ fn finished(auth: &str, outcome: LoginOutcome) -> anyhow::Result<()> {
 }
 
 /// `error`, the daemon's refusal of what `doing` describes; a daemon too
-/// old to know the method gets told how to replace it.
+/// old to know the method gets told how to replace it, and one that cannot
+/// reach the credential store something chose for it, as one started from
+/// an SSH login cannot reach the OS store, how to choose the file store.
 fn refused(error: ClientError, doing: String) -> anyhow::Error {
     match error.error_code() {
         Some(ErrorCode::MethodNotFound) => anyhow!(
             "{doing}: the running rho daemon is older than this rho and cannot sign in; stop it with `rho daemon stop`, then run rho login again to start this rho's daemon"
+        ),
+        Some(ErrorCode::CredentialStoreUnavailable) => anyhow!(
+            "{doing}: {error}\nto keep credentials in a private file instead, run `rho credential-store set file`, or set RHO_CREDENTIAL_STORE=file where that variable chooses the store, then run rho login again"
         ),
         _ => anyhow::Error::new(error).context(doing),
     }

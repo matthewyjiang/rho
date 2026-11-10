@@ -292,12 +292,13 @@ pub(crate) fn initialize_from_config(
     Ok(())
 }
 
-/// Opens the configured backend for a sign-in or sign-out inside a running
-/// process (see `app::credential_writes`). Unlike [`initialize_from_config`]
-/// it runs no migrations and writes nothing, so it is safe beside startup or
-/// a live session.
+/// Opens the backend `config` selects inside a running process: for a
+/// sign-in or sign-out (see `app::credential_writes`), and for a session the
+/// daemon opens, whose config may have chosen another store since the daemon
+/// started. Unlike [`initialize_from_config`] it runs no migrations and
+/// writes nothing, so it is safe beside startup or a live session.
 #[cfg(unix)]
-pub(crate) fn activate_for_login(config: &Config, config_path: &Path) -> anyhow::Result<()> {
+pub(crate) fn activate_from_config(config: &Config, config_path: &Path) -> anyhow::Result<()> {
     remember_config_path(config_path);
     activate(resolve_backend(config.credential_store)?)?;
     Ok(())

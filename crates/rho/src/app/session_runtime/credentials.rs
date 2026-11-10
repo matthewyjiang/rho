@@ -11,7 +11,8 @@
 //! failed on its credentials (#1662). A save or logout from another client
 //! of the same process (ACP, the daemon) thus applies from the next prompt,
 //! a refusal picks up a `rho login` run elsewhere, and a logout fails the
-//! prompt with the typed provider error, as missing credentials do.
+//! prompt with the typed provider error, as missing credentials do, until a
+//! later prompt finds a login, whichever process saved it.
 
 use rho_providers::model::ModelError;
 
@@ -140,8 +141,9 @@ impl SessionRuntime {
             // This process's writes keep the OS store's cache current, so
             // a moved generation needs no reread.
             SessionCredentials::Read(_) => {}
-            // The login that fixes a refusal may have run in another
-            // process, such as the editor's terminal login.
+            // The login that fixes a refusal, or the credentials a renewal
+            // did not find, may have run in another process, such as the
+            // editor's terminal login.
             SessionCredentials::Refused => AppCredentialStore::reread_external_logins(),
             #[cfg(test)]
             SessionCredentials::Scripted => return Ok(()),
@@ -152,11 +154,17 @@ impl SessionRuntime {
         // A keyless login lives in config, which `logout` edits on disk.
         let login_config =
             crate::app::endpoint_login::with_disk_login(&config, &self.build.launch.config_path)?;
-        let provider = build_provider_from_config_ensuring_catalog(
+        let built = build_provider_from_config_ensuring_catalog(
             &login_config,
             self.build.host.environment.credentials(),
         )
-        .await?;
+        .await
+        .map_err(anyhow::Error::new);
+        // With nothing to build with, as after a logout, the read above
+        // cached the miss, and the login that fixes it may run in another
+        // process: the next prompt rereads.
+        self.note_credential_failure(&built);
+        let provider = built?;
         // The model switch path also rebinds the compactor, which holds its
         // own provider. The model is unchanged, so no switch notice is saved.
         self.switch_provider(provider, &config, read)
@@ -165,7 +173,7 @@ impl SessionRuntime {
     }
 
     /// Marks the provider stale when `result` failed on its credentials, so
-    /// the next prompt renews it.
+    /// the next prompt renews it from what the store holds then.
     pub(super) fn note_credential_failure<T>(&mut self, result: &anyhow::Result<T>) {
         if result
             .as_ref()
@@ -175,3 +183,7 @@ impl SessionRuntime {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "credentials_tests.rs"]
+mod tests;
