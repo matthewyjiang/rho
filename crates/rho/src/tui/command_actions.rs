@@ -1,8 +1,8 @@
 use crate::tui::DefaultTerminal;
 
 use super::{
-    command_palette::slash_command_args, App, ChatMedia, CommandId, CommandInvocation,
-    ComposerMode, Entry, InputSubmissionMode, InteractiveRuntime, PasteSegment, TurnPrompt,
+    command_palette::slash_command_args, App, ChatMedia, CommandId, CommandInvocation, Entry,
+    InteractiveRuntime, PasteSegment, TurnPrompt,
 };
 
 /// Fully-owned composer state transferred to a slash command.
@@ -206,7 +206,16 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if self.refuse_daemon_action(CommandId::New, "new") {
+        if self.info.session.daemon.is_some() {
+            match self
+                .switch_daemon_session(super::daemon_session::DaemonTarget::New, terminal)
+                .await
+            {
+                Ok(()) => self.set_status("new session"),
+                Err(error) => self.insert_entry(&Entry::Error(format!(
+                    "could not start new session: {error:#}"
+                ))),
+            }
             return Ok(());
         }
         // Reset refuses to run under compaction, so stop it first.
@@ -224,39 +233,7 @@ impl App {
         self.clear_tool_sources_loading_activity();
         self.start_follow_ups = None;
         self.info.session.session_id = None;
-        self.input_ui.set_composer(ComposerMode::Input);
-        self.input_ui.clear_text();
-        self.input_ui.clear_paste_segments();
-        self.input_ui.set_shell_mode(None);
-        self.input_ui
-            .set_submission_mode(InputSubmissionMode::ParseCommands);
-        self.input_ui.reset_history_navigation();
-        self.input_ui.set_cursor(0);
-        self.cancel_all_pending_attachments();
-        self.input_ui.clear_attachments();
-        self.input_ui.set_command_palette_dismissed(false);
-        self.clamp_command_selection();
-        self.pending.clear_follow_ups();
-        self.goal = None;
-        self.pending.clear_steering();
-        self.pending.clear_input_action();
-        self.pending_input_changed();
-        self.reset_streams();
-        self.end_busy_ui();
-        self.turn.clear_tool_calls();
-        self.reset_usage();
-        self.usage.current_context = None;
-        self.pending_session_title = None;
-        self.session_title_locked = false;
-        self.turn.set_current_turn_start(None);
-        self.discard_side_chat();
-        self.provisional_history = None;
-        self.history.clear_entries();
-        self.history.images_mut().clear();
-        self.history.set_images_dirty_from(None);
-        self.history.lines_mut().invalidate_from(0);
-        self.scroll_history_to_bottom();
-        self.clamp_history_scroll_for_terminal(terminal)?;
+        self.reset_session_view(terminal)?;
         self.set_status("new session");
         Ok(())
     }

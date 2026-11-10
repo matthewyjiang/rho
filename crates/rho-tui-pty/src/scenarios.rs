@@ -41,6 +41,8 @@ mod daemon_prompt;
 mod daemon_restart;
 #[cfg(unix)]
 mod daemon_resume;
+#[cfg(unix)]
+mod daemon_switch;
 mod diff_viewer;
 mod dispatch;
 mod doctor;
@@ -680,6 +682,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_detach::SCENARIO,
     #[cfg(unix)]
     daemon_context::SCENARIO,
+    #[cfg(unix)]
+    daemon_switch::SCENARIO,
     #[cfg(unix)]
     daemon_restart::SCENARIO,
     #[cfg(unix)]

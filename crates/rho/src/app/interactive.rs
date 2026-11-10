@@ -129,7 +129,9 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
     // `InteractiveRuntime` and `tui/prompt_turn.rs`.
     let daemon = match SessionHost::from_env() {
         SessionHost::InProcess => None,
-        SessionHost::Daemon => Some(daemon::open(cli, &startup_session, &cwd, &added_dirs).await?),
+        SessionHost::Daemon => {
+            Some(daemon::open(cli, &config, &startup_session, &cwd, &added_dirs).await?)
+        }
     };
     let open_resume_picker = matches!(startup_session, StartupSession::Picker);
     let mut recovered_messages = Vec::new();

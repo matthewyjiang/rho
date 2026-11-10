@@ -38,9 +38,6 @@ impl App {
     }
 
     pub(super) fn open_resume_picker(&mut self) -> anyhow::Result<()> {
-        if self.refuse_daemon_action(super::CommandId::Resume, "resume") {
-            return Ok(());
-        }
         if self.info.session.no_save {
             self.insert_entry(&Entry::Notice(
                 "resume unavailable with --no-save; start Rho without it to resume".into(),
@@ -64,10 +61,8 @@ impl App {
                 self.set_status("no saved sessions for this workspace");
             }
             Ok(sessions) => {
-                let picker = session_picker::session_picker(
-                    sessions,
-                    self.info.session.session_id.as_deref(),
-                );
+                let picker =
+                    session_picker::session_picker(sessions, self.current_session_id().as_deref());
                 if picker.items.is_empty() {
                     self.input_ui.set_composer(ComposerMode::Input);
                     self.set_status("no other saved sessions for this workspace");
@@ -179,6 +174,11 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         self.ensure_resume_saves()?;
+        if self.info.session.daemon.is_some() {
+            // The daemon reopens it, as the agent it was saved as, and
+            // says on its next turn when its model or prompt changed.
+            return self.resume_daemon_session(session_id, terminal).await;
+        }
         let opened = Session::open_by_id_with_histories(&self.info.runtime.cwd, session_id)?;
         self.resume_opened_session(opened, terminal, agent).await
     }
@@ -191,6 +191,9 @@ impl App {
     ) -> anyhow::Result<()> {
         self.ensure_resume_saves()?;
         self.ensure_this_project(&target.cwd)?;
+        if self.info.session.daemon.is_some() {
+            return self.resume_daemon_session(&target.id, terminal).await;
+        }
         let opened = Session::open_target_with_histories(target)?;
         self.resume_opened_session(opened, terminal, agent).await
     }

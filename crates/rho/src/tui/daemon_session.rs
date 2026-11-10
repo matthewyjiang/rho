@@ -27,9 +27,39 @@
 //! TUI's daemon paths compile everywhere and never run there.
 
 #[cfg(unix)]
-pub(crate) use unix::{DaemonSession, DaemonTarget};
+pub(crate) use unix::DaemonSession;
 
 use super::daemon_events::DaemonView;
+
+/// What a launch opens its sessions with: the one it starts in, and each
+/// `/new` after it.
+#[derive(Clone)]
+pub(crate) struct DaemonLaunch {
+    pub(crate) cwd: std::path::PathBuf,
+    /// The agent a new session runs as; a resumed one runs as it was saved.
+    pub(crate) agent: Option<String>,
+    pub(crate) setup: rho_protocol::SessionSetup,
+}
+
+/// Which session the TUI follows.
+pub(crate) enum DaemonTarget {
+    /// A new session the daemon opens.
+    New,
+    /// The saved session with this id, which the daemon reopens unless it
+    /// has it loaded.
+    Resume(rho_protocol::SessionId),
+}
+
+/// The settings a session starts to be followed with.
+pub(crate) enum InitialSettings {
+    /// As the daemon opened it.
+    Kept,
+    /// Changes the launch asked for; one the daemon refuses fails the open.
+    Required(Vec<rho_protocol::SessionChange>),
+    /// The settings of the session it replaces; one the daemon refuses
+    /// keeps its default.
+    Carried(Box<rho_protocol::SessionOptions>),
+}
 
 /// What the followed session changed since the last call, waiting until it
 /// changes; never ready without a session.
@@ -64,6 +94,10 @@ impl DaemonSession {
     }
 
     pub(in crate::tui) fn rename(&self, _title: String) -> anyhow::Result<()> {
+        match *self {}
+    }
+
+    pub(in crate::tui) async fn open_sibling(&self, _target: DaemonTarget) -> anyhow::Result<Self> {
         match *self {}
     }
 
@@ -137,8 +171,7 @@ mod unix {
         ClientEnvironment, ContentBlock, DetachReason, ErrorCode, InputAnswer, InputRequestId,
         SessionAnswerParams, SessionAttachParams, SessionAttachResponse, SessionCancelParams,
         SessionChange, SessionConfigureParams, SessionHoldParams, SessionId, SessionNewParams,
-        SessionOptions, SessionSetup, SessionSteerParams, SessionUnsteerParams, SteerId,
-        UnsteerOutcome,
+        SessionOptions, SessionSteerParams, SessionUnsteerParams, SteerId, UnsteerOutcome,
     };
     use rho_sdk::SteeringId;
     use tokio::sync::{mpsc, oneshot, watch};
@@ -146,8 +179,10 @@ mod unix {
     use super::super::{
         daemon_events::{DaemonEvents, DaemonView, Rest, TurnState},
         daemon_inputs::AnswerRefusal,
+        daemon_options::setting_name,
         daemon_requests::{DaemonRequests, Target},
     };
+    use super::{DaemonLaunch, DaemonTarget, InitialSettings};
     use crate::{
         app::daemon_client::{Daemon, Link, Part, Routed, StreamPosition},
         daemon::DAEMON_RESTART_TIMEOUT,
@@ -260,15 +295,7 @@ mod unix {
                         let changes = carried
                             .map(|carried| changes_between(&created.options, &carried))
                             .unwrap_or_default();
-                        for change in changes {
-                            let params = SessionConfigureParams {
-                                session: session.clone(),
-                                change,
-                            };
-                            if let Err(error) = link.request::<SessionConfigure>(&params).await {
-                                tracing::warn!(%error, "could not carry a setting to the new daemon session");
-                            }
-                        }
+                        carry(&link, &session, changes).await;
                         let routed = route(&daemon, &session);
                         let attach = SessionAttachParams {
                             session: session.clone(),
@@ -304,16 +331,33 @@ mod unix {
         routed
     }
 
-    /// Which session the TUI follows.
-    pub(crate) enum DaemonTarget {
-        /// A new session the daemon opens with these params.
-        New(SessionNewParams),
-        /// The saved session `session`, which the daemon reopens with
-        /// `setup` unless it has it loaded.
-        Resume {
-            session: SessionId,
-            setup: SessionSetup,
-        },
+    /// Applies `changes` to `session` in order, returning its options
+    /// after the last one that applied, or the first refusal.
+    async fn configure_all(
+        link: &Link,
+        session: &SessionId,
+        changes: Vec<SessionChange>,
+    ) -> Result<Option<SessionOptions>, (SessionChange, ClientError)> {
+        let mut options = None;
+        for change in changes {
+            let params = SessionConfigureParams {
+                session: session.clone(),
+                change,
+            };
+            match link.request::<SessionConfigure>(&params).await {
+                Ok(response) => options = Some(response.options),
+                Err(error) => return Err((params.change, error)),
+            }
+        }
+        Ok(options)
+    }
+
+    /// Carries `changes` to `session`; one the daemon refuses keeps its
+    /// default, as do those after it.
+    async fn carry(link: &Link, session: &SessionId, changes: Vec<SessionChange>) {
+        if let Err((_, error)) = configure_all(link, session, changes).await {
+            tracing::warn!(%error, "could not carry a setting to the new daemon session");
+        }
     }
 
     /// One daemon session the TUI follows.
@@ -325,7 +369,8 @@ mod unix {
         /// Whether the session is saved, so the exit receipt offers to
         /// resume it: it was resumed, has a title, or took a prompt.
         saved: bool,
-        setup: SessionSetup,
+        /// What `/new` and a resume from here open their session with.
+        launch: DaemonLaunch,
         /// What opened the session, while it was opened new: a restarted
         /// daemon cannot reopen it until it saves, so it opens a new one.
         opened: Option<SessionNewParams>,
@@ -351,19 +396,30 @@ mod unix {
     }
 
     impl DaemonSession {
-        /// Opens or resumes `target` and attaches to it. The daemon starts
-        /// when none runs.
-        pub(crate) async fn open(target: DaemonTarget) -> anyhow::Result<Self> {
+        /// Opens or resumes `target` as `launch` says, attaches to it, and
+        /// applies `settings`. The daemon starts when none runs.
+        pub(crate) async fn open(
+            launch: DaemonLaunch,
+            target: DaemonTarget,
+            settings: InitialSettings,
+        ) -> anyhow::Result<Self> {
             let daemon = Arc::new(Daemon::default());
-            let (id, setup, opened) = match target {
-                DaemonTarget::New(params) => {
+            let (id, opened) = match target {
+                DaemonTarget::New => {
+                    let params = SessionNewParams {
+                        cwd: launch.cwd.clone(),
+                        environment: ClientEnvironment::of_this_process(),
+                        agent: launch.agent.clone(),
+                        setup: launch.setup.clone(),
+                        parent: None,
+                    };
                     let created = daemon
                         .request::<SessionNew>(&params)
                         .await
                         .context("could not open a daemon session")?;
-                    (created.session, params.setup.clone(), Some(params))
+                    (created.session, Some(params))
                 }
-                DaemonTarget::Resume { session, setup } => (session, setup, None),
+                DaemonTarget::Resume(session) => (session, None),
             };
             // Routed before the attach, so the replay that follows its
             // response is not dropped.
@@ -372,7 +428,7 @@ mod unix {
                 session: id.clone(),
                 after: None,
                 environment: ClientEnvironment::of_this_process(),
-                setup,
+                setup: launch.setup.clone(),
             };
             let response = match daemon.request::<SessionAttach>(&params).await {
                 Ok(response) => response,
@@ -383,6 +439,27 @@ mod unix {
                 }
             };
             let link = daemon.current().await.context(LOST)?;
+            // After the attach, which loads a saved session. The daemon
+            // also sends each change's options on the session's stream.
+            let changed = match settings {
+                InitialSettings::Kept => None,
+                InitialSettings::Required(changes) => {
+                    match configure_all(&link, &id, changes).await {
+                        Ok(options) => options,
+                        Err((change, error)) => {
+                            daemon.unroute(&id);
+                            return Err(anyhow::Error::new(error).context(format!(
+                                "could not set the session's {}",
+                                setting_name(&change)
+                            )));
+                        }
+                    }
+                }
+                InitialSettings::Carried(carried) => {
+                    carry(&link, &id, changes_between(&response.options, &carried)).await;
+                    None
+                }
+            };
             let (target, requests) = watch::channel(Target::Attached {
                 link,
                 session: id.clone(),
@@ -394,18 +471,35 @@ mod unix {
                 daemon,
                 id,
                 saved: opened.is_none() || response.title.is_some(),
-                setup: params.setup,
+                launch,
                 opened,
                 workspace: response.workspace,
                 routed,
                 target,
-                options: Some(response.options.clone()),
+                options: Some(changed.unwrap_or_else(|| response.options.clone())),
                 events,
                 pending,
                 ended: false,
                 requests: Some(DaemonRequests::new(requests)),
                 reattach: None,
             })
+        }
+
+        /// Opens `target` on a connection of its own, to follow in this
+        /// session's place: with this launch's setup, and a new session
+        /// with the settings this one has now. This session keeps running
+        /// in the daemon until the caller drops it, which detaches it.
+        pub(in crate::tui) async fn open_sibling(
+            &self,
+            target: DaemonTarget,
+        ) -> anyhow::Result<Self> {
+            let settings = match (&target, &self.options) {
+                (DaemonTarget::New, Some(options)) => {
+                    InitialSettings::Carried(Box::new(options.clone()))
+                }
+                (DaemonTarget::New, None) | (DaemonTarget::Resume(_), _) => InitialSettings::Kept,
+            };
+            Self::open(self.launch.clone(), target, settings).await
         }
 
         /// The session's id, once a resume, saved title, or catalog lookup
@@ -508,7 +602,7 @@ mod unix {
                 session: self.id.clone(),
                 after: self.position.cursor().cloned(),
                 environment: ClientEnvironment::of_this_process(),
-                setup: self.setup.clone(),
+                setup: self.launch.setup.clone(),
             }
         }
 

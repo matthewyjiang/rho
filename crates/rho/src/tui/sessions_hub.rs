@@ -344,11 +344,8 @@ pub(super) fn directory_picker(
 
 impl App {
     pub(super) fn current_session_target(&self) -> Option<SessionTarget> {
-        self.info
-            .session
-            .session_id
-            .as_ref()
-            .map(|id| SessionTarget::new(id.clone(), self.info.runtime.cwd.clone()))
+        self.current_session_id()
+            .map(|id| SessionTarget::new(id, self.info.runtime.cwd.clone()))
     }
 
     /// `/sessions`: open the hub at once and list sessions in the background.

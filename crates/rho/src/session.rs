@@ -296,7 +296,6 @@ impl Session {
 
     /// Resolves a resume prefix without opening the session or taking its
     /// writer lease. Daemon clients leave opening to the daemon.
-    #[cfg(unix)]
     pub(crate) fn resolve_id(cwd: &Path, id_prefix: &str) -> anyhow::Result<String> {
         let root = session_root()?;
         Ok(SessionStore::new(&root, cwd).resolve(id_prefix)?.id)
