@@ -348,14 +348,19 @@ impl LiveEvents {
             | SessionEvent::QuestionAsked { .. }
             | SessionEvent::QuestionWithdrawn { .. } => Vec::new(),
         };
-        if events.iter().any(|event| {
-            !matches!(
-                event,
-                WireEvent::AgentMessageChunk { .. }
-                    | WireEvent::ThoughtChunk { .. }
-                    | WireEvent::SteeringDelivered { .. }
-            )
-        }) {
+        // Usage the provider counts mid-response arrives between a
+        // message's chunks, as a delivered steer may, and ends nothing.
+        let mid_response = matches!(event, SessionEvent::Run(RunEvent::UsageUpdated { .. }));
+        if !mid_response
+            && events.iter().any(|event| {
+                !matches!(
+                    event,
+                    WireEvent::AgentMessageChunk { .. }
+                        | WireEvent::ThoughtChunk { .. }
+                        | WireEvent::SteeringDelivered { .. }
+                )
+            })
+        {
             self.message = None;
         }
         late_steers.into_iter().chain(events).collect()

@@ -31,6 +31,11 @@ pub(super) struct TurnCost {
     recorded: ModelUsage,
     /// The run's usage as the provider last counted it.
     run: ModelUsage,
+    /// The most the response under way has been reported to cost since the
+    /// ledger was last read. A response the provider discards leaves the
+    /// run's usage, though the ledger will count it, so the cost holds
+    /// here rather than fall until the next read.
+    shown: Option<u64>,
 }
 
 impl TurnCost {
@@ -40,6 +45,7 @@ impl TurnCost {
             ledger: None,
             recorded: ModelUsage::default(),
             run: ModelUsage::default(),
+            shown: None,
         }
     }
 
@@ -74,14 +80,16 @@ impl TurnCost {
                 RoutePricing::Local | RoutePricing::Unknown => None,
             }
         });
-        match (self.ledger, unrecorded) {
+        let cost = match (self.ledger, unrecorded) {
             (None, None) => None,
             (ledger, unrecorded) => Some(
                 ledger
                     .unwrap_or_default()
                     .saturating_add(unrecorded.unwrap_or_default()),
             ),
-        }
+        };
+        self.shown = self.shown.max(cost);
+        self.shown
     }
 
     /// Takes `ledger` as the session's cost with every request the run has
@@ -89,6 +97,7 @@ impl TurnCost {
     fn read_ledger(&mut self, ledger: Option<u64>) {
         self.ledger = ledger;
         self.recorded = self.run.clone();
+        self.shown = None;
     }
 }
 
