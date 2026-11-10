@@ -70,10 +70,9 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::New
         | CommandId::Resume
         | CommandId::Sessions => CommandRoute::Ui,
-        // The conversation tree and rewind need daemon methods;
-        // provider/auth editors and the advisor still own in-process
-        // state. The /workflow hub likewise describes the wrong runtime,
-        // even when opened read-only.
+        // The conversation tree and rewind need daemon methods, and
+        // code mode a setting the daemon does not take yet. The /workflow
+        // hub describes the wrong runtime, even when opened read-only.
         | CommandId::Rewind
         | CommandId::Tree
         | CommandId::Codemode
