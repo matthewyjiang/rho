@@ -672,7 +672,9 @@ fn a_streamed_call_opens_pending_and_keeps_its_id_when_it_starts() {
     let events = [
         // Named before it has arguments: nothing to show yet.
         streamed(Some("call-1"), ""),
-        streamed(None, r#"{"command":"ls"#),
+        streamed(Some("call-1"), r#"{"command":"l"#),
+        // Its card follows its arguments.
+        streamed(Some("call-1"), "s"),
         proposed("call-1", "ls"),
         started("call-1", ToolMetadata::default()),
         step(100),
@@ -694,12 +696,13 @@ fn a_streamed_call_opens_pending_and_keeps_its_id_when_it_starts() {
             _ => None,
         })
         .collect();
-    let (first, second) = (seen[0].0.clone(), seen[2].0.clone());
+    let (first, second) = (seen[0].0.clone(), seen[3].0.clone());
 
     assert_eq!(
         seen,
         [
             (first.clone(), Some(ToolStatus::Pending), true),
+            (first.clone(), None, true),
             (first.clone(), Some(ToolStatus::InProgress), true),
             (second.clone(), Some(ToolStatus::Pending), true),
             (second.clone(), Some(ToolStatus::Failed), false),

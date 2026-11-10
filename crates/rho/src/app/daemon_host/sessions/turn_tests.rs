@@ -142,12 +142,7 @@ async fn show(view: &mut DaemonView, events: Vec<SessionEvent>) {
     }
     drop(event_sender);
     let (control, _control_receiver) = mpsc::unbounded_channel();
-    let model = crate::app::session_runtime::CurrentModel {
-        provider: "openai".into(),
-        model: "gpt-5.5".into(),
-        auth: "openai".into(),
-    };
-    view.show(event_receiver, control, super::cost::TurnCost::new(model))
+    view.show(event_receiver, control, super::cost::TurnCost::unpriced())
         .await;
 }
 

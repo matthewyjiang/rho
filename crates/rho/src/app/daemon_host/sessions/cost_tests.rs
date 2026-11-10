@@ -3,15 +3,10 @@ use pretty_assertions::assert_eq;
 use rho_sdk::model::ModelUsage;
 
 use super::{usd_micros, TurnCost};
-use crate::{app::session_runtime::CurrentModel, usage::report::Valuation};
+use crate::usage::report::Valuation;
 
-/// A turn on a model the catalog has no price for.
 fn turn() -> TurnCost {
-    TurnCost::new(CurrentModel {
-        provider: "unlisted".into(),
-        model: "unlisted".into(),
-        auth: "unlisted".into(),
-    })
+    TurnCost::unpriced()
 }
 
 /// The run's usage once the provider has billed it `micros` in all.

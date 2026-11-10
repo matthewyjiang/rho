@@ -38,8 +38,8 @@ const UNFINISHED_COMPACTION: &str = "compaction ended without a result";
 /// session; keeps the message ids and open tool calls it has announced.
 ///
 /// Proposed tool arguments are held until [`RunEvent::ToolStarted`], so a
-/// call opens with its title, kind, arguments and locations together. Every
-/// call opens with a full card, even one the run finishes without starting,
+/// call starts with its title, kind, arguments and locations together. Every
+/// call gets a full card, even one the run finishes without starting,
 /// such as a call to a tool that does not exist. When the run's events end
 /// ([`SessionEvent::RunClosed`]), calls still open close `failed`: the SDK
 /// does not finish calls a cancel interrupts. A compaction reports as
@@ -98,12 +98,13 @@ pub(crate) struct LiveEvents {
     presenter: InteractiveToolPresenter,
     /// The run's announced calls, by provider call id.
     announced: BTreeMap<String, AnnouncedCall>,
-    /// The context fill last reported, which a usage report between steps
-    /// repeats.
-    context: Option<ContextEstimate>,
-    /// The calls the model step under way is still streaming, by their
-    /// place in the provider's output.
-    streamed: HashMap<usize, StreamedCall>,
+    /// The context fill last reported, which usage the provider counts
+    /// within a response repeats.
+    used_tokens: Option<u64>,
+    /// Cards of calls the step under way is still streaming that clients
+    /// have not been sent, by the calls' place in the provider's output:
+    /// one waits here until its call has an id and a name.
+    unsent_previews: HashMap<usize, rho_protocol::display::ToolCard>,
     /// Wire ids of the calls opened live.
     call_ids: CallIds,
     /// Wire ids of the calls [`Self::replay`] opened.
@@ -152,6 +153,9 @@ struct OpenMessage {
 /// Whether clients may still be waiting for a call's final status.
 #[derive(Clone, Copy, PartialEq)]
 enum CallState {
+    /// Opened while the provider still streams its arguments; it has not
+    /// started.
+    Pending,
     Open,
     Finished,
 }
@@ -187,8 +191,8 @@ impl LiveEvents {
             prompt: None,
             proposed: HashMap::new(),
             announced: BTreeMap::new(),
-            streamed: HashMap::new(),
-            context: None,
+            unsent_previews: HashMap::new(),
+            used_tokens: None,
             call_ids: CallIds::default(),
             replayed_ids: CallIds::default(),
             replayed_rows: 0,
@@ -402,7 +406,7 @@ impl LiveEvents {
             } => {
                 self.message = None;
                 // A step numbers its calls from zero again.
-                self.streamed.clear();
+                self.unsent_previews.clear();
                 self.presenter.step_started();
                 vec![self.usage(*context_estimate)]
             }
@@ -428,16 +432,12 @@ impl LiveEvents {
                     .remove(call_id.as_str())
                     .map(|call| call.arguments);
                 // A call its streamed arguments already opened keeps its id.
-                let previewed = self
-                    .streamed
-                    .values_mut()
-                    .find(|streamed| streamed.opened_as.as_deref() == Some(call_id.as_str()))
-                    .and_then(|streamed| streamed.opened_as.take())
-                    .and_then(|provider| self.announced.get(&provider))
-                    .map(|call| call.id.clone());
-                let (id, superseded) = match previewed {
-                    Some(id) => (id, None),
-                    None => self.announce(call_id.as_str(), CallState::Open),
+                let (id, superseded) = match self.announced.get_mut(call_id.as_str()) {
+                    Some(call) if call.state == CallState::Pending => {
+                        call.state = CallState::Open;
+                        (call.id.clone(), None)
+                    }
+                    _ => self.announce(call_id.as_str(), CallState::Open),
                 };
                 let opened = ToolCallUpdate {
                     display: Some(Presentation::Card(card)),
@@ -482,16 +482,17 @@ impl LiveEvents {
                 // them again: the cards its streamed arguments opened close.
                 self.proposed.clear();
                 self.presenter.step_started();
-                let discarded: Vec<_> = std::mem::take(&mut self.streamed)
-                    .into_values()
-                    .filter_map(|streamed| streamed.opened_as)
-                    .filter_map(|provider| {
-                        let call = self.announced.get_mut(&provider)?;
+                self.unsent_previews.clear();
+                let discarded: Vec<_> = self
+                    .announced
+                    .values_mut()
+                    .filter(|call| call.state == CallState::Pending)
+                    .map(|call| {
                         call.state = CallState::Finished;
-                        Some(WireEvent::tool_call(status_update(
+                        WireEvent::tool_call(status_update(
                             call.id.clone(),
                             Some(ToolStatus::Failed),
-                        )))
+                        ))
                     })
                     .collect();
                 discarded
@@ -530,8 +531,8 @@ impl LiveEvents {
             // context is as the step reported it; the daemon prices the
             // session anew.
             RunEvent::UsageUpdated { .. } => self
-                .context
-                .map(|context| self.usage(context))
+                .used_tokens
+                .map(|used| self.fill(used))
                 .into_iter()
                 .collect(),
             // Retries, diagnostics and model-call metrics land as later
@@ -552,10 +553,16 @@ impl LiveEvents {
     /// Context fill from `estimate`, against the configured window, else
     /// the one the provider reported with it. The daemon prices it.
     fn usage(&mut self, estimate: ContextEstimate) -> WireEvent {
-        self.context = Some(estimate);
         self.window = context_window(self.configured_window, estimate);
+        self.fill(estimate.tokens())
+    }
+
+    /// A usage event for a context holding `used_tokens`, which later
+    /// reports within the response repeat.
+    fn fill(&mut self, used_tokens: u64) -> WireEvent {
+        self.used_tokens = Some(used_tokens);
         WireEvent::Usage {
-            used_tokens: estimate.tokens(),
+            used_tokens,
             window_tokens: self.window,
             cost_usd_micros: None,
         }
@@ -587,7 +594,7 @@ impl LiveEvents {
     /// next run starts clean: steers it has not applied were dropped.
     fn close_unfinished(&mut self) -> Vec<WireEvent> {
         self.proposed.clear();
-        self.streamed.clear();
+        self.unsent_previews.clear();
         self.presenter =
             InteractiveToolPresenter::new(self.workspace.clone(), self.mcp_tools.clone());
         self.steers.clear();
@@ -599,7 +606,7 @@ impl LiveEvents {
         let announced = std::mem::take(&mut self.announced);
         let calls = announced
             .into_values()
-            .filter(|call| call.state == CallState::Open)
+            .filter(|call| call.state != CallState::Finished)
             .map(|call| WireEvent::tool_call(status_update(call.id, Some(ToolStatus::Failed))));
         compaction.into_iter().chain(calls).collect()
     }
@@ -627,11 +634,7 @@ impl LiveEvents {
                 Some(self.compaction.take().unwrap_or_else(fresh_compaction_id)),
                 CompactionStatus::Completed,
                 // The compacted context's fill, as ACP reports it.
-                Some(WireEvent::Usage {
-                    used_tokens: outcome.current_tokens(),
-                    window_tokens: self.window,
-                    cost_usd_micros: None,
-                }),
+                Some(outcome.current_tokens()),
             ),
             CompactionEnd::Cancelled => (self.compaction.take(), CompactionStatus::Cancelled, None),
             CompactionEnd::Failed(error) => (
@@ -646,7 +649,7 @@ impl LiveEvents {
         // Called outside [`Self::map`] too: a compaction ends any message.
         self.message = None;
         std::iter::once(WireEvent::Compaction { id, status })
-            .chain(usage)
+            .chain(usage.map(|used| self.fill(used)))
             .collect()
     }
 
@@ -710,52 +713,43 @@ impl LiveEvents {
         name: Option<&str>,
         arguments_delta: &str,
     ) -> Vec<WireEvent> {
-        let card = self
-            .presenter
-            .preview(index, name.map(str::to_owned), arguments_delta)
-            .map(|presented| presented.card);
-        let streamed = self.streamed.entry(index).or_default();
-        if let Some(id) = id.filter(|id| !id.is_empty()) {
-            streamed.provider = Some(id.to_owned());
+        if let Some(presented) =
+            self.presenter
+                .preview(index, name.map(str::to_owned), arguments_delta)
+        {
+            self.unsent_previews.insert(index, presented.card);
         }
-        if let Some(name) = name {
-            streamed.name = Some(name.to_owned());
-        }
-        let changed = card.is_some();
-        if let Some(card) = card {
-            streamed.card = Some(card);
-        }
-        if streamed.opened_as.is_some() && !changed {
-            return Vec::new();
-        }
-        let StreamedCall {
-            provider: Some(provider),
-            name: Some(name),
-            card: Some(card),
-            opened_as,
-        } = streamed
-        else {
+        // The SDK repeats a call's id and name on each delta once known.
+        let (Some(provider), Some(name)) = (id.filter(|id| !id.is_empty()), name) else {
             return Vec::new();
         };
-        let display = Some(Presentation::Card(card.clone()));
-        if let Some(call) = opened_as
-            .as_ref()
-            .and_then(|opened| self.announced.get(opened))
+        let Some(card) = self.unsent_previews.remove(&index) else {
+            return Vec::new();
+        };
+        let display = Some(Presentation::Card(card));
+        match self
+            .announced
+            .get(provider)
+            .map(|call| (call.state, &call.id))
         {
-            return vec![WireEvent::tool_call(ToolCallUpdate {
-                display,
-                ..status_update(call.id.clone(), /*status*/ None)
-            })];
+            Some((CallState::Pending, id)) => {
+                return vec![WireEvent::tool_call(ToolCallUpdate {
+                    display,
+                    ..status_update(id.clone(), /*status*/ None)
+                })];
+            }
+            // It started; its own updates draw it from here.
+            Some((CallState::Open, _)) => return Vec::new(),
+            // New, or a later step reusing a finished call's id.
+            Some((CallState::Finished, _)) | None => {}
         }
-        let (provider, name) = (provider.clone(), name.clone());
-        *opened_as = Some(provider.clone());
-        let (wire_id, superseded) = self.announce(&provider, CallState::Open);
+        let (wire_id, superseded) = self.announce(provider, CallState::Pending);
         let opened = ToolCallUpdate {
             status: Some(ToolStatus::Pending),
             display,
             ..named_call(
                 wire_id,
-                &name,
+                name,
                 /*arguments*/ None,
                 &ToolMetadata::default(),
                 &self.workspace,
@@ -780,7 +774,7 @@ impl LiveEvents {
         let superseded = self
             .announced
             .insert(provider.to_owned(), call)
-            .filter(|call| call.state == CallState::Open)
+            .filter(|call| call.state != CallState::Finished)
             .map(|call| WireEvent::tool_call(status_update(call.id, Some(ToolStatus::Failed))));
         (id, superseded)
     }
@@ -802,18 +796,6 @@ impl LiveEvents {
             self.presenter.proposed(call.clone());
         }
     }
-}
-
-/// A call the provider is still streaming.
-#[derive(Default)]
-struct StreamedCall {
-    /// Its provider call id, once the provider names it.
-    provider: Option<String>,
-    name: Option<String>,
-    /// Its card as its arguments so far draw it.
-    card: Option<rho_protocol::display::ToolCard>,
-    /// The provider id it was announced under, until the call starts.
-    opened_as: Option<String>,
 }
 
 /// What a progress or result update shows of a call.
