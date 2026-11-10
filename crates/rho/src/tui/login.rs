@@ -131,6 +131,10 @@ impl App {
         invocation: CommandInvocation,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            // The daemon wrote the store since this process last read it.
+            crate::credential_store::AppCredentialStore::reread_external_logins();
+        }
         if invocation.args.is_empty() {
             let claude_signed_in = Self::claude_signed_in().await;
             let config = self.info.services.config_repository.load()?;

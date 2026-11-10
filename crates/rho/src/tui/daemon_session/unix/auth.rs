@@ -2,9 +2,9 @@
 //! credential store its sessions read, so a key, a login, or a logout made
 //! here applies to them from their next prompt.
 //!
-//! The requests go on the connection the session is attached on, which an
-//! interactive login belongs to: the daemon cancels it when that
-//! connection closes.
+//! The requests go on the connection the session is attached on, never a
+//! new one, since an interactive login belongs to its connection: the
+//! daemon cancels it when that connection closes.
 
 use std::sync::Arc;
 
@@ -15,7 +15,7 @@ use rho_protocol::{
 };
 use tokio::sync::mpsc;
 
-use super::DaemonSession;
+use super::{DaemonSession, Target};
 use crate::{app::daemon_client::LoginEvent, tui::daemon_events::LoginUpdate};
 
 /// The next step of the login under way; never resolves without one.
@@ -45,7 +45,8 @@ impl DaemonSession {
             key,
             environment: ClientEnvironment::of_this_process(),
         };
-        Ok(self.daemon.request::<AuthKey>(&params).await?)
+        let link = self.attached_link().await?;
+        Ok(link.request::<AuthKey>(&params).await?)
     }
 
     /// Has the daemon delete `auth`'s saved credentials.
@@ -54,17 +55,20 @@ impl DaemonSession {
             auth: auth.to_owned(),
             environment: ClientEnvironment::of_this_process(),
         };
-        self.daemon.request::<AuthLogout>(&params).await?;
+        let link = self.attached_link().await?;
+        link.request::<AuthLogout>(&params).await?;
         Ok(())
     }
 
-    /// Starts `auth`'s interactive login in the daemon. Its prompt and its
-    /// end arrive as `DaemonView::Login`.
+    /// Starts `auth`'s interactive login in the daemon and waits for its
+    /// first step, the prompt unless the login ended before one. The steps
+    /// after it arrive as `DaemonView::Login`.
     pub(in crate::tui) async fn start_login(
         &mut self,
         auth: &str,
         flow: LoginFlow,
-    ) -> anyhow::Result<LoginId> {
+    ) -> anyhow::Result<(LoginId, LoginUpdate)> {
+        let link = self.attached_link().await?;
         let (sender, logins) = mpsc::unbounded_channel();
         self.daemon.route_login(sender);
         self.logins = Some(logins);
@@ -73,13 +77,18 @@ impl DaemonSession {
             flow: Some(flow),
             environment: ClientEnvironment::of_this_process(),
         };
-        match self.daemon.request::<AuthLogin>(&params).await {
-            Ok(started) => Ok(started.login),
+        let started = match link.request::<AuthLogin>(&params).await {
+            Ok(started) => started.login,
             Err(error) => {
                 self.end_login();
-                Err(error.into())
+                return Err(error.into());
             }
-        }
+        };
+        // The route was dropped only if the connection's router ended.
+        let first = next_login(&mut self.logins)
+            .await
+            .unwrap_or(LoginUpdate::Lost);
+        Ok((started, first))
     }
 
     /// Stops listening for the login that ended.
@@ -88,13 +97,15 @@ impl DaemonSession {
         self.logins = None;
     }
 
-    /// Asks the daemon to cancel `login` and stops listening for it. A
-    /// login its provider already approved is saved all the same.
-    pub(in crate::tui) fn cancel_login(&mut self, login: LoginId) {
-        self.end_login();
-        let daemon = Arc::clone(&self.daemon);
+    /// Asks the daemon to cancel `login`. Its end still arrives as a view:
+    /// a login its provider approved first is saved all the same.
+    pub(in crate::tui) fn cancel_login(&self, login: LoginId) {
+        let Target::Attached { link, .. } = &*self.target.borrow() else {
+            return;
+        };
+        let link = Arc::clone(link);
         tokio::spawn(async move {
-            let _ = daemon
+            let _ = link
                 .request::<AuthLoginCancel>(&AuthLoginCancelParams { login })
                 .await;
         });

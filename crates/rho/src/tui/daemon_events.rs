@@ -120,7 +120,6 @@ pub(super) enum DaemonView {
     Error(String),
 }
 
-/// Whether the session runs a turn.
 /// A step of an interactive login the daemon runs for the TUI.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum LoginUpdate {
@@ -134,6 +133,7 @@ pub(super) enum LoginUpdate {
     Lost,
 }
 
+/// Whether the session runs a turn.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum TurnState {
     /// A turn runs.

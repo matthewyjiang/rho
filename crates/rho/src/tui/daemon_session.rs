@@ -105,7 +105,7 @@ mod unix {
     use tokio::sync::{mpsc, oneshot, watch};
 
     use super::super::{
-        daemon_events::{DaemonEvents, DaemonView, Rest, TurnState},
+        daemon_events::{DaemonEvents, DaemonView, LoginUpdate, Rest, TurnState},
         daemon_inputs::AnswerRefusal,
         daemon_options::setting_name,
         daemon_requests::{DaemonRequests, Target},
@@ -671,13 +671,19 @@ mod unix {
 
         /// The attachment is over: `error` says why, and the TUI stops
         /// showing a turn it can no longer follow.
-        fn end(&mut self, error: DaemonView) -> [DaemonView; 2] {
+        fn end(&mut self, error: DaemonView) -> Vec<DaemonView> {
             self.ended = true;
             self.target.send_replace(Target::Ended);
-            [
+            let mut views = vec![
                 error,
                 DaemonView::Turn(TurnState::Resting(Rest::Unfollowed)),
-            ]
+            ];
+            // Its connection is gone, and nothing reads its events now.
+            if self.logins.take().is_some() {
+                self.daemon.unroute_login();
+                views.push(DaemonView::Login(LoginUpdate::Lost));
+            }
+            views
         }
 
         /// The connection this session is attached on. A new connection

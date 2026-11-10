@@ -51,7 +51,10 @@ impl DaemonSession {
         &mut self,
         _auth: &str,
         _flow: rho_protocol::LoginFlow,
-    ) -> anyhow::Result<rho_protocol::LoginId> {
+    ) -> anyhow::Result<(
+        rho_protocol::LoginId,
+        crate::tui::daemon_events::LoginUpdate,
+    )> {
         match *self {}
     }
 
@@ -59,7 +62,7 @@ impl DaemonSession {
         match *self {}
     }
 
-    pub(in crate::tui) fn cancel_login(&mut self, _login: rho_protocol::LoginId) {
+    pub(in crate::tui) fn cancel_login(&self, _login: rho_protocol::LoginId) {
         match *self {}
     }
 

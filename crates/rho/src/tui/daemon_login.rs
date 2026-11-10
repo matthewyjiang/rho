@@ -7,7 +7,11 @@
 //! Unlike in process, a login does not swap the running provider: the
 //! daemon's sessions pick the credential up at their next prompt, and a
 //! logout of the profile in use shows as that prompt's authentication
-//! error.
+//! error. Nor does it make the session's provider and model the config's
+//! defaults: only the default provider's auth profile follows a login.
+//! A login its provider cannot confirm (Ollama Cloud's device key) is
+//! saved by the daemon as soon as it is shown, so it reads as finished
+//! before the person approves it.
 
 use rho_protocol::{LoginId, LoginOutcome, SessionChange};
 use rho_providers::{
@@ -55,15 +59,18 @@ impl App {
                 self.finish_daemon_login(target, terminal).await
             }
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("{error:#}")));
+                self.insert_entry(&Entry::Error(format!(
+                    "could not save the {} key: {error:#}",
+                    target.provider
+                )));
                 self.set_status("login failed");
                 Ok(())
             }
         }
     }
 
-    /// Starts `target`'s interactive login in the daemon. Its prompt and
-    /// its end arrive as views; see [`Self::show_daemon_login`].
+    /// Starts `target`'s interactive login in the daemon and shows its
+    /// prompt. Its end arrives as a view; see [`Self::show_daemon_login`].
     pub(super) async fn start_daemon_login(
         &mut self,
         target: LoginTarget,
@@ -73,31 +80,36 @@ impl App {
     ) -> anyhow::Result<()> {
         if self.daemon_login.is_some() {
             self.insert_entry(&Entry::Notice(
-                "Interactive login is already in progress. Press esc to cancel.".into(),
+                "Interactive login is already in progress.".into(),
             ));
             return Ok(());
         }
         self.set_status(format!("starting {provider_label} login"));
         terminal.draw(|frame| self.draw(frame))?;
+        // The daemon's end maps them back (`app/login/relay_wire.rs`,
+        // which only a platform with a daemon builds).
         let flow = match mode {
             InteractiveLoginMode::Browser => rho_protocol::LoginFlow::Browser,
             InteractiveLoginMode::Device => rho_protocol::LoginFlow::DeviceCode,
         };
         let session = self.daemon_session_mut();
         match session.start_login(&target.auth, flow).await {
-            Ok(id) => {
+            Ok((id, first)) => {
                 self.daemon_login = Some(DaemonLogin {
                     id,
                     target,
                     provider_label,
                 });
+                self.show_daemon_login(first, terminal).await
             }
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("{error:#}")));
+                self.insert_entry(&Entry::Error(format!(
+                    "could not start the {provider_label} login: {error:#}"
+                )));
                 self.set_status("login failed");
+                Ok(())
             }
         }
-        Ok(())
     }
 
     /// Shows a step of the login under way: its prompt, with the browser
@@ -147,6 +159,8 @@ impl App {
                 let target = login.target.clone();
                 self.end_daemon_login();
                 match outcome {
+                    // Also one the provider approved before a cancel
+                    // reached the daemon.
                     LoginOutcome::Succeeded => self.finish_daemon_login(target, terminal).await,
                     LoginOutcome::Cancelled => {
                         self.set_status("login cancelled");
@@ -177,11 +191,18 @@ impl App {
         }
     }
 
-    /// Esc on the pending login: the daemon is asked to cancel it.
+    /// Esc on the pending login: the daemon is asked to cancel it, and
+    /// says how it ended.
     pub(super) fn cancel_daemon_login(&mut self) {
-        if let Some(login) = self.daemon_login.take() {
-            self.daemon_session_mut().cancel_login(login.id);
+        if let Some(login) = &self.daemon_login {
+            self.daemon_session().cancel_login(login.id.clone());
         }
+    }
+
+    /// Forgets the login of a session the TUI stops following: closing its
+    /// connection cancels it in the daemon.
+    pub(super) fn drop_daemon_login(&mut self) {
+        self.daemon_login = None;
     }
 
     /// Whether the daemon runs an interactive login for this TUI.
@@ -199,7 +220,10 @@ impl App {
                 self.set_status("logout complete");
             }
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("{error:#}")));
+                self.insert_entry(&Entry::Error(format!(
+                    "could not log out of {}: {error:#}",
+                    target.provider
+                )));
                 self.set_status("logout failed");
             }
         }
@@ -216,7 +240,7 @@ impl App {
     ) -> anyhow::Result<()> {
         // The OS store caches reads, misses included.
         AppCredentialStore::reread_external_logins();
-        self.persist_login_auth(&target);
+        self.persist_default_login_auth(&target);
         self.refresh_available_auths();
         self.refresh_model_list_after_login(&target, terminal)
             .await?;
@@ -224,7 +248,14 @@ impl App {
         if self.finish_decision_host_login(&target).await {
             return Ok(());
         }
-        self.set_status(if target.provider == self.info.runtime.provider {
+        let in_use =
+            target.provider == self.info.runtime.provider && target.auth == self.info.runtime.auth;
+        self.set_status(if target.auth == rho_providers::provider::KEYLESS_AUTH {
+            format!(
+                "{} is ready. Switch models with /model when you want to use it.",
+                target.provider
+            )
+        } else if in_use {
             format!(
                 "stored credentials for {}; the session uses them from its next prompt",
                 target.provider
@@ -244,7 +275,13 @@ impl App {
     fn end_daemon_login(&mut self) {
         self.daemon_login = None;
         self.daemon_session_mut().end_login();
-        self.input_ui.set_composer(ComposerMode::Input);
+        // Esc already closed it when the person cancelled.
+        if matches!(
+            self.input_ui.composer(),
+            ComposerMode::InteractivePending(_)
+        ) {
+            self.input_ui.set_composer(ComposerMode::Input);
+        }
     }
 
     fn fail_daemon_login(&mut self, message: String) {
