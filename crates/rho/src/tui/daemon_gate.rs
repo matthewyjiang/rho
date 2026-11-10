@@ -20,8 +20,7 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
     match command {
         // Session state the daemon owns, changed through the session's
         // options, and settings it saves through `rho/config/set`.
-        // In process, the settings commands say they need the daemon
-        // (`needs_daemon`).
+        // In process, `/advisor` says it needs the daemon (`needs_daemon`).
         CommandId::Model
         | CommandId::Permissions
         | CommandId::Fast

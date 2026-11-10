@@ -94,7 +94,7 @@ impl App {
     /// the daemon sent before it answered, such as the turn's start, waits
     /// for [`Self::show_taken_daemon_views`], as does, on an error, what
     /// ended the attachment, such as a failed reattach.
-    async fn request_daemon_turn(
+    pub(super) async fn request_daemon_turn(
         &mut self,
         turn: &TurnPrompt,
         media: &[ChatMedia],
