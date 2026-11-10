@@ -44,9 +44,9 @@ use rho_protocol::{
         JobList, SessionCancel, SessionConfigure, SessionList, SessionNew, SessionPrompt,
         SessionSteer,
     },
-    ClientError, ContentBlock, JobId, JobKind, JobListParams, JobState, JobSummary, ModelRef,
-    SessionCancelParams, SessionChange, SessionConfigureParams, SessionId, SessionListParams,
-    SessionNewParams, SessionPromptParams, SessionSetup, SessionSteerParams,
+    ClientEnvironment, ClientError, ContentBlock, JobId, JobKind, JobListParams, JobState,
+    JobSummary, ModelRef, SessionCancelParams, SessionChange, SessionConfigureParams, SessionId,
+    SessionListParams, SessionNewParams, SessionPromptParams, SessionSetup, SessionSteerParams,
 };
 use serde_json::Value;
 
@@ -194,7 +194,7 @@ impl SessionControl {
             .daemon
             .request::<SessionNew>(&SessionNewParams {
                 cwd: workspace.clone(),
-                environment: caller.environment.clone(),
+                environment: Self::child_environment(caller),
                 agent: params.agent,
                 setup: SessionSetup::default(),
                 parent: caller.session.clone(),
@@ -274,7 +274,7 @@ impl SessionControl {
                 session: session.clone(),
                 content,
                 timeout_ms: None,
-                environment: caller.environment.clone(),
+                environment: Self::child_environment(caller),
                 grant: Some(caller.child_context().into()),
                 idempotency_key: None,
             })
@@ -388,6 +388,28 @@ impl SessionControl {
             .request::<JobList>(&JobListParams {})
             .await?
             .jobs)
+    }
+    /// The environment a session `caller` starts or prompts runs with: the
+    /// caller's, with its context one level deeper in place of any the
+    /// caller's environment carries. The daemon writes the same variables
+    /// from the grant the request names; they are set here too because a
+    /// daemon of a build before the grant reports the same protocol version
+    /// until the beta and ignores the field, and would otherwise run the
+    /// session with the caller's own context.
+    fn child_environment(caller: &Caller) -> ClientEnvironment {
+        caller
+            .environment
+            .iter()
+            .filter(|(name, _)| !crate::caller_context::ENV_NAMES.contains(name))
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .chain(
+                caller
+                    .child_context()
+                    .env()
+                    .into_iter()
+                    .map(|(name, value)| (name.to_owned(), value)),
+            )
+            .collect()
     }
 }
 
