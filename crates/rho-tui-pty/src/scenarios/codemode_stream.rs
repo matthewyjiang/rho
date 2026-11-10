@@ -44,16 +44,39 @@ pub(super) const CODEMODE_LARGE_SCRIPT_SCENARIO: Scenario = Scenario::new(
         rows: 40,
         cols: 100,
     },
-    &[
-        Step::WaitText {
-            text: "gpt-5.5",
-            timeout: STARTUP,
-        },
-        Step::Custom(exercise_large_stream),
-        Step::ExitCommand,
-    ],
+    LARGE_SCRIPT_STEPS,
     /*smoke*/ true,
 );
+
+// Covers: the same stream from a daemon session, which sends a streamed
+// card only as its arguments grow: the small tail the model wrote before
+// it paused still shows.
+// Owner: interactive TUI as a daemon client
+#[cfg(unix)]
+pub(super) const DAEMON_CODEMODE_LARGE_SCRIPT_SCENARIO: Scenario = Scenario::new(
+    "daemon_codemode_large_script_stream",
+    "Show a daemon call's small source deltas once its stream pauses",
+    PtySize {
+        rows: 40,
+        cols: 100,
+    },
+    LARGE_SCRIPT_STEPS,
+    /*smoke*/ false,
+)
+.with_env(&[
+    ("RHO_TUI_DAEMON", "1"),
+    ("OPENAI_API_KEY", "sk-test-matrix"),
+])
+.with_setup(super::daemon_resume::write_daemon_config);
+
+const LARGE_SCRIPT_STEPS: &[Step] = &[
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Custom(exercise_large_stream),
+    Step::ExitCommand,
+];
 
 fn exercise_collapsed_stream(harness: &mut PtyHarness) -> Result<()> {
     harness.set_phase("first_open_script_fragment");
