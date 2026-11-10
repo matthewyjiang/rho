@@ -25,21 +25,33 @@ struct Run {
     passed: HashSet<ConfigRevision>,
 }
 
+/// A write [`WriterRun::admit`] let through, to hand back to
+/// [`WriterRun::landed`] once it is saved.
+#[must_use = "a saved write must be recorded with `WriterRun::landed`"]
+pub(super) struct Admitted {
+    writer: Option<ConfigWriter>,
+    /// The namespace's revision the write lands on.
+    before: ConfigRevision,
+}
+
 impl WriterRun {
-    /// `Ok` when a write `writer` made against `sent` may land on
+    /// Lets through a write `writer` made against `sent`, landing on
     /// `current`; `ConfigConflict` when someone else changed the namespace
     /// since `sent`.
-    pub(super) fn check(
+    pub(super) fn admit(
         &self,
-        current: &ConfigRevision,
+        current: ConfigRevision,
         sent: &ConfigRevision,
-        writer: Option<&ConfigWriter>,
-    ) -> Result<(), RpcError> {
+        writer: Option<ConfigWriter>,
+    ) -> Result<Admitted, RpcError> {
         let own = self.0.as_ref().is_some_and(|run| {
-            Some(&run.writer) == writer && run.tip == *current && run.passed.contains(sent)
+            writer.as_ref() == Some(&run.writer) && run.tip == current && run.passed.contains(sent)
         });
-        if current == sent || own {
-            Ok(())
+        if current == *sent || own {
+            Ok(Admitted {
+                writer,
+                before: current,
+            })
         } else {
             Err(RpcError::new(
                 ErrorCode::ConfigConflict,
@@ -48,13 +60,13 @@ impl WriterRun {
         }
     }
 
-    /// Records that a write by `writer` turned `before` into `after`.
-    pub(super) fn wrote(
-        &mut self,
-        writer: Option<ConfigWriter>,
-        before: ConfigRevision,
-        after: ConfigRevision,
-    ) {
+    /// Records that `write` saved, leaving the namespace at `after`. A
+    /// write that changed nothing leaves any run as it was.
+    pub(super) fn landed(&mut self, write: Admitted, after: ConfigRevision) {
+        let Admitted { writer, before } = write;
+        if before == after {
+            return;
+        }
         let Some(writer) = writer else {
             self.0 = None;
             return;
@@ -76,5 +88,5 @@ impl WriterRun {
 }
 
 #[cfg(test)]
-#[path = "run_tests.rs"]
+#[path = "writer_run_tests.rs"]
 mod tests;

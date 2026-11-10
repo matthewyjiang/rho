@@ -24,9 +24,8 @@ use tokio::sync::watch;
 
 use super::{
     file::{self, Edit, Stat},
-    refused,
-    run::WriterRun,
-    wire_errors,
+    refused, wire_errors,
+    writer_run::WriterRun,
 };
 use crate::config::{client_specs_problem, spec_values, write_changes, ConfigDocument};
 
@@ -102,12 +101,12 @@ impl Clients {
         // Locked before the revision check, so the file the client read is
         // the one changed.
         let mut edit = Edit::open(&path)?;
-        let before = client.refresh(&path);
-        client.run.check(&before, revision, writer.as_ref())?;
+        let current = client.refresh(&path);
+        let admitted = client.run.admit(current, revision, writer)?;
         write_changes(&mut edit.doc, &client.specs, changes).map_err(refused)?;
         let (stat, doc) = edit.save()?;
         let revision = client.publish(stat, Ok(doc), &path);
-        client.run.wrote(writer, before, revision.clone());
+        client.run.landed(admitted, revision.clone());
         Ok(ConfigSetResponse { revision })
     }
 

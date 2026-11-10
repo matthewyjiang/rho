@@ -16,7 +16,7 @@
 
 mod clients;
 mod file;
-mod run;
+mod writer_run;
 
 use std::{
     collections::BTreeMap,
@@ -34,7 +34,7 @@ use tokio::sync::watch;
 use self::{
     clients::Clients,
     file::{Edit, Stat},
-    run::WriterRun,
+    writer_run::WriterRun,
 };
 use crate::{
     app::agent_concurrency::AgentConcurrency,
@@ -181,8 +181,8 @@ impl ConfigStore {
         // the one changed.
         let mut edit = Edit::open(path)?;
         self.refresh_agent(&mut file.seen);
-        let before = self.agent_state.borrow().revision.clone();
-        file.run.check(&before, &revision, writer.as_ref())?;
+        let current = self.agent_state.borrow().revision.clone();
+        let admitted = file.run.admit(current, &revision, writer)?;
         let (config, warnings) =
             apply_agent_changes(&mut edit.doc, &changes).map_err(|error| match error {
                 AgentChangeError::Refused(errors) => refused(errors),
@@ -195,7 +195,7 @@ impl ConfigStore {
         let values = agent_values(&doc, &config);
         log_warnings(path, &warnings);
         let revision = self.publish_agent(Ok((config, values)));
-        file.run.wrote(writer, before, revision.clone());
+        file.run.landed(admitted, revision.clone());
         Ok(ConfigSetResponse { revision })
     }
 
