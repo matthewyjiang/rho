@@ -7,15 +7,19 @@
 use std::{
     collections::BTreeSet,
     io::{BufRead, BufReader},
+    path::Path,
     process::{Command, Stdio},
 };
+
+use base64::{engine::general_purpose, Engine as _};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{AuthList, AuthLogin, AuthLoginCancel, SessionAttach, SessionNew},
     AuthListParams, AuthLoginCancelParams, AuthLoginFinishedParams, AuthLoginParams, AuthStatus,
-    Client, DaemonNotification, ErrorCode, LoginFlow, LoginId, LoginOutcome, LoginPrompt,
-    Notifications, SessionAttachParams, SessionNewParams, SessionOptions, SessionSetup,
+    Client, ClientEnvironment, DaemonNotification, ErrorCode, LoginFlow, LoginId, LoginOutcome,
+    LoginPrompt, Notifications, SessionAttachParams, SessionNewParams, SessionOptions,
+    SessionSetup,
 };
 use rho_providers::credentials::{CredentialStore, FileCredentialStore};
 use serde_json::Value;
@@ -77,6 +81,74 @@ async fn status(client: &Client) -> AuthStatus {
         .find(|summary| summary.auth == AUTH)
         .expect("the daemon lists xai-oauth")
         .status
+}
+
+/// Ollama Cloud's device-key profile. Its login is offline: it creates the
+/// key file when there is none and shows a URL that names the public key.
+const DEVICE_AUTH: &str = "ollama-cloud-device";
+/// The variable that names the directory a client keeps its device key in.
+const KEY_DIR_ENV: &str = "OLLAMA_DEVICE_KEY_DIR";
+
+/// The environment of a client of `sandbox` that keeps its Ollama device
+/// key in `key_dir`.
+fn environment_keeping_key_in(sandbox: &Sandbox, key_dir: &Path) -> ClientEnvironment {
+    sandbox
+        .client_environment()
+        .into_iter()
+        .chain([(
+            KEY_DIR_ENV.to_owned(),
+            key_dir.to_string_lossy().into_owned(),
+        )])
+        .collect()
+}
+
+/// Logs a new client with `environment` in to [`DEVICE_AUTH`]: the public
+/// key its prompt asks the user to approve, and how the login ended.
+async fn device_login(sandbox: &Sandbox, environment: ClientEnvironment) -> (String, LoginOutcome) {
+    let (client, mut notifications) = sandbox.connect_following().await;
+    let login = client
+        .request::<AuthLogin>(&AuthLoginParams {
+            auth: DEVICE_AUTH.into(),
+            flow: None,
+            environment,
+        })
+        .await
+        .unwrap()
+        .login;
+    let prompt = next_prompt(&mut notifications, &login).await;
+    let url = url::Url::parse(&prompt.url).unwrap();
+    let (_, key) = url
+        .query_pairs()
+        .find(|(name, _)| name == "key")
+        .unwrap_or_else(|| panic!("the connect URL names a key: {url}"));
+    let key = general_purpose::URL_SAFE_NO_PAD
+        .decode(key.as_bytes())
+        .unwrap();
+    (
+        String::from_utf8(key).unwrap(),
+        next_finished(&mut notifications).await.outcome,
+    )
+}
+
+/// What `rho/auth/list` says of [`DEVICE_AUTH`] to a client with
+/// `environment`.
+async fn device_status(client: &Client, environment: ClientEnvironment) -> AuthStatus {
+    client
+        .request::<AuthList>(&AuthListParams { environment })
+        .await
+        .unwrap()
+        .auths
+        .into_iter()
+        .find(|summary| summary.auth == DEVICE_AUTH)
+        .expect("the daemon lists ollama-cloud-device")
+        .status
+}
+
+/// The public key in `key_dir`, when a device key was created there.
+fn public_key_in(key_dir: &Path) -> Option<String> {
+    std::fs::read_to_string(key_dir.join("id_ed25519.pub"))
+        .ok()
+        .map(|key| key.trim().to_owned())
 }
 
 /// The next login notification on `notifications`.
@@ -206,6 +278,53 @@ async fn a_relayed_login_signs_in_a_running_session() {
             (BTreeSet::from(["xai".to_owned()]), 0),
             AuthStatus::SignedIn,
             Some(FIXTURE_TOKEN.to_owned()),
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+// Covers: the Ollama device key is each client's, kept in the directory its
+// own `OLLAMA_DEVICE_KEY_DIR` names. A daemon whose environment names a
+// directory of its own, as one inherited from the client that started it
+// would, creates no key there: each of two clients is asked to approve a
+// key the daemon created in that client's directory, the two keys differ,
+// and the first client's login does not sign in the second, which has no
+// key yet (#1789).
+// Owner: daemon login relay.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_clients_device_login_uses_the_key_in_its_own_directory() {
+    let sandbox = Sandbox::new();
+    let [daemon_dir, first_dir, second_dir] = [(); 3].map(|()| tempfile::tempdir().unwrap());
+    let mut daemon = rho(&sandbox);
+    daemon.env(KEY_DIR_ENV, daemon_dir.path());
+    let client = sandbox.spawn_daemon(daemon, &[]).await.1;
+    let first = || environment_keeping_key_in(&sandbox, first_dir.path());
+    let second = || environment_keeping_key_in(&sandbox, second_dir.path());
+
+    let (first_key, first_outcome) = device_login(&sandbox, first()).await;
+    let after_first = (
+        device_status(&client, first()).await,
+        device_status(&client, second()).await,
+        public_key_in(second_dir.path()),
+    );
+    let (second_key, second_outcome) = device_login(&sandbox, second()).await;
+
+    assert_ne!(first_key, second_key);
+    assert_eq!(
+        (
+            (first_outcome, Some(first_key)),
+            after_first,
+            (second_outcome, Some(second_key)),
+            device_status(&client, second()).await,
+            public_key_in(daemon_dir.path()),
+        ),
+        (
+            (LoginOutcome::Succeeded, public_key_in(first_dir.path())),
+            (AuthStatus::SignedIn, AuthStatus::SignedOut, None),
+            (LoginOutcome::Succeeded, public_key_in(second_dir.path())),
+            AuthStatus::SignedIn,
+            None,
         ),
         "log:\n{}",
         sandbox.isolated.daemon_log()

@@ -352,10 +352,11 @@ pub(crate) fn ollama_device_login_recorded(store: &dyn CredentialStore) -> Crede
     Ok(store.get_secret(OLLAMA_DEVICE_SIGNED_IN_ACCOUNT)?.is_some())
 }
 
-/// True when Rho is signed in and a usable `~/.ollama` device key exists.
+/// True when Rho is signed in and a usable device key exists in the key
+/// directory of the party `store` belongs to.
 fn ollama_device_signed_in(store: &dyn CredentialStore) -> CredentialResult<bool> {
     Ok(ollama_device_login_recorded(store)?
-        && crate::auth::ollama_device::ollama_device_credentials_available())
+        && crate::auth::ollama_device::ollama_device_credentials_available(store))
 }
 
 pub(crate) fn sign_in_ollama_device(store: &dyn CredentialStore) -> CredentialResult<()> {
