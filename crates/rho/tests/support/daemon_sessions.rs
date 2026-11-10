@@ -203,6 +203,7 @@ impl Sandbox {
 
     /// Writes the fixture config with `behavior.permission_mode = "<mode>"`
     /// and the TOML `tables` after it, which a daemon started after reads.
+    /// Keys `tables` sets before any table header are `behavior` keys.
     pub(super) fn set_config(&self, mode: &str, tables: &str) {
         std::fs::write(
             &self.isolated.config_path,
@@ -267,6 +268,7 @@ impl Sandbox {
                 environment,
                 agent: None,
                 setup: SessionSetup::default(),
+                parent: None,
             })
             .await
             .unwrap()

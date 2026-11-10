@@ -1746,7 +1746,7 @@
         },
         {
           "const": "queued",
-          "description": "A subagent run waiting for capacity; [`JobSummary::queue`] says\nwhere it stands.",
+          "description": "A subagent run, or the turn of a session another job started\n([`super::SessionNewParams::parent`]), waiting for capacity;\n[`JobSummary::queue`] says where it stands.",
           "type": "string"
         },
         {
@@ -4041,6 +4041,17 @@
           "$ref": "#/$defs/ClientEnvironment",
           "description": "The client's environment, which the session's processes run with\nuntil a prompt brings another."
         },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The session whose turn starts this one, such as the session of an\nagent that starts a peer through session control (#1714). The daemon\nrecords the job writing that session as the new session's job's\n[`super::JobSummary::parent`], and the new session's turns then wait\nfor capacity in the daemon-wide agent budget, as subagent runs do\n([`super::JobState::Queued`]). A session no job of the daemon writes,\nsuch as one an in-process rho runs, records no parent, but the new\nsession's turns still share the budget."
+        },
         "setup": {
           "$ref": "#/$defs/SessionSetup",
           "description": "The client's choices for the session."
@@ -4209,7 +4220,7 @@
       "type": "object"
     },
     "SessionPromptResponse": {
-      "description": "Result of [`SESSION_PROMPT`]: the turn began: it saved its prompt, or,\nfor `/compact`, its compaction started. The turn runs on in the daemon;\n[`super::JOB_LIST`] reports how it ends.\n\nA turn that ends before it began answers with an error\ninstead: [`crate::ErrorCode::TurnEnded`], whose `data` is the turn's\n[`crate::TurnOutcome`], or [`crate::ErrorCode::DaemonStopping`] when the\ndaemon stopped it.",
+      "description": "Result of [`SESSION_PROMPT`]: the turn began: it saved its prompt, or,\nfor `/compact`, its compaction started; or, for a session another job\nstarted ([`SessionNewParams::parent`]), it queued for capacity in the\ndaemon-wide agent budget. The turn runs on in the daemon;\n[`super::JOB_LIST`] reports how it ends.\n\nA turn that ends before it began answers with an error\ninstead: [`crate::ErrorCode::TurnEnded`], whose `data` is the turn's\n[`crate::TurnOutcome`], or [`crate::ErrorCode::DaemonStopping`] when the\ndaemon stopped it.",
       "type": "object"
     },
     "SessionRenameParams": {

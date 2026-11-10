@@ -120,6 +120,7 @@ fn session_new(
             without: passed.without,
             child_threads: ChildThreads::Daemon,
         },
+        parent: None,
     })
 }
 

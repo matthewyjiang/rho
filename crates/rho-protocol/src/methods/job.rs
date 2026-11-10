@@ -67,8 +67,9 @@ pub enum JobKind {
 pub enum JobState {
     /// Created; no turn has started.
     Idle,
-    /// A subagent run waiting for capacity; [`JobSummary::queue`] says
-    /// where it stands.
+    /// A subagent run, or the turn of a session another job started
+    /// ([`super::SessionNewParams::parent`]), waiting for capacity;
+    /// [`JobSummary::queue`] says where it stands.
     Queued,
     Running,
     /// The turn waits for an approval, a plan approval, or a question to be

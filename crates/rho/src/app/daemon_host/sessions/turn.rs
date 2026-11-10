@@ -21,7 +21,11 @@ use tokio::{
 };
 
 use super::{
-    super::jobs::TurnEnd, cost, inputs::Inputs, options::available_auths, queued::Queued,
+    super::{jobs::TurnEnd, subagents::TurnBudget},
+    budget, cost,
+    inputs::Inputs,
+    options::available_auths,
+    queued::Queued,
     saved_replay, LoadedSession,
 };
 use crate::{
@@ -47,7 +51,8 @@ use wake::WakePrompt;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum PromptStart {
     /// The turn began: it saved its prompt, or, for `/compact`, its
-    /// compaction started. It runs on.
+    /// compaction started; or it must wait for capacity in the daemon-wide
+    /// budget (see [`TurnTask::budget`]). It runs on.
     Began,
     /// The turn ended before it began, as this says: cancelled, timed out,
     /// or failed.
@@ -115,6 +120,9 @@ pub(super) struct TurnTask {
     /// The turn's place in the queue on the session's runtime, joined as
     /// the turn started (see `Sessions::prompt`).
     pub(super) runtime: Queued<Option<SessionRuntime>>,
+    /// The turn's place in the daemon-wide budget's line, for a session
+    /// another session started (#1714, see `budget`); `None` runs at once.
+    pub(super) budget: Option<TurnBudget>,
     /// Cancelled once the daemon stops: a turn cancelled then was
     /// interrupted, not cancelled by a client.
     pub(super) stopping: CancellationToken,
@@ -146,6 +154,7 @@ impl TurnTask {
         let Self {
             session,
             runtime,
+            budget,
             stopping,
             cancel,
             limit,
@@ -168,30 +177,39 @@ impl TurnTask {
             // without beginning its prompt, as the turns the stop stops do.
             Some(_) if stopping.is_cancelled() => (Ok(Ran::Cancelled), None),
             Some(runtime) => {
-                // Global settings that changed since the last turn reach the
-                // session now, before its prompt.
-                let config = session.config_for_turn(runtime).await;
                 let (ended, timed_out) = {
                     let turn = async {
-                        let ended = match input {
-                            TurnInput::Prompt(input) => {
-                                run_turn(runtime, &mut view, input, &config, &cancel).await
-                            }
-                            TurnInput::Goal(turn) => {
-                                run_goal_turn(runtime, &mut view, turn.into(), &config, &cancel)
-                                    .await
-                            }
+                        let Ok(slot) = budget::admit(&mut view, budget, &cancel, &stopping).await
+                        else {
+                            return Ok(Ran::Cancelled);
                         };
-                        super::goal::drive(
-                            runtime,
-                            &mut view,
-                            ended,
-                            super::goal::Halt {
-                                turn_cancel: &cancel,
-                                stopping: &stopping,
-                            },
-                        )
-                        .await
+                        // Global settings that changed since the last turn,
+                        // or while this one waited for its slot, reach the
+                        // session now, before its prompt.
+                        let config = session.config_for_turn(runtime).await;
+                        let turn = async {
+                            let ended = match input {
+                                TurnInput::Prompt(input) => {
+                                    run_turn(runtime, &mut view, input, &config, &cancel).await
+                                }
+                                TurnInput::Goal(turn) => {
+                                    run_goal_turn(runtime, &mut view, turn.into(), &config, &cancel)
+                                        .await
+                                }
+                            };
+                            super::goal::drive(
+                                runtime,
+                                &mut view,
+                                ended,
+                                super::goal::Halt {
+                                    turn_cancel: &cancel,
+                                    stopping: &stopping,
+                                },
+                            )
+                            .await
+                        };
+                        slot.lend_while_waiting(&session.jobs, &session.job, turn)
+                            .await
                     };
                     tokio::pin!(turn);
                     // The deadline first, so a limit already past cancels
@@ -569,7 +587,7 @@ impl DaemonView {
 
     /// Tells the request that sent the prompt, if it still waits, that the
     /// turn began (see [`PromptStart::Began`]).
-    fn began(&mut self) {
+    pub(super) fn began(&mut self) {
         if let Some(started) = self.started.take() {
             let _ = started.send(PromptStart::Began);
         }

@@ -10,8 +10,8 @@ use std::{
 };
 
 use super::{
-    state::TransitionRefused, unix_now, JobEvent, JobId, JobRecord, JobState, JobStore, JobSubject,
-    TurnEnd,
+    state::TransitionRefused, unix_now, Admission, JobEvent, JobId, JobRecord, JobState, JobStore,
+    JobSubject, TurnEnd,
 };
 
 /// The daemon's jobs: the ones it runs and the records it loaded at
@@ -35,6 +35,8 @@ pub(in crate::app::daemon_host) struct JobRegistry {
     /// Counts the jobs that went in progress, under the `jobs` lock, so an
     /// upgrade can tell that none did since it last found the daemon idle.
     started: AtomicU64,
+    /// Woken after every job is added, moves, or is forgotten.
+    changed: tokio::sync::Notify,
 }
 
 /// The daemon found idle, as of [`JobRegistry::idle`]: no job was in
@@ -116,6 +118,7 @@ impl JobRegistry {
             ),
             closed: AtomicBool::new(false),
             started: AtomicU64::new(0),
+            changed: tokio::sync::Notify::new(),
         };
         registry.interrupt_unfinished(&mut registry.lock());
         registry
@@ -137,7 +140,30 @@ impl JobRegistry {
             self.started.fetch_add(1, Ordering::Relaxed);
         }
         jobs.insert(record.id.clone(), record);
+        self.changed.notify_waiters();
         Ok(())
+    }
+
+    /// Resolves after the next change to any job: one added, moved, or
+    /// forgotten. Enable it before reading the jobs it should follow, so a
+    /// change in between is not missed.
+    pub(in crate::app::daemon_host) fn changed(&self) -> tokio::sync::futures::Notified<'_> {
+        self.changed.notified()
+    }
+
+    /// Whether job `id` runs a turn alone: `running`, with no job it
+    /// started still queued, running, or waiting for input. Only then does
+    /// a started session's turn hold its slot in the daemon-wide budget
+    /// (#1714). A job it started may be one it does not wait on yet; the
+    /// turn lends its slot all the same, since it cannot tell (see
+    /// `sessions::budget`).
+    pub(in crate::app::daemon_host) fn runs_alone(&self, id: &JobId) -> bool {
+        let jobs = self.lock();
+        jobs.get(id)
+            .is_some_and(|record| record.state == JobState::Running)
+            && !jobs
+                .values()
+                .any(|record| record.parent.as_ref() == Some(id) && record.state.in_progress())
     }
 
     #[cfg(test)]
@@ -192,16 +218,25 @@ impl JobRegistry {
             .count()
     }
 
-    /// Starts a new turn on job `id`, unless one is already under way.
-    /// Checked and applied under one lock, so of two prompts that race only
-    /// one starts a turn.
-    pub(in crate::app::daemon_host) fn start_turn(&self, id: &JobId) -> Result<(), StartTurnError> {
+    /// Starts a new turn on session job `id`, unless one is already under
+    /// way, and returns the state the turn starts in: `queued` for a session
+    /// another job started, whose turns wait for capacity in the daemon-wide
+    /// budget (#1714), `running` otherwise. Checked and applied under one
+    /// lock, so of two prompts that race only one starts a turn.
+    pub(in crate::app::daemon_host) fn start_turn(
+        &self,
+        id: &JobId,
+    ) -> Result<JobState, StartTurnError> {
         let mut jobs = self.lock();
         if self.closed.load(Ordering::Relaxed) {
             return Err(StartTurnError::Closed);
         }
-        match self.record_under(&mut jobs, id, JobEvent::TurnStarted) {
-            Ok(_) => Ok(()),
+        let event = match jobs.get(id).map(|record| record.admission) {
+            Some(Admission::SharedBudget) => JobEvent::TurnQueued,
+            Some(Admission::Immediate) | None => JobEvent::TurnStarted,
+        };
+        match self.record_under(&mut jobs, id, event) {
+            Ok(state) => Ok(state),
             Err(TransitionError::Unknown(unknown)) => Err(unknown.into()),
             // A turn starts from every state but the two of a turn under way.
             Err(TransitionError::Refused(_)) => Err(StartTurnError::Busy),
@@ -232,6 +267,7 @@ impl JobRegistry {
             self.started.fetch_add(1, Ordering::Relaxed);
         }
         persist(&self.store, record);
+        self.changed.notify_waiters();
         Ok(record.state.clone())
     }
 
@@ -249,6 +285,7 @@ impl JobRegistry {
         apply(record, JobEvent::TurnEnded(end))?;
         record.outcome = outcome;
         persist(&self.store, record);
+        self.changed.notify_waiters();
         Ok(record.state.clone())
     }
 
@@ -261,6 +298,7 @@ impl JobRegistry {
         if jobs.remove(id).is_none() {
             return;
         }
+        self.changed.notify_waiters();
         if let Err(error) = self.store.remove(id) {
             tracing::error!(job = %id, %error, "could not delete job record");
         }

@@ -4,7 +4,9 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use super::{JobRegistry, RegisterError, SessionJob, StartTurnError};
-use crate::app::daemon_host::jobs::{JobEvent, JobId, JobRecord, JobState, JobStore, TurnEnd};
+use crate::app::daemon_host::jobs::{
+    Admission, JobEvent, JobId, JobRecord, JobState, JobStore, TurnEnd,
+};
 
 fn states(records: Vec<JobRecord>) -> Vec<(JobId, JobState)> {
     let mut states: Vec<_> = records
@@ -59,8 +61,10 @@ fn startup_interrupts_the_turns_a_dead_daemon_left_open() {
 }
 
 // Covers: a turn starts only on a job with none under way, so a second
-// prompt to a running or waiting session is refused as busy and leaves it as
-// it was, and an unknown job is reported as unknown.
+// prompt to a running, waiting, or queued session is refused as busy and
+// leaves it as it was, and an unknown job is reported as unknown; the turn of
+// a session admitted through the shared budget queues for capacity first
+// (#1714).
 // Owner: daemon job registry.
 #[test]
 fn a_turn_starts_only_when_none_is_in_progress() {
@@ -72,21 +76,42 @@ fn a_turn_starts_only_when_none_is_in_progress() {
         rho_sdk::SessionId::new(),
     );
     let id = job.id.clone();
+    let started_by = JobRecord {
+        admission: Admission::SharedBudget,
+        ..JobRecord::new_session(
+            JobId::generate(),
+            PathBuf::from("/work"),
+            rho_sdk::SessionId::new(),
+        )
+    };
+    let child = started_by.id.clone();
     registry.register(job).unwrap();
+    registry.register(started_by).unwrap();
 
     let started = registry.start_turn(&id);
     let while_running = registry.start_turn(&id);
     registry.record(&id, JobEvent::InputOpened).unwrap();
     let while_waiting = registry.start_turn(&id);
     let unknown = registry.start_turn(&JobId::generate());
+    let queued = registry.start_turn(&child);
+    let while_queued = registry.start_turn(&child);
 
     assert_eq!(
-        [started, while_running, while_waiting, unknown],
         [
-            Ok(()),
+            started,
+            while_running,
+            while_waiting,
+            unknown,
+            queued,
+            while_queued
+        ],
+        [
+            Ok(JobState::Running),
             Err(StartTurnError::Busy),
             Err(StartTurnError::Busy),
             Err(StartTurnError::Unknown(super::UnknownJob)),
+            Ok(JobState::Queued),
+            Err(StartTurnError::Busy),
         ]
     );
     assert_eq!(
