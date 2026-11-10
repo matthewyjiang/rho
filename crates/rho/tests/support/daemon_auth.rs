@@ -12,10 +12,10 @@ use pretty_assertions::assert_eq;
 use rho_protocol::{
     methods::{AuthChooseStore, AuthKey, AuthLogout, JobList, SessionPrompt, Status},
     AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse,
-    AuthLogoutParams, AuthLogoutResponse, Client, ClientError, ContentBlock, CredentialStoreKind,
-    CredentialStoreStatus, EnvironmentOverride, ErrorCode, JobListParams, JobState, RpcError,
-    SessionId, SessionPromptParams, StatusParams, StoreSelectedBy, TurnError, TurnErrorKind,
-    TurnOutcome,
+    AuthLogoutParams, AuthLogoutResponse, Client, ClientEnvironment, ClientError, ContentBlock,
+    CredentialStoreKind, CredentialStoreStatus, EnvironmentOverride, ErrorCode, JobListParams,
+    JobState, RpcError, SessionId, SessionPromptParams, StatusParams, StoreSelectedBy, TurnError,
+    TurnErrorKind, TurnOutcome,
 };
 use rho_providers::credentials::{CredentialStore, FileCredentialStore};
 use serde_json::Value;
@@ -125,19 +125,43 @@ fn rpc_error(error: ClientError) -> RpcError {
     }
 }
 
+/// Saves `key` for a client that sends no environment, so to the daemon's
+/// own store.
 async fn save_key(client: &Client, key: &str) -> Result<AuthKeyResponse, RpcError> {
+    save_key_from(client, key, ClientEnvironment::default()).await
+}
+
+/// Saves `key` for a client whose environment is `environment`.
+async fn save_key_from(
+    client: &Client,
+    key: &str,
+    environment: ClientEnvironment,
+) -> Result<AuthKeyResponse, RpcError> {
     client
         .request::<AuthKey>(&AuthKeyParams {
             auth: AUTH.into(),
             key: key.into(),
+            environment,
         })
         .await
         .map_err(rpc_error)
 }
 
+/// Signs out a client that sends no environment.
 async fn logout(client: &Client) -> Result<AuthLogoutResponse, RpcError> {
+    logout_from(client, ClientEnvironment::default()).await
+}
+
+/// Signs out a client whose environment is `environment`.
+async fn logout_from(
+    client: &Client,
+    environment: ClientEnvironment,
+) -> Result<AuthLogoutResponse, RpcError> {
     client
-        .request::<AuthLogout>(&AuthLogoutParams { auth: AUTH.into() })
+        .request::<AuthLogout>(&AuthLogoutParams {
+            auth: AUTH.into(),
+            environment,
+        })
         .await
         .map_err(rpc_error)
 }
@@ -155,7 +179,10 @@ async fn choose_store(
     store: CredentialStoreKind,
 ) -> Result<AuthChooseStoreResponse, RpcError> {
     client
-        .request::<AuthChooseStore>(&AuthChooseStoreParams { store })
+        .request::<AuthChooseStore>(&AuthChooseStoreParams {
+            store,
+            environment: ClientEnvironment::default(),
+        })
         .await
         .map_err(rpc_error)
 }
@@ -242,15 +269,23 @@ async fn a_key_saved_or_deleted_by_one_client_applies_to_another_clients_session
     );
 }
 
-// Covers: a key in the daemon's environment wins over a saved one, so both
-// methods refuse, naming the variable, and leave the saved key alone.
+// Covers: a key in a client's environment wins over a saved one in that
+// client's sessions, so both methods refuse that client, naming the
+// variable, and leave the saved key alone. The same variable in the
+// daemon's own environment refuses nobody: a client without it signs in
+// and out (#1779).
 // Owner: daemon credential methods.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_key_in_the_daemons_environment_refuses_sign_in_and_out() {
+async fn a_key_in_a_clients_environment_refuses_its_sign_in_and_out() {
     let valid = Arc::new(Mutex::new(FIRST_KEY.to_owned()));
     let fixture = Fixture::start(&valid, &[(KEY_VARIABLE, SECOND_KEY)]).await;
     fixture.store.set_secret(KEY_ACCOUNT, FIRST_KEY).unwrap();
     let client = fixture.sandbox.connect().await;
+    let exporting = || -> ClientEnvironment {
+        [(KEY_VARIABLE.to_owned(), SECOND_KEY.to_owned())]
+            .into_iter()
+            .collect()
+    };
 
     let overridden = (
         Some(ErrorCode::EnvironmentOverride),
@@ -263,11 +298,25 @@ async fn a_key_in_the_daemons_environment_refuses_sign_in_and_out() {
     );
     assert_eq!(
         (
-            error_of(save_key(&client, FIRST_KEY).await),
-            error_of(logout(&client).await),
+            error_of(save_key_from(&client, FIRST_KEY, exporting()).await),
+            error_of(logout_from(&client, exporting()).await),
             fixture.saved_key(),
         ),
         (overridden.clone(), overridden, Some(FIRST_KEY.into()))
+    );
+    assert_eq!(
+        (
+            save_key(&client, FIRST_KEY).await,
+            logout(&client).await,
+            fixture.saved_key(),
+        ),
+        (
+            Ok(AuthKeyResponse { unchecked: None }),
+            Ok(AuthLogoutResponse {}),
+            None
+        ),
+        "log:\n{}",
+        fixture.sandbox.isolated.daemon_log()
     );
 }
 

@@ -238,7 +238,10 @@ pub trait Service: Send + Sync {
     ) -> impl Future<Output = Result<AuthLogoutResponse, RpcError>> + Send;
 
     /// Answers `rho/auth/list`: the auth profiles a client can sign in to.
-    fn list_auths(&self) -> impl Future<Output = Result<AuthListResponse, RpcError>> + Send;
+    fn list_auths(
+        &self,
+        params: AuthListParams,
+    ) -> impl Future<Output = Result<AuthListResponse, RpcError>> + Send;
 
     /// Handles `rho/auth/login`: start the auth profile's interactive login
     /// in a task the service owns, which sends its prompt and end through
@@ -600,7 +603,7 @@ enum ServiceCall {
     ListJobs,
     SaveAuthKey(AuthKeyParams),
     LogoutAuth(AuthLogoutParams),
-    ListAuths,
+    ListAuths(AuthListParams),
     CancelLogin(AuthLoginCancelParams),
     ChooseStore(AuthChooseStoreParams),
 }
@@ -698,7 +701,7 @@ impl ServiceCall {
             JOB_LIST => decode_params::<JobList>(params).map(|JobListParams {}| Self::ListJobs),
             AUTH_KEY => decode_params::<AuthKey>(params).map(Self::SaveAuthKey),
             AUTH_LOGOUT => decode_params::<AuthLogout>(params).map(Self::LogoutAuth),
-            AUTH_LIST => decode_params::<AuthList>(params).map(|AuthListParams {}| Self::ListAuths),
+            AUTH_LIST => decode_params::<AuthList>(params).map(Self::ListAuths),
             AUTH_LOGIN_CANCEL => decode_params::<AuthLoginCancel>(params).map(Self::CancelLogin),
             AUTH_CHOOSE_STORE => decode_params::<AuthChooseStore>(params).map(Self::ChooseStore),
             method => Err(RpcError::new(
@@ -730,7 +733,7 @@ impl ServiceCall {
             | Self::ListJobs
             | Self::SaveAuthKey(_)
             | Self::LogoutAuth(_)
-            | Self::ListAuths
+            | Self::ListAuths(_)
             | Self::CancelLogin(_)
             | Self::ChooseStore(_) => None,
         }
@@ -791,7 +794,9 @@ impl ServiceCall {
             Self::LogoutAuth(params) => {
                 encode_result::<AuthLogout>(&service.logout_auth(params).await?)
             }
-            Self::ListAuths => encode_result::<AuthList>(&service.list_auths().await?),
+            Self::ListAuths(params) => {
+                encode_result::<AuthList>(&service.list_auths(params).await?)
+            }
             Self::CancelLogin(params) => {
                 encode_result::<AuthLoginCancel>(&service.cancel_login(params).await?)
             }

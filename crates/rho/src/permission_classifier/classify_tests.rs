@@ -588,7 +588,8 @@ async fn unusable_screen_config_is_reported() {
             config.set_internal_agent_model_config(DECISION_SCREEN_ID, selection);
         }
 
-        let result = check_screen_config(&config).map_err(|error| error.to_string());
+        let result = check_screen_config(&config, &crate::credential_store::AppCredentialStore)
+            .map_err(|error| error.to_string());
 
         assert_eq!(result, expected, "{screen:?}");
         if let Err(reason) = expected {
@@ -695,6 +696,7 @@ async fn verdict_for_config(config: Config) -> ClassifierVerdict {
     let session_id = SessionId::new();
     classify_capability_request(
         &config,
+        Arc::new(crate::credential_store::AppCredentialStore),
         ClassifyRequest {
             history: &history,
             pending: &pending,

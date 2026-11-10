@@ -87,7 +87,11 @@ impl GitHubClonePlan {
         Ok(())
     }
 
-    pub(super) async fn execute(self) -> Result<super::FetchedTarget, ToolError> {
+    /// Clones the repository, signed in with `github_token` when given.
+    pub(super) async fn execute(
+        self,
+        github_token: Option<&str>,
+    ) -> Result<super::FetchedTarget, ToolError> {
         if let Some(parent) = self.local_path.parent() {
             self.store
                 .create_private_dir_all(parent)
@@ -96,7 +100,7 @@ impl GitHubClonePlan {
         // The authorized command line stays token-free; private repositories are
         // authenticated through git configuration passed in the environment so the
         // token never reaches the process table or the clone's remote URL.
-        let credentials = github::clone_credential_environment();
+        let credentials = github::clone_credential_environment(github_token);
         for process in &self.processes {
             run_process(process, &credentials).await?;
         }

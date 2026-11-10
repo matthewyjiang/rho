@@ -47,7 +47,8 @@ impl SessionRuntime {
         }
         let mut config = model_scoped_config(&self.current_model(), process_config);
         config.permission_mode = mode;
-        ensure_auto_classifier_model(&config)
+        let credentials = self.build.host.environment.credentials();
+        ensure_auto_classifier_model(&config, credentials.as_ref())
             .map_err(|error| SettingChangeError::Unsupported(error.to_string()))?;
 
         let writes = self
@@ -60,6 +61,7 @@ impl SessionRuntime {
             workspace_root: self.permission.workspace_root.clone(),
             usage_recording: self.built.runtime.usage_recording(),
             session_writes: writes.clone(),
+            credentials,
         });
         // `exit_plan_mode` is offered only in plan mode; the rebuilt runtime
         // must see the tool list of the mode it serves.
@@ -82,7 +84,11 @@ impl SessionRuntime {
                     provider: std::sync::Arc::clone(&self.built.provider),
                     tools: &self.built.tools,
                     workspace,
-                    workspace_policy: AppPolicy::for_mode(mode, writes.clone()),
+                    workspace_policy: AppPolicy::for_mode(
+                        mode,
+                        writes.clone(),
+                        self.build.host.environment.current().path(),
+                    ),
                     approval_session: approval.session,
                     system_prompt: self.built.prompt.system.clone(),
                     reasoning: self.built.session.reasoning_level(),

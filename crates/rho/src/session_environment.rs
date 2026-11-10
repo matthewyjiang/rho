@@ -13,6 +13,12 @@
 //! environment grants other trust (see [`SessionEnvironment::trust_mismatch`])
 //! instead of running it under the session's. Only a [`SessionEnvironment`]
 //! says what is trusted; an [`Ambient`] is variables.
+//!
+//! Credentials are the opening environment's as well (#1779): an API key in
+//! one of its variables, and the credential store its `RHO_CREDENTIAL_STORE`
+//! chooses, are what the session's providers and tools read for as long as
+//! it is open (see [`SessionEnvironment::credentials`]). A later prompt's
+//! environment changes neither.
 
 use std::{
     collections::BTreeMap,
@@ -21,9 +27,13 @@ use std::{
     sync::{Arc, PoisonError, RwLock},
 };
 
+use rho_providers::credentials::CredentialStore;
 use rho_sdk::ProcessEnvironment;
 
-use crate::workspace::ProjectTrusts;
+use crate::{
+    credential_store::{AppCredentialStore, ClientCredentialStore},
+    workspace::ProjectTrusts,
+};
 
 /// The environment a session's children see (#1659): this process's own,
 /// or a daemon client's variables.
@@ -68,6 +78,27 @@ impl Ambient {
             Self::ThisProcess => {}
             Self::Client(variables) => {
                 command.env_clear().envs(variables.iter());
+            }
+        }
+    }
+
+    /// The credentials of whoever this environment belongs to: this
+    /// process's own, or a daemon client's, which never include a variable
+    /// or a store choice of the daemon's (see [`ClientCredentialStore`]).
+    pub(crate) fn credentials(&self) -> Arc<dyn CredentialStore> {
+        match self {
+            Self::ThisProcess => Arc::new(AppCredentialStore),
+            Self::Client(variables) => Arc::new(ClientCredentialStore::new(Arc::clone(variables))),
+        }
+    }
+
+    /// [`Self::credentials`] for secrets no provider reads, such as an MCP
+    /// server's OAuth tokens, whose writes rebuild no session's provider.
+    fn untracked_credentials(&self) -> Arc<dyn CredentialStore> {
+        match self {
+            Self::ThisProcess => Arc::new(crate::credential_store::UntrackedCredentialStore),
+            Self::Client(variables) => {
+                Arc::new(ClientCredentialStore::new(Arc::clone(variables)).untracked())
             }
         }
     }
@@ -155,6 +186,9 @@ pub(crate) struct SessionEnvironment {
     /// The trust the opening [`Ambient`] granted, which [`Self::replace`]
     /// keeps.
     project_trust: ProjectTrusts,
+    /// The [`Ambient`] the session opened with, whose credentials it keeps
+    /// through every [`Self::replace`].
+    opened_with: Ambient,
 }
 
 impl SessionEnvironment {
@@ -164,6 +198,7 @@ impl SessionEnvironment {
         Self {
             process: ambient.process_environment().into(),
             project_trust: ProjectTrusts::read(|name| ambient.read(name)),
+            opened_with: ambient.clone(),
             ambient: Arc::new(RwLock::new(ambient)),
         }
     }
@@ -174,6 +209,7 @@ impl SessionEnvironment {
     pub(crate) fn snapshot(&self) -> Self {
         Self {
             project_trust: self.project_trust,
+            opened_with: self.opened_with.clone(),
             ..Self::new(self.current())
         }
     }
@@ -197,6 +233,22 @@ impl SessionEnvironment {
     /// hooks, plugins, and agents when it opens (#1779).
     pub(crate) fn project_trust(&self) -> ProjectTrusts {
         self.project_trust
+    }
+
+    /// The session's credentials: those of the environment it opened with,
+    /// not of a later prompt's, as its project trust is (#1779). Every
+    /// provider the session builds and every key its tools read comes from
+    /// here, so a daemon session never uses a key from the daemon's own
+    /// environment or from another client's.
+    pub(crate) fn credentials(&self) -> Arc<dyn CredentialStore> {
+        self.opened_with.credentials()
+    }
+
+    /// [`Self::credentials`] for secrets no provider reads, such as an MCP
+    /// server's OAuth tokens: saving or refreshing one rebuilds no session's
+    /// provider (#1662).
+    pub(crate) fn untracked_credentials(&self) -> Arc<dyn CredentialStore> {
+        self.opened_with.untracked_credentials()
     }
 
     /// The environment a child started now sees.

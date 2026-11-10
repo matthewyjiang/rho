@@ -50,8 +50,8 @@ pub(super) async fn load(
                 .env_var()
                 .expect("Kimi OAuth must declare an environment variable");
             let missing = || crate::model::registry::missing_credentials_error("kimi-code");
-            let mut tokens = match std::env::var(env_var) {
-                Ok(access_token) if !access_token.trim().is_empty() => KimiTokens {
+            let mut tokens = match store.environment_variable(env_var) {
+                Some(access_token) if !access_token.trim().is_empty() => KimiTokens {
                     access_token,
                     refresh_token: None,
                     expires_at_unix: None,
@@ -78,7 +78,7 @@ pub(super) async fn load(
                 .auth_kind
                 .env_var()
                 .expect("Muse subscription auth must declare an environment variable");
-            if let Some(api_key) = env_api_key(env_var) {
+            if let Some(api_key) = env_api_key(store, env_var) {
                 return Ok(ModelRequestAuth::Bearer(api_key));
             }
             let missing = || crate::model::registry::missing_credentials_error("meta-muse");

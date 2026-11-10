@@ -180,7 +180,11 @@ impl InteractiveRuntime {
     }
 
     fn workspace_policy(&self) -> AppPolicy {
-        AppPolicy::for_mode(self.permission_mode, self.session_writes.clone())
+        AppPolicy::for_mode(
+            self.permission_mode,
+            self.session_writes.clone(),
+            std::env::var_os("PATH"),
+        )
     }
 
     pub(crate) fn update_config(&mut self, config: Config) {
@@ -586,6 +590,7 @@ impl InteractiveRuntime {
                 recall: self.tools.recall_store(),
                 todo: Some(self.tools.todo_state()),
                 code_mode: Some(self.tools.code_mode().clone()),
+                credentials: self.tools.credentials(),
             },
         )
     }

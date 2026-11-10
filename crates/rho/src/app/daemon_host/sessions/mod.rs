@@ -92,7 +92,8 @@ mod unload;
 
 use feed::{Attached, Feed};
 use inputs::Inputs;
-use open::{open_session, session_environment, OpenWith, OpenedSession, Opening, Workspace};
+pub(super) use open::session_environment;
+use open::{open_session, OpenWith, OpenedSession, Opening, Workspace};
 use queued::Queued;
 use reopen::ReopenLocks;
 use start::Entered;
@@ -627,7 +628,7 @@ impl Sessions {
         opened: OpenedSession,
     ) -> Result<Arc<LoadedSession>, RpcError> {
         let session = opened.runtime.session_id().clone();
-        let auths = options::available_auths().await;
+        let auths = options::available_auths(opened.runtime.credentials()).await;
         let entry = LoadedSession::new(
             job.job(),
             Arc::clone(&self.jobs),

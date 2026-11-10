@@ -192,6 +192,8 @@ pub(crate) struct EvaluationRequest<'a> {
     pub cancellation: CancellationToken,
     pub session_id: &'a SessionId,
     pub workspace_path: &'a std::path::Path,
+    /// The credentials of the session the goal belongs to.
+    pub credentials: std::sync::Arc<dyn rho_providers::credentials::CredentialStore>,
 }
 
 pub(crate) async fn evaluate(
@@ -208,6 +210,7 @@ pub(crate) async fn evaluate(
         cancellation,
         session_id,
         workspace_path,
+        credentials,
     } = request;
     let transcript = evaluation_transcript(messages);
     let result = run_one_shot_agent(
@@ -225,6 +228,7 @@ pub(crate) async fn evaluate(
         provider_name,
         model,
         auth,
+        credentials,
         usage_recording,
     )
     .await?;

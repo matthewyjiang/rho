@@ -103,7 +103,7 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                             .expect("Kimi OAuth must declare an environment variable");
                         let missing = missing_credentials_error("kimi-code");
                         let (source, tokens) = env_or_stored(
-                            env_var,
+                            self.store.environment_variable(env_var),
                             |access_token| KimiTokens {
                                 access_token,
                                 refresh_token: None,
@@ -128,7 +128,9 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                             .auth_kind
                             .env_var()
                             .expect("Muse subscription auth must declare an environment variable");
-                        if let Some(api_key) = crate::auth::meta_token::env_api_key(env_var) {
+                        if let Some(api_key) =
+                            crate::auth::meta_token::env_api_key(self.store.as_ref(), env_var)
+                        {
                             CompatibleAuth::ApiKey(api_key)
                         } else {
                             let tokens = load_meta_tokens(self.store.as_ref())?
@@ -177,7 +179,7 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                         missing_message,
                         ..
                     } => env_or_stored(
-                        env_var,
+                        self.store.environment_variable(env_var),
                         |access_token| XaiTokens {
                             access_token,
                             refresh_token: None,
@@ -207,7 +209,7 @@ pub(crate) fn load_stored_bearer_key(
     missing_message: &'static str,
     store: &dyn CredentialStore,
 ) -> Result<String, ModelError> {
-    if let Ok(key) = std::env::var(env_var) {
+    if let Some(key) = store.environment_variable(env_var) {
         if !key.trim().is_empty() {
             return Ok(key);
         }
@@ -219,15 +221,15 @@ pub(crate) fn load_stored_bearer_key(
 }
 
 fn env_or_stored<T, S>(
-    env_var: &str,
+    env_value: Option<String>,
     from_env: impl FnOnce(String) -> T,
     load: impl FnOnce() -> Result<Option<T>, ModelError>,
     missing: ModelError,
     env_source: S,
     store_source: S,
 ) -> Result<(S, T), ModelError> {
-    match std::env::var(env_var) {
-        Ok(value) if !value.trim().is_empty() => Ok((env_source, from_env(value))),
+    match env_value {
+        Some(value) if !value.trim().is_empty() => Ok((env_source, from_env(value))),
         _ => Ok((store_source, load()?.ok_or(missing)?)),
     }
 }
@@ -247,7 +249,7 @@ pub(crate) fn load_api_key_for_mode(
             "expected API key auth kind".into(),
         ));
     };
-    if let Ok(key) = std::env::var(env_var) {
+    if let Some(key) = store.environment_variable(env_var) {
         if !key.trim().is_empty() {
             return Ok(key);
         }
@@ -272,7 +274,7 @@ fn load_provider_api_key_auth(
     else {
         return Err(ModelError::UnsupportedProvider(provider_name.into()));
     };
-    if let Ok(key) = std::env::var(env_var) {
+    if let Some(key) = store.environment_variable(env_var) {
         if !key.trim().is_empty() {
             return Ok(key);
         }
@@ -292,7 +294,7 @@ fn load_openai_api_key_auth(store: &dyn CredentialStore) -> Result<Auth, ModelEr
     else {
         return Err(ModelError::UnsupportedProvider("openai".into()));
     };
-    if let Ok(key) = std::env::var(env_var) {
+    if let Some(key) = store.environment_variable(env_var) {
         if !key.trim().is_empty() {
             return Ok(Auth::ApiKey(key));
         }
@@ -308,13 +310,13 @@ fn load_codex_auth(store: Arc<dyn CredentialStore>) -> Result<Auth, ModelError> 
         .auth_kind
         .env_var()
         .expect("Codex OAuth must declare an environment variable");
-    if let Ok(access_token) = std::env::var(env_var) {
+    if let Some(access_token) = store.environment_variable(env_var) {
         return Ok(Auth::codex(
             CodexTokens {
                 access_token,
                 refresh_token: None,
                 id_token: None,
-                account_id: std::env::var("CODEX_ACCOUNT_ID").ok(),
+                account_id: store.environment_variable("CODEX_ACCOUNT_ID"),
             },
             CodexAuthSource::Env,
             store,
@@ -336,7 +338,7 @@ fn load_anthropic_api_key(store: &dyn CredentialStore) -> Result<String, ModelEr
     else {
         return Err(ModelError::UnsupportedProvider("anthropic".into()));
     };
-    if let Ok(key) = std::env::var(env_var) {
+    if let Some(key) = store.environment_variable(env_var) {
         if !key.trim().is_empty() {
             return Ok(key);
         }
@@ -390,6 +392,92 @@ mod tests {
 
         fn delete_secret(&self, _account: &str) -> CredentialResult<bool> {
             panic!("Ollama credential acquisition must not delete from the store")
+        }
+    }
+
+    /// The credentials of a party whose environment is `environment`, as a
+    /// daemon session's are its client's.
+    struct PartyStore {
+        environment: Vec<(&'static str, &'static str)>,
+        saved: MemoryCredentialStore,
+    }
+
+    impl CredentialStore for PartyStore {
+        fn get_secret(&self, account: &str) -> CredentialResult<Option<String>> {
+            self.saved.get_secret(account)
+        }
+
+        fn set_secret(&self, account: &str, secret: &str) -> CredentialResult<()> {
+            self.saved.set_secret(account, secret)
+        }
+
+        fn delete_secret(&self, account: &str) -> CredentialResult<bool> {
+            self.saved.delete_secret(account)
+        }
+
+        fn environment_variable(&self, name: &str) -> Option<String> {
+            self.environment
+                .iter()
+                .find(|(variable, _)| *variable == name)
+                .map(|(_, value)| (*value).to_owned())
+        }
+    }
+
+    // Covers: a provider's key is read from the environment of the party
+    // its credential store belongs to, never from this process's: a key in
+    // that environment wins over a saved one, a party without the variable
+    // gets its saved key, and one with neither gets none. A daemon session's
+    // party is its client, so one client's key never signs in another's
+    // session (#1779).
+    // Owner: provider credential acquisition
+    #[test]
+    fn acquisition_reads_the_environment_of_the_stores_party() {
+        let auth = "ollama-cloud-api-key";
+        let variable = provider::provider_descriptor("ollama-cloud")
+            .and_then(|descriptor| descriptor.auth_mode(auth))
+            .and_then(|mode| mode.auth_kind.env_var())
+            .expect("the profile reads an environment variable");
+        let cases = [
+            (
+                "its environment's key wins",
+                vec![(variable, "from the environment")],
+                Some("saved"),
+                Some("from the environment"),
+            ),
+            (
+                "a blank variable is no key",
+                vec![(variable, " ")],
+                Some("saved"),
+                Some("saved"),
+            ),
+            (
+                "no variable, a saved key",
+                vec![],
+                Some("saved"),
+                Some("saved"),
+            ),
+            ("neither", vec![], None, None),
+        ];
+        for (name, environment, saved, expected) in cases {
+            let store = PartyStore {
+                environment,
+                saved: MemoryCredentialStore::default(),
+            };
+            if let Some(saved) = saved {
+                store
+                    .set_secret(OLLAMA_CLOUD_API_KEY_ACCOUNT, saved)
+                    .unwrap();
+            }
+
+            let acquired = ApplicationCredentialSource::new(Arc::new(store))
+                .acquire("ollama-cloud", auth)
+                .ok()
+                .map(|credential| match credential {
+                    ProviderCredential::OpenAiCompatible(CompatibleAuth::ApiKey(key)) => key,
+                    _ => panic!("{name}: an API key credential"),
+                });
+
+            assert_eq!(acquired.as_deref(), expected, "{name}");
         }
     }
 

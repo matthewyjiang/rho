@@ -53,6 +53,9 @@ pub(crate) struct WorkflowOps {
     /// The project trust those runs have (#1779): planning finds project
     /// agents under it, and a recheck holds a plan to it.
     project_trust: ProjectTrusts,
+    /// The credentials those runs have, which decide the models planning
+    /// binds agent nodes to.
+    credentials: std::sync::Arc<dyn rho_providers::credentials::CredentialStore>,
 }
 
 impl WorkflowOps {
@@ -70,6 +73,7 @@ impl WorkflowOps {
             config_path,
             search_path: environment.current().path(),
             project_trust: environment.project_trust(),
+            credentials: environment.credentials(),
         })
     }
 
@@ -113,6 +117,7 @@ impl WorkflowOps {
             entry,
             self.search_path.as_deref(),
             self.project_trust,
+            self.credentials.as_ref(),
         )?;
         self.prepare_from_sources(sources, inputs, &host, limits)
             .await

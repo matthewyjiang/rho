@@ -72,7 +72,14 @@ impl fmt::Display for SessionId {
 /// Its `RHO_TRUST_PROJECT_*` variables are the session's project trust
 /// when it opens or reopens the session: the daemon's own environment
 /// grants none. A later prompt's do not change it.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+///
+/// Its credential variables, such as `OPENAI_API_KEY`, and its
+/// `RHO_CREDENTIAL_STORE` are the session's too, from when it opens or
+/// reopens until the daemon unloads it: the session's models sign in with
+/// them, and a variable in the daemon's own environment never does (#1779).
+/// Without the variables the session reads the daemon's own credential
+/// store.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct ClientEnvironment(BTreeMap<String, String>);
 

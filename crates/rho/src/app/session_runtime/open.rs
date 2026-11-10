@@ -202,6 +202,7 @@ impl SessionRuntime {
                     build.host.environment.project_trust(),
                 )?)
             },
+            build.host.environment.credentials().as_ref(),
         )?;
         let credentials = SessionCredentials::Read(AppCredentialStore::generation());
         let (built, permission) =

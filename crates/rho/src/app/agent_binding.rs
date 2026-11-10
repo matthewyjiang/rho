@@ -307,7 +307,10 @@ impl AgentBinder {
     }
 
     /// Per-call selection changes only the launch model, never the definition
-    /// identity, prompt, capabilities, or host permission ceiling.
+    /// identity, prompt, capabilities, or host permission ceiling. The model
+    /// is chosen among those this process's own credentials can use: right
+    /// for a command that acts for its terminal, never for a session, which
+    /// binds with [`Self::bind_with_credentials`].
     pub(crate) fn bind_with_model_override(
         definition: Arc<AgentDefinition>,
         invocation: AgentInvocation,
@@ -323,7 +326,10 @@ impl AgentBinder {
         )
     }
 
-    fn bind_with_credentials(
+    /// [`Self::bind_with_model_override`] choosing the model among those
+    /// `store` can use: the credentials of the session the agent runs in
+    /// (see [`crate::session_environment::SessionEnvironment::credentials`]).
+    pub(crate) fn bind_with_credentials(
         definition: Arc<AgentDefinition>,
         invocation: AgentInvocation,
         host_config: &Config,

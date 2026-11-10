@@ -11,6 +11,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::ClientEnvironment;
+
 /// Choose the credential store the daemon keeps provider credentials in.
 pub const AUTH_CHOOSE_STORE: &str = "rho/auth/choose_store";
 
@@ -66,6 +68,14 @@ pub struct CredentialStoreStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AuthChooseStoreParams {
     pub store: CredentialStoreKind,
+    /// The asking client's environment, whose credential variables and
+    /// `RHO_CREDENTIAL_STORE` are that client's sessions' (#1779): a client whose
+    /// `RHO_CREDENTIAL_STORE` already chooses a store is refused as
+    /// [`crate::ErrorCode::EnvironmentOverride`], since the daemon's choice
+    /// would change nothing for it.
+    /// An empty one names no store and holds no credential, so the daemon's
+    /// own store is used.
+    pub environment: ClientEnvironment,
 }
 
 /// Result of [`AUTH_CHOOSE_STORE`]: the daemon wrote and deleted a

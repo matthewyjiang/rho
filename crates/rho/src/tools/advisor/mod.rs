@@ -287,7 +287,7 @@ impl SdkTool for AdvisorTool {
             let (advice, usage) = consult_advisor(
                 request,
                 workspace_path,
-                self.environment.current(),
+                &self.environment,
                 context.cancellation().clone(),
                 context.progress().clone(),
             )
@@ -313,7 +313,7 @@ impl SdkTool for AdvisorTool {
 async fn consult_advisor(
     request: AdvisorRequest,
     workspace_path: PathBuf,
-    environment: Ambient,
+    environment: &SessionEnvironment,
     cancellation: CancellationToken,
     progress: ToolProgressSender,
 ) -> Result<(String, ModelUsage), ToolError> {
@@ -331,6 +331,7 @@ async fn consult_advisor(
                 &selection.model,
                 reasoning,
                 &selection.auth,
+                environment.credentials(),
             )
             .await
             .map_err(|error| {
@@ -354,7 +355,7 @@ async fn consult_advisor(
                 model.clone(),
                 reasoning,
                 &workspace_path,
-                environment,
+                environment.current(),
                 transcript,
                 cancellation,
                 progress,

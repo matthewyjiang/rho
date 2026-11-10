@@ -115,6 +115,7 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
     } = cli_config::settle_bound_config(
         config,
         &bound_agent,
+        &crate::credential_store::AppCredentialStore,
         &provider_refresh,
         bound_reasoning_source,
     )

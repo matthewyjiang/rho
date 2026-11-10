@@ -309,6 +309,7 @@ impl EvalSetup {
             recall: Some(recall),
             todo: None,
             code_mode: None,
+            credentials: Arc::new(crate::credential_store::AppCredentialStore),
         });
         let request = CompactionRequest::new(point.messages.clone(), CancellationToken::new())
             .with_trigger(CompactionTrigger::Automatic)

@@ -88,6 +88,7 @@ impl SessionRuntime {
                 recall: self.built.tools.recall_store(),
                 todo: Some(self.built.tools.todo_state()),
                 code_mode: Some(self.built.tools.code_mode().clone()),
+                credentials: self.built.tools.credentials(),
             },
         );
         if let Err(error) = refreshed {

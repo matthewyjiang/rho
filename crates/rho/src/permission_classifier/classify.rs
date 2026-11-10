@@ -76,9 +76,10 @@ pub(super) struct CallScope<'a> {
 
 pub(crate) async fn classify_capability_request(
     config: &Config,
+    credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
     request: ClassifyRequest<'_>,
 ) -> ClassifierVerdict {
-    let result = match ClassifierModel::resolve(config).await {
+    let result = match ClassifierModel::resolve(config, credentials).await {
         Ok(model) => model.classify(request).await.result,
         Err(error) => Err(error),
     };
@@ -113,10 +114,13 @@ pub(super) enum Screen {
 
 /// Fails when [`DECISION_SCREEN_ID`] is configured but unusable, so a
 /// headless run can refuse to start instead of denying every request.
-pub(crate) fn check_screen_config(config: &Config) -> anyhow::Result<()> {
+pub(crate) fn check_screen_config(
+    config: &Config,
+    credentials: &dyn rho_providers::credentials::CredentialStore,
+) -> anyhow::Result<()> {
     // A text model is built at classification, so only its kind and provider
     // are checked here.
-    match decision::resolve(config, DECISION_SCREEN_ID)? {
+    match decision::resolve(config, DECISION_SCREEN_ID, credentials)? {
         Some(EntryModel::Decision(_)) => {
             decision_allow_percent(config)?;
         }
@@ -155,9 +159,13 @@ pub(crate) fn screen_allow_percent(
 }
 
 impl ClassifierModel {
-    /// Builds the `[internal_agents.permission-classifier]` model.
-    pub(crate) async fn resolve(config: &Config) -> anyhow::Result<Self> {
-        let screen = resolve_screen(config).await?;
+    /// Builds the `[internal_agents.permission-classifier]` model, signed
+    /// in with `credentials`.
+    pub(crate) async fn resolve(
+        config: &Config,
+        credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
+    ) -> anyhow::Result<Self> {
+        let screen = resolve_screen(config, &credentials).await?;
         let model = config
             .internal_agent_model(PERMISSION_CLASSIFIER_AGENT_ID)
             .ok_or_else(|| anyhow!("{PERMISSION_CLASSIFIER_AGENT_ID} model is not configured"))?;
@@ -171,6 +179,7 @@ impl ClassifierModel {
             &selection.model,
             reasoning,
             &selection.auth,
+            credentials,
         )
         .await
         .map_err(|_| {
@@ -236,8 +245,11 @@ impl ClassifierModel {
 
 /// Builds the screen [`DECISION_SCREEN_ID`] names. A text model's build
 /// failure names the entry, since its credentials may be what is missing.
-async fn resolve_screen(config: &Config) -> anyhow::Result<Screen> {
-    let selection = match decision::resolve(config, DECISION_SCREEN_ID)? {
+async fn resolve_screen(
+    config: &Config,
+    credentials: &Arc<dyn rho_providers::credentials::CredentialStore>,
+) -> anyhow::Result<Screen> {
+    let selection = match decision::resolve(config, DECISION_SCREEN_ID, credentials.as_ref())? {
         None => return Ok(Screen::Classifier),
         Some(EntryModel::Decision(model)) => {
             return Ok(Screen::Decision {
@@ -253,6 +265,7 @@ async fn resolve_screen(config: &Config) -> anyhow::Result<Screen> {
         &selection.model,
         ReasoningLevel::Low,
         &selection.auth,
+        Arc::clone(credentials),
     )
     .await
     .map_err(|_| decision::ConfigError::TextModelUnavailable {

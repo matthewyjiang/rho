@@ -6,7 +6,6 @@ use super::agent_binding::BoundAgent;
 use {
     crate::cli::{Cli, Command},
     crate::config::{Config, ProviderConfigs},
-    crate::credential_store::AppCredentialStore,
     crate::diagnostics::RuntimeDiagnostics,
     crate::model_aliases::ResolvedModelReference,
     rho_providers::credentials::{self, CredentialStore},
@@ -492,14 +491,16 @@ pub(super) struct SettledConfig {
 /// The model's capabilities are fetched when the cache lacks them and
 /// `provider_refresh` did not just fetch them, and the reasoning is
 /// normalized to what the model supports, or refused when an `Explicit`
-/// request does not fit. Custom providers must be active already.
+/// request does not fit. Custom providers must be active already. The fetch
+/// signs in with `credentials`, those of whoever the session runs for.
 pub(super) async fn settle_bound_config(
     mut config: Config,
     agent: &BoundAgent,
+    credentials: &dyn CredentialStore,
     provider_refresh: &ProviderRefreshStatus,
     reasoning: rho_providers::model::ReasoningRequestSource,
 ) -> anyhow::Result<SettledConfig> {
-    prepare_model_metadata(&config, &AppCredentialStore, provider_refresh).await;
+    prepare_model_metadata(&config, credentials, provider_refresh).await;
     normalize_reasoning(&mut config, reasoning)?;
     let diagnostics = RuntimeDiagnostics::new(&config);
     diagnostics.update_agent(agent.id().as_str(), &agent.fingerprint().to_string());

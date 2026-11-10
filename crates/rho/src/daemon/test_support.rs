@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use rho_protocol::{
-    AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse,
+    AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse, AuthListParams,
     AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
     AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, CredentialStoreKind,
     CredentialStoreStatus, DaemonStatus, ErrorCode, JobListResponse, LoginStream, RpcError,
@@ -166,7 +166,7 @@ impl Service for StubHost {
         Err(no_credential_store())
     }
 
-    async fn list_auths(&self) -> Result<AuthListResponse, RpcError> {
+    async fn list_auths(&self, _params: AuthListParams) -> Result<AuthListResponse, RpcError> {
         Err(no_credential_store())
     }
 

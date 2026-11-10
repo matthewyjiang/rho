@@ -320,6 +320,9 @@ impl App {
                         cancellation: cancellation.clone(),
                         session_id: agent.session_id(),
                         workspace_path: agent.workspace_path(),
+                        credentials: std::sync::Arc::new(
+                            crate::credential_store::AppCredentialStore,
+                        ),
                     },
                     agent.usage_recording(),
                 ));

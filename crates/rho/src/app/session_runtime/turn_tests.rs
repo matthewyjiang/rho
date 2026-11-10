@@ -63,7 +63,11 @@ async fn a_run_that_crosses_its_compaction_threshold_compacts_and_finishes() {
         provider: Arc::clone(&shared),
         tools: &inventory,
         workspace: Workspace::new(root.path()).unwrap(),
-        workspace_policy: AppPolicy::for_mode(PermissionMode::Auto, Default::default()),
+        workspace_policy: AppPolicy::for_mode(
+            PermissionMode::Auto,
+            Default::default(),
+            /*search_path*/ None,
+        ),
         approval_session: None,
         system_prompt: SystemPrompt::None,
         reasoning: rho_sdk::ReasoningLevel::Off,
