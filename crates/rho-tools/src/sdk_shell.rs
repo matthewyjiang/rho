@@ -88,7 +88,7 @@ impl ShellToolOptions {
     /// is unavailable. Each run is also recorded under the Claude Code projects
     /// directory (`$CLAUDE_CONFIG_DIR` or `~/.claude`) for `rtk discover`.
     pub fn rtk(mut self, enabled: bool) -> Self {
-        self.rtk = enabled.then(Rtk::system).flatten();
+        self.rtk = enabled.then(Rtk::system);
         self
     }
 

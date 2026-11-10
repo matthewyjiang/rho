@@ -14,6 +14,8 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::ClientEnvironment;
+
 /// Start an auth profile's interactive login.
 pub const AUTH_LOGIN: &str = "rho/auth/login";
 /// Cancel a login under way.
@@ -58,6 +60,14 @@ pub struct AuthLoginParams {
     /// when absent. A provider with one flow ignores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flow: Option<LoginFlow>,
+    /// The asking client's environment, whose credential variables and
+    /// `RHO_CREDENTIAL_STORE` are that client's sessions' (#1779): the login's credential is
+    /// saved to the store it chooses, and the login refused as
+    /// [`crate::ErrorCode::EnvironmentOverride`] when one of its variables
+    /// already holds the profile's credential.
+    /// An empty one names no store and holds no credential, so the daemon's
+    /// own store is used.
+    pub environment: ClientEnvironment,
 }
 
 /// How the user finishes a login whose provider offers both flows. The

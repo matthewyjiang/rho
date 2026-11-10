@@ -76,6 +76,7 @@ pub(crate) async fn generate_title(
     input: String,
     session_id: SessionId,
     workspace_path: std::path::PathBuf,
+    credentials: std::sync::Arc<dyn rho_providers::credentials::CredentialStore>,
     usage_recording: ProviderRequestUsageRecording,
     cancellation: CancellationToken,
 ) -> anyhow::Result<String> {
@@ -95,6 +96,7 @@ pub(crate) async fn generate_title(
         &model.provider,
         &model.model,
         &model.auth,
+        credentials,
         usage_recording,
     );
     tokio::pin!(request);

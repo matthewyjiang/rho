@@ -14,12 +14,13 @@ use super::FetchedTarget;
 pub(in crate::tools::web) async fn fetch_via_api(
     client: &reqwest::Client,
     github: &GitHubTarget,
+    token: Option<&str>,
 ) -> Result<FetchedTarget, ToolError> {
     let api_url = api_url(github);
     let content = match github.kind {
-        GitHubKind::Blob => github_api_file_content(client, &api_url).await?,
+        GitHubKind::Blob => github_api_file_content(client, &api_url, token).await?,
         GitHubKind::Root | GitHubKind::Tree | GitHubKind::Commit => {
-            format_github_api(&github_api_json(client, &api_url).await?)
+            format_github_api(&github_api_json(client, &api_url, token).await?)
         }
     };
     Ok(FetchedTarget {
@@ -61,8 +62,10 @@ pub(in crate::tools::web) fn clone_url(github: &GitHubTarget) -> String {
 /// of a URL userinfo component, so it never appears in the command line (world
 /// readable through the process table) or in the cloned repository's
 /// `remote.origin.url`.
-pub(in crate::tools::web) fn clone_credential_environment() -> Vec<(String, String)> {
-    let Ok(token) = github_token() else {
+pub(in crate::tools::web) fn clone_credential_environment(
+    token: Option<&str>,
+) -> Vec<(String, String)> {
+    let Some(token) = token else {
         return Vec::new();
     };
     let header = format!(
@@ -137,8 +140,12 @@ fn format_github_commit(value: &Value) -> Option<String> {
     Some(lines.join("\n"))
 }
 
-async fn github_api_file_content(client: &reqwest::Client, url: &str) -> Result<String, ToolError> {
-    let value = github_api_json(client, url).await?;
+async fn github_api_file_content(
+    client: &reqwest::Client,
+    url: &str,
+    token: Option<&str>,
+) -> Result<String, ToolError> {
+    let value = github_api_json(client, url, token).await?;
     let encoding = value.get("encoding").and_then(Value::as_str);
     let content = value
         .get("content")
@@ -156,9 +163,13 @@ async fn github_api_file_content(client: &reqwest::Client, url: &str) -> Result<
     Ok(content.to_string())
 }
 
-async fn github_api_json(client: &reqwest::Client, url: &str) -> Result<Value, ToolError> {
+async fn github_api_json(
+    client: &reqwest::Client,
+    url: &str,
+    token: Option<&str>,
+) -> Result<Value, ToolError> {
     let mut request = client.get(url).header("User-Agent", "rho-coding-agent");
-    if let Ok(token) = github_token() {
+    if let Some(token) = token {
         request = request.bearer_auth(token);
     }
     request
@@ -172,8 +183,14 @@ async fn github_api_json(client: &reqwest::Client, url: &str) -> Result<Value, T
         .map_err(|err| ToolError::Message(format!("GitHub API response was not JSON: {err}")))
 }
 
-fn github_token() -> Result<String, std::env::VarError> {
-    std::env::var("GITHUB_TOKEN").or_else(|_| std::env::var("GH_TOKEN"))
+/// The GitHub token of whoever `credentials` belong to: `GITHUB_TOKEN`,
+/// else `GH_TOKEN`, in their environment.
+pub(in crate::tools::web) fn token(
+    credentials: &dyn rho_providers::credentials::CredentialStore,
+) -> Option<String> {
+    credentials
+        .environment_variable("GITHUB_TOKEN")
+        .or_else(|| credentials.environment_variable("GH_TOKEN"))
 }
 
 pub(in crate::tools::web) async fn read_clone(

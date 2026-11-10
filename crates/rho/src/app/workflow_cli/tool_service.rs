@@ -464,12 +464,14 @@ impl AppWorkflowToolService {
             )
             .await?;
         let available_tools = AgentCapabilities::all_host_tools();
+        let credentials = environment.credentials();
         let host = AuthorizedPlanHost::new(
             &self.cwd,
             &config,
             &catalog,
             &available_tools,
             &executable_identities,
+            credentials.as_ref(),
         );
         let resolved_nodes = super::plan_host::resolve_nodes_with_host(launchable, &host)?;
         super::freeze_planned_workflow(sources, planned, resolved_nodes, &limits)

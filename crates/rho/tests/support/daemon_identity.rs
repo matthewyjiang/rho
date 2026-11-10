@@ -1,7 +1,11 @@
 //! What a daemon takes from the client that starts it, through the real
 //! binary (#1779): an allowed part of its environment and nothing else, so
 //! each session's project trust is its own client's, and a prompt from a
-//! client with other trust is refused.
+//! client with other trust is refused. A session's credentials are its own
+//! client's too: an API key in the starting client's environment signs in
+//! nobody else.
+
+use std::sync::{Arc, Mutex};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
@@ -12,7 +16,10 @@ use rho_protocol::{
 };
 use serde_json::json;
 
-use super::sessions::{is_state, settled_job, Follower, Sandbox};
+use super::{
+    key_checking_provider::spawn_provider,
+    sessions::{is_state, settled_job, Follower, Sandbox},
+};
 
 /// Every variable that grants a workspace's project files.
 const TRUST: [(&str, &str); 4] = [
@@ -392,6 +399,93 @@ async fn an_unloaded_session_replays_as_the_agent_it_was_saved_as() {
         [
             ("a project's agent", Ok(())),
             ("a built-in agent the project shadows since", Ok(())),
+        ],
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
+/// The variable that holds the key of the custom `mock` provider.
+const KEY_VARIABLE: &str = "RHO_MOCK_API_KEY";
+
+// Covers: a session signs in with the credentials of the client that opens
+// it, not of the client that started the daemon. On a daemon started by a
+// client whose environment holds a key the provider refuses, that key
+// reaches only that client's own sessions, whose turn the provider fails: a
+// client with the key the provider accepts completes a turn, and a client with no key is told to
+// sign in instead of borrowing the starter's (#1779). The provider checks
+// every key over real HTTP; no fixture stands in.
+// Owner: daemon session credentials.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_signs_in_with_its_opening_clients_key() {
+    const STARTERS_KEY: &str = "test-starters-key";
+    const OTHER_KEY: &str = "test-other-clients-key";
+    let address = spawn_provider(Arc::new(Mutex::new(OTHER_KEY.to_owned())));
+    let sandbox = Sandbox::new();
+    std::fs::write(
+        &sandbox.isolated.config_path,
+        format!(
+            r#"provider = "mock"
+model = "mock-model"
+auth = "mock-api-key"
+
+[providers.custom.mock]
+base_url = "http://{address}/v1"
+
+[behavior]
+check_for_updates = false
+credential_store = "file"
+
+[web_search]
+hosted = false
+provider = "disabled"
+"#
+        ),
+    )
+    .unwrap();
+    // No fixture mode: the daemon's sessions reach the provider itself.
+    let started = sandbox
+        .rho("fixed")
+        .env_remove("RHO_AUTOMATION_TEST_MODE")
+        .env(KEY_VARIABLE, STARTERS_KEY)
+        .args(["daemon", "start"])
+        .status()
+        .unwrap();
+    assert!(
+        started.success(),
+        "daemon start: {started:?}; log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+    let client = sandbox.connect().await;
+
+    let mut signed_in = Vec::new();
+    for (opener, key) in [
+        ("the starting client", Some(STARTERS_KEY)),
+        ("a client with another key", Some(OTHER_KEY)),
+        ("a client with no key", None),
+    ] {
+        let variables: Vec<_> = key.map(|key| (KEY_VARIABLE, key)).into_iter().collect();
+        let environment = environment_with(&sandbox, &variables);
+        let turn = match new_session(&sandbox, &client, None, environment.clone()).await {
+            Ok(session) => match prompt_as(&client, &session, "hello", environment).await {
+                Ok(()) => Ok(settled_job(&sandbox, &client, &session).await.state),
+                Err(refusal) => Err(format!("prompt: {refusal:?}")),
+            },
+            Err(code) => Err(format!("open: {code:?}")),
+        };
+        signed_in.push((opener, turn));
+    }
+
+    assert_eq!(
+        signed_in,
+        [
+            // The provider refused the starter's key, so it was the one sent.
+            ("the starting client", Ok(JobState::Failed)),
+            ("a client with another key", Ok(JobState::Completed)),
+            (
+                "a client with no key",
+                Err(format!("open: {:?}", Some(ErrorCode::SignInRequired))),
+            ),
         ],
         "log:\n{}",
         sandbox.isolated.daemon_log()

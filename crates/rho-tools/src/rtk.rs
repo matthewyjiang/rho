@@ -12,6 +12,8 @@ use std::{
 
 use rho_sdk::ProcessEnvironment;
 use serde_json::json;
+
+use crate::process_env::process_variable;
 use tokio::{io::AsyncWriteExt, process::Command, sync::OnceCell};
 
 /// Matches the budget RTK's own agent hooks give `rtk rewrite`. A rewrite
@@ -40,9 +42,11 @@ fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
     ))
 }
 
-/// `rtk rewrite` ignores a process-level `RTK_DISABLED`, so Rho honors it.
-fn disabled_by_env() -> bool {
-    std::env::var("RTK_DISABLED").ok().as_deref() == Some("1")
+/// `rtk rewrite` ignores a process-level `RTK_DISABLED`, so Rho honors it,
+/// read from `environment`: the one the command would run in, a daemon
+/// session's client's (#1779).
+fn disabled_in(environment: &ProcessEnvironment) -> bool {
+    process_variable(environment, "RTK_DISABLED").is_some_and(|value| value == "1")
 }
 
 /// The `rtk rewrite` form of `command`, or `None` to run it unchanged.
@@ -88,7 +92,6 @@ pub(crate) struct Rtk {
     program: OsString,
     /// Leading arguments, e.g. a fake-rtk script run through `sh` in tests.
     program_args: Vec<OsString>,
-    projects_dir: Option<PathBuf>,
     available: Arc<OnceCell<bool>>,
 }
 
@@ -121,21 +124,16 @@ impl DiscoverRecord {
 }
 
 impl Rtk {
-    /// `rtk` from `PATH`, logging under the Claude Code projects directory.
-    /// `None` when `RTK_DISABLED=1` is set.
-    pub(crate) fn system() -> Option<Self> {
-        (!disabled_by_env()).then(|| Self::new("rtk".into(), Vec::new(), discover_projects_dir()))
+    /// `rtk` from `PATH`, logging under the Claude Code projects directory
+    /// of each command's environment (see [`Self::prepare`]).
+    pub(crate) fn system() -> Self {
+        Self::new("rtk".into(), Vec::new())
     }
 
-    pub(crate) fn new(
-        program: OsString,
-        program_args: Vec<OsString>,
-        projects_dir: Option<PathBuf>,
-    ) -> Self {
+    pub(crate) fn new(program: OsString, program_args: Vec<OsString>) -> Self {
         Self {
             program,
             program_args,
-            projects_dir,
             available: Arc::new(OnceCell::new()),
         }
     }
@@ -143,12 +141,17 @@ impl Rtk {
     /// Rewrites `command` when RTK has a better form, and plans its record.
     /// `rtk` runs in the command's directory with its environment, so it
     /// reads the same project config and never sees scrubbed credentials.
+    /// `RTK_DISABLED=1` in that environment leaves the command alone, and
+    /// its `CLAUDE_CONFIG_DIR` is where the record goes.
     pub(crate) async fn prepare(
         &self,
         command: String,
         cwd: &Path,
         environment: &ProcessEnvironment,
     ) -> Prepared {
+        if disabled_in(environment) {
+            return Prepared::unchanged(command);
+        }
         let Some(mut rtk) = self.command(cwd, environment) else {
             return Prepared::unchanged(command);
         };
@@ -156,13 +159,10 @@ impl Rtk {
             return Prepared::unchanged(command);
         }
         let command = rewrite_with(&mut rtk, &command).await.unwrap_or(command);
-        let record = self
-            .projects_dir
-            .clone()
-            .map(|projects_dir| DiscoverRecord {
-                projects_dir,
-                command: command.clone(),
-            });
+        let record = discover_projects_dir(environment).map(|projects_dir| DiscoverRecord {
+            projects_dir,
+            command: command.clone(),
+        });
         Prepared { command, record }
     }
 
@@ -204,8 +204,11 @@ pub(crate) struct CommandRun {
     pub(crate) failed: bool,
 }
 
-fn discover_projects_dir() -> Option<PathBuf> {
-    let claude_dir = std::env::var_os("CLAUDE_CONFIG_DIR")
+/// The Claude Code projects directory of a command's `environment`, where
+/// its `rtk discover` record is written: under its `CLAUDE_CONFIG_DIR`, else
+/// `~/.claude`.
+fn discover_projects_dir(environment: &ProcessEnvironment) -> Option<PathBuf> {
+    let claude_dir = process_variable(environment, "CLAUDE_CONFIG_DIR")
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
         .or_else(|| crate::paths::home_dir().map(|home| home.join(".claude")))?;

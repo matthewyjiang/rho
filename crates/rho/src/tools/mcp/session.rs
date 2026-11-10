@@ -351,6 +351,9 @@ async fn resolve_http_client(
         oauth_config.as_ref(),
         &headers,
         authorization,
+        // MCP tokens feed no model provider, so saving or refreshing them
+        // must not rebuild every session's provider (#1662).
+        environment.untracked_credentials(),
     )
     .await
 }

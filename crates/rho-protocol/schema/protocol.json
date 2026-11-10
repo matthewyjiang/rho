@@ -176,12 +176,17 @@
     "AuthChooseStoreParams": {
       "description": "Params of [`AUTH_CHOOSE_STORE`].",
       "properties": {
+        "environment": {
+          "$ref": "#/$defs/ClientEnvironment",
+          "description": "The asking client's environment, whose credential variables and\n`RHO_CREDENTIAL_STORE` are that client's sessions' (#1779): a client whose\n`RHO_CREDENTIAL_STORE` already chooses a store is refused as\n[`crate::ErrorCode::EnvironmentOverride`], since the daemon's choice\nwould change nothing for it.\nAn empty one names no store and holds no credential, so the daemon's\nown store is used."
+        },
         "store": {
           "$ref": "#/$defs/CredentialStoreKind"
         }
       },
       "required": [
-        "store"
+        "store",
+        "environment"
       ],
       "type": "object"
     },
@@ -204,6 +209,10 @@
           "description": "The auth profile the key signs in to, such as `openai-api-key` or a\ncustom provider's `<name>-api-key`. It must take an API key.",
           "type": "string"
         },
+        "environment": {
+          "$ref": "#/$defs/ClientEnvironment",
+          "description": "The asking client's environment, whose credential variables and\n`RHO_CREDENTIAL_STORE` are that client's sessions' (#1779): the key is saved to the\nstore it chooses, and refused as\n[`crate::ErrorCode::EnvironmentOverride`] when one of its variables\nalready holds the profile's credential.\nAn empty one names no store and holds no credential, so the daemon's\nown store is used."
+        },
         "key": {
           "description": "The API key. Surrounding whitespace is ignored.",
           "type": "string"
@@ -211,7 +220,8 @@
       },
       "required": [
         "auth",
-        "key"
+        "key",
+        "environment"
       ],
       "type": "object"
     },
@@ -254,6 +264,15 @@
     },
     "AuthListParams": {
       "description": "Params of [`AUTH_LIST`].",
+      "properties": {
+        "environment": {
+          "$ref": "#/$defs/ClientEnvironment",
+          "description": "The asking client's environment, whose credential variables and\n`RHO_CREDENTIAL_STORE` are that client's sessions' (#1779): a profile one of its\nvariables holds a credential for is listed as signed in.\nAn empty one names no store and holds no credential, so the daemon's\nown store is used."
+        }
+      },
+      "required": [
+        "environment"
+      ],
       "type": "object"
     },
     "AuthListResponse": {
@@ -310,6 +329,10 @@
           "description": "The auth profile to sign in to, such as `openai-codex`. It must take\nan interactive login ([`crate::AuthKind::Login`]); an API key goes\nthrough [`crate::methods::AUTH_KEY`].",
           "type": "string"
         },
+        "environment": {
+          "$ref": "#/$defs/ClientEnvironment",
+          "description": "The asking client's environment, whose credential variables and\n`RHO_CREDENTIAL_STORE` are that client's sessions' (#1779): the login's credential is\nsaved to the store it chooses, and the login refused as\n[`crate::ErrorCode::EnvironmentOverride`] when one of its variables\nalready holds the profile's credential.\nAn empty one names no store and holds no credential, so the daemon's\nown store is used."
+        },
         "flow": {
           "anyOf": [
             {
@@ -323,7 +346,8 @@
         }
       },
       "required": [
-        "auth"
+        "auth",
+        "environment"
       ],
       "type": "object"
     },
@@ -361,10 +385,15 @@
         "auth": {
           "description": "The auth profile to sign out of. Its provider's endpoint login, as\nOllama records one, is forgotten too.",
           "type": "string"
+        },
+        "environment": {
+          "$ref": "#/$defs/ClientEnvironment",
+          "description": "The asking client's environment, whose credential variables and\n`RHO_CREDENTIAL_STORE` are that client's sessions' (#1779): the credential is deleted\nfrom the store it chooses, and the request refused as\n[`crate::ErrorCode::EnvironmentOverride`] when one of its variables\nholds the profile's credential.\nAn empty one names no store and holds no credential, so the daemon's\nown store is used."
         }
       },
       "required": [
-        "auth"
+        "auth",
+        "environment"
       ],
       "type": "object"
     },
@@ -506,7 +535,7 @@
       "additionalProperties": {
         "type": "string"
       },
-      "description": "A client's environment variables, which a daemon session's children\nsee in place of the daemon's own (#1659): its tools' commands and\nbackground processes (minus provider credentials), its MCP servers,\nhooks, and OpenAPI sources, its CLI subagents and Claude Code advisor\n(credentials included), and the workflow runs it starts. Values are\nsecrets: the daemon never logs or saves them.\n\nIts `RHO_TRUST_PROJECT_*` variables are the session's project trust\nwhen it opens or reopens the session: the daemon's own environment\ngrants none. A later prompt's do not change it.",
+      "description": "A client's environment variables, which a daemon session's children\nsee in place of the daemon's own (#1659): its tools' commands and\nbackground processes (minus provider credentials), its MCP servers,\nhooks, and OpenAPI sources, its CLI subagents and Claude Code advisor\n(credentials included), and the workflow runs it starts. Values are\nsecrets: the daemon never logs or saves them.\n\nIts `RHO_TRUST_PROJECT_*` variables are the session's project trust\nwhen it opens or reopens the session: the daemon's own environment\ngrants none. A later prompt's do not change it.\n\nIts credential variables, such as `OPENAI_API_KEY`, and its\n`RHO_CREDENTIAL_STORE` are the session's too, from when it opens or\nreopens until the daemon unloads it: the session's models sign in with\nthem, and a variable in the daemon's own environment never does (#1779).\nWithout the variables the session reads the daemon's own credential\nstore.",
       "type": "object"
     },
     "ClientInfo": {
@@ -1050,7 +1079,7 @@
       "description": "The `data` of a [`crate::ErrorCode::EnvironmentOverride`] error.",
       "properties": {
         "variable": {
-          "description": "The variable in the daemon's environment that holds the auth\nprofile's credential, such as `OPENAI_API_KEY`.",
+          "description": "The variable in the asking client's environment that holds the auth\nprofile's credential, such as `OPENAI_API_KEY`, or the\n`RHO_CREDENTIAL_STORE` that chooses the credential store, in the\nclient's environment or the daemon's own.",
           "type": "string"
         }
       },

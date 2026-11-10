@@ -12,7 +12,7 @@
 //! - An API key is checked against the provider's models endpoint and saved
 //!   unless the provider refuses it.
 //! - Every write moves the credential generation (see
-//!   [`AppCredentialStore::generation`]), so the process's running sessions
+//!   [`credential_store::AppCredentialStore::generation`]), so the process's running sessions
 //!   use the change from their next prompt. A refused request writes
 //!   nothing.
 
@@ -31,10 +31,7 @@ use rho_providers::{
 };
 
 use super::{bootstrap, config_repository::ConfigRepository, endpoint_login};
-use crate::{
-    config::Config,
-    credential_store::{self, AppCredentialStore},
-};
+use crate::{config::Config, credential_store};
 
 /// Why a sign-in or sign-out wrote nothing, or failed partway. No variant's
 /// message holds a key.
@@ -96,7 +93,7 @@ impl fmt::Display for CredentialWrite {
 
 /// Loads `repository`'s config, publishes its custom providers, as a
 /// session open does, and makes the store it selects the one
-/// [`AppCredentialStore`] uses (with no store chosen, the OS store).
+/// [`credential_store::AppCredentialStore`] uses (with no store chosen, the OS store).
 /// Custom providers' auth profiles resolve, and their models endpoints
 /// answer a key check, only once published; running sessions keep the
 /// providers they were built with. Switching stores moves no session to it:
@@ -130,13 +127,15 @@ pub(crate) fn environment_override(
         .filter(|_| credentials::auth_has_env_override_from(auth, environment))
 }
 
-/// Refuses auth profile `auth` when the process environment overrides its
-/// saved credential.
+/// Refuses auth profile `auth` when the environment of whoever
+/// `credentials` belong to overrides its saved credential: this process's,
+/// or a daemon client's.
 pub(crate) fn refuse_environment_override(
     auth: &str,
     write: CredentialWrite,
+    credentials: &dyn CredentialStore,
 ) -> Result<(), CredentialWriteError> {
-    match environment_override(auth, |variable| std::env::var(variable).ok()) {
+    match environment_override(auth, |variable| credentials.environment_variable(variable)) {
         Some(variable) => Err(CredentialWriteError::EnvironmentOverride {
             auth: auth.into(),
             variable,
@@ -147,10 +146,12 @@ pub(crate) fn refuse_environment_override(
 }
 
 /// Signs out of auth profile `auth`, which a client named, on the provider
-/// it signs in to, as `rho/auth/logout` signs out.
+/// it signs in to, as `rho/auth/logout` signs out, deleting from
+/// `credentials`.
 pub(crate) fn sign_out_named(
     auth: &str,
     repository: &ConfigRepository,
+    credentials: &dyn CredentialStore,
 ) -> Result<(), CredentialWriteError> {
     load_config_and_store(repository)?;
     let Some((descriptor, mode)) = provider::resolve_auth_mode(auth) else {
@@ -159,8 +160,8 @@ pub(crate) fn sign_out_named(
     if matches!(mode.auth_kind, ProviderAuthKind::None) {
         return Err(CredentialWriteError::NoCredentials { auth: auth.into() });
     }
-    refuse_environment_override(auth, CredentialWrite::SignOut)?;
-    write_sign_out(auth, Some(descriptor), repository)
+    refuse_environment_override(auth, CredentialWrite::SignOut, credentials)?;
+    write_sign_out(auth, Some(descriptor), repository, credentials)
 }
 
 /// Deletes `auth`'s stored credentials, and forgets `descriptor`'s login
@@ -171,8 +172,9 @@ fn write_sign_out(
     auth: &str,
     descriptor: Option<&'static ProviderDescriptor>,
     repository: &ConfigRepository,
+    credentials: &dyn CredentialStore,
 ) -> Result<(), CredentialWriteError> {
-    ProviderAuthentication::delete_credentials(&AppCredentialStore, auth)
+    ProviderAuthentication::delete_credentials(credentials, auth)
         .with_context(|| format!("could not delete {auth} credentials"))
         .map_err(CredentialWriteError::Store)?;
     if let Some(descriptor) = descriptor {
@@ -211,7 +213,12 @@ pub(crate) struct ApiKeyAuth {
 impl ApiKeyAuth {
     /// Checks that `auth` can take a saved key. A custom provider's profile
     /// resolves once [`load_config_and_store`] (or startup) published it.
-    pub(crate) fn resolve(auth: &str) -> Result<Self, CredentialWriteError> {
+    /// Refused when the environment of whoever `credentials` belong to
+    /// already holds the profile's key.
+    pub(crate) fn resolve(
+        auth: &str,
+        credentials: &dyn CredentialStore,
+    ) -> Result<Self, CredentialWriteError> {
         let Some((descriptor, mode)) = provider::resolve_auth_mode(auth) else {
             return Err(CredentialWriteError::UnknownAuth { auth: auth.into() });
         };
@@ -220,7 +227,7 @@ impl ApiKeyAuth {
         };
         // The variable wins over a saved key, so saving one would change
         // nothing and the check would test the variable's key instead.
-        refuse_environment_override(auth, CredentialWrite::SignIn)?;
+        refuse_environment_override(auth, CredentialWrite::SignIn, credentials)?;
         Ok(Self {
             auth: mode.id,
             descriptor,

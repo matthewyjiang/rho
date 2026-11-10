@@ -216,6 +216,19 @@ async fn run_foreground(
             "RHO_TRUST_PROJECT_* in the daemon's environment grants nothing: each session takes the project trust of the client that opens it"
         );
     }
+    // Likewise for credentials: before #1779 a key here signed every session
+    // in. Custom providers' variables are known only once a config is read,
+    // so this names the built-in ones and any `RHO_*_API_KEY`.
+    let credentials: Vec<String> = rho_providers::credential_env_vars()
+        .into_iter()
+        .filter(|variable| std::env::var_os(variable).is_some())
+        .collect();
+    if !credentials.is_empty() {
+        tracing::warn!(
+            variables = credentials.join(", "),
+            "credential variables in the daemon's environment sign in no session: each session reads those of the client that opens it, else the credential store"
+        );
+    }
     // A panicking request handler is answered with an internal error, and an
     // auto-spawned daemon's stderr goes nowhere, so the log is the only place
     // the panic can surface.

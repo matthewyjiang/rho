@@ -2,12 +2,13 @@
 //!
 //! A daemon outlives the client that starts it and serves every later one,
 //! so it must not take that client's identity: the client's hook marker,
-//! session depth, project trust, or whatever else it happened to export. The
-//! daemon starts from an empty environment and gets only the variables
-//! allowed here, which say where its files are, how it reaches the network,
-//! and how the daemon itself is set up. Everything a session needs from a
-//! client arrives with that client's requests instead (see
-//! [`crate::session_environment`]).
+//! session depth, project trust, credentials, or whatever else it happened
+//! to export. The daemon starts from an empty environment and gets only the
+//! variables allowed here, which say where its files are, how it reaches the
+//! network, and how the daemon itself is set up. Everything a session needs
+//! from a client arrives with that client's requests instead (see
+//! [`crate::session_environment`]): its API keys and its choice of
+//! credential store among them, so none is listed here.
 //!
 //! A variable belongs here only when it describes the daemon or the machine,
 //! the same for every client. One that could differ between two clients of
@@ -69,21 +70,6 @@ const DAEMON_SETTINGS: &[&str] = &[
     "RUST_BACKTRACE",
 ];
 
-/// Credential inputs the daemon still reads from its own environment: the
-/// credential store choice, the session bus the OS keyring is reached on,
-/// and, with [`rho_providers::is_credential_env_var`], credentials
-/// themselves. They are the starting client's, which is the problem #1779
-/// describes; they stay until a session takes its client's instead, since
-/// dropping them first would sign out every user who exports an API key.
-const CREDENTIAL_INPUTS: &[&str] = &[
-    crate::credential_store::ENV_BACKEND,
-    "DBUS_SESSION_BUS_ADDRESS",
-    "CODEX_ACCOUNT_ID",
-    "OLLAMA_DEVICE_KEY_DIR",
-    "GITHUB_TOKEN",
-    "GH_TOKEN",
-];
-
 /// The fixture providers a test suite's daemon answers with. Release builds
 /// compile no fixture, and pass none of these.
 #[cfg(debug_assertions)]
@@ -95,10 +81,9 @@ const FIXTURE_PREFIXES: &[&str] = &[];
 /// Whether an auto-started daemon keeps variable `name` of the client that
 /// starts it.
 fn is_allowed(name: &str) -> bool {
-    [MACHINE, NETWORK, DAEMON_SETTINGS, CREDENTIAL_INPUTS]
+    [MACHINE, NETWORK, DAEMON_SETTINGS]
         .iter()
         .any(|names| names.contains(&name))
-        || rho_providers::is_credential_env_var(name)
         || FIXTURE_PREFIXES
             .iter()
             .any(|prefix| name.starts_with(prefix))

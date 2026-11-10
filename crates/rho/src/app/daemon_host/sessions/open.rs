@@ -132,7 +132,9 @@ pub(super) struct OpenedSession {
 /// credentials from its tools' processes. A variable no process
 /// could be given is invalid params, naming it, so it fails the request
 /// rather than every later command (#1659).
-pub(super) fn session_environment(environment: &ClientEnvironment) -> Result<Ambient, RpcError> {
+pub(in crate::app::daemon_host) fn session_environment(
+    environment: &ClientEnvironment,
+) -> Result<Ambient, RpcError> {
     let variables = environment
         .iter()
         .map(|(name, value)| {
@@ -248,7 +250,6 @@ async fn open_runtime(
     job: &JobId,
 ) -> anyhow::Result<OpenedSession> {
     let cwd = &opening.cwd().to_path_buf();
-    let project_trust = environment.project_trust();
     let Setup {
         left_out,
         questions,
@@ -273,10 +274,10 @@ async fn open_runtime(
             &config,
             agent.as_deref().unwrap_or(DEFAULT_AGENT_ID),
             available_tools,
-            project_trust,
+            &environment,
         )?,
         Opening::Saved(stored) => {
-            bind_saved_agent(cwd, &config, stored, available_tools, project_trust)?
+            bind_saved_agent(cwd, &config, stored, available_tools, &environment)?
         }
     };
     // The agent's own config, which may pin a model and reasoning, replaces
@@ -368,43 +369,40 @@ fn bind_saved_agent(
     config: &Config,
     stored: &StoredSession,
     available_tools: AgentCapabilities,
-    project_trust: ProjectTrusts,
+    environment: &SessionEnvironment,
 ) -> anyhow::Result<BoundAgent> {
     let Some(root) = stored.root_agent()? else {
         // A delegated session written before launch identities were saved:
         // nothing names its root, so it runs under the default agent, as it
         // did then.
-        return bind_agent(
-            cwd,
-            config,
-            DEFAULT_AGENT_ID,
-            available_tools,
-            project_trust,
-        );
+        return bind_agent(cwd, config, DEFAULT_AGENT_ID, available_tools, environment);
     };
-    let agent = bind_agent(cwd, config, &root.id, available_tools, project_trust)?;
+    let agent = bind_agent(cwd, config, &root.id, available_tools, environment)?;
     root.validate(agent.definition())?;
     Ok(agent)
 }
 
-/// Agent `id` of `cwd`'s catalog as `project_trust` finds it, bound as a
+/// Agent `id` of `cwd`'s catalog as `environment`'s project trust finds it,
+/// its model chosen among those `environment`'s credentials can use, bound as a
 /// person's root session with `available_tools`.
 fn bind_agent(
     cwd: &Path,
     config: &Config,
     id: &str,
     available_tools: AgentCapabilities,
-    project_trust: ProjectTrusts,
+    environment: &SessionEnvironment,
 ) -> anyhow::Result<BoundAgent> {
-    let catalog = AgentCatalog::discover(cwd, project_trust)?;
+    let catalog = AgentCatalog::discover(cwd, environment.project_trust())?;
     let definition = Arc::new(catalog.find(id)?.definition.clone());
-    AgentBinder::bind(
+    AgentBinder::bind_with_credentials(
         definition,
         AgentInvocation {
             role: AgentRole::InteractiveRoot,
             available_tools,
         },
         config,
+        /*model_override*/ None,
+        environment.credentials().as_ref(),
     )
 }
 

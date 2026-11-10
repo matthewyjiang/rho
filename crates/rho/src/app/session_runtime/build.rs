@@ -243,7 +243,7 @@ pub(super) async fn build_session(
     added_dirs: &AddedDirs,
     session_options: impl FnOnce(Arc<dyn ModelProvider>) -> anyhow::Result<SessionOptions>,
 ) -> anyhow::Result<(BuiltSession, SessionPermission)> {
-    ensure_auto_classifier_model(config)?;
+    ensure_auto_classifier_model(config, build.host.environment.credentials().as_ref())?;
     // A session request can follow a terminal login another process saved,
     // even when startup itself succeeded without credentials.
     AppCredentialStore::reread_external_logins();

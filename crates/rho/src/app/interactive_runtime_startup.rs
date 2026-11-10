@@ -152,7 +152,11 @@ pub(super) async fn initialize(
             provider: Arc::clone(&provider),
             tools: &tools,
             workspace: workspace.clone(),
-            workspace_policy: AppPolicy::for_mode(permission_mode, session_writes.clone()),
+            workspace_policy: AppPolicy::for_mode(
+                permission_mode,
+                session_writes.clone(),
+                std::env::var_os("PATH"),
+            ),
             approval_session: approval_channel
                 .handler
                 .clone()
@@ -414,6 +418,7 @@ pub(in crate::app) fn approval_channel_for(
                 options.config,
                 options.workspace_path,
                 options.usage_recording,
+                Arc::new(AppCredentialStore),
                 Some(Arc::new(human_handler)),
                 Some(options.session_writes.clone()),
             );

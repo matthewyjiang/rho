@@ -35,9 +35,10 @@ impl WebSearch {
         config: &Config,
         client: reqwest::Client,
         store: WebAccessStore,
+        credentials: std::sync::Arc<dyn rho_providers::credentials::CredentialStore>,
     ) -> Self {
         Self {
-            config: SearchBackendConfig::from_config(config),
+            config: SearchBackendConfig::from_config(config, credentials),
             client,
             store,
         }

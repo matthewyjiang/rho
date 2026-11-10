@@ -228,6 +228,15 @@ impl SessionRuntime {
         self.built.session.id()
     }
 
+    /// The session's credentials: those of the environment it opened with
+    /// (see [`crate::session_environment::SessionEnvironment::credentials`]).
+    #[cfg_attr(not(unix), allow(dead_code, reason = "only the Unix daemon asks"))]
+    pub(crate) fn credentials(
+        &self,
+    ) -> std::sync::Arc<dyn rho_providers::credentials::CredentialStore> {
+        self.build.host.environment.credentials()
+    }
+
     /// A read-only view of the session's tools; see [`SessionTools`].
     pub(crate) fn tools(&self) -> SessionTools<'_> {
         SessionTools::of(&self.built.tools)

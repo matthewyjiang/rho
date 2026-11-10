@@ -86,7 +86,7 @@ impl Sessions {
             &job,
             &opened.runtime,
             &opened.config,
-            &available_auths().await,
+            &available_auths(opened.runtime.credentials()).await,
         );
         feed.close(DetachReason::NotLoaded);
         let observed = attach_response(opened.runtime.workspace_root(), feed.attach(after));

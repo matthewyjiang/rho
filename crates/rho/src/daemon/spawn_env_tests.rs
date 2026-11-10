@@ -7,9 +7,10 @@ use super::daemon_environment;
 // Covers: an auto-started daemon keeps what describes it and the machine,
 // and nothing that describes the client starting it. Each dropped name is
 // one a daemon once inherited and acted on for every later session: project
-// trust, the hook marker, session depth and scope, and the client's journal
-// stream. A variable nobody listed is dropped too, which a denylist would
-// keep.
+// trust, the hook marker, session depth and scope, the client's journal
+// stream, and its credentials: API keys, tokens, the credential store
+// choice, and the session bus its keyring is on. A variable nobody listed is
+// dropped too, which a denylist would keep.
 // Owner: daemon auto-spawn environment policy.
 #[test]
 fn an_auto_started_daemon_keeps_only_allowed_variables() {
@@ -20,10 +21,6 @@ fn an_auto_started_daemon_keeps_only_allowed_variables() {
         ("LANG", "C.UTF-8"),
         ("https_proxy", "http://proxy:3128"),
         ("RHO_LOG", "rho=debug"),
-        // Still the daemon's until sessions take their client's (#1779).
-        ("RHO_CREDENTIAL_STORE", "file"),
-        ("OPENAI_API_KEY", "sk-test"),
-        ("RHO_CORP_API_KEY", "custom-host-key"),
     ];
     let dropped = [
         ("RHO_TRUST_PROJECT_HOOKS", "1"),
@@ -36,6 +33,15 @@ fn an_auto_started_daemon_keeps_only_allowed_variables() {
         ("JOURNAL_STREAM", "8:12345"),
         ("VIRTUAL_ENV", "/work/.venv"),
         ("SSH_AUTH_SOCK", "/tmp/agent.sock"),
+        ("RHO_CREDENTIAL_STORE", "file"),
+        ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus"),
+        ("OPENAI_API_KEY", "sk-test"),
+        ("RHO_CORP_API_KEY", "custom-host-key"),
+        ("EXA_API_KEY", "search-key"),
+        ("GITHUB_TOKEN", "ghp-test"),
+        ("GH_TOKEN", "ghp-test"),
+        ("CODEX_ACCOUNT_ID", "account"),
+        ("OLLAMA_DEVICE_KEY_DIR", "/home/dev/.ollama"),
     ];
     let pairs = |variables: &[(&str, &str)]| -> Vec<(OsString, OsString)> {
         variables

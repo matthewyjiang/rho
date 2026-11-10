@@ -168,10 +168,14 @@ fn workflow_approval_channel(
     workspace_path: PathBuf,
     approval_mode: WorkflowApprovalMode,
     session_writes: SessionWriteLog,
+    credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
 ) -> anyhow::Result<WorkflowApprovalChannel> {
     let (handler, classifier): (Arc<dyn ApprovalHandler>, _) = match permission_mode {
         PermissionMode::Auto => {
-            crate::app::session_runtime::ensure_auto_classifier_model(config)?;
+            crate::app::session_runtime::ensure_auto_classifier_model(
+                config,
+                credentials.as_ref(),
+            )?;
             let human = approval_mode.can_prompt().then(|| {
                 Arc::new(TerminalWorkflowApprovals { interactive: true })
                     as Arc<dyn ApprovalHandler>
@@ -180,6 +184,7 @@ fn workflow_approval_channel(
                 config.clone(),
                 workspace_path,
                 approval_mode.usage_recording(),
+                credentials,
                 human,
                 Some(session_writes.clone()),
             );
@@ -481,6 +486,7 @@ impl WorkflowRuntime {
             cwd.clone(),
             approval_mode,
             session_writes.clone(),
+            environment.credentials(),
         )?;
         let needs_provider_credentials = run.graph.resolved_nodes.values().any(|node| {
             matches!(
@@ -507,7 +513,11 @@ impl WorkflowRuntime {
         };
         let hosts = Arc::new(WorkflowCommandHosts {
             workspace,
-            policy: AppPolicy::for_mode(permission_mode, session_writes),
+            policy: AppPolicy::for_mode(
+                permission_mode,
+                session_writes,
+                environment.current().path(),
+            ),
             approvals: command_approvals,
             hooks,
         });

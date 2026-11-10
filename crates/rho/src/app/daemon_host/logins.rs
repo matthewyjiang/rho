@@ -35,12 +35,13 @@ use rho_providers::{
         browser::BrowserAvailability,
         login_dispatch::{AuthenticationError, AuthenticationMethod, ProviderAuthentication},
     },
+    credentials::CredentialStore,
     provider::{self, ProviderDescriptor},
 };
 use rho_sdk::CancellationToken;
 
 use super::{
-    auth::{credentials_changed, off_workers, repository},
+    auth::{client_credentials, credentials_changed, off_workers, repository},
     sessions::Sessions,
 };
 use crate::app::{
@@ -78,9 +79,14 @@ impl Logins {
         params: AuthLoginParams,
         sessions: Arc<Sessions>,
     ) -> Result<(AuthLoginResponse, LoginStream), RpcError> {
-        let AuthLoginParams { auth, flow } = params;
+        let AuthLoginParams {
+            auth,
+            flow,
+            environment,
+        } = params;
         let flow = flow.unwrap_or_default();
-        let target = off_workers(move || LoginAuth::resolve(&auth)).await??;
+        let credentials = client_credentials(&environment)?;
+        let target = off_workers(move || LoginAuth::resolve(&auth, credentials)).await??;
         let login = LoginId::new(uuid::Uuid::new_v4().to_string());
         let cancel = CancellationToken::new();
         let slot = self.claim(target.auth, &login, &cancel)?;
@@ -173,13 +179,16 @@ struct LoginAuth {
     /// What the provider calls itself in a login, such as `Codex`.
     provider_label: &'static str,
     descriptor: &'static ProviderDescriptor,
+    /// The credentials of the client that started the login, which the
+    /// approved credential is saved to.
+    credentials: Arc<dyn CredentialStore>,
 }
 
 impl LoginAuth {
     /// Checks that `auth` takes an interactive login whose credential the
     /// daemon's sessions would read. Loads the config and its store first,
     /// as every credential write does. Blocks.
-    fn resolve(auth: &str) -> Result<Self, RpcError> {
+    fn resolve(auth: &str, credentials: Arc<dyn CredentialStore>) -> Result<Self, RpcError> {
         credential_writes::load_config_and_store(&repository())?;
         let invalid = |message: String| RpcError::new(ErrorCode::InvalidParams, message);
         let Some((descriptor, mode)) = provider::resolve_auth_mode(auth) else {
@@ -198,13 +207,18 @@ impl LoginAuth {
                 return Err(invalid(format!("'{auth}' needs no sign-in")));
             }
         };
-        // A credential in the daemon's environment wins over a saved one,
-        // so the login would change nothing.
-        credential_writes::refuse_environment_override(mode.id, CredentialWrite::Login)?;
+        // A credential in the client's environment wins over a saved one,
+        // so the login would change nothing for its sessions.
+        credential_writes::refuse_environment_override(
+            mode.id,
+            CredentialWrite::Login,
+            credentials.as_ref(),
+        )?;
         Ok(Self {
             auth: mode.id,
             provider_label,
             descriptor,
+            credentials,
         })
     }
 }
@@ -273,12 +287,13 @@ async fn run(
 /// endpoint as `rho login` always has, and tells every session.
 async fn save(target: &LoginAuth, approval: Approval, sessions: &Sessions) -> LoginOutcome {
     let descriptor = *target.descriptor;
+    let credentials = Arc::clone(&target.credentials);
     let saved = off_workers(move || -> anyhow::Result<()> {
         // The config may have chosen another store since the login started.
         credential_writes::load_config_and_store(&repository())?;
         // A provider that sends no confirmation (Ollama Cloud's device key)
         // already told the user what to approve in its prompt.
-        approval.save(descriptor, &repository())
+        approval.save(descriptor, &repository(), credentials.as_ref())
     })
     .await;
     // Even a failed save may have written part of an entry.

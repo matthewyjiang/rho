@@ -30,8 +30,8 @@ use super::{
     },
 };
 use crate::{
-    config::Config, credential_store::AppCredentialStore, diagnostics::RuntimeDiagnostics,
-    permission::SessionWriteLog, tools::sdk_registry::AppToolSet,
+    config::Config, diagnostics::RuntimeDiagnostics, permission::SessionWriteLog,
+    tools::sdk_registry::AppToolSet,
 };
 
 /// Everything a caller must supply to assemble a session, including the three
@@ -87,6 +87,8 @@ pub(super) struct ApprovalInputs {
     pub workspace_root: PathBuf,
     pub usage_recording: rho_sdk::ProviderRequestUsageRecording,
     pub session_writes: SessionWriteLog,
+    /// The session's credentials, which Auto's classifier signs in with.
+    pub credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
 }
 
 /// Approval wiring for one session: the handler the runtime enforces and, for
@@ -186,7 +188,7 @@ where
         &*super::endpoint_login::with_disk_login(config, &config_path)?,
         cwd,
     )?;
-    let credentials = ApplicationCredentialSource::new(Arc::new(AppCredentialStore));
+    let credentials = ApplicationCredentialSource::new(environment.credentials());
     // Automation and ACP normally skip the catalog fetch, but catalog-constructed
     // providers need the hydrate before build; a no-op for the rest.
     sdk_options.provider.ensure_catalog_for_construction().await;
@@ -251,7 +253,9 @@ where
         workspace_root: workspace_root.clone(),
         usage_recording: usage_recording.clone(),
         session_writes: session_writes.clone(),
+        credentials: environment.credentials(),
     })?;
+    let search_path = environment.current().path();
     let hooks = match hook_start {
         HookStart::Start => crate::hooks::start_for_cwd(&workspace_root, environment),
         HookStart::Skip => None,
@@ -275,6 +279,7 @@ where
                 workspace_policy: AppPolicy::for_mode(
                     config.permission_mode,
                     session_writes.clone(),
+                    search_path,
                 ),
                 approval_session,
                 system_prompt: prompt.system.clone(),

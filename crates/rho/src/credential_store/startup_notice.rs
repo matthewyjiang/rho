@@ -135,6 +135,10 @@ impl CredentialStore for NotifyingCredentialStore {
     fn delete_secret(&self, account: &str) -> CredentialResult<bool> {
         self.notify_if_slow(|| self.inner.delete_secret(account))
     }
+
+    fn environment_variable(&self, name: &str) -> Option<String> {
+        self.inner.environment_variable(name)
+    }
 }
 
 #[cfg(test)]

@@ -231,6 +231,8 @@ pub struct AppToolSet {
     /// the only way to read an elided result back.
     recall: Option<crate::session::recall::RecallStore>,
     todo: super::todo::TodoState,
+    /// The credentials of the session the tools belong to.
+    credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
 }
 
 impl AppToolSet {
@@ -255,6 +257,7 @@ impl AppToolSet {
             session_search: super::sessions::SessionBinding::default(),
             recall: None,
             todo: super::todo::TodoState::default(),
+            credentials: Arc::new(crate::credential_store::AppCredentialStore),
         }
     }
 
@@ -269,6 +272,7 @@ impl AppToolSet {
             environment,
         } = options;
         let mut tool_set = Self::disabled();
+        tool_set.credentials = environment.credentials();
         tool_set.workflow_tracker = workflow_tracker;
         tool_set.checkpoint_tracker = Arc::new(
             crate::session::workspace_checkpoint::WorkspaceCheckpointTracker::new(
@@ -359,6 +363,7 @@ impl AppToolSet {
             &capabilities,
             process_environment,
             web_access,
+            tool_set.credentials(),
         ));
 
         let delegation_tools = DelegationToolSelection::from_capabilities(&capabilities);
@@ -439,6 +444,12 @@ impl AppToolSet {
 
     pub(crate) fn todo_state(&self) -> super::todo::TodoState {
         self.todo.clone()
+    }
+
+    /// The credentials of the session the tools belong to, which the models
+    /// that run beside it, such as a compaction summarizer, sign in with.
+    pub(crate) fn credentials(&self) -> Arc<dyn rho_providers::credentials::CredentialStore> {
+        Arc::clone(&self.credentials)
     }
 
     /// Prompts and resources connected servers offer the user.
@@ -693,7 +704,12 @@ impl AppToolSet {
     /// Replace only search, retaining content storage and all other live tools.
     pub(crate) fn replace_web_search(&mut self, config: &Config) -> Option<Arc<dyn Tool>> {
         let replacement = if self.web_search_capable {
-            super::web::sdk_web_search(config, self.web_access.clone(), config.max_output_bytes)
+            super::web::sdk_web_search(
+                config,
+                self.web_access.clone(),
+                config.max_output_bytes,
+                self.credentials(),
+            )
         } else {
             None
         };

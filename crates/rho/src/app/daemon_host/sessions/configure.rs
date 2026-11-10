@@ -89,7 +89,7 @@ impl Sessions {
         // waits for (see `Sessions::refresh_all_options`): a refresh queued
         // before this ran first, and one queued after runs once this is
         // done, so the options this publishes are never older than one.
-        let auths = available_auths().await;
+        let auths = available_auths(runtime.credentials()).await;
         let applied = change
             .apply(runtime, &session.config, &auths)
             .await

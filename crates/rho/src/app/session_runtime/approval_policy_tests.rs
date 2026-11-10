@@ -245,7 +245,8 @@ fn auto_requires_configured_permission_classifier_model() {
         ..Config::default()
     };
 
-    let error = ensure_auto_classifier_model(&config).unwrap_err();
+    let error = ensure_auto_classifier_model(&config, &crate::credential_store::AppCredentialStore)
+        .unwrap_err();
     assert_eq!(
         error.to_string(),
         "permission mode auto requires a configured permission-classifier model (set via /config or config.toml [internal_agents.permission-classifier])"
@@ -255,7 +256,7 @@ fn auto_requires_configured_permission_classifier_model() {
         PERMISSION_CLASSIFIER_AGENT_ID,
         InternalAgentModelConfig::new("openai".into(), "gpt-5.5".into(), "api-key".into()),
     );
-    ensure_auto_classifier_model(&config).unwrap();
+    ensure_auto_classifier_model(&config, &crate::credential_store::AppCredentialStore).unwrap();
 }
 
 // Covers: a classifier allow or human escalation on a parent's Auto
@@ -325,9 +326,18 @@ async fn classifier_template_records_allows_on_the_session_write_log() {
                 workspace_root: root.path().to_path_buf(),
                 usage_recording: Default::default(),
                 session_writes: session_writes.clone(),
+                credentials: Arc::new(crate::credential_store::AppCredentialStore),
             });
-        let session_policy = AppPolicy::for_mode(PermissionMode::Auto, session_writes);
-        let template_policy = AppPolicy::for_mode(PermissionMode::Auto, template_writes);
+        let session_policy = AppPolicy::for_mode(
+            PermissionMode::Auto,
+            session_writes,
+            /*search_path*/ None,
+        );
+        let template_policy = AppPolicy::for_mode(
+            PermissionMode::Auto,
+            template_writes,
+            /*search_path*/ None,
+        );
         assert_eq!(session_policy.evaluate(&request), require_approval);
 
         if escalate {
