@@ -1092,7 +1092,7 @@
       "description": "Result of [`HELLO`].",
       "properties": {
         "capabilities": {
-          "description": "Optional features this daemon supports. Protocol minors add names\nhere; protocol 1.0 defines none.",
+          "description": "Optional features this daemon supports. Protocol minors add names\nhere from major 1 on; none is defined yet.",
           "items": {
             "type": "string"
           },
@@ -1103,7 +1103,7 @@
         },
         "protocol": {
           "$ref": "#/$defs/ProtocolVersion",
-          "description": "The protocol the daemon speaks. Its major equals the client's."
+          "description": "The protocol the daemon speaks, which is compatible with the\nclient's."
         }
       },
       "required": [
@@ -2319,7 +2319,7 @@
       "type": "object"
     },
     "ProtocolVersion": {
-      "description": "A protocol version. Minors add optional fields, methods, and error codes;\nmajors may change anything.",
+      "description": "A protocol version. Major 0 is the unstable protocol: every minor may\nchange anything. From major 1 on, minors add optional fields, methods,\nand error codes, and only majors may change anything.",
       "properties": {
         "major": {
           "format": "uint16",
@@ -2529,6 +2529,28 @@
         }
       ],
       "description": "How an input request closed, as [`super::SessionEvent::InputResolved`]\ntells every attached client."
+    },
+    "RestartCost": {
+      "description": "What restarting the daemon would cost, as of the moment the daemon\ncounted.",
+      "properties": {
+        "clients": {
+          "description": "How many other clients are connected, which the restart disconnects.\nThey speak the daemon's protocol, so each needs updating or\nrestarting before it can use a newer daemon.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "in_progress": {
+          "description": "How many things the restart would interrupt: jobs in progress\n(queued, running, or waiting for input), logins under way, and\nsessions with work of their own, such as a background process.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "in_progress",
+        "clients"
+      ],
+      "type": "object"
     },
     "RestartParams": {
       "description": "Params of [`DAEMON_RESTART`].",
@@ -5014,18 +5036,18 @@
       "oneOf": [
         {
           "const": "restart_daemon",
-          "description": "The running daemon is older than the client. Stopping it lets the next\nconnection start the daemon from the newer installed binary.",
+          "description": "The running daemon is older than the client. Replacing it with the\nclient's version lets them talk; [`VersionMismatch::restart`] says\nwhat that costs.",
           "type": "string"
         },
         {
           "const": "update_client",
-          "description": "The client is older than the daemon. Update the client.",
+          "description": "The client is older than the daemon. Update the client, or restart\none that was updated while it ran.",
           "type": "string"
         }
       ]
     },
     "VersionMismatch": {
-      "description": "An incompatible handshake. The daemon sends this as the `data` of a\n[`crate::ErrorCode::VersionMismatch`] error; its `Display` is the\nactionable message for users.",
+      "description": "An incompatible handshake. The daemon sends this as the `data` of a\n[`crate::ErrorCode::VersionMismatch`] error; its `Display` is the\nactionable message for users.\n\nBoth sides must read this whatever their versions, so it only ever gains\noptional fields, also while the protocol is unstable; CI holds it to\nthat.",
       "properties": {
         "client": {
           "$ref": "#/$defs/ProtocolVersion"
@@ -5035,6 +5057,17 @@
         },
         "fix": {
           "$ref": "#/$defs/VersionFix"
+        },
+        "restart": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RestartCost"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What restarting the daemon would cost. The daemon sends it with\n[`VersionFix::RestartDaemon`], so a client can say so before anyone\nrestarts it, and can tell a daemon nobody is using."
         }
       },
       "required": [
@@ -5365,8 +5398,8 @@
     }
   },
   "protocol": {
-    "major": 1,
-    "minor": 0
+    "major": 0,
+    "minor": 1
   },
   "title": "rho daemon protocol"
 }

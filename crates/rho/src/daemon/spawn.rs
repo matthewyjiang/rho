@@ -1,4 +1,6 @@
-//! Connecting to the daemon, starting one first when none is running.
+//! Connecting to the daemon, starting one first when none is running, or
+//! when the one running is older than this client and nobody is using it
+//! (#1776).
 
 use std::{
     fs::{File, OpenOptions},
@@ -9,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rho_protocol::ClientInfo;
+use rho_protocol::{ClientError, ClientInfo, VersionFix, VersionMismatch};
 
 use super::{
     client::{connect, ConnectError, Connection},
@@ -38,7 +40,8 @@ const START_POLL_INTERVAL: Duration = Duration::from_millis(10);
 // `daemon_host::sessions`) after the stop request, then exits in tens of
 // milliseconds. 5 s matches `DAEMON_STOP_TIMEOUT`, which bounds the same
 // wait for `rho daemon stop`. A daemon restarting in place (#1713) keeps its
-// socket, so a client waits in its backlog instead and never comes here.
+// socket, so a client waits in its backlog instead and never comes here. An
+// older daemon this client stops (#1776) is the same stop, bounded the same.
 const DRAIN_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Starts a daemon process for [`connect_or_spawn`].
@@ -47,6 +50,14 @@ const DRAIN_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// `connect_or_spawn` detects readiness by connecting. The caller holds the
 /// spawn lock, so at most one `spawn` runs per runtime directory at a time.
 pub(crate) trait DaemonSpawner: Send + Sync {
+    /// Whether a daemon `spawn` starts could start, as far as the caller's
+    /// side can tell. `connect_or_spawn` asks before every `spawn`, and
+    /// before it stops an older daemon to start this one in its place, so a
+    /// daemon that works is never stopped for one that cannot start.
+    fn check(&self) -> io::Result<()> {
+        Ok(())
+    }
+
     fn spawn(&self, paths: &DaemonPaths) -> io::Result<()>;
 }
 
@@ -116,6 +127,8 @@ pub(crate) enum SpawnError {
     Lock(#[from] LockError),
     #[error("could not start the rho daemon: {0}")]
     Spawn(io::Error),
+    #[error("could not stop the older rho daemon to start this rho in its place: {0:#}")]
+    StopOlder(anyhow::Error),
     #[error(
         "rho daemon is still stopping after DRAIN_WAIT_TIMEOUT ({limit:?}; waited {elapsed:?}); see {log_file}"
     )]
@@ -146,6 +159,14 @@ pub(crate) enum SpawnError {
 
 /// Connects to the daemon, starting one with `spawner` if none is running.
 ///
+/// A daemon that refuses this client as newer than itself is replaced when
+/// it reports that restarting it is free: this stops it and starts one with
+/// `spawner` in its place, as `rho daemon restart` would, since that
+/// interrupts nothing and disconnects no one. One with work in progress or
+/// another client connected keeps running, and the refusal, which names
+/// what a restart would cost, is the error (#1776). A daemon newer than
+/// this client is never replaced.
+///
 /// Concurrent callers serialize on the spawn lock: the first starts the
 /// daemon, and the rest connect to it once they get the lock.
 ///
@@ -171,14 +192,25 @@ async fn connect_or_spawn_observing(
 ) -> Result<Connection, SpawnError> {
     match connect(paths, client.clone()).await {
         Err(ConnectError::NotRunning) => {}
+        Err(refusal) if is_unused_older_daemon(&refusal) => {}
         connected => return Ok(connected?),
     }
     paths.prepare_runtime_dir()?;
-    // Serializes clients that race to start a daemon.
+    // Serializes clients that race to start, or replace, a daemon.
     let _spawn_lock = lock_spawn(&paths.runtime_dir.join("spawn.lock")).await?;
-    // Another caller may have started the daemon while this one waited.
-    if let Some(connection) = wait_while_held(paths, &client, on_held).await? {
-        return Ok(connection);
+    // Another caller may have started the daemon, or replaced the older
+    // one, while this one waited, and the older one may be in use by now:
+    // only what it answers under the lock decides.
+    let unused_older = match wait_while_held(paths, &client, on_held).await {
+        Ok(Some(connection)) => return Ok(connection),
+        Ok(None) => None,
+        Err(SpawnError::Connect(refusal)) if is_unused_older_daemon(&refusal) => Some(refusal),
+        Err(error) => return Err(error),
+    };
+    spawner.check().map_err(SpawnError::Spawn)?;
+    if let Some(refusal) = unused_older {
+        tracing::info!(%refusal, "replacing the unused rho daemon with this rho");
+        stop_older(paths).await?;
     }
     spawner.spawn(paths).map_err(SpawnError::Spawn)?;
     let started = Instant::now();
@@ -196,6 +228,40 @@ async fn connect_or_spawn_observing(
             });
         }
         tokio::time::sleep(START_POLL_INTERVAL).await;
+    }
+}
+
+/// Whether the daemon refused this client as newer than itself and reported
+/// that restarting it is free, so replacing it interrupts nothing and
+/// disconnects no one. A daemon that does not say what a restart costs is
+/// in use.
+fn is_unused_older_daemon(refusal: &ConnectError) -> bool {
+    matches!(
+        refusal,
+        ConnectError::Handshake(ClientError::VersionMismatch(VersionMismatch {
+            fix: VersionFix::RestartDaemon,
+            restart: Some(cost),
+            ..
+        })) if cost.is_free()
+    )
+}
+
+/// Stops the older daemon that refused this client and waits until it lets
+/// go of the lock, so the caller can start this rho in its place. It speaks
+/// another protocol, so it cannot take a stop request and is signalled
+/// instead, which stops it as gracefully: work that began since it reported
+/// none is recorded interrupted, as `rho daemon stop` records it, and a
+/// client that connected since is detached as from any stop.
+async fn stop_older(paths: &DaemonPaths) -> Result<(), SpawnError> {
+    let signalled = Instant::now();
+    lock::terminate_recorded_daemon(paths).map_err(SpawnError::StopOlder)?;
+    match lock::wait_until_released(paths, DRAIN_WAIT_TIMEOUT).await? {
+        Some(_) => Ok(()),
+        None => Err(SpawnError::StillStopping {
+            limit: DRAIN_WAIT_TIMEOUT,
+            elapsed: signalled.elapsed(),
+            log_file: paths.log_file.clone(),
+        }),
     }
 }
 
