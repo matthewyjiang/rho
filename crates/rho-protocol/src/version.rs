@@ -17,9 +17,9 @@ pub struct ProtocolVersion {
 }
 
 /// The protocol this crate speaks. It stays at major 0 until a frontend
-/// outside this repository has run against it (#1776), so every change to
-/// the wire raises the minor; CI checks each change against the commit
-/// before it.
+/// outside this repository has run against it (#1776). Until the beta the
+/// wire changes without raising the minor: nothing is released, and the
+/// version is set once then.
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::new(0, 4);
 
 impl ProtocolVersion {
