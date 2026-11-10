@@ -123,11 +123,12 @@ pub(super) async fn connect_with(reach: Reach) -> Result<daemon::Connection, Unr
         .map_err(|error| unreachable(error.to_string()))
 }
 
-/// Starts the daemon once the part of this process's environment it
-/// inherits passes the checks the daemon makes at startup, so a daemon that
-/// would refuse to start is reported now rather than after the start
-/// timeout. A daemon already running never sees this environment, so only a
-/// spawn checks it.
+/// Starts the daemon once this process's own credential store choice is one
+/// rho knows. The daemon does not inherit `RHO_CREDENTIAL_STORE` (#1779),
+/// but it refuses every session and sign-in of a client whose environment
+/// names an unknown store, so a daemon is not started for one: the mistake
+/// is reported here, at once. A client of a running daemon hears it from
+/// that daemon at its first such request.
 #[cfg(unix)]
 struct CheckedSpawner(daemon::ProcessSpawner);
 
@@ -139,9 +140,7 @@ impl daemon::DaemonSpawner for CheckedSpawner {
             .map_err(|error| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    format!(
-                        "RHO_CREDENTIAL_STORE in this environment, which it would inherit: {error}"
-                    ),
+                    format!("RHO_CREDENTIAL_STORE in this environment: {error}"),
                 )
             })
     }

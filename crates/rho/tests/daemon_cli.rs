@@ -190,9 +190,9 @@ fn daemon_start_is_idempotent() {
 }
 
 // Covers: a client whose environment sets an unknown RHO_CREDENTIAL_STORE
-// refuses to start a daemon, which would inherit it and stop, naming the
-// variable at once instead of waiting out the start timeout; with a daemon
-// already running, which never sees the client's environment, it connects.
+// starts no daemon, which would refuse its sessions and sign-ins for it,
+// and names the variable at once; with a daemon already running it
+// connects, and that daemon refuses what needs the store.
 // Owner: CLI process (daemon ensure-running path).
 #[test]
 fn an_unknown_credential_store_stops_only_a_daemon_start() {
