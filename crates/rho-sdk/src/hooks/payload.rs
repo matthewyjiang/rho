@@ -92,6 +92,16 @@ pub enum HookCapability {
         path: PathBuf,
         scope: HookPathScope,
     },
+    /// Acting on another agent session: `action` is what the tool does to
+    /// it (`new`, `prompt`, `steer`, or `cancel`), `session` the session,
+    /// `null` for one it starts, `workspace` the session's workspace, and
+    /// `text` what the operation sends, `null` for a cancel.
+    ControlSession {
+        action: String,
+        session: Option<String>,
+        workspace: PathBuf,
+        text: Option<String>,
+    },
 }
 
 /// Host policy result a blocking hook is allowed to see.
@@ -475,6 +485,27 @@ pub(crate) fn summarize_capability(
             path: path
                 .as_deref()
                 .map(|path| bounded_path(path, "payload.capability.path", bounds, truncation)),
+        },
+        CapabilityOperation::ControlSession(target) => HookCapability::ControlSession {
+            action: target.action.label().to_owned(),
+            session: target.session.as_ref().map(|session| {
+                bounded_string(
+                    session.as_str().to_owned(),
+                    "payload.capability.session",
+                    bounds,
+                    truncation,
+                )
+            }),
+            workspace: bounded_path(
+                &target.workspace,
+                "payload.capability.workspace",
+                bounds,
+                truncation,
+            ),
+            text: target
+                .text
+                .clone()
+                .map(|text| bounded_string(text, "payload.capability.text", bounds, truncation)),
         },
     }
 }
