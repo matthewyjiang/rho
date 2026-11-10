@@ -4,8 +4,8 @@
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    methods::HELLO, DaemonInfo, HelloResponse, Message, ProtocolVersion, Response, VersionFix,
-    VersionMismatch, PROTOCOL_VERSION,
+    methods::HELLO, DaemonInfo, HelloResponse, Message, ProtocolVersion, Response, RestartCost,
+    VersionFix, VersionMismatch, PROTOCOL_VERSION,
 };
 use serde_json::json;
 use tokio::{
@@ -56,13 +56,14 @@ async fn hello(
 
 // Covers: the daemon answers a client of another rho build that speaks its
 // protocol version, and refuses one of a newer protocol version at the
-// handshake, before any request can fail on it: the refusal names a daemon
-// restart as the fix and how many jobs that would interrupt, the turn under
-// way and then none once it ended. A client of an older version is told to
+// handshake, before any request can fail on it. The refusal names a daemon
+// restart as the fix and what it would cost as the daemon stands: the turn
+// under way and the client connected, then that client alone once the turn
+// ended, then nothing once it left. A client of an older version is told to
 // change itself.
 // Owner: daemon process (handshake).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_newer_client_is_told_at_hello_what_restarting_the_daemon_would_interrupt() {
+async fn a_newer_client_is_told_at_hello_what_restarting_the_daemon_would_cost() {
     let sandbox = Sandbox::new();
     sandbox.set_permission_mode("bypass");
     let (daemon, client) = sandbox.spawn_daemon(sandbox.rho("tool-call"), &[]).await;
@@ -70,41 +71,56 @@ async fn a_newer_client_is_told_at_hello_what_restarting_the_daemon_would_interr
     let release = fifo(sandbox.workspace.join("release.fifo"));
     let newer = ProtocolVersion::new(PROTOCOL_VERSION.major, PROTOCOL_VERSION.minor + 1);
     let older = ProtocolVersion::new(0, 0);
-    let refusal = |client, fix, in_progress| VersionMismatch {
-        daemon: PROTOCOL_VERSION,
-        client,
-        fix,
-        in_progress,
+    let restart_costs = |in_progress, clients| {
+        Err(VersionMismatch {
+            daemon: PROTOCOL_VERSION,
+            client: newer,
+            fix: VersionFix::RestartDaemon,
+            restart: Some(RestartCost {
+                in_progress,
+                clients,
+            }),
+        })
     };
 
     sandbox
         .prompt_tool_call(&client, &session, &blocked_on("release.fifo"))
         .await;
-    let during_the_turn = (
-        hello(&sandbox, PROTOCOL_VERSION).await,
-        hello(&sandbox, newer).await,
-        hello(&sandbox, older).await,
-    );
+    let during_the_turn = (hello(&sandbox, newer).await, hello(&sandbox, older).await);
     open_gate(&sandbox, &release).await;
     settled_job(&sandbox, &client, &session).await;
     let after_the_turn = hello(&sandbox, newer).await;
+    let same_protocol = hello(&sandbox, PROTOCOL_VERSION).await;
+    drop(client);
+    // The daemon notices each client leave on its own time.
+    let unused = restart_costs(0, 0);
+    sandbox
+        .poll_until("the daemon to see its clients leave", async || {
+            (hello(&sandbox, newer).await == unused).then_some(())
+        })
+        .await;
 
     assert_eq!(
-        (during_the_turn, after_the_turn),
+        (during_the_turn, after_the_turn, same_protocol),
         (
             (
-                Ok(HelloResponse {
-                    protocol: PROTOCOL_VERSION,
-                    daemon: DaemonInfo {
-                        version: env!("CARGO_PKG_VERSION").to_owned(),
-                        pid: daemon.id(),
-                    },
-                    capabilities: Vec::new(),
+                restart_costs(1, 1),
+                Err(VersionMismatch {
+                    daemon: PROTOCOL_VERSION,
+                    client: older,
+                    fix: VersionFix::UpdateClient,
+                    restart: None,
                 }),
-                Err(refusal(newer, VersionFix::RestartDaemon, Some(1))),
-                Err(refusal(older, VersionFix::UpdateClient, None)),
             ),
-            Err(refusal(newer, VersionFix::RestartDaemon, Some(0))),
+            restart_costs(0, 1),
+            Ok(HelloResponse {
+                protocol: PROTOCOL_VERSION,
+                daemon: DaemonInfo {
+                    version: env!("CARGO_PKG_VERSION").to_owned(),
+                    pid: daemon.id(),
+                },
+                capabilities: Vec::new(),
+            }),
         ),
         "daemon log:\n{}",
         sandbox.isolated.daemon_log()

@@ -71,13 +71,15 @@ While `PROTOCOL_VERSION` in `crates/rho-protocol/src/version.rs` is 0.x, a chang
 cargo run -p rho-protocol --example protocol_schema > crates/rho-protocol/schema/protocol.json
 ```
 
-CI compares each pull request with its base, and each push with the commit before it. The full workflow cannot know your base, so run the same check against it before pushing:
+The version a hello names and the data of the error that refuses it are the exception: clients and daemons of every version read them, so they only ever gain optional fields.
+
+CI compares each pull request with its base as of that run, and each push with the commit before it. The full workflow cannot know your base, so run the same check against it before pushing:
 
 ```bash
 python3 scripts/check_protocol_compat.py --baseline-ref origin/daemon-v3 --unstable-only
 ```
 
-A pull request that raised the minor before another one merged with the same number fails that check once it is updated: raise the minor again.
+A pull request that raised the minor before another one merged with the same number fails that check only once it is updated onto the other, since git merges two identical version edits cleanly. Update a pull request that changes the wire before merging it, and raise the minor again when the number was taken.
 
 ## Crate publish preparation
 

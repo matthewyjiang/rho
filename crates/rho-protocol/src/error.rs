@@ -83,7 +83,7 @@ error_codes! {
         /// `rho/hello` named an incompatible protocol version. `data` is a
         /// [`crate::VersionMismatch`] saying which side must change and, for
         /// a client newer than the daemon, what restarting the daemon would
-        /// interrupt.
+        /// cost.
         VersionMismatch = -32001 => crate::VersionMismatch,
         /// No saved session has that id, in any workspace.
         SessionNotFound = -32003,

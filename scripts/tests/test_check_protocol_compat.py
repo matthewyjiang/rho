@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import json
+import tempfile
 import unittest
 from collections.abc import Callable
+from pathlib import Path
 
 from scripts import check_protocol_compat
 
@@ -82,6 +86,20 @@ def add_method(document: dict) -> None:
 
 def remove_error(document: dict) -> None:
     del document["errors"]["-32011"]
+
+
+def require_restart_cost(document: dict) -> None:
+    defs(document)["VersionMismatch"]["required"].append("restart")
+
+
+def retype_version(document: dict) -> None:
+    defs(document)["ProtocolVersion"]["properties"]["major"]["type"] = "string"
+
+
+def rename_client_field(document: dict) -> None:
+    client = defs(document)["ClientInfo"]
+    client["properties"]["build"] = client["properties"].pop("version")
+    client["required"] = ["build" if name == "version" else name for name in client["required"]]
 
 
 def refuse_unknown_fields(document: dict) -> None:
@@ -328,10 +346,8 @@ class UnstableProtocolTests(unittest.TestCase):
         document["protocol"] = {"major": major, "minor": minor}
         return document
 
-    def check(self, current: dict, *, unstable_only: bool = False) -> list[str]:
-        return check_protocol_compat.check(
-            self.UNSTABLE, current, "the base", unstable_only=unstable_only
-        )
+    def check(self, current: dict) -> list[str]:
+        return check_protocol_compat.check(self.UNSTABLE, current, "the base")
 
     def test_any_change_needs_only_a_new_minor(self) -> None:
         for name, change in [
@@ -349,7 +365,32 @@ class UnstableProtocolTests(unittest.TestCase):
                     ],
                 )
 
-    def test_a_change_is_held_to_its_base_only_while_both_are_unstable(self) -> None:
+    def test_the_handshake_may_only_gain_optional_fields(self) -> None:
+        # A client and a daemon of different versions still read these, so a
+        # new minor does not excuse breaking them. Compared by where the
+        # problem is: what it says is the stable protocol's wording.
+        for name, change, expected in [
+            (
+                "the refusal's data gains a required field",
+                require_restart_cost,
+                ["error -32001 data.restart required"],
+            ),
+            (
+                "the version a hello names is retyped",
+                retype_version,
+                [
+                    "method rho/hello params.protocol.major",
+                    "error -32001 data.client.major",
+                    "error -32001 data.daemon.major",
+                ],
+            ),
+            ("the rest of a hello changes", rename_client_field, []),
+        ]:
+            with self.subTest(name):
+                problems = self.check(self.at(change, 0, 5))
+                self.assertEqual([problem.split(":")[0] for problem in problems], expected)
+
+    def test_unstable_only_holds_a_change_to_its_base_while_both_are_unstable(self) -> None:
         # Leaving major 0 without raising the minor of a stable protocol
         # would fail the release rules; between two commits it breaks none.
         stable = {**COMMITTED, "protocol": {"major": 1, "minor": 0}}
@@ -359,11 +400,16 @@ class UnstableProtocolTests(unittest.TestCase):
             ("leaving major 0", self.UNSTABLE, self.at(remove_method, 1, 0), 0),
             ("both stable", stable, self.at(add_method, 1, 0), 0),
         ]:
-            with self.subTest(name):
-                problems = check_protocol_compat.check(
-                    baseline, current, "the base", unstable_only=True
-                )
-                self.assertEqual(len(problems), expected, problems)
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                paths = [Path(directory) / "baseline.json", Path(directory) / "current.json"]
+                for path, document in zip(paths, [baseline, current]):
+                    path.write_text(json.dumps(document))
+                arguments = ["--baseline", str(paths[0]), "--current", str(paths[1])]
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
+                    io.StringIO()
+                ):
+                    code = check_protocol_compat.main([*arguments, "--unstable-only"])
+                self.assertEqual(code, expected)
 
 
 class LatestReleaseTests(unittest.TestCase):

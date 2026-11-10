@@ -8,7 +8,8 @@ daemon and its frontends: the Rho TUI, rho-ui, the `rho acp` adapter, and MCP.
   its major is 0: peers are compatible only when their protocol versions are
   equal. From major 1 on, they are when their majors match. A mismatch
   returns a typed error that says whether to restart the daemon or update the
-  client, and how many jobs in progress a daemon restart would interrupt.
+  client, and what a daemon restart would cost: how much work in progress it
+  interrupts and how many other clients it disconnects.
 - After the handshake, the daemon serves a connection's requests concurrently
   and answers each one when it completes, so responses can arrive out of
   order and pair with their requests by id. Requests also run concurrently, so

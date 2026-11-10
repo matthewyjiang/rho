@@ -2469,6 +2469,28 @@
       ],
       "description": "How an input request closed, as [`super::SessionEvent::InputResolved`]\ntells every attached client."
     },
+    "RestartCost": {
+      "description": "What restarting the daemon would cost, as of the moment the daemon\ncounted.",
+      "properties": {
+        "clients": {
+          "description": "How many other clients are connected, which the restart disconnects.\nThey speak the daemon's protocol, so each needs updating or\nrestarting before it can use a newer daemon.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "in_progress": {
+          "description": "How many things the restart would interrupt: jobs in progress\n(queued, running, or waiting for input), logins under way, and\nsessions with work of their own, such as a background process.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "in_progress",
+        "clients"
+      ],
+      "type": "object"
+    },
     "RestartParams": {
       "description": "Params of [`DAEMON_RESTART`].",
       "type": "object"
@@ -4923,7 +4945,7 @@
       "oneOf": [
         {
           "const": "restart_daemon",
-          "description": "The running daemon is older than the client. Replacing it with the\nclient's version lets them talk; [`VersionMismatch::in_progress`]\nsays what that interrupts.",
+          "description": "The running daemon is older than the client. Replacing it with the\nclient's version lets them talk; [`VersionMismatch::restart`] says\nwhat that costs.",
           "type": "string"
         },
         {
@@ -4934,7 +4956,7 @@
       ]
     },
     "VersionMismatch": {
-      "description": "An incompatible handshake. The daemon sends this as the `data` of a\n[`crate::ErrorCode::VersionMismatch`] error; its `Display` is the\nactionable message for users.\n\nBoth sides must read this whatever their versions, so it only ever gains\noptional fields.",
+      "description": "An incompatible handshake. The daemon sends this as the `data` of a\n[`crate::ErrorCode::VersionMismatch`] error; its `Display` is the\nactionable message for users.\n\nBoth sides must read this whatever their versions, so it only ever gains\noptional fields, also while the protocol is unstable; CI holds it to\nthat.",
       "properties": {
         "client": {
           "$ref": "#/$defs/ProtocolVersion"
@@ -4945,14 +4967,16 @@
         "fix": {
           "$ref": "#/$defs/VersionFix"
         },
-        "in_progress": {
-          "description": "How many things restarting the daemon would interrupt: jobs in\nprogress (queued, running, or waiting for input), logins under way,\nand sessions with work of their own, such as a background process.\nThe daemon sends it with [`VersionFix::RestartDaemon`], so a client\ncan say what the restart costs before anyone runs it.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
+        "restart": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RestartCost"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What restarting the daemon would cost. The daemon sends it with\n[`VersionFix::RestartDaemon`], so a client can say so before anyone\nrestarts it, and can tell a daemon nobody is using."
         }
       },
       "required": [

@@ -78,7 +78,7 @@ pub(super) fn paths() -> anyhow::Result<DaemonPaths> {
 /// platform's limit, the daemon could not start or did not accept
 /// connections in time (the reason names its log file), or its protocol
 /// is incompatible (the reason says which side to change and, for an older
-/// daemon with work in progress, how much a restart would interrupt).
+/// daemon someone is using, what a restart would cost).
 #[cfg(unix)]
 #[derive(Debug, thiserror::Error)]
 #[error("could not reach the rho daemon: {reason}; see https://matthewyjiang.github.io/rho/daemon")]
@@ -110,15 +110,20 @@ struct CheckedSpawner(daemon::ProcessSpawner);
 
 #[cfg(unix)]
 impl daemon::DaemonSpawner for CheckedSpawner {
+    fn check(&self) -> std::io::Result<()> {
+        crate::credential_store::environment_backend()
+            .map(drop)
+            .map_err(|error| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "RHO_CREDENTIAL_STORE in this environment, which it would inherit: {error}"
+                    ),
+                )
+            })
+    }
+
     fn spawn(&self, paths: &DaemonPaths) -> std::io::Result<()> {
-        crate::credential_store::environment_backend().map_err(|error| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!(
-                    "RHO_CREDENTIAL_STORE in this environment, which it would inherit: {error}"
-                ),
-            )
-        })?;
         self.0.spawn(paths)
     }
 }

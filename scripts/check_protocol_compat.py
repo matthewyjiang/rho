@@ -11,7 +11,10 @@ new minor, so a client can tell from `rho/hello` what it may receive.
 
 Major 0 is the unstable protocol (#1776): a minor may change anything, and a
 client and daemon work together only when their versions are equal, so there
-any change needs only a new minor.
+any change needs only a new minor. The exception is the handshake a client
+and daemon of different versions still exchange, the version `rho/hello`
+names and the data of the error that refuses it, which a minor may only add
+to at any major.
 
 The baseline is the schema the last `rho-coding-agent` release shipped:
 compatibility matters between released daemons and clients, not between
@@ -38,6 +41,9 @@ SCHEMA = Path("crates/rho-protocol/schema/protocol.json")
 RELEASE_TAG = re.compile(r"rho-coding-agent-v(\d+)\.(\d+)\.(\d+)")
 REMOTE = "origin"
 OTHER = "x-rho-other"
+# What a client and a daemon of different versions still read of each other:
+# the version a hello names, and the refusal's data.
+HANDSHAKE = (("method rho/hello params", ".protocol"), ("error -32001",))
 # Keys that describe a schema without constraining the wire.
 ANNOTATIONS = {"description", "title", "default", "examples", "$comment", "deprecated"}
 # Keys that narrow a type; any change to them is a change of the type.
@@ -349,26 +355,34 @@ def version(document: dict) -> tuple[int, int]:
     return protocol["major"], protocol["minor"]
 
 
-def check(
-    baseline: dict, current: dict, baseline_name: str, *, unstable_only: bool = False
-) -> list[str]:
-    """Why `current` may not ship after `baseline`; empty when it may.
+def handshake(facts_: dict[Where, Fact]) -> dict[Where, Fact]:
+    """The facts of `facts_` under [`HANDSHAKE`]."""
+    return {
+        path: fact
+        for path, fact in facts_.items()
+        if any(path[: len(prefix)] == prefix for prefix in HANDSHAKE)
+    }
 
-    `unstable_only` compares only two schemas of protocol major 0, for
-    holding each change to the commit before it: a stable protocol's minors
-    count releases, not changes, and the change that enters or leaves major 0
-    has no rule to break."""
-    old, new = version(baseline), version(current)
-    if unstable_only and (old[0], new[0]) != (0, 0):
-        return []
+
+def check(baseline: dict, current: dict, baseline_name: str) -> list[str]:
+    """Why `current` may not ship after `baseline`; empty when it may."""
     before, after = facts(baseline), facts(current)
+    old, new = version(baseline), version(current)
     if new < old:
         return [f"PROTOCOL_VERSION {new[0]}.{new[1]} is below {baseline_name}'s {old[0]}.{old[1]}"]
     if new[0] > old[0]:
         return []
-    # An unstable minor may change anything.
-    breaking = [] if new[0] == 0 else breaking_changes(before, after)
-    problems = [f"{problem} (needs a new protocol major)" for problem in breaking]
+    if new[0] == 0:
+        # An unstable minor may change anything but the handshake.
+        problems = [
+            f"{problem} (clients and daemons of every version read the handshake, so it may "
+            "only gain optional fields)"
+            for problem in breaking_changes(handshake(before), handshake(after))
+        ]
+    else:
+        problems = [
+            f"{problem} (needs a new protocol major)" for problem in breaking_changes(before, after)
+        ]
     if before != after and new == old:
         problems.append(
             f"the protocol changed since {baseline_name} but PROTOCOL_VERSION is still "
@@ -460,7 +474,12 @@ def main(argv: list[str] | None = None) -> int:
 
     baseline = json.loads(baseline_text)
     current = json.loads(arguments.current.read_text())
-    problems = check(baseline, current, baseline_name, unstable_only=arguments.unstable_only)
+    if arguments.unstable_only and (version(baseline)[0], version(current)[0]) != (0, 0):
+        # A stable protocol's minors count releases, not changes, and the
+        # change that enters or leaves major 0 has no rule to break.
+        print(f"skipped: {baseline_name} and the current schema are not both protocol major 0")
+        return 0
+    problems = check(baseline, current, baseline_name)
     for problem in problems:
         print(f"error: {problem}", file=sys.stderr)
     if problems:

@@ -207,25 +207,30 @@ macro_rules! logs_in_nothing {
     };
 }
 
-/// The count of a test service with nothing a restart would interrupt.
-macro_rules! nothing_in_progress {
+/// What a restart costs a test service nobody uses.
+const UNUSED: RestartCost = RestartCost {
+    in_progress: 0,
+    clients: 0,
+};
+
+/// The refusal of a test service nobody uses.
+macro_rules! nobody_uses_it {
     () => {
-        fn in_progress(&self) -> u64 {
-            0
+        fn refused_newer(&self, _: ProtocolVersion) -> RestartCost {
+            UNUSED
         }
     };
 }
 
-/// Answers every request at once, and reports `in_progress` things a restart
-/// would interrupt.
-#[derive(Default)]
+/// Answers every request at once, and reports that restarting it costs
+/// `restart`.
 struct FakeService {
-    in_progress: u64,
+    restart: RestartCost,
 }
 
 impl Service for FakeService {
-    fn in_progress(&self) -> u64 {
-        self.in_progress
+    fn refused_newer(&self, _: ProtocolVersion) -> RestartCost {
+        self.restart
     }
 
     async fn status(&self) -> DaemonStatus {
@@ -247,7 +252,7 @@ fn buggy_status() -> DaemonStatus {
 }
 
 impl Service for PanickingService {
-    nothing_in_progress!();
+    nobody_uses_it!();
 
     async fn status(&self) -> DaemonStatus {
         buggy_status()
@@ -280,7 +285,7 @@ impl GatedService {
 }
 
 impl Service for GatedService {
-    nothing_in_progress!();
+    nobody_uses_it!();
 
     async fn status(&self) -> DaemonStatus {
         self.release_status.notified().await;
@@ -421,6 +426,15 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
             vec![(id(1), Err(Some(ErrorCode::InvalidParams)))],
         ),
         (
+            "a hello of another version is refused for its version, whatever else it holds",
+            vec![request_with_params(
+                1,
+                HELLO,
+                serde_json::json!({"protocol": incompatible, "client": {"later_shape": true}}),
+            )],
+            vec![(id(1), Err(Some(ErrorCode::VersionMismatch)))],
+        ),
+        (
             "session params are decoded and service errors pass through",
             vec![
                 hello_line(1, PROTOCOL_VERSION),
@@ -465,23 +479,20 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
         ),
     ];
     for (name, lines, expected) in cases {
-        assert_eq!(
-            exchange(FakeService::default(), &lines).await,
-            expected,
-            "{name}"
-        );
+        let service = FakeService { restart: UNUSED };
+        assert_eq!(exchange(service, &lines).await, expected, "{name}");
     }
 }
 
-/// What a daemon with `in_progress` things under way answers the hello of a
-/// client that speaks `protocol`.
+/// What a daemon whose restart costs `restart` answers the hello of a client
+/// that speaks `protocol`.
 async fn hello_answer(
-    in_progress: u64,
+    restart: RestartCost,
     protocol: ProtocolVersion,
 ) -> Result<HelloResponse, VersionMismatch> {
     let (client, server) = duplex(64 * 1024);
     let server = tokio::spawn(async move {
-        let service = Arc::new(FakeService { in_progress });
+        let service = Arc::new(FakeService { restart });
         serve_connection(server, &test_info(), service, std::future::pending()).await
     });
     let (read, mut write) = tokio::io::split(client);
@@ -507,27 +518,31 @@ async fn hello_answer(
 
 // Covers: the daemon's version-skew policy at the handshake (#1776). A
 // client of its protocol version is accepted. A newer client is refused and
-// told that restarting the daemon is the fix and how many things that would
-// interrupt; an older one is told to change itself, with no count, since no
-// daemon restart helps it.
+// told that restarting the daemon is the fix and what that would cost; an
+// older one is told to change itself, with no cost, since no daemon restart
+// helps it.
 // Owner: protocol server handshake.
 #[tokio::test]
 async fn hello_accepts_the_daemons_version_and_tells_any_other_which_side_to_change() {
     let newer = ProtocolVersion::new(PROTOCOL_VERSION.major, PROTOCOL_VERSION.minor + 1);
     let older = ProtocolVersion::new(0, 0);
-    let refusal = |client, fix, in_progress| VersionMismatch {
+    let in_use = RestartCost {
+        in_progress: 2,
+        clients: 1,
+    };
+    let refusal = |client, fix, restart| VersionMismatch {
         daemon: PROTOCOL_VERSION,
         client,
         fix,
-        in_progress,
+        restart,
     };
 
     assert_eq!(
         (
-            hello_answer(2, PROTOCOL_VERSION).await,
-            hello_answer(2, newer).await,
-            hello_answer(0, newer).await,
-            hello_answer(2, older).await,
+            hello_answer(in_use, PROTOCOL_VERSION).await,
+            hello_answer(in_use, newer).await,
+            hello_answer(UNUSED, newer).await,
+            hello_answer(in_use, older).await,
         ),
         (
             Ok(HelloResponse {
@@ -535,8 +550,8 @@ async fn hello_accepts_the_daemons_version_and_tells_any_other_which_side_to_cha
                 daemon: test_info().daemon,
                 capabilities: Vec::new(),
             }),
-            Err(refusal(newer, VersionFix::RestartDaemon, Some(2))),
-            Err(refusal(newer, VersionFix::RestartDaemon, Some(0))),
+            Err(refusal(newer, VersionFix::RestartDaemon, Some(in_use))),
+            Err(refusal(newer, VersionFix::RestartDaemon, Some(UNUSED))),
             Err(refusal(older, VersionFix::UpdateClient, None)),
         )
     );
@@ -632,7 +647,7 @@ impl AttachService {
 }
 
 impl Service for AttachService {
-    nothing_in_progress!();
+    nobody_uses_it!();
 
     async fn status(&self) -> DaemonStatus {
         self.release_status.notified().await;
@@ -1007,7 +1022,7 @@ fn login_prompt() -> LoginPrompt {
 }
 
 impl Service for LoginService {
-    nothing_in_progress!();
+    nobody_uses_it!();
 
     async fn status(&self) -> DaemonStatus {
         test_status()

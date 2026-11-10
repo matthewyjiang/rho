@@ -79,7 +79,7 @@ pub enum ClientError {
     InvalidMessage(#[from] ParseError),
     /// The daemon and this client speak incompatible protocol versions. The
     /// message says which side to change and, when that is the daemon, what
-    /// restarting it would interrupt.
+    /// restarting it would cost.
     #[error("{0}")]
     VersionMismatch(VersionMismatch),
     /// The daemon answered with an error. A `null`-id error (the daemon

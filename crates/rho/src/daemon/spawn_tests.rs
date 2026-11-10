@@ -10,8 +10,8 @@ use std::{
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    ErrorCode, Message, MessageReader, MessageWriter, ProtocolVersion, Response, RpcError,
-    PROTOCOL_VERSION,
+    ErrorCode, Message, MessageReader, MessageWriter, ProtocolVersion, Response, RestartCost,
+    RpcError, PROTOCOL_VERSION,
 };
 use tempfile::TempDir;
 use tokio::{
@@ -199,17 +199,17 @@ async fn a_client_on_another_socket_is_told_where_the_daemon_listens() {
 }
 
 /// A daemon of another protocol version, as far as a client can tell: it
-/// holds the daemon lock, answers every hello with `refusal`, and stops on
-/// SIGTERM by removing its socket and letting go of the lock. The pid it
-/// records is a child process's, so a signal a client sends the daemon lands
-/// there, not on the test process.
+/// holds the daemon lock, answers each hello with the next of `refusals`,
+/// repeating the last, and stops on SIGTERM by removing its socket and
+/// letting go of the lock. The pid it records is a child process's, so a
+/// signal a client sends the daemon lands there, not on the test process.
 struct RefusingDaemon {
     /// Resolves once the daemon stopped, with how its process ended.
     stopped: JoinHandle<ExitStatus>,
 }
 
 impl RefusingDaemon {
-    fn start(paths: &DaemonPaths, refusal: VersionMismatch) -> Self {
+    fn start(paths: &DaemonPaths, refusals: &[VersionMismatch]) -> Self {
         let lock = lock::acquire(paths).unwrap();
         paths.prepare_runtime_dir().unwrap();
         let listener = UnixListener::bind(&paths.socket).unwrap();
@@ -223,13 +223,15 @@ impl RefusingDaemon {
             &lock::DaemonRecord {
                 pid: process.id().expect("the process is running"),
                 version: "0.0.0".into(),
-                protocol: refusal.daemon,
+                protocol: refusals[0].daemon,
                 started_at: 0,
                 socket: paths.socket.clone(),
             },
         )
         .unwrap();
         let socket = paths.socket.clone();
+        let refusals = refusals.to_vec();
+        let mut answered = 0;
         let stopped = tokio::spawn(async move {
             let _lock = lock;
             loop {
@@ -239,7 +241,10 @@ impl RefusingDaemon {
                         return ended.unwrap();
                     }
                     accepted = listener.accept() => {
-                        tokio::spawn(refuse(accepted.unwrap().0, refusal));
+                        let refusal = refusals[answered.min(refusals.len() - 1)];
+                        answered += 1;
+                        // In turn, so the hellos are answered in order.
+                        refuse(accepted.unwrap().0, refusal).await;
                     }
                 }
             }
@@ -267,26 +272,31 @@ async fn refuse(stream: UnixStream, refusal: VersionMismatch) {
 }
 
 /// The refusal of a daemon one protocol version older than this client,
-/// with `in_progress` things a restart would interrupt.
-fn older_daemon(in_progress: Option<u64>) -> VersionMismatch {
+/// whose restart costs `restart`.
+fn older_daemon(restart: Option<RestartCost>) -> VersionMismatch {
     VersionMismatch {
         daemon: ProtocolVersion::new(0, 0),
         client: PROTOCOL_VERSION,
         fix: VersionFix::RestartDaemon,
-        in_progress,
+        restart,
     }
 }
 
-// Covers: a client that finds a daemon older than itself with nothing in
-// progress stops it and starts its own in its place, then connects to that
-// one, instead of failing on a daemon nobody is using (#1776).
+const UNUSED: RestartCost = RestartCost {
+    in_progress: 0,
+    clients: 0,
+};
+
+// Covers: a client that finds a daemon older than itself that nobody is
+// using stops it and starts its own in its place, then connects to that
+// one, instead of failing on a daemon it could replace at no cost (#1776).
 // Owner: daemon auto-spawn.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_idle_older_daemon_is_replaced_by_the_clients_own() {
+async fn an_unused_older_daemon_is_replaced_by_the_clients_own() {
     let root = TempDir::new().unwrap();
     let paths = DaemonPaths::resolve(root.path(), |_| None).unwrap();
     let spawner = InProcessSpawner::default();
-    let older = RefusingDaemon::start(&paths, older_daemon(Some(0)));
+    let older = RefusingDaemon::start(&paths, &[older_daemon(Some(UNUSED))]);
 
     let pid = tokio::time::timeout(
         RACE_DEADLINE,
@@ -313,47 +323,104 @@ async fn an_idle_older_daemon_is_replaced_by_the_clients_own() {
     }
 }
 
-// Covers: a client replaces no daemon it cannot tell is older and idle: one
-// with work in progress, one that does not say what it has in progress, and
-// one newer than the client all keep running, the client starts no daemon,
-// and its error is the daemon's refusal, which names the fix and what a
-// restart would interrupt (#1776).
+/// A spawner whose daemon could not start, and which is never asked to.
+struct CannotStart;
+
+impl DaemonSpawner for CannotStart {
+    fn check(&self) -> io::Result<()> {
+        Err(io::Error::other("its environment is invalid"))
+    }
+
+    fn spawn(&self, _: &DaemonPaths) -> io::Result<()> {
+        panic!("a daemon that cannot start is not started");
+    }
+}
+
+// Covers: a client stops no daemon it may not replace (#1776). One with
+// work in progress, one another client is connected to, one that does not
+// say what a restart costs, and one newer than the client all keep running,
+// as does one that came into use, or was itself replaced by a newer one,
+// while the client waited to replace it, and one the client could not start
+// a daemon in place of. The client starts no daemon, and its error names
+// what stood in the way.
 // Owner: daemon auto-spawn.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_daemon_that_is_busy_or_newer_keeps_running_and_its_refusal_is_the_error() {
+async fn a_daemon_the_client_may_not_replace_keeps_running() {
+    let cost = |in_progress, clients| {
+        Some(RestartCost {
+            in_progress,
+            clients,
+        })
+    };
     let newer_daemon = VersionMismatch {
         daemon: ProtocolVersion::new(PROTOCOL_VERSION.major + 1, 0),
         client: PROTOCOL_VERSION,
         fix: VersionFix::UpdateClient,
-        in_progress: None,
+        restart: None,
     };
-    for refusal in [older_daemon(Some(2)), older_daemon(None), newer_daemon] {
+    let unused = older_daemon(Some(UNUSED));
+    let busy = older_daemon(cost(2, 0));
+    let refused_by = |refusal: VersionMismatch| refusal.to_string();
+    let can_start: &dyn DaemonSpawner = &InProcessSpawner::default();
+    let cases: [(&str, Vec<VersionMismatch>, &dyn DaemonSpawner, String); 7] = [
+        ("busy", vec![busy], can_start, refused_by(busy)),
+        (
+            "another client is connected",
+            vec![older_daemon(cost(0, 1))],
+            can_start,
+            refused_by(older_daemon(cost(0, 1))),
+        ),
+        (
+            "does not say what a restart costs",
+            vec![older_daemon(None)],
+            can_start,
+            refused_by(older_daemon(None)),
+        ),
+        (
+            "newer",
+            vec![newer_daemon],
+            can_start,
+            refused_by(newer_daemon),
+        ),
+        (
+            "came into use while the client waited",
+            vec![unused, busy],
+            can_start,
+            refused_by(busy),
+        ),
+        (
+            "replaced by a newer daemon while the client waited",
+            vec![unused, newer_daemon],
+            can_start,
+            refused_by(newer_daemon),
+        ),
+        (
+            "the client's own daemon could not start",
+            vec![unused],
+            &CannotStart,
+            "could not start the rho daemon: its environment is invalid".to_owned(),
+        ),
+    ];
+    for (name, refusals, spawner, expected) in cases {
         let root = TempDir::new().unwrap();
         let paths = DaemonPaths::resolve(root.path(), |_| None).unwrap();
-        let spawner = InProcessSpawner::default();
-        let _daemon = RefusingDaemon::start(&paths, refusal);
+        let _daemon = RefusingDaemon::start(&paths, &refusals);
 
         let error = tokio::time::timeout(
             RACE_DEADLINE,
-            connect_or_spawn(&paths, cli_client_info(), &spawner),
+            connect_or_spawn(&paths, cli_client_info(), spawner),
         )
         .await
         .expect("the client is refused")
         .err()
         .expect("the client does not connect");
 
-        let SpawnError::Connect(ConnectError::Handshake(ClientError::VersionMismatch(reported))) =
-            error
-        else {
-            panic!("expected the daemon's refusal, got {error:?}");
-        };
+        // A client that stopped the daemon waited for it to let go of the
+        // lock, so a lock still held is a daemon nobody signalled.
         assert_eq!(
-            (
-                reported,
-                lock::is_held(&paths).unwrap(),
-                spawner.spawns.load(Ordering::SeqCst)
-            ),
-            (refusal, true, 0)
+            (error.to_string(), lock::is_held(&paths).unwrap()),
+            (expected, true),
+            "{name}"
         );
     }
 }

@@ -13,7 +13,7 @@
 //!    ([`ProtocolVersion::is_compatible_with`]), or replies
 //!    [`ErrorCode::VersionMismatch`] with a [`VersionMismatch`] saying which
 //!    side to change and, for a client newer than the daemon, what
-//!    restarting the daemon would interrupt.
+//!    restarting the daemon would cost ([`RestartCost`]).
 //! 3. The client sends requests such as [`methods::DAEMON_STATUS`]. The
 //!    daemon serves them concurrently and answers each one when it completes,
 //!    so responses can arrive out of order; each carries its request's id.
@@ -128,4 +128,4 @@ pub use methods::{
 };
 pub use server::{serve_connection, ServerInfo, Service, CLOSE_GRACE};
 pub use subscription::{subscription, Published, Publisher, Subscription};
-pub use version::{ProtocolVersion, VersionFix, VersionMismatch, PROTOCOL_VERSION};
+pub use version::{ProtocolVersion, RestartCost, VersionFix, VersionMismatch, PROTOCOL_VERSION};

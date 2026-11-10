@@ -27,7 +27,7 @@ fn version_mismatch_follows_the_compatibility_rule_and_blames_the_older_side() {
                 daemon,
                 client,
                 fix,
-                in_progress: None,
+                restart: None,
             }),
             "daemon {daemon}, client {client}"
         );

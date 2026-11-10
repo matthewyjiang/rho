@@ -1,6 +1,6 @@
 //! Connecting to the daemon, starting one first when none is running, or
-//! when the one running is older than this client and has nothing in
-//! progress (#1776).
+//! when the one running is older than this client and nobody is using it
+//! (#1776).
 
 use std::{
     fs::{File, OpenOptions},
@@ -49,6 +49,14 @@ const DRAIN_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// `connect_or_spawn` detects readiness by connecting. The caller holds the
 /// spawn lock, so at most one `spawn` runs per runtime directory at a time.
 pub(crate) trait DaemonSpawner: Send + Sync {
+    /// Whether a daemon `spawn` starts could start, as far as the caller's
+    /// side can tell. `connect_or_spawn` asks before every `spawn`, and
+    /// before it stops an older daemon to start this one in its place, so a
+    /// daemon that works is never stopped for one that cannot start.
+    fn check(&self) -> io::Result<()> {
+        Ok(())
+    }
+
     fn spawn(&self, paths: &DaemonPaths) -> io::Result<()>;
 }
 
@@ -152,11 +160,12 @@ pub(crate) enum SpawnError {
 /// Connects to the daemon, starting one with `spawner` if none is running.
 ///
 /// A daemon that refuses this client as newer than itself is replaced when
-/// it reports nothing in progress: this stops it and starts one with
+/// it reports that restarting it is free: this stops it and starts one with
 /// `spawner` in its place, as `rho daemon restart` would, since that
-/// interrupts nothing. One with work in progress keeps running, and the
-/// refusal, which names how much a restart would interrupt, is the error
-/// (#1776). A daemon newer than this client is never replaced.
+/// interrupts nothing and disconnects no one. One with work in progress or
+/// another client connected keeps running, and the refusal, which names
+/// what a restart would cost, is the error (#1776). A daemon newer than
+/// this client is never replaced.
 ///
 /// Concurrent callers serialize on the spawn lock: the first starts the
 /// daemon, and the rest connect to it once they get the lock.
@@ -183,22 +192,25 @@ async fn connect_or_spawn_observing(
 ) -> Result<Connection, SpawnError> {
     match connect(paths, client.clone()).await {
         Err(ConnectError::NotRunning) => {}
-        Err(refusal) if is_idle_older_daemon(&refusal) => {}
+        Err(refusal) if is_unused_older_daemon(&refusal) => {}
         connected => return Ok(connected?),
     }
     paths.prepare_runtime_dir()?;
     // Serializes clients that race to start, or replace, a daemon.
     let _spawn_lock = lock_spawn(&paths.runtime_dir.join("spawn.lock")).await?;
     // Another caller may have started the daemon, or replaced the older
-    // one, while this one waited.
-    match wait_while_held(paths, &client, on_held).await {
+    // one, while this one waited, and the older one may be in use by now:
+    // only what it answers under the lock decides.
+    let unused_older = match wait_while_held(paths, &client, on_held).await {
         Ok(Some(connection)) => return Ok(connection),
-        Ok(None) => {}
-        Err(SpawnError::Connect(refusal)) if is_idle_older_daemon(&refusal) => {
-            tracing::info!(%refusal, "replacing the idle rho daemon with this rho");
-            stop_older(paths).await?;
-        }
+        Ok(None) => None,
+        Err(SpawnError::Connect(refusal)) if is_unused_older_daemon(&refusal) => Some(refusal),
         Err(error) => return Err(error),
+    };
+    spawner.check().map_err(SpawnError::Spawn)?;
+    if let Some(refusal) = unused_older {
+        tracing::info!(%refusal, "replacing the unused rho daemon with this rho");
+        stop_older(paths).await?;
     }
     spawner.spawn(paths).map_err(SpawnError::Spawn)?;
     let started = Instant::now();
@@ -220,16 +232,17 @@ async fn connect_or_spawn_observing(
 }
 
 /// Whether the daemon refused this client as newer than itself and reported
-/// nothing in progress, so replacing it interrupts nothing. A daemon that
-/// does not say what it has in progress is not idle.
-fn is_idle_older_daemon(refusal: &ConnectError) -> bool {
+/// that restarting it is free, so replacing it interrupts nothing and
+/// disconnects no one. A daemon that does not say what a restart costs is
+/// in use.
+fn is_unused_older_daemon(refusal: &ConnectError) -> bool {
     matches!(
         refusal,
         ConnectError::Handshake(ClientError::VersionMismatch(VersionMismatch {
             fix: VersionFix::RestartDaemon,
-            in_progress: Some(0),
+            restart: Some(cost),
             ..
-        }))
+        })) if cost.is_free()
     )
 }
 
@@ -237,7 +250,8 @@ fn is_idle_older_daemon(refusal: &ConnectError) -> bool {
 /// go of the lock, so the caller can start this rho in its place. It speaks
 /// another protocol, so it cannot take a stop request and is signalled
 /// instead, which stops it as gracefully: work that began since it reported
-/// none is recorded interrupted, as `rho daemon stop` records it.
+/// none is recorded interrupted, as `rho daemon stop` records it, and a
+/// client that connected since is detached as from any stop.
 async fn stop_older(paths: &DaemonPaths) -> Result<(), SpawnError> {
     let signalled = Instant::now();
     lock::terminate_recorded_daemon(paths).map_err(SpawnError::StopOlder)?;

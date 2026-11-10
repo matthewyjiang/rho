@@ -15,7 +15,10 @@
 use std::{
     io,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
@@ -23,14 +26,14 @@ use rho_protocol::{
     AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse,
     AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
     AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, ClientInfo, DaemonStatus,
-    DetachReason, JobListResponse, LoginStream, PendingUpgrade, RpcError, Service,
-    SessionAnswerParams, SessionAnswerResponse, SessionAttachParams, SessionAttachResponse,
-    SessionCancelParams, SessionCancelResponse, SessionConfigureParams, SessionConfigureResponse,
-    SessionDeleteParams, SessionDeleteResponse, SessionHoldParams, SessionHoldResponse,
-    SessionListParams, SessionListResponse, SessionNewParams, SessionNewResponse,
-    SessionObserveParams, SessionPromptParams, SessionPromptResponse, SessionRenameParams,
-    SessionRenameResponse, SessionSteerParams, SessionSteerResponse, SessionUnsteerParams,
-    SessionUnsteerResponse, Subscription, PROTOCOL_VERSION,
+    DetachReason, JobListResponse, LoginStream, PendingUpgrade, ProtocolVersion, RestartCost,
+    RpcError, Service, SessionAnswerParams, SessionAnswerResponse, SessionAttachParams,
+    SessionAttachResponse, SessionCancelParams, SessionCancelResponse, SessionConfigureParams,
+    SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse, SessionHoldParams,
+    SessionHoldResponse, SessionListParams, SessionListResponse, SessionNewParams,
+    SessionNewResponse, SessionObserveParams, SessionPromptParams, SessionPromptResponse,
+    SessionRenameParams, SessionRenameResponse, SessionSteerParams, SessionSteerResponse,
+    SessionUnsteerParams, SessionUnsteerResponse, Subscription, PROTOCOL_VERSION,
 };
 use rho_providers::credentials::CredentialStoreBackend;
 
@@ -78,6 +81,9 @@ pub(super) struct DaemonHost {
     sessions: Arc<Sessions>,
     logins: Arc<Logins>,
     upgrades: Upgrades,
+    /// Connections whose handshake the daemon accepted and that have not
+    /// left: the clients a restart would disconnect.
+    clients: AtomicU64,
     /// `RHO_CREDENTIAL_STORE` in the daemon's environment, parsed once at
     /// startup, which refuses a value it does not know.
     store_environment: Option<CredentialStoreBackend>,
@@ -105,6 +111,7 @@ impl DaemonHost {
             sessions: Arc::new(Sessions::new(Arc::clone(&jobs), rho_home)),
             logins: Arc::new(Logins::new()),
             upgrades: Upgrades::default(),
+            clients: AtomicU64::new(0),
             shutdown,
             jobs,
             store_environment,
@@ -148,9 +155,19 @@ impl DaemonHost {
         let Some(idle) = self.jobs.idle() else {
             return false;
         };
-        self.logins.under_way() == 0
-            && self.sessions.upgrade_blockers() == 0
-            && self.jobs.close_if_still(idle)
+        self.work_outside_jobs() == 0 && self.jobs.close_if_still(idle)
+    }
+
+    /// What a restart would cut short besides jobs in progress: logins
+    /// under way and sessions with work of their own. An upgrade waits for
+    /// it, and a newer client is told of it, so both count it here.
+    fn work_outside_jobs(&self) -> usize {
+        self.logins.under_way() + self.sessions.upgrade_blockers()
+    }
+
+    /// Everything a restart would cut short, which an upgrade waits for.
+    fn in_progress(&self) -> u64 {
+        u64::try_from(self.jobs.in_progress() + self.work_outside_jobs()).unwrap_or(u64::MAX)
     }
 
     /// Whether the daemon's stop, or restart, has begun.
@@ -216,15 +233,30 @@ impl Service for DaemonHost {
     }
 
     fn hello(&self, client: &ClientInfo) {
+        self.clients.fetch_add(1, Ordering::Relaxed);
         self.upgrades.heard(client);
     }
 
-    /// What an upgrade waits for is what a restart interrupts, so the count
-    /// a refused newer client hears is the one `status` reports pending.
-    fn in_progress(&self) -> u64 {
-        let in_progress =
-            self.jobs.in_progress() + self.logins.under_way() + self.sessions.upgrade_blockers();
-        u64::try_from(in_progress).unwrap_or(u64::MAX)
+    fn left(&self) {
+        self.clients.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    /// What an upgrade waits for is what a restart interrupts, so a refused
+    /// newer client hears the count `status` reports pending, and how many
+    /// clients the restart would leave without a daemon they can use.
+    fn refused_newer(&self, client: ProtocolVersion) -> RestartCost {
+        let cost = RestartCost {
+            in_progress: self.in_progress(),
+            clients: self.clients.load(Ordering::Relaxed),
+        };
+        // That client may now stop this daemon, so its log says why.
+        tracing::info!(
+            %client,
+            in_progress = cost.in_progress,
+            clients = cost.clients,
+            "refused a client of a newer protocol; it replaces a daemon with nothing in progress and no other client"
+        );
+        cost
     }
 
     async fn stop(&self) {

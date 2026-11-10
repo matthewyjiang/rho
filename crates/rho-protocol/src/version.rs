@@ -18,7 +18,8 @@ pub struct ProtocolVersion {
 
 /// The protocol this crate speaks. It stays at major 0 until a frontend
 /// outside this repository has run against it (#1776), so every change to
-/// the wire raises the minor, and CI holds each change to that.
+/// the wire raises the minor; CI checks each change against the commit
+/// before it.
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::new(0, 1);
 
 impl ProtocolVersion {
@@ -47,12 +48,33 @@ impl fmt::Display for ProtocolVersion {
 #[serde(rename_all = "snake_case")]
 pub enum VersionFix {
     /// The running daemon is older than the client. Replacing it with the
-    /// client's version lets them talk; [`VersionMismatch::in_progress`]
-    /// says what that interrupts.
+    /// client's version lets them talk; [`VersionMismatch::restart`] says
+    /// what that costs.
     RestartDaemon,
     /// The client is older than the daemon. Update the client, or restart
     /// one that was updated while it ran.
     UpdateClient,
+}
+
+/// What restarting the daemon would cost, as of the moment the daemon
+/// counted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct RestartCost {
+    /// How many things the restart would interrupt: jobs in progress
+    /// (queued, running, or waiting for input), logins under way, and
+    /// sessions with work of their own, such as a background process.
+    pub in_progress: u64,
+    /// How many other clients are connected, which the restart disconnects.
+    /// They speak the daemon's protocol, so each needs updating or
+    /// restarting before it can use a newer daemon.
+    pub clients: u64,
+}
+
+impl RestartCost {
+    /// Whether the restart would interrupt nothing and disconnect no one.
+    pub const fn is_free(self) -> bool {
+        self.in_progress == 0 && self.clients == 0
+    }
 }
 
 /// An incompatible handshake. The daemon sends this as the `data` of a
@@ -60,19 +82,18 @@ pub enum VersionFix {
 /// actionable message for users.
 ///
 /// Both sides must read this whatever their versions, so it only ever gains
-/// optional fields.
+/// optional fields, also while the protocol is unstable; CI holds it to
+/// that.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct VersionMismatch {
     pub daemon: ProtocolVersion,
     pub client: ProtocolVersion,
     pub fix: VersionFix,
-    /// How many things restarting the daemon would interrupt: jobs in
-    /// progress (queued, running, or waiting for input), logins under way,
-    /// and sessions with work of their own, such as a background process.
-    /// The daemon sends it with [`VersionFix::RestartDaemon`], so a client
-    /// can say what the restart costs before anyone runs it.
+    /// What restarting the daemon would cost. The daemon sends it with
+    /// [`VersionFix::RestartDaemon`], so a client can say so before anyone
+    /// restarts it, and can tell a daemon nobody is using.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub in_progress: Option<u64>,
+    pub restart: Option<RestartCost>,
 }
 
 impl VersionMismatch {
@@ -91,7 +112,7 @@ impl VersionMismatch {
             daemon,
             client,
             fix,
-            in_progress: None,
+            restart: None,
         })
     }
 }
@@ -102,7 +123,7 @@ impl fmt::Display for VersionMismatch {
             daemon,
             client,
             fix,
-            in_progress,
+            restart,
         } = self;
         match fix {
             VersionFix::RestartDaemon => {
@@ -111,11 +132,24 @@ impl fmt::Display for VersionMismatch {
                     "rho daemon speaks protocol {daemon}, older than this client's {client}; \
                      run `rho daemon restart` to replace it, which interrupts "
                 )?;
+                let Some(RestartCost {
+                    in_progress,
+                    clients,
+                }) = restart
+                else {
+                    return formatter.write_str("its work in progress");
+                };
                 match in_progress {
-                    Some(0) => formatter.write_str("nothing"),
-                    Some(1) => formatter.write_str("1 job in progress"),
-                    Some(count) => write!(formatter, "{count} jobs in progress"),
-                    None => formatter.write_str("the jobs it has in progress"),
+                    0 => formatter.write_str("nothing"),
+                    count => write!(
+                        formatter,
+                        "{count} in progress (jobs, logins, or background work)"
+                    ),
+                }?;
+                match clients {
+                    0 => Ok(()),
+                    1 => formatter.write_str(" and disconnects 1 other client"),
+                    count => write!(formatter, " and disconnects {count} other clients"),
                 }
             }
             VersionFix::UpdateClient => write!(
