@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, ffi::OsStr, path::Path};
 
 use rho_sdk::{tool::ToolContext, CapabilityRequest, CapabilitySource, PathScope};
 
-use super::{path_scope, project_agent_catalogs_trusted, AppWorkflowToolService};
+use super::{path_scope, AppWorkflowToolService};
 
 impl AppWorkflowToolService {
     pub(super) async fn authorized_config(
@@ -84,16 +84,19 @@ impl AppWorkflowToolService {
         Ok(opened)
     }
 
+    /// The agents a plan of `workflow_entry` may name, read through the
+    /// permission policy, project ones only under `trust`.
     pub(super) async fn authorized_agent_catalog(
         &self,
         context: &ToolContext,
         workflow_entry: &Path,
+        trust: crate::workspace::ProjectTrusts,
     ) -> anyhow::Result<crate::agent::AgentCatalog> {
         let home = crate::paths::home_dir();
         let mut sources = crate::agent::AgentCatalogSources::default();
         // Plugin agent files skip the permission gate; see
         // `PluginAgentFiles::read_sources`.
-        let plugins = crate::plugins::agent_tiers(&self.cwd, home.as_deref());
+        let plugins = crate::plugins::agent_tiers(&self.cwd, home.as_deref(), trust);
         let read = |tier: &[crate::plugins::PluginAgentFiles]| {
             tier.iter()
                 .flat_map(crate::plugins::PluginAgentFiles::read_sources)
@@ -106,7 +109,7 @@ impl AppWorkflowToolService {
             sources.agents_home = self.authorized_agent_sources(context, &agents_home).await?;
             sources.rho_home = self.authorized_agent_sources(context, &rho_home).await?;
         }
-        if project_agent_catalogs_trusted() {
+        if trust.agents.is_trusted() {
             for root in crate::workspace::project_ancestor_dirs(&self.cwd)
                 .into_iter()
                 .map(|path| path.join(".agents/agents"))

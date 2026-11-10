@@ -173,13 +173,16 @@ fn authorization_plan<'a>(
 }
 
 /// Resolve the HTTP client for one Streamable HTTP server before its session
-/// starts, running the OAuth flow when the server is configured for it.
+/// starts, running the OAuth flow when the server is configured for it. Its
+/// tokens are kept in `tokens`, the credentials of the session the server
+/// belongs to, whose writes rebuild no provider.
 pub(super) async fn prepare_http_client(
     identity: &str,
     url: &str,
     oauth: Option<&McpOAuthConfig>,
     headers: &HashMap<HeaderName, HeaderValue>,
     mode: McpAuthorizationMode,
+    tokens: Arc<dyn rho_providers::credentials::CredentialStore>,
 ) -> anyhow::Result<McpHttpClient> {
     let oauth = match authorization_plan(identity, oauth, headers) {
         AuthorizationPlan::Skip => return Ok(McpHttpClient::Default),
@@ -191,9 +194,7 @@ pub(super) async fn prepare_http_client(
         oauth,
         headers,
         mode,
-        // MCP tokens feed no model provider, so saving or refreshing them
-        // must not rebuild every session's provider (#1662).
-        Arc::new(crate::credential_store::UntrackedCredentialStore),
+        tokens,
         AuthorizationPrompt::DesktopBrowser,
     )
     .await

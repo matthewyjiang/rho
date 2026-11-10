@@ -42,14 +42,25 @@ fn login_messages_travel_in_their_wire_form() {
         AuthLoginParams {
             auth: "xai-oauth".into(),
             flow: Some(LoginFlow::DeviceCode),
+            environment: [("RHO_CREDENTIAL_STORE".to_owned(), "file".to_owned())]
+                .into_iter()
+                .collect(),
         },
-        json!({"auth": "xai-oauth", "flow": "device_code"}),
+        json!({
+            "auth": "xai-oauth",
+            "flow": "device_code",
+            "environment": {"RHO_CREDENTIAL_STORE": "file"},
+        }),
     );
     assert_eq!(
-        serde_json::from_value::<AuthLoginParams>(json!({"auth": "github-copilot"})).unwrap(),
+        serde_json::from_value::<AuthLoginParams>(
+            json!({"auth": "github-copilot", "environment": {}})
+        )
+        .unwrap(),
         AuthLoginParams {
             auth: "github-copilot".into(),
             flow: None,
+            environment: Default::default(),
         }
     );
     round_trips(

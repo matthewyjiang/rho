@@ -51,7 +51,11 @@ pub(super) async fn run(args: &ClassifierEvalArgs, cli: &Cli) -> anyhow::Result<
     if let Some(reference) = &args.screen_model {
         select_model(&mut config, DECISION_SCREEN_ID, reference)?;
     }
-    let model = ClassifierModel::resolve(&config).await?;
+    let model = ClassifierModel::resolve(
+        &config,
+        std::sync::Arc::new(crate::credential_store::AppCredentialStore),
+    )
+    .await?;
     let auth = config
         .internal_agent_model(PERMISSION_CLASSIFIER_AGENT_ID)
         .and_then(InternalAgentModelConfig::rho)

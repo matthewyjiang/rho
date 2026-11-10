@@ -48,10 +48,12 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
             .command(&runner.binary)
             .args(["daemon", "restart"])
             .output()?;
+        // The error names the daemon's log, which goes with the sandbox.
         ensure!(
             restart.status.success(),
-            "rho daemon restart failed: {}",
-            String::from_utf8_lossy(&restart.stderr)
+            "rho daemon restart failed: {}\ndaemon log:\n{}",
+            String::from_utf8_lossy(&restart.stderr),
+            home.daemon_log()
         );
         Ok(())
     };

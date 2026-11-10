@@ -196,7 +196,13 @@ impl SessionRuntime {
             &build.launch.agent,
             &stored,
             session_config(process_config, &host_mcp),
-            || Ok(AgentCatalog::discover(cwd)?),
+            || {
+                Ok(AgentCatalog::discover(
+                    cwd,
+                    build.host.environment.project_trust(),
+                )?)
+            },
+            build.host.environment.credentials().as_ref(),
         )?;
         let credentials = SessionCredentials::Read(AppCredentialStore::generation());
         let (built, permission) =

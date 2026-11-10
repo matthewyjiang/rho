@@ -21,7 +21,8 @@
 //! The session's processes, MCP servers, hooks, OpenAPI sources, CLI agents,
 //! and workflow runs use its client's environment, not the daemon's (#1659):
 //! the opening client's, then each prompting client's (see
-//! [`session_environment`]).
+//! [`session_environment`]). Its project trust (`RHO_TRUST_PROJECT_*`) is
+//! the opening client's for as long as the daemon has it loaded (#1779).
 
 use std::{
     path::{Path, PathBuf},
@@ -36,7 +37,7 @@ use super::{
     setup::Setup,
 };
 use crate::{
-    agent::{AgentCapabilities, AgentCatalog, DEFAULT_AGENT_ID},
+    agent::{AgentCapabilities, AgentCatalog, AgentDefinition, DEFAULT_AGENT_ID},
     app::{
         agent_binding::{
             root_host_tools, AgentBinder, AgentInvocation, AgentRole, BoundAgent, LaunchTools,
@@ -52,6 +53,7 @@ use crate::{
     session::{Session as StoredSession, SessionPersistence},
     session_environment::{Ambient, SessionEnvironment},
     tools::mcp::McpAuthorizationMode,
+    workspace::{ProjectTrust, ProjectTrusts},
 };
 
 /// The directory a session works in: an existing directory, canonicalized.
@@ -130,7 +132,9 @@ pub(super) struct OpenedSession {
 /// credentials from its tools' processes. A variable no process
 /// could be given is invalid params, naming it, so it fails the request
 /// rather than every later command (#1659).
-pub(super) fn session_environment(environment: &ClientEnvironment) -> Result<Ambient, RpcError> {
+pub(in crate::app::daemon_host) fn session_environment(
+    environment: &ClientEnvironment,
+) -> Result<Ambient, RpcError> {
     let variables = environment
         .iter()
         .map(|(name, value)| {
@@ -165,7 +169,7 @@ pub(super) async fn open_session(
     let setup = Setup::resolve(&with.setup, opening.cwd(), saved)?;
     open_runtime(
         opening,
-        &with.environment,
+        SessionEnvironment::new(with.environment.clone()),
         setup,
         SessionUse::Run,
         subagents,
@@ -175,19 +179,57 @@ pub(super) async fn open_session(
     .map_err(open_failed)
 }
 
+/// The project trust `stored` is read under, which no client is there to
+/// grant: none when the agents it was saved as are found without, so a
+/// project file never stands in for an agent saved without trust; else the
+/// project's agents and plugins, which a session saved as one of them
+/// needs. A read only parses them: it starts no hooks, tool sources, or
+/// turns.
+fn reading_trust(stored: &StoredSession) -> anyhow::Result<ProjectTrusts> {
+    let catalog = AgentCatalog::discover(stored.cwd(), ProjectTrusts::UNTRUSTED)?;
+    let found = |id: &str, accepts: &dyn Fn(&AgentDefinition) -> bool| {
+        catalog
+            .find(id)
+            .is_ok_and(|entry| accepts(&entry.definition))
+    };
+    let root = stored.root_agent()?;
+    let delegated = stored.delegated_agent_id()?;
+    let found_untrusted = root
+        .as_ref()
+        .is_none_or(|root| found(&root.id, &|definition| root.validate(definition).is_ok()))
+        && delegated.as_deref().is_none_or(|id| {
+            found(id, &|definition| {
+                stored
+                    .validate_agent_definition_identity(definition)
+                    .is_ok()
+            })
+        });
+    Ok(if found_untrusted {
+        ProjectTrusts::UNTRUSTED
+    } else {
+        ProjectTrusts {
+            agents: ProjectTrust::Trusted,
+            plugins: ProjectTrust::Trusted,
+            ..ProjectTrusts::UNTRUSTED
+        }
+    })
+}
+
 /// Opens `stored` only to read what it saved, its turns recorded on job
 /// `job`: it starts none of its MCP servers, OpenAPI sources, or hooks, sees
-/// no client's environment, and takes no setup but what its file keeps.
-/// Fails as [`open_session`] does.
+/// no client's environment (see [`SessionEnvironment::for_reading`]), and
+/// takes no setup but what its file keeps. Its agents are found under
+/// [`reading_trust`]. Fails as [`open_session`] does.
 pub(super) async fn open_to_read(
     stored: StoredSession,
     subagents: &Subagents,
     job: &JobId,
 ) -> Result<OpenedSession, RpcError> {
+    let project_trust = reading_trust(&stored).map_err(open_failed)?;
     let setup = Setup::resolve(&SessionSetup::default(), stored.cwd(), Some(&stored))?;
     open_runtime(
         Opening::Saved(stored),
-        &Ambient::Client(Arc::default()),
+        SessionEnvironment::for_reading(project_trust),
         setup,
         SessionUse::Read,
         subagents,
@@ -197,17 +239,17 @@ pub(super) async fn open_to_read(
     .map_err(open_failed)
 }
 
-/// [`open_session`] and [`open_to_read`] once the setup resolved.
+/// [`open_session`] and [`open_to_read`] once the setup resolved. The
+/// session's agent is found under `environment`'s project trust (#1779).
 async fn open_runtime(
     opening: Opening,
-    environment: &Ambient,
+    environment: SessionEnvironment,
     setup: Setup,
     session_use: SessionUse,
     subagents: &Subagents,
     job: &JobId,
 ) -> anyhow::Result<OpenedSession> {
     let cwd = &opening.cwd().to_path_buf();
-    let environment = SessionEnvironment::new(environment.clone());
     let Setup {
         left_out,
         questions,
@@ -232,8 +274,11 @@ async fn open_runtime(
             &config,
             agent.as_deref().unwrap_or(DEFAULT_AGENT_ID),
             available_tools,
+            &environment,
         )?,
-        Opening::Saved(stored) => bind_saved_agent(cwd, &config, stored, available_tools)?,
+        Opening::Saved(stored) => {
+            bind_saved_agent(cwd, &config, stored, available_tools, &environment)?
+        }
     };
     // The agent's own config, which may pin a model and reasoning, replaces
     // the loaded one; an agent on another runtime keeps it.
@@ -244,6 +289,7 @@ async fn open_runtime(
     } = settle_bound_config(
         config,
         &agent,
+        environment.credentials().as_ref(),
         &ProviderRefreshStatus::NotAttempted,
         rho_providers::model::ReasoningRequestSource::PersistedOrDefault,
     )
@@ -324,35 +370,40 @@ fn bind_saved_agent(
     config: &Config,
     stored: &StoredSession,
     available_tools: AgentCapabilities,
+    environment: &SessionEnvironment,
 ) -> anyhow::Result<BoundAgent> {
     let Some(root) = stored.root_agent()? else {
         // A delegated session written before launch identities were saved:
         // nothing names its root, so it runs under the default agent, as it
         // did then.
-        return bind_agent(cwd, config, DEFAULT_AGENT_ID, available_tools);
+        return bind_agent(cwd, config, DEFAULT_AGENT_ID, available_tools, environment);
     };
-    let agent = bind_agent(cwd, config, &root.id, available_tools)?;
+    let agent = bind_agent(cwd, config, &root.id, available_tools, environment)?;
     root.validate(agent.definition())?;
     Ok(agent)
 }
 
-/// Agent `id` of `cwd`'s catalog, bound as a person's root session with
-/// `available_tools`.
+/// Agent `id` of `cwd`'s catalog as `environment`'s project trust finds it,
+/// its model chosen among those `environment`'s credentials can use, bound as a
+/// person's root session with `available_tools`.
 fn bind_agent(
     cwd: &Path,
     config: &Config,
     id: &str,
     available_tools: AgentCapabilities,
+    environment: &SessionEnvironment,
 ) -> anyhow::Result<BoundAgent> {
-    let catalog = AgentCatalog::discover(cwd)?;
+    let catalog = AgentCatalog::discover(cwd, environment.project_trust())?;
     let definition = Arc::new(catalog.find(id)?.definition.clone());
-    AgentBinder::bind(
+    AgentBinder::bind_with_credentials(
         definition,
         AgentInvocation {
             role: AgentRole::InteractiveRoot,
             available_tools,
         },
         config,
+        /*model_override*/ None,
+        environment.credentials().as_ref(),
     )
 }
 

@@ -24,7 +24,7 @@ use crate::{
         DoctorSummary, HerdrProbe,
     },
     herdr::HerdrReporter,
-    plugins::{self, ProjectTrust},
+    plugins,
     tools::mcp::{McpLoadMode, McpSessionReport},
 };
 
@@ -61,7 +61,7 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
         &cwd,
         home.as_deref(),
         Some(&rho_home),
-        ProjectTrust::from_plugins_env(),
+        crate::workspace::ProjectTrusts::of_this_process().plugins,
     );
     plugins::log(&discovery.report);
     let mut mcp_config = config.mcp.clone();

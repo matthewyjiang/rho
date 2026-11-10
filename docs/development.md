@@ -65,21 +65,13 @@ Development and test profiles use reduced debug information to keep artifacts an
 
 ### Changing the daemon protocol
 
-While `PROTOCOL_VERSION` in `crates/rho-protocol/src/version.rs` is 0.x, a change to the wire (anything in `crates/rho-protocol/schema/protocol.json` other than descriptions and names) raises its minor, in the same pull request. The version is how a frontend and a daemon of different builds tell at `rho/hello` that they cannot work together ([Versions](/daemon#versions)), so a change that keeps it lets two builds fail later instead. Regenerate the schema after either edit:
+`PROTOCOL_VERSION` in `crates/rho-protocol/src/version.rs` stays as it is while 3.0 is built: nothing is released, so a change to the wire does not raise it, and the beta sets it once. Until then a frontend and a daemon built from different commits may fail at a request rather than at `rho/hello` ([Versions](/daemon#versions)); restart the daemon after rebuilding. Regenerate the schema after a wire change:
 
 ```bash
 cargo run -p rho-protocol --example protocol_schema > crates/rho-protocol/schema/protocol.json
 ```
 
 The version a hello names and the data of the error that refuses it are the exception: clients and daemons of every version read them, so they only ever gain optional fields.
-
-CI compares each pull request with its base as of that run, and each push with the commit before it. The full workflow cannot know your base, so run the same check against it before pushing:
-
-```bash
-python3 scripts/check_protocol_compat.py --baseline-ref origin/daemon-v3 --unstable-only
-```
-
-A pull request that raised the minor before another one merged with the same number fails that check only once it is updated onto the other, since git merges two identical version edits cleanly. Update a pull request that changes the wire before merging it, and raise the minor again when the number was taken.
 
 ## Crate publish preparation
 

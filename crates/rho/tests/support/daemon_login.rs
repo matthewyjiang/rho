@@ -59,6 +59,7 @@ async fn start_login(client: &Client) -> Result<LoginId, Option<ErrorCode>> {
         .request::<AuthLogin>(&AuthLoginParams {
             auth: AUTH.into(),
             flow: Some(LoginFlow::DeviceCode),
+            environment: Default::default(),
         })
         .await
         .map(|response| response.login)
@@ -68,7 +69,7 @@ async fn start_login(client: &Client) -> Result<LoginId, Option<ErrorCode>> {
 /// What `rho/auth/list` says of [`AUTH`].
 async fn status(client: &Client) -> AuthStatus {
     client
-        .request::<AuthList>(&AuthListParams {})
+        .request::<AuthList>(&AuthListParams::default())
         .await
         .unwrap()
         .auths

@@ -168,7 +168,12 @@ fn notification_prompts_bound_many_large_utf8_results_and_keep_run_statuses() {
 }
 
 async fn spawn_background_run(manager: &SubagentManager, root: &Path) -> String {
-    let tool = AgentTool::new(manager.clone(), root, /*catalog*/ None);
+    let tool = AgentTool::new(
+        manager.clone(),
+        root,
+        /*catalog*/ None,
+        crate::workspace::ProjectTrusts::UNTRUSTED,
+    );
     let output = call_agent(
         &tool,
         root,
@@ -355,7 +360,12 @@ async fn deleted_agent_no_longer_launches() {
     std::fs::create_dir_all(&agents).unwrap();
     let path = agents.join("doomed.md");
     std::fs::write(&path, "---\ndescription: doomed\n---\nbody\n").unwrap();
-    let tool = AgentTool::new(fixture.manager(), root.path(), /*catalog*/ None);
+    let tool = AgentTool::new(
+        fixture.manager(),
+        root.path(),
+        /*catalog*/ None,
+        crate::workspace::ProjectTrusts::UNTRUSTED,
+    );
     std::fs::remove_file(&path).unwrap();
 
     let error = tool
@@ -379,7 +389,12 @@ async fn concurrent_background_launches_register_together() {
         /*storage*/ None,
         crate::session::SessionPersistence::Saved,
     );
-    let tool = AgentTool::new(manager.clone(), root.path(), /*catalog*/ None);
+    let tool = AgentTool::new(
+        manager.clone(),
+        root.path(),
+        /*catalog*/ None,
+        crate::workspace::ProjectTrusts::UNTRUSTED,
+    );
     let first = call_agent(
         &tool,
         root.path(),
@@ -414,7 +429,12 @@ fn agent_list_never_names_an_agent_model() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    let tool = AgentTool::new(manager.clone(), root.path(), /*catalog*/ None);
+    let tool = AgentTool::new(
+        manager.clone(),
+        root.path(),
+        /*catalog*/ None,
+        crate::workspace::ProjectTrusts::UNTRUSTED,
+    );
     let baseline = tool.spec().description;
 
     let agents = baseline

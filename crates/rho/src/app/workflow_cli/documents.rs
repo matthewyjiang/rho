@@ -46,7 +46,7 @@ pub(super) fn run_status(prefix: &str, output: WorkflowDocumentFormat) -> anyhow
     let ops = WorkflowOps::open(
         std::env::current_dir()?,
         /*config_path*/ None,
-        &crate::session_environment::Ambient::ThisProcess,
+        &crate::session_environment::SessionEnvironment::default(),
     )?;
     let run = ops.load_run_prefix(prefix)?;
     let state = &run.state.state;

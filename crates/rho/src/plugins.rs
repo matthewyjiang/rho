@@ -61,7 +61,7 @@ use std::path::{Path, PathBuf};
 use crate::skills::{Skill, SkillSource};
 use crate::tools::mcp::config::{InvalidMcpServer, McpConfig, McpServerConfig};
 
-pub(crate) use crate::workspace::{ProjectTrust, TRUST_PROJECT_PLUGINS_ENV};
+pub(crate) use crate::workspace::{ProjectTrust, ProjectTrusts, TRUST_PROJECT_PLUGINS_ENV};
 pub(crate) use agents::{PluginAgentFiles, PluginAgentTiers};
 pub(crate) use state::{PluginOrigin, PluginScope, PluginStateStore};
 
@@ -194,51 +194,63 @@ impl ComponentSelection {
     }
 }
 
+// The entry points below take the caller's whole `ProjectTrusts`, the
+// session's or this process's, and apply its plugin trust
+// (`RHO_TRUST_PROJECT_PLUGINS`), so a caller cannot hand over another
+// feature's by mistake.
+
 /// Plugin-owned skills in precedence order for ordinary skill discovery.
-pub(crate) fn skills_by_precedence(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
+pub(crate) fn skills_by_precedence(
+    cwd: &Path,
+    home: Option<&Path>,
+    trust: ProjectTrusts,
+) -> Vec<Skill> {
     discover_components(
         cwd,
         home,
         None,
         ComponentSelection::SkillsOnly,
-        ProjectTrust::from_plugins_env(),
+        trust.plugins,
     )
     .skills
 }
 
 /// Active plugins' Rho agent files by catalog tier. Applies plugin enable
-/// state and project plugin trust (`RHO_TRUST_PROJECT_PLUGINS`).
-pub(crate) fn agent_tiers(cwd: &Path, home: Option<&Path>) -> PluginAgentTiers {
+/// state and project plugin trust.
+pub(crate) fn agent_tiers(
+    cwd: &Path,
+    home: Option<&Path>,
+    trust: ProjectTrusts,
+) -> PluginAgentTiers {
     discover_components(
         cwd,
         home,
         None,
         ComponentSelection::AgentsOnly,
-        ProjectTrust::from_plugins_env(),
+        trust.plugins,
     )
     .agents
 }
 
 /// Discover and load plugin packages from the explicit roots.
-pub(crate) fn discover(cwd: &Path, home: Option<&Path>) -> PluginDiscovery {
+pub(crate) fn discover(cwd: &Path, home: Option<&Path>, trust: ProjectTrusts) -> PluginDiscovery {
     let rho_home = crate::paths::rho_dir().ok();
-    discover_with_trust(
-        cwd,
-        home,
-        rho_home.as_deref(),
-        ProjectTrust::from_plugins_env(),
-    )
+    discover_with_trust(cwd, home, rho_home.as_deref(), trust.plugins)
 }
 
 /// Discover only plugin MCP configuration for the `rho mcp` inventory path.
-pub(crate) fn discover_mcp(cwd: &Path, home: Option<&Path>) -> PluginDiscovery {
+pub(crate) fn discover_mcp(
+    cwd: &Path,
+    home: Option<&Path>,
+    trust: ProjectTrusts,
+) -> PluginDiscovery {
     let rho_home = crate::paths::rho_dir().ok();
     discover_components(
         cwd,
         home,
         rho_home.as_deref(),
         ComponentSelection::McpOnly,
-        ProjectTrust::from_plugins_env(),
+        trust.plugins,
     )
 }
 

@@ -229,7 +229,7 @@ impl TurnTask {
                 session.report_goal_outcome();
                 // The turn may have left new skills, prompts, or MCP prompts
                 // behind; clients see them before they see the turn end.
-                session.refresh_options(runtime, &available_auths().await);
+                session.refresh_options(runtime, &available_auths(runtime.credentials()).await);
                 wake::prompt_ended(&session, runtime, &stopping).await;
                 (
                     ended.map_err(|error| failure(&session, runtime, &error)),
@@ -367,7 +367,7 @@ async fn run_turn(
                 .live()
                 .rebind_tools(runtime.tools(), runtime.configured_context_window());
             view.session
-                .refresh_options(runtime, &available_auths().await);
+                .refresh_options(runtime, &available_auths(runtime.credentials()).await);
             Turn {
                 display: input,
                 model: task.input,
@@ -690,7 +690,7 @@ impl TurnView for DaemonView {
         };
         async move {
             session.feed.publish(notice);
-            session.refresh_options(runtime, &available_auths().await);
+            session.refresh_options(runtime, &available_auths(runtime.credentials()).await);
         }
     }
 }

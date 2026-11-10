@@ -65,6 +65,7 @@ async fn run_fetch(
             12_000,
             rho_sdk::ProcessEnvironment::InheritAll.into(),
             super::storage::WebAccessStore::new(),
+            std::sync::Arc::new(crate::credential_store::AppCredentialStore),
         ),
     )
     .await

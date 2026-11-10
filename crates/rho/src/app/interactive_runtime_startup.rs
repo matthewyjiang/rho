@@ -141,6 +141,7 @@ pub(super) async fn initialize(
             workspace_path: workspace.root().to_path_buf(),
             usage_recording: usage_recording.clone(),
             session_writes: session_writes.clone(),
+            credentials: Arc::new(AppCredentialStore),
         },
     );
     let hooks = crate::hooks::start_for_cwd(&cwd, environment);
@@ -152,7 +153,11 @@ pub(super) async fn initialize(
             provider: Arc::clone(&provider),
             tools: &tools,
             workspace: workspace.clone(),
-            workspace_policy: AppPolicy::for_mode(permission_mode, session_writes.clone()),
+            workspace_policy: AppPolicy::for_mode(
+                permission_mode,
+                session_writes.clone(),
+                std::env::var_os("PATH"),
+            ),
             approval_session: approval_channel
                 .handler
                 .clone()
@@ -387,6 +392,8 @@ pub(in crate::app) struct ApprovalChannelOptions {
     pub(in crate::app) workspace_path: PathBuf,
     pub(in crate::app) usage_recording: rho_sdk::ProviderRequestUsageRecording,
     pub(in crate::app) session_writes: SessionWriteLog,
+    /// The credentials Auto's classifier signs in with: the session's.
+    pub(in crate::app) credentials: Arc<dyn rho_providers::credentials::CredentialStore>,
 }
 
 pub(in crate::app) struct ApprovalChannel {
@@ -414,6 +421,7 @@ pub(in crate::app) fn approval_channel_for(
                 options.config,
                 options.workspace_path,
                 options.usage_recording,
+                options.credentials,
                 Some(Arc::new(human_handler)),
                 Some(options.session_writes.clone()),
             );

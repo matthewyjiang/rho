@@ -26,7 +26,7 @@ use agent_client_protocol::{
 use rho_protocol::{
     methods::{AuthList, AuthLogin, AuthLoginCancel, AuthLogout},
     AuthKind, AuthListParams, AuthLoginCancelParams, AuthLoginParams, AuthLogoutParams,
-    AuthSummary, LoginId, LoginOutcome,
+    AuthSummary, ClientEnvironment, LoginId, LoginOutcome,
 };
 use rho_providers::auth::{browser::BrowserAvailability, login_prompt::LoginPrompt};
 use tokio::{
@@ -84,7 +84,10 @@ pub(super) fn methods(auths: &[AuthSummary], features: HostFeatures) -> Vec<Auth
 fn session_auth(agent: Option<&str>) -> anyhow::Result<String> {
     let config = ConfigRepository::new(None).load()?;
     config.providers.activate()?;
-    let catalog = AgentCatalog::discover(&std::env::current_dir()?)?;
+    let catalog = AgentCatalog::discover(
+        &std::env::current_dir()?,
+        crate::workspace::ProjectTrusts::of_this_process(),
+    )?;
     let definition = Arc::new(
         catalog
             .find(agent.unwrap_or(DEFAULT_AGENT_ID))?
@@ -106,7 +109,13 @@ impl Adapter {
     /// The auth methods for the host that sent `request`. A daemon that
     /// cannot be reached advertises none; its sessions fail the same way.
     pub(super) async fn auth_methods(&self, request: &InitializeRequest) -> Vec<AuthMethod> {
-        match self.daemon.request::<AuthList>(&AuthListParams {}).await {
+        match self
+            .daemon
+            .request::<AuthList>(&AuthListParams {
+                environment: ClientEnvironment::of_this_process(),
+            })
+            .await
+        {
             Ok(list) => methods(&list.auths, HostFeatures::from_initialize(request)),
             Err(error) => {
                 tracing::warn!(%error, "could not list the rho daemon's auth profiles");
@@ -145,7 +154,10 @@ impl Adapter {
                     return Err(AcpError::invalid_request().data("no auth profile is selected"));
                 }
                 self.daemon
-                    .request::<AuthLogout>(&AuthLogoutParams { auth })
+                    .request::<AuthLogout>(&AuthLogoutParams {
+                        auth,
+                        environment: ClientEnvironment::of_this_process(),
+                    })
                     .await?;
                 Ok(LogoutResponse::new())
             })
@@ -182,6 +194,7 @@ impl Adapter {
         let params = AuthLoginParams {
             auth: auth.to_owned(),
             flow: Some(relay_wire::flow_to_wire(mode)),
+            environment: ClientEnvironment::of_this_process(),
         };
         let started = link
             .request::<AuthLogin>(&params)
@@ -243,7 +256,12 @@ impl Adapter {
 
     /// How the daemon names `auth`, or the id itself.
     async fn auth_label(&self, auth: &str) -> String {
-        let list = self.daemon.request::<AuthList>(&AuthListParams {}).await;
+        let list = self
+            .daemon
+            .request::<AuthList>(&AuthListParams {
+                environment: ClientEnvironment::of_this_process(),
+            })
+            .await;
         list.ok()
             .and_then(|list| list.auths.into_iter().find(|summary| summary.auth == auth))
             .map_or_else(|| auth.to_owned(), |summary| summary.label)

@@ -28,28 +28,77 @@ impl ProjectTrust {
         }
     }
 
-    fn from_env_var(name: &str) -> Self {
-        Self::from_env(std::env::var(name).ok().as_deref())
-    }
-
-    pub fn from_hooks_env() -> Self {
-        Self::from_env_var(TRUST_PROJECT_HOOKS_ENV)
-    }
-
-    pub fn from_agents_env() -> Self {
-        Self::from_env_var(TRUST_PROJECT_AGENTS_ENV)
-    }
-
-    pub fn from_plugins_env() -> Self {
-        Self::from_env_var(TRUST_PROJECT_PLUGINS_ENV)
-    }
-
-    pub fn from_openapi_env() -> Self {
-        Self::from_env_var(TRUST_PROJECT_OPENAPI_ENV)
-    }
-
     pub const fn is_trusted(self) -> bool {
         matches!(self, Self::Trusted)
+    }
+}
+
+/// A workspace's [`ProjectTrust`] for each feature that asks for it, as one
+/// environment grants them.
+///
+/// Read once from the environment of whoever opens a session or starts a
+/// workflow run, and kept for as long as that runs: a local `rho`'s own
+/// environment, or, in the daemon, the client's (#1779). Nothing reads the
+/// variables later, so what a session loaded when it opened and what it
+/// loads afterwards agree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProjectTrusts {
+    pub hooks: ProjectTrust,
+    pub agents: ProjectTrust,
+    pub plugins: ProjectTrust,
+    pub openapi: ProjectTrust,
+}
+
+impl ProjectTrusts {
+    /// No trust: what an environment that sets none of the variables grants.
+    pub const UNTRUSTED: Self = Self {
+        hooks: ProjectTrust::Untrusted,
+        agents: ProjectTrust::Untrusted,
+        plugins: ProjectTrust::Untrusted,
+        openapi: ProjectTrust::Untrusted,
+    };
+
+    /// The trust the environment `read` reads grants.
+    pub fn read(read: impl Fn(&str) -> Option<String>) -> Self {
+        let trust = |name| ProjectTrust::from_env(read(name).as_deref());
+        Self {
+            hooks: trust(TRUST_PROJECT_HOOKS_ENV),
+            agents: trust(TRUST_PROJECT_AGENTS_ENV),
+            plugins: trust(TRUST_PROJECT_PLUGINS_ENV),
+            openapi: trust(TRUST_PROJECT_OPENAPI_ENV),
+        }
+    }
+
+    /// The variables that grant what `self` trusts and `other` does not, in
+    /// the order the struct lists the features.
+    pub fn variables_beyond(self, other: Self) -> Vec<&'static str> {
+        // Destructured so that a new feature cannot be left out: two trusts
+        // that differ always differ in a variable named here.
+        let Self {
+            hooks,
+            agents,
+            plugins,
+            openapi,
+        } = self;
+        [
+            (TRUST_PROJECT_HOOKS_ENV, hooks, other.hooks),
+            (TRUST_PROJECT_AGENTS_ENV, agents, other.agents),
+            (TRUST_PROJECT_PLUGINS_ENV, plugins, other.plugins),
+            (TRUST_PROJECT_OPENAPI_ENV, openapi, other.openapi),
+        ]
+        .into_iter()
+        .filter(|(_, own, others)| {
+            *own == ProjectTrust::Trusted && *others != ProjectTrust::Trusted
+        })
+        .map(|(variable, _, _)| variable)
+        .collect()
+    }
+
+    /// The trust this process's environment grants, for a command that acts
+    /// for the terminal it runs in. A daemon session takes its client's
+    /// instead (see [`crate::session_environment::SessionEnvironment`]).
+    pub fn of_this_process() -> Self {
+        Self::read(|name| std::env::var(name).ok())
     }
 }
 
@@ -93,6 +142,49 @@ mod tests {
             vec![child],
             "outside a git worktree only cwd is returned"
         );
+    }
+
+    // Covers: each `RHO_TRUST_PROJECT_*` variable grants its own feature and
+    // no other, so trusting a project's agents never activates its hooks.
+    // Owner: workspace trust policy.
+    #[test]
+    fn each_trust_variable_grants_only_its_feature() {
+        use ProjectTrust::Trusted;
+        const UNTRUSTED: ProjectTrusts = ProjectTrusts::UNTRUSTED;
+        let cases = [
+            (
+                TRUST_PROJECT_HOOKS_ENV,
+                ProjectTrusts {
+                    hooks: Trusted,
+                    ..UNTRUSTED
+                },
+            ),
+            (
+                TRUST_PROJECT_AGENTS_ENV,
+                ProjectTrusts {
+                    agents: Trusted,
+                    ..UNTRUSTED
+                },
+            ),
+            (
+                TRUST_PROJECT_PLUGINS_ENV,
+                ProjectTrusts {
+                    plugins: Trusted,
+                    ..UNTRUSTED
+                },
+            ),
+            (
+                TRUST_PROJECT_OPENAPI_ENV,
+                ProjectTrusts {
+                    openapi: Trusted,
+                    ..UNTRUSTED
+                },
+            ),
+        ];
+        for (variable, expected) in cases {
+            let granted = ProjectTrusts::read(|name| (name == variable).then(|| "1".to_owned()));
+            assert_eq!(granted, expected, "{variable}");
+        }
     }
 
     // Covers: only the exact value `1` grants trust, matching the

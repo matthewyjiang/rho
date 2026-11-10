@@ -1383,7 +1383,7 @@ impl Follower {
     }
 }
 
-fn is_state(state: JobState) -> impl Fn(&SessionEvent) -> bool {
+pub(super) fn is_state(state: JobState) -> impl Fn(&SessionEvent) -> bool {
     move |event| matches!(event, SessionEvent::State { state: got, .. } if *got == state)
 }
 

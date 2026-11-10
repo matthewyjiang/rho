@@ -46,7 +46,7 @@ pub(super) async fn run(
         eprint_login_prompt(provider_label, &prompt);
     })
     .await?;
-    approval.save(*descriptor, repository)?;
+    approval.save(*descriptor, repository, &AppCredentialStore)?;
     // As the daemon's `rho login` reports it: an Ollama Cloud device key
     // saves before the user approves it, and the prompt said to approve it,
     // so this claims the save, not the approval.

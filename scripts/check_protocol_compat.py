@@ -19,9 +19,9 @@ to at any major.
 The baseline is the schema the last `rho-coding-agent` release shipped:
 compatibility matters between released daemons and clients, not between
 commits. Before the first release with a schema there is nothing to compare.
-An unstable protocol has no release to hold it yet, and its users run builds
-of any commit, so CI also compares each change with the commit before it
-(`--baseline-ref HEAD^1 --unstable-only`).
+An unstable protocol has no release to hold it yet; `--baseline-ref <ref>
+--unstable-only` compares against a commit instead. CI does not run it while
+3.0 is built: the version is set once at the beta.
 Descriptions and Rust names are not part of the contract, so changing them
 needs nothing.
 """

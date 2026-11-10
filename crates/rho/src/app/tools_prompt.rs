@@ -157,8 +157,12 @@ pub(crate) async fn assemble_tools_and_prompt(
     // Agent Plugins contribute skills through ordinary skill discovery, MCP
     // servers through the generic native MCP configuration, and agents
     // through the agent catalog's own discovery.
-    let plugin_discovery =
-        crate::plugins::discover(options.cwd, crate::paths::home_dir().as_deref());
+    let project_trust = options.environment.project_trust();
+    let plugin_discovery = crate::plugins::discover(
+        options.cwd,
+        crate::paths::home_dir().as_deref(),
+        project_trust,
+    );
     crate::plugins::log(&plugin_discovery.report);
     let crate::plugins::PluginDiscovery {
         skills: plugin_skills,
@@ -204,7 +208,7 @@ pub(crate) async fn assemble_tools_and_prompt(
             &options.config.openapi,
             &options.config_path,
             options.cwd,
-            crate::workspace::ProjectTrust::from_openapi_env(),
+            project_trust.openapi,
         )
         .plan(&|name| ambient.read(name))
     } else {
@@ -268,7 +272,7 @@ pub(crate) async fn assemble_tools_and_prompt(
     };
     let ToolSourcesOutcome { mcp, openapi } = sources;
     let mut tools = if options.no_tools {
-        AppToolSet::disabled().with_mcp(mcp)
+        AppToolSet::disabled_for(options.environment.credentials()).with_mcp(mcp)
     } else {
         let mut tool_options = ToolSetOptions::new(capabilities)
             .process_keep_warm(options.process_keep_warm)

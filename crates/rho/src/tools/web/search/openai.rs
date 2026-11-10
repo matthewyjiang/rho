@@ -4,7 +4,6 @@ use serde_json::{json, Value};
 use url::Url;
 
 use {
-    crate::credential_store::AppCredentialStore,
     rho_providers::auth::codex_oauth::{chatgpt_plan_from_id_token, ChatGptPlan},
     rho_providers::credentials::CodexTokens,
     rho_providers::providers::openai::auth::{refresh_codex_token, CodexAuthSource},
@@ -90,10 +89,9 @@ pub(super) async fn search(
         } = &auth
         {
             if let Some(refresh_token) = tokens.refresh_token.as_deref() {
-                let store = AppCredentialStore;
                 let refreshed = refresh_codex_token(
                     client,
-                    &store,
+                    config.credentials.as_ref(),
                     refresh_token,
                     CodexAuthSource::Store,
                     tokens,
