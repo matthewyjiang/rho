@@ -6,6 +6,10 @@
 //! child or reads a variable. A workflow run the session starts or resumes
 //! instead gets its own handle of the environment current then, which no
 //! later prompt replaces.
+//!
+//! Project trust (`RHO_TRUST_PROJECT_*`) is read from the same environment,
+//! once: a session keeps the trust of the environment it opened with, whatever
+//! later prompts bring (#1779).
 
 use std::{
     collections::BTreeMap,
@@ -15,6 +19,8 @@ use std::{
 };
 
 use rho_sdk::ProcessEnvironment;
+
+use crate::workspace::{ProjectTrust, ProjectTrusts};
 
 /// The environment a session's children see (#1659): this process's own,
 /// or a daemon client's variables.
@@ -61,6 +67,14 @@ impl Ambient {
                 command.env_clear().envs(variables.iter());
             }
         }
+    }
+
+    /// The project trust this environment grants, for a host about to fix
+    /// it: one opening a session ([`SessionEnvironment::new`] does this) or
+    /// planning and starting a workflow run from one snapshot. A session
+    /// already open answers with [`SessionEnvironment::project_trust`].
+    pub(crate) fn project_trust(&self) -> ProjectTrusts {
+        ProjectTrusts::read(|name| self.read(name))
     }
 
     /// The `PATH` executables are looked up on.
@@ -129,14 +143,51 @@ pub(crate) struct SessionEnvironment {
     ambient: Arc<RwLock<Ambient>>,
     /// `ambient`'s process environment, the handle process tools snapshot.
     process: rho_tools::SharedProcessEnvironment,
+    /// The trust the opening [`Ambient`] granted, which [`Self::replace`]
+    /// keeps.
+    project_trust: ProjectTrusts,
 }
 
 impl SessionEnvironment {
+    /// A session's environment, starting as `ambient`, with the project
+    /// trust `ambient` grants for as long as the session is open.
     pub(crate) fn new(ambient: Ambient) -> Self {
         Self {
             process: ambient.process_environment().into(),
+            project_trust: ambient.project_trust(),
             ambient: Arc::new(RwLock::new(ambient)),
         }
+    }
+
+    /// The environment of a session opened only to read what it saved: no
+    /// client's variables, since nothing of the session starts.
+    ///
+    /// It reads the project's agents and plugins as trusted, so a session
+    /// saved as a project agent can still be read. That activates nothing:
+    /// a read starts no hooks, tool sources, or turns, and the session was
+    /// saved by a client that trusted them.
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "only the Unix daemon reads sessions")
+    )]
+    pub(crate) fn for_reading() -> Self {
+        let ambient = Ambient::Client(Arc::default());
+        Self {
+            process: ambient.process_environment().into(),
+            project_trust: ProjectTrusts {
+                agents: ProjectTrust::Trusted,
+                plugins: ProjectTrust::Trusted,
+                ..ProjectTrusts::UNTRUSTED
+            },
+            ambient: Arc::new(RwLock::new(ambient)),
+        }
+    }
+
+    /// The session's project trust: what the environment it opened with
+    /// granted, not what a later prompt's does, since the session loads its
+    /// hooks, plugins, and agents when it opens (#1779).
+    pub(crate) fn project_trust(&self) -> ProjectTrusts {
+        self.project_trust
     }
 
     /// The environment a child started now sees.
@@ -153,7 +204,7 @@ impl SessionEnvironment {
     }
 
     /// Makes `ambient` the environment every later child sees, process
-    /// tools' included.
+    /// tools' included. The session's project trust stays as it opened.
     #[cfg_attr(
         not(unix),
         allow(dead_code, reason = "only the Unix daemon replaces it")

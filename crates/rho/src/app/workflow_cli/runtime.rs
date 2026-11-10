@@ -540,9 +540,8 @@ impl WorkflowRuntime {
             Arc::clone(&hosts) as Arc<dyn CommandHostFactory>,
         ));
         let security = RuntimeSecurity {
-            project_trusted: crate::workspace::ProjectTrust::from_agents_env().is_trusted(),
-            project_plugins_trusted: crate::workspace::ProjectTrust::from_plugins_env()
-                .is_trusted(),
+            project_trusted: environment.project_trust().agents.is_trusted(),
+            project_plugins_trusted: environment.project_trust().plugins.is_trusted(),
             permission_mode,
         };
         let mut runner = WorkflowRunner::new(

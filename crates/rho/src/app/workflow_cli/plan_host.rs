@@ -43,17 +43,18 @@ pub(crate) struct DiscoveringPlanHost<'a> {
 }
 
 impl<'a> DiscoveringPlanHost<'a> {
-    /// A host finding bare executables on `search_path`.
+    /// A host finding bare executables on `search_path` and project agents
+    /// under `trust`, both of the environment the run will start in.
     pub(crate) fn new(
         workspace: &'a Path,
         config: &'a crate::config::Config,
         available_tools: &'a crate::agent::AgentCapabilities,
         workflow_entry: &Path,
         search_path: Option<&'a OsStr>,
+        trust: crate::workspace::ProjectTrusts,
     ) -> anyhow::Result<Self> {
         let home = crate::paths::home_dir();
-        let trust = crate::workspace::ProjectTrust::from_agents_env();
-        let plugins = crate::plugins::agent_tiers(workspace, home.as_deref());
+        let plugins = crate::plugins::agent_tiers(workspace, home.as_deref(), trust);
         Ok(Self {
             workspace,
             config,
@@ -61,7 +62,7 @@ impl<'a> DiscoveringPlanHost<'a> {
                 workspace,
                 workflow_entry,
                 home.as_deref(),
-                trust,
+                trust.agents,
                 &plugins,
             )?,
             available_tools,

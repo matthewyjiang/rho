@@ -22,7 +22,10 @@ impl App {
                     .collect(),
             )
         } else {
-            skill_picker::skill_picker(crate::skills::discover(&self.info.runtime.cwd))
+            skill_picker::skill_picker(crate::skills::discover(
+                &self.info.runtime.cwd,
+                crate::workspace::ProjectTrusts::of_this_process(),
+            ))
         };
         if picker.items.is_empty() {
             self.set_status("no skills loaded");
@@ -51,10 +54,12 @@ impl App {
             self.set_status("skill unavailable");
             return Ok(SkillCommandAction::Rejected);
         }
-        let Some(skill) = crate::skills::discover(&self.info.runtime.cwd)
-            .into_iter()
-            .find(|skill| skill.name == name)
-        else {
+        let Some(skill) = crate::skills::discover(
+            &self.info.runtime.cwd,
+            crate::workspace::ProjectTrusts::of_this_process(),
+        )
+        .into_iter()
+        .find(|skill| skill.name == name) else {
             return Ok(SkillCommandAction::NotSkill);
         };
         Ok(SkillCommandAction::Prompt(Box::new(
@@ -67,7 +72,12 @@ impl App {
     /// continuations and `/init`, skip this so their text stays prose.
     pub(super) fn load_mentioned_skills(&self, turn: &mut TurnPrompt, agent: &InteractiveRuntime) {
         if agent.has_tool(crate::skills::mention::SKILL_TOOL) {
-            turn.load_mentioned_skills(|| crate::skills::discover(&self.info.runtime.cwd));
+            turn.load_mentioned_skills(|| {
+                crate::skills::discover(
+                    &self.info.runtime.cwd,
+                    crate::workspace::ProjectTrusts::of_this_process(),
+                )
+            });
         }
     }
 

@@ -68,6 +68,10 @@ impl fmt::Display for SessionId {
 /// hooks, and OpenAPI sources, its CLI subagents and Claude Code advisor
 /// (credentials included), and the workflow runs it starts. Values are
 /// secrets: the daemon never logs or saves them.
+///
+/// Its `RHO_TRUST_PROJECT_*` variables are the session's project trust
+/// when it opens or reopens the session: the daemon's own environment
+/// grants none. A later prompt's do not change it.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct ClientEnvironment(BTreeMap<String, String>);

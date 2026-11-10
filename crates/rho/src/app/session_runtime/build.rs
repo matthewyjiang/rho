@@ -305,6 +305,7 @@ pub(super) async fn build_session(
                     &mut tools,
                     workspace,
                     config.max_output_bytes,
+                    build.host.environment.project_trust(),
                 ),
             }
             with_plan_exit(tools, build, agent, config)

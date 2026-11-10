@@ -123,7 +123,10 @@ impl SessionRuntime {
         task: &AgentTask,
         process_config: &Config,
     ) -> anyhow::Result<()> {
-        let catalog = AgentCatalog::discover(self.storage.cwd())?;
+        let catalog = AgentCatalog::discover(
+            self.storage.cwd(),
+            self.build.host.environment.project_trust(),
+        )?;
         let definition = catalog.find(&task.agent_id)?.definition.clone();
         let model_override = task.model_override.clone();
         let cwd = self.storage.cwd().to_path_buf();

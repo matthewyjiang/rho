@@ -298,7 +298,10 @@ impl AppToolSet {
             tool_set.add_bundle(bundle);
         }
         if capabilities.contains(&ToolCapability::Skill) {
-            tool_set.add_bundle(super::sdk_features::skill_bundle(config.max_output_bytes));
+            tool_set.add_bundle(super::sdk_features::skill_bundle(
+                config.max_output_bytes,
+                environment.project_trust(),
+            ));
         }
         if capabilities.contains(&ToolCapability::Sessions) {
             let recall = crate::session::recall::RecallStore::default();
@@ -310,7 +313,11 @@ impl AppToolSet {
             ));
         }
         if capabilities.contains(&ToolCapability::Rho) {
-            tool_set.add_bundle(super::rho::sdk_bundle(diagnostics, config.max_output_bytes));
+            tool_set.add_bundle(super::rho::sdk_bundle(
+                diagnostics,
+                config.max_output_bytes,
+                environment.project_trust(),
+            ));
         }
         if capabilities.contains(&ToolCapability::Todo) {
             tool_set.add_bundle(super::todo::sdk_bundle(tool_set.todo.clone()));

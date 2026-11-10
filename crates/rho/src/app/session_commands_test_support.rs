@@ -110,6 +110,7 @@ impl Fixture {
         CommandScope {
             cwd: self.workspace.path(),
             home: Some(self.home.path()),
+            project_trust: crate::workspace::ProjectTrusts::UNTRUSTED,
             tools: SessionTools::of_tool_set_for_tests(&self.tools),
             config: &self.config,
             permission_mode: PermissionMode::Supervised,

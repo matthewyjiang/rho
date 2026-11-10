@@ -10,7 +10,8 @@
 //! and the interactive logins it relays to clients, `rho login` among
 //! them, in [`login`]; `rho mcp serve` driving its sessions is in [`mcp`];
 //! re-executing the daemon in place, for an upgrade or `rho daemon
-//! restart`, is in [`upgrade`].
+//! restart`, is in [`upgrade`]; what a daemon takes from the client that
+//! starts it, and each session's project trust, is in [`identity`].
 #![cfg(unix)]
 
 use std::{
@@ -55,6 +56,9 @@ mod mcp;
 
 #[path = "support/daemon_upgrade.rs"]
 mod upgrade;
+
+#[path = "support/daemon_identity.rs"]
+mod identity;
 
 #[path = "support/key_checking_provider.rs"]
 mod key_checking_provider;

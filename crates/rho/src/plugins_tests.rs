@@ -636,7 +636,11 @@ fn plugin_skills_lose_to_loose_skills_and_report_conflict() {
     )
     .unwrap();
 
-    let skills = crate::skills::discover_with_home(env.project.path(), Some(env.home.path()));
+    let skills = crate::skills::discover_with_home(
+        env.project.path(),
+        Some(env.home.path()),
+        crate::workspace::ProjectTrusts::UNTRUSTED,
+    );
 
     let skill = skills
         .iter()

@@ -3,8 +3,8 @@
 //! deterministically calls one tool and replies with its result.
 //!
 //! `rho acp` is a client of the rho daemon, which it starts in the
-//! sandbox; the daemon inherits the first client's environment, fixture
-//! mode included, and the sandbox stops it when it drops, after the server.
+//! sandbox; the daemon keeps the fixture mode of the first client's
+//! environment, and the sandbox stops it when it drops, after the server.
 //! The daemon is unix-only (#1665), and so is `rho acp`.
 #![cfg(unix)]
 

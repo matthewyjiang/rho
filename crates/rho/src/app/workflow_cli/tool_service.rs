@@ -90,7 +90,12 @@ impl AppWorkflowToolService {
             &rho_home,
             crate::paths::home_dir().as_deref(),
             &executable,
-            project_agent_catalogs_trusted(),
+            // As the request's own snapshot reads it when it runs.
+            self.environment
+                .current()
+                .project_trust()
+                .agents
+                .is_trusted(),
         )
     }
 
@@ -426,7 +431,8 @@ impl AppWorkflowToolService {
         WorkflowOps::open(self.cwd.clone(), self.config_path.clone(), environment)
     }
 
-    /// Plans `file`, finding bare executables on `environment`'s `PATH`.
+    /// Plans `file`, finding bare executables on `environment`'s `PATH` and
+    /// project agents under its project trust.
     async fn prepare(
         &self,
         file: &Path,
@@ -434,7 +440,9 @@ impl AppWorkflowToolService {
         environment: &Ambient,
         context: &ToolContext,
     ) -> anyhow::Result<super::PreparedPlan> {
-        let catalog = self.authorized_agent_catalog(context, file).await?;
+        let catalog = self
+            .authorized_agent_catalog(context, file, environment.project_trust())
+            .await?;
         let rho_home = crate::paths::rho_dir()?;
         let config_path = self.config_request_path(&rho_home);
         let config = self.authorized_config(context, &config_path).await?;
@@ -517,10 +525,6 @@ fn workflow_error_from_anyhow(error: anyhow::Error) -> WorkflowError {
         Ok(error) => error,
         Err(error) => WorkflowError::Starlark(error.to_string()),
     }
-}
-
-fn project_agent_catalogs_trusted() -> bool {
-    crate::workspace::ProjectTrust::from_agents_env().is_trusted()
 }
 
 fn agent_catalog_roots_for(

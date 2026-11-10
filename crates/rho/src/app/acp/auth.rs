@@ -84,7 +84,10 @@ pub(super) fn methods(auths: &[AuthSummary], features: HostFeatures) -> Vec<Auth
 fn session_auth(agent: Option<&str>) -> anyhow::Result<String> {
     let config = ConfigRepository::new(None).load()?;
     config.providers.activate()?;
-    let catalog = AgentCatalog::discover(&std::env::current_dir()?)?;
+    let catalog = AgentCatalog::discover(
+        &std::env::current_dir()?,
+        crate::workspace::ProjectTrusts::of_this_process(),
+    )?;
     let definition = Arc::new(
         catalog
             .find(agent.unwrap_or(DEFAULT_AGENT_ID))?

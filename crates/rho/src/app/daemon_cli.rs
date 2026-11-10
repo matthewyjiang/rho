@@ -99,11 +99,11 @@ pub(super) async fn connect() -> Result<daemon::Connection, Unreachable> {
         .map_err(|error| unreachable(error.to_string()))
 }
 
-/// Starts the daemon once this process's environment, which it inherits,
-/// passes the checks the daemon makes at startup, so a daemon that would
-/// refuse to start is reported now rather than after the start timeout. A
-/// daemon already running never sees this environment, so only a spawn
-/// checks it.
+/// Starts the daemon once the part of this process's environment it
+/// inherits passes the checks the daemon makes at startup, so a daemon that
+/// would refuse to start is reported now rather than after the start
+/// timeout. A daemon already running never sees this environment, so only a
+/// spawn checks it.
 #[cfg(unix)]
 struct CheckedSpawner(daemon::ProcessSpawner);
 

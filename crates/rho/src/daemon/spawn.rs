@@ -1,6 +1,7 @@
 //! Connecting to the daemon, starting one first when none is running.
 
 use std::{
+    ffi::OsString,
     fs::{File, OpenOptions},
     io,
     os::unix::{fs::OpenOptionsExt, process::CommandExt},
@@ -15,6 +16,7 @@ use super::{
     client::{connect, ConnectError, Connection},
     lock::{self, LockError},
     paths::{DaemonPathError, DaemonPaths},
+    spawn_env::daemon_environment,
 };
 
 /// How long a client waits for a daemon it started to accept connections.
@@ -52,20 +54,33 @@ pub(crate) trait DaemonSpawner: Send + Sync {
 /// Starts `rho daemon run` from the current executable, detached from the
 /// caller's terminal.
 ///
-/// The daemon inherits the caller's environment on purpose: `RHO_HOME` and
-/// `XDG_RUNTIME_DIR` are what produced the caller's [`DaemonPaths`], so the
-/// child resolves the same socket the caller then polls. Passing a different
-/// home here would start a daemon the caller can never reach. It runs in `/`,
-/// so `RHO_HOME` is pinned to the home's canonical path: a relative one would
-/// otherwise name another directory there.
+/// The daemon does not inherit the caller's environment: it gets only the
+/// variables that describe the daemon and the machine (see
+/// [`super::spawn_env`]), so the first client to need a daemon does not
+/// decide project trust, hook recursion, or session depth for every later
+/// one (#1779). Each session takes those from its own client. A variable
+/// that is not allowed never reaches the daemon; the daemon's own log is no
+/// journal stream of the caller's either.
+///
+/// `RHO_HOME` and `XDG_RUNTIME_DIR` are what produced the caller's
+/// [`DaemonPaths`], so the child resolves the same socket the caller then
+/// polls. Passing a different home here would start a daemon the caller can
+/// never reach. It runs in `/`, so `RHO_HOME` is pinned to the home's
+/// canonical path: a relative one would otherwise name another directory
+/// there.
 pub(crate) struct ProcessSpawner {
     executable: PathBuf,
+    /// The whole environment the daemon starts with, but for `RHO_HOME`.
+    environment: Vec<(OsString, OsString)>,
 }
 
 impl ProcessSpawner {
+    /// A spawner of this executable, giving the daemon the allowed part of
+    /// this process's environment.
     pub(crate) fn current_exe() -> io::Result<Self> {
         Ok(Self {
             executable: std::env::current_exe()?,
+            environment: daemon_environment(std::env::vars_os()),
         })
     }
 }
@@ -82,21 +97,12 @@ impl DaemonSpawner for ProcessSpawner {
             // hold for its whole life (blocking an unmount, say). It opens
             // each session in that session's own workspace.
             .current_dir("/")
+            .env_clear()
+            .envs(self.environment.iter().map(|(name, value)| (name, value)))
             .env("RHO_HOME", &paths.home)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            // The caller's journal stream is not the daemon's stderr; the
-            // daemon logs to its file instead.
-            .env_remove("JOURNAL_STREAM")
-            // A daemon a hook auto-started must not disable hooks for every
-            // session; each session's own client decides (#1659).
-            .env_remove(crate::hooks::IN_HOOK_ENV);
-        // Nor run at the depth, or under the scope, of the session whose
-        // `rho mcp serve` started it: each session's client sends its own.
-        for name in crate::caller_context::ENV_NAMES {
-            command.env_remove(name);
-        }
+            .stderr(Stdio::null());
         let mut child = command.spawn()?;
         // Reap the daemon if it exits while this process is still running.
         std::thread::spawn(move || child.wait());

@@ -21,7 +21,8 @@
 //! The session's processes, MCP servers, hooks, OpenAPI sources, CLI agents,
 //! and workflow runs use its client's environment, not the daemon's (#1659):
 //! the opening client's, then each prompting client's (see
-//! [`session_environment`]).
+//! [`session_environment`]). Its project trust (`RHO_TRUST_PROJECT_*`) is
+//! the opening client's for as long as the daemon has it loaded (#1779).
 
 use std::{
     path::{Path, PathBuf},
@@ -52,6 +53,7 @@ use crate::{
     session::{Session as StoredSession, SessionPersistence},
     session_environment::{Ambient, SessionEnvironment},
     tools::mcp::McpAuthorizationMode,
+    workspace::ProjectTrusts,
 };
 
 /// The directory a session works in: an existing directory, canonicalized.
@@ -165,7 +167,7 @@ pub(super) async fn open_session(
     let setup = Setup::resolve(&with.setup, opening.cwd(), saved)?;
     open_runtime(
         opening,
-        &with.environment,
+        SessionEnvironment::new(with.environment.clone()),
         setup,
         SessionUse::Run,
         subagents,
@@ -177,8 +179,8 @@ pub(super) async fn open_session(
 
 /// Opens `stored` only to read what it saved, its turns recorded on job
 /// `job`: it starts none of its MCP servers, OpenAPI sources, or hooks, sees
-/// no client's environment, and takes no setup but what its file keeps.
-/// Fails as [`open_session`] does.
+/// no client's environment (see [`SessionEnvironment::for_reading`]), and
+/// takes no setup but what its file keeps. Fails as [`open_session`] does.
 pub(super) async fn open_to_read(
     stored: StoredSession,
     subagents: &Subagents,
@@ -187,7 +189,7 @@ pub(super) async fn open_to_read(
     let setup = Setup::resolve(&SessionSetup::default(), stored.cwd(), Some(&stored))?;
     open_runtime(
         Opening::Saved(stored),
-        &Ambient::Client(Arc::default()),
+        SessionEnvironment::for_reading(),
         setup,
         SessionUse::Read,
         subagents,
@@ -197,17 +199,19 @@ pub(super) async fn open_to_read(
     .map_err(open_failed)
 }
 
-/// [`open_session`] and [`open_to_read`] once the setup resolved.
+/// [`open_session`] and [`open_to_read`] once the setup resolved. The
+/// session's agent is found under `environment`'s project trust, the
+/// opening client's (#1779).
 async fn open_runtime(
     opening: Opening,
-    environment: &Ambient,
+    environment: SessionEnvironment,
     setup: Setup,
     session_use: SessionUse,
     subagents: &Subagents,
     job: &JobId,
 ) -> anyhow::Result<OpenedSession> {
     let cwd = &opening.cwd().to_path_buf();
-    let environment = SessionEnvironment::new(environment.clone());
+    let project_trust = environment.project_trust();
     let Setup {
         left_out,
         questions,
@@ -232,8 +236,11 @@ async fn open_runtime(
             &config,
             agent.as_deref().unwrap_or(DEFAULT_AGENT_ID),
             available_tools,
+            project_trust,
         )?,
-        Opening::Saved(stored) => bind_saved_agent(cwd, &config, stored, available_tools)?,
+        Opening::Saved(stored) => {
+            bind_saved_agent(cwd, &config, stored, available_tools, project_trust)?
+        }
     };
     // The agent's own config, which may pin a model and reasoning, replaces
     // the loaded one; an agent on another runtime keeps it.
@@ -324,27 +331,35 @@ fn bind_saved_agent(
     config: &Config,
     stored: &StoredSession,
     available_tools: AgentCapabilities,
+    project_trust: ProjectTrusts,
 ) -> anyhow::Result<BoundAgent> {
     let Some(root) = stored.root_agent()? else {
         // A delegated session written before launch identities were saved:
         // nothing names its root, so it runs under the default agent, as it
         // did then.
-        return bind_agent(cwd, config, DEFAULT_AGENT_ID, available_tools);
+        return bind_agent(
+            cwd,
+            config,
+            DEFAULT_AGENT_ID,
+            available_tools,
+            project_trust,
+        );
     };
-    let agent = bind_agent(cwd, config, &root.id, available_tools)?;
+    let agent = bind_agent(cwd, config, &root.id, available_tools, project_trust)?;
     root.validate(agent.definition())?;
     Ok(agent)
 }
 
-/// Agent `id` of `cwd`'s catalog, bound as a person's root session with
-/// `available_tools`.
+/// Agent `id` of `cwd`'s catalog as `project_trust` finds it, bound as a
+/// person's root session with `available_tools`.
 fn bind_agent(
     cwd: &Path,
     config: &Config,
     id: &str,
     available_tools: AgentCapabilities,
+    project_trust: ProjectTrusts,
 ) -> anyhow::Result<BoundAgent> {
-    let catalog = AgentCatalog::discover(cwd)?;
+    let catalog = AgentCatalog::discover(cwd, project_trust)?;
     let definition = Arc::new(catalog.find(id)?.definition.clone());
     AgentBinder::bind(
         definition,
