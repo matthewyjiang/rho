@@ -474,7 +474,19 @@ impl App {
         };
         match save_result {
             Ok(()) => {
-                self.set_status(format!("{subject} now uses {label}; saved to config"));
+                // A daemon session reads the saved config itself: the
+                // advisor's model before its next turn, any other agent's
+                // only when a session opens.
+                let applies = match &self.info.session.daemon {
+                    None => "",
+                    Some(_) if id == ADVISOR_AGENT_ID => {
+                        "; this session uses it from the next turn"
+                    }
+                    Some(_) => "; sessions opened from now on use it",
+                };
+                self.set_status(format!(
+                    "{subject} now uses {label}; saved to config{applies}"
+                ));
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
