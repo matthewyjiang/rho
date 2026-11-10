@@ -49,6 +49,9 @@ pub(crate) enum RewindError {
     /// can tell why.
     #[error("{0:#}")]
     Refused(anyhow::Error),
+    /// The checkpoints or the workspace could not be read or written.
+    #[error("{0:#}")]
+    Failed(anyhow::Error),
 }
 
 impl SessionRuntime {
@@ -74,6 +77,8 @@ impl SessionRuntime {
         let Some(stored) = self.storage.file() else {
             return Ok(None);
         };
+        // One a turn that panicked left open would refuse this one.
+        self.built.tools.checkpoint_tracker().discard_turn();
         match self
             .built
             .tools
@@ -156,27 +161,29 @@ impl SessionRuntime {
 
     /// Restores the files checkpoint `target`'s turn changed and, when
     /// every one was restored, continues the conversation from before that
-    /// turn. Everything that can refuse does so before a file is written.
+    /// turn. A session or checkpoint that cannot rewind is refused before a
+    /// file is written; moving the conversation can still fail after, which
+    /// [`RewoundConversation::Failed`] says.
     pub(crate) async fn rewind_workspace(
         &mut self,
         target: &NodeId,
         process_config: &Config,
     ) -> Result<WorkspaceRewind, RewindError> {
-        let refused = |error: anyhow::Error| RewindError::Refused(error);
+        use RewindError::{Failed, Refused};
         if self.permission.mode == PermissionMode::Plan {
-            return Err(refused(anyhow::anyhow!(
+            return Err(Refused(anyhow::anyhow!(
                 "workspace rewind is unavailable in plan permission mode"
             )));
         }
         let stored =
             self.storage.file().cloned().ok_or_else(|| {
-                refused(anyhow::anyhow!("the session has no saved conversation yet"))
+                Refused(anyhow::anyhow!("the session has no saved conversation yet"))
             })?;
         let store = stored
             .workspace_checkpoint_store()
-            .map_err(refused)?
+            .map_err(Failed)?
             .ok_or_else(|| {
-                refused(anyhow::anyhow!(
+                Refused(anyhow::anyhow!(
                     "workspace rewind is unavailable for this session"
                 ))
             })?;
@@ -184,14 +191,14 @@ impl SessionRuntime {
             root: self.permission.workspace_root.clone(),
         }
         .build_workspace(&self.added_dirs)
-        .map_err(|error| refused(error.into()))?;
-        let planned = PlannedRewind::new(&store, &workspace, target).map_err(refused)?;
+        .map_err(|error| Failed(error.into()))?;
+        let planned = PlannedRewind::new(&store, &workspace, target).map_err(Refused)?;
         let before = rewind_boundary(&planned.checkpoint)
-            .map_err(refused)?
+            .map_err(Refused)?
             .clone();
         // The node must still be there to return to once files changed.
-        stored.histories_for_node(&before).map_err(refused)?;
-        let audit = planned.restore(&store, &workspace).map_err(refused)?;
+        stored.histories_for_node(&before).map_err(Refused)?;
+        let audit = planned.restore(&store, &workspace).map_err(Failed)?;
         let conversation = if restored_fully(&audit) {
             match self.select_node(&before, process_config).await {
                 Ok(()) => RewoundConversation::Restored,

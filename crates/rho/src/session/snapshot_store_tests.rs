@@ -79,7 +79,8 @@ fn empty_root_is_session_start_and_remains_restorable() -> anyhow::Result<()> {
 // Covers: `/tree` lists one row for each prompt however many nodes its turn
 // saved: the row names the turn's last node, so restoring it gives the
 // conversation once the turn ended, a branch from that node starts a row of
-// its own, and the row holding the active leaf is the active one.
+// its own, and the row holding the active leaf is the active one; a node
+// names the prompt of the turn that saved it.
 // Owner: session tree projection.
 #[test]
 fn turn_rows_join_the_nodes_that_carry_a_prompt_on() -> anyhow::Result<()> {
@@ -111,7 +112,8 @@ fn turn_rows_join_the_nodes_that_carry_a_prompt_on() -> anyhow::Result<()> {
         1,
     )?;
 
-    let rows = SessionTree::load(session.path())?
+    let tree = SessionTree::load(session.path())?;
+    let rows = tree
         .turn_items()?
         .into_iter()
         .map(|item| {
@@ -124,6 +126,11 @@ fn turn_rows_join_the_nodes_that_carry_a_prompt_on() -> anyhow::Result<()> {
             )
         })
         .collect::<Vec<_>>();
+    // A node a turn saved after its prompt still names that prompt.
+    assert_eq!(
+        [&first_end, &second_end, &branch].map(|node| tree.turn_prompt(node)),
+        ["first", "second", "other"].map(|prompt| Some(prompt.to_owned()))
+    );
     let turn = |text: &str| (SessionTreeItemKind::Turn, Some(text.to_owned()));
     let row = |(kind, text): (SessionTreeItemKind, Option<String>),
                id: &crate::session::tree::NodeId,

@@ -189,25 +189,21 @@ impl SessionRuntime {
             TurnStart::Continue => (self.install_continuation_checkpoint(), RunInput::Continue),
         };
         let checkpoint = checkpoint?;
-        // The prompt is durable before anything runs, so a host that dies
-        // mid-turn still replays it.
-        // The workspace checkpoint opens first, while the conversation's
-        // leaf is still the one a rewind of this turn returns to.
-        let begun = self.begin_workspace_checkpoint().and_then(|paused| {
-            self.insert_user_message(&checkpoint)
-                .map(|inserted| (paused, inserted))
-        });
-        let result = match begun {
-            Ok((paused, inserted)) => {
-                io.emit(SessionEvent::MessageInserted(inserted));
-                for text in self.reopen_notice.take().into_iter().chain(paused) {
-                    io.emit(SessionEvent::Notice { text });
-                }
-                self.drive_run(prompt, &checkpoint, input, displays, io)
-                    .await
+        let result = async {
+            // The workspace checkpoint opens first, while the conversation's
+            // leaf is still the one a rewind of this turn returns to.
+            let paused = self.begin_workspace_checkpoint()?;
+            // The prompt is durable before anything runs, so a host that
+            // dies mid-turn still replays it.
+            let inserted = self.insert_user_message(&checkpoint)?;
+            io.emit(SessionEvent::MessageInserted(inserted));
+            for text in self.reopen_notice.take().into_iter().chain(paused) {
+                io.emit(SessionEvent::Notice { text });
             }
-            Err(error) => Err(error),
-        };
+            self.drive_run(prompt, &checkpoint, input, displays, io)
+                .await
+        }
+        .await;
         let ended = match &result {
             Ok(TurnOutcome::Completed(_)) => CheckpointOutcome::Completed,
             Ok(TurnOutcome::Cancelled) => CheckpointOutcome::Cancelled,
