@@ -53,17 +53,29 @@ impl App {
         relative_path: &str,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
-        let source = discover_workflow_sources(&self.info.runtime.cwd)
-            .into_iter()
+        let sources = discover_workflow_sources(&self.info.runtime.cwd);
+        let source = sources
+            .iter()
             .find(|workflow| workflow.relative_path == relative_path);
-        let refused = match source.as_ref().map(DiscoveredWorkflow::command_name) {
-            Some(Some(command)) => {
+        // The daemon finds the workflow again by its name, ignoring case:
+        // a name two files share starts neither, so say which row it was.
+        let twin = source.and_then(|source| {
+            sources.iter().find(|other| {
+                other.relative_path != source.relative_path
+                    && other.label.eq_ignore_ascii_case(&source.label)
+            })
+        });
+        let refused = match (source.map(DiscoveredWorkflow::command_name), twin) {
+            (Some(_), Some(twin)) => {
+                format!("{} has the same name; rename one", twin.relative_path)
+            }
+            (Some(Some(command)), None) => {
                 return self
                     .launch_daemon_workflow(format!("/{command}"), terminal)
                     .await
             }
-            Some(None) => "its name has spaces; rename the file",
-            None => "the file is gone",
+            (Some(None), None) => "its name has spaces; rename the file".to_owned(),
+            (None, _) => "the file is gone".to_owned(),
         };
         self.input_ui.set_composer(super::ComposerMode::Input);
         self.insert_entry(&Entry::Error(format!(

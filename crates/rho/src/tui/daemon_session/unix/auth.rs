@@ -26,11 +26,22 @@ pub(super) async fn next_login(
         Some(logins) => logins.recv().await?,
         None => std::future::pending().await,
     };
-    Some(match event {
+    Some(update(event))
+}
+
+/// The steps of the login under way that already arrived, without waiting.
+pub(super) fn take_logins(
+    logins: &mut Option<mpsc::UnboundedReceiver<LoginEvent>>,
+) -> impl Iterator<Item = LoginUpdate> + '_ {
+    std::iter::from_fn(move || logins.as_mut()?.try_recv().ok().map(update))
+}
+
+fn update(event: LoginEvent) -> LoginUpdate {
+    match event {
         LoginEvent::Prompt { login, prompt } => LoginUpdate::Prompt { login, prompt },
         LoginEvent::Finished { login, outcome } => LoginUpdate::Finished { login, outcome },
         LoginEvent::Lost => LoginUpdate::Lost,
-    })
+    }
 }
 
 impl DaemonSession {
