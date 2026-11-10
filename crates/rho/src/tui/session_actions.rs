@@ -208,7 +208,7 @@ impl App {
         Ok(())
     }
 
-    fn ensure_this_project(&self, session_cwd: &std::path::Path) -> anyhow::Result<()> {
+    pub(super) fn ensure_this_project(&self, session_cwd: &std::path::Path) -> anyhow::Result<()> {
         anyhow::ensure!(
             !is_cross_project(session_cwd, &self.info.runtime.cwd),
             "start Rho in {} to resume this session",

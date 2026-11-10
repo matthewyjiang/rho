@@ -1,10 +1,11 @@
 //! The daemon session the TUI follows instead of running one in process
 //! (#1667, behind `RHO_TUI_DAEMON=1`; see `app/interactive.rs`).
 //!
-//! [`DaemonSession::open`] opens or resumes the session on this process's
-//! daemon connection (`app::daemon_client`, which starts the daemon when
-//! none runs) and attaches to it before the TUI takes the terminal, so a
-//! refusal reads as an ordinary startup error. The app loop then waits on
+//! [`DaemonSession::open`] opens or resumes the session on a daemon
+//! connection of its own (`app::daemon_client`, which starts the daemon
+//! when none runs) and attaches to it: at launch before the TUI takes the
+//! terminal, so a refusal reads as an ordinary startup error, and again
+//! for each session the TUI switches to (`daemon_switch`). The app loop then waits on
 //! [`next_views`], which maps what the daemon sent since through
 //! [`DaemonEvents`]: the reset replay of the saved conversation first, then
 //! live events. Once the replay is over, the job state the attach answered
@@ -55,7 +56,8 @@ pub(crate) enum DaemonTarget {
 pub(crate) enum InitialSettings {
     /// As the daemon opened it.
     Kept,
-    /// Changes the launch asked for; one the daemon refuses fails the open.
+    /// Changes the launch asked for; one the daemon refuses fails the open,
+    /// unless the session has a turn under way, which they wait for.
     Required(Vec<rho_protocol::SessionChange>),
     /// The settings of the session it replaces; one the daemon refuses
     /// keeps its default.
@@ -72,86 +74,10 @@ pub(super) async fn next_views(session: &mut Option<DaemonSession>) -> Vec<Daemo
 }
 
 #[cfg(not(unix))]
-pub(crate) enum DaemonSession {}
-
+#[path = "daemon_session_absent.rs"]
+mod absent;
 #[cfg(not(unix))]
-impl DaemonSession {
-    pub(in crate::tui) fn configure(
-        &self,
-        _change: rho_protocol::SessionChange,
-    ) -> anyhow::Result<()> {
-        match *self {}
-    }
-
-    pub(in crate::tui) fn request_mcp(&self) -> anyhow::Result<()> {
-        match *self {}
-    }
-
-    pub(in crate::tui) fn goal(
-        &self,
-        _action: rho_protocol::SessionGoalAction,
-    ) -> anyhow::Result<()> {
-        match *self {}
-    }
-
-    pub(in crate::tui) fn rename(&self, _title: String) -> anyhow::Result<()> {
-        match *self {}
-    }
-
-    pub(in crate::tui) async fn open_sibling(&self, _target: DaemonTarget) -> anyhow::Result<Self> {
-        match *self {}
-    }
-
-    pub(crate) fn saved_id(&self) -> Option<&str> {
-        match *self {}
-    }
-
-    pub(crate) fn workspace(&self) -> &std::path::Path {
-        match *self {}
-    }
-
-    async fn next_views(&mut self) -> Vec<DaemonView> {
-        match *self {}
-    }
-
-    pub(in crate::tui) fn take_views(&mut self) -> Vec<DaemonView> {
-        match *self {}
-    }
-
-    pub(in crate::tui) async fn prompt(
-        &mut self,
-        _content: Vec<rho_protocol::ContentBlock>,
-    ) -> anyhow::Result<()> {
-        match *self {}
-    }
-
-    pub(in crate::tui) async fn cancel(&self) -> anyhow::Result<()> {
-        match *self {}
-    }
-
-    pub(in crate::tui) async fn steer(&self, _text: String) -> anyhow::Result<rho_sdk::SteeringId> {
-        match *self {}
-    }
-
-    pub(in crate::tui) async fn unsteer(
-        &self,
-        _id: &rho_sdk::SteeringId,
-    ) -> anyhow::Result<rho_protocol::UnsteerOutcome> {
-        match *self {}
-    }
-
-    pub(in crate::tui) async fn answer(
-        &mut self,
-        _id: rho_protocol::InputRequestId,
-        _answer: rho_protocol::InputAnswer,
-    ) {
-        match *self {}
-    }
-
-    pub(in crate::tui) async fn hold(&mut self, _id: rho_protocol::InputRequestId) -> bool {
-        match *self {}
-    }
-}
+pub(crate) use absent::DaemonSession;
 
 #[cfg(unix)]
 mod unix {
@@ -170,9 +96,10 @@ mod unix {
             SessionSteer, SessionUnsteer,
         },
         ClientEnvironment, ContentBlock, DetachReason, ErrorCode, InputAnswer, InputRequestId,
-        SessionAnswerParams, SessionAttachParams, SessionAttachResponse, SessionCancelParams,
-        SessionChange, SessionConfigureParams, SessionHoldParams, SessionId, SessionNewParams,
-        SessionOptions, SessionSteerParams, SessionUnsteerParams, SteerId, UnsteerOutcome,
+        JobState, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
+        SessionCancelParams, SessionChange, SessionConfigureParams, SessionHoldParams, SessionId,
+        SessionNewParams, SessionOptions, SessionSteerParams, SessionUnsteerParams, SteerId,
+        UnsteerOutcome,
     };
     use rho_sdk::SteeringId;
     use tokio::sync::{mpsc, oneshot, watch};
@@ -354,10 +281,12 @@ mod unix {
     }
 
     /// Carries `changes` to `session`; one the daemon refuses keeps its
-    /// default, as do those after it.
+    /// default.
     async fn carry(link: &Link, session: &SessionId, changes: Vec<SessionChange>) {
-        if let Err((_, error)) = configure_all(link, session, changes).await {
-            tracing::warn!(%error, "could not carry a setting to the new daemon session");
+        for change in changes {
+            if let Err((_, error)) = configure_all(link, session, vec![change]).await {
+                tracing::warn!(%error, "could not carry a setting to the new daemon session");
+            }
         }
     }
 
@@ -442,8 +371,20 @@ mod unix {
             let link = daemon.current().await.context(LOST)?;
             // After the attach, which loads a saved session. The daemon
             // also sends each change's options on the session's stream.
+            let at_rest = !matches!(
+                response.state,
+                JobState::Queued | JobState::Running | JobState::WaitingForInput
+            );
+            // A change waits for the turn under way, which may wait for
+            // this client: those go through the request queue once the
+            // session is followed, and a refusal shows as a row.
+            let mut queued = Vec::new();
             let changed = match settings {
                 InitialSettings::Kept => None,
+                InitialSettings::Required(changes) if !at_rest => {
+                    queued = changes;
+                    None
+                }
                 InitialSettings::Required(changes) => {
                     match configure_all(&link, &id, changes).await {
                         Ok(options) => options,
@@ -467,7 +408,7 @@ mod unix {
             });
             let mut events = DaemonEvents::default();
             let pending = begin_replay(&mut events, &response);
-            Ok(Self {
+            let session = Self {
                 position: StreamPosition::attached(&response),
                 daemon,
                 id,
@@ -483,7 +424,11 @@ mod unix {
                 ended: false,
                 requests: Some(DaemonRequests::new(requests)),
                 reattach: None,
-            })
+            };
+            for change in queued {
+                session.configure(change)?;
+            }
+            Ok(session)
         }
 
         /// Opens `target` on a connection of its own, to follow in this

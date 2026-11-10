@@ -3,17 +3,19 @@
 //!
 //! The session to follow opens on a connection of its own before anything
 //! here changes, so a refusal leaves the TUI on the session it had. Then
-//! the screen resets and the old session's connection closes, which
-//! detaches it without cancelling anything: these commands run only while
-//! the TUI is idle, so the one case of leaving work behind is a session the
-//! TUI had already stopped following, which keeps running in the daemon
-//! and can be resumed. The new session's attach replays its conversation
-//! as a first attach does.
+//! the old session's connection closes, which detaches it without
+//! cancelling anything, and the screen resets. These commands run only
+//! while the TUI shows no turn, so work is left behind only in a session
+//! the TUI had stopped following, or whose turn began unseen; it keeps
+//! running in the daemon and can be resumed. The new session's attach
+//! replays its conversation as a first attach does.
+//!
+//! [`App::reset_session_view`] is also the in-process `/new`'s reset.
 
 use super::{
     daemon_session::DaemonTarget, App, ComposerMode, DefaultTerminal, InputSubmissionMode,
 };
-use crate::session::{is_cross_project, Session};
+use crate::session::Session;
 
 impl App {
     /// Clears what the screen holds of the session it showed, for one that
@@ -34,6 +36,7 @@ impl App {
         self.input_ui.clear_attachments();
         self.input_ui.set_command_palette_dismissed(false);
         self.clamp_command_selection();
+        self.start_follow_ups = None;
         self.pending.clear_follow_ups();
         self.goal = None;
         self.pending.clear_steering();
@@ -72,22 +75,16 @@ impl App {
             .as_ref()
             .expect("switching needs a daemon session");
         let opened = current.open_sibling(target).await?;
-        // An id lookup can find a session saved under another project.
-        // Dropping the opened session detaches it.
-        anyhow::ensure!(
-            !is_cross_project(opened.workspace(), &self.info.runtime.cwd),
-            "start Rho in {} to resume this session",
-            crate::paths::display(opened.workspace())
-        );
-        self.reset_session_view(terminal)?;
-        self.sessions_hub_state.clear();
-        self.daemon_options = None;
-        self.daemon_option_requests.clear();
-        self.daemon_title = None;
-        self.daemon_answers = Default::default();
         self.info.session.session_id = opened.saved_id().map(str::to_owned);
         // The session followed until now detaches as its connection drops.
         self.info.session.daemon = Some(opened);
+        self.sessions_hub_state.clear();
+        self.daemon_option_requests.clear();
+        self.daemon_title = None;
+        self.reset_session_view(terminal)?;
+        // What the attach answered with, the session's options among it:
+        // a session at rest sends nothing more until it is prompted.
+        self.show_taken_daemon_views(terminal).await?;
         self.sync_herdr_session().await;
         Ok(())
     }
@@ -98,10 +95,13 @@ impl App {
         id: &str,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
-        let id = Session::resolve_id(&self.info.runtime.cwd, id)?;
-        let short = super::session_picker::short_session_id(&id);
+        let target = Session::resolve_target(&self.info.runtime.cwd, id)?;
+        // An id lookup can find a session saved under another project;
+        // refused before the daemon opens it.
+        self.ensure_this_project(&target.cwd)?;
+        let short = super::session_picker::short_session_id(&target.id);
         self.switch_daemon_session(
-            DaemonTarget::Resume(rho_protocol::SessionId::new(id)),
+            DaemonTarget::Resume(rho_protocol::SessionId::new(target.id)),
             terminal,
         )
         .await?;
