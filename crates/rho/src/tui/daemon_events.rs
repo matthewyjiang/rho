@@ -84,6 +84,11 @@ pub(super) enum DaemonView {
     Options(Box<rho_protocol::SessionOptions>),
     /// On-demand inventory response; ignored if the person closed the picker.
     McpInventory(Result<Box<rho_protocol::SessionMcpInventory>, String>),
+    /// A report the person asked for, as the daemon presents it.
+    Report {
+        report: rho_protocol::SessionReport,
+        result: Result<serde_json::Value, String>,
+    },
     /// The daemon's jobs, asked for to refresh the subagent rail.
     Jobs(Result<Vec<rho_protocol::JobSummary>, String>),
     /// One background configure request finished, successfully or otherwise.

@@ -27,10 +27,12 @@ use std::{
 };
 
 use rho_protocol::{
-    methods::{JobList, SessionConfigure, SessionMcp, SessionPrompt, SessionRename},
+    methods::{
+        JobList, SessionConfigure, SessionInspect, SessionMcp, SessionPrompt, SessionRename,
+    },
     ClientEnvironment, ClientError, ContentBlock, ErrorCode, IdempotencyKey, JobListParams,
-    SessionChange, SessionConfigureParams, SessionGoalAction, SessionId, SessionMcpParams,
-    SessionPromptParams, SessionRenameParams,
+    SessionChange, SessionConfigureParams, SessionGoalAction, SessionId, SessionInspectParams,
+    SessionMcpParams, SessionPromptParams, SessionRenameParams, SessionReport,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -116,6 +118,7 @@ enum Control {
     Goal(SessionGoalAction),
     Rename(String),
     Jobs,
+    Inspect(SessionReport),
 }
 
 pub(super) struct DaemonRequests {
@@ -195,6 +198,24 @@ impl DaemonRequests {
                         };
                         let _ = control_views.send(DaemonView::Jobs(jobs));
                     }
+                    Control::Inspect(report) => {
+                        let answer =
+                            on_attachment(&mut control_target, |link, session| async move {
+                                link.request::<SessionInspect>(&SessionInspectParams {
+                                    session,
+                                    report,
+                                })
+                                .await
+                            })
+                            .await;
+                        let result = match answer {
+                            Some((_, answer)) => answer
+                                .map(|answer| answer.report)
+                                .map_err(|error| error.to_string()),
+                            None => Err(LOST.to_owned()),
+                        };
+                        let _ = control_views.send(DaemonView::Report { report, result });
+                    }
                     Control::Rename(title) => {
                         let answer = on_attachment(&mut control_target, |link, session| {
                             let title = title.clone();
@@ -227,7 +248,10 @@ impl DaemonRequests {
                 match request {
                     Request::Configure(change) => {
                         let setting = setting_name(&change);
-                        let saves_rows = matches!(change, SessionChange::Context { .. });
+                        let saves_rows = matches!(
+                            change,
+                            SessionChange::Context { .. } | SessionChange::AddDirectory { .. }
+                        );
                         let answer = on_attachment(&mut target, |link, session| {
                             let change = change.clone();
                             async move {
@@ -312,6 +336,12 @@ impl DaemonRequests {
     pub(super) fn goal(&self, action: SessionGoalAction) -> anyhow::Result<()> {
         self.control
             .send(Control::Goal(action))
+            .map_err(|_| anyhow::anyhow!(LOST))
+    }
+
+    pub(super) fn inspect(&self, report: SessionReport) -> anyhow::Result<()> {
+        self.control
+            .send(Control::Inspect(report))
             .map_err(|_| anyhow::anyhow!(LOST))
     }
 

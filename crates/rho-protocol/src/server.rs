@@ -27,17 +27,18 @@ use crate::{
         SessionCancelResponse, SessionConfigure, SessionConfigureParams, SessionConfigureResponse,
         SessionDelete, SessionDeleteParams, SessionDeleteResponse, SessionDetach,
         SessionDetachParams, SessionDetachResponse, SessionHold, SessionHoldParams,
-        SessionHoldResponse, SessionId, SessionList, SessionListParams, SessionListResponse,
-        SessionMcp, SessionMcpInventory, SessionMcpParams, SessionNew, SessionNewParams,
-        SessionNewResponse, SessionObserve, SessionObserveParams, SessionPrompt,
-        SessionPromptParams, SessionPromptResponse, SessionRename, SessionRenameParams,
-        SessionRenameResponse, SessionSteer, SessionSteerParams, SessionSteerResponse,
-        SessionUnsteer, SessionUnsteerParams, SessionUnsteerResponse, Status, Stop,
-        AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT,
-        DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER,
-        SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH,
-        SESSION_HOLD, SESSION_LIST, SESSION_MCP, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT,
-        SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
+        SessionHoldResponse, SessionId, SessionInspect, SessionInspectParams,
+        SessionInspectResponse, SessionList, SessionListParams, SessionListResponse, SessionMcp,
+        SessionMcpInventory, SessionMcpParams, SessionNew, SessionNewParams, SessionNewResponse,
+        SessionObserve, SessionObserveParams, SessionPrompt, SessionPromptParams,
+        SessionPromptResponse, SessionRename, SessionRenameParams, SessionRenameResponse,
+        SessionSteer, SessionSteerParams, SessionSteerResponse, SessionUnsteer,
+        SessionUnsteerParams, SessionUnsteerResponse, Status, Stop, AUTH_CHOOSE_STORE, AUTH_KEY,
+        AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, DAEMON_RESTART, DAEMON_STATUS,
+        DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL,
+        SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD, SESSION_INSPECT,
+        SESSION_LIST, SESSION_MCP, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT, SESSION_RENAME,
+        SESSION_STEER, SESSION_UNSTEER,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -170,6 +171,13 @@ pub trait Service: Send + Sync {
         &self,
         params: SessionMcpParams,
     ) -> impl Future<Output = Result<SessionMcpInventory, RpcError>> + Send;
+
+    /// Handles `rho/session/inspect`: read a report about the loaded
+    /// session between its turns, refusing while one runs.
+    fn inspect_session(
+        &self,
+        params: SessionInspectParams,
+    ) -> impl Future<Output = Result<SessionInspectResponse, RpcError>> + Send;
 
     /// Handles `rho/session/attach`: subscribe this connection to the
     /// session's events (see [`crate::subscription()`]). The connection sends
@@ -597,6 +605,7 @@ enum ServiceCall {
     HoldSession(SessionHoldParams),
     ConfigureSession(SessionConfigureParams),
     SessionMcp(SessionMcpParams),
+    InspectSession(SessionInspectParams),
     ListSessions(SessionListParams),
     RenameSession(SessionRenameParams),
     DeleteSession(SessionDeleteParams),
@@ -695,6 +704,7 @@ impl ServiceCall {
                 decode_params::<SessionConfigure>(params).map(Self::ConfigureSession)
             }
             SESSION_MCP => decode_params::<SessionMcp>(params).map(Self::SessionMcp),
+            SESSION_INSPECT => decode_params::<SessionInspect>(params).map(Self::InspectSession),
             SESSION_LIST => decode_params::<SessionList>(params).map(Self::ListSessions),
             SESSION_RENAME => decode_params::<SessionRename>(params).map(Self::RenameSession),
             SESSION_DELETE => decode_params::<SessionDelete>(params).map(Self::DeleteSession),
@@ -722,6 +732,7 @@ impl ServiceCall {
             | Self::AnswerSession(SessionAnswerParams { session, .. })
             | Self::HoldSession(SessionHoldParams { session, .. })
             | Self::SessionMcp(SessionMcpParams { session, .. })
+            | Self::InspectSession(SessionInspectParams { session, .. })
             | Self::ConfigureSession(SessionConfigureParams { session, .. })
             | Self::RenameSession(SessionRenameParams { session, .. }) => Some(session),
             Self::Status
@@ -777,6 +788,9 @@ impl ServiceCall {
             }
             Self::SessionMcp(params) => {
                 encode_result::<SessionMcp>(&service.session_mcp(params).await?)
+            }
+            Self::InspectSession(params) => {
+                encode_result::<SessionInspect>(&service.inspect_session(params).await?)
             }
             Self::ListSessions(params) => {
                 encode_result::<SessionList>(&service.list_sessions(params).await?)

@@ -45,6 +45,17 @@ impl SessionRuntime {
         if self.permission.mode == mode {
             return Ok(());
         }
+        self.rebuild_for_mode(mode, process_config).await
+    }
+
+    /// Rebuilds the SDK runtime to serve `mode` over the session's
+    /// workspace and added directories, and rebinds the session onto it.
+    /// On error the session keeps the runtime it had.
+    pub(super) async fn rebuild_for_mode(
+        &mut self,
+        mode: PermissionMode,
+        process_config: &Config,
+    ) -> Result<(), SettingChangeError> {
         let mut config = model_scoped_config(&self.current_model(), process_config);
         config.permission_mode = mode;
         let credentials = self.build.host.environment.credentials();

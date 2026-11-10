@@ -197,3 +197,63 @@ async fn added_context_reaches_the_model_and_a_later_replay() {
         )
     );
 }
+
+// Covers: a directory a client adds between turns joins the session's
+// scope, which its options report; clients attached now are told, and a
+// later attach replays the row that says so. A relative path, and a
+// directory the workspace already reaches, are refused.
+// Owner: daemon session settings.
+#[tokio::test]
+async fn an_added_directory_joins_the_sessions_scope() {
+    let (root, home) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    let (outside, inside) = (TempDir::new().unwrap(), root.path().join("inside"));
+    std::fs::create_dir(&inside).unwrap();
+    let sessions = new_sessions(&home);
+    let session = load(&sessions, &root, Load::Saved).await;
+    let add = |path: &std::path::Path| SessionConfigureParams {
+        session: session_to_wire(session.id.clone()),
+        change: SessionChange::AddDirectory { path: path.into() },
+    };
+    let code = |answer: Result<wire::SessionConfigureResponse, wire::RpcError>| {
+        answer.map(|_| ()).map_err(|error| error.code)
+    };
+
+    let relative = code(sessions.configure(add("elsewhere".as_ref())).await);
+    let covered = code(
+        sessions
+            .configure(add(&inside.canonicalize().unwrap()))
+            .await,
+    );
+    let added = sessions
+        .configure(add(outside.path()))
+        .await
+        .map(|added| added.options.added_dirs);
+
+    let dir = outside.path().canonicalize().unwrap();
+    let told: Vec<_> = session
+        .feed
+        .buffered_for_tests()
+        .into_iter()
+        .filter_map(|event| match event {
+            wire::SessionEvent::Notice { text } => Some(text),
+            _ => None,
+        })
+        .collect();
+    let replayed = session
+        .feed
+        .reset_replay_for_tests()
+        .into_iter()
+        .filter(|event| matches!(event, wire::SessionEvent::UserMessage { .. }))
+        .count();
+    let invalid = wire::ErrorCode::InvalidParams.code();
+    assert_eq!(
+        (relative, covered, added, told, replayed),
+        (
+            Err(invalid),
+            Err(invalid),
+            Ok(vec![dir.clone()]),
+            vec![format!("added directory {}", crate::paths::display(&dir))],
+            1,
+        )
+    );
+}

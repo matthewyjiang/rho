@@ -42,6 +42,7 @@ use crate::{
     tools::mcp::config::McpConfig,
 };
 
+mod added_dirs;
 mod agent;
 pub(in crate::app) mod agent_catalog;
 mod approval_policy;
@@ -53,6 +54,7 @@ mod delegation;
 mod events;
 mod goal;
 mod handle;
+mod inspect;
 mod left_out;
 mod mode;
 mod open;
@@ -71,6 +73,7 @@ mod title;
 mod turn;
 mod workflow;
 
+pub(crate) use added_dirs::AddDirError;
 pub(crate) use agent::AgentTask;
 pub(crate) use approval_policy::{
     ensure_auto_classifier_model, ApprovalPolicy, UnattendedApprovals,

@@ -2894,6 +2894,36 @@
             "kind"
           ],
           "type": "object"
+        },
+        {
+          "description": "Let the session's tools reach the directory at `path`, absolute, and\ntell the model so from its next turn on, with a saved row. A path\nthat is not a directory, or one the session already reaches, is\n[`crate::ErrorCode::InvalidParams`].",
+          "properties": {
+            "kind": {
+              "const": "add_directory",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Read the model lists again: a client sends it after it refreshed\nthe lists the daemon shares on disk. Every loaded session's options\nfollow.",
+          "properties": {
+            "kind": {
+              "const": "model_catalog",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3613,6 +3643,34 @@
       "description": "A session's id, the one `rho sessions` and `/resume` show. Opaque to\nclients: send back the string the daemon gave.",
       "type": "string"
     },
+    "SessionInspectParams": {
+      "description": "Params of [`SESSION_INSPECT`].",
+      "properties": {
+        "report": {
+          "$ref": "#/$defs/SessionReport"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "session",
+        "report"
+      ],
+      "type": "object"
+    },
+    "SessionInspectResponse": {
+      "description": "Result of [`SESSION_INSPECT`].",
+      "properties": {
+        "report": {
+          "description": "The report as rho's own frontends show it. Presentation data, not a\nmachine-readable contract: its shape follows the rho version."
+        }
+      },
+      "required": [
+        "report"
+      ],
+      "type": "object"
+    },
     "SessionListParams": {
       "description": "Params of [`SESSION_LIST`].",
       "properties": {
@@ -3891,6 +3949,13 @@
     "SessionOptions": {
       "description": "What a session runs with now, and what a client may change it to.",
       "properties": {
+        "added_dirs": {
+          "description": "The directories the session's tools reach besides its workspace.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "commands": {
           "description": "The commands a prompt may start with or mention, in menu order.",
           "items": {
@@ -4048,6 +4113,21 @@
     "SessionRenameResponse": {
       "description": "Result of [`SESSION_RENAME`]: the title is saved, and clients attached\nto the session receive it as [`super::SessionEvent::TitleChanged`]. A\ngenerated title never replaces it.",
       "type": "object"
+    },
+    "SessionReport": {
+      "description": "A report [`SESSION_INSPECT`] reads. Protocol minors may add reports.",
+      "oneOf": [
+        {
+          "const": "context",
+          "description": "What fills the model's context window on the next request, by\nsource.",
+          "type": "string"
+        },
+        {
+          "const": "hooks",
+          "description": "The session's hooks, read again from their files, and their recent\nactivity.",
+          "type": "string"
+        }
+      ]
     },
     "SessionSetup": {
       "description": "Choices a client makes for a session the daemon opens for it.\n\nThe session owns its directories and the parts it leaves out but\nquestions: it saves them, and a reopen adds the opening request's to the\nsaved ones, so a later client can narrow a session, never widen it. The\nopening client owns its MCP servers, whether it shows questions, and\nwhether its host runs the session's children: a reopened session has\nthose its opening request names, and none when a prompt reopens it.\n\nThat holds across the daemon's reopens. A host that opens the session\nfile in its own process does not keep it yet: `rho acp`'s\n`session/load` and `session/resume` save the session with that\nprocess's own flags and directories, and the terminal UI keeps what a\nsession saved but does not save its own `--no-*` flags.",
@@ -5437,6 +5517,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionHoldResponse"
+      }
+    },
+    "rho/session/inspect": {
+      "params": {
+        "$ref": "#/$defs/SessionInspectParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionInspectResponse"
       }
     },
     "rho/session/list": {

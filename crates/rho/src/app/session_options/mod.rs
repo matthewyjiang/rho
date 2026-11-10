@@ -45,7 +45,7 @@ pub(crate) fn of(
 ) -> wire::SessionOptions {
     let home = crate::paths::home_dir();
     let scope = CommandScope::of(runtime, home.as_deref(), process_config);
-    build(
+    let mut options = build(
         &runtime.current_model(),
         process_config,
         available_auths,
@@ -55,7 +55,9 @@ pub(crate) fn of(
         },
         runtime.permission_mode(),
         available_commands(&scope, commands),
-    )
+    );
+    options.added_dirs = runtime.added_dirs().as_slice().to_vec();
+    options
 }
 
 /// The options of a session on `current` at `reasoning` in
@@ -92,6 +94,7 @@ fn build(
         },
         commands,
         goal: None,
+        added_dirs: Vec::new(),
     }
 }
 

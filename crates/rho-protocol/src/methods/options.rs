@@ -11,6 +11,8 @@
 //! new commands behind, a plan approval's mode switch, or a credential write
 //! that changes the models a session may switch to.
 
+use std::path::PathBuf;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -65,6 +67,15 @@ pub enum SessionChange {
     /// it after it wrote or removed a definition. Clients see a
     /// [`super::SessionEvent::Notice`] when the model had to be told.
     AgentCatalog,
+    /// Let the session's tools reach the directory at `path`, absolute, and
+    /// tell the model so from its next turn on, with a saved row. A path
+    /// that is not a directory, or one the session already reaches, is
+    /// [`crate::ErrorCode::InvalidParams`].
+    AddDirectory { path: PathBuf },
+    /// Read the model lists again: a client sends it after it refreshed
+    /// the lists the daemon shares on disk. Every loaded session's options
+    /// follow.
+    ModelCatalog,
 }
 
 /// Result of [`SESSION_CONFIGURE`], once the change applied, after the turn
@@ -94,6 +105,9 @@ pub struct SessionOptions {
     /// Kept while the session is loaded, not across daemon restarts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal: Option<Box<SessionGoal>>,
+    /// The directories the session's tools reach besides its workspace.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added_dirs: Vec<PathBuf>,
 }
 
 /// A model, by its provider and the provider's model id.

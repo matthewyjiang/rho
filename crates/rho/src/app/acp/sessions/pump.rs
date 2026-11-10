@@ -175,7 +175,7 @@ impl Pump {
                 let _ = waiter.outcome.send(Err(daemon::lost()));
             }
             Control::Options(options, told) => {
-                self.options_changed(options).await;
+                self.options_changed(*options).await;
                 let _ = told.send(());
             }
             Control::Flush(done) => {

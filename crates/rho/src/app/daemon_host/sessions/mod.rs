@@ -72,6 +72,7 @@ mod cost;
 mod feed;
 mod goal;
 mod inputs;
+mod inspect;
 mod mcp;
 mod observe;
 mod open;

@@ -11,7 +11,11 @@ impl App {
     ) -> anyhow::Result<()> {
         let raw = invocation.args.trim();
         if raw.is_empty() {
-            let dirs = agent.added_dirs().as_slice();
+            // A daemon session's set arrives with its options.
+            let dirs = match self.info.session.daemon {
+                Some(_) => self.info.runtime.added_dirs.as_slice(),
+                None => agent.added_dirs().as_slice(),
+            };
             let listing = if dirs.is_empty() {
                 "none".to_string()
             } else {
@@ -36,6 +40,10 @@ impl App {
                 return Ok(());
             }
         };
+        if self.info.session.daemon.is_some() {
+            // The daemon's notice says it was added; a refusal says why not.
+            return self.configure_daemon(rho_protocol::SessionChange::AddDirectory { path: dir });
+        }
         match agent.add_dir(dir.clone()).await {
             Ok(AddDirOutcome::Added) => {
                 self.insert_entry(&Entry::Notice(format!(

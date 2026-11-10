@@ -228,6 +228,49 @@ pub fn running_inside_hook(environment: &Ambient) -> bool {
     environment.read_os(IN_HOOK_ENV).is_some()
 }
 
+/// Reads the hooks for the workspace containing `cwd` again and reports
+/// what a session running `hooks` there now has. `inside_hook` is
+/// [`running_inside_hook`] for the session's environment, and `trust` its
+/// project trust.
+///
+/// The swap is atomic, so a blocking decision already in flight keeps the
+/// hook set it started with. A session that started without hooks, or
+/// without a whole class of hooks (blocking vs observational), stays that
+/// way until it is opened again: installing a gate or worker means
+/// rebuilding the SDK runtime, which a report should not do behind the
+/// user's back.
+pub fn reload_report(
+    hooks: Option<&HookPipeline>,
+    cwd: &std::path::Path,
+    trust: ProjectTrusts,
+    inside_hook: bool,
+) -> anyhow::Result<HookReport> {
+    let Some(hooks) = hooks else {
+        // A Rho a hook started runs without hooks (#1659).
+        if inside_hook {
+            return Ok(HookReport::disabled());
+        }
+        let mut discard = |_message: String| {};
+        let catalog = discover_for_cwd(cwd, trust, &mut discard)?;
+        anyhow::ensure!(
+            catalog.is_empty(),
+            "hooks were added since this session started; restart Rho to load them"
+        );
+        let mut report = HookReport::disabled();
+        report.skipped_untrusted = catalog
+            .skipped_untrusted()
+            .map(|skipped| crate::paths::display(&skipped.path));
+        report.skipped_untrusted_error = catalog
+            .skipped_untrusted()
+            .and_then(|skipped| skipped.error())
+            .map(ToString::to_string);
+        report.hooks = contract_views(&catalog);
+        return Ok(report);
+    };
+    hooks.reload_for_cwd(cwd)?;
+    Ok(HookInspector::new(hooks).report())
+}
+
 /// How long queued observational hooks may finish after a session ends.
 pub const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 

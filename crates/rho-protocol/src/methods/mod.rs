@@ -21,6 +21,7 @@
 //! | [`SESSION_OBSERVE`] | [`SessionObserveParams`] | [`SessionAttachResponse`] |
 //! | [`SESSION_DETACH`] | [`SessionDetachParams`] | [`SessionDetachResponse`] |
 //! | [`SESSION_MCP`] | [`SessionMcpParams`] | [`SessionMcpInventory`] |
+//! | [`SESSION_INSPECT`] | [`SessionInspectParams`] | [`SessionInspectResponse`] |
 //! | [`SESSION_CONFIGURE`] | [`SessionConfigureParams`] | [`SessionConfigureResponse`] |
 //! | [`SESSION_LIST`] | [`SessionListParams`] | [`SessionListResponse`] |
 //! | [`SESSION_RENAME`] | [`SessionRenameParams`] | [`SessionRenameResponse`] |
@@ -58,6 +59,7 @@ mod daemon;
 mod event;
 mod goal;
 mod input;
+mod inspect;
 mod job;
 mod login;
 mod mcp;
@@ -95,6 +97,7 @@ pub use input::{
     SessionAnswerResponse, SessionControlAction, SessionHoldParams, SessionHoldResponse,
     SESSION_ANSWER, SESSION_HOLD,
 };
+pub use inspect::{SessionInspectParams, SessionInspectResponse, SessionReport, SESSION_INSPECT};
 pub use job::{
     Budget, JobId, JobKind, JobListParams, JobListResponse, JobState, JobSummary, QueuePlace,
     JOB_LIST,
@@ -215,6 +218,7 @@ protocol! {
         SessionDetach = SESSION_DETACH: SessionDetachParams => SessionDetachResponse,
         SessionConfigure = SESSION_CONFIGURE: SessionConfigureParams => SessionConfigureResponse,
         SessionMcp = SESSION_MCP: SessionMcpParams => SessionMcpInventory,
+        SessionInspect = SESSION_INSPECT: SessionInspectParams => SessionInspectResponse,
         SessionList = SESSION_LIST: SessionListParams => SessionListResponse,
         SessionRename = SESSION_RENAME: SessionRenameParams => SessionRenameResponse,
         SessionDelete = SESSION_DELETE: SessionDeleteParams => SessionDeleteResponse,

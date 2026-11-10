@@ -37,6 +37,11 @@ pub(crate) struct RestoredDirs {
 }
 
 impl AddedDirs {
+    /// The set a session reports as its own, already canonical and sorted.
+    pub(crate) fn reported(dirs: Vec<PathBuf>) -> Self {
+        Self(dirs)
+    }
+
     pub(crate) fn as_slice(&self) -> &[PathBuf] {
         &self.0
     }

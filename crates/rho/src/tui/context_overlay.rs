@@ -85,7 +85,16 @@ impl App {
         &mut self,
         agent: &InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let report = agent.context_report();
+        if self.info.session.daemon.is_some() {
+            self.request_daemon_report(rho_protocol::SessionReport::Context);
+            return Ok(());
+        }
+        self.show_context_report(agent.context_report());
+        Ok(())
+    }
+
+    /// Opens the `/context` overlay on `report`.
+    pub(super) fn show_context_report(&mut self, report: ContextReport) {
         let window = report
             .window
             .filter(|window| *window > 0)
@@ -104,7 +113,6 @@ impl App {
                 },
             ))));
         self.set_status_quiet("context");
-        Ok(())
     }
 }
 
@@ -145,7 +153,7 @@ fn context_lines(report: &ContextReport, window: Option<u64>, width: usize) -> V
     for group in &report.groups {
         lines.push(Line::default());
         lines.extend(table.row(
-            group.label,
+            &group.label,
             None,
             group.tokens,
             Theme::text().add_modifier(Modifier::BOLD),

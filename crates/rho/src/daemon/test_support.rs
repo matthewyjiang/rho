@@ -119,6 +119,13 @@ impl Service for StubHost {
         Err(no_sessions())
     }
 
+    async fn inspect_session(
+        &self,
+        _: rho_protocol::SessionInspectParams,
+    ) -> Result<rho_protocol::SessionInspectResponse, RpcError> {
+        Err(no_sessions())
+    }
+
     async fn configure_session(
         &self,
         _: SessionConfigureParams,

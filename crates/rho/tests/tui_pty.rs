@@ -1204,6 +1204,14 @@ fn daemon_session_takes_context_added_without_a_turn() {
     assert_pass("daemon_session_context");
 }
 
+// Covers: `/add-dir` widens the daemon's session, which a reopening TUI
+// still lists, and `/context` and `/hooks` show the daemon's reports.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_session_adds_a_directory_and_reports_on_itself() {
+    assert_pass("daemon_session_reports");
+}
+
 // Covers: `/new`, `/resume`, and the `--resume` picker switch the daemon
 // session the TUI follows; a launch flag's setting carries into `/new`.
 // Owner: interactive TUI as a daemon client (#1667)

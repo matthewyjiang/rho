@@ -45,6 +45,8 @@ pub(super) fn setting_name(change: &SessionChange) -> &'static str {
         SessionChange::PermissionMode { .. } => "permission mode",
         SessionChange::Context { .. } => "session context",
         SessionChange::AgentCatalog => "agent catalog",
+        SessionChange::AddDirectory { .. } => "added directories",
+        SessionChange::ModelCatalog => "model lists",
         // `SessionChange` is non-exhaustive; the TUI sends only the above.
         _ => "session setting",
     }
@@ -104,6 +106,8 @@ impl App {
             .as_ref()
             .filter(|fast| fast.enabled)
             .map(|_| rho_sdk::model::ServiceTier::Priority);
+        self.info.runtime.added_dirs =
+            crate::added_dirs::AddedDirs::reported(options.added_dirs.clone());
         // Metadata is display-only in this path; never normalize daemon options
         // or push a context window into the unused InteractiveRuntime.
         self.model_metadata = super::reasoning_metadata::cached_metadata(

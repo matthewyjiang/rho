@@ -8,44 +8,16 @@ use super::InteractiveRuntime;
 use crate::session_environment::Ambient;
 
 impl InteractiveRuntime {
-    /// Re-reads hooks for this workspace and reports what is now configured.
-    ///
-    /// The swap is atomic, so a blocking decision already in flight keeps the
-    /// hook set it started with. A session that started without hooks, or without
-    /// a whole class of hooks (blocking vs observational), stays that way until
-    /// restart: installing a gate or worker means rebuilding the SDK runtime,
-    /// which a diagnostics command should not do behind the user's back.
+    /// Re-reads hooks for this workspace and reports what is now configured
+    /// (see [`crate::hooks::reload_report`]). The interactive host always
+    /// runs in this process's environment (#1659).
     pub(crate) fn reload_hooks(&self) -> anyhow::Result<crate::hooks::HookReport> {
-        let cwd = self.workspace.root();
-        let Some(hooks) = self.hooks.as_ref() else {
-            // A Rho a hook started runs without hooks; the interactive host
-            // always runs in this process's environment (#1659).
-            if crate::hooks::running_inside_hook(&Ambient::ThisProcess) {
-                return Ok(crate::hooks::HookReport::disabled());
-            }
-            let mut discard = |_message: String| {};
-            let catalog = crate::hooks::discover_for_cwd(
-                cwd,
-                crate::workspace::ProjectTrusts::of_this_process(),
-                &mut discard,
-            )?;
-            anyhow::ensure!(
-                catalog.is_empty(),
-                "hooks were added since this session started; restart Rho to load them"
-            );
-            let mut report = crate::hooks::HookReport::disabled();
-            report.skipped_untrusted = catalog
-                .skipped_untrusted()
-                .map(|skipped| crate::paths::display(&skipped.path));
-            report.skipped_untrusted_error = catalog
-                .skipped_untrusted()
-                .and_then(|skipped| skipped.error())
-                .map(ToString::to_string);
-            report.hooks = crate::hooks::contract_views(&catalog);
-            return Ok(report);
-        };
-        hooks.reload_for_cwd(cwd)?;
-        Ok(crate::hooks::HookInspector::new(hooks).report())
+        crate::hooks::reload_report(
+            self.hooks.as_ref(),
+            self.workspace.root(),
+            crate::workspace::ProjectTrusts::of_this_process(),
+            crate::hooks::running_inside_hook(&Ambient::ThisProcess),
+        )
     }
 
     /// Reports the session boundary and lets queued observational hooks finish.

@@ -224,7 +224,7 @@ async fn a_change_sent_during_a_turn_applies_at_its_end_before_the_next_turn() {
     #[derive(Debug, PartialEq)]
     enum Seen {
         Prompt,
-        Options(SessionOptions),
+        Options(Box<SessionOptions>),
     }
     let sandbox = Sandbox::new();
     // The fixture holds each turn until it is cancelled.
@@ -303,13 +303,13 @@ async fn a_change_sent_during_a_turn_applies_at_its_end_before_the_next_turn() {
     next_event(&mut notifications, &session, |event| {
         seen.push(match event {
             SessionEvent::UserMessage { .. } => Seen::Prompt,
-            SessionEvent::OptionsChanged { options } => Seen::Options(*options),
+            SessionEvent::OptionsChanged { options } => Seen::Options(options),
             _ => return None,
         });
         seen.contains(&Seen::Prompt).then_some(())
     })
     .await;
-    assert_eq!(seen, [Seen::Options(expected), Seen::Prompt]);
+    assert_eq!(seen, [Seen::Options(Box::new(expected)), Seen::Prompt]);
     client
         .request::<SessionCancel>(&SessionCancelParams { session })
         .await

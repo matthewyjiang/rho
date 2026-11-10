@@ -98,7 +98,7 @@ async fn report_groups_sources_and_scales_rows_to_calibrated_total() {
                 .iter()
                 .map(|row| (row.label.as_str(), row.detail.as_deref()))
                 .collect();
-            (group.label, rows)
+            (group.label.as_str(), rows)
         })
         .collect();
     assert_eq!(
