@@ -72,11 +72,19 @@ impl ProjectTrusts {
     /// The variables that grant what `self` trusts and `other` does not, in
     /// the order the struct lists the features.
     pub fn variables_beyond(self, other: Self) -> Vec<&'static str> {
+        // Destructured so that a new feature cannot be left out: two trusts
+        // that differ always differ in a variable named here.
+        let Self {
+            hooks,
+            agents,
+            plugins,
+            openapi,
+        } = self;
         [
-            (TRUST_PROJECT_HOOKS_ENV, self.hooks, other.hooks),
-            (TRUST_PROJECT_AGENTS_ENV, self.agents, other.agents),
-            (TRUST_PROJECT_PLUGINS_ENV, self.plugins, other.plugins),
-            (TRUST_PROJECT_OPENAPI_ENV, self.openapi, other.openapi),
+            (TRUST_PROJECT_HOOKS_ENV, hooks, other.hooks),
+            (TRUST_PROJECT_AGENTS_ENV, agents, other.agents),
+            (TRUST_PROJECT_PLUGINS_ENV, plugins, other.plugins),
+            (TRUST_PROJECT_OPENAPI_ENV, openapi, other.openapi),
         ]
         .into_iter()
         .filter(|(_, own, others)| {
