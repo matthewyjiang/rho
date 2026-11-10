@@ -764,6 +764,7 @@ impl LiveEvents {
         let Some(card) = preview.unsent.take() else {
             return Vec::new();
         };
+        let first = preview.sent_at == 0;
         preview.sent_at = preview.received.max(1);
         let display = Some(Presentation::Card(card));
         match self
@@ -779,6 +780,8 @@ impl LiveEvents {
             }
             // It started; its own updates draw it from here.
             Some((CallState::Open, _)) => return Vec::new(),
+            // This step's call, which a card it held back outlived.
+            Some((CallState::Finished, _)) if !first => return Vec::new(),
             // New, or a later step reusing a finished call's id.
             Some((CallState::Finished, _)) | None => {}
         }
