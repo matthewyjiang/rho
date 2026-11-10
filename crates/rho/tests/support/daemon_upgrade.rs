@@ -68,7 +68,7 @@ impl Install {
 }
 
 /// Makes a FIFO at `path`: opening it blocks until the other end opens.
-fn fifo(path: PathBuf) -> PathBuf {
+pub(super) fn fifo(path: PathBuf) -> PathBuf {
     let name = CString::new(path.as_os_str().as_bytes()).unwrap();
     // SAFETY: `name` is a NUL-terminated path that outlives the call.
     assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
@@ -77,7 +77,7 @@ fn fifo(path: PathBuf) -> PathBuf {
 
 /// Opens FIFO `gate` for writing once something opened it to read, and
 /// writes a line, which lets that reader go on.
-async fn open_gate(sandbox: &Sandbox, gate: &Path) {
+pub(super) async fn open_gate(sandbox: &Sandbox, gate: &Path) {
     // Without a reader, a non-blocking open fails at once with ENXIO.
     let mut writer = sandbox
         .poll_until("something to wait on the gate", async || {
@@ -158,7 +158,7 @@ async fn attach(
 }
 
 /// A bash call that blocks until FIFO `gate`, in the workspace, opens.
-fn blocked_on(gate: &str) -> serde_json::Value {
+pub(super) fn blocked_on(gate: &str) -> serde_json::Value {
     json!({
         "id": "blocked",
         "name": "bash",

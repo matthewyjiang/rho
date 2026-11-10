@@ -54,6 +54,13 @@ pub(super) fn test_status() -> DaemonStatus {
 }
 
 impl Service for StubHost {
+    fn refused_newer(&self, _: rho_protocol::ProtocolVersion) -> rho_protocol::RestartCost {
+        rho_protocol::RestartCost {
+            in_progress: 0,
+            clients: 0,
+        }
+    }
+
     async fn restart(&self) {
         self.shutdown.request(Ending::Restart, |_| {});
     }

@@ -45,11 +45,12 @@ pub struct DaemonInfo {
 /// Result of [`HELLO`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HelloResponse {
-    /// The protocol the daemon speaks. Its major equals the client's.
+    /// The protocol the daemon speaks, which is compatible with the
+    /// client's.
     pub protocol: ProtocolVersion,
     pub daemon: DaemonInfo,
     /// Optional features this daemon supports. Protocol minors add names
-    /// here; protocol 1.0 defines none.
+    /// here from major 1 on; none is defined yet.
     pub capabilities: Vec<String>,
 }
 
