@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rho_protocol::{ClientError, ClientInfo, VersionFix, VersionMismatch};
+use rho_protocol::{ClientError, ClientHello, VersionFix, VersionMismatch};
 
 use super::{
     client::{connect, ConnectError, Connection},
@@ -176,21 +176,21 @@ pub(crate) enum SpawnError {
 /// the lock first, up to [`DRAIN_WAIT_TIMEOUT`].
 pub(crate) async fn connect_or_spawn(
     paths: &DaemonPaths,
-    client: ClientInfo,
+    hello: ClientHello,
     spawner: &dyn DaemonSpawner,
 ) -> Result<Connection, SpawnError> {
-    connect_or_spawn_observing(paths, client, spawner, || {}).await
+    connect_or_spawn_observing(paths, hello, spawner, || {}).await
 }
 
 /// The ensure path with an observer at the held-lock boundary, so lifecycle
 /// tests can release a draining daemon only after a client encounters it.
 async fn connect_or_spawn_observing(
     paths: &DaemonPaths,
-    client: ClientInfo,
+    hello: ClientHello,
     spawner: &dyn DaemonSpawner,
     on_held: impl FnMut(),
 ) -> Result<Connection, SpawnError> {
-    match connect(paths, client.clone()).await {
+    match connect(paths, hello.clone()).await {
         Err(ConnectError::NotRunning) => {}
         Err(refusal) if is_unused_older_daemon(&refusal) => {}
         connected => return Ok(connected?),
@@ -201,7 +201,7 @@ async fn connect_or_spawn_observing(
     // Another caller may have started the daemon, or replaced the older
     // one, while this one waited, and the older one may be in use by now:
     // only what it answers under the lock decides.
-    let unused_older = match wait_while_held(paths, &client, on_held).await {
+    let unused_older = match wait_while_held(paths, &hello, on_held).await {
         Ok(Some(connection)) => return Ok(connection),
         Ok(None) => None,
         Err(SpawnError::Connect(refusal)) if is_unused_older_daemon(&refusal) => Some(refusal),
@@ -215,7 +215,7 @@ async fn connect_or_spawn_observing(
     spawner.spawn(paths).map_err(SpawnError::Spawn)?;
     let started = Instant::now();
     loop {
-        match connect(paths, client.clone()).await {
+        match connect(paths, hello.clone()).await {
             Err(ConnectError::NotRunning) => {}
             connected => return Ok(connected?),
         }
@@ -273,12 +273,12 @@ async fn stop_older(paths: &DaemonPaths) -> Result<(), SpawnError> {
 /// ran `rho daemon run`, and while it drains before it exits.
 async fn wait_while_held(
     paths: &DaemonPaths,
-    client: &ClientInfo,
+    hello: &ClientHello,
     mut on_held: impl FnMut(),
 ) -> Result<Option<Connection>, SpawnError> {
     let started = Instant::now();
     loop {
-        match connect(paths, client.clone()).await {
+        match connect(paths, hello.clone()).await {
             Err(ConnectError::NotRunning) => {}
             connected => return Ok(Some(connected?)),
         }

@@ -341,12 +341,23 @@ impl Service for GatedService {
 
 serves_no_config!(GatedService);
 
+/// The hello of a frontend that answers its sessions' requests.
 fn hello_line(id: i64, protocol: ProtocolVersion) -> String {
+    hello_as(id, protocol, "frontend", &["answer"])
+}
+
+/// The hello of a client declaring `role` and `capabilities`.
+fn hello_as(id: i64, protocol: ProtocolVersion, role: &str, capabilities: &[&str]) -> String {
     serde_json::json!({
         "jsonrpc": "2.0",
         "id": id,
         "method": HELLO,
-        "params": {"protocol": protocol, "client": {"name": "test", "version": "0"}},
+        "params": {
+            "protocol": protocol,
+            "client": {"name": "test", "version": "0"},
+            "role": role,
+            "capabilities": capabilities,
+        },
     })
     .to_string()
 }
@@ -409,8 +420,10 @@ async fn exchange<Svc: Service + 'static>(service: Svc, lines: &[String]) -> Vec
 }
 
 // Covers: the hello gate (nothing before hello, no second hello, a rejected
-// hello leaves the connection unhandshaken), unknown methods, and recoverable
-// parse errors that keep the connection open.
+// hello leaves the connection unhandshaken), the capabilities a hello
+// declares (#1780: answer and hold need `answer`, which an agent's role may
+// not declare), unknown methods, and recoverable parse errors that keep the
+// connection open.
 // Owner: protocol server dispatch.
 #[tokio::test]
 async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
@@ -494,6 +507,74 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
                 (id(2), Err(Some(ErrorCode::InvalidParams))),
                 (id(3), Err(Some(ErrorCode::SessionNotFound))),
             ],
+        ),
+        (
+            "a frontend that declared `answer` reaches the service with its answer",
+            vec![
+                hello_line(1, PROTOCOL_VERSION),
+                request_with_params(
+                    2,
+                    SESSION_ANSWER,
+                    serde_json::json!({
+                        "session": "s",
+                        "request": 1,
+                        "answer": {"kind": "allow_once"},
+                    }),
+                ),
+            ],
+            vec![
+                (id(1), Ok(())),
+                (id(2), Err(Some(ErrorCode::SessionNotFound))),
+            ],
+        ),
+        (
+            "an agent's connection may neither answer nor hold, and keeps its other methods",
+            vec![
+                hello_as(1, PROTOCOL_VERSION, "agent", &[]),
+                request_line(2, SESSION_ANSWER),
+                request_line(3, SESSION_HOLD),
+                request_line(4, DAEMON_STATUS),
+            ],
+            vec![
+                (id(1), Ok(())),
+                (id(2), Err(Some(ErrorCode::CapabilityRequired))),
+                (id(3), Err(Some(ErrorCode::CapabilityRequired))),
+                (id(4), Ok(())),
+            ],
+        ),
+        (
+            "a frontend that declared no capability may not answer",
+            vec![
+                hello_as(1, PROTOCOL_VERSION, "frontend", &[]),
+                request_line(2, SESSION_ANSWER),
+            ],
+            vec![
+                (id(1), Ok(())),
+                (id(2), Err(Some(ErrorCode::CapabilityRequired))),
+            ],
+        ),
+        (
+            "an agent's hello may not declare `answer`, and is not accepted",
+            vec![
+                hello_as(1, PROTOCOL_VERSION, "agent", &["answer"]),
+                request_line(2, DAEMON_STATUS),
+            ],
+            vec![
+                (id(1), Err(Some(ErrorCode::InvalidParams))),
+                (id(2), Err(Some(ErrorCode::HandshakeRequired))),
+            ],
+        ),
+        (
+            "a hello must declare its role",
+            vec![request_with_params(
+                1,
+                HELLO,
+                serde_json::json!({
+                    "protocol": PROTOCOL_VERSION,
+                    "client": {"name": "test", "version": "0"},
+                }),
+            )],
+            vec![(id(1), Err(Some(ErrorCode::InvalidParams)))],
         ),
         (
             "detach answers although nothing is attached",

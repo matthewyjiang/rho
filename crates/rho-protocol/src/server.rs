@@ -4,7 +4,7 @@
 
 use std::{future::Future, sync::Arc, time::Duration};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Map, Value};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -14,6 +14,7 @@ use tokio::{
 
 use crate::server_settings::{self, SettingsService};
 use crate::{
+    declared::{hello_protocol, Declared},
     forward::Forwarders,
     jsonrpc,
     login_relay::LoginStream,
@@ -577,10 +578,11 @@ impl<Svc: Service> Drop for Accepted<Svc> {
 }
 
 /// Handshake state of one connection.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Connection {
     AwaitingHello,
-    Ready,
+    /// Its hello was accepted, declaring this.
+    Ready(Declared),
 }
 
 /// Where one request's answer comes from.
@@ -639,7 +641,10 @@ impl Connection {
     ///
     /// A hello from an incompatible client is refused, which leaves the
     /// connection awaiting one. A refused newer client is told what
-    /// restarting this daemon would cost, from `refused_newer`.
+    /// restarting this daemon would cost, from `refused_newer`. A hello
+    /// declaring a capability its role may not is refused too, and a method
+    /// that needs a capability the hello did not declare is refused before
+    /// its params are read, so the service never hears it ([`Declared`]).
     fn route(
         &mut self,
         method: &str,
@@ -647,7 +652,7 @@ impl Connection {
         info: &ServerInfo,
         refused_newer: impl FnOnce(ProtocolVersion) -> RestartCost,
     ) -> Result<Route, RpcError> {
-        match (*self, method) {
+        match (&*self, method) {
             (Self::AwaitingHello, HELLO) => {
                 // The version is read first and alone, so a client of
                 // another version hears that, not that the rest of its
@@ -666,36 +671,36 @@ impl Connection {
                             .with_data(encode(&mismatch)?),
                     );
                 }
-                let hello = decode_params::<Hello>(params)?;
+                let (declared, client) = Declared::accept(decode_params::<Hello>(params)?)?;
                 let response = encode_result::<Hello>(&HelloResponse {
                     protocol: PROTOCOL_VERSION,
                     daemon: info.daemon.clone(),
                     capabilities: info.capabilities.clone(),
                 })?;
-                *self = Self::Ready;
-                Ok(Route::Hello {
-                    response,
-                    client: hello.client,
-                })
+                *self = Self::Ready(declared);
+                Ok(Route::Hello { response, client })
             }
             (Self::AwaitingHello, method) => Err(RpcError::new(
                 ErrorCode::HandshakeRequired,
                 format!("send {HELLO} before {method}"),
             )),
-            (Self::Ready, HELLO) => Err(RpcError::new(
+            (Self::Ready(_), HELLO) => Err(RpcError::new(
                 ErrorCode::InvalidRequest,
                 format!("{HELLO} was already accepted on this connection"),
             )),
-            (Self::Ready, SESSION_ATTACH) => decode_params::<SessionAttach>(params)
-                .map(|params| Route::Attach(AttachRequest::Attach(params))),
-            (Self::Ready, SESSION_OBSERVE) => decode_params::<SessionObserve>(params)
-                .map(|params| Route::Attach(AttachRequest::Observe(params))),
-            (Self::Ready, SESSION_DETACH) => {
-                decode_params::<SessionDetach>(params).map(Route::Detach)
+            (Self::Ready(declared), method) => {
+                declared.permit(method)?;
+                match method {
+                    SESSION_ATTACH => decode_params::<SessionAttach>(params)
+                        .map(|params| Route::Attach(AttachRequest::Attach(params))),
+                    SESSION_OBSERVE => decode_params::<SessionObserve>(params)
+                        .map(|params| Route::Attach(AttachRequest::Observe(params))),
+                    SESSION_DETACH => decode_params::<SessionDetach>(params).map(Route::Detach),
+                    AUTH_LOGIN => decode_params::<AuthLogin>(params).map(Route::Login),
+                    CONFIG_GET => decode_params::<ConfigGet>(params).map(Route::ConfigGet),
+                    method => ServiceCall::decode(method, params).map(Route::Call),
+                }
             }
-            (Self::Ready, AUTH_LOGIN) => decode_params::<AuthLogin>(params).map(Route::Login),
-            (Self::Ready, CONFIG_GET) => decode_params::<ConfigGet>(params).map(Route::ConfigGet),
-            (Self::Ready, method) => ServiceCall::decode(method, params).map(Route::Call),
         }
     }
 }
@@ -961,23 +966,6 @@ impl Drop for Responder {
 /// params type the client sends.
 fn decode_params<M: Method>(params: Option<Value>) -> Result<M::Params, RpcError> {
     serde_json::from_value(params.unwrap_or_else(|| Value::Object(Map::new())))
-        .map_err(|error| RpcError::new(ErrorCode::InvalidParams, error.to_string()))
-}
-
-/// The protocol a hello names, whatever else it holds.
-fn hello_protocol(params: Option<&Value>) -> Result<ProtocolVersion, RpcError> {
-    #[derive(Deserialize)]
-    struct Versioned {
-        protocol: ProtocolVersion,
-    }
-    let Some(params) = params else {
-        return Err(RpcError::new(
-            ErrorCode::InvalidParams,
-            format!("{HELLO} needs params"),
-        ));
-    };
-    Versioned::deserialize(params)
-        .map(|hello| hello.protocol)
         .map_err(|error| RpcError::new(ErrorCode::InvalidParams, error.to_string()))
 }
 

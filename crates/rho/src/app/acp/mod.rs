@@ -146,7 +146,8 @@ impl Adapter {
         .filter_map(|(left_out, part)| left_out.then_some(part))
         .collect::<BTreeSet<_>>();
         Ok(Self {
-            daemon: Arc::default(),
+            // An editor's host answers its sessions' approvals.
+            daemon: Arc::new(Daemon::for_frontend()),
             launch: Launch {
                 agent: cli.agent.clone(),
                 added_dirs: added_dirs.as_slice().to_vec(),

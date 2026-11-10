@@ -153,7 +153,7 @@ async fn ask_daemon_store(deadline: Duration) -> DaemonStore {
 
     let ask = async {
         let paths = super::daemon_cli::paths().map_err(|error| format!("{error:#}"))?;
-        let connection = match daemon::connect(&paths, daemon::cli_client_info()).await {
+        let connection = match daemon::connect(&paths, daemon::ConnectAs::Command.hello()).await {
             Ok(connection) => connection,
             Err(ConnectError::NotRunning) => return Ok(DaemonStore::NotRunning),
             Err(error) => return Err(error.to_string()),

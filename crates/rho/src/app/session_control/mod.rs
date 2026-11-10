@@ -18,9 +18,11 @@
 //! parent, and its turns wait for capacity in the daemon-wide agent budget
 //! as subagent runs do (#1714).
 //!
-//! No action answers a session's approvals or questions, and the core never
-//! sends `rho/session/answer` or `rho/session/hold`: a turn that asks waits
-//! for a person, and `wait` reports it waiting for input.
+//! No action answers a session's approvals or questions: a turn that asks
+//! waits for a person, and `wait` reports it waiting for input. The daemon
+//! holds the core to that. Its connections declare an agent's role
+//! ([`ConnectAs::Agent`]), which the daemon refuses `rho/session/answer`
+//! and `rho/session/hold` from (#1780).
 //!
 //! The daemon is reached as [`Reach`] allows: `rho mcp serve` starts it
 //! when none runs, as any client does, and the native tool reaches only one
@@ -50,6 +52,7 @@ use super::{
     daemon_cli::Unreachable,
     daemon_client::{Daemon, DaemonError},
 };
+use crate::daemon::ConnectAs;
 
 mod check;
 mod dispatch;
@@ -115,7 +118,7 @@ impl SessionControl {
     /// A core that reaches the daemon as `reach` allows.
     pub(crate) fn new(limits: Limits, reach: Reach) -> Self {
         Self {
-            daemon: Daemon::reaching(reach),
+            daemon: Daemon::reaching(reach, ConnectAs::Agent),
             reach,
             limits,
             driven: Mutex::default(),

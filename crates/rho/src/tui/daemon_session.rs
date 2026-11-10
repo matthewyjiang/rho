@@ -376,7 +376,7 @@ mod unix {
         /// Opens or resumes `target` and attaches to it. The daemon starts
         /// when none runs.
         pub(crate) async fn open(target: DaemonTarget) -> anyhow::Result<Self> {
-            let daemon = Arc::new(Daemon::default());
+            let daemon = Arc::new(Daemon::for_frontend());
             let (id, setup, opened) = match target {
                 DaemonTarget::New(params) => {
                     let created = daemon
