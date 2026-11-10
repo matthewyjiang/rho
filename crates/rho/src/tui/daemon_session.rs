@@ -259,13 +259,19 @@ mod unix {
         routed
     }
 
+    /// A change the daemon refused, and why.
+    struct Refused {
+        change: SessionChange,
+        error: ClientError,
+    }
+
     /// Applies `changes` to `session` in order, returning its options
     /// after the last one that applied, or the first refusal.
     async fn configure_all(
         link: &Link,
         session: &SessionId,
         changes: Vec<SessionChange>,
-    ) -> Result<Option<SessionOptions>, (SessionChange, ClientError)> {
+    ) -> Result<Option<SessionOptions>, Box<Refused>> {
         let mut options = None;
         for change in changes {
             let params = SessionConfigureParams {
@@ -274,7 +280,12 @@ mod unix {
             };
             match link.request::<SessionConfigure>(&params).await {
                 Ok(response) => options = Some(response.options),
-                Err(error) => return Err((params.change, error)),
+                Err(error) => {
+                    return Err(Box::new(Refused {
+                        change: params.change,
+                        error,
+                    }))
+                }
             }
         }
         Ok(options)
@@ -284,8 +295,8 @@ mod unix {
     /// default.
     async fn carry(link: &Link, session: &SessionId, changes: Vec<SessionChange>) {
         for change in changes {
-            if let Err((_, error)) = configure_all(link, session, vec![change]).await {
-                tracing::warn!(%error, "could not carry a setting to the new daemon session");
+            if let Err(refused) = configure_all(link, session, vec![change]).await {
+                tracing::warn!(error = %refused.error, "could not carry a setting to the new daemon session");
             }
         }
     }
@@ -388,7 +399,8 @@ mod unix {
                 InitialSettings::Required(changes) => {
                     match configure_all(&link, &id, changes).await {
                         Ok(options) => options,
-                        Err((change, error)) => {
+                        Err(refused) => {
+                            let Refused { change, error } = *refused;
                             daemon.unroute(&id);
                             return Err(anyhow::Error::new(error).context(format!(
                                 "could not set the session's {}",
