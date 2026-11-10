@@ -66,6 +66,7 @@ impl ApprovalPolicy {
                         workspace_path: inputs.workspace_root,
                         usage_recording: inputs.usage_recording,
                         session_writes: inputs.session_writes,
+                        credentials: inputs.credentials,
                     },
                 );
                 SessionApproval {

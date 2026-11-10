@@ -27,6 +27,7 @@ impl InteractiveRuntime {
                 workspace_path: self.workspace.root().to_path_buf(),
                 usage_recording: self.usage_recording.clone(),
                 session_writes: session_writes.clone(),
+                credentials: Arc::new(crate::credential_store::AppCredentialStore),
             },
         );
         self.tools.set_plan_exit_registered(mode);
@@ -115,6 +116,7 @@ impl InteractiveRuntime {
                         workspace_path: self.workspace.root().to_path_buf(),
                         usage_recording: self.usage_recording.clone(),
                         session_writes: session_writes.clone(),
+                        credentials: Arc::new(crate::credential_store::AppCredentialStore),
                     },
                 );
                 RebuiltPermission {
