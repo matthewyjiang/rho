@@ -46,6 +46,7 @@ mod agent;
 mod approval_policy;
 mod build;
 mod compact;
+mod context;
 mod credentials;
 mod delegation;
 mod events;

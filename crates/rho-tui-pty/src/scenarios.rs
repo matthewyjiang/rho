@@ -26,6 +26,8 @@ mod copy_output;
 #[cfg(unix)]
 mod daemon_approval;
 #[cfg(unix)]
+mod daemon_context;
+#[cfg(unix)]
 mod daemon_detach;
 #[cfg(unix)]
 mod daemon_goal;
@@ -676,6 +678,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_resume::SCENARIO,
     #[cfg(unix)]
     daemon_detach::SCENARIO,
+    #[cfg(unix)]
+    daemon_context::SCENARIO,
     #[cfg(unix)]
     daemon_restart::SCENARIO,
     #[cfg(unix)]

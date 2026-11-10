@@ -123,7 +123,7 @@ impl App {
     pub(super) fn execute_info_command(&mut self) -> anyhow::Result<()> {
         let identity = self.info.services.diagnostics.identity();
         // A live turn may still be writing the tree. Read it only when idle.
-        let (tree_error, tree_loading) = match self.info.session.session_id.as_deref() {
+        let (tree_error, tree_loading) = match self.current_session_id().as_deref() {
             Some(_) if self.is_ui_busy() => (
                 Some("tree facts are available after the current model turn".into()),
                 false,

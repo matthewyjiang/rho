@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{PermissionMode, SessionGoal, SessionGoalAction, SessionId};
 
-/// Change one setting of a loaded session between its turns: a change sent
+/// Make one change to a loaded session between its turns: a change sent
 /// during a turn, waiting for input included, waits for the turn to end,
 /// then applies (#1685). Changes apply in the order the daemon took them,
 /// each before any turn a later prompt starts. The session keeps the change
@@ -35,7 +35,8 @@ pub struct SessionConfigureParams {
     pub change: SessionChange,
 }
 
-/// One setting to change. The value must be one the session's
+/// One change to a loaded session, applied between its turns: a setting, or
+/// an edit to its context. A setting's value must be one the session's
 /// [`SessionOptions`] offers; any other is [`crate::ErrorCode::InvalidParams`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -53,6 +54,12 @@ pub enum SessionChange {
     PermissionMode { mode: PermissionMode },
     /// Control the loaded session's goal without waiting for its turn.
     Goal { action: SessionGoalAction },
+    /// Add `text` to what the model reads from its next turn on, without a
+    /// turn of its own, and save it with the session as a user row that
+    /// reads `display`. Clients attached now see no event for it: the one
+    /// that sent it shows its own notice, and a later reset replays the
+    /// row. An empty `text` is [`crate::ErrorCode::InvalidParams`].
+    Context { text: String, display: String },
 }
 
 /// Result of [`SESSION_CONFIGURE`], once the change applied, after the turn
@@ -95,6 +102,10 @@ pub struct ModelRef {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ModelOptions {
     pub current: ModelRef,
+    /// The auth profile `current` runs on, which names how its use is
+    /// billed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<String>,
     /// The user's favorites first, then the rest; always includes `current`.
     pub available: Vec<ModelChoice>,
 }

@@ -79,7 +79,7 @@ impl App {
                 UiOutput::InfoRuntimes(result).into()
             });
         if self.info_tree_loading() {
-            let Some(session_id) = self.info.session.session_id.clone() else {
+            let Some(session_id) = self.current_session_id() else {
                 return;
             };
             self.spawn_info_tree_read(session_id);
@@ -157,7 +157,7 @@ impl App {
         ) {
             return false;
         }
-        let Some(session_id) = self.info.session.session_id.clone() else {
+        let Some(session_id) = self.current_session_id() else {
             return false;
         };
         self.mark_info_tree_loading();

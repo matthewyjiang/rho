@@ -63,6 +63,10 @@ impl DaemonSession {
         match *self {}
     }
 
+    pub(in crate::tui) fn rename(&self, _title: String) -> anyhow::Result<()> {
+        match *self {}
+    }
+
     pub(crate) fn saved_id(&self) -> Option<&str> {
         match *self {}
     }
@@ -519,7 +523,7 @@ mod unix {
                         match &event {
                             rho_protocol::SessionEvent::TitleChanged { .. } => self.saved = true,
                             rho_protocol::SessionEvent::OptionsChanged { options } => {
-                                self.options = Some(options.clone());
+                                self.options = Some((**options).clone());
                             }
                             _ => {}
                         }
@@ -708,6 +712,18 @@ mod unix {
                 .as_ref()
                 .expect("attached session has requests")
                 .goal(action)
+        }
+
+        /// Rename the session without waiting for the active turn; its
+        /// `TitleChanged` event reports the new title.
+        pub(in crate::tui) fn rename(&self, title: String) -> anyhow::Result<()> {
+            if self.ended {
+                anyhow::bail!(LOST);
+            }
+            self.requests
+                .as_ref()
+                .expect("attached session has requests")
+                .rename(title)
         }
 
         /// Queue a change without waiting for the active turn to release it.

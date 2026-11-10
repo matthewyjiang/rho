@@ -23,6 +23,7 @@ fn model_ref(provider: &str, model: &str) -> wire::ModelRef {
 fn options() -> wire::SessionOptions {
     wire::SessionOptions {
         model: wire::ModelOptions {
+            auth: None,
             current: model_ref("openai", "gpt-4"),
             available: vec![
                 wire::ModelChoice {

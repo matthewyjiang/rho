@@ -1,7 +1,7 @@
-//! `rho/session/configure`: one change to a session's settings, applied
-//! between its turns through the session runtime's settings cores, the same
+//! `rho/session/configure`: one change to a session, applied between its
+//! turns: a setting, through the session runtime's settings cores, the same
 //! ACP's `session/set_mode` and `session/set_config_option` and the TUI's
-//! controls use (#1670, #1667).
+//! controls use (#1670, #1667), or context added for the model's next turn.
 //!
 //! A change sent while a turn is under way, waiting for input included,
 //! waits for the turn to end, then applies and answers, as the TUI and ACP
@@ -20,7 +20,7 @@ use rho_protocol::{
     self as wire, ErrorCode, RpcError, SessionConfigureParams, SessionConfigureResponse,
 };
 use rho_providers::model::catalog::ModelSelection;
-use rho_sdk::ReasoningLevel;
+use rho_sdk::{model::Message, ReasoningLevel};
 
 use super::{being_deleted, options::available_auths, queued::Queued, stopping, Held, Sessions};
 use crate::{
@@ -38,6 +38,7 @@ enum Change {
     Reasoning(ReasoningLevel),
     FastMode { enabled: bool },
     PermissionMode(PermissionMode),
+    Context { text: String, display: String },
 }
 
 impl Sessions {
@@ -101,6 +102,9 @@ impl Sessions {
                     )
                 })
             });
+        // What the change saved joins the transcript a reset replays; no
+        // turn's end would move it there before the next prompt.
+        super::turn::save_transcript(&session, runtime);
         // Even after a failure: a model switch can fail partway, after it
         // changed what the session reports.
         let options = session.refresh_options(runtime, &auths);
@@ -120,6 +124,10 @@ impl Change {
             wire::SessionChange::PermissionMode { mode } => PermissionMode::try_from(mode)
                 .map(Self::PermissionMode)
                 .map_err(|_| invalid("unknown permission mode")),
+            wire::SessionChange::Context { text, .. } if text.trim().is_empty() => {
+                Err(invalid("context to add must not be empty"))
+            }
+            wire::SessionChange::Context { text, display } => Ok(Self::Context { text, display }),
             // A change of a later protocol minor fails to decode before it
             // gets here; the arm keeps the match open to new variants.
             _ => Err(invalid("unknown change")),
@@ -140,6 +148,10 @@ impl Change {
             Self::Reasoning(level) => runtime.set_reasoning_level(level, config),
             Self::FastMode { enabled } => runtime.set_fast_mode(enabled),
             Self::PermissionMode(mode) => runtime.set_permission_mode(mode, config).await,
+            Self::Context { text, display } => runtime
+                .append_context(text, Message::user_text(display), [])
+                .map(|_| ())
+                .map_err(SettingChangeError::Apply),
         };
         applied.map_err(setting_error)
     }

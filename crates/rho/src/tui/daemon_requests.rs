@@ -17,9 +17,10 @@
 use std::{future::Future, sync::Arc};
 
 use rho_protocol::{
-    methods::{SessionConfigure, SessionMcp, SessionPrompt},
+    methods::{SessionConfigure, SessionMcp, SessionPrompt, SessionRename},
     ClientEnvironment, ClientError, ContentBlock, ErrorCode, IdempotencyKey, SessionChange,
     SessionConfigureParams, SessionGoalAction, SessionId, SessionMcpParams, SessionPromptParams,
+    SessionRenameParams,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -103,6 +104,7 @@ where
 enum Control {
     Mcp,
     Goal(SessionGoalAction),
+    Rename(String),
 }
 
 pub(super) struct DaemonRequests {
@@ -164,6 +166,28 @@ impl DaemonRequests {
                         };
                         let _ = control_views.send(DaemonView::Error(format!(
                             "could not {verb} the goal: {error}"
+                        )));
+                    }
+                    Control::Rename(title) => {
+                        let answer = on_attachment(&mut control_target, |link, session| {
+                            let title = title.clone();
+                            async move {
+                                link.request::<SessionRename>(&SessionRenameParams {
+                                    session,
+                                    title,
+                                })
+                                .await
+                            }
+                        })
+                        .await;
+                        // The session's TitleChanged says the rename landed.
+                        let error = match answer {
+                            Some((_, Ok(_))) => continue,
+                            Some((_, Err(error))) => error.to_string(),
+                            None => LOST.to_owned(),
+                        };
+                        let _ = control_views.send(DaemonView::Error(format!(
+                            "could not rename session: {error}"
                         )));
                     }
                 }
@@ -249,6 +273,12 @@ impl DaemonRequests {
     pub(super) fn goal(&self, action: SessionGoalAction) -> anyhow::Result<()> {
         self.control
             .send(Control::Goal(action))
+            .map_err(|_| anyhow::anyhow!(LOST))
+    }
+
+    pub(super) fn rename(&self, title: String) -> anyhow::Result<()> {
+        self.control
+            .send(Control::Rename(title))
             .map_err(|_| anyhow::anyhow!(LOST))
     }
 

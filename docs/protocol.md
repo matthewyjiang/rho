@@ -201,7 +201,7 @@ A session's `options` are what a frontend shows as its settings and command menu
 
 | Field | What it carries |
 | --- | --- |
-| `model` | The `current` model, as `{provider, model}`, and the models the session may switch to (`available`), each with a short `label`; the user's favorites first. |
+| `model` | The `current` model, as `{provider, model}`, the `auth` profile it runs on, and the models the session may switch to (`available`), each with a short `label`; the user's favorites first. |
 | `reasoning` | The `current` reasoning level and the levels the model takes (`available`): `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Absent when the model's reasoning cannot be configured. |
 | `fast_mode` | Whether fast mode is `enabled`: faster responses at a higher credit rate. Absent when the model has no fast mode. |
 | `permission_mode` | The `current` permission mode and every mode (`available`): `bypass`, `auto`, `allow_edits`, `plan`, `supervised`. |
@@ -217,6 +217,7 @@ A session's `options` are what a frontend shows as its settings and command menu
 | `fast_mode` | `enabled` | Turns fast mode on, for a model that has it, or off. |
 | `permission_mode` | `mode` | Gates later turns' tool calls with `mode`. |
 | `goal` | `action` | Sets, clears, or resumes the session's [goal](#goals). Unlike the settings above, it never waits for a turn. |
+| `context` | `text`, `display` | Adds `text` to what the model reads from its next turn on, with no turn of its own, and saves it as a user row reading `display`. Attached clients get no event for it; a later reset replays the row. Empty `text` is `InvalidParams`. |
 
 A change the session cannot take, such as a model no saved credential serves or fast mode on a model without it, gets `InvalidParams` naming why, and the session keeps its setting. A change that fails as it applies, such as a model switch whose provider could not be built, gets `InternalError`; the session's `options` then report what it runs with, which `options_changed` carries if that changed. A change sent while the session's turn is under way, waiting for input included, waits for the turn to end, then applies and answers, so a frontend can send settings whenever its user picks them. Changes and turns take the session one at a time, in the order the daemon took their requests: a change applies after the turn of every prompt taken before it, and a prompt's turn runs after every change taken before it, so a change sent once the job reports `running` waits for that turn's end. A change the daemon took applies even if its client disconnects before the answer; while the daemon is stopping, one still waiting gets `DaemonStopping` and does not apply. Only a session the daemon has loaded takes a change; any other gets `SessionNotLoaded`, so attach first.
 

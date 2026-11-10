@@ -450,9 +450,6 @@ impl super::App {
         mode: InlineShellMode,
         command: String,
     ) -> anyhow::Result<()> {
-        if self.refuse_daemon_shell() {
-            return Ok(());
-        }
         if command.is_empty() {
             self.set_status("enter a shell command after ! or !!");
             return Ok(());
@@ -625,21 +622,28 @@ impl super::App {
             }
         };
         if task.mode.included_in_context() {
-            self.deferred_inline_shell_context
-                .push(DeferredShellContext {
-                    context: rho_tools::tool::truncate(
-                        context_text(&output),
-                        task.max_output_bytes,
+            let deferred = DeferredShellContext {
+                context: rho_tools::tool::truncate(context_text(&output), task.max_output_bytes),
+                persisted_display: rho_tools::tool::truncate(
+                    format!(
+                        "!{}\n\n{}",
+                        output.command,
+                        display_text(&output, /*included_in_context*/ true)
                     ),
-                    persisted_display: rho_tools::tool::truncate(
-                        format!(
-                            "!{}\n\n{}",
-                            output.command,
-                            display_text(&output, /*included_in_context*/ true)
-                        ),
-                        task.max_output_bytes,
-                    ),
-                });
+                    task.max_output_bytes,
+                ),
+            };
+            if self.info.session.daemon.is_some() {
+                // The daemon queues it behind the turn under way, so it
+                // needs no deferral here. A `!!` card is never sent: it
+                // stays on this screen only.
+                self.configure_daemon(rho_protocol::SessionChange::Context {
+                    text: deferred.context,
+                    display: deferred.persisted_display,
+                })?;
+            } else {
+                self.deferred_inline_shell_context.push(deferred);
+            }
         }
         self.finish_streams();
         self.insert_entry(&super::Entry::Tool(super::ToolEntry::new(

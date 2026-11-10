@@ -57,8 +57,9 @@ fn options_changed_leaves_out_what_the_model_lacks() {
         model: "gpt-5.5".into(),
     };
     let event = SessionEvent::OptionsChanged {
-        options: SessionOptions {
+        options: Box::new(SessionOptions {
             model: ModelOptions {
+                auth: None,
                 current: gpt.clone(),
                 available: vec![ModelChoice {
                     model: gpt,
@@ -86,7 +87,7 @@ fn options_changed_leaves_out_what_the_model_lacks() {
                 },
             ],
             goal: None,
-        },
+        }),
     };
     let wire = json!({
         "type": "options_changed",

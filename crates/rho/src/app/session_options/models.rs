@@ -48,6 +48,7 @@ pub(super) fn model_options(
             provider: current.provider.clone(),
             model: current.model.clone(),
         },
+        auth: Some(current.auth.clone()),
         available: model_labels(&ordered)
             .into_iter()
             .zip(ordered)

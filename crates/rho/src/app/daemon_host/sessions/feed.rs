@@ -163,7 +163,9 @@ impl Feed {
         // overwrite a concurrent clear with an older runtime snapshot.
         options.goal.clone_from(&state.options.goal);
         if state.options != options {
-            state.push(wire::SessionEvent::OptionsChanged { options });
+            state.push(wire::SessionEvent::OptionsChanged {
+                options: Box::new(options),
+            });
         }
     }
 
@@ -173,7 +175,9 @@ impl Feed {
         let mut options = state.options.clone();
         options.goal = goal;
         if state.options != options {
-            state.push(wire::SessionEvent::OptionsChanged { options });
+            state.push(wire::SessionEvent::OptionsChanged {
+                options: Box::new(options),
+            });
         }
     }
 
@@ -191,6 +195,13 @@ impl Feed {
             .iter()
             .map(|buffered| buffered.event.clone())
             .collect()
+    }
+
+    /// What a client attaching with no cursor replays, oldest first.
+    #[cfg(test)]
+    pub(super) fn reset_replay_for_tests(&self) -> Vec<wire::SessionEvent> {
+        let (_, events) = self.state().replay_from(None);
+        events.into_iter().map(|(_, event)| event).collect()
     }
 
     /// Records that the turns since the last save saved as `saved`, their
@@ -284,7 +295,7 @@ impl FeedState {
                 }
             }
             wire::SessionEvent::TitleChanged { title } => self.title = Some(title.clone()),
-            wire::SessionEvent::OptionsChanged { options } => self.options = options.clone(),
+            wire::SessionEvent::OptionsChanged { options } => self.options = (**options).clone(),
             _ => {}
         }
         let seq = Seq(self.last.0 + 1);

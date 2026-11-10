@@ -286,7 +286,7 @@ pub(super) fn client_error(runtime: &SessionRuntime, error: &anyhow::Error) -> w
 
 /// Moves what the turn saved into the session's feed transcript, so a
 /// client that attaches from now on replays it from the saved rows.
-fn save_transcript(session: &LoadedSession, runtime: &SessionRuntime) {
+pub(super) fn save_transcript(session: &LoadedSession, runtime: &SessionRuntime) {
     // A turn that saved no rows stays in the buffer, as one whose rows could
     // not be read does, until a later turn saves.
     if let Some(saved) = saved_replay(&mut session.live(), runtime, &session.job) {

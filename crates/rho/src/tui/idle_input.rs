@@ -236,10 +236,9 @@ impl App {
                 return self.block_pasted_inline_shell();
             }
             self.clear_submitted_input();
-            if self.refuse_daemon_shell() {
-                return Ok(());
+            if self.info.session.daemon.is_none() {
+                self.ensure_session(agent)?;
             }
-            self.ensure_session(agent)?;
             self.start_inline_shell(mode, command)?;
             return Ok(());
         }

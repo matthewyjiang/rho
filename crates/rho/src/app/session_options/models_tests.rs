@@ -99,6 +99,7 @@ fn model_options_list_favorites_first_with_short_unique_labels() {
 
     let expected = wire::ModelOptions {
         current: model_ref("openai", "gpt-4"),
+        auth: Some("api-key".into()),
         available: vec![
             choice("xai/grok-3", "Grok 3"),
             choice("openai/gpt-4", "gpt-4"),
@@ -130,6 +131,7 @@ fn current_model_absent_from_available_is_appended() {
         options,
         wire::ModelOptions {
             current: model_ref("custom", "local-model"),
+            auth: Some("api-key".into()),
             available: vec![
                 choice("xai/grok-3", "grok-3"),
                 choice("custom/local-model", "local-model"),

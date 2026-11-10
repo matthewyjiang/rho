@@ -1720,6 +1720,13 @@
     "ModelOptions": {
       "description": "The session's model and the models it may switch to.",
       "properties": {
+        "auth": {
+          "description": "The auth profile `current` runs on, which names how its use is\nbilled.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "available": {
           "description": "The user's favorites first, then the rest; always includes `current`.",
           "items": {
@@ -2709,7 +2716,7 @@
       "type": "object"
     },
     "SessionChange": {
-      "description": "One setting to change. The value must be one the session's\n[`SessionOptions`] offers; any other is [`crate::ErrorCode::InvalidParams`].",
+      "description": "One change to a loaded session, applied between its turns: a setting, or\nan edit to its context. A setting's value must be one the session's\n[`SessionOptions`] offers; any other is [`crate::ErrorCode::InvalidParams`].",
       "oneOf": [
         {
           "description": "Switch to `model`, one of [`ModelOptions::available`]. The session\nkeeps its reasoning level, or refuses a model that cannot.",
@@ -2793,6 +2800,27 @@
           "required": [
             "kind",
             "action"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Add `text` to what the model reads from its next turn on, without a\nturn of its own, and save it with the session as a user row that\nreads `display`. Clients attached now see no event for it: the one\nthat sent it shows its own notice, and a later reset replays the\nrow. An empty `text` is [`crate::ErrorCode::InvalidParams`].",
+          "properties": {
+            "display": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "context",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text",
+            "display"
           ],
           "type": "object"
         }
@@ -3289,7 +3317,8 @@
           "description": "The session's options changed, as after [`super::SESSION_CONFIGURE`]\nor a plan approval's mode switch: all of them, replacing the last.",
           "properties": {
             "options": {
-              "$ref": "#/$defs/SessionOptions"
+              "$ref": "#/$defs/SessionOptions",
+              "description": "Boxed so the largest event stays small on every queue."
             },
             "type": {
               "const": "options_changed",
@@ -5423,7 +5452,7 @@
   },
   "protocol": {
     "major": 0,
-    "minor": 2
+    "minor": 3
   },
   "title": "rho daemon protocol"
 }

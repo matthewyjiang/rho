@@ -57,6 +57,16 @@ impl App {
             crate::paths::prompt_data(&path),
         );
         self.insert_entry(&Entry::Notice(display.clone()));
+        if self.info.session.daemon.is_some() {
+            // The daemon adds it to the session between turns and reports a
+            // refusal itself.
+            self.configure_daemon(rho_protocol::SessionChange::Context {
+                text: context,
+                display,
+            })?;
+            self.set_status("instruction remembered");
+            return Ok(());
+        }
         if let Err(error) = agent.append_user_context_with_display(context, display) {
             // The file is already durable. Do not report a write failure or
             // silently imply that the instruction reached the live session.

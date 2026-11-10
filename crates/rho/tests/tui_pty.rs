@@ -1196,10 +1196,18 @@ fn daemon_permission_changes_do_not_block_the_turn() {
     assert_pass("daemon_permission_mode");
 }
 
-// Covers: an unported command refuses visibly without changing instructions.
+// Covers: `/remember`, `/title`, and `!` output land in the daemon's
+// session: a TUI reopening it replays the added rows.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_session_takes_context_added_without_a_turn() {
+    assert_pass("daemon_session_context");
+}
+
+// Covers: an unported command refuses visibly and the next prompt still runs.
 // Owner: interactive TUI daemon command boundary.
 #[test]
-fn daemon_unported_commands_refuse_without_mutating_local_state() {
+fn daemon_unported_commands_refuse_and_keep_the_session_usable() {
     assert_pass("daemon_gated_command");
 }
 

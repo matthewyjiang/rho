@@ -199,7 +199,10 @@ pub enum SessionEvent {
     },
     /// The session's options changed, as after [`super::SESSION_CONFIGURE`]
     /// or a plan approval's mode switch: all of them, replacing the last.
-    OptionsChanged { options: super::SessionOptions },
+    OptionsChanged {
+        /// Boxed so the largest event stays small on every queue.
+        options: Box<super::SessionOptions>,
+    },
     /// The provider already took steer `id` mid-request: it can no longer
     /// be withdrawn ([`super::SESSION_UNSTEER`]), and still applies, as a
     /// [`Self::UserMessage`] carrying `id`, at the turn's next model request.

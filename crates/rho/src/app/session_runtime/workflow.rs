@@ -122,29 +122,24 @@ impl SessionRuntime {
 
     /// Adds the run id to model context and saves the prompt with `notice` as
     /// its reply, returning the prompt's user message and the reply as
-    /// saved. A failed save rolls the context back so the live session never
-    /// holds history its file lacks. No SDK run happens here, so no turn
-    /// checkpoint is involved.
+    /// saved (see [`Self::append_context`]).
     fn record_started(
         &mut self,
         display: &UserInput,
         model: String,
         notice: &str,
     ) -> anyhow::Result<(InsertedMessage, InsertedMessage)> {
-        let session = self.built.session.clone();
-        let before = session.history();
-        session.append_message(Message::user_text(model))?;
-        let saved = self.save_prompt_rows(
-            Message::User(display.blocks().to_vec()),
-            [Message::assistant_text(notice)],
-        );
-        if let Err(error) = &saved {
-            session.replace_history(before)?;
+        let (inserted, [reply]) = self
+            .append_context(
+                model,
+                Message::User(display.blocks().to_vec()),
+                [Message::assistant_text(notice)],
+            )
             // Hosts such as ACP show only the outermost message, so keep the
             // cause inline.
-            anyhow::bail!("workflow started, but could not save its run id: {error:#}");
-        }
-        let (inserted, [reply]) = saved?;
+            .map_err(|error| {
+                anyhow::anyhow!("workflow started, but could not save its run id: {error:#}")
+            })?;
         Ok((inserted, reply))
     }
 }
