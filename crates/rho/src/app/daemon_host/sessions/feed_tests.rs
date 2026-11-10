@@ -185,6 +185,33 @@ fn a_turn_larger_than_the_buffer_resets_with_a_notice_instead_of_its_start() {
     assert_eq!(replay(&feed, cursor(&feed, 1)).0, Replay::Reset);
 }
 
+// Covers: once a session's conversation moved to another node of its tree,
+// the feed replays that conversation to everyone: a cursor from before the
+// move resets instead of tailing the branch left behind, what is published
+// after the move follows the new transcript, and the clients attached at
+// the move are no longer subscribed, so they attach again.
+// Owner: daemon session feed.
+#[test]
+fn a_restart_replays_the_moved_conversation_to_every_cursor() {
+    let feed = idle_feed();
+    feed.publish(notices(&["live"]));
+    feed.end_turn(notices(&["first saved", "second saved"]));
+    let before = cursor(&feed, 1);
+    let _attached = feed.attach(before.as_ref());
+
+    feed.restart(notices(&["first saved"]));
+    feed.publish(notices(&["told after"]));
+
+    let moved = (
+        Replay::Reset,
+        vec![(0, notice("first saved")), (1, notice("told after"))],
+    );
+    assert_eq!(
+        (replay(&feed, before), replay(&feed, None), feed.followed()),
+        (moved.clone(), moved, false)
+    );
+}
+
 #[test]
 fn an_attach_reports_the_job_state_its_replay_ends_in_and_its_turn() {
     let feed = idle_feed();

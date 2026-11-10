@@ -73,9 +73,12 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Sessions
         // The hub lists the workspace's workflow store, which the daemon
         // shares; a launch is a prompt the daemon runs.
-        | CommandId::Workflow => CommandRoute::Ui,
-        // The conversation tree and rewind need daemon methods.
-        CommandId::Rewind | CommandId::Tree => CommandRoute::Unavailable,
+        | CommandId::Workflow
+        // Read from the session's file, which the daemon shares; the
+        // daemon moves the session to the node chosen.
+        | CommandId::Tree => CommandRoute::Ui,
+        // Workspace rewind needs checkpoints the daemon does not take yet.
+        CommandId::Rewind => CommandRoute::Unavailable,
     }
 }
 

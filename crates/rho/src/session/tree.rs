@@ -261,6 +261,15 @@ pub(crate) struct SessionTreeItem {
     pub(crate) is_last_sibling: bool,
 }
 
+/// What a row of [`SessionTree::collect_items`] stands for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Rows {
+    /// One saved node.
+    Nodes,
+    /// A prompt's node and the nodes that carry its turn on.
+    Turns,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SessionTree {
     nodes: HashMap<NodeId, RestoredNode>,
@@ -479,6 +488,37 @@ impl SessionTree {
     }
 
     pub(crate) fn items(&self) -> anyhow::Result<Vec<SessionTreeItem>> {
+        self.collect_items(Rows::Nodes)
+    }
+
+    /// [`Self::items`] with one row for each prompt and all that followed
+    /// it: a node that adds no user message joins the row of the node
+    /// before it when nothing branches between them. The row names the
+    /// last node of its run, the conversation once the turn ended, since
+    /// some hosts save a turn as several nodes, one for each step.
+    pub(crate) fn turn_items(&self) -> anyhow::Result<Vec<SessionTreeItem>> {
+        self.collect_items(Rows::Turns)
+    }
+
+    /// The node after `node`, when exactly one follows it.
+    fn only_child(&self, node: &RestoredNode) -> Option<&RestoredNode> {
+        match self.children.get(node.id()).map(Vec::as_slice) {
+            Some([only]) => self.node(only),
+            _ => None,
+        }
+    }
+
+    /// Whether `node` carries on the turn of the node before it: a commit
+    /// that shows no user message.
+    fn continues_turn(node: &RestoredNode) -> bool {
+        node.kind() == SessionNodeKind::Commit
+            && !node
+                .display_messages()
+                .iter()
+                .any(|stored| super::persistence::user_message_text(&stored.message).is_some())
+    }
+
+    fn collect_items(&self, rows: Rows) -> anyhow::Result<Vec<SessionTreeItem>> {
         let active_path: HashSet<_> = self
             .active_path()?
             .into_iter()
@@ -506,7 +546,9 @@ impl SessionTree {
                 // commits are still turns, while an empty root is the session start.
                 SessionNodeKind::Commit
                     if node.parent_id().is_none()
-                        && node.facts().model_len == 0
+                        // A host that saves the session before its first
+                        // prompt saves the system prompt with it.
+                        && (node.facts().model_len == 0 || rows == Rows::Turns)
                         && node.display_messages().is_empty() =>
                 {
                     SessionTreeItemKind::SessionStart
@@ -542,13 +584,27 @@ impl SessionTree {
                         cost_usd_micros: None,
                     })
             });
+            // The last node of the row's run, and whether the run holds
+            // the active leaf.
+            let mut last = node;
+            let mut active = self.active_leaf_id() == Some(node.id());
+            if rows == Rows::Turns {
+                while let Some(next) = self
+                    .only_child(last)
+                    .filter(|next| Self::continues_turn(next))
+                {
+                    last = next;
+                    active |= self.active_leaf_id() == Some(last.id());
+                }
+            }
+            let id = last.id().clone();
             traversal.push(SessionTreeItem {
-                id: node.id().clone(),
+                id: id.clone(),
                 depth,
                 kind,
                 first_user_text,
                 compaction_facts,
-                active: self.active_leaf_id() == Some(node.id()),
+                active,
                 on_active_path: active_path.contains(node.id()),
                 ancestor_has_next_sibling: ancestor_has_next_sibling.clone(),
                 is_last_sibling,

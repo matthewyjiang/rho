@@ -79,6 +79,74 @@ fn empty_root_is_session_start_and_remains_restorable() -> anyhow::Result<()> {
     Ok(())
 }
 
+// Covers: `/tree` lists one row for each prompt however many nodes its turn
+// saved: the row names the turn's last node, so restoring it gives the
+// conversation once the turn ended, a branch from that node starts a row of
+// its own, and the row holding the active leaf is the active one.
+// Owner: session tree projection.
+#[test]
+fn turn_rows_join_the_nodes_that_carry_a_prompt_on() -> anyhow::Result<()> {
+    let (_root, _cwd, session) = create_session();
+    let system = || Message::System("prompt".into());
+    let saved = |revision: u64, history: Vec<Message>, shown: usize| {
+        let snapshot = snapshot(&session, revision, history);
+        let rows = &snapshot.history()[snapshot.history().len() - shown..];
+        session.save_snapshot_node(&snapshot, rows)
+    };
+    let user = Message::user_text;
+    let reply = Message::assistant_text;
+    // A host that saves before the first prompt, then at each step.
+    saved(1, vec![system()], 0)?;
+    saved(2, vec![system(), user("first")], 1)?;
+    let first_end = saved(3, vec![system(), user("first"), reply("one")], 1)?;
+    saved(
+        4,
+        vec![system(), user("first"), reply("one"), user("second")],
+        1,
+    )?;
+    let second = [system(), user("first"), reply("one"), user("second")];
+    let second_end = saved(5, [&second[..], &[reply("two")]].concat(), 1)?;
+    // Back to the first turn's end, then a prompt that is still running.
+    session.set_leaf(&first_end)?;
+    let branch = saved(
+        6,
+        vec![system(), user("first"), reply("one"), user("other")],
+        1,
+    )?;
+
+    let rows = SessionTree::load(session.path())?
+        .turn_items()?
+        .into_iter()
+        .map(|item| {
+            (
+                item.kind,
+                item.first_user_text,
+                item.id,
+                item.depth,
+                item.active,
+            )
+        })
+        .collect::<Vec<_>>();
+    let turn = |text: &str| (SessionTreeItemKind::Turn, Some(text.to_owned()));
+    let row = |(kind, text): (SessionTreeItemKind, Option<String>),
+               id: &crate::session::tree::NodeId,
+               depth,
+               active| { (kind, text, id.clone(), depth, active) };
+    assert_eq!(
+        rows[1..],
+        [
+            row(turn("first"), &first_end, 1, false),
+            row(turn("second"), &second_end, 2, false),
+            row(turn("other"), &branch, 2, true),
+        ]
+    );
+    assert_eq!(
+        (rows.len(), rows[0].0, rows[0].3),
+        (4, SessionTreeItemKind::SessionStart, 0)
+    );
+    Ok(())
+}
+
 // Covers: saves leave the cached active state as a pending replay. Deltas,
 // rewritten prefixes, and compactions built on it, and readers after it, must
 // match a fresh reload, without depending on a stale disk parse.

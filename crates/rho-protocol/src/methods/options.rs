@@ -38,7 +38,7 @@ pub struct SessionConfigureParams {
 }
 
 /// One change to a loaded session, applied between its turns: a setting, or
-/// an edit to its context. A setting's value must be one the session's
+/// an edit to its context or to where its conversation continues from. A setting's value must be one the session's
 /// [`SessionOptions`] offers; any other is [`crate::ErrorCode::InvalidParams`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -76,6 +76,14 @@ pub enum SessionChange {
     /// the lists the daemon shares on disk. Every loaded session's options
     /// follow.
     ModelCatalog,
+    /// Continue the conversation from `node`, a node of the session's saved
+    /// tree, as it stood there: later turns branch from it, and the nodes
+    /// after it stay in the tree. The daemon then detaches every attached
+    /// client as [`super::DetachReason::Lagged`]; attaching again replays
+    /// the conversation up to `node`. A node the tree does not hold, or a
+    /// session that has saved nothing, is
+    /// [`crate::ErrorCode::InvalidParams`].
+    SelectNode { node: String },
 }
 
 /// Result of [`SESSION_CONFIGURE`], once the change applied, after the turn

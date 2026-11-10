@@ -28,10 +28,11 @@ use super::{being_deleted, options::available_auths, queued::Queued, stopping, H
 use crate::{
     app::{
         session_options::{reasoning_from_wire, resolve_model},
-        session_runtime::{AddDirError, SessionRuntime, SettingChangeError},
+        session_runtime::{AddDirError, SelectNodeError, SessionRuntime, SettingChangeError},
     },
     config::Config,
     permission::PermissionMode,
+    session::tree::NodeId,
 };
 
 /// A change this daemon knows how to apply.
@@ -44,6 +45,7 @@ enum Change {
     AgentCatalog,
     AddDirectory(PathBuf),
     ModelCatalog,
+    SelectNode(NodeId),
 }
 
 impl Sessions {
@@ -117,6 +119,11 @@ impl Sessions {
                 super::turn::save_transcript(&session, runtime);
                 Ok(())
             }
+            // Every client replays the conversation as it now stands.
+            Ok(Applied::Restarted) => {
+                super::turn::restart_transcript(&session, runtime);
+                Ok(())
+            }
             Ok(Applied::SharedOptions) => {
                 // Each session's, once its runtime is free; this one's
                 // also follow below.
@@ -140,6 +147,8 @@ enum Applied {
     /// Rows may have been saved, which the transcript takes, with a notice
     /// to tell the session's clients now.
     Rows { notice: Option<String> },
+    /// The conversation moved to another node of the session's tree.
+    Restarted,
     /// What every loaded session's options show was read again.
     SharedOptions,
 }
@@ -165,6 +174,9 @@ impl Change {
             }
             wire::SessionChange::AddDirectory { path } => Ok(Self::AddDirectory(path)),
             wire::SessionChange::ModelCatalog => Ok(Self::ModelCatalog),
+            wire::SessionChange::SelectNode { node } => NodeId::from_string(node)
+                .map(Self::SelectNode)
+                .map_err(|error| invalid(format!("{error:#}"))),
             // A change of a later protocol minor fails to decode before it
             // gets here; the arm keeps the match open to new variants.
             _ => Err(invalid("unknown change")),
@@ -220,6 +232,15 @@ impl Change {
                 // client rewrote the catalogs.
                 rho_providers::model::forget_model_display_names();
                 return Ok(Applied::SharedOptions);
+            }
+            Self::SelectNode(node) => {
+                return match runtime.select_node(&node, config).await {
+                    Ok(()) => Ok(Applied::Restarted),
+                    Err(SelectNodeError::Change(error)) => Err(setting_error(error)),
+                    Err(error @ (SelectNodeError::Unsaved | SelectNodeError::Node(_))) => {
+                        Err(invalid(error.to_string()))
+                    }
+                };
             }
             Self::Model(model) => {
                 let selection = model_selection(runtime, &model, auths)?;

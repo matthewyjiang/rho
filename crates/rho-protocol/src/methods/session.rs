@@ -441,8 +441,9 @@ pub struct SessionDetachedParams {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum DetachReason {
-    /// The client fell too far behind, or the daemon unloaded the session,
-    /// as a delete that failed after it unloaded the session does; attach
+    /// The client fell too far behind, the daemon unloaded the session, as
+    /// a delete that failed after it unloaded the session does, or the
+    /// session's conversation moved to another node of its tree; attach
     /// again with the client's cursor.
     Lagged,
     /// The daemon is stopping.

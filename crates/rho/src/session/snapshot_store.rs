@@ -247,6 +247,11 @@ impl Session {
         self.with_session_tree(SessionTree::items)
     }
 
+    /// The tree as `/tree` lists it; see [`SessionTree::turn_items`].
+    pub(crate) fn tree_turn_items(&self) -> anyhow::Result<Vec<super::tree::SessionTreeItem>> {
+        self.with_session_tree(SessionTree::turn_items)
+    }
+
     pub(crate) fn histories_for_node(
         &self,
         target_id: &NodeId,

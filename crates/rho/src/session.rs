@@ -405,6 +405,16 @@ impl Session {
         Ok(resolved.tree()?.facts())
     }
 
+    /// Session `id_prefix`'s tree as `/tree` lists it, read without opening
+    /// the session, which another process may hold.
+    pub(crate) fn tree_turn_items_by_id(
+        cwd: &Path,
+        id_prefix: &str,
+    ) -> anyhow::Result<Vec<tree::SessionTreeItem>> {
+        let store = SessionStore::new(&session_root()?, cwd);
+        store.resolve(id_prefix)?.tree()?.turn_items()
+    }
+
     pub fn export_by_id(cwd: &Path, id_prefix: &str) -> anyhow::Result<SessionExport> {
         Self::export_by_id_in_root(&session_root()?, cwd, id_prefix)
     }

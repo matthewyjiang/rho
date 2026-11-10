@@ -72,6 +72,7 @@ mod switch;
 #[cfg(test)]
 mod test_support;
 mod title;
+mod tree;
 mod turn;
 mod workflow;
 
@@ -110,6 +111,7 @@ pub(in crate::app) use test_support::{
 };
 pub(crate) use title::TitleJob;
 use title::TitleState;
+pub(crate) use tree::SelectNodeError;
 pub(crate) use turn::{Turn, TurnIo, TurnOutcome, TurnStart};
 pub(crate) use workflow::WorkflowStart;
 

@@ -290,6 +290,14 @@ impl LiveEvents {
         }
     }
 
+    /// Forgets which saved rows were replayed, so the next [`Self::replay`]
+    /// replays every row: the session's conversation moved to another
+    /// branch of its tree, whose rows are not the ones replayed so far.
+    pub(crate) fn forget_replayed(&mut self) {
+        self.replayed_rows = 0;
+        self.replayed_ids = Default::default();
+    }
+
     /// The wire events for `event`, in order; empty for events the wire does
     /// not carry yet.
     pub(crate) fn map(&mut self, event: &SessionEvent) -> Vec<WireEvent> {

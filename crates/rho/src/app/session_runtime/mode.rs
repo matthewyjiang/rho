@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use rho_sdk::SessionOptions;
+use rho_sdk::{SessionOptions, SessionSnapshot};
 
 use super::{
     ensure_auto_classifier_model, model_context_window, model_scoped_config, RunShape,
@@ -88,6 +88,20 @@ impl SessionRuntime {
         mode: PermissionMode,
         writes: SessionWriteLog,
     ) -> Result<(), SettingChangeError> {
+        let conversation = self.built.session.snapshot();
+        self.rebuild_runtime_onto(config, mode, writes, conversation)
+            .await
+    }
+
+    /// [`Self::rebuild_runtime`], around `conversation` in place of the
+    /// live one.
+    pub(super) async fn rebuild_runtime_onto(
+        &mut self,
+        config: &Config,
+        mode: PermissionMode,
+        writes: SessionWriteLog,
+        conversation: SessionSnapshot,
+    ) -> Result<(), SettingChangeError> {
         // Approvals follow the session's mode, which a caller's config,
         // built from the process config, may not carry.
         let mut config = config.clone();
@@ -140,7 +154,7 @@ impl SessionRuntime {
         )
         .map_err(|error| SettingChangeError::Apply(error.into()))?;
         let session = match runtime
-            .rebind_session(SessionOptions::from_snapshot(self.built.session.snapshot()))
+            .rebind_session(SessionOptions::from_snapshot(conversation))
             .await
         {
             Ok(session) => session,

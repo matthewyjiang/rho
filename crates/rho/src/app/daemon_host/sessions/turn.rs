@@ -292,6 +292,20 @@ pub(super) fn save_transcript(session: &LoadedSession, runtime: &SessionRuntime)
     }
 }
 
+/// Replaces the feed's transcript with the rows the session's file replays
+/// now that its conversation moved to another node of its tree, and
+/// detaches the session's clients to replay it (see [`Feed::restart`]).
+///
+/// [`Feed::restart`]: super::feed::Feed::restart
+pub(super) fn restart_transcript(session: &LoadedSession, runtime: &SessionRuntime) {
+    let saved = {
+        let mut live = session.live();
+        live.forget_replayed();
+        saved_replay(&mut live, runtime, &session.job).unwrap_or_default()
+    };
+    session.feed.restart(saved);
+}
+
 /// Generates the title the session's first answered turn asked for, which
 /// saves it, and tells the session's clients (#1670). It lands seconds
 /// after the turn; a session the daemon unloaded by then is titled all the

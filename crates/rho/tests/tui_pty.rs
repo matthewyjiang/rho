@@ -1253,6 +1253,14 @@ fn daemon_runs_the_workflow_the_hub_starts() {
     assert_pass("daemon_workflow");
 }
 
+// Covers: `/tree` in a daemon session restores an earlier turn, the daemon
+// continues from it, and a reopened session shows that branch.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_restores_an_earlier_turn_from_the_tree() {
+    assert_pass("daemon_tree");
+}
+
 // Covers: `/new`, `/resume`, and the `--resume` picker switch the daemon
 // session the TUI follows; a launch flag's setting carries into `/new`.
 // Owner: interactive TUI as a daemon client (#1667)
