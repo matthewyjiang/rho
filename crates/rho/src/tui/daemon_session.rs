@@ -112,9 +112,12 @@ mod unix {
     };
     use super::{DaemonLaunch, DaemonTarget, InitialSettings};
     use crate::{
-        app::daemon_client::{Daemon, Link, Part, Routed, StreamPosition},
+        app::daemon_client::{Daemon, Link, LoginEvent, Part, Routed, StreamPosition},
         daemon::DAEMON_RESTART_TIMEOUT,
     };
+
+    mod auth;
+    mod requests;
 
     const LOST: &str = "lost the connection to the rho daemon";
 
@@ -334,6 +337,8 @@ mod unix {
         /// Kept across cancelled `next_views` waits; never restart an attach
         /// merely because the TUI handled a key or redrew.
         reattach: Option<Reattach>,
+        /// The events of the interactive login under way, if any.
+        logins: Option<mpsc::UnboundedReceiver<LoginEvent>>,
     }
 
     impl DaemonSession {
@@ -436,6 +441,7 @@ mod unix {
                 ended: false,
                 requests: Some(DaemonRequests::new(requests)),
                 reattach: None,
+                logins: None,
             };
             for change in queued {
                 session.configure(change)?;
@@ -498,6 +504,9 @@ mod unix {
                 routed = self.routed.recv() => routed,
                 Some(error) = self.requests.as_mut().expect("attached session has requests").views.recv() => {
                     return vec![error];
+                }
+                Some(event) = auth::next_login(&mut self.logins) => {
+                    return vec![DaemonView::Login(event)];
                 }
             };
             let mut views = std::mem::take(&mut self.pending);
@@ -750,87 +759,9 @@ mod unix {
             }
         }
 
-        /// Request live inventory without waiting for the active turn.
-        pub(in crate::tui) fn request_mcp(&self) -> anyhow::Result<()> {
-            if self.ended {
-                anyhow::bail!(LOST);
-            }
-            self.requests
-                .as_ref()
-                .expect("attached session has requests")
-                .request_mcp()
-        }
-
-        /// Send a goal action without waiting for the active turn.
-        pub(in crate::tui) fn goal(
-            &self,
-            action: rho_protocol::SessionGoalAction,
-        ) -> anyhow::Result<()> {
-            if self.ended {
-                anyhow::bail!(LOST);
-            }
-            self.requests
-                .as_ref()
-                .expect("attached session has requests")
-                .goal(action)
-        }
-
-        /// Ask for a report on the session, which arrives as
-        /// [`DaemonView::Report`]; the daemon refuses during a turn.
-        pub(in crate::tui) fn inspect(
-            &self,
-            report: rho_protocol::SessionReport,
-        ) -> anyhow::Result<()> {
-            if self.ended {
-                anyhow::bail!(LOST);
-            }
-            self.requests
-                .as_ref()
-                .expect("attached session has requests")
-                .inspect(report)
-        }
-
-        /// Ask for the daemon's jobs without waiting for the active turn;
-        /// they arrive as [`DaemonView::Jobs`].
-        pub(in crate::tui) fn request_jobs(&self) -> anyhow::Result<()> {
-            if self.ended {
-                anyhow::bail!(LOST);
-            }
-            self.requests
-                .as_ref()
-                .expect("attached session has requests")
-                .request_jobs()
-        }
-
         /// The session's id, saved or not.
         pub(in crate::tui) fn id(&self) -> &str {
             self.id.as_str()
-        }
-
-        /// Rename the session without waiting for the active turn; its
-        /// `TitleChanged` event reports the new title.
-        pub(in crate::tui) fn rename(&self, title: String) -> anyhow::Result<()> {
-            if self.ended {
-                anyhow::bail!(LOST);
-            }
-            self.requests
-                .as_ref()
-                .expect("attached session has requests")
-                .rename(title)
-        }
-
-        /// Queue a change without waiting for the active turn to release it.
-        pub(in crate::tui) fn configure(
-            &self,
-            change: rho_protocol::SessionChange,
-        ) -> anyhow::Result<()> {
-            if self.ended {
-                anyhow::bail!(LOST);
-            }
-            self.requests
-                .as_ref()
-                .expect("attached session has requests")
-                .configure(change)
         }
 
         /// Asks the turn under way, if any, to stop. A closed connection

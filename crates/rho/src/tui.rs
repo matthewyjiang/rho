@@ -66,6 +66,7 @@ mod daemon_gate;
 mod daemon_goal;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod daemon_inputs;
+mod daemon_login;
 mod daemon_options;
 mod daemon_prompt;
 mod daemon_reports;
@@ -672,6 +673,8 @@ struct App {
     daemon_title: Option<String>,
     /// The subagent rail's job-list polling for the daemon session.
     daemon_rail: daemon_subagents::DaemonRail,
+    /// The interactive login the daemon runs for this TUI, if any.
+    daemon_login: Option<daemon_login::DaemonLogin>,
     /// Set by `/title` so auto-title generation cannot overwrite a manual name.
     session_title_locked: bool,
     /// Latest native checklist, mirrored for commands while a turn is running.

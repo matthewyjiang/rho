@@ -88,6 +88,7 @@ impl App {
                 DaemonView::Options(options) => self.show_daemon_options(*options),
                 DaemonView::McpInventory(result) => self.show_daemon_mcp(result),
                 DaemonView::Report { report, result } => self.show_daemon_report(report, result),
+                DaemonView::Login(update) => self.show_daemon_login(update, terminal).await?,
                 DaemonView::Jobs(jobs) => self.show_daemon_jobs(jobs),
                 DaemonView::ConfigureFinished => {
                     self.daemon_option_requests.pop_front();

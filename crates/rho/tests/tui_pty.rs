@@ -1212,6 +1212,14 @@ fn daemon_session_adds_a_directory_and_reports_on_itself() {
     assert_pass("daemon_session_reports");
 }
 
+// Covers: `/login` has the daemon check and save an API key, and `/logout`
+// has it delete the credential.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_saves_and_deletes_a_key_for_the_tui() {
+    assert_pass("daemon_login");
+}
+
 // Covers: `/new`, `/resume`, and the `--resume` picker switch the daemon
 // session the TUI follows; a launch flag's setting carries into `/new`.
 // Owner: interactive TUI as a daemon client (#1667)

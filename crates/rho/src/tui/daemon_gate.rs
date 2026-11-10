@@ -58,6 +58,10 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Hooks
         | CommandId::AddDir
         | CommandId::RefreshModels
+        // The pickers and prompts are this screen's; the daemon checks and
+        // saves the credential, runs the login, and signs out.
+        | CommandId::Login
+        | CommandId::Logout
         // The daemon opens the session these follow next.
         | CommandId::New
         | CommandId::Resume
@@ -67,8 +71,6 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         // state. The /workflow hub likewise describes the wrong runtime,
         // even when opened read-only.
         CommandId::Advisor
-        | CommandId::Login
-        | CommandId::Logout
         | CommandId::Rewind
         | CommandId::Tree
         | CommandId::Codemode

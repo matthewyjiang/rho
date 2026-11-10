@@ -28,9 +28,9 @@ use std::collections::HashMap;
 
 use rho_protocol::{
     display::{Presentation, ToolCard, ToolCardStatus},
-    CompactionStatus, ContentBlock, InputRequest, InputRequestId, JobState, MessageId, PlanEntry,
-    PlanStatus, Replay, SessionEvent, SteerId, ToolCallId as WireCallId, ToolCallUpdate,
-    ToolStatus, TurnId, TurnOutcome,
+    CompactionStatus, ContentBlock, InputRequest, InputRequestId, JobState, LoginId, LoginOutcome,
+    LoginPrompt, MessageId, PlanEntry, PlanStatus, Replay, SessionEvent, SteerId,
+    ToolCallId as WireCallId, ToolCallUpdate, ToolStatus, TurnId, TurnOutcome,
 };
 use rho_sdk::{SteeringId, ToolCallId};
 
@@ -89,6 +89,8 @@ pub(super) enum DaemonView {
         report: rho_protocol::SessionReport,
         result: Result<serde_json::Value, String>,
     },
+    /// What the interactive login the TUI started in the daemon did.
+    Login(LoginUpdate),
     /// The daemon's jobs, asked for to refresh the subagent rail.
     Jobs(Result<Vec<rho_protocol::JobSummary>, String>),
     /// One background configure request finished, successfully or otherwise.
@@ -119,6 +121,19 @@ pub(super) enum DaemonView {
 }
 
 /// Whether the session runs a turn.
+/// A step of an interactive login the daemon runs for the TUI.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum LoginUpdate {
+    /// What the person must do to finish it.
+    Prompt { login: LoginId, prompt: LoginPrompt },
+    Finished {
+        login: LoginId,
+        outcome: LoginOutcome,
+    },
+    /// The connection it belonged to closed, which cancelled it.
+    Lost,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum TurnState {
     /// A turn runs.
