@@ -13,6 +13,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use rho_protocol::{TurnErrorKind, TurnOutcome};
+
 use super::{
     daemon_prompt, daemon_session,
     during_turn::RunningTerminalError,
@@ -29,10 +31,11 @@ impl App {
 
     /// Asks the daemon to run `turn` with `media`. On a refusal the
     /// transcript says why and the composer gets the prompt back, so the
-    /// caller clears the composer before calling. A turn that failed
-    /// before it saved its prompt, as `/init` does in plan mode, is not a
-    /// refusal: the daemon's own rows say how it ended, and the prompt is
-    /// kept in the input history as a sent one is.
+    /// caller clears the composer before calling. A turn that ended before
+    /// it saved its prompt is not a refusal: the daemon's own rows say how
+    /// it ended, so the prompt comes back without another. A command the
+    /// daemon refused, as `/init` in plan mode, does not come back either:
+    /// it goes to the input history as a sent one does.
     pub(super) async fn submit_daemon_turn(
         &mut self,
         turn: TurnPrompt,
@@ -47,17 +50,28 @@ impl App {
             let ended = error
                 .downcast_ref::<rho_protocol::ClientError>()
                 .and_then(rho_protocol::ClientError::turn_ended);
-            if matches!(ended, Some(rho_protocol::TurnOutcome::Failed { .. })) {
-                if !turn.history.is_empty() {
-                    self.push_input_history(&turn.history);
+            match ended {
+                // The daemon refused the command itself, and its row says
+                // why: sent, as far as the composer goes.
+                Some(TurnOutcome::Failed { error })
+                    if error.kind == TurnErrorKind::Configuration =>
+                {
+                    if !turn.history.is_empty() {
+                        self.push_input_history(&turn.history);
+                    }
+                    self.reset_input_history_navigation();
+                    return Ok(());
                 }
-                self.reset_input_history_navigation();
-                return Ok(());
-            }
-            if ended.is_none() {
-                self.insert_entry(&Entry::Error(format!(
+                // The daemon's rows say how the turn ended.
+                Some(
+                    TurnOutcome::Failed { .. }
+                    | TurnOutcome::Cancelled
+                    | TurnOutcome::TimedOut { .. },
+                ) => {}
+                // Not sent, or ended in a way this rho cannot show.
+                Some(_) | None => self.insert_entry(&Entry::Error(format!(
                     "could not send the prompt: {error:#}"
-                )));
+                ))),
             }
             self.restore_pending_prompt(QueuedPrompt {
                 prompt: turn.model,

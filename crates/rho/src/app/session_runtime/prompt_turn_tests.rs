@@ -17,7 +17,7 @@ use crate::{
     permission::PermissionMode,
     session::Session as StoredSession,
     tools::{
-        plan_exit::{PlanExitHost, PlanPermissionAnswer},
+        plan_exit::{PlanExitDecision, PlanExitHost},
         sdk_registry::AppToolSet,
     },
 };
@@ -77,7 +77,7 @@ enum Hosted {
 /// shows. With `cancel_before_handoff`, it cancels the prompt as it
 /// finishes showing the first turn, before the handoff.
 struct PlanView {
-    answer: PlanPermissionAnswer,
+    answer: PlanExitDecision,
     cancel_before_handoff: bool,
     hosted: Vec<Hosted>,
 }
@@ -147,7 +147,7 @@ async fn the_plan_handoff_follows_the_decision_and_the_turn() {
         permission_mode: PermissionMode::Bypass,
         ..Config::default()
     };
-    let approve = || PlanPermissionAnswer::approve(PermissionMode::AllowEdits);
+    let approve = || PlanExitDecision::approve(PermissionMode::AllowEdits);
     let cases = [
         (
             "no plan answered",
@@ -159,7 +159,7 @@ async fn the_plan_handoff_follows_the_decision_and_the_turn() {
         (
             "plan rejected",
             vec![propose_plan(), text("proposed")],
-            PlanPermissionAnswer::keep_planning(),
+            PlanExitDecision::keep_planning(),
             false,
             (
                 vec![Hosted::Turn, Hosted::Kept],

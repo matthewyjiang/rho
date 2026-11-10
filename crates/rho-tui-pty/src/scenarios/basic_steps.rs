@@ -3,7 +3,8 @@
 
 use std::time::Duration;
 
-use super::{assert_helpers::assert_terminal_restored, *};
+use super::{assert_helpers::assert_terminal_restored, SETTLE, STARTUP, STREAM};
+use crate::{keys::Key, scenario::Step, WaitTimeout};
 
 pub(super) const CANCEL_AND_RESUBMIT_STEPS: &[Step] = &[
     Step::Phase("startup"),

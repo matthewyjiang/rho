@@ -172,12 +172,25 @@ impl SessionRuntime {
             };
         }
         if let Err(error) = self.save_changed_settings() {
+            // Back in plan mode, as `Kept` says; the unsaved switch needs
+            // no save undone.
+            let restored = self
+                .set_permission_mode(crate::permission::PermissionMode::Plan, process_config)
+                .await;
+            let notice = match restored {
+                Ok(_) => format!("could not execute approved plan: {error:#}"),
+                Err(restore) => format!(
+                    "could not execute approved plan: {error:#}; the session stays in {} mode: {restore:#}",
+                    target.as_str()
+                ),
+            };
             return PlanHandoff::Kept {
-                notice: format!("could not execute approved plan: {error:#}"),
+                notice,
                 ended: proposal,
             };
         }
-        // A permission prompt carries no feedback, so the decision has none.
+        // The model read any feedback with the approval, in the tool's
+        // result.
         let input = UserInput::text(IMPLEMENT_PLAN);
         PlanHandoff::Switched(Turn {
             display: input.clone(),
