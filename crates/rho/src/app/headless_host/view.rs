@@ -182,7 +182,7 @@ impl<'a> HeadlessView<'a> {
             SessionEvent::PlanApprovalRequested { id, .. } => {
                 let _ = control.send(TurnControl::AnswerPlan {
                     id,
-                    answer: PlanPermissionAnswer::KeepPlanning,
+                    answer: PlanPermissionAnswer::keep_planning(),
                 });
             }
             SessionEvent::QuestionAsked { id, request, .. } => match &self.parent {

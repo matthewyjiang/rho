@@ -95,23 +95,36 @@ fn a_request_hands_the_turn_only_the_answers_it_takes() {
         ),
         (
             approval(0),
-            InputAnswer::KeepPlanning,
+            InputAnswer::KeepPlanning { feedback: None },
             Outcome::Refused(ErrorCode::InvalidParams),
         ),
         (
             plan(0),
             InputAnswer::ApprovePlan {
                 mode: wire::PermissionMode::Auto,
+                feedback: None,
             },
             Outcome::Turn(TurnControl::AnswerPlan {
                 id: PlanApprovalId::nth_for_tests(0),
-                answer: PlanPermissionAnswer::Approve(PermissionMode::Auto),
+                answer: PlanPermissionAnswer::approve(PermissionMode::Auto),
+            }),
+        ),
+        (
+            plan(0),
+            InputAnswer::KeepPlanning {
+                feedback: Some("smaller steps".into()),
+            },
+            Outcome::Turn(TurnControl::AnswerPlan {
+                id: PlanApprovalId::nth_for_tests(0),
+                answer: PlanPermissionAnswer::keep_planning()
+                    .with_feedback(Some("smaller steps".into())),
             }),
         ),
         (
             plan(0),
             InputAnswer::ApprovePlan {
                 mode: wire::PermissionMode::Bypass,
+                feedback: None,
             },
             Outcome::Refused(ErrorCode::InvalidParams),
         ),

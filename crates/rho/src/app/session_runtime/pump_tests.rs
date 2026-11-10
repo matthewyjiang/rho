@@ -300,7 +300,7 @@ async fn answers_reach_the_request_they_name() {
     });
     harness.answer(TurnControl::AnswerPlan {
         id: PlanApprovalId(0),
-        answer: PlanPermissionAnswer::Approve(PermissionMode::AllowEdits),
+        answer: PlanPermissionAnswer::approve(PermissionMode::AllowEdits),
     });
     drop(abandoned_answer);
     assert_eq!(harness.next().await, Seen::PlanWithdrawn(PlanApprovalId(1)));
@@ -315,7 +315,7 @@ async fn answers_reach_the_request_they_name() {
                 reason: "no".into()
             },
             ApprovalDecision::AllowForSession,
-            PlanPermissionAnswer::Approve(PermissionMode::AllowEdits),
+            PlanPermissionAnswer::approve(PermissionMode::AllowEdits),
         )
     );
 

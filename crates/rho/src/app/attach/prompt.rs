@@ -72,11 +72,17 @@ impl Prompt {
                         let mode = PermissionMode::try_from(wire).ok()?;
                         Some((
                             format!("approve in {}", mode.as_str()),
-                            InputAnswer::ApprovePlan { mode: wire },
+                            InputAnswer::ApprovePlan {
+                                mode: wire,
+                                feedback: None,
+                            },
                         ))
                     })
                     .collect();
-                options.push(("keep planning".to_owned(), InputAnswer::KeepPlanning));
+                options.push((
+                    "keep planning".to_owned(),
+                    InputAnswer::KeepPlanning { feedback: None },
+                ));
                 Kind::Pick {
                     preface: Some(escape_controls(plan.plan.trim_end(), LineBreaks::Keep)),
                     options,

@@ -5,7 +5,10 @@ use rho_protocol::{
 use rho_sdk::HostInputResponse;
 
 use super::{plan_answer, DaemonPrompt};
-use crate::tools::plan_exit::DECISION_QUESTION_ID;
+use crate::{
+    permission::PermissionMode,
+    tools::plan_exit::{DECISION_QUESTION_ID, FEEDBACK_QUESTION_ID},
+};
 
 fn plan_request(modes: Vec<WireMode>) -> InputRequest {
     InputRequest {
@@ -32,14 +35,17 @@ fn plan_approval_choices_answer_as_the_mode_they_name() {
             vec![
                 InputAnswer::ApprovePlan {
                     mode: WireMode::AllowEdits,
+                    feedback: None,
                 },
                 InputAnswer::ApprovePlan {
                     mode: WireMode::Supervised,
+                    feedback: None,
                 },
                 InputAnswer::ApprovePlan {
                     mode: WireMode::Bypass,
+                    feedback: None,
                 },
-                InputAnswer::KeepPlanning,
+                InputAnswer::KeepPlanning { feedback: None },
             ],
         ),
         (
@@ -48,14 +54,15 @@ fn plan_approval_choices_answer_as_the_mode_they_name() {
             vec![
                 InputAnswer::ApprovePlan {
                     mode: WireMode::Auto,
+                    feedback: None,
                 },
-                InputAnswer::KeepPlanning,
+                InputAnswer::KeepPlanning { feedback: None },
             ],
         ),
         (
             "no mode to approve into",
             Vec::new(),
-            vec![InputAnswer::KeepPlanning],
+            vec![InputAnswer::KeepPlanning { feedback: None }],
         ),
     ];
 
@@ -64,8 +71,8 @@ fn plan_approval_choices_answer_as_the_mode_they_name() {
         else {
             panic!("{name}: not a plan approval prompt");
         };
-        let [question] = form.questions() else {
-            panic!("{name}: expected the decision question alone");
+        let [question, _feedback] = form.questions() else {
+            panic!("{name}: expected the decision and feedback questions");
         };
         let answers: Vec<_> = question
             .choices()
@@ -77,5 +84,45 @@ fn plan_approval_choices_answer_as_the_mode_they_name() {
             })
             .collect();
         assert_eq!(answers, expected, "{name}");
+    }
+}
+
+// Covers: what the person writes as feedback goes with the answer either
+// way and never decides it: text naming a mode does not approve, and the
+// "No feedback" choice sends none.
+// Owner: tui daemon input answers
+#[test]
+fn plan_approval_feedback_goes_with_the_answer_and_never_decides_it() {
+    let modes = [PermissionMode::AllowEdits, PermissionMode::Bypass];
+    let cases = [
+        (
+            "allow_edits",
+            "add tests",
+            InputAnswer::ApprovePlan {
+                mode: WireMode::AllowEdits,
+                feedback: Some("add tests".into()),
+            },
+        ),
+        (
+            "keep_planning",
+            "bypass",
+            InputAnswer::KeepPlanning {
+                feedback: Some("bypass".into()),
+            },
+        ),
+        (
+            "bypass",
+            "no_feedback",
+            InputAnswer::ApprovePlan {
+                mode: WireMode::Bypass,
+                feedback: None,
+            },
+        ),
+    ];
+    for (decision, feedback, expected) in cases {
+        let response = HostInputResponse::new()
+            .answer(DECISION_QUESTION_ID, [decision])
+            .answer(FEEDBACK_QUESTION_ID, [feedback]);
+        assert_eq!(plan_answer(&response, &modes), expected, "{decision}");
     }
 }

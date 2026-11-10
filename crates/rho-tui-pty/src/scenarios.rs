@@ -245,6 +245,12 @@ const DEFAULT_SIZE: PtySize = PtySize {
 pub(super) const STARTUP: WaitTimeout = WaitTimeout::secs(20, "startup");
 pub(super) const STREAM: WaitTimeout = WaitTimeout::secs(20, "stream response");
 pub(super) const SETTLE: WaitTimeout = WaitTimeout::secs(10, "ui settle");
+/// The environment that runs a scenario's TUI as a daemon client.
+#[cfg(unix)]
+pub(super) const DAEMON_ENV: &[(&str, &str)] = &[
+    ("RHO_TUI_DAEMON", "1"),
+    ("OPENAI_API_KEY", "sk-test-matrix"),
+];
 
 const CANCEL_AND_RESUBMIT_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -524,6 +530,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     config::SETTINGS_NEED_THE_DAEMON,
     plan_exit::APPROVE_SCENARIO,
+    #[cfg(unix)]
+    plan_exit::DAEMON_APPROVE_SCENARIO,
+    #[cfg(unix)]
+    init_command::DAEMON_INIT_PLAN_SCENARIO,
     plan_exit::GOAL_SCENARIO,
     plan_exit::IDLE_COMPLETION_SCENARIO,
     plan_exit::KEEP_SCENARIO,

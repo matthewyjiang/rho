@@ -29,7 +29,10 @@ impl App {
 
     /// Asks the daemon to run `turn` with `media`. On a refusal the
     /// transcript says why and the composer gets the prompt back, so the
-    /// caller clears the composer before calling.
+    /// caller clears the composer before calling. A turn that failed
+    /// before it saved its prompt, as `/init` does in plan mode, is not a
+    /// refusal: the daemon's own rows say how it ended, and the prompt is
+    /// kept in the input history as a sent one is.
     pub(super) async fn submit_daemon_turn(
         &mut self,
         turn: TurnPrompt,
@@ -41,9 +44,21 @@ impl App {
             // Why the prompt found no attachment, such as a failed reattach
             // after a daemon restart, shows first.
             self.show_taken_daemon_views(terminal).await?;
-            self.insert_entry(&Entry::Error(format!(
-                "could not send the prompt: {error:#}"
-            )));
+            let ended = error
+                .downcast_ref::<rho_protocol::ClientError>()
+                .and_then(rho_protocol::ClientError::turn_ended);
+            if matches!(ended, Some(rho_protocol::TurnOutcome::Failed { .. })) {
+                if !turn.history.is_empty() {
+                    self.push_input_history(&turn.history);
+                }
+                self.reset_input_history_navigation();
+                return Ok(());
+            }
+            if ended.is_none() {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not send the prompt: {error:#}"
+                )));
+            }
             self.restore_pending_prompt(QueuedPrompt {
                 prompt: turn.model,
                 display_prompt: turn.display,

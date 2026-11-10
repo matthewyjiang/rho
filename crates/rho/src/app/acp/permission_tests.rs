@@ -124,12 +124,13 @@ fn plan_outcomes_approve_a_mode_or_keep_planning() {
             selected("auto"),
             Some(InputAnswer::ApprovePlan {
                 mode: wire::PermissionMode::Auto,
+                feedback: None,
             }),
         ),
         (
             "keep planning",
             selected("keep_planning"),
-            Some(InputAnswer::KeepPlanning),
+            Some(InputAnswer::KeepPlanning { feedback: None }),
         ),
     ];
     for (label, outcome, expected) in cases {

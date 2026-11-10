@@ -264,7 +264,7 @@ fn an_attach_reports_open_requests_as_they_stand() {
         tool_call: None,
         timeout: Some(wire::InputTimeout {
             deadline_ms: 1,
-            answer: wire::InputAnswer::KeepPlanning,
+            answer: wire::InputAnswer::KeepPlanning { feedback: None },
             reason: "safe".into(),
         }),
     };

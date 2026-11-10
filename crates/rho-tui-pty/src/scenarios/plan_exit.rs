@@ -278,42 +278,59 @@ pub(super) const APPROVE_SCENARIO: Scenario = Scenario::new(
     "plan_exit_approve",
     "Expand a long plan while approving, then implement without saving config",
     DEFAULT_SIZE,
-    &[
-        Step::WaitText {
-            text: "gpt-5.5",
-            timeout: STARTUP,
-        },
-        Step::SubmitText("fixture plan exit long"),
-        Step::WaitText {
-            text: "Plan ready. How should Rho continue?",
-            timeout: STREAM,
-        },
-        Step::Custom(assert_plan_collapsed),
-        Step::Key(Key::Ctrl('o')),
-        Step::WaitText {
-            text: "Verify the final safety step.",
-            timeout: STREAM,
-        },
-        Step::Key(Key::Enter),
-        Step::WaitText {
-            text: "Optional feedback for the plan",
-            timeout: STREAM,
-        },
-        Step::TypeText("include migration steps"),
-        Step::Custom(submit_migration_feedback),
-        Step::WaitText {
-            text: "fixture plan implementation reached",
-            timeout: STREAM,
-        },
-        Step::Custom(assert_approval_feedback),
-        Step::Custom(assert_allow_edits),
-        Step::ExitCommand,
-        Step::Custom(assert_config_unchanged),
-    ],
+    APPROVE_STEPS,
     /*smoke*/ false,
 )
 .with_setup(setup)
 .with_args(&["--permission-mode", "plan"]);
+
+// Covers: the same approval when the session runs in the daemon: the
+// feedback typed with it reaches the implementation turn's history.
+// Owner: interactive TUI as a daemon client
+#[cfg(unix)]
+pub(super) const DAEMON_APPROVE_SCENARIO: Scenario = Scenario::new(
+    "daemon_plan_exit_approve",
+    "Approve a daemon session's plan with feedback, then implement",
+    DEFAULT_SIZE,
+    APPROVE_STEPS,
+    /*smoke*/ false,
+)
+.with_setup(setup)
+.with_args(&["--permission-mode", "plan"])
+.with_env(super::DAEMON_ENV);
+
+const APPROVE_STEPS: &[Step] = &[
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("fixture plan exit long"),
+    Step::WaitText {
+        text: "Plan ready. How should Rho continue?",
+        timeout: STREAM,
+    },
+    Step::Custom(assert_plan_collapsed),
+    Step::Key(Key::Ctrl('o')),
+    Step::WaitText {
+        text: "Verify the final safety step.",
+        timeout: STREAM,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Optional feedback for the plan",
+        timeout: STREAM,
+    },
+    Step::TypeText("include migration steps"),
+    Step::Custom(submit_migration_feedback),
+    Step::WaitText {
+        text: "fixture plan implementation reached",
+        timeout: STREAM,
+    },
+    Step::Custom(assert_approval_feedback),
+    Step::Custom(assert_allow_edits),
+    Step::ExitCommand,
+    Step::Custom(assert_config_unchanged),
+];
 
 // Covers: reserved decision values typed as feedback must never grant permission.
 // Owner: questionnaire authorization separation (PTY).

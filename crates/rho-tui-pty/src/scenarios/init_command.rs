@@ -94,23 +94,40 @@ pub(super) const INIT_PLAN_SCENARIO: Scenario = Scenario::new(
     "init_plan",
     "Refuse /init in Plan permission mode without creating instructions",
     DEFAULT_SIZE,
-    &[
-        Step::WaitText {
-            text: "gpt-5.5",
-            timeout: STARTUP,
-        },
-        Step::SubmitText("/init"),
-        Step::WaitText {
-            text: "file writes are denied in plan permission mode",
-            timeout: SETTLE,
-        },
-        Step::Custom(assert_no_instructions),
-        Step::ExitCommand,
-    ],
+    INIT_PLAN_STEPS,
     /*smoke*/ false,
 )
 .with_setup(setup_nested_repository)
 .with_args(&["--permission-mode", "plan"]);
+
+// Covers: the same refusal from a daemon session: the transcript says why
+// once, and the composer is left empty for the next command.
+// Owner: interactive TUI as a daemon client
+#[cfg(unix)]
+pub(super) const DAEMON_INIT_PLAN_SCENARIO: Scenario = Scenario::new(
+    "daemon_init_plan",
+    "Refuse /init in a daemon session in Plan permission mode",
+    DEFAULT_SIZE,
+    INIT_PLAN_STEPS,
+    /*smoke*/ false,
+)
+.with_setup(setup_nested_repository)
+.with_args(&["--permission-mode", "plan"])
+.with_env(super::DAEMON_ENV);
+
+const INIT_PLAN_STEPS: &[Step] = &[
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/init"),
+    Step::WaitText {
+        text: "file writes are denied in plan permission mode",
+        timeout: SETTLE,
+    },
+    Step::Custom(assert_no_instructions),
+    Step::ExitCommand,
+];
 
 fn setup_nested_repository(home: &IsolatedHome) -> Result<()> {
     // The harness launches in workspace/, beneath this distinct git root.

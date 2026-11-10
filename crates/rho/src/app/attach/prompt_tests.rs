@@ -154,8 +154,9 @@ fn a_prompt_turns_typed_lines_into_its_answer() {
                 retry("answer a number from 1 to 3"),
                 Reply::Answer(InputAnswer::ApprovePlan {
                     mode: PermissionMode::AllowEdits,
+                    feedback: None,
                 }),
-                Reply::Answer(InputAnswer::KeepPlanning),
+                Reply::Answer(InputAnswer::KeepPlanning { feedback: None }),
             ],
         },
         Case {
