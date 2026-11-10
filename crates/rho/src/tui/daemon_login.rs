@@ -5,10 +5,13 @@
 //! browser, which opens here.
 //!
 //! Unlike in process, a login does not swap the running provider: the
-//! daemon's sessions pick the credential up at their next prompt, and a
-//! logout of the profile in use shows as that prompt's authentication
-//! error. Nor does it make the session's provider and model the config's
-//! defaults: only the default provider's auth profile follows a login.
+//! daemon's sessions pick the credential up at their next prompt. A
+//! logout of the profile in use marks the session signed out here, so the
+//! header says so and a prompt offers `/login` rather than failing; that
+//! is this TUI's reading of the shared credential store, checked again
+//! before each prompt it would hold back. A login does not make the
+//! session's provider and model the config's defaults either: only the
+//! default provider's auth profile follows it.
 //! A login its provider cannot confirm (Ollama Cloud's device key) is
 //! saved by the daemon as soon as it is shown, so it reads as finished
 //! before the person approves it.
@@ -20,7 +23,10 @@ use rho_providers::{
         login_dispatch::{InteractiveLoginMode, ProviderAuthentication},
         login_prompt::LoginPrompt,
     },
-    model::{catalog::LoginTarget, registry},
+    model::{
+        catalog::{self, LoginTarget},
+        registry,
+    },
 };
 
 use super::{
@@ -213,19 +219,41 @@ impl App {
     /// Marks the session signed out when the logout of `target` left its
     /// auth without credentials, which the header hints, the statusline,
     /// and a prompt's detour to `/login` follow (`setup_state`). Reports
-    /// whether it did. The daemon builds the provider; this only says what
-    /// the next prompt would find.
-    fn daemon_session_signed_out(&mut self, target: &LoginTarget) -> bool {
+    /// whether it did.
+    fn mark_signed_out_after_logout(&mut self, target: &LoginTarget) -> bool {
         let runtime = &self.info.runtime;
         if runtime.provider != target.provider
             || runtime.auth != target.auth
-            || ProviderAuthentication::has_credentials(self.credential_store.as_ref(), &target.auth)
-                .unwrap_or(false)
+            || self.session_auth_has_credentials()
         {
             return false;
         }
         self.info.services.auth_unavailable =
             Some(registry::missing_credentials_error(&target.provider).to_string());
+        true
+    }
+
+    fn session_auth_has_credentials(&self) -> bool {
+        ProviderAuthentication::has_credentials(
+            self.credential_store.as_ref(),
+            &self.info.runtime.auth,
+        )
+        .unwrap_or(false)
+    }
+
+    /// Whether a prompt should be held for `/login` rather than sent: the
+    /// session reads as signed out and the store, read again, still has
+    /// nothing for its auth. A login made elsewhere since, such as
+    /// `rho login` in another terminal, lets the prompt through.
+    pub(super) fn daemon_prompt_needs_login(&mut self) -> bool {
+        if self.setup_state().signed_in {
+            return false;
+        }
+        AppCredentialStore::reread_external_logins();
+        if self.session_auth_has_credentials() {
+            self.info.services.auth_unavailable = None;
+            return false;
+        }
         true
     }
 
@@ -236,14 +264,13 @@ impl App {
                 AppCredentialStore::reread_external_logins();
                 self.refresh_available_auths();
                 self.insert_entry(&Entry::Notice(format!("logged out of {}", target.provider)));
-                if !self.daemon_session_signed_out(target) {
-                    self.set_status("logout complete");
-                } else {
+                if self.mark_signed_out_after_logout(target) {
                     self.insert_entry(&Entry::Notice(
-                        "the active provider no longer has credentials. Run /login or switch with /model."
-                            .into(),
+                        super::login::ACTIVE_PROVIDER_SIGNED_OUT.into(),
                     ));
-                    self.set_status("no providers configured; run /login");
+                    self.set_status(super::login::NO_PROVIDER_STATUS);
+                } else {
+                    self.set_status("logout complete");
                 }
             }
             Err(error) => {
@@ -279,6 +306,19 @@ impl App {
             target.provider == self.info.runtime.provider && target.auth == self.info.runtime.auth;
         if in_use {
             self.info.services.auth_unavailable = None;
+        } else if !self.setup_state().signed_in {
+            // A signed-out session moves to the provider just signed in to,
+            // as it does in process; the daemon's report of the switch
+            // marks it signed in.
+            if let Some(model) = catalog::default_model_for_provider(&target.provider) {
+                self.configure_daemon(SessionChange::Model {
+                    model: rho_protocol::ModelRef {
+                        provider: target.provider.clone(),
+                        model,
+                    },
+                    auth: Some(target.auth.clone()),
+                })?;
+            }
         }
         self.set_status(if target.auth == rho_providers::provider::KEYLESS_AUTH {
             format!(

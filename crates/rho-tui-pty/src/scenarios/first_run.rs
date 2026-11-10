@@ -35,11 +35,57 @@ pub(super) const DAEMON_SIGNED_OUT_SCENARIO: super::Scenario = super::Scenario::
     "daemon_signed_out_setup_state",
     "Show a daemon session signed out, and route a prompt to login",
     super::DEFAULT_SIZE,
-    SIGNED_OUT_SETUP_STEPS,
+    DAEMON_SIGNED_OUT_STEPS,
     /*smoke*/ false,
 )
 .with_env(&[("RHO_TUI_DAEMON", "1")])
 .with_setup(setup_prompt_template);
+
+/// [`SIGNED_OUT_SETUP_STEPS`] for a daemon session, which holds a template
+/// command as typed: the daemon expands it, not the TUI.
+#[cfg(unix)]
+const DAEMON_SIGNED_OUT_STEPS: &[Step] = &[
+    Step::Phase("signed_in_baseline"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("sign_out"),
+    Step::SubmitText("/logout openai"),
+    Step::WaitText {
+        text: "no longer has credentials",
+        timeout: SETTLE,
+    },
+    Step::AssertText("not signed in"),
+    Step::AssertText("/login       Sign in to a provider"),
+    Step::Phase("prompt_opens_login_picker"),
+    Step::SubmitText("hello"),
+    Step::WaitText {
+        text: "Select provider to login",
+        timeout: SETTLE,
+    },
+    Step::AssertText("still in the composer"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "hello",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Ctrl('c')),
+    Step::Phase("template_command_is_held"),
+    Step::SubmitText("/prompt:greet with a trailing note"),
+    Step::WaitText {
+        text: "Select provider to login",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "/prompt:greet with a trailing note",
+        timeout: SETTLE,
+    },
+    Step::Phase("exit"),
+    Step::Key(Key::Ctrl('c')),
+    Step::ExitCommand,
+];
 
 /// Exercise the credential-store prompt on a fresh installation.
 pub(super) fn setup_without_credential_store(home: &IsolatedHome) -> Result<()> {

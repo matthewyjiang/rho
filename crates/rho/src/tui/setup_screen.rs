@@ -108,6 +108,13 @@ impl App {
         let step = match entry {
             SetupEntry::SignIn => SetupStep::SignIn,
             SetupEntry::ChooseModel => SetupStep::ChooseModel,
+            SetupEntry::Auto if self.info.session.daemon.is_some() => {
+                if self.daemon_setup_can_choose_model() {
+                    SetupStep::ChooseModel
+                } else {
+                    SetupStep::SignIn
+                }
+            }
             SetupEntry::Auto if self.setup_model_picker().is_some() => SetupStep::ChooseModel,
             SetupEntry::Auto => SetupStep::SignIn,
         };

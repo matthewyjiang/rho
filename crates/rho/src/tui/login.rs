@@ -99,6 +99,12 @@ fn selected_credential_store_backend(
         .expect("credential store choices contain valid backends")
 }
 
+/// The notice and status after a logout left the session's own provider
+/// without credentials.
+pub(super) const ACTIVE_PROVIDER_SIGNED_OUT: &str =
+    "the active provider no longer has credentials. Run /login or switch with /model.";
+pub(super) const NO_PROVIDER_STATUS: &str = "no providers configured; run /login";
+
 impl App {
     /// Whether the external Claude Code binary currently reports signed in.
     pub(super) async fn claude_signed_in() -> bool {
@@ -798,11 +804,7 @@ impl App {
                 };
                 self.insert_entry(&Entry::Notice(message));
                 if self.invalidate_active_provider_if_needed(&target, forgot_login, agent) {
-                    self.insert_entry(&Entry::Notice(
-                            "the active provider no longer has credentials. Run /login or switch with /model."
-                                .into(),
-                        ),
-                    );
+                    self.insert_entry(&Entry::Notice(ACTIVE_PROVIDER_SIGNED_OUT.into()));
                 }
                 self.report_resting_herdr_state().await;
                 Ok(())
@@ -848,7 +850,7 @@ impl App {
             Ok(_) => {
                 self.cache_warm_provider_replaced();
                 self.using_unavailable_provider = true;
-                self.set_status("no providers configured; run /login");
+                self.set_status(NO_PROVIDER_STATUS);
             }
             Err(swap_error) => {
                 // Runtime still holds the prior provider object.

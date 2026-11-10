@@ -65,3 +65,78 @@ fn cycle_advertised_choices_without_catalog_fallbacks() {
         );
     }
 }
+
+fn options_on(provider: &str, auth: &str) -> rho_protocol::SessionOptions {
+    rho_protocol::SessionOptions {
+        model: ModelOptions {
+            auth: auth.into(),
+            current: ModelRef {
+                provider: provider.into(),
+                model: "model".into(),
+            },
+            available: Vec::new(),
+        },
+        reasoning: None,
+        fast_mode: None,
+        permission_mode: rho_protocol::PermissionModeOptions {
+            current: rho_protocol::PermissionMode::Bypass,
+            available: Vec::new(),
+        },
+        commands: Vec::new(),
+        goal: None,
+        added_dirs: Vec::new(),
+    }
+}
+
+// Covers: the launch found no credentials for the config's provider, but
+// the daemon session, a resumed one for instance, runs on another: it is
+// not held signed out, from its first report on. One on that same provider
+// and auth stays signed out.
+// Owner: tui daemon session options
+#[test]
+fn a_session_on_another_provider_than_the_signed_out_one_is_not_signed_out() {
+    for (provider, auth, signed_in) in [
+        ("anthropic", "anthropic-api-key", true),
+        ("openai", "chatgpt", true),
+        ("openai", "api-key", false),
+    ] {
+        let mut app = crate::tui::tests::test_app();
+        app.info.runtime.provider = "openai".into();
+        app.info.runtime.auth = "api-key".into();
+        app.info.services.auth_unavailable = Some("no credentials for openai".into());
+
+        app.show_daemon_options(options_on(provider, auth));
+
+        assert_eq!(app.setup_state().signed_in, signed_in, "{provider} {auth}");
+    }
+}
+
+// Covers: a daemon session's first launch opens at sign-in when it is
+// signed out and no other auth offers a model. The daemon always lists the
+// session's own model, so a list of one is nothing to choose from.
+// Owner: tui daemon session options
+#[test]
+fn a_signed_out_first_launch_has_a_model_to_choose_only_from_another_auth() {
+    let choice = |provider: &str| ModelChoice {
+        model: ModelRef {
+            provider: provider.into(),
+            model: "model".into(),
+        },
+        label: provider.into(),
+    };
+    for (signed_out, available, can_choose) in [
+        (true, vec![choice("openai")], false),
+        (true, vec![choice("openai"), choice("anthropic")], true),
+        (false, vec![choice("openai")], true),
+    ] {
+        let mut app = crate::tui::tests::test_app();
+        let mut options = options_on("openai", "api-key");
+        options.model.available = available;
+        app.info.runtime.provider = "openai".into();
+        app.info.runtime.auth = "api-key".into();
+        app.show_daemon_options(options);
+        app.info.services.auth_unavailable = signed_out.then(|| "no credentials".into());
+
+        assert_eq!(app.daemon_setup_can_choose_model(), can_choose);
+    }
+}
