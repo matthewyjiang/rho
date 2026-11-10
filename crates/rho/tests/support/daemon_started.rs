@@ -31,6 +31,7 @@ async fn start_child(sandbox: &Sandbox, client: &Client, parent: &SessionId) -> 
             agent: None,
             setup: SessionSetup::default(),
             parent: Some(parent.clone()),
+            grant: None,
         })
         .await
         .unwrap()

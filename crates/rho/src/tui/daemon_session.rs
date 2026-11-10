@@ -364,7 +364,7 @@ mod unix {
             target: DaemonTarget,
             settings: InitialSettings,
         ) -> anyhow::Result<Self> {
-            let daemon = Arc::new(Daemon::default());
+            let daemon = Arc::new(Daemon::for_frontend());
             let (id, opened) = match target {
                 DaemonTarget::New => {
                     let params = SessionNewParams {
@@ -373,6 +373,7 @@ mod unix {
                         agent: launch.agent.clone(),
                         setup: launch.setup.clone(),
                         parent: None,
+                        grant: None,
                     };
                     let created = daemon
                         .request::<SessionNew>(&params)

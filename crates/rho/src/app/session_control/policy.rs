@@ -155,7 +155,8 @@ pub(crate) struct Caller {
     /// as its parent and shares the daemon-wide agent budget (#1714).
     pub(crate) session: Option<rho_protocol::SessionId>,
     /// The environment of the process or session that calls, which the
-    /// sessions it starts or prompts run with, its context set in it.
+    /// sessions it starts or prompts run with; the daemon sets the grant
+    /// the core names for them in it.
     pub(crate) environment: ClientEnvironment,
 }
 

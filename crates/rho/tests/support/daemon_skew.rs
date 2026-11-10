@@ -32,7 +32,11 @@ async fn hello(
         "id": 1,
         "method": HELLO,
         // Not the daemon's rho version: the builds differ.
-        "params": {"protocol": protocol, "client": {"name": "another-build", "version": "999.0.0"}},
+        "params": {
+            "protocol": protocol,
+            "client": {"name": "another-build", "version": "999.0.0"},
+            "role": "frontend",
+        },
     });
     write
         .write_all(format!("{hello}\n").as_bytes())
