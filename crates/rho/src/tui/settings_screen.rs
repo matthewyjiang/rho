@@ -14,7 +14,8 @@
 //! selection kept, and a `tui` client change takes effect live.
 
 use rho_protocol::{
-    Applies, ConfigLayer, ConfigSetParams, SettingChange, SettingKey, SettingKind, SettingValue,
+    Applies, ConfigLayer, ConfigSetParams, SettingChange, SettingKey, SettingKind, SettingSpec,
+    SettingValue,
 };
 
 use super::{
@@ -347,21 +348,6 @@ impl App {
             }
         };
         match change {
-            Ok(SettingChange::Set {
-                key,
-                value: SettingValue::Integer(limit),
-            }) if lowers_saved_prompts(
-                namespace,
-                &key,
-                limit,
-                self.info.services.settings.prompt_history_limit,
-            ) =>
-            {
-                self.close_setting_input();
-                if let Err(error) = self.confirm_prompt_history_limit(limit) {
-                    self.insert_entry(&Entry::Error(error.to_string()));
-                }
-            }
             Ok(change) => {
                 self.close_setting_input();
                 self.write_setting(namespace, change);
@@ -389,15 +375,40 @@ impl App {
         }
     }
 
-    /// Sends `change` to the daemon and says what it will do.
+    /// Writes `change`, from any page: after a yes when it deletes saved
+    /// prompts, and with the advisor off when it resets the advisor's model.
     pub(super) fn write_setting(&mut self, namespace: SettingsNamespace, change: SettingChange) {
-        let key = match &change {
-            SettingChange::Set { key, .. } | SettingChange::Reset { key } => key.clone(),
-        };
+        if self.resets_the_advisor_model(namespace, &change) {
+            self.reset_advisor_model();
+            return;
+        }
+        let lowered = self
+            .daemon_settings
+            .as_ref()
+            .and_then(|settings| settings.spec(namespace, change.key()))
+            .and_then(|spec| {
+                lowered_prompt_history_limit(
+                    namespace,
+                    spec,
+                    &change,
+                    self.info.services.settings.prompt_history_limit,
+                )
+            });
+        if let Some(limit) = lowered {
+            if let Err(error) = self.confirm_prompt_history_limit(limit, change) {
+                self.insert_entry(&Entry::Error(error.to_string()));
+            }
+            return;
+        }
+        self.save_setting(namespace, change);
+    }
+
+    /// Sends `change` to the daemon and says what it will do.
+    pub(super) fn save_setting(&mut self, namespace: SettingsNamespace, change: SettingChange) {
         let Some(spec) = self
             .daemon_settings
             .as_ref()
-            .and_then(|settings| settings.spec(namespace, &key))
+            .and_then(|settings| settings.spec(namespace, change.key()))
         else {
             return;
         };
@@ -538,19 +549,28 @@ impl App {
     }
 }
 
-/// Whether setting the prompt history limit to `limit` deletes saved
-/// prompts: it lowers a limit that keeps some. `0` stops saving and
-/// deletes nothing.
-fn lowers_saved_prompts(
+/// The prompt history limit `change` leaves, `spec`'s default for a reset,
+/// when that deletes saved prompts: it lowers a limit that keeps some.
+/// `0` stops saving and deletes nothing.
+fn lowered_prompt_history_limit(
     namespace: SettingsNamespace,
-    key: &SettingKey,
-    limit: u64,
+    spec: &SettingSpec,
+    change: &SettingChange,
     current: usize,
-) -> bool {
-    namespace == SettingsNamespace::Tui
-        && key.as_str() == super::client_settings::PROMPT_HISTORY_LIMIT_KEY
-        && limit > 0
-        && limit < current as u64
+) -> Option<u64> {
+    if namespace != SettingsNamespace::Tui
+        || spec.key.as_str() != super::client_settings::PROMPT_HISTORY_LIMIT_KEY
+    {
+        return None;
+    }
+    let value = match change {
+        SettingChange::Set { value, .. } => Some(value),
+        SettingChange::Reset { .. } => spec.default.as_ref(),
+    };
+    match value {
+        Some(&SettingValue::Integer(limit)) if limit > 0 && limit < current as u64 => Some(limit),
+        _ => None,
+    }
 }
 
 /// `label` as status text names it: lowercase, unless its first word is a

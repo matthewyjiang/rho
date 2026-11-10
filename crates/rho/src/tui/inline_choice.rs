@@ -107,10 +107,10 @@ pub(super) enum InlineChoicePending {
         run_id: String,
     },
     ClearPromptHistory,
-    /// Lowering the prompt history limit to `limit` deletes older
+    /// `change` lowers the prompt history limit, which deletes older
     /// prompts, so it waits for a yes.
     LowerPromptHistoryLimit {
-        limit: u64,
+        change: rho_protocol::SettingChange,
     },
 }
 

@@ -162,6 +162,33 @@ fn lowering_prompt_history_asks_first(harness: &mut PtyHarness) -> Result<()> {
     lower(harness)?;
     harness.inject_key(&Key::Char('y'))?;
     harness.wait_for_text("prompt history limit: 10", SETTLE)?;
+
+    // Raised past the default, an empty entry resets it to the default,
+    // which lowers it again and so asks too.
+    let enter_limit = |harness: &mut PtyHarness, text: &str| -> Result<()> {
+        harness.inject_key(&Key::Enter)?;
+        harness.wait_for_text("edit prompt history limit", SETTLE)?;
+        harness.inject_key(&Key::End)?;
+        for _ in 0..8 {
+            harness.inject_key(&Key::Backspace)?;
+        }
+        if !text.is_empty() {
+            harness.type_into_field(text)?;
+        }
+        harness.inject_key(&Key::Enter)
+    };
+    enter_limit(harness, "2000")?;
+    // Only the daemon's change notification moves the limit in force.
+    harness.wait_for_screen("the limit row shows 2000", SETTLE, |screen| {
+        screen
+            .rows_text()
+            .iter()
+            .any(|row| row.contains("Prompt history limit") && row.contains("2000"))
+    })?;
+    enter_limit(harness, "")?;
+    harness.wait_for_text("Keep only the newest 1000 prompts?", SETTLE)?;
+    harness.inject_key(&Key::Char('y'))?;
+    harness.wait_for_text("prompt history limit: default", SETTLE)?;
     close_config(harness)
 }
 
@@ -169,7 +196,8 @@ fn lowering_prompt_history_asks_first(harness: &mut PtyHarness) -> Result<()> {
 // and takes effect live (zen re-renders the transcript; vim mode turns on, and
 // off again from the page's default row); an agent setting shows its saved
 // value once the daemon confirms it, and one the daemon refuses says why;
-// lowering the prompt history limit asks before deleting prompts. Fails if
+// lowering the prompt history limit asks before deleting prompts, a reset
+// to a lower default included. Fails if
 // `/config` edits only local state, or if a change never comes back from the
 // daemon.
 // Owner: interactive TUI settings screen as a daemon client
@@ -209,7 +237,8 @@ pub(super) const DAEMON_CONFIG: Scenario = Scenario::new(
 // Covers: `/advisor on` with no advisor model asks for one, Space typing into
 // that page's filter rather than choosing a model, then turns the advisor on
 // with it in one write, and the loaded session's next turn gets it;
-// `/advisor off` turns it off. Fails if the change never reaches the session.
+// resetting its model turns it off in the same write, never leaving it on
+// with no model; `/advisor off` turns it off. Fails if the change never reaches the session.
 // Owner: interactive TUI `/advisor` as a daemon client
 pub(super) const DAEMON_ADVISOR: Scenario = Scenario::new(
     "daemon_advisor",
@@ -242,6 +271,39 @@ pub(super) const DAEMON_ADVISOR: Scenario = Scenario::new(
             text: "assistant stream part one",
             timeout: STREAM,
         },
+        Step::Phase("advisor_model_reset"),
+        Step::SubmitText("/advisor model"),
+        Step::WaitText {
+            text: "Advisor model · Type to search",
+            timeout: SETTLE,
+        },
+        // Only the reset row reads `not set`; `default` also finds models.
+        Step::TypeIntoField("not set"),
+        Step::Key(Key::Enter),
+        Step::WaitText {
+            text: "advisor: off, model reset; applies next turn",
+            timeout: SETTLE,
+        },
+        // An open page re-renders once the daemon reports the write, and
+        // the model and the mode change in that one report.
+        Step::SubmitText("/advisor model"),
+        Step::WaitText {
+            text: "Advisor model · Type to search",
+            timeout: SETTLE,
+        },
+        Step::WaitTextGone {
+            text: "Default (not set)",
+            timeout: SETTLE,
+        },
+        Step::Key(Key::Esc),
+        // Off with no model, so turning it on asks for one; left on, the
+        // toggle would turn it off instead.
+        Step::SubmitText("/advisor"),
+        Step::WaitText {
+            text: "Advisor model · Type to search",
+            timeout: SETTLE,
+        },
+        Step::Key(Key::Esc),
         Step::Phase("advisor_off"),
         Step::SubmitText("/advisor off"),
         Step::WaitText {

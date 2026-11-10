@@ -176,8 +176,8 @@ impl App {
             InlineChoicePending::ClearPromptHistory => {
                 self.submit_clear_prompt_history_choice(&value)?;
             }
-            InlineChoicePending::LowerPromptHistoryLimit { limit } => {
-                self.submit_lower_prompt_history_limit(&value, limit, modal.parent_picker);
+            InlineChoicePending::LowerPromptHistoryLimit { change } => {
+                self.submit_lower_prompt_history_limit(&value, change, modal.parent_picker);
             }
         }
         Ok(true)

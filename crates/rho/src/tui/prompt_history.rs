@@ -361,7 +361,11 @@ impl App {
 
     /// Asks before a lower prompt history limit, sent from `/config`,
     /// deletes saved prompts beyond the newest `limit`.
-    pub(super) fn confirm_prompt_history_limit(&mut self, limit: u64) -> anyhow::Result<()> {
+    pub(super) fn confirm_prompt_history_limit(
+        &mut self,
+        limit: u64,
+        change: rho_protocol::SettingChange,
+    ) -> anyhow::Result<()> {
         self.prompt_prompt_history_choice(PromptHistoryChoice {
             title: format!("Keep only the newest {limit} prompts?"),
             description: format!(
@@ -370,7 +374,7 @@ impl App {
             confirm_label: "Lower the limit",
             confirm_detail: "This cannot be undone",
             cancel_label: "Keep the current limit",
-            pending: InlineChoicePending::LowerPromptHistoryLimit { limit },
+            pending: InlineChoicePending::LowerPromptHistoryLimit { change },
             status: "confirm prompt history limit",
         })
     }
@@ -378,20 +382,12 @@ impl App {
     pub(super) fn submit_lower_prompt_history_limit(
         &mut self,
         value: &str,
-        limit: u64,
+        change: rho_protocol::SettingChange,
         parent: Option<Box<super::UiPicker>>,
     ) {
         self.restore_choice_parent_picker(parent);
         if value == CONFIRM_VALUE {
-            self.write_setting(
-                super::daemon_settings::SettingsNamespace::Tui,
-                rho_protocol::SettingChange::Set {
-                    key: rho_protocol::SettingKey::new(
-                        super::client_settings::PROMPT_HISTORY_LIMIT_KEY,
-                    ),
-                    value: rho_protocol::SettingValue::Integer(limit),
-                },
-            );
+            self.save_setting(super::daemon_settings::SettingsNamespace::Tui, change);
         }
     }
 

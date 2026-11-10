@@ -7,8 +7,10 @@ use rho_protocol::{SettingChange, SettingKey, SettingValue};
 use crate::agent::ADVISOR_AGENT_ID;
 
 use super::{
-    config_row::ConfigRow, daemon_settings::SettingsNamespace, settings_screen::ConfigPage, App,
-    ComposerMode, Entry, InteractiveRuntime, UiPicker,
+    config_row::ConfigRow,
+    daemon_settings::{DaemonSettings, SettingsNamespace},
+    settings_screen::ConfigPage,
+    App, ComposerMode, Entry, InteractiveRuntime, UiPicker,
 };
 
 const ADVISOR_MODE_KEY: &str = "behavior.advisor_mode";
@@ -60,10 +62,7 @@ impl App {
             ));
             return;
         };
-        let advisor_on = matches!(
-            settings.value(SettingsNamespace::Agent, &SettingKey::new(ADVISOR_MODE_KEY)),
-            Some(SettingValue::Bool(true))
-        );
+        let advisor_on = advisor_on(settings);
         let has_model = settings
             .value(
                 SettingsNamespace::Agent,
@@ -134,6 +133,34 @@ impl App {
         Some(UiPicker::config(label, items))
     }
 
+    /// Whether `change` resets the advisor's model while the advisor is on,
+    /// which would leave it on with nothing to consult.
+    pub(super) fn resets_the_advisor_model(
+        &self,
+        namespace: SettingsNamespace,
+        change: &SettingChange,
+    ) -> bool {
+        self.daemon_settings.as_ref().is_some_and(advisor_on)
+            && namespace == SettingsNamespace::Agent
+            && matches!(change, SettingChange::Reset { key } if key.as_str() == ADVISOR_MODEL_KEY)
+    }
+
+    /// Resets the advisor's model and turns the advisor off, in one write.
+    pub(super) fn reset_advisor_model(&mut self) {
+        let changes = vec![
+            SettingChange::Reset {
+                key: SettingKey::new(ADVISOR_MODEL_KEY),
+            },
+            SettingChange::Set {
+                key: SettingKey::new(ADVISOR_MODE_KEY),
+                value: SettingValue::Bool(false),
+            },
+        ];
+        if self.send_settings(SettingsNamespace::Agent, changes, "advisor") {
+            self.set_status("advisor: off, model reset; applies next turn");
+        }
+    }
+
     /// Turns the advisor on with `model`, in one write.
     pub(super) fn enable_advisor(&mut self, model: SettingValue) {
         let changes = vec![
@@ -150,4 +177,12 @@ impl App {
             self.set_status("advisor: on; applies next turn");
         }
     }
+}
+
+/// Whether the saved settings turn advisor mode on.
+fn advisor_on(settings: &DaemonSettings) -> bool {
+    matches!(
+        settings.value(SettingsNamespace::Agent, &SettingKey::new(ADVISOR_MODE_KEY)),
+        Some(SettingValue::Bool(true))
+    )
 }
