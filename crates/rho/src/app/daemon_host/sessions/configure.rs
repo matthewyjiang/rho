@@ -91,7 +91,7 @@ impl Sessions {
         // before this ran first, and one queued after runs once this is
         // done, so the options this publishes are never older than one.
         let auths = available_auths(runtime.credentials()).await;
-        let applied = change.apply(runtime, &session.config, &auths).await;
+        let applied = change.apply(runtime, &session.config(), &auths).await;
         let applied = match applied {
             // The session keeps a setting with its file from its first
             // change on.

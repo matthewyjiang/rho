@@ -10,9 +10,10 @@
 //! idempotency key, so one a stopping daemon refused goes again on the
 //! restarted daemon without running twice (#1777). Cancel and answers
 //! deliberately bypass this queue, since they may unblock that change. MCP
-//! inventory reads, renames, and goal actions use an independent control
-//! worker to stay usable during the turn: a goal runs as one long turn, which
-//! a queued change would otherwise hold `/goal clear` behind.
+//! inventory reads, renames, goal actions, and settings writes use an
+//! independent control worker to stay usable during the turn: a goal runs as
+//! one long turn, which a queued change would otherwise hold `/goal clear`
+//! behind.
 //!
 //! A change still queued here when the TUI quits is not sent: context from a
 //! `!` command that finished behind a change waiting for the turn is lost
@@ -27,10 +28,10 @@ use std::{
 };
 
 use rho_protocol::{
-    methods::{SessionConfigure, SessionMcp, SessionPrompt, SessionRename},
-    ClientEnvironment, ClientError, ContentBlock, ErrorCode, IdempotencyKey, SessionChange,
-    SessionConfigureParams, SessionGoalAction, SessionId, SessionMcpParams, SessionPromptParams,
-    SessionRenameParams,
+    methods::{ConfigSet, SessionConfigure, SessionMcp, SessionPrompt, SessionRename},
+    ClientEnvironment, ClientError, ConfigSetParams, ConfigWriter, ContentBlock, ErrorCode,
+    IdempotencyKey, SessionChange, SessionConfigureParams, SessionGoalAction, SessionId,
+    SessionMcpParams, SessionPromptParams, SessionRenameParams,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -115,6 +116,11 @@ enum Control {
     Mcp,
     Goal(SessionGoalAction),
     Rename(String),
+    /// A settings write; `label` names it in a refusal.
+    SetConfig {
+        params: ConfigSetParams,
+        label: String,
+    },
 }
 
 pub(super) struct DaemonRequests {
@@ -135,6 +141,9 @@ impl DaemonRequests {
         let (sender, mut requests) = mpsc::unbounded_channel();
         let (views, receiver) = mpsc::unbounded_channel();
         let (control, mut control_requests) = mpsc::unbounded_channel();
+        // Names these writes, so the daemon tells them from another
+        // client's (see `ConfigSetParams::writer`).
+        let writer = ConfigWriter::new(uuid::Uuid::new_v4().to_string());
         let mut control_target = target.clone();
         let mut target = target;
         let control_views = views.clone();
@@ -202,6 +211,32 @@ impl DaemonRequests {
                         let _ = control_views.send(DaemonView::Error(format!(
                             "could not rename session: {error}"
                         )));
+                    }
+                    Control::SetConfig { mut params, label } => {
+                        params.writer = Some(writer.clone());
+                        let answer = on_attachment(&mut control_target, |link, _| {
+                            let params = params.clone();
+                            async move { link.request::<ConfigSet>(&params).await }
+                        })
+                        .await;
+                        // `rho/config/changed`, not this response, updates
+                        // what the TUI shows.
+                        let view = match answer {
+                            Some((_, Ok(_))) => continue,
+                            Some((_, Err(error)))
+                                if error.error_code() == Some(ErrorCode::ConfigConflict) =>
+                            {
+                                // Another client's change or a hand edit;
+                                // this TUI's own writes conflict only
+                                // across a daemon restart.
+                                DaemonView::Status("settings changed; try again".into())
+                            }
+                            Some((_, Err(error))) => {
+                                DaemonView::Error(format!("could not save {label}: {error}"))
+                            }
+                            None => DaemonView::Error(format!("could not save {label}: {LOST}")),
+                        };
+                        let _ = control_views.send(view);
                     }
                 }
             }
@@ -304,6 +339,13 @@ impl DaemonRequests {
     pub(super) fn rename(&self, title: String) -> anyhow::Result<()> {
         self.control
             .send(Control::Rename(title))
+            .map_err(|_| anyhow::anyhow!(LOST))
+    }
+
+    /// Writes settings without waiting for the active turn.
+    pub(super) fn set_config(&self, params: ConfigSetParams, label: String) -> anyhow::Result<()> {
+        self.control
+            .send(Control::SetConfig { params, label })
             .map_err(|_| anyhow::anyhow!(LOST))
     }
 

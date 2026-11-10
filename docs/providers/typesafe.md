@@ -22,7 +22,7 @@ In the TUI, run:
 /login typesafe
 ```
 
-Login discovers TypeSafe's models; **Refresh model lists** in `/config` updates them. Then pick Jev where a feature takes a decision model, for example **Permission screen model** in `/config`, or name it in config:
+Login discovers TypeSafe's models; `/refresh-models` updates them. Then pick Jev where a feature takes a decision model, for example the permission screen model, by naming it in config:
 
 ```toml
 [internal_agents.permission-classifier-screen]

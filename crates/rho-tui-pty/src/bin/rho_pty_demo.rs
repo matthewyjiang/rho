@@ -41,11 +41,12 @@ const STARTUP: WaitTimeout = WaitTimeout::secs(20, "startup");
 const STREAM: WaitTimeout = WaitTimeout::secs(30, "stream response");
 const SETTLE: WaitTimeout = WaitTimeout::secs(10, "ui settle");
 
-const DEMO_CONFIG: &str = r#"provider = "openai"
+const DEMO_CONFIG: &str = r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.6-sol"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 
 [behavior]
 # Keep matrix runs on the isolated file store so /login never prompts and

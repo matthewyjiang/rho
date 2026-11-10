@@ -502,7 +502,7 @@ fn unavailable_model_error(provider: &str, model: &str) -> ModelSelectionError {
         // Rho refreshes such a host only after its /login, which also refreshes.
         "Run /login for this provider to set it up and refresh its models."
     } else if provider_uses_cached_models(provider) {
-        "Open /config and choose Refresh model lists to update available models."
+        "Run /refresh-models to update available models."
     } else {
         "Choose a model from the provider allowlist."
     };

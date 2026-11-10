@@ -63,7 +63,8 @@ pub struct HostProfile {
 /// from parallel tests: nothing is shared between two sandboxes.
 ///
 /// Under the temporary root: `home/` (`HOME`), `home/.rho/` (`RHO_HOME`,
-/// holding `config.toml`), `workspace/`, `tmp/` (`TMPDIR`), and `run/`
+/// holding `config.toml`, `tui.toml` and `clients/tui.toml`), `workspace/`,
+/// `tmp/` (`TMPDIR`), and `run/`
 /// (`XDG_RUNTIME_DIR`, mode 0700 on Unix). [`Self::env`] points a process
 /// at them; [`Self::command`] and [`RhoLaunchPlan::matrix`] build on it.
 ///
@@ -96,6 +97,10 @@ pub struct IsolatedHome {
     pub home: PathBuf,
     pub workspace: PathBuf,
     pub config_path: PathBuf,
+    /// TUI client settings (`clients/tui.toml`); starts with update checks off.
+    pub client_settings_path: PathBuf,
+    /// TUI theme and keybindings (`tui.toml`); not written until a test does.
+    pub tui_path: PathBuf,
     /// Deleted once [`Drop`] stopped the daemon running from it: a struct's
     /// fields drop after its `drop` returns.
     temp: TempDir,
@@ -119,11 +124,12 @@ impl IsolatedHome {
         let config_path = rho_dir.join("config.toml");
         fs::write(
             &config_path,
-            r#"provider = "openai"
+            r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
 
 [behavior]
 # Keep matrix runs on the isolated file store so /login never prompts and
@@ -132,10 +138,16 @@ credential_store = "file"
 "#,
         )
         .context("failed to write isolated config.toml")?;
+        let client_settings_path = rho_dir.join("clients").join("tui.toml");
+        fs::create_dir_all(rho_dir.join("clients"))?;
+        fs::write(&client_settings_path, "check_for_updates = false\n")
+            .context("failed to write isolated clients/tui.toml")?;
         Ok(Self {
             home,
             workspace,
             config_path,
+            client_settings_path,
+            tui_path: rho_dir.join("tui.toml"),
             temp,
         })
     }

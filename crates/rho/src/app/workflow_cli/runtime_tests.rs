@@ -102,7 +102,7 @@ fn auto_workflow_requires_configured_permission_classifier_model() {
 
     assert_eq!(
         error.to_string(),
-        "permission mode auto requires a configured permission-classifier model (set via /config or config.toml [internal_agents.permission-classifier])"
+        "permission mode auto requires a configured permission-classifier model (set it with /agents, /config in a daemon TUI, or config.toml [internal_agents.permission-classifier])"
     );
 }
 

@@ -1,7 +1,7 @@
 //! Runtime selection model for internal agents: which harness runs an agent,
 //! and the settings only that harness understands.
 //!
-//! The on-disk shape of these selections lives in `config_format`.
+//! The on-disk shape of these selections is read and written by `config_load`.
 
 use {crate::model_aliases::ModelAliases, rho_providers::reasoning::ReasoningLevel};
 

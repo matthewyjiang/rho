@@ -15,7 +15,6 @@ use tokio::sync::oneshot;
 mod activity;
 mod add_dir_command;
 mod advisor_command;
-mod advisor_reasoning;
 mod advisor_status;
 mod agent_creator_command;
 mod agent_delete;
@@ -32,6 +31,7 @@ mod background_tasks;
 mod cache_stats;
 mod cache_warm;
 mod click_sequence;
+mod client_settings;
 mod clipboard;
 mod codemode_command;
 mod command_actions;
@@ -48,10 +48,7 @@ mod composer_history;
 mod composer_pointer;
 mod composer_undo;
 mod composer_vim;
-mod config_actions;
-mod config_editor;
 mod config_input;
-mod config_picker;
 mod config_row;
 mod context_handoff;
 mod context_overlay;
@@ -71,6 +68,10 @@ mod daemon_prompt;
 #[cfg(unix)]
 mod daemon_requests;
 mod daemon_session;
+#[cfg_attr(not(unix), allow(dead_code))]
+mod daemon_settings;
+#[cfg(unix)]
+mod daemon_settings_read;
 mod daemon_transcript;
 mod daemon_turn;
 mod diff_pane;
@@ -96,7 +97,6 @@ mod subagent_inbox;
 mod subagent_questionnaires;
 mod text_input;
 mod text_view_overlay;
-mod web_search_config;
 
 fn plural_suffix(count: usize) -> &'static str {
     if count == 1 {
@@ -106,6 +106,7 @@ fn plural_suffix(count: usize) -> &'static str {
     }
 }
 
+pub(crate) use client_settings::TuiSettings;
 pub(crate) use first_run::SetupEntry;
 mod antigravity_login;
 mod changelog_command;
@@ -269,6 +270,7 @@ mod workflow_hub;
 mod workflow_panel;
 // Separate full-screen mode for an active workflow run. The chat hub hands off
 // through terminal suspend when starting or resuming a run.
+mod settings_screen;
 pub(crate) mod workflow;
 mod workspace;
 mod zen_tool_run;
@@ -283,10 +285,6 @@ use chat_media::{
     ChatMedia, ChatTextDocument, ComposerAttachment, MediaAttachId, PendingAttachmentSource,
 };
 use clipboard::Clipboard;
-use config_editor::{
-    config_number_input_frame, resolve_web_search_editor_value, ConfigNumberInput, ConfigNumberKey,
-    ConfigToggle,
-};
 use copy_interaction::CodeBlockCopyTarget;
 use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
 use feed_image::FeedImage;
@@ -496,9 +494,9 @@ pub struct SessionBootstrap {
 
 pub struct ApplicationServices {
     pub(crate) config_repository: ConfigRepository,
-    /// Theme id from the already-loaded startup config, so the TUI does not
-    /// re-read and re-parse the config file for one field.
-    pub(crate) theme: String,
+    /// The `tui` client settings, theme, and chords read at startup. Toggles
+    /// change this copy only; the files are not written.
+    pub(crate) settings: TuiSettings,
     /// Set when this launch should open the first-run setup screen, and at
     /// which step. `None` for a returning session.
     pub(crate) first_run: Option<first_run::SetupEntry>,
@@ -527,7 +525,7 @@ pub(crate) async fn run(
     let mut terminal = synced_backend::init();
     let probe = terminal_probe::probe_terminal();
     Theme::initialize_palette(probe.palette);
-    Theme::apply_committed(&info.services.theme);
+    Theme::apply_committed(&info.services.settings.theme);
     let herdr = info.services.herdr.clone();
     let result = {
         let injected = smoke_injection::after_terminal_init();
@@ -630,7 +628,6 @@ struct App {
     >,
     /// Open `/diff` popup state; dropped once its picker closes.
     diff_viewer: Option<diff_viewer::DiffViewer>,
-    web_search_reload_pending: bool,
     compaction_reload_pending: bool,
     /// Set when classifier settings were saved without the agent at hand;
     /// see [`App::apply_pending_classifier_config`].
@@ -667,6 +664,8 @@ struct App {
     daemon_options: Option<rho_protocol::SessionOptions>,
     daemon_option_requests: std::collections::VecDeque<rho_protocol::SessionChange>,
     daemon_title: Option<String>,
+    /// The daemon's settings, once read; `None` in process.
+    daemon_settings: Option<daemon_settings::DaemonSettings>,
     /// Set by `/title` so auto-title generation cannot overwrite a manual name.
     session_title_locked: bool,
     /// Latest native checklist, mirrored for commands while a turn is running.

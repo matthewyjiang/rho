@@ -19,49 +19,13 @@ fn setup(home: &IsolatedHome, seconds: u64) -> Result<()> {
 
 pub(super) const TIMEOUT: Scenario = Scenario::new(
     "questionnaire_timeout",
-    "Configure a timeout and submit explicit fallback answers with distinct provenance",
+    "Time out a questionnaire and submit explicit fallback answers with distinct provenance",
     DEFAULT_SIZE,
     &[
         Step::WaitText {
             text: "gpt-5.5",
             timeout: STARTUP,
         },
-        Step::SubmitText("/config"),
-        Step::WaitText {
-            text: "Config · saves automatically",
-            timeout: STARTUP,
-        },
-        Step::TypeIntoField("agent"),
-        Step::Key(Key::Enter),
-        Step::WaitText {
-            text: "Config / Agent behavior",
-            timeout: STREAM,
-        },
-        Step::TypeIntoField("questionnaire"),
-        Step::WaitText {
-            text: "Disabled",
-            timeout: STREAM,
-        },
-        Step::Key(Key::Enter),
-        Step::WaitText {
-            text: "edit questionnaire timeout seconds",
-            timeout: STREAM,
-        },
-        Step::TypeIntoField("0"),
-        Step::Key(Key::Enter),
-        Step::WaitText {
-            text: "questionnaire timeout must be positive whole seconds",
-            timeout: STREAM,
-        },
-        Step::Key(Key::Backspace),
-        Step::TypeIntoField("1"),
-        Step::Key(Key::Enter),
-        Step::WaitText {
-            text: "Config / Agent behavior",
-            timeout: STREAM,
-        },
-        Step::Key(Key::Esc),
-        Step::Key(Key::Esc),
         Step::SubmitText("fixture questionnaire timeout"),
         Step::WaitText {
             text: "questionnaire response observed exactly 1 time",
@@ -78,7 +42,8 @@ pub(super) const TIMEOUT: Scenario = Scenario::new(
         Step::ExitCommand,
     ],
     true,
-);
+)
+.with_setup(|home| setup(home, 1));
 
 pub(super) const PAUSE: Scenario = Scenario::new(
     "questionnaire_timeout_pause",

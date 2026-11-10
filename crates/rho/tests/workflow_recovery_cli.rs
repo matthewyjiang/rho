@@ -26,13 +26,13 @@ const SAVE_DEADLINE: Duration = Duration::from_secs(25);
 /// The fixture's reply when no response is configured.
 const FIXTURE_REPLY: &str = "fixture response";
 
-const CONFIG: &str = r#"provider = "xai"
+const CONFIG: &str = r#"[model]
+provider = "xai"
 model = "grok-fixture"
 auth = "xai-oauth"
 
 [web_search]
-hosted = false
-provider = "disabled"
+mode = "off"
 "#;
 
 const WORKFLOW: &str = r#"def build(inputs):

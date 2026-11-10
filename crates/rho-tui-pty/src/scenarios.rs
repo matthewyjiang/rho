@@ -26,6 +26,8 @@ mod copy_output;
 #[cfg(unix)]
 mod daemon_approval;
 #[cfg(unix)]
+mod daemon_config;
+#[cfg(unix)]
 mod daemon_context;
 #[cfg(unix)]
 mod daemon_detach;
@@ -50,6 +52,7 @@ mod fast_discovery;
 mod file_palette;
 mod first_run;
 mod goal;
+#[cfg(unix)]
 mod header_hints;
 mod hooks;
 mod hover_clicks;
@@ -79,6 +82,7 @@ mod questionnaire;
 mod questionnaire_timeout;
 #[cfg(unix)]
 mod quiet_subagent;
+#[cfg(unix)]
 mod reasoning_output;
 mod remember;
 mod resume_delete;
@@ -106,7 +110,6 @@ mod tool_card_hover;
 mod transcript_search;
 mod turn_notifications;
 mod type_during_stream;
-mod web_search;
 mod workflow;
 // Real command workflows require the verified-handle process adapter, not just a PTY.
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -117,10 +120,7 @@ mod write_stream;
 mod zen_tool_run;
 
 use activity_anchor::{SPINNER_ACTIVITY_ANCHOR_SCENARIO, SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO};
-use advisor::{
-    ADVISOR_COMMAND_SCENARIO, ADVISOR_MISSING_MODEL_SCENARIO, ADVISOR_MODEL_COMMAND_SCENARIO,
-    ADVISOR_REVIEW_SCENARIO,
-};
+use advisor::{ADVISOR_MISSING_MODEL_SCENARIO, ADVISOR_REVIEW_SCENARIO};
 use agent_prompt::AGENT_PROMPT_SCENARIO;
 use attach_picker::ATTACH_PICKER_SCENARIO;
 use attach_view::{
@@ -137,11 +137,7 @@ use command_palette::{
     TAB_COMPLETE_ENTER_BARE_COMMAND_SCENARIO,
 };
 use compact::{SUBMIT_DURING_COMPACT_STEPS, TYPE_DURING_COMPACT_STEPS};
-use config::{
-    setup_auto_without_classifier, AUTO_PERMISSION_MODE_CONFIG_STEPS,
-    AUTO_PERMISSION_MODE_STARTUP_STEPS, OPEN_CONFIG_PICKER_SCENARIO,
-    SCREEN_ALLOW_THRESHOLD_SCENARIO,
-};
+use config::{setup_auto_without_classifier, AUTO_PERMISSION_MODE_STARTUP_STEPS};
 use conversation_tree::CONVERSATION_TREE_STEPS;
 use doctor::DOCTOR_OVERLAY_SCENARIO;
 use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
@@ -155,6 +151,7 @@ use goal::{
     GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_QUESTIONNAIRE_STEPS,
     GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS, GOAL_WAITS_FOR_SUBAGENTS_STEPS,
 };
+#[cfg(unix)]
 use header_hints::HEADER_HINTS_SCENARIO;
 use hooks::HOOKS_CONTRACT_SCENARIO;
 use init_command::{INIT_COMMAND_SCENARIO, INIT_EXISTING_SCENARIO, INIT_PLAN_SCENARIO};
@@ -184,6 +181,7 @@ use process_rail::{
 };
 use program_status::PROGRAM_STATUS_SCENARIO;
 use prompt_history_search::PROMPT_HISTORY_SEARCH_SCENARIO;
+#[cfg(unix)]
 use reasoning_output::REASONING_OUTPUT_RETROACTIVE_SCENARIO;
 use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use resume_scrollback::RESUME_SCROLLBACK_ID;
@@ -400,8 +398,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     STARTUP_PROMPT_STREAM_EXIT_SCENARIO,
     NO_SAVE_SESSION_SCENARIO,
     remember::REMEMBER_SCENARIO,
+    #[cfg(unix)]
     REASONING_OUTPUT_RETROACTIVE_SCENARIO,
     ZEN_TOOL_RUN_SUMMARY_SCENARIO,
+    #[cfg(unix)]
     HEADER_HINTS_SCENARIO,
     TURN_NOTIFICATIONS_SCENARIO,
     PROGRAM_STATUS_SCENARIO,
@@ -490,6 +490,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     inline_choice_click::INLINE_CHOICE_CLICK_SCENARIO,
     palette_click::SLASH_PALETTE_CLICK_SCENARIO,
     palette_click::FILE_PALETTE_CLICK_SCENARIO,
+    #[cfg(unix)]
     hover_clicks::INLINE_PICKER_CLICK_SCENARIO,
     hover_clicks::OVERLAY_PICKER_DOUBLE_CLICK_SCENARIO,
     panel_pointer::PANEL_POINTER_SCENARIO,
@@ -507,23 +508,14 @@ const ALL_SCENARIOS: &[Scenario] = &[
         true,
     ),
     config::PERMISSIONS_COMMAND_SCENARIO,
+    #[cfg(unix)]
+    config::SETTINGS_NEED_THE_DAEMON,
     plan_exit::APPROVE_SCENARIO,
     plan_exit::GOAL_SCENARIO,
     plan_exit::IDLE_COMPLETION_SCENARIO,
     plan_exit::KEEP_SCENARIO,
     plan_exit::FAILED_SCENARIO,
     plan_exit::QUEUED_CYCLE_SCENARIO,
-    Scenario::new(
-        "auto_permission_mode_config",
-        "Gate Auto behind a classifier model picker, cancel safely, then enable it",
-        PtySize {
-            rows: 14,
-            cols: 100,
-        },
-        AUTO_PERMISSION_MODE_CONFIG_STEPS,
-        /*smoke*/ false,
-    )
-    .with_env(OPENAI_AND_XAI_KEY_ENV),
     Scenario::new(
         "auto_permission_mode_startup",
         "Start in Auto without a classifier and force a model pick before tools run",
@@ -698,6 +690,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_options::PERMISSION_MODE,
     #[cfg(unix)]
     daemon_options::GATED_COMMAND,
+    #[cfg(unix)]
+    daemon_config::DAEMON_CONFIG,
+    #[cfg(unix)]
+    daemon_config::DAEMON_ADVISOR,
     Scenario::new(
         "sessions_hub",
         "Inspect a foreign session safely, then browse, resume, and delete locally",
@@ -730,7 +726,6 @@ const ALL_SCENARIOS: &[Scenario] = &[
     permission_cycle::IDLE,
     permission_cycle::REMAPPED,
     permission_cycle::QUEUED,
-    web_search::WEB_SEARCH_CONFIG_SCENARIO,
     Scenario::new(
         "open_workflow_hub_empty",
         "Open the workflows hub when the workspace has no workflows yet",
@@ -746,8 +741,6 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     )
     .with_setup(setup_workflow_hub_unsupported_records),
-    OPEN_CONFIG_PICKER_SCENARIO,
-    SCREEN_ALLOW_THRESHOLD_SCENARIO,
     Scenario::new(
         "open_agents_picker",
         "Browse agent metadata in a navigable popup and scroll hidden detail into view",
@@ -939,8 +932,6 @@ const ALL_SCENARIOS: &[Scenario] = &[
         SCREEN_TEXT_SELECTION_STEPS,
         false,
     ),
-    ADVISOR_COMMAND_SCENARIO,
-    ADVISOR_MODEL_COMMAND_SCENARIO,
     ADVISOR_MISSING_MODEL_SCENARIO,
     ADVISOR_REVIEW_SCENARIO,
     Scenario::new(

@@ -119,14 +119,15 @@ pub(super) fn write_daemon_config_in_mode(
     std::fs::write(
         &home.config_path,
         format!(
-            r#"provider = "openai"
+            r#"web_search.mode = "off"
+
+[model]
+provider = "openai"
 model = "gpt-5.5"
 auth = "api-key"
-check_for_updates = false
-web_search.mode = "off"
-permission_mode = "{permission_mode}"
 
 [behavior]
+permission_mode = "{permission_mode}"
 credential_store = "file"
 "#
         ),

@@ -51,7 +51,7 @@ rho --provider opencode-go \
 
 ## Models and wire shape
 
-Use `/config` and choose **Refresh model lists** to fetch the current Go catalog. Rho does not ship a baked default model; the first cached `/models` id is used until you pick one.
+Run `/refresh-models` to fetch the current Go catalog. Rho does not ship a baked default model; the first cached `/models` id is used until you pick one.
 
 Cost, context, and reasoning controls come from models.dev under `opencode-go`. The same catalog names the AI SDK package for each model. Rho uses that package to choose Chat Completions, OpenAI Responses, Anthropic Messages, or Gemini `generateContent`. New Go models work after a models.dev refresh without a Rho update, as long as they use one of those packages.
 
