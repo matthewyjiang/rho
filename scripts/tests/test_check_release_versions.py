@@ -11,7 +11,8 @@ from scripts.check_release_versions import (
 
 class CargoReleaseBaselineTests(unittest.TestCase):
     # Covers: unpublished Cargo may sit one patch/minor/major ahead of the last
-    # tag, but a pre-bumped Release Please baseline must not be accepted as current.
+    # tag, or on a pre-release of that next version, but a pre-bumped Release
+    # Please baseline must not be accepted as current.
     # Owner: release packaging scripts
 
     def test_accepts_match_or_one_unpublished_step(self) -> None:
@@ -26,7 +27,11 @@ class CargoReleaseBaselineTests(unittest.TestCase):
             ("6.0.0", "4.2.0", False),
             ("1.1.1", "1.2.0", False),
             ("1.1.0", "1.1.1", False),
-            ("1.2.0-rc.1", "1.1.1", False),
+            ("1.2.0-rc.1", "1.1.1", True),
+            ("2.0.0-dev", "1.1.1", True),
+            ("3.0.0-dev", "1.1.1", False),
+            ("1.1.1-dev", "1.1.1", False),
+            ("1.1.1", "1.1.1-dev", False),
         )
         for cargo_version, release_version, expected in cases:
             with self.subTest(cargo=cargo_version, released=release_version):

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 
-use crate::update::{latest_release_tag, release_tag_to_version};
+use crate::update::{is_prerelease, latest_release_tag, release_tag_to_version};
 
 /// Bundled app changelog shipped with this build.
 pub const BUNDLED_CHANGELOG: &str = include_str!("../CHANGELOG.md");
@@ -72,13 +72,33 @@ pub fn parse_request(args: &str) -> Result<ChangelogRequest, ChangelogRequestErr
 
 /// Resolve the running version from the bundled changelog.
 pub fn bundled_current_display(current_version: &str) -> Result<ChangelogDisplay, String> {
-    let section = section_for_version(BUNDLED_CHANGELOG, current_version).ok_or_else(|| {
-        format!("no changelog section for v{current_version} in the bundled release notes")
-    })?;
-    let note = section
-        .groups
-        .is_empty()
-        .then(|| "this version only updated workspace dependencies".to_string());
+    current_display(BUNDLED_CHANGELOG, current_version)
+}
+
+/// Resolve `current_version` in `changelog`. A pre-release build such as
+/// `3.0.0-dev` gets a section only when it is released, so until then it
+/// shows the newest release notes it was built on.
+fn current_display(changelog: &str, current_version: &str) -> Result<ChangelogDisplay, String> {
+    let (section, note) = if let Some(section) = section_for_version(changelog, current_version) {
+        let note = section
+            .groups
+            .is_empty()
+            .then(|| "this version only updated workspace dependencies".to_string());
+        (section, note)
+    } else if let Some(section) = is_prerelease(current_version)
+        .then(|| latest_section(changelog))
+        .flatten()
+    {
+        let note = format!(
+            "v{current_version} is unreleased; showing the last release, v{}",
+            section.version
+        );
+        (section, Some(note))
+    } else {
+        return Err(format!(
+            "no changelog section for v{current_version} in the bundled release notes"
+        ));
+    };
     Ok(ChangelogDisplay {
         section,
         source: ChangelogSource::Bundled,

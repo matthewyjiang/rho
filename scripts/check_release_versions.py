@@ -2,7 +2,8 @@
 """Ensure Release Please and Cargo agree on independently released versions.
 
 Cargo may sit exactly one unpublished patch, minor, or major ahead of the Release
-Please manifest. Publish dry-run path-patches unpublished versions so a new public
+Please manifest, or on a pre-release of that next version such as `3.0.0-dev`
+on an integration branch. Publish dry-run path-patches unpublished versions so a new public
 API can land before the next tag. The manifest must stay on the last tagged version;
 if it is pre-bumped without a tag, Release Please loses the baseline and can
 rewrite history as a false major.
@@ -41,11 +42,17 @@ def parse_semver(version: str) -> tuple[int, int, int]:
 
 
 def cargo_agrees_with_release_baseline(cargo_version: str, release_version: str) -> bool:
-    """Return whether Cargo matches or is the next unpublished patch/minor."""
+    """Return whether Cargo matches or is the next unpublished patch/minor/major.
+
+    Cargo may also carry a pre-release of that next version, such as
+    `3.0.0-dev` over a released `2.33.0`. A pre-release of the released
+    version itself would precede the tag, so it is rejected.
+    """
     if cargo_version == release_version:
         return True
+    cargo_core, _, _pre_release = cargo_version.partition("-")
     try:
-        cargo = parse_semver(cargo_version)
+        cargo = parse_semver(cargo_core)
         released = parse_semver(release_version)
     except ValueError:
         return False
@@ -320,7 +327,8 @@ def main() -> None:
                 f"{release_path} Cargo version {cargo_version} does not match "
                 f"release-please manifest version {release_version}. "
                 "Cargo may be exactly one unpublished patch, minor, or major ahead "
-                "of the last tagged Release Please version."
+                "of the last tagged Release Please version, or a pre-release of "
+                "that next version."
             )
 
     check_internal_dependency_versions()

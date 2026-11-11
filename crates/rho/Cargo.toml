@@ -1,6 +1,6 @@
 [package]
 name = "rho-coding-agent"
-version = "2.33.0"
+version = "3.0.0-dev"
 edition = "2021"
 rust-version = "1.92"
 description = "A fast Rust agent harness with a small footprint and opinionated defaults"
