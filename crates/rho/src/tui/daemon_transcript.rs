@@ -66,7 +66,12 @@ impl App {
                     // is: what the stream still holds came before it.
                     if self.turn.is_provider_turn() {
                         self.finish_streams();
-                        self.reset_streams();
+                        // A chunk that continues the message leaves the
+                        // stream its fence and wrap state for the live
+                        // text that follows.
+                        if opens {
+                            self.reset_streams();
+                        }
                     }
                     if opens {
                         self.open_transcript_row(kind.entry(text));
