@@ -1,8 +1,11 @@
 //! A loaded session's goal controller. One daemon turn owns the work loop,
 //! including judging and retry waits, so disconnecting a client changes nothing.
-//! The runtime's boundary delivery already waits for children and services their
-//! parent-action requests. Goal changes bypass the runtime lock; clear disarms
-//! continuation without cancelling a model run already in progress.
+//! The runtime's boundary delivery waits for children and services their
+//! parent-action requests, except in a session whose prompts end while their
+//! subagents run (`BackgroundWait::HostTurns`): there the loop waits for them
+//! between its turns and delivers their results before it retries or judges.
+//! Goal changes bypass the runtime lock; clear disarms continuation without
+//! cancelling a model run already in progress.
 
 use std::sync::{Arc, MutexGuard, PoisonError};
 
@@ -10,7 +13,9 @@ use rho_protocol::{self as wire, ErrorCode, RpcError};
 use rho_sdk::{CancellationToken, UserInput};
 
 use super::{
+    idle_wake::IdleWatch,
     open::OpenWith,
+    t3_wake::Background,
     turn::{self, DaemonView, Ran},
     Entered, LoadedSession, Sessions, TurnTask,
 };
@@ -324,7 +329,7 @@ async fn drive_goal(
         if cancel.is_cancelled() {
             return ended;
         }
-        let next = if let Err(error) = &ended {
+        if let Err(error) = &ended {
             notice(
                 &session,
                 format!(
@@ -332,9 +337,27 @@ async fn drive_goal(
                     turn::client_error(runtime, error).message
                 ),
             );
+        }
+        // Where prompts end while their subagents run, the goal still waits
+        // for them: it neither retries nor is judged ahead of their results.
+        let background = session.idle_wake.as_ref().map(IdleWatch::background);
+        if let Some(background) = background.filter(|background| background.subagents_hold_turn()) {
+            notice(&session, "waiting for delegated agents".into());
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => return ended,
+                () = halt.halted() => return ended,
+                () = background.subagents_released_turn() => {}
+            }
+        }
+        let next = if ended.is_err() {
             if !retry_wait(&cancel, halt).await {
                 return ended;
             }
+            TurnStart::Continue
+        } else if background.is_some_and(Background::has_result) {
+            // The turn's first boundary delivers what waits, as an idle
+            // session's delivery turn does; the goal is judged after it.
             TurnStart::Continue
         } else {
             notice(&session, "evaluating goal".into());
