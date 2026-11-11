@@ -6,7 +6,7 @@ use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
 
-use super::{daemon_resume::DAEMON_ENV, DEFAULT_SIZE, OPENAI_KEY_ENV, SETTLE, STARTUP};
+use super::{DEFAULT_SIZE, OPENAI_KEY_ENV, SETTLE, STARTUP};
 use crate::{
     env::IsolatedHome,
     harness::PtyHarness,
@@ -114,6 +114,6 @@ pub(super) const IN_PROCESS: Scenario = Scenario::new(
 pub(super) const DAEMON: Scenario = Scenario {
     id: "daemon_config_2x_upgrade",
     description: "Start a daemon session on a 2.x config.toml",
-    env: DAEMON_ENV,
+    env: super::daemon_resume::DAEMON_ENV,
     ..IN_PROCESS
 };

@@ -10,7 +10,7 @@ Unknown keys in any of these files are a load error, so typos fail loudly. A val
 
 ## Upgrading from Rho 2.x
 
-Rho 2.x kept everything in `config.toml`. The first time Rho 3.0 starts on a 2.x file, it rewrites the file to the 3.0 layout and prints what it moved:
+Rho 2.x kept everything in `config.toml`. When Rho 3.0 starts and finds 2.x keys in `config.toml`, it rewrites the file to the 3.0 layout and prints what it moved. The check runs at every start, so a 2.x key added by hand later is rewritten the same way, with a new backup:
 
 - `[display]` settings, `behavior.check_for_updates`, and `keybindings.editing_mode` move to `clients/tui.toml`.
 - `display.theme` and the `[keybindings]` chords move to `tui.toml`.
@@ -362,7 +362,7 @@ Built-in providers have no per-provider override. They use this table unless you
 | `xai` | `str_replace` | First-party agent tooling uses string replace |
 | all others | `str_replace` | Rho default when no first-party match is known |
 
-Pinned values stay fixed across provider changes. A change from `/config` applies to new sessions. Auto also switches live when you change providers mid-session. Rho 3.0 removed the legacy `hashline` format. The [2.x upgrade](#upgrading-from-rho-2x) rewrites it to `str_replace`; set by hand afterwards, `edit_tool = "hashline"` is a load error, globally or on a custom provider. Format details: [Edit formats](/tools-workspace/edit-format).
+Pinned values stay fixed across provider changes. A change from `/config` applies to new sessions. Auto also switches live when you change providers mid-session. Rho 3.0 removed the legacy `hashline` format. The [2.x upgrade](#upgrading-from-rho-2x) rewrites `edit_tool = "hashline"` to `"str_replace"` at startup, globally and on a custom provider. Format details: [Edit formats](/tools-workspace/edit-format).
 
 ## Behavior
 

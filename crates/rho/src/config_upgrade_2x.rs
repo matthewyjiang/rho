@@ -16,7 +16,7 @@ use rho_providers::credentials::{CredentialStoreBackend, WebSearchCredential};
 use toml_edit::{DocumentMut, Item};
 
 use super::{
-    document::ConfigDocument,
+    document::{shown, ConfigDocument},
     migrate_2x::{migrate_2x, Change, MigratedFile},
 };
 use crate::config_writer::write_bytes_atomically;
@@ -28,7 +28,8 @@ pub(crate) struct Upgraded {
     pub(crate) backup: PathBuf,
     /// What [`migrate_2x`] changed, in order.
     pub(crate) report: Vec<Change>,
-    /// 2.x keys whose 3.0 file already held a value, which was kept.
+    /// 2.x keys, as the file named them, whose 3.0 file already held a
+    /// different value, which was kept.
     pub(crate) already_set: Vec<String>,
     /// Why the plaintext web-search keys did not reach the credential
     /// store. They are in [`Self::backup`] only.
@@ -64,12 +65,17 @@ pub(crate) fn upgrade_2x(
 
     let backup = back_up(config_path, &original)?;
     let mut already_set = Vec::new();
-    for (path, moved) in [
+    for (file, path, moved) in [
         (
+            MigratedFile::ClientTui,
             rho_dir.join("clients").join("tui.toml"),
             migrated.client_tui,
         ),
-        (rho_dir.join("tui.toml"), migrated.tui_local),
+        (
+            MigratedFile::TuiLocal,
+            rho_dir.join("tui.toml"),
+            migrated.tui_local,
+        ),
     ] {
         let existing = read(&path)?;
         let mut merged = match &existing {
@@ -79,10 +85,12 @@ pub(crate) fn upgrade_2x(
         };
         let moved = ConfigDocument::from(moved);
         for key in moved.leaf_paths().iter().map(|leaf| leaf.join(".")) {
-            if merged.get(&key).is_some() {
-                already_set.push(key);
-            } else {
-                merged.set_item(&key, moved.get(&key).cloned());
+            let new = moved.get(&key);
+            match merged.get(&key) {
+                None => merged.set_item(&key, new.cloned()),
+                // An interrupted upgrade already wrote this value.
+                Some(kept) if same_value(kept, new) => {}
+                Some(_) => already_set.push(name_in_2x(&migrated.report, file, &key)),
             }
         }
         let text = merged.text();
@@ -160,7 +168,7 @@ impl Upgraded {
         ignored.extend(self.already_set.iter().map(String::as_str));
         if !ignored.is_empty() {
             lines.push(format!(
-                "warning: ignored 2.x keys that 3.0 does not read or that are already set: {}",
+                "warning: ignored 2.x keys that 3.0 does not read, or whose 3.0 file already sets another value: {}",
                 ignored.join(", ")
             ));
         }
@@ -178,6 +186,35 @@ impl Upgraded {
         }
         lines
     }
+}
+
+fn same_value(kept: &Item, new: Option<&Item>) -> bool {
+    match (kept.as_value(), new.and_then(Item::as_value)) {
+        (Some(kept), Some(new)) => shown(kept) == shown(new),
+        _ => false,
+    }
+}
+
+/// The 2.x key whose value moved to `key` in `file`. `[keybindings]` moves
+/// as one table, so a chord is named under the table's 2.x key.
+fn name_in_2x(report: &[Change], file: MigratedFile, key: &str) -> String {
+    report
+        .iter()
+        .find_map(|change| match change {
+            Change::Moved {
+                from,
+                file: to_file,
+                to,
+            } if *to_file == file => {
+                let rest = key.strip_prefix(to.as_str())?;
+                (rest.is_empty() || rest.starts_with('.')).then(|| format!("{from}{rest}"))
+            }
+            Change::Moved { .. }
+            | Change::Rewritten { .. }
+            | Change::Dropped { .. }
+            | Change::Secret { .. } => None,
+        })
+        .unwrap_or_else(|| key.to_owned())
 }
 
 /// The text of `path`, or `None` when no file is there.

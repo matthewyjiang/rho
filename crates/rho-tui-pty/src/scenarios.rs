@@ -19,6 +19,7 @@ mod compact;
 mod composer_unicode;
 mod composer_vim;
 mod config;
+mod config_2x_upgrade;
 mod context_overlay;
 mod continue_latest;
 mod conversation_tree;
@@ -55,7 +56,6 @@ mod daemon_switch;
 #[cfg(unix)]
 mod daemon_tree;
 // Starts a real command workflow, as `workflow_background` does.
-mod config_2x_upgrade;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod daemon_workflow;
 mod diff_viewer;

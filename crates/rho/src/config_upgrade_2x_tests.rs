@@ -150,16 +150,22 @@ fn a_home_saved_by_2x_loads_with_its_settings() {
 }
 
 // Covers: a value the 3.0 files already hold is not overwritten by the 2.x
-// one, a file the upgrade rewrites is copied first, and an older backup is
-// never replaced.
+// one and is reported under the 2.x key the user wrote, unless both agree;
+// a file the upgrade rewrites is copied first, and an older backup is never
+// replaced.
 // Owner: config upgrade
 #[test]
 fn values_in_the_3_0_files_win_and_rewritten_files_are_backed_up() {
     let dir = tempfile::tempdir().unwrap();
-    let config = "[display]\ntheme = \"nord\"\nzen_mode = false\nshow_header_hints = false\n";
+    let config = "[display]\ntheme = \"nord\"\nzen_mode = false\nshow_header_hints = false\n\n[keybindings]\nundo = \"ctrl+u\"\nredo = \"ctrl+y\"\n";
     write(dir.path(), "config.toml", config);
     write(dir.path(), "config.toml.2x.bak", "an earlier backup\n");
-    write(dir.path(), "tui.toml", "theme = \"dracula\"\n");
+    // `redo` is as an interrupted upgrade left it: already the 2.x value.
+    write(
+        dir.path(),
+        "tui.toml",
+        "theme = \"dracula\"\n\n[keybindings]\nundo = \"ctrl+x\"\nredo = \"ctrl+y\"\n",
+    );
     write(dir.path(), "clients/tui.toml", "# mine\nzen_mode = true\n");
 
     let upgraded = upgrade(dir.path()).expect("the file holds 2.x keys");
@@ -176,11 +182,18 @@ fn values_in_the_3_0_files_win_and_rewritten_files_are_backed_up() {
             read(dir.path(), "clients/tui.toml.2x.bak"),
         ),
         (
-            vec!["zen_mode".to_owned(), "theme".to_owned()],
+            vec![
+                "display.zen_mode".to_owned(),
+                "display.theme".to_owned(),
+                "keybindings.undo".to_owned(),
+            ],
             dir.path().join("config.toml.2x.bak.1"),
             Some(config.to_owned()),
             Some("an earlier backup\n".to_owned()),
-            Some("theme = \"dracula\"\n".to_owned()),
+            Some(
+                "theme = \"dracula\"\n\n[keybindings]\nundo = \"ctrl+x\"\nredo = \"ctrl+y\"\n"
+                    .to_owned()
+            ),
             None,
             Some("# mine\nzen_mode = true\nshow_header_hints = false\n".to_owned()),
             Some("# mine\nzen_mode = true\n".to_owned()),
