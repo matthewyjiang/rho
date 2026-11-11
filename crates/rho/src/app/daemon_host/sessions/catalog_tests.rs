@@ -46,13 +46,10 @@ async fn a_client_that_attaches_while_a_sparing_delete_waits_keeps_its_session()
         .map(|_| ())
         .map_err(|error| error.error_code());
 
+    let loaded = sessions.loaded().contains_key(&session.id);
+    let has_runtime = session.runtime.lock().await.is_some();
     assert_eq!(
-        (
-            refused,
-            session.feed.followed(),
-            sessions.loaded().contains_key(&session.id),
-            session.runtime.lock().await.is_some(),
-        ),
+        (refused, session.feed.followed(), loaded, has_runtime),
         (Err(Some(ErrorCode::SessionInUse)), true, true, true)
     );
 }
