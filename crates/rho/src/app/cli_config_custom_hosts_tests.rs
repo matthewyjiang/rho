@@ -191,7 +191,9 @@ async fn session_refresh_waits_only_when_the_session_host_cache_falls_short() {
         let session_api = format!("http://{}/v1", session_listener.local_addr().unwrap());
         let other_api = format!("http://{}/v1", other_listener.local_addr().unwrap());
         // The session host answers at once. The other host answers only after
-        // the session refresh returned, so waiting on it would time out.
+        // the session refresh returned, so a refresh that waited on it would
+        // return with the other host's fetch timed out and nothing left in the
+        // background.
         let (_session_sender, session_released) = tokio::sync::watch::channel(true);
         serve_models(
             session_listener,
@@ -225,17 +227,16 @@ async fn session_refresh_waits_only_when_the_session_host_cache_falls_short() {
         }
         let cli = Cli::try_parse_from(["rho", "--model", "session/m"]).unwrap();
 
-        // Fails well before the 5 s discovery timeout if the other host is awaited.
-        let background = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            refresh_custom_provider_models_for_session(
-                &cli,
-                &cfg,
-                Arc::new(MemoryCredentialStore::default()),
-            ),
+        // No wall-clock budget here: building an HTTP client blocks this
+        // thread for as long as a loaded machine likes. The still-running
+        // background refresh asserted below is what shows the other host was
+        // not awaited.
+        let background = refresh_custom_provider_models_for_session(
+            &cli,
+            &cfg,
+            Arc::new(MemoryCredentialStore::default()),
         )
         .await
-        .unwrap_or_else(|_| panic!("{case}: session refresh waited on the other host"))
         .unwrap()
         .expect("other hosts refresh in the background");
         let at_return = (
