@@ -217,6 +217,11 @@ struct TurnSlot {
     /// What holds the session, if anything: neither a delete nor the idle
     /// unload takes a held session. Set and freed by [`Held`].
     hold: Option<Hold>,
+    /// How many approved plans have switched the session's permission mode.
+    /// The approval names the implementation turn's mode, so a mode change
+    /// still waiting for the runtime when one lands is dropped (see
+    /// `configure`).
+    plan_switches: u64,
 }
 
 /// A turn a prompt naming `key` started, as a prompt sent again with the
@@ -429,6 +434,7 @@ impl LoadedSession {
                 keyed,
                 residency: Residency::InUse,
                 hold: None,
+                plan_switches: 0,
             }),
         }
     }

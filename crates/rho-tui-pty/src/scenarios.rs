@@ -393,6 +393,14 @@ const ALL_SCENARIOS: &[Scenario] = &[
     plan_exit::KEEP_SCENARIO,
     plan_exit::FAILED_SCENARIO,
     plan_exit::QUEUED_CYCLE_SCENARIO,
+    #[cfg(unix)]
+    plan_exit::DAEMON_GOAL_SCENARIO,
+    #[cfg(unix)]
+    plan_exit::DAEMON_DELEGATED_COMPLETION_SCENARIO,
+    #[cfg(unix)]
+    plan_exit::DAEMON_FAILED_SCENARIO,
+    #[cfg(unix)]
+    plan_exit::DAEMON_QUEUED_CYCLE_SCENARIO,
     Scenario::new(
         "auto_permission_mode_startup",
         "Start in Auto without a classifier and force a model pick before tools run",

@@ -122,6 +122,10 @@ fn wait_for_dispatch_turn(harness: &mut PtyHarness) -> Result<()> {
     wait_for_turn_completion_after(harness, "fixture plan background dispatched")
 }
 
+fn wait_for_implementation_turn(harness: &mut PtyHarness) -> Result<()> {
+    wait_for_turn_completion_after(harness, "fixture plan implementation reached")
+}
+
 fn release_plan_child(harness: &mut PtyHarness) -> Result<()> {
     super::release_fixture(harness, ".rho-fixture-release-plan-child")
 }
@@ -137,7 +141,21 @@ pub(super) const QUEUED_CYCLE_SCENARIO: Scenario = Scenario::new(
     "plan_exit_queued_cycle",
     "Apply an approved plan's mode over an Alt+M change queued during the proposal turn",
     DEFAULT_SIZE,
-    &[
+    QUEUED_CYCLE_STEPS,
+    /*smoke*/ false,
+)
+.with_setup(setup)
+.with_args(&["--permission-mode", "plan"]);
+
+// The next step's start writes a routine status that clears any toast. Wait
+// for its durable activity label (the held reply keeps it up) so a late step
+// start cannot wipe the queued-mode toast before it paints.
+const QUEUED_CYCLE_STEPS: &[Step] = &queued_cycle_steps("waiting for provider");
+
+/// Approves a held plan, queues Alt+M once the proposal turn runs again and
+/// shows `resumed`, then checks the approved mode outlasts the queued one.
+const fn queued_cycle_steps(resumed: &'static str) -> [Step; 18] {
+    [
         Step::WaitText {
             text: "gpt-5.5",
             timeout: STARTUP,
@@ -159,11 +177,8 @@ pub(super) const QUEUED_CYCLE_SCENARIO: Scenario = Scenario::new(
             text: "✓ exit_plan_mode",
             timeout: STREAM,
         },
-        // The next step's start writes a routine status that clears any toast.
-        // Wait for its durable activity label (the held reply keeps it up) so
-        // a late step start cannot wipe the queued-mode toast before it paints.
         Step::WaitText {
-            text: "waiting for provider",
+            text: resumed,
             timeout: STREAM,
         },
         Step::Key(Key::Alt('m')),
@@ -176,14 +191,20 @@ pub(super) const QUEUED_CYCLE_SCENARIO: Scenario = Scenario::new(
             text: "fixture plan implementation reached",
             timeout: STREAM,
         },
+        // A queued change applies once the running work rests, which may
+        // be after the implementation turn. The next turn runs after it, so
+        // the mode this turn shows is final.
+        Step::Custom(wait_for_implementation_turn),
+        Step::SubmitText("fixture plan mode check"),
+        Step::WaitText {
+            text: "fixture plan received unrelated continuation",
+            timeout: STREAM,
+        },
         Step::Custom(assert_allow_edits),
         Step::ExitCommand,
         Step::Custom(assert_config_unchanged),
-    ],
-    /*smoke*/ false,
-)
-.with_setup(setup)
-.with_args(&["--permission-mode", "plan"]);
+    ]
+}
 
 // Covers: every turn driver must deliver the implementation handoff before
 // evaluating the goal or returning to idle background delivery.
@@ -413,3 +434,89 @@ pub(super) const FAILED_SCENARIO: Scenario = Scenario::new(
 )
 .with_setup(setup)
 .with_args(&["--permission-mode", "plan"]);
+
+/// `base` with its TUI as a daemon client.
+#[cfg(unix)]
+const fn in_daemon(id: &'static str, description: &'static str, base: Scenario) -> Scenario {
+    Scenario {
+        id,
+        description,
+        env: super::daemon_resume::DAEMON_ENV,
+        ..base
+    }
+}
+
+#[cfg(unix)]
+pub(super) const DAEMON_GOAL_SCENARIO: Scenario = in_daemon(
+    "daemon_plan_exit_goal",
+    "Deliver a daemon session's plan approval from /goal before goal evaluation",
+    GOAL_SCENARIO,
+);
+
+// Covers: a plan proposed from a delegated child's completion hands off to
+// implementation. The daemon holds the prompt open while a subagent runs (its
+// idle wake covers only workflows and processes), so the completion arrives
+// in that prompt rather than in an idle turn, and the idle-only
+// `/permissions` probe does not apply.
+// Owner: interactive TUI as a daemon client (#1667)
+#[cfg(unix)]
+pub(super) const DAEMON_DELEGATED_COMPLETION_SCENARIO: Scenario = Scenario::new(
+    "daemon_plan_exit_delegated_completion",
+    "Deliver a daemon session's plan approval from a delegated child's completion",
+    DEFAULT_SIZE,
+    &[
+        Step::WaitText {
+            text: "gpt-5.5",
+            timeout: STARTUP,
+        },
+        Step::SubmitText("fixture plan exit background"),
+        Step::WaitText {
+            text: "fixture plan background dispatched",
+            timeout: STREAM,
+        },
+        Step::Custom(release_plan_child),
+        Step::WaitText {
+            text: "Plan ready. How should Rho continue?",
+            timeout: STREAM,
+        },
+        Step::Key(Key::Enter),
+        Step::WaitText {
+            text: "Optional feedback for the plan",
+            timeout: STREAM,
+        },
+        Step::Key(Key::Enter),
+        Step::WaitText {
+            text: "fixture plan implementation reached",
+            timeout: STREAM,
+        },
+        Step::Custom(assert_allow_edits),
+        Step::ExitCommand,
+        Step::Custom(assert_config_unchanged),
+    ],
+    /*smoke*/ false,
+)
+.with_setup(setup)
+.with_args(&["--permission-mode", "plan"])
+.with_env(super::daemon_resume::DAEMON_ENV);
+
+#[cfg(unix)]
+pub(super) const DAEMON_FAILED_SCENARIO: Scenario = in_daemon(
+    "daemon_plan_exit_failed_turn",
+    "Discard a daemon session's approval when the proposal turn fails",
+    FAILED_SCENARIO,
+);
+
+// The daemon's wire carries no step starts, so the resumed proposal turn
+// shows as starting rather than waiting for the provider.
+#[cfg(unix)]
+const DAEMON_QUEUED_CYCLE_STEPS: &[Step] = &queued_cycle_steps("starting ·");
+
+#[cfg(unix)]
+pub(super) const DAEMON_QUEUED_CYCLE_SCENARIO: Scenario = Scenario {
+    steps: DAEMON_QUEUED_CYCLE_STEPS,
+    ..in_daemon(
+        "daemon_plan_exit_queued_cycle",
+        "Apply a daemon session's approved plan mode over a queued Alt+M change",
+        QUEUED_CYCLE_SCENARIO,
+    )
+};

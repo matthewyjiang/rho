@@ -264,6 +264,35 @@ fn daemon_plan_exit_approve_carries_feedback() {
     assert_pass("daemon_plan_exit_approve");
 }
 
+// Covers: with RHO_TUI_DAEMON=1, /goal and a delegated child's completion
+// hand an approved plan to the implementation turn.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_plan_exit_non_composer_drivers() {
+    for scenario in [
+        "daemon_plan_exit_goal",
+        "daemon_plan_exit_delegated_completion",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: with RHO_TUI_DAEMON=1, a proposal turn failing after approval
+// discards it instead of implementing.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_plan_exit_failed_turn() {
+    assert_pass("daemon_plan_exit_failed_turn");
+}
+
+// Covers: with RHO_TUI_DAEMON=1, an Alt+M queued during the proposal turn
+// does not outlast the approved plan's mode.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_plan_exit_queued_cycle() {
+    assert_pass("daemon_plan_exit_queued_cycle");
+}
+
 // Covers: with RHO_TUI_DAEMON=1, /init refused in plan mode says why once
 // and leaves the composer empty.
 // Owner: interactive TUI as a daemon client (#1667)
