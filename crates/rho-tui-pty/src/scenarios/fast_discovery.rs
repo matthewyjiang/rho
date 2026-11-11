@@ -175,3 +175,67 @@ fn wait_for_draft(harness: &mut PtyHarness, draft: &str) -> Result<()> {
         );
     }
 }
+
+// Covers: the same discovery when the daemon says whether the session's
+// model has a fast mode, and `/fast` answers in the in-process words.
+// Owner: interactive TUI as a daemon client
+#[cfg(unix)]
+pub(super) const DAEMON_FAST_DISCOVERY_SCENARIO: Scenario = Scenario {
+    id: "daemon_fast_command_discovery",
+    description: "Follow a daemon session's model switches in /fast suggestions",
+    env: DAEMON_ENV,
+    smoke: false,
+    ..FAST_DISCOVERY_SCENARIO
+};
+
+#[cfg(unix)]
+const DAEMON_ENV: &[(&str, &str)] = &[
+    ("CODEX_ACCESS_TOKEN", "fixture-codex-token"),
+    ("OPENAI_API_KEY", "fixture-openai-key"),
+    ("RHO_TUI_DAEMON", "1"),
+];
+
+// Covers: fast mode turned off on a model that has none stays off when the
+// daemon session returns to a model that has it. The preference outlives the
+// switch, so the bare toggle at the end turns it on rather than off.
+// Owner: interactive TUI as a daemon client
+#[cfg(unix)]
+pub(super) const DAEMON_FAST_OFF_SCENARIO: Scenario = Scenario {
+    id: "daemon_fast_off_without_fast_mode",
+    description: "Turn a daemon session's fast mode off from a model without one",
+    env: DAEMON_ENV,
+    smoke: false,
+    steps: &[
+        Step::WaitText {
+            text: "OpenAI Codex · gpt-5.5",
+            timeout: STARTUP,
+        },
+        Step::SubmitText("/fast on"),
+        Step::WaitText {
+            text: "fast mode is on",
+            timeout: SETTLE,
+        },
+        Step::SubmitText("/model openai-codex/gpt-5.3-codex-spark"),
+        Step::WaitText {
+            text: "OpenAI Codex · gpt-5.3-codex-spark",
+            timeout: SETTLE,
+        },
+        Step::SubmitText("/fast off"),
+        Step::WaitText {
+            text: "fast mode is off",
+            timeout: SETTLE,
+        },
+        Step::SubmitText("/model openai-codex/gpt-5.5"),
+        Step::WaitText {
+            text: "model switched to openai-codex/gpt-5.5",
+            timeout: SETTLE,
+        },
+        Step::SubmitText("/fast"),
+        Step::WaitText {
+            text: "fast mode is on",
+            timeout: SETTLE,
+        },
+        Step::ExitCommand,
+    ],
+    ..FAST_DISCOVERY_SCENARIO
+};

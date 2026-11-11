@@ -85,6 +85,15 @@ impl App {
                 .collect();
             (agent.workspace_checkpoints()?, prompts)
         };
+        // A daemon session takes the setting when it opens, so one opened
+        // after a change may have checkpoints this client's launch config
+        // would not expect: the setting only explains an empty list.
+        if checkpoints.is_empty() && !agent.workspace_rewind_enabled() {
+            self.set_status(
+                "workspace rewind is off; set behavior.workspace_rewind = true and start a new session",
+            );
+            return Ok(());
+        }
         if checkpoints.is_empty() {
             self.set_status("this session has no workspace checkpoints");
             return Ok(());

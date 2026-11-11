@@ -207,3 +207,14 @@ pub(super) const PROMPT_TEMPLATE_DURING_TURN_SCENARIO: Scenario = Scenario::new(
     PROMPT_TEMPLATE_DURING_TURN_STEPS,
     /* smoke */ false,
 );
+
+// Covers: a daemon session's palette offers a settled command's arguments,
+// so Tab completes `/agents create` and Enter still runs the bare command.
+// Owner: interactive TUI as a daemon client
+#[cfg(unix)]
+pub(super) const DAEMON_TAB_COMPLETE_SCENARIO: Scenario = Scenario {
+    id: "daemon_tab_complete_enter_bare_command",
+    description: "Complete a command's argument from a daemon session's palette",
+    env: &[("RHO_TUI_DAEMON", "1")],
+    ..TAB_COMPLETE_ENTER_BARE_COMMAND_SCENARIO
+};

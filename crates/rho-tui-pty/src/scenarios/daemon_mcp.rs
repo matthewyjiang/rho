@@ -57,7 +57,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         harness.set_phase("inventory_bypasses_queued_configure");
         harness.wait_for_text("reply waiting for release", STARTUP)?;
         harness.submit_text("/permissions supervised")?;
-        harness.wait_for_text("the change applies after the current turn", SETTLE)?;
+        harness.wait_for_text("permission mode supervised queued for next turn", SETTLE)?;
         harness.submit_text("/mcp")?;
         harness.wait_for_text("daemon-session-server", SETTLE)?;
         ensure!(
