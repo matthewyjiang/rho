@@ -62,16 +62,17 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Hooks
         | CommandId::AddDir
         | CommandId::RefreshModels
+        // The pickers and prompts are this screen's; the daemon checks and
+        // saves the credential, runs the login, and signs out.
+        | CommandId::Login
+        | CommandId::Logout
         // The daemon opens the session these follow next.
         | CommandId::New
         | CommandId::Resume
         | CommandId::Sessions => CommandRoute::Ui,
-        // The conversation tree and rewind need daemon methods;
-        // provider/auth editors and the advisor still own in-process
-        // state. The /workflow hub likewise describes the wrong runtime,
-        // even when opened read-only.
-        | CommandId::Login
-        | CommandId::Logout
+        // The conversation tree and rewind need daemon methods, and
+        // code mode a setting the daemon does not take yet. The /workflow
+        // hub describes the wrong runtime, even when opened read-only.
         | CommandId::Rewind
         | CommandId::Tree
         | CommandId::Codemode

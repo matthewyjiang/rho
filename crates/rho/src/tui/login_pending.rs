@@ -28,6 +28,11 @@ impl App {
         terminal: &mut DefaultTerminal,
         _agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            return self
+                .start_daemon_login(target, provider_label, mode, terminal)
+                .await;
+        }
         if self.interactive_login_pending() {
             self.insert_entry(&Entry::Notice(
                 "Interactive login is already in progress. Press esc to cancel.".into(),
@@ -148,12 +153,13 @@ impl App {
     }
 
     pub(super) fn interactive_login_pending(&self) -> bool {
-        self.tasks.contains(|id| *id == TaskId::InteractiveLogin)
+        self.daemon_login_pending() || self.tasks.contains(|id| *id == TaskId::InteractiveLogin)
     }
 
     /// Esc on the pending-login composer. Drops the task so its result never
     /// applies.
     pub(super) fn abort_interactive_login(&mut self) {
+        self.cancel_daemon_login();
         self.tasks.abort(|id| *id == TaskId::InteractiveLogin);
     }
 

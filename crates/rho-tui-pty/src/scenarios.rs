@@ -34,6 +34,8 @@ mod daemon_detach;
 #[cfg(unix)]
 mod daemon_goal;
 #[cfg(unix)]
+mod daemon_login;
+#[cfg(unix)]
 mod daemon_mcp;
 #[cfg(unix)]
 mod daemon_options;
@@ -676,6 +678,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_detach::SCENARIO,
     #[cfg(unix)]
     daemon_context::SCENARIO,
+    #[cfg(unix)]
+    daemon_login::SCENARIO,
     #[cfg(unix)]
     daemon_reports::SCENARIO,
     #[cfg(unix)]

@@ -35,6 +35,37 @@ impl DaemonSession {
         match *self {}
     }
 
+    pub(in crate::tui) async fn save_key(
+        &self,
+        _auth: &str,
+        _key: String,
+    ) -> anyhow::Result<rho_protocol::AuthKeyResponse> {
+        match *self {}
+    }
+
+    pub(in crate::tui) async fn sign_out(&self, _auth: &str) -> anyhow::Result<()> {
+        match *self {}
+    }
+
+    pub(in crate::tui) async fn start_login(
+        &mut self,
+        _auth: &str,
+        _flow: rho_protocol::LoginFlow,
+    ) -> anyhow::Result<(
+        rho_protocol::LoginId,
+        crate::tui::daemon_events::LoginUpdate,
+    )> {
+        match *self {}
+    }
+
+    pub(in crate::tui) fn end_login(&mut self) {
+        match *self {}
+    }
+
+    pub(in crate::tui) fn cancel_login(&self, _login: rho_protocol::LoginId) {
+        match *self {}
+    }
+
     pub(in crate::tui) fn request_jobs(&self) -> anyhow::Result<()> {
         match *self {}
     }

@@ -108,7 +108,7 @@ mod unix {
     use tokio::sync::{mpsc, oneshot, watch};
 
     use super::super::{
-        daemon_events::{DaemonEvents, DaemonView, Rest, TurnState},
+        daemon_events::{DaemonEvents, DaemonView, LoginUpdate, Rest, TurnState},
         daemon_inputs::AnswerRefusal,
         daemon_options::setting_name,
         daemon_requests::{DaemonRequests, Target},
@@ -117,10 +117,11 @@ mod unix {
     };
     use super::{DaemonLaunch, DaemonTarget, InitialSettings};
     use crate::{
-        app::daemon_client::{Daemon, Link, Part, Routed, StreamPosition},
+        app::daemon_client::{Daemon, Link, LoginEvent, Part, Routed, StreamPosition},
         daemon::DAEMON_RESTART_TIMEOUT,
     };
 
+    mod auth;
     mod requests;
 
     const LOST: &str = "lost the connection to the rho daemon";
@@ -354,6 +355,8 @@ mod unix {
         /// Kept across cancelled `next_views` waits; never restart an attach
         /// merely because the TUI handled a key or redrew.
         reattach: Option<Reattach>,
+        /// The events of the interactive login under way, if any.
+        logins: Option<mpsc::UnboundedReceiver<LoginEvent>>,
     }
 
     impl DaemonSession {
@@ -461,6 +464,7 @@ mod unix {
                 ended: false,
                 requests: Some(DaemonRequests::new(requests)),
                 reattach: None,
+                logins: None,
             };
             session.pending.push(settings_loaded(settings));
             for change in queued {
@@ -543,6 +547,9 @@ mod unix {
                 Some(changed) = self.config_changes.recv() => {
                     views.push(DaemonView::SettingsChanged(Box::new(changed)));
                 }
+                Some(update) = auth::next_login(&mut self.logins) => {
+                    views.push(DaemonView::Login(update));
+                }
             }
             // A settings change that arrived meanwhile rides along, so a
             // streaming turn's events never hold it back.
@@ -550,11 +557,13 @@ mod unix {
             views
         }
 
-        /// Appends every settings change already received, after `views`.
+        /// Appends every settings change and login step already received,
+        /// after `views`: neither waits for the session's events to pause.
         fn take_settings_changes(&mut self, views: &mut Vec<DaemonView>) {
             while let Ok(changed) = self.config_changes.try_recv() {
                 views.push(DaemonView::SettingsChanged(Box::new(changed)));
             }
+            views.extend(auth::take_logins(&mut self.logins).map(DaemonView::Login));
         }
 
         /// What the daemon sent since the last call, mapped, without
@@ -719,13 +728,29 @@ mod unix {
 
         /// The attachment is over: `error` says why, and the TUI stops
         /// showing a turn it can no longer follow.
-        fn end(&mut self, error: DaemonView) -> [DaemonView; 2] {
+        fn end(&mut self, error: DaemonView) -> Vec<DaemonView> {
             self.ended = true;
             self.target.send_replace(Target::Ended);
-            [
+            let mut views = vec![
                 error,
                 DaemonView::Turn(TurnState::Resting(Rest::Unfollowed)),
-            ]
+            ];
+            // Its connection is gone, and nothing reads its events now.
+            // What it already sent still counts: a login that finished
+            // before the connection went was saved.
+            if self.logins.is_some() {
+                let queued: Vec<_> = auth::take_logins(&mut self.logins).collect();
+                let finished = queued
+                    .iter()
+                    .any(|update| matches!(update, LoginUpdate::Finished { .. }));
+                views.extend(queued.into_iter().map(DaemonView::Login));
+                self.logins = None;
+                self.daemon.unroute_login();
+                if !finished {
+                    views.push(DaemonView::Login(LoginUpdate::Lost));
+                }
+            }
+            views
         }
 
         /// The connection this session is attached on. A new connection

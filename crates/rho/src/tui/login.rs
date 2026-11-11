@@ -131,6 +131,10 @@ impl App {
         invocation: CommandInvocation,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            // The daemon wrote the store since this process last read it.
+            crate::credential_store::AppCredentialStore::reread_external_logins();
+        }
         if invocation.args.is_empty() {
             let claude_signed_in = Self::claude_signed_in().await;
             let config = self.info.services.config_repository.load()?;
@@ -500,6 +504,9 @@ impl App {
     ) -> anyhow::Result<()> {
         self.cancel_limits_command().await;
         self.cancel_doctor_command().await;
+        if self.info.session.daemon.is_some() {
+            return self.save_daemon_api_key(target, key, terminal).await;
+        }
         let saved = ProviderAuthentication::save_api_key(
             self.credential_store.as_ref(),
             &target.auth,
@@ -521,27 +528,16 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            return self.finish_daemon_login(target, terminal).await;
+        }
         // Write the keyed profile once. Later activate/reload failures must not
         // leave a stored custom key behind as `auth = "none"`.
         self.persist_login_auth(&target);
         self.refresh_available_auths();
         self.refresh_model_list_after_login(&target, terminal)
             .await?;
-        // A decision-model host has no chat models to switch to, and signing
-        // in to one does not finish a first-run sign-in, so setup offers the
-        // provider menu again.
-        if provider::provider_descriptor(&target.provider)
-            .is_some_and(|descriptor| !descriptor.serves_chat())
-        {
-            if matches!(self.setup_step(), Some(SetupStep::SignIn)) {
-                self.open_login_picker();
-            }
-            self.set_status(format!(
-                "stored credentials for {}. It serves decision models, not chat; see the decision-model screen in the permissions docs.",
-                target.provider
-            ));
-            self.announce_held_prompt_after_login();
-            self.report_resting_herdr_state().await;
+        if self.finish_decision_host_login(&target).await {
             return Ok(());
         }
         if self.using_unavailable_provider {
@@ -605,6 +601,28 @@ impl App {
                 None
             }
         }
+    }
+
+    /// Finishes a login to a host that serves decision models only, and
+    /// says whether `target` is one. It has no chat models to switch to,
+    /// and signing in to one does not finish a first-run sign-in, so setup
+    /// offers the provider menu again.
+    pub(super) async fn finish_decision_host_login(&mut self, target: &LoginTarget) -> bool {
+        if provider::provider_descriptor(&target.provider)
+            .is_none_or(|descriptor| descriptor.serves_chat())
+        {
+            return false;
+        }
+        if matches!(self.setup_step(), Some(SetupStep::SignIn)) {
+            self.open_login_picker();
+        }
+        self.set_status(format!(
+            "stored credentials for {}. It serves decision models, not chat; see the decision-model screen in the permissions docs.",
+            target.provider
+        ));
+        self.announce_held_prompt_after_login();
+        self.report_resting_herdr_state().await;
+        true
     }
 
     async fn reload_active_provider_after_login(
@@ -744,6 +762,9 @@ impl App {
 
         self.cancel_limits_command().await;
         self.cancel_doctor_command().await;
+        if self.info.session.daemon.is_some() {
+            return self.sign_out_of_daemon(&target).await;
+        }
         let deleted = ProviderAuthentication::delete_credentials(
             self.credential_store.as_ref(),
             &target.auth,
