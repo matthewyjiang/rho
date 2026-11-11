@@ -761,7 +761,12 @@ impl TurnView for DaemonView {
         let session = Arc::clone(&self.session);
         let notice = match report {
             PlanReport::Kept { notice } => Some(wire::SessionEvent::Notice { text: notice }),
-            PlanReport::Switched => None,
+            PlanReport::Switched => {
+                // Before the implementation turn starts, so only a change
+                // queued during the proposal sees the switch.
+                session.turn().plan_switches += 1;
+                None
+            }
         };
         async move {
             session.feed.publish(notice);

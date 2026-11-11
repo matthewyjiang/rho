@@ -12,6 +12,10 @@
 //! when its client disconnects meanwhile: the protocol server runs every
 //! request it read to completion.
 //!
+//! A permission mode change queued behind a turn whose approved plan
+//! switched the mode is dropped: the approval names the mode the
+//! implementation runs in, as in the in-process TUI.
+//!
 //! Only a loaded session takes a change: a client attaches first, which
 //! loads it. A change that applies is kept with the session's file, so a
 //! session the daemon unloads while idle reopens with it.
@@ -84,7 +88,7 @@ impl Sessions {
             .loaded_session(&params.session)
             .await?
             .ok_or_else(not_loaded)?;
-        let (held, queued) = {
+        let (held, queued, plan_switches) = {
             // `None` once the idle unload took the session after the lookup.
             let mut turn = session.enter().ok_or_else(not_loaded)?;
             let held = Held::change(&session, &mut turn).ok_or_else(being_deleted)?;
@@ -92,7 +96,7 @@ impl Sessions {
             // turn under, as the change counts: a turn started before this
             // runs first, even one not holding the runtime yet, and a prompt
             // that sees the count starts a turn that queues behind it.
-            (held, Queued::join(&session.runtime))
+            (held, Queued::join(&session.runtime), turn.plan_switches)
         };
         // Behind the turn under way and the changes queued before this one.
         // The stop first: a turn that outlives the stop's drain must not
@@ -111,7 +115,13 @@ impl Sessions {
         // before this ran first, and one queued after runs once this is
         // done, so the options this publishes are never older than one.
         let auths = available_auths(runtime.credentials()).await;
-        let applied = change.apply(runtime, &session.config(), &auths).await;
+        let superseded = matches!(change, Change::PermissionMode(_))
+            && session.turn().plan_switches != plan_switches;
+        let applied = if superseded {
+            Ok(Applied::Superseded)
+        } else {
+            change.apply(runtime, &session.config(), &auths).await
+        };
         let applied = match applied {
             // The session keeps a setting with its file from its first
             // change on.
@@ -147,6 +157,7 @@ impl Sessions {
                 self.refresh_all_options().await;
                 Ok(())
             }
+            Ok(Applied::Superseded) => Ok(()),
             Err(error) => Err(error),
         };
         // Even after a failure: a model switch can fail partway, after it
@@ -169,6 +180,9 @@ enum Applied {
     Restarted { notice: Option<String> },
     /// What every loaded session's options show was read again.
     SharedOptions,
+    /// Nothing: a plan approved after the change was sent set the
+    /// permission mode it asked for.
+    Superseded,
 }
 
 impl Change {
