@@ -147,63 +147,68 @@ pub(super) const QUEUED_CYCLE_SCENARIO: Scenario = Scenario::new(
 .with_setup(setup)
 .with_args(&["--permission-mode", "plan"]);
 
-// The next step's start writes a routine status that clears any toast. Wait
-// for its durable activity label (the held reply keeps it up) so a late step
-// start cannot wipe the queued-mode toast before it paints.
-const QUEUED_CYCLE_STEPS: &[Step] = &queued_cycle_steps("waiting for provider");
+/// Approves a held plan, queues Alt+M once the proposal turn runs again,
+/// then checks the approved mode outlasts the queued one.
+const QUEUED_CYCLE_STEPS: &[Step] = &[
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("fixture plan exit held"),
+    Step::WaitText {
+        text: "Plan ready. How should Rho continue?",
+        timeout: STREAM,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Optional feedback for the plan",
+        timeout: STREAM,
+    },
+    Step::Key(Key::Enter),
+    // The questionnaire owns keys until the tool completes; queue Alt+M
+    // only once the proposal turn is waiting on the held reply.
+    Step::WaitText {
+        text: "✓ exit_plan_mode",
+        timeout: STREAM,
+    },
+    Step::Custom(wait_for_resumed_proposal_turn),
+    Step::Key(Key::Alt('m')),
+    Step::WaitText {
+        text: "permission mode supervised queued for next turn",
+        timeout: SETTLE,
+    },
+    Step::Custom(release_held_proposal),
+    Step::WaitText {
+        text: "fixture plan implementation reached",
+        timeout: STREAM,
+    },
+    // A queued change applies once the running work rests, which may
+    // be after the implementation turn. The next turn runs after it, so
+    // the mode this turn shows is final.
+    Step::Custom(wait_for_implementation_turn),
+    Step::SubmitText("fixture plan mode check"),
+    Step::WaitText {
+        text: "fixture plan received unrelated continuation",
+        timeout: STREAM,
+    },
+    Step::Custom(assert_allow_edits),
+    Step::ExitCommand,
+    Step::Custom(assert_config_unchanged),
+];
 
-/// Approves a held plan, queues Alt+M once the proposal turn runs again and
-/// shows `resumed`, then checks the approved mode outlasts the queued one.
-const fn queued_cycle_steps(resumed: &'static str) -> [Step; 18] {
-    [
-        Step::WaitText {
-            text: "gpt-5.5",
-            timeout: STARTUP,
-        },
-        Step::SubmitText("fixture plan exit held"),
-        Step::WaitText {
-            text: "Plan ready. How should Rho continue?",
-            timeout: STREAM,
-        },
-        Step::Key(Key::Enter),
-        Step::WaitText {
-            text: "Optional feedback for the plan",
-            timeout: STREAM,
-        },
-        Step::Key(Key::Enter),
-        // The questionnaire owns keys until the tool completes; queue Alt+M
-        // only once the proposal turn is waiting on the held reply.
-        Step::WaitText {
-            text: "✓ exit_plan_mode",
-            timeout: STREAM,
-        },
-        Step::WaitText {
-            text: resumed,
-            timeout: STREAM,
-        },
-        Step::Key(Key::Alt('m')),
-        Step::WaitText {
-            text: "permission mode supervised queued for next turn",
-            timeout: SETTLE,
-        },
-        Step::Custom(release_held_proposal),
-        Step::WaitText {
-            text: "fixture plan implementation reached",
-            timeout: STREAM,
-        },
-        // A queued change applies once the running work rests, which may
-        // be after the implementation turn. The next turn runs after it, so
-        // the mode this turn shows is final.
-        Step::Custom(wait_for_implementation_turn),
-        Step::SubmitText("fixture plan mode check"),
-        Step::WaitText {
-            text: "fixture plan received unrelated continuation",
-            timeout: STREAM,
-        },
-        Step::Custom(assert_allow_edits),
-        Step::ExitCommand,
-        Step::Custom(assert_config_unchanged),
-    ]
+/// Waits for the resumed proposal turn's durable activity label, which the
+/// held reply keeps up. In process, the next step's start writes a routine
+/// status that clears any toast, so the wait outlasts the brief `starting`
+/// label: a late step start then cannot wipe the queued-mode toast before it
+/// paints. A daemon session's wire carries no step starts, so its turn stays
+/// `starting`.
+fn wait_for_resumed_proposal_turn(harness: &mut PtyHarness) -> Result<()> {
+    let label = if harness.follows_daemon() {
+        "starting ·"
+    } else {
+        "waiting for provider"
+    };
+    harness.wait_for_text(label, STREAM)
 }
 
 // Covers: every turn driver must deliver the implementation handoff before
@@ -506,17 +511,9 @@ pub(super) const DAEMON_FAILED_SCENARIO: Scenario = in_daemon(
     FAILED_SCENARIO,
 );
 
-// The daemon's wire carries no step starts, so the resumed proposal turn
-// shows as starting rather than waiting for the provider.
 #[cfg(unix)]
-const DAEMON_QUEUED_CYCLE_STEPS: &[Step] = &queued_cycle_steps("starting ·");
-
-#[cfg(unix)]
-pub(super) const DAEMON_QUEUED_CYCLE_SCENARIO: Scenario = Scenario {
-    steps: DAEMON_QUEUED_CYCLE_STEPS,
-    ..in_daemon(
-        "daemon_plan_exit_queued_cycle",
-        "Apply a daemon session's approved plan mode over a queued Alt+M change",
-        QUEUED_CYCLE_SCENARIO,
-    )
-};
+pub(super) const DAEMON_QUEUED_CYCLE_SCENARIO: Scenario = in_daemon(
+    "daemon_plan_exit_queued_cycle",
+    "Apply a daemon session's approved plan mode over a queued Alt+M change",
+    QUEUED_CYCLE_SCENARIO,
+);
