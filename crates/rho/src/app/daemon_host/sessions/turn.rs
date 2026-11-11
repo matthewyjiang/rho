@@ -292,6 +292,45 @@ pub(super) fn save_transcript(session: &LoadedSession, runtime: &SessionRuntime)
     }
 }
 
+/// Replaces the feed's transcript with the rows the session's file replays
+/// now that its conversation moved to another node of its tree, and
+/// detaches the session's clients to replay it (see [`Feed::restart`]).
+/// The new stream then says that the session rests with no turn to show,
+/// since the job's last turn may not be part of the conversation any more
+/// and its answer must not show over it, and how full the context is now.
+///
+/// [`Feed::restart`]: super::feed::Feed::restart
+pub(super) async fn restart_transcript(session: &LoadedSession, runtime: &SessionRuntime) {
+    let (saved, usage) = {
+        let mut live = session.live();
+        live.forget_replayed();
+        (
+            saved_replay(&mut live, runtime, &session.job),
+            live.context_usage(runtime.context_estimate()),
+        )
+    };
+    // The conversation moved either way, so the old transcript cannot
+    // stay. Rows that could not be read leave it empty, which must not
+    // read as a conversation with nothing in it.
+    let unread = saved.is_none()
+        && runtime
+            .saved_history()
+            .is_some_and(|saved| saved.display_rows().is_err());
+    let usage = cost::priced(vec![usage], &session.id).await;
+    session.feed.restart(saved.unwrap_or_default());
+    let rests = wire::SessionEvent::State {
+        state: wire::JobState::Idle,
+        turn: None,
+    };
+    let unread = unread.then(|| wire::SessionEvent::Notice {
+        text: "could not read the conversation's saved rows; the next turn still continues from it"
+            .into(),
+    });
+    session
+        .feed
+        .publish([rests].into_iter().chain(usage).chain(unread));
+}
+
 /// Generates the title the session's first answered turn asked for, which
 /// saves it, and tells the session's clients (#1670). It lands seconds
 /// after the turn; a session the daemon unloaded by then is titled all the

@@ -217,6 +217,29 @@ impl Feed {
         state.turn_start_evicted = false;
     }
 
+    /// Replaces the conversation the feed holds with `transcript`, the
+    /// session's saved rows after its conversation moved to another point
+    /// of its tree. The feed becomes a new stream, so no cursor of the old
+    /// one resumes, and every attached client is detached as lagged, which
+    /// it answers by attaching again and replaying `transcript`. Call
+    /// between turns: the buffer holds no turn in progress then.
+    pub(super) fn restart(&self, transcript: Vec<wire::SessionEvent>) {
+        let mut state = self.state();
+        state.stream = StreamId::new(uuid::Uuid::new_v4().to_string());
+        state.transcript = transcript
+            .into_iter()
+            .filter(|event| encoded_len(event).is_some())
+            .collect();
+        state.buffer.clear();
+        state.buffered_bytes = 0;
+        state.last = Seq(0);
+        state.turn_start = Seq(0);
+        state.turn_start_evicted = false;
+        for publisher in std::mem::take(&mut state.subscribers) {
+            publisher.close(DetachReason::Lagged);
+        }
+    }
+
     /// Subscribes a client resuming from `after`. A cursor this stream
     /// still buffers resumes with the events after it; anything else
     /// resets to the transcript and the turn in progress. Once the feed is

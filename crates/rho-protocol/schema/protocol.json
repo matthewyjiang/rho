@@ -1314,7 +1314,7 @@
       "anyOf": [
         {
           "const": "lagged",
-          "description": "The client fell too far behind, or the daemon unloaded the session,\nas a delete that failed after it unloaded the session does; attach\nagain with the client's cursor.",
+          "description": "The client fell too far behind, the daemon unloaded the session, as\na delete that failed after it unloaded the session does, or the\nsession's conversation moved to another node of its tree; attach\nagain with the client's cursor.",
           "type": "string"
         },
         {
@@ -3309,7 +3309,7 @@
       "type": "object"
     },
     "SessionChange": {
-      "description": "One change to a loaded session, applied between its turns: a setting, or\nan edit to its context. A setting's value must be one the session's\n[`SessionOptions`] offers; any other is [`crate::ErrorCode::InvalidParams`].",
+      "description": "One change to a loaded session, applied between its turns: a setting, or\nan edit to its context or to where its conversation continues from. A setting's value must be one the session's\n[`SessionOptions`] offers; any other is [`crate::ErrorCode::InvalidParams`].",
       "oneOf": [
         {
           "description": "Switch to `model`, one of [`ModelOptions::available`]. The session\nkeeps its reasoning level, or refuses a model that cannot.",
@@ -3457,6 +3457,23 @@
           },
           "required": [
             "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Continue the conversation from `node`, a node of the session's saved\ntree, as it stood there: later turns branch from it, and the nodes\nafter it stay in the tree. The daemon then detaches every attached\nclient as [`super::DetachReason::Lagged`]; attaching again replays\nthe conversation up to `node`. A node the tree does not hold, or a\nsession that has saved nothing, is\n[`crate::ErrorCode::InvalidParams`].",
+          "properties": {
+            "kind": {
+              "const": "select_node",
+              "type": "string"
+            },
+            "node": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "node"
           ],
           "type": "object"
         }

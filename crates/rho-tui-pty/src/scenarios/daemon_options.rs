@@ -108,9 +108,9 @@ pub(super) const GATED_COMMAND: Scenario = Scenario::new(
             text: "Bypass ·",
             timeout: STARTUP,
         },
-        Step::SubmitText("/tree"),
+        Step::SubmitText("/rewind"),
         Step::WaitText {
-            text: "/tree is not available with RHO_TUI_DAEMON yet",
+            text: "/rewind is not available with RHO_TUI_DAEMON yet",
             timeout: SETTLE,
         },
         Step::SubmitText("hello after refusal"),

@@ -1,3 +1,5 @@
+use rho_protocol::SessionChange;
+
 use crate::tui::DefaultTerminal;
 
 use crate::session::tree::{NodeId, SessionTreeItem, SessionTreeItemKind};
@@ -78,11 +80,21 @@ impl App {
             self.set_status("conversation tree unavailable with --no-save");
             return Ok(());
         }
-        let Some(storage) = agent.stored_session() else {
-            self.set_status("no active session tree; send a message first");
-            return Ok(());
+        let items = if self.info.session.daemon.is_some() {
+            // The daemon holds the session open; its tree is read from the
+            // file both share.
+            let Some(id) = self.current_session_id() else {
+                self.set_status("no active session tree; send a message first");
+                return Ok(());
+            };
+            crate::session::Session::tree_turn_items_by_id(&self.info.runtime.cwd, &id)?
+        } else {
+            let Some(storage) = agent.stored_session() else {
+                self.set_status("no active session tree; send a message first");
+                return Ok(());
+            };
+            storage.tree_turn_items()?
         };
-        let items = storage.tree_items()?;
         if items.is_empty() {
             self.set_status("this session tree has no turns");
             return Ok(());
@@ -100,6 +112,14 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let target_id = NodeId::from_string(value)?;
+        if self.info.session.daemon.is_some() {
+            // The daemon moves the session there and has every client
+            // replay the conversation as it then stands.
+            self.input_ui.set_composer(ComposerMode::Input);
+            return self.configure_daemon(SessionChange::SelectNode {
+                node: target_id.to_string(),
+            });
+        }
         let storage = agent
             .stored_session()
             .ok_or_else(|| anyhow::anyhow!("active session storage is unavailable"))?;

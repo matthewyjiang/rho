@@ -45,6 +45,10 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
         return super::daemon_workflow::run(runner);
     }
     #[cfg(unix)]
+    if name == super::daemon_tree::SCENARIO.id {
+        return super::daemon_tree::run(runner);
+    }
+    #[cfg(unix)]
     if name == super::daemon_reports::SCENARIO.id {
         return super::daemon_reports::run(runner);
     }

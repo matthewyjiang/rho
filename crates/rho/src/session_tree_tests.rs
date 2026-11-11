@@ -381,7 +381,12 @@ fn tree_items_use_depth_first_branch_order_and_connector_state() {
         ],
         CompactionState::default(),
     );
-    session.save_snapshot(&root_state, &[]).unwrap();
+    session
+        .save_snapshot(
+            &root_state,
+            &root_state.history()[root_state.history().len() - 2..],
+        )
+        .unwrap();
     let root_id = session
         .session_tree()
         .unwrap()
@@ -399,7 +404,9 @@ fn tree_items_use_depth_first_branch_order_and_connector_state() {
         ],
         CompactionState::default(),
     );
-    session.save_snapshot(&a_state, &[]).unwrap();
+    session
+        .save_snapshot(&a_state, &a_state.history()[a_state.history().len() - 2..])
+        .unwrap();
     let a_id = session
         .session_tree()
         .unwrap()
@@ -418,7 +425,9 @@ fn tree_items_use_depth_first_branch_order_and_connector_state() {
         ],
         CompactionState::default(),
     );
-    session.save_snapshot(&b_state, &[]).unwrap();
+    session
+        .save_snapshot(&b_state, &b_state.history()[b_state.history().len() - 2..])
+        .unwrap();
     let b_id = session
         .session_tree()
         .unwrap()
@@ -439,7 +448,12 @@ fn tree_items_use_depth_first_branch_order_and_connector_state() {
         ],
         CompactionState::default(),
     );
-    session.save_snapshot(&a1_state, &[]).unwrap();
+    session
+        .save_snapshot(
+            &a1_state,
+            &a1_state.history()[a1_state.history().len() - 2..],
+        )
+        .unwrap();
     let a1_id = session
         .session_tree()
         .unwrap()
@@ -447,7 +461,7 @@ fn tree_items_use_depth_first_branch_order_and_connector_state() {
         .unwrap()
         .clone();
 
-    let items = session.tree_items().unwrap();
+    let items = session.tree_turn_items().unwrap();
     assert_eq!(
         items.iter().map(|item| item.id.clone()).collect::<Vec<_>>(),
         vec![root_id, a_id, a1_id, b_id]
