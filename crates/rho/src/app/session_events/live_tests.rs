@@ -98,8 +98,8 @@ fn usage(tokens: u64) -> WireEvent {
 }
 
 // Covers: one live turn as a client sees it: the prompt as the saved user
-// message, each step's context fill, text deltas sharing a message until the
-// next step, a call that opens with its card and arguments, reports
+// message, each step's model request and context fill, text deltas sharing
+// a message until the next step, a call that opens with its card and arguments, reports
 // progress, and finishes with its output, a call the run left open closing
 // `failed` when the run's events end, and the settled context fill the run
 // ends with.
@@ -144,12 +144,14 @@ fn a_live_turn_streams_its_prompt_text_and_calls() {
                 }],
                 steer: None,
             },
+            WireEvent::ProviderRequest,
             usage(100),
             agent("m1", "Let me "),
             agent("m1", "look."),
             opened("call-1", "ls"),
             updated("call-1", ToolStatus::InProgress, vec![text("running")]),
             updated("call-1", ToolStatus::Completed, vec![text("a.rs")]),
+            WireEvent::ProviderRequest,
             usage(200),
             agent("m2", "Found a.rs."),
             opened("call-2", "cat a.rs"),
@@ -841,11 +843,14 @@ fn usage_reports_the_configured_window() {
     );
     assert_eq!(
         map_all(&mut live, &[step(100)]),
-        vec![WireEvent::Usage {
-            used_tokens: 100,
-            window_tokens: Some(1_000),
-            cost_usd_micros: None,
-        }]
+        vec![
+            WireEvent::ProviderRequest,
+            WireEvent::Usage {
+                used_tokens: 100,
+                window_tokens: Some(1_000),
+                cost_usd_micros: None,
+            }
+        ]
     );
 }
 

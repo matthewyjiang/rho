@@ -1,5 +1,7 @@
 //! Quit a daemon-hosted turn without cancelling it, then resume its reply.
 
+use std::time::{Duration, Instant};
+
 use anyhow::{ensure, Result};
 
 use super::{config, daemon_resume::write_daemon_config, DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
@@ -8,7 +10,12 @@ use crate::{
     env::{IsolatedHome, RhoLaunchPlan},
     harness::PtyHarness,
     scenario::{Scenario, ScenarioOutcome, ScenarioRunner},
+    screen::ScreenModel,
 };
+
+/// How long the turn runs before the quit: far longer than a frame takes to
+/// reach the screen, so a clock that restarted on reopen cannot catch up.
+const RUN_BEFORE_QUIT: Duration = Duration::from_secs(3);
 
 pub(super) const SCENARIO: Scenario = Scenario::new(
     "daemon_detach",
@@ -19,9 +26,10 @@ pub(super) const SCENARIO: Scenario = Scenario::new(
 );
 
 // Covers: quitting must not cancel a daemon turn, and reopening it mid-reply
-// shows it responding; a newly saved session's receipt must identify the
-// session the user can resume, while an untouched session must not
-// advertise a nonexistent saved conversation.
+// shows it responding, its clock counting from the turn's start; a newly
+// saved session's receipt must identify the session the user can resume,
+// while an untouched session must not advertise a nonexistent saved
+// conversation.
 // Owner: interactive daemon session lifecycle
 pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
     let home = IsolatedHome::new()?;
@@ -53,6 +61,11 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         harness.wait_for_text("gpt-5.5", STARTUP)?;
         harness.submit_text("fixture gated reply")?;
         harness.wait_for_text("reply waiting for release", STREAM)?;
+        harness.wait_for_screen(
+            &format!("turn clock past {RUN_BEFORE_QUIT:?}"),
+            SETTLE,
+            |screen| turn_clock(screen).is_some_and(|clock| clock >= RUN_BEFORE_QUIT),
+        )?;
         let (session_id, _) = config::find_latest_session(&home)?;
         // Unlike quit_with_exit_command, do not send Esc: it cancels a turn.
         harness.submit_text("/exit")?;
@@ -61,12 +74,20 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         let short_id: String = session_id.chars().take(8).collect();
         harness.assert_raw_contains(format!("rho --resume {short_id}").as_bytes())?;
 
+        let quit_at = Instant::now();
+
         // Reopened mid-reply, the turn shows busy and responding, as it did
-        // before the quit, and quitting again leaves it running.
+        // before the quit, and quitting again leaves it running. Its clock
+        // keeps the time before the quit: one counting from the reopen
+        // always reads less than the time since the quit.
         harness = spawn(&plan.clone().with_arg("--resume").with_arg(&short_id))?;
         harness.set_phase("reopen_running_turn");
         harness.wait_for_text("reply waiting for release", STREAM)?;
-        harness.wait_for_text("responding ·", SETTLE)?;
+        harness.wait_for_screen(
+            "responding, with the turn's clock from before the quit",
+            SETTLE,
+            |screen| turn_clock(screen).is_some_and(|clock| clock >= quit_at.elapsed()),
+        )?;
         harness.submit_text("/exit")?;
         let code = harness.wait_for_exit(STARTUP)?;
         ensure!(
@@ -98,5 +119,14 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
             .unwrap_or_default(),
         timing: harness.timing().clone(),
         artifact_dir: runner.artifact_root.clone(),
+    })
+}
+
+/// The running turn's clock, as its `responding · 4.2s` activity row shows it.
+fn turn_clock(screen: &ScreenModel) -> Option<Duration> {
+    screen.rows_text().iter().find_map(|row| {
+        let (_, rest) = row.split_once("responding · ")?;
+        let seconds = rest.split_once('s')?.0.trim();
+        seconds.parse().ok().map(Duration::from_secs_f64)
     })
 }

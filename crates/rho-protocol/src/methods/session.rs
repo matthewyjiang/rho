@@ -426,6 +426,11 @@ pub struct SessionAttachResponse {
     /// carrying this id. Absent only while the session has run no turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn: Option<TurnId>,
+    /// How long, in milliseconds, `turn` had been under way when the
+    /// attachment began, so a client shows the turn's clock from its start
+    /// rather than from the attach. Absent while no turn is under way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_elapsed_ms: Option<u64>,
     /// The input requests open when the attachment began, oldest first:
     /// what a client may answer even when the replay no longer holds the
     /// events that opened them (#1660). The replay may repeat some; an

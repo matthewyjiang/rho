@@ -94,6 +94,14 @@ pub enum JobState {
     Unknown,
 }
 
+impl JobState {
+    /// Whether a turn is under way in this state: running, queued, or
+    /// waiting for input.
+    pub const fn in_progress(self) -> bool {
+        matches!(self, Self::Running | Self::Queued | Self::WaitingForInput)
+    }
+}
+
 /// One job, as [`JOB_LIST`] reports it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct JobSummary {

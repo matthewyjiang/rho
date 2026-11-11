@@ -63,6 +63,7 @@ mod unix {
         path::{Path, PathBuf},
         pin::Pin,
         sync::Arc,
+        time::{Duration, Instant},
     };
 
     use anyhow::Context;
@@ -936,10 +937,14 @@ mod unix {
         if let Some(title) = &response.title {
             views.push(DaemonView::Title(title.clone()));
         }
+        let turn_since = response
+            .turn_elapsed_ms
+            .and_then(|elapsed| Instant::now().checked_sub(Duration::from_millis(elapsed)));
         events.attached(
             response.inputs.clone(),
             response.state,
             response.turn.clone(),
+            turn_since,
         );
         if response.replay_events == 0 {
             views.extend(events.end_replay());

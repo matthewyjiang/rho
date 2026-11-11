@@ -173,6 +173,9 @@ pub enum SessionEvent {
         id: CompactionId,
         status: CompactionStatus,
     },
+    /// The turn sent the provider a model request and waits for its
+    /// response. Says what the turn is doing until its next event.
+    ProviderRequest,
     /// The provider discarded the response it was streaming, and the run
     /// asks for it again. What was sent of it cannot be taken back; the
     /// retried response starts new messages (#1670). A

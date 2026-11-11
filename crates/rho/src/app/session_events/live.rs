@@ -422,7 +422,7 @@ impl LiveEvents {
                 self.presenter.step_started();
                 unstarted
                     .into_iter()
-                    .chain([self.usage(*context_estimate)])
+                    .chain([WireEvent::ProviderRequest, self.usage(*context_estimate)])
                     .collect()
             }
             RunEvent::ToolProposed { call } => {

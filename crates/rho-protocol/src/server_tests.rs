@@ -835,6 +835,7 @@ impl Service for AttachService {
             replay_events: 0,
             state: JobState::Idle,
             turn: None,
+            turn_elapsed_ms: None,
             inputs: Vec::new(),
             title: None,
             options: SessionOptions {

@@ -206,7 +206,7 @@ fn live_and_replayed_turns_agree() {
     assert_eq!(users(&live_events), users(&replayed));
     let live_conversation = live_events
         .into_iter()
-        .filter(|event| !matches!(event, WireEvent::Usage { .. }))
+        .filter(|event| !matches!(event, WireEvent::Usage { .. } | WireEvent::ProviderRequest))
         .collect();
     assert_eq!(
         canonical_messages(merged_chunks(live_conversation)),

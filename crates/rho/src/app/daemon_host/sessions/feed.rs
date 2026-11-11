@@ -25,6 +25,7 @@
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{Mutex, MutexGuard, PoisonError},
+    time::{Duration, Instant},
 };
 
 use rho_protocol::{
@@ -76,6 +77,8 @@ struct FeedState {
     job: wire::JobState,
     /// The turn `job` is of, as that event named it.
     turn: Option<wire::TurnId>,
+    /// When the feed first saw `turn` under way, while it is.
+    turn_since: Option<Instant>,
     /// The input requests opened and not yet resolved, so an attach reports
     /// them even once the buffer no longer holds the events that opened
     /// them.
@@ -106,6 +109,9 @@ pub(super) struct Attached {
     pub(super) job: wire::JobState,
     /// The turn `job` is of.
     pub(super) turn: Option<wire::TurnId>,
+    /// How long `turn` had been under way as of the attach; `None` when no
+    /// turn is.
+    pub(super) turn_elapsed: Option<Duration>,
     /// The input requests open as of the attach, oldest first.
     pub(super) inputs: Vec<wire::InputRequest>,
     /// The session's title as of the attach, if it has one.
@@ -138,6 +144,7 @@ impl Feed {
                 transcript: Vec::new(),
                 job,
                 turn,
+                turn_since: None,
                 inputs: BTreeMap::new(),
                 title,
                 options,
@@ -248,6 +255,7 @@ impl Feed {
             replay_events,
             job: state.job,
             turn: state.turn.clone(),
+            turn_elapsed: state.turn_since.map(|since| since.elapsed()),
             inputs: state.inputs.values().cloned().collect(),
             title: state.title.clone(),
             options: state.options.clone(),
@@ -288,6 +296,13 @@ impl FeedState {
         };
         match &event {
             wire::SessionEvent::State { state, turn } => {
+                // A turn waiting for input is still the same turn under way.
+                let continues = self.job.in_progress() && self.turn == *turn;
+                self.turn_since = match (state.in_progress(), continues) {
+                    (false, _) => None,
+                    (true, true) => self.turn_since.or_else(|| Some(Instant::now())),
+                    (true, false) => Some(Instant::now()),
+                };
                 self.job = *state;
                 self.turn.clone_from(turn);
             }

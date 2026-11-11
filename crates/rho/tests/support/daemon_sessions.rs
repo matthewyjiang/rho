@@ -1508,9 +1508,9 @@ pub(super) fn is_state(state: JobState) -> impl Fn(&SessionEvent) -> bool {
     move |event| matches!(event, SessionEvent::State { state: got, .. } if *got == state)
 }
 
-/// What a conversation shows: its events without job states, context
-/// usage, titles, and options, which describe the session as it was when they were
-/// sent.
+/// What a conversation shows: its events without job states, model
+/// requests, context usage, titles, and options, which describe the session
+/// as it was when they were sent.
 fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
     events
         .iter()
@@ -1519,6 +1519,7 @@ fn conversation(events: &[(Seq, SessionEvent)]) -> Vec<SessionEvent> {
             !matches!(
                 event,
                 SessionEvent::State { .. }
+                    | SessionEvent::ProviderRequest
                     | SessionEvent::Usage { .. }
                     | SessionEvent::TitleChanged { .. }
                     | SessionEvent::OptionsChanged { .. }

@@ -171,7 +171,13 @@ const QUEUED_CYCLE_STEPS: &[Step] = &[
         text: "✓ exit_plan_mode",
         timeout: STREAM,
     },
-    Step::Custom(wait_for_resumed_proposal_turn),
+    // In process, the next step's start writes a routine status that clears
+    // any toast, so the wait outlasts the brief `starting` label: a late step
+    // start then cannot wipe the queued-mode toast before it paints.
+    Step::WaitText {
+        text: "waiting for provider",
+        timeout: STREAM,
+    },
     Step::Key(Key::Alt('m')),
     Step::WaitText {
         text: "permission mode supervised queued for next turn",
@@ -195,21 +201,6 @@ const QUEUED_CYCLE_STEPS: &[Step] = &[
     Step::ExitCommand,
     Step::Custom(assert_config_unchanged),
 ];
-
-/// Waits for the resumed proposal turn's durable activity label, which the
-/// held reply keeps up. In process, the next step's start writes a routine
-/// status that clears any toast, so the wait outlasts the brief `starting`
-/// label: a late step start then cannot wipe the queued-mode toast before it
-/// paints. A daemon session's wire carries no step starts, so its turn stays
-/// `starting`.
-fn wait_for_resumed_proposal_turn(harness: &mut PtyHarness) -> Result<()> {
-    let label = if harness.follows_daemon() {
-        "starting ·"
-    } else {
-        "waiting for provider"
-    };
-    harness.wait_for_text(label, STREAM)
-}
 
 // Covers: an idle delegated-completion turn must deliver the implementation
 // handoff before returning to idle background delivery.

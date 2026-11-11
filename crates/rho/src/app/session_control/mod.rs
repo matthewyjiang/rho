@@ -44,8 +44,8 @@ use rho_protocol::{
         JobList, SessionCancel, SessionConfigure, SessionList, SessionNew, SessionPrompt,
         SessionSteer,
     },
-    ClientEnvironment, ClientError, ContentBlock, JobId, JobKind, JobListParams, JobState,
-    JobSummary, ModelRef, SessionCancelParams, SessionChange, SessionConfigureParams, SessionId,
+    ClientEnvironment, ClientError, ContentBlock, JobId, JobKind, JobListParams, JobSummary,
+    ModelRef, SessionCancelParams, SessionChange, SessionConfigureParams, SessionId,
     SessionListParams, SessionNewParams, SessionPromptParams, SessionSetup, SessionSteerParams,
 };
 use serde_json::Value;
@@ -315,7 +315,7 @@ impl SessionControl {
         let jobs = self.jobs().await?;
         let running: HashSet<&SessionId> = jobs
             .iter()
-            .filter(|job| in_progress(job.state))
+            .filter(|job| job.state.in_progress())
             .filter_map(|job| job.session.as_ref())
             .collect();
         let mut driven = self.driven.lock().unwrap_or_else(PoisonError::into_inner);
@@ -421,15 +421,6 @@ impl SessionControl {
 /// The catalog page `workspace_of` walks: the daemon's largest
 /// (`rho/session/list` refuses more than 1000).
 const CATALOG_PAGE: u32 = 1000;
-
-/// Whether a turn is under way in this state, so the session counts toward
-/// its holder's cap and `wait` keeps waiting.
-fn in_progress(state: JobState) -> bool {
-    matches!(
-        state,
-        JobState::Running | JobState::Queued | JobState::WaitingForInput
-    )
-}
 
 /// `path` resolved through symlinks, as the daemon records workspaces.
 fn canonical(path: &Path) -> Result<PathBuf, ControlError> {

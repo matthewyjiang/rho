@@ -202,6 +202,15 @@ impl App {
                     self.close_daemon_input(id, notice).await;
                 }
                 DaemonView::InputHeld(id) => self.daemon_input_held(id),
+                DaemonView::TurnSince(since) if self.turn.is_busy() => {
+                    self.turn.start_loading_at(since);
+                }
+                DaemonView::TurnSince(_) => {}
+                DaemonView::Requesting if self.turn.is_provider_turn() => {
+                    self.turn
+                        .set_activity_phase(ActivityPhase::WaitingForProvider);
+                }
+                DaemonView::Requesting => {}
                 DaemonView::Retrying(hint) if self.turn.is_provider_turn() => {
                     self.turn
                         .set_activity_phase(ActivityPhase::RetryingProvider);

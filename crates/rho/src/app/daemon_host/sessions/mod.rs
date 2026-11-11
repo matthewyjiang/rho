@@ -849,6 +849,7 @@ fn attach_response(workspace: &Path, attached: Attached) -> (SessionAttachRespon
         replay_events,
         job,
         turn,
+        turn_elapsed,
         inputs,
         title,
         options,
@@ -861,6 +862,9 @@ fn attach_response(workspace: &Path, attached: Attached) -> (SessionAttachRespon
         replay_events,
         state: job,
         turn,
+        // Far below `u64::MAX` milliseconds.
+        turn_elapsed_ms: turn_elapsed
+            .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)),
         inputs,
         title,
         options,
