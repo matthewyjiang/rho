@@ -170,18 +170,20 @@ impl App {
     /// not always: a reattach delivers them in its response, after the
     /// request finished. A switch to a model not shown yet waits for the
     /// next options report, which says where it landed; a refused one
-    /// leaves that report on another model and says nothing.
+    /// leaves that report on another model and says nothing. Login's
+    /// switch has nothing to wait for: its status line names the model.
     pub(super) fn finish_daemon_option_request(&mut self) {
         let finished = self.daemon_option_requests.pop_front();
         if let Some(SessionChange::Model { model, .. }) = finished {
-            if self.daemon_login_selected.as_ref() == Some(&model) {
-                self.daemon_login_selected = None;
-            }
+            let by_login = self
+                .daemon_login_selected
+                .take_if(|selected| *selected == model)
+                .is_some();
             let shown = self
                 .daemon_options
                 .as_ref()
                 .is_some_and(|options| options.model.current == model);
-            if !shown {
+            if !by_login && !shown {
                 self.daemon_unshown_switch = Some(model);
             }
         }
