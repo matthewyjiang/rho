@@ -61,9 +61,7 @@ pub(crate) use absent::DaemonSession;
 #[cfg(unix)]
 mod unix {
     use std::{
-        future::Future,
         path::{Path, PathBuf},
-        pin::Pin,
         sync::Arc,
     };
 
@@ -99,127 +97,19 @@ mod unix {
     mod auth;
     mod initial_settings;
     mod mcp;
+    mod relink;
     mod requests;
     mod tool_sources;
 
     use initial_settings::{carry, changes_between, configure_all, Refused};
     pub(in crate::tui) use mcp::DaemonMcp;
+    use relink::{Reattach, Reattached, Relink, Relinked};
     use tool_sources::ToolSources;
 
     const LOST: &str = "lost the connection to the rho daemon";
 
     /// Shown while the TUI reconnects to a restarting daemon.
     const RECONNECTING: &str = "rho daemon restarting; reconnecting";
-
-    type Reattach = Pin<Box<dyn Future<Output = anyhow::Result<Reattached>> + Send>>;
-
-    /// What a reattach came back with.
-    struct Reattached {
-        response: SessionAttachResponse,
-        /// After the daemon restarted: where the session attached again.
-        relinked: Option<Relinked>,
-    }
-
-    /// The session's attachment after the daemon restarted.
-    struct Relinked {
-        /// The connection it attached on.
-        link: Arc<Link>,
-        /// The route its events now arrive on.
-        routed: mpsc::UnboundedReceiver<Routed>,
-        /// The session's id: a new one when the old one had saved nothing.
-        session: SessionId,
-        /// The settings, read again: the restarted daemon knows neither
-        /// this connection's subscription nor the TUI's registration.
-        config_changes: mpsc::UnboundedReceiver<ConfigChangedParams>,
-        settings: anyhow::Result<DaemonSettings>,
-        /// Whether the session's MCP servers connect, read again: the
-        /// restarted daemon starts them again.
-        tool_sources: ToolSources,
-    }
-
-    /// Attaching a session again once the daemon restarted.
-    struct Relink {
-        daemon: Arc<Daemon>,
-        /// The attach, after the session's cursor.
-        params: SessionAttachParams,
-        /// What opened the session, when it had saved nothing yet, and
-        /// the options it ran with, which a new session in its place takes.
-        opened: Option<(SessionNewParams, Option<SessionOptions>)>,
-    }
-
-    impl Relink {
-        /// Waits for `old`, the connection the daemon detached the session
-        /// on, to close, then attaches on the next one, which waits for the
-        /// restarted daemon. Once the router handed the session's old route
-        /// `Lost`, a new route belongs to the next connection.
-        async fn run(self, old: Option<Arc<Link>>) -> anyhow::Result<Reattached> {
-            let Self {
-                daemon,
-                params,
-                opened,
-            } = self;
-            if let Some(old) = old {
-                old.closed().await;
-            }
-            let routed = route(&daemon, &params.session);
-            let config_changes = route_config(&daemon);
-            // A daemon that failed to come back resets the connections that
-            // waited for it; the second try starts a new daemon.
-            let link = match daemon.link().await {
-                Ok(link) => link,
-                Err(_) => daemon.link().await?,
-            };
-            let settings = load_settings(&link).await;
-            match link.request::<SessionAttach>(&params).await {
-                Ok(response) => Ok(Reattached {
-                    response,
-                    relinked: Some(Relinked {
-                        tool_sources: ToolSources::read(&link, &params.session).await,
-                        link,
-                        routed,
-                        session: params.session,
-                        config_changes,
-                        settings,
-                    }),
-                }),
-                Err(error) => match opened {
-                    Some((mut opened, carried))
-                        if error.error_code() == Some(ErrorCode::SessionNotFound) =>
-                    {
-                        daemon.unroute(&params.session);
-                        opened.environment = ClientEnvironment::of_this_process();
-                        let created = link.request::<SessionNew>(&opened).await?;
-                        let session = created.session;
-                        // The settings the person changed carry over; one the
-                        // restarted daemon refuses keeps its default.
-                        let changes = carried
-                            .map(|carried| changes_between(&created.options, &carried))
-                            .unwrap_or_default();
-                        carry(&link, &session, changes).await;
-                        let routed = route(&daemon, &session);
-                        let attach = SessionAttachParams {
-                            session: session.clone(),
-                            after: None,
-                            ..params
-                        };
-                        let response = link.request::<SessionAttach>(&attach).await?;
-                        Ok(Reattached {
-                            response,
-                            relinked: Some(Relinked {
-                                tool_sources: ToolSources::read(&link, &session).await,
-                                link,
-                                routed,
-                                session,
-                                config_changes,
-                                settings,
-                            }),
-                        })
-                    }
-                    _ => Err(error.into()),
-                },
-            }
-        }
-    }
 
     /// Routes session `id`'s notifications to the receiver this returns,
     /// replacing any earlier route.
