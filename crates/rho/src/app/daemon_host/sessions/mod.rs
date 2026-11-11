@@ -237,6 +237,12 @@ struct TurnSlot {
     /// still waiting for the runtime when one lands is dropped (see
     /// `configure`).
     plan_switches: u64,
+    /// How many turns prompts have started.
+    prompts: u64,
+    /// The prompted turn, as `prompts` counted it, whose `/compact` last
+    /// reduced the conversation, which a
+    /// [`rho_protocol::SessionChange::ModelAfterCompaction`] waits for.
+    compacted_prompt: Option<u64>,
 }
 
 /// A turn a prompt naming `key` started, as a prompt sent again with the
@@ -453,6 +459,8 @@ impl LoadedSession {
                 residency: Residency::InUse,
                 hold: None,
                 plan_switches: 0,
+                prompts: 0,
+                compacted_prompt: None,
             }),
         }
     }

@@ -3655,6 +3655,30 @@
           "type": "object"
         },
         {
+          "description": "Switch to `model` as [`Self::Model`] does, only if the session's\ncurrent or last prompted turn is a `/compact` that reduced the\nconversation. Queued behind that turn like any change, it applies once\nthe turn ends having compacted and is dropped otherwise, leaving the\nsession's options as they were. A host sends it once a `/compact` it\nasked for started, to return to the model the session compacted from,\nso the switch back outlives the host and a change queued after it\nstill applies last.",
+          "properties": {
+            "auth": {
+              "description": "As [`Self::Model`]'s `auth`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "model_after_compaction",
+              "type": "string"
+            },
+            "model": {
+              "$ref": "#/$defs/ModelRef"
+            }
+          },
+          "required": [
+            "kind",
+            "model"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Spend `level`, one of [`ReasoningOptions::available`], on later turns.",
           "properties": {
             "kind": {

@@ -10,11 +10,11 @@
 //!
 //! The dialog offers what it does in process: the model that produced the
 //! native context when the session may switch to it, to compact on that
-//! model and then continue on this one, and to continue. The daemon applies
-//! a change sent while a turn holds the session once that turn ends, so
-//! "Compact, then continue" sends three requests in order: switch to the
-//! source model, `/compact`, and switch back. Unlike in process, the session
-//! returns to this model even when the compaction fails.
+//! model and then continue on this one, and to continue. "Compact, then
+//! continue" switches the session to the source model, sends `/compact`,
+//! and has the daemon switch back once that turn ends having compacted. A
+//! compaction that fails, leaves the conversation as it was, or is
+//! cancelled keeps the session on the source model, as in process.
 
 use rho_protocol::{ModelRef, SessionChange, SessionReport};
 use rho_providers::{model::catalog::ModelSelection, provider::model_reference};
@@ -168,11 +168,14 @@ impl App {
     }
 
     /// Compacts on `source`, then continues on the model and auth the
-    /// session runs on now. The switch back goes once the daemon answered
-    /// `/compact`: one it started holds the switch until the compaction
-    /// ends, and one it refused lets the switch apply at once. A compaction
-    /// that cannot start while the session's MCP servers connect changes
-    /// nothing.
+    /// session runs on now, as in process. Once `/compact` started, the
+    /// switch back goes to the daemon as a
+    /// [`SessionChange::ModelAfterCompaction`]: the daemon applies it only if
+    /// the compaction reduced the conversation, whether or not this TUI still
+    /// follows the session, and a change sent meanwhile applies after it. A
+    /// compaction that does not compact, or never starts, keeps the session
+    /// on `source`. One that cannot start while the session's MCP servers
+    /// connect changes nothing.
     async fn compact_then_continue_on_daemon(
         &mut self,
         source: Option<InteractiveModelSelection>,
@@ -188,7 +191,13 @@ impl App {
             return Ok(());
         }
         let runtime = &self.info.runtime;
-        let target = model_change(&runtime.provider, &runtime.model, Some(&runtime.auth));
+        let target = SessionChange::ModelAfterCompaction {
+            model: ModelRef {
+                provider: runtime.provider.clone(),
+                model: runtime.model.clone(),
+            },
+            auth: Some(runtime.auth.clone()),
+        };
         let switched = source.filter(|source| !selection_matches_runtime(self, source));
         if let Some(source) = &switched {
             self.configure_daemon(model_change(
@@ -198,27 +207,46 @@ impl App {
             ))?;
         }
         let compact = TurnPrompt::command("/compact".into(), "/compact".into());
-        let started = self.request_daemon_turn(&compact, &[]).await;
-        // Before anything can fail, so the session never stays on `source`.
-        if switched.is_some() {
-            self.configure_daemon(target)?;
-        }
-        self.show_taken_daemon_views(terminal).await?;
-        if let Err(error) = started {
-            let ended = error
-                .downcast_ref::<rho_protocol::ClientError>()
-                .and_then(rho_protocol::ClientError::turn_ended);
-            // A compaction that ended before it began has the daemon's own
-            // rows to say how.
-            if ended.is_none() {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not compact before continuing: {error:#}"
-                )));
+        match self.request_daemon_turn(&compact, &[]).await {
+            Ok(()) if switched.is_some() => {
+                self.configure_daemon(target)?;
+                // Before the views, which may hold the compaction's end.
+                self.daemon_compact_handoff = true;
+            }
+            Ok(()) => {}
+            Err(error) => {
+                let ended = error
+                    .downcast_ref::<rho_protocol::ClientError>()
+                    .and_then(rho_protocol::ClientError::turn_ended);
+                // A compaction that ended before it began has the daemon's
+                // own rows to say how.
+                if ended.is_none() {
+                    self.insert_entry(&Entry::Error(format!(
+                        "could not compact before continuing: {error:#}"
+                    )));
+                }
+                if switched.is_some() {
+                    self.insert_entry(&Entry::Notice(KEPT_SOURCE.into()));
+                }
             }
         }
-        Ok(())
+        self.show_taken_daemon_views(terminal).await
+    }
+
+    /// The `/compact` of "Compact, then continue" ended as this TUI saw it:
+    /// `compacted` when its compaction reduced the conversation, `None` when
+    /// the TUI did not see how it ended. Says when the daemon kept the
+    /// source model, as in process; does nothing when no handoff waits.
+    pub(in crate::tui) fn settle_daemon_compact_handoff(&mut self, compacted: Option<bool>) {
+        if std::mem::take(&mut self.daemon_compact_handoff) && compacted == Some(false) {
+            self.insert_entry(&Entry::Notice(KEPT_SOURCE.into()));
+        }
     }
 }
+
+/// The in-process notice for a "Compact, then continue" that did not
+/// compact.
+const KEPT_SOURCE: &str = "kept the session model because context was not compacted";
 
 /// The daemon change that switches the session to `provider`/`model` on
 /// `auth`, or on the auth the daemon chooses.

@@ -255,6 +255,7 @@ impl Sessions {
             .replace(grant::carrying(&grant, &with.environment));
         turn.cancel = CancellationToken::new();
         turn.kind = TurnKind::Prompt;
+        turn.prompts += 1;
         let (start, started) = watch::channel(PromptStart::Pending);
         // The latest turn's key alone is kept: this turn's, or none.
         turn.keyed = key.map(|key| KeyedTurn {

@@ -8,12 +8,12 @@
 //!
 //! "Compact, then send" parks the prompt first in the follow-up queue and
 //! sends `/compact`, which the daemon runs as a turn. The queue sends the
-//! prompt when that turn completes, and the consent given here goes with
-//! that prompt alone, so it is not asked for again and no other prompt is
-//! sent under it. A cancelled compaction returns the prompt to the composer
-//! with the rest of the pending work, without the consent; a failed one
-//! leaves it parked with it. A compaction the daemon cannot start parks
-//! nothing: the prompt returns to the composer.
+//! prompt when that turn ends, whether the compaction compacted or failed,
+//! as in process, and the consent given here goes with that prompt alone,
+//! so it is not asked for again and no other prompt is sent under it. A
+//! cancelled compaction returns the prompt to the composer with the rest of
+//! the pending work, without the consent. A compaction the daemon cannot
+//! start parks nothing: the prompt returns to the composer.
 //!
 //! A prompt held while the session's MCP servers connect keeps the model it
 //! was confirmed for (`HeldOrigin::Confirmed`), so its release asks again

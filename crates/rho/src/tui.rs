@@ -683,6 +683,10 @@ struct App {
     /// Set while the daemon session's turn is a `/compact`; see
     /// `daemon_transcript`.
     daemon_compact_turn: Option<daemon_transcript::DaemonCompactTurn>,
+    /// Whether a "Compact, then continue" waits for the `/compact` it
+    /// started, to say whether the session kept the source model; see
+    /// `context_handoff::daemon`.
+    daemon_compact_handoff: bool,
     /// The open `/info` overlay's read of the daemon session's compaction.
     info_compaction_read: daemon_reports::InfoCompactionRead,
     /// The report the person last asked the daemon for and still waits on;

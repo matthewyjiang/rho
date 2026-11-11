@@ -1,9 +1,11 @@
 use pretty_assertions::assert_eq;
 
+use super::DaemonCompactTurn;
 use crate::tui::{
+    compact_work::ReadyFollowUp,
     daemon_events::{Rest, TurnState},
     tests::test_app,
-    Entry, StreamKind,
+    Entry, QueuedPrompt, StreamKind,
 };
 
 // Covers: a replayed chunk that continues the message a running turn
@@ -64,4 +66,44 @@ async fn reset_replay_during_a_turn_places_its_start_after_the_rebuilt_rows() {
             Entry::Assistant(receipt),
         ] if earlier.worked_for.is_none() && receipt.worked_for.is_some()
     ));
+}
+
+// Covers: a daemon `/compact` turn whose compaction failed sends the
+// follow-up that waited for it, as a prompt "Compact, then send" parked, as a
+// failed compaction does in process; a cancelled compaction does not, and
+// neither does a failed turn that was no compaction.
+// Owner: daemon transcript (follow-ups at a turn's end). The fixture matrix
+// cannot fail a compaction: a failed native compaction falls back to a text
+// summary, and a conversation small enough for a PTY has none to write.
+#[tokio::test]
+async fn a_failed_compaction_sends_the_follow_up_that_waited_for_it() {
+    let failed = || Rest::Failed {
+        error: "compaction failed".into(),
+    };
+    let cases = [
+        ("failed compaction", true, failed(), true),
+        ("cancelled compaction", true, Rest::Interrupted, false),
+        ("failed model turn", false, failed(), false),
+    ];
+    for (name, compaction, rest, sends) in cases {
+        let mut app = test_app();
+        app.show_daemon_turn(TurnState::Running).await;
+        if compaction {
+            app.daemon_compact_turn = Some(DaemonCompactTurn::default());
+        }
+        app.pending.push_follow_up(QueuedPrompt {
+            prompt: "parked".into(),
+            display_prompt: "parked".into(),
+            paste_segments: Vec::new(),
+            media: Vec::new(),
+        });
+
+        app.show_daemon_turn(TurnState::Resting(rest)).await;
+
+        assert_eq!(
+            matches!(app.start_follow_ups, Some(ReadyFollowUp::Queued { .. })),
+            sends,
+            "{name}"
+        );
+    }
 }

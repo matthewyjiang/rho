@@ -135,11 +135,16 @@ const MCP_COMPOSER_STEPS: &[Step] = &[
     },
     Step::Phase("complete_prompt_argument"),
     Step::TypeText("/mcp:fixture:greet al"),
+    // Both rows: a frame can reach the screen over more than one read, so
+    // one row showing does not mean the other has.
     Step::WaitText {
         text: "alfred-from-server",
         timeout: SETTLE,
     },
-    Step::AssertText("alice-from-server"),
+    Step::WaitText {
+        text: "alice-from-server",
+        timeout: SETTLE,
+    },
     Step::Custom(complete_highlighted_row),
     Step::WaitText {
         text: "/mcp:fixture:greet alice-from-server",
