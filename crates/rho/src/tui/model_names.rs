@@ -36,10 +36,15 @@ impl<'a> ModelNames<'a> {
             .iter()
             .find(|choice| choice.model.provider == provider && choice.model.model == model)
         {
-            // The daemon labels a model with its bare id when no catalog names
-            // it, or when another model from its provider shares its name. The
-            // catalog would say no more in either case.
-            Some(choice) => (choice.label != model).then(|| choice.label.clone()),
+            // The daemon labels a model with its id when no catalog names it,
+            // or when another model from its provider shares its name; the id
+            // carries its provider when another provider offers the same one.
+            // The catalog would say no more in any of these cases.
+            Some(choice) => {
+                let is_id =
+                    choice.label == model || choice.label == format!("{model} ({provider})");
+                (!is_id).then(|| choice.label.clone())
+            }
             None => unambiguous_model_display_name(provider, model),
         }
     }

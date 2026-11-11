@@ -45,8 +45,9 @@ pub(in crate::tui) fn offered(provider: &str, model: &str, label: &str) -> Model
 
 // Covers: chrome names a model by its display name from the daemon's labels
 // or the local catalog, and falls back to the id when neither names it. A
-// daemon label that is the bare id keeps the id even when the local catalog
-// has a name, since the daemon uses the id to tell apart models that share one.
+// daemon label that is the id, alone or with its provider, keeps the id even
+// when the local catalog has a name, since the daemon uses the id to tell
+// apart models that share one.
 // Owner: TUI model naming
 #[test]
 fn models_read_by_name_when_known_and_by_id_otherwise() {
@@ -57,6 +58,7 @@ fn models_read_by_name_when_known_and_by_id_otherwise() {
             "Claude Opus 5.5",
         ),
         offered("openai", "gpt-5.5", "gpt-5.5"),
+        offered("openai-codex", "gpt-5.5", "gpt-5.5 (openai-codex)"),
     ];
     with_catalog_names(
         &[
@@ -88,6 +90,14 @@ fn models_read_by_name_when_known_and_by_id_otherwise() {
                     "gpt-5.5",
                     None,
                     "openai/gpt-5.5",
+                ),
+                (
+                    "daemon id label with its provider",
+                    ModelNames::new(&daemon),
+                    "openai-codex",
+                    "gpt-5.5",
+                    None,
+                    "openai-codex/gpt-5.5",
                 ),
                 (
                     "unnamed",
