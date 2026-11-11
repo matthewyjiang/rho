@@ -15,6 +15,7 @@ fn request(ask: Ask) -> InputRequest {
         ask,
         tool_call: None,
         timeout: None,
+        asker: Default::default(),
     }
 }
 

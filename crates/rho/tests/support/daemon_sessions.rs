@@ -1741,6 +1741,7 @@ async fn an_approval_waits_for_any_client_to_answer() {
                 }),
                 tool_call: Some(ToolCallId::new("edit")),
                 timeout: None,
+                asker: rho_protocol::InputAsker::Turn,
             }],
             JobState::WaitingForInput,
             Ok(()),

@@ -54,6 +54,33 @@ pub struct InputRequest {
     /// the request is held.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<InputTimeout>,
+    /// Who waits on the answer; absent for the turn under way.
+    #[serde(default, skip_serializing_if = "InputAsker::is_turn")]
+    pub asker: InputAsker,
+}
+
+/// Who waits on an input request, which says what ends it unanswered.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum InputAsker {
+    /// The session's turn under way: cancelling the turn withdraws the
+    /// request.
+    #[default]
+    Turn,
+    /// A subagent, which outlives the turn that started it: only the
+    /// subagent withdraws the request, and cancelling the turn does not.
+    Subagent,
+    /// A value a newer daemon sends that this crate does not know.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+impl InputAsker {
+    fn is_turn(&self) -> bool {
+        matches!(self, Self::Turn)
+    }
 }
 
 /// An answer the daemon gives an input request at a deadline, unless a

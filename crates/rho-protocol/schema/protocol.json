@@ -1809,11 +1809,35 @@
         }
       ]
     },
+    "InputAsker": {
+      "anyOf": [
+        {
+          "const": "turn",
+          "description": "The session's turn under way: cancelling the turn withdraws the\nrequest.",
+          "type": "string"
+        },
+        {
+          "const": "subagent",
+          "description": "A subagent, which outlives the turn that started it: only the\nsubagent withdraws the request, and cancelling the turn does not.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Who waits on an input request, which says what ends it unanswered."
+    },
     "InputRequest": {
       "description": "One thing a turn waits on a person for.",
       "properties": {
         "ask": {
           "$ref": "#/$defs/Ask"
+        },
+        "asker": {
+          "$ref": "#/$defs/InputAsker",
+          "description": "Who waits on the answer; absent for the turn under way."
         },
         "id": {
           "$ref": "#/$defs/InputRequestId"

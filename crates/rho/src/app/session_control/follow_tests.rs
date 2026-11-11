@@ -126,6 +126,7 @@ fn a_turn_waiting_for_input_reports_its_open_requests() {
         }),
         tool_call: None,
         timeout: None,
+        asker: Default::default(),
     };
     let mut watching = watch(JobState::Running, "t1");
     for event in [

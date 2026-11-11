@@ -767,6 +767,7 @@ fn approval(id: u64) -> InputRequest {
         }),
         tool_call: None,
         timeout: None,
+        asker: Default::default(),
     }
 }
 
@@ -800,6 +801,7 @@ fn timed_question(id: u64) -> InputRequest {
             },
             reason: "red keeps the build going".into(),
         }),
+        asker: Default::default(),
     }
 }
 

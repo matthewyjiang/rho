@@ -1191,6 +1191,19 @@ fn screen_text_selection_copies_composer_text() {
     assert_pass("screen_text_selection");
 }
 
+// Covers: Esc at a subagent's questionnaire while its parent's turn runs
+// dismisses only the questionnaire, in process and on a daemon session.
+// Owner: interactive delegated-questionnaire routing (PTY)
+#[test]
+fn background_agent_questionnaire_cancel_leaves_the_parent_turn_running() {
+    for scenario in [
+        "cancel_background_agent_questionnaire",
+        "daemon_cancel_background_agent_questionnaire",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
 #[test]
 fn background_agent_questionnaire_is_answered_in_parent_tui() {
     assert_pass("background_agent_questionnaire");
