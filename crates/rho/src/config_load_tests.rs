@@ -461,6 +461,25 @@ reasoning = "high"
     );
 }
 
+// Covers: a `goal-judge` table left from before `/goal` was removed, empty as
+// the old full example had it or filled in, loads without an entry and
+// without the catalog-agent warning. Owner: config load
+#[test]
+fn a_leftover_goal_judge_table_is_dropped_quietly() {
+    for table in [
+        "[internal_agents.goal-judge]\n",
+        "[internal_agents.goal-judge]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\n",
+    ] {
+        let (config, warnings) = parse_settings(table).unwrap();
+
+        assert_eq!(
+            (config.internal_agent_model("goal-judge"), warnings),
+            (None, Vec::new()),
+            "{table}"
+        );
+    }
+}
+
 // Covers: a custom host configured before Rho shipped a built-in of the same
 // name (OpenCode Zen as `opencode`) loads with a warning when it points at the
 // built-in's API base, and fails loudly for any other base

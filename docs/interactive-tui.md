@@ -237,10 +237,9 @@ When the workspace is a Git repository with a GitHub remote and `gh` is on `PATH
 
 While [advisor mode](/configuration/advisor-mode) is on, the top composer divider names the reviewing model, for example `advisor: anthropic/claude-fable-5`. It reads `advisor: no model` when the mode is on but no model is set. Nothing reviews the session in that state. Advice arrives as an `advisor` tool card.
 
-
 ## Removed commands
 
-`/goal` was removed in Rho 3. It was a legacy feature that set a completion condition and kept prompting the agent until an evaluator judged the condition met. Models got better and no longer need that hand-holding to reach a goal: state the outcome you want in the prompt.
+`/goal` was removed in Rho 3. It was a legacy feature that set a completion condition and kept prompting the agent until an evaluator judged the condition met. Models got better and no longer need that hand-holding to reach a goal: state the outcome you want in the prompt. A leftover `[internal_agents.goal-judge]` table in a config file is ignored and can be deleted.
 
 ## Questionnaires
 

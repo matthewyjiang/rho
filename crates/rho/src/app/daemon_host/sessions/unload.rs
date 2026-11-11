@@ -164,10 +164,10 @@ impl Sessions {
 impl Sessions {
     /// How many loaded sessions with no turn under way have work of their
     /// own a restart would cut short, which keeps an upgrade waiting
-    /// (#1713): background work their prompts started, a queued
-    /// settings change, or, for one a client follows, nothing saved yet, so
-    /// a restarted daemon could not reopen it for that client. Turns under
-    /// way are the job registry's to count.
+    /// (#1713): background work their prompts started, a queued settings
+    /// change, or, for one a client follows, nothing saved yet, so a
+    /// restarted daemon could not reopen it for that client. Turns under way
+    /// are the job registry's to count.
     pub(in crate::app::daemon_host) fn upgrade_blockers(&self) -> usize {
         // Collected first: the turn lock comes before `loaded`, never after.
         let loaded: Vec<_> = self

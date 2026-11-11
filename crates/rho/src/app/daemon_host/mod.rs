@@ -150,10 +150,9 @@ impl DaemonHost {
     /// registry is the claim: no turn starts after it. It closes only if no
     /// job went in progress since the daemon was found idle, before the
     /// other checks, so a turn that began and ended meanwhile cannot leave
-    /// work those checks missed. Background work and subagents both
-    /// start in a turn; only a login or a settings change sent between the
-    /// checks and the close escapes them, and the restart then ends it as a
-    /// stop would.
+    /// work those checks missed. Background work and subagents both start in
+    /// a turn; only a login or a settings change sent between the checks and
+    /// the close escapes them, and the restart then ends it as a stop would.
     fn claim_idle(&self) -> bool {
         let Some(idle) = self.jobs.idle() else {
             return false;

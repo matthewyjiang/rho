@@ -561,8 +561,8 @@ impl App {
     }
 
     /// Reports the resting state to Herdr. The terminal's program status
-    /// follows once the event loop waits for input, so queued
-    /// follow-ups do not flash `done` between turns.
+    /// follows once the event loop waits for input, so queued follow-ups do
+    /// not flash `done` between turns.
     pub(super) async fn report_resting_herdr_state(&mut self) {
         let (state, message) = self.resting_herdr_state();
         let message = message.map(str::to_string);

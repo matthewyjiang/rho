@@ -8,8 +8,7 @@
 //! `RHO_PROGRAM_STATUS=1` forces them on or `RHO_PROGRAM_STATUS=0` turns them off.
 //!
 //! Messages are fixed wait text, the sign-in hint, or the first line of a
-//! turn error. Prompts and
-//! assistant replies are never reported.
+//! turn error. Prompts and assistant replies are never reported.
 
 use base64::Engine as _;
 
