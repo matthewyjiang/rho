@@ -119,15 +119,14 @@ impl LoadedSession {
     }
 
     /// The config a permission-mode change reads: the session's, with the
-    /// permission classifier's models of the global config as it is now,
-    /// which the session keeps. A classifier picked after the session
-    /// opened then runs when a client sets Auto.
+    /// permission classifier's models of the global config as it is now. A
+    /// classifier picked after the session opened then runs when a client
+    /// sets Auto; [`Self::keep_config`] keeps it once the mode applied.
     pub(super) async fn config_for_permission_change(&self) -> Arc<Config> {
         let Ok(global) = self.settings.agent_config().await else {
             return self.config();
         };
-        let mut config = self.lock_config();
-        let mut next = (*config.config).clone();
+        let mut next = (*self.config()).clone();
         for id in [PERMISSION_CLASSIFIER_AGENT_ID, DECISION_SCREEN_ID] {
             match global.internal_agents.get(id) {
                 Some(selection) => {
@@ -138,8 +137,12 @@ impl LoadedSession {
                 }
             }
         }
-        config.config = Arc::new(next);
-        Arc::clone(&config.config)
+        Arc::new(next)
+    }
+
+    /// Makes `config` the one the session's turns and rebuilds read.
+    pub(super) fn keep_config(&self, config: Arc<Config>) {
+        self.lock_config().config = config;
     }
 
     /// Nothing panics while holding the lock, so a poisoned one is still

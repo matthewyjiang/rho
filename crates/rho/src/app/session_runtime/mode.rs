@@ -34,19 +34,52 @@ pub(crate) struct SessionPermission {
     pub(crate) workspace_root: PathBuf,
 }
 
+/// What a permission-mode change does when the session already runs the mode.
+#[derive(Clone, Copy)]
+enum SameMode {
+    /// Nothing.
+    Keep,
+    /// Auto rebuilds, reading the classifier model again.
+    RebuildAuto,
+}
+
 impl SessionRuntime {
     /// Applies `mode` to later prompts. The host holds the runtime between
     /// prompts, so none is in flight. On error the session keeps its old
     /// mode: a mode this session's config cannot run, such as auto without
-    /// a classifier model, is [`SettingChangeError::Unsupported`]. Auto
-    /// rebuilds even when the session already runs it, so a classifier model
-    /// picked since takes effect.
+    /// a classifier model, is [`SettingChangeError::Unsupported`].
     pub(crate) async fn set_permission_mode(
         &mut self,
         mode: PermissionMode,
         process_config: &Config,
     ) -> Result<(), SettingChangeError> {
-        if self.permission.mode == mode && mode != PermissionMode::Auto {
+        self.change_permission_mode(mode, process_config, SameMode::Keep)
+            .await
+    }
+
+    /// [`Self::set_permission_mode`] as a client asks for it: Auto set again
+    /// on a session that runs it rebuilds, so a classifier model picked
+    /// since takes effect.
+    pub(crate) async fn reapply_permission_mode(
+        &mut self,
+        mode: PermissionMode,
+        process_config: &Config,
+    ) -> Result<(), SettingChangeError> {
+        self.change_permission_mode(mode, process_config, SameMode::RebuildAuto)
+            .await
+    }
+
+    async fn change_permission_mode(
+        &mut self,
+        mode: PermissionMode,
+        process_config: &Config,
+        same: SameMode,
+    ) -> Result<(), SettingChangeError> {
+        let rebuild_same = match same {
+            SameMode::Keep => false,
+            SameMode::RebuildAuto => mode == PermissionMode::Auto,
+        };
+        if self.permission.mode == mode && !rebuild_same {
             return Ok(());
         }
         let mut config = model_scoped_config(&self.current_model(), process_config);

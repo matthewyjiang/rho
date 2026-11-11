@@ -273,7 +273,9 @@ pub(super) async fn build_session(
         // in-process TUI session does: the classifier denies every gated tool
         // until a client picks a model and sets Auto again.
         SessionRole::Daemon => {
-            crate::permission_classifier::check_screen_config(config, credentials.as_ref())?;
+            if config.permission_mode == crate::permission::PermissionMode::Auto {
+                crate::permission_classifier::check_screen_config(config, credentials.as_ref())?;
+            }
         }
         SessionRole::Interactive
         | SessionRole::Run
