@@ -2,6 +2,8 @@
 //! daemon's jobs name (`daemon_jobs`), read from the run's artifact
 //! directory, which the daemon writes under the rho home this process
 //! shares. `/attach` then opens a run's artifacts from the same directory.
+//! A finished run's cost there joins the session's subagent cost, as the
+//! in-process subagent manager's does (`app_loop.rs`).
 
 use std::{
     collections::{HashMap, HashSet},
@@ -27,6 +29,8 @@ pub(super) struct SubagentRuns {
     delivered: HashSet<String>,
     /// The rows the last job list put on the rail.
     shown: Vec<SubagentSnapshot>,
+    /// The finished runs whose cost the session's subagent cost counts.
+    costed: HashSet<String>,
 }
 
 impl SubagentRuns {
@@ -37,6 +41,16 @@ impl SubagentRuns {
             self.directories.insert(run.to_owned(), directory);
         }
         subagent::read_status(&self.directories[run].join(subagent::RESULT_FILE_NAME))
+    }
+
+    /// What `run`, as `status` has it, adds to the session's subagent cost
+    /// in USD micros: its cost the first time it is seen finished, else
+    /// nothing.
+    fn claim_cost(&mut self, run: &str, status: &RunStatus) -> u64 {
+        if !status.state.is_terminal() || !self.costed.insert(run.to_owned()) {
+            return 0;
+        }
+        status.total_cost_usd.map_or(0, subagent::usd_to_micros)
     }
 }
 
@@ -52,7 +66,10 @@ impl App {
                 if self.daemon_rail.subagents.delivered.contains(&run) {
                     return None;
                 }
-                let status = self.daemon_rail.subagents.status(&run)?;
+                let runs = &mut self.daemon_rail.subagents;
+                let status = runs.status(&run)?;
+                let cost = runs.claim_cost(&run, &status);
+                self.usage.extra.subagent = self.usage.extra.subagent.saturating_add(cost);
                 let done = status.state.is_terminal();
                 let ended_long_ago = status.finished_at.is_some_and(|finished| {
                     now.saturating_sub(finished) >= ENDED_RETENTION.as_secs()
@@ -86,12 +103,12 @@ impl App {
         };
         let runs = &mut self.daemon_rail.subagents;
         // A running subagent's message names its run too; its row stays.
-        if !runs
-            .status(run)
-            .is_some_and(|status| status.state.is_terminal())
-        {
+        let Some(status) = runs.status(run).filter(|status| status.state.is_terminal()) else {
             return;
-        }
+        };
+        // Its row leaves before a job list may see it finished.
+        let cost = runs.claim_cost(run, &status);
+        self.usage.extra.subagent = self.usage.extra.subagent.saturating_add(cost);
         runs.delivered.insert(run.clone());
         runs.shown.retain(|shown| &shown.id != run);
         let shown = runs.shown.clone();
