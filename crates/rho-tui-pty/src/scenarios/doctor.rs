@@ -9,7 +9,7 @@ use crate::{
     scenario::{Scenario, Step},
 };
 
-use super::{SETTLE, STARTUP};
+use super::{mcp::setup_mcp, SETTLE, STARTUP};
 
 const SIZE: PtySize = PtySize {
     rows: 28,
@@ -53,6 +53,62 @@ pub(super) const DOCTOR_OVERLAY_SCENARIO: Scenario = Scenario::new(
     DOCTOR_OVERLAY_STEPS,
     /* smoke */ false,
 );
+
+// Covers: the MCP row reports the session's servers, a failed one included.
+// `daemon_doctor_mcp` expects the same row from a daemon session.
+// Owner: interactive TUI
+const DOCTOR_MCP_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    // The doctor row is a snapshot: wait until the broken server has failed.
+    Step::Phase("servers_settle"),
+    Step::SubmitText("/mcp"),
+    Step::WaitText {
+        text: "1 problem",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitTextGone {
+        text: "1 problem",
+        timeout: SETTLE,
+    },
+    Step::Phase("open_doctor"),
+    Step::SubmitText("/doctor"),
+    Step::WaitText {
+        text: "Authentication",
+        timeout: SETTLE,
+    },
+    // The Extensions section sits below the fold.
+    Step::Key(Key::End),
+    Step::WaitText {
+        text: "1 server problem, 0 connected, 0 tools; run /mcp for details",
+        timeout: SETTLE,
+    },
+    Step::AssertText("degraded"),
+    Step::Key(Key::Esc),
+    Step::WaitTextGone {
+        text: "Extensions",
+        timeout: SETTLE,
+    },
+    Step::ExitCommand,
+];
+
+const DOCTOR_MCP_SIZE: PtySize = PtySize {
+    rows: 50,
+    cols: 120,
+};
+
+pub(super) const DOCTOR_MCP_SCENARIO: Scenario = Scenario::new(
+    "doctor_mcp",
+    "Report the session's MCP servers in /doctor",
+    DOCTOR_MCP_SIZE,
+    DOCTOR_MCP_STEPS,
+    /* smoke */ false,
+)
+.with_setup(setup_mcp);
 
 fn assert_doctor_overlay_is_single_pane(harness: &mut PtyHarness) -> Result<()> {
     harness.wait_for_hidden_cursor(SETTLE)?;

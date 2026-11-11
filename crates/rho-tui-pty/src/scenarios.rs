@@ -34,6 +34,8 @@ mod daemon_context;
 #[cfg(unix)]
 mod daemon_detach;
 #[cfg(unix)]
+mod daemon_doctor;
+#[cfg(unix)]
 mod daemon_goal;
 #[cfg(unix)]
 mod daemon_login;
@@ -159,7 +161,7 @@ use command_palette::{
 use compact::{SUBMIT_DURING_COMPACT_STEPS, TYPE_DURING_COMPACT_STEPS};
 use config::{setup_auto_without_classifier, AUTO_PERMISSION_MODE_STARTUP_STEPS};
 use conversation_tree::CONVERSATION_TREE_STEPS;
-use doctor::DOCTOR_OVERLAY_SCENARIO;
+use doctor::{DOCTOR_MCP_SCENARIO, DOCTOR_OVERLAY_SCENARIO};
 use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
 use edit_diff::EDIT_DIFF_SCENARIO;
 use file_palette::FILE_PATH_AUTOCOMPLETE_SCENARIO;
@@ -480,6 +482,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO,
     LIMITS_OVERLAY_SCENARIO,
     DOCTOR_OVERLAY_SCENARIO,
+    DOCTOR_MCP_SCENARIO,
     spend::SPEND_OVERLAY_SCENARIO,
     context_overlay::CONTEXT_OVERLAY_SCENARIO,
     SIDE_OVERLAY_SCENARIO,
@@ -605,6 +608,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_goal::SCENARIO,
     #[cfg(unix)]
     daemon_mcp::SCENARIO,
+    #[cfg(unix)]
+    daemon_doctor::SCENARIO,
     #[cfg(unix)]
     daemon_prompt::DAEMON_PROMPT_SCENARIO,
     #[cfg(unix)]

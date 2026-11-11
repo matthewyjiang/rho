@@ -659,6 +659,17 @@ fn doctor_overlay_opens_and_dismisses() {
     assert_pass("doctor_overlay");
 }
 
+// Covers: the /doctor MCP row reports the session's servers in process and,
+// with RHO_TUI_DAEMON=1, the daemon session's servers rather than the
+// client's, with the same row.
+// Owner: interactive TUI (#1685)
+#[test]
+fn doctor_reports_the_session_mcp_servers() {
+    assert_pass("doctor_mcp");
+    #[cfg(unix)]
+    assert_pass("daemon_doctor_mcp");
+}
+
 // Covers: /hooks must open a single-pane overlay with the spawn contract, and
 // Esc must dismiss it instead of leaving a transcript notice.
 // Owner: interactive TUI
