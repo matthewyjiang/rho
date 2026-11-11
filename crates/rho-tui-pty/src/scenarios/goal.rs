@@ -139,27 +139,42 @@ fn assert_goal_retry_waited_for_subagents(harness: &mut crate::PtyHarness) -> Re
     Ok(())
 }
 
-pub(super) const GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("retry_after_delegation"),
-    Step::SubmitText("/goal fixture goal delegation retry"),
-    Step::WaitText {
-        text: "waiting for delegated agents",
-        timeout: STREAM,
-    },
-    Step::Custom(release_goal_retry_child),
-    Step::WaitText {
-        text: "goal retry resumed after delegated agent finished",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "goal achieved",
-        timeout: STREAM,
-    },
-    Step::Custom(assert_goal_retry_waited_for_subagents),
-    Step::ExitCommand,
-];
+/// The retry scenario up to the model's reply once the child was released,
+/// which `$resumed` names.
+macro_rules! goal_retry_steps {
+    ($resumed:expr) => {
+        &[
+            Step::Phase("startup"),
+            Step::WaitText {
+                text: "gpt-5.5",
+                timeout: STARTUP,
+            },
+            Step::Phase("retry_after_delegation"),
+            Step::SubmitText("/goal fixture goal delegation retry"),
+            Step::WaitText {
+                text: "waiting for delegated agents",
+                timeout: STREAM,
+            },
+            Step::Custom(release_goal_retry_child),
+            Step::WaitText {
+                text: $resumed,
+                timeout: STREAM,
+            },
+            Step::WaitText {
+                text: "goal achieved",
+                timeout: STREAM,
+            },
+            Step::Custom(assert_goal_retry_waited_for_subagents),
+            Step::ExitCommand,
+        ]
+    };
+}
+
+pub(super) const GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS: &[Step] =
+    goal_retry_steps!("goal retry resumed after delegated agent finished");
+
+/// A daemon session retries the failed turn's saved history instead of
+/// sending its prompt again, so one turn delivers the child's result and
+/// retries: the model answers the delivery.
+pub(super) const DAEMON_GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS: &[Step] =
+    goal_retry_steps!("background agent completion received with delegated result (delivery 1)");
