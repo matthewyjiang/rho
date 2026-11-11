@@ -674,6 +674,10 @@ struct App {
     /// status line already names it: the switch itself then says nothing
     /// over it.
     daemon_login_selected: Option<rho_protocol::ModelRef>,
+    /// A model switch this TUI asked for whose request finished before the
+    /// options showing it arrived, as after a reattach; the next options
+    /// report says where it landed.
+    daemon_unshown_switch: Option<rho_protocol::ModelRef>,
     daemon_title: Option<String>,
     /// Set while the daemon session's turn is a `/compact`; see
     /// `daemon_transcript`.

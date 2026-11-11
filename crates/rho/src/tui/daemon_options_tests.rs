@@ -269,3 +269,61 @@ fn a_switch_login_asked_for_keeps_logins_status_line() {
 
     assert_eq!(kept, vec![true, false, false]);
 }
+
+/// When a model switch's request finished, relative to the options report
+/// that follows it.
+#[derive(Clone, Copy, Debug)]
+enum Finished {
+    /// After the report showed the switch, as the event stream orders it.
+    AfterOptions,
+    /// Before any report showed it, as when a reattach's response carries
+    /// the options (#1880).
+    BeforeOptions,
+    /// Refused: the next report is on another model.
+    Refused,
+}
+
+// Covers: a pinned-model switch says where it landed whether its request
+// finished before or after the options showing it arrived, and a refused
+// one says nothing when a later report lands elsewhere (#1880).
+// Owner: tui daemon session options
+#[test]
+fn a_switch_says_where_it_landed_whenever_its_request_finished() {
+    const BEFORE: &str = "status before the switch";
+    let announced: Vec<_> = [
+        Finished::AfterOptions,
+        Finished::BeforeOptions,
+        Finished::Refused,
+    ]
+    .into_iter()
+    .map(|finished| {
+        let mut app = crate::tui::tests::test_app();
+        app.show_daemon_options(options_on("openai", "api-key"));
+        let asked = options_on("anthropic", "anthropic-api-key");
+        app.daemon_option_requests
+            .push_back(rho_protocol::SessionChange::Model {
+                model: asked.model.current.clone(),
+                auth: None,
+                setup: false,
+            });
+        app.set_status(BEFORE);
+        match finished {
+            Finished::AfterOptions => {
+                app.show_daemon_options(asked);
+                app.finish_daemon_option_request();
+            }
+            Finished::BeforeOptions => {
+                app.finish_daemon_option_request();
+                app.show_daemon_options(asked);
+            }
+            Finished::Refused => {
+                app.finish_daemon_option_request();
+                app.show_daemon_options(options_on("xai", "api-key"));
+            }
+        }
+        app.last_status != BEFORE
+    })
+    .collect();
+
+    assert_eq!(announced, vec![true, true, false]);
+}
