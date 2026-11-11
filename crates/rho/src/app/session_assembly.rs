@@ -129,6 +129,16 @@ pub(super) struct BuiltSession {
     pub diagnostics: RuntimeDiagnostics,
     /// The tool sources still loading, when the session defers them.
     pub tool_sources: Option<super::tools_prompt::PendingToolSources>,
+    /// Whether `provider` was built from the model's credentials.
+    pub provider_credentials: ProviderCredentials,
+}
+
+/// Whether an assembled session's provider was built from its model's
+/// credentials, or stands in for one that could not be ([`SignIn::Optional`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ProviderCredentials {
+    Found,
+    Missing,
 }
 
 impl BuiltSession {
@@ -229,13 +239,16 @@ where
             build_automation_provider(sdk_options.provider, &credentials)
         }
     };
-    let provider = match (built, sign_in) {
-        (Ok(provider), _) => provider,
+    let (provider, provider_credentials) = match (built, sign_in) {
+        (Ok(provider), _) => (provider, ProviderCredentials::Found),
         (Err(error), SignIn::Required) => return Err(error.into()),
-        (Err(error), SignIn::Optional) => Arc::new(UnavailableProvider::standing_in_for(
-            ModelIdentity::new(&login_config.provider, "unavailable", &login_config.model),
-            error,
-        )),
+        (Err(error), SignIn::Optional) => (
+            Arc::new(UnavailableProvider::standing_in_for(
+                ModelIdentity::new(&login_config.provider, "unavailable", &login_config.model),
+                error,
+            )) as Arc<dyn ModelProvider>,
+            ProviderCredentials::Missing,
+        ),
     };
     let live_provider = Arc::clone(&provider);
     let workspace_root = sdk_options.workspace.root.clone();
@@ -396,6 +409,7 @@ where
             prompt,
             diagnostics: diagnostics.clone(),
             tool_sources,
+            provider_credentials,
         },
         workspace_root,
         session_writes,
