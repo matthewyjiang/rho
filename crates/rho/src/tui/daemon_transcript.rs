@@ -9,6 +9,7 @@ use std::time::Instant;
 use super::{
     activity::ActivityPhase,
     compact_work::ReadyFollowUp,
+    compaction_display::CompactionUiOutcome,
     daemon_events::{DaemonView, Rest, TurnState},
     event_adapter::{compact_finished_event, compact_started_event, ViewModelEvent},
     program_status::ProgramStatus,
@@ -24,6 +25,8 @@ pub(super) struct DaemonCompactTurn {
     /// How its compaction ended, as the status line says it; the turn rests
     /// on it.
     rest_status: Option<&'static str>,
+    /// Whether its compaction reduced the conversation, once it ended.
+    compacted: Option<bool>,
 }
 
 impl App {
@@ -128,10 +131,12 @@ impl App {
                 DaemonView::CompactTurnOver => self.daemon_compact_turn = None,
                 DaemonView::CompactionEnded(outcome) => {
                     let status = outcome.status_label();
+                    let compacted = matches!(outcome, CompactionUiOutcome::Completed(_));
                     self.handle_agent_event(compact_finished_event(outcome), terminal)?;
                     self.set_status(status);
                     if let Some(turn) = &mut self.daemon_compact_turn {
                         turn.rest_status = Some(status);
+                        turn.compacted = Some(compacted);
                     }
                 }
                 DaemonView::Plan(list) => {
@@ -331,8 +336,9 @@ impl App {
     /// Pending work settles as an in-process turn's does: an interrupted
     /// turn hands it back to the composer, unless the person's cancel of
     /// questions ended it; any other keeps steers it never applied as
-    /// follow-ups, and a completed one arms the next follow-up, which the
-    /// app loop sends once the composer is free.
+    /// follow-ups, and a completed one, or a `/compact` whose compaction
+    /// failed, arms the next follow-up, which the app loop sends once the
+    /// composer is free.
     async fn end_daemon_turn(&mut self, rest: Rest) {
         // What the stream still holds of the reply shows before the turn's
         // closing rows, and nothing of it outlasts the turn.
@@ -392,6 +398,13 @@ impl App {
             }
             Rest::Failed { error } => {
                 self.end_busy_ui();
+                // As in process, a failed compaction still sends what waited
+                // for it, as a prompt "Compact, then send" parked.
+                if compact_turn.is_some() && self.pending.has_follow_ups() {
+                    self.start_follow_ups = Some(ReadyFollowUp::Queued {
+                        allow_auto_compact: false,
+                    });
+                }
                 (
                     Some("error".to_owned()),
                     ProgramStatus::Error { message: error },
@@ -405,6 +418,7 @@ impl App {
         };
         self.turn.stop_loading();
         self.turn.set_current_turn_start(None);
+        let compacted = compact_turn.as_ref().and_then(|turn| turn.compacted);
         // A `/compact` turn rests as its compaction ended.
         let compaction_status = compact_turn
             .and_then(|turn| turn.rest_status)
@@ -412,6 +426,7 @@ impl App {
         if let Some(status) = compaction_status.or(status) {
             self.set_status(status);
         }
+        self.settle_daemon_compact_handoff(compacted);
         self.settled_program_status = settled;
         self.notifier.turn_finished();
         self.report_resting_herdr_state().await;

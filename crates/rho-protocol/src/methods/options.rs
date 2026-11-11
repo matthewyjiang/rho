@@ -62,6 +62,20 @@ pub enum SessionChange {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         setup: bool,
     },
+    /// Switch to `model` as [`Self::Model`] does, only if the session's
+    /// current or last prompted turn is a `/compact` that reduced the
+    /// conversation. Queued behind that turn like any change, it applies once
+    /// the turn ends having compacted and is dropped otherwise, leaving the
+    /// session's options as they were. A host sends it once a `/compact` it
+    /// asked for started, to return to the model the session compacted from,
+    /// so the switch back outlives the host and a change queued after it
+    /// still applies last.
+    ModelAfterCompaction {
+        model: ModelRef,
+        /// As [`Self::Model`]'s `auth`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auth: Option<String>,
+    },
     /// Spend `level`, one of [`ReasoningOptions::available`], on later turns.
     Reasoning { level: ReasoningLevel },
     /// Turn fast mode on or off. Turning it on needs a model that has it

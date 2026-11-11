@@ -94,15 +94,6 @@ fn accept_highlighted_row(harness: &mut PtyHarness) -> Result<()> {
     harness.inject_key(&Key::Enter)
 }
 
-/// Both suggestions in one frame. Waiting for one and then asserting the
-/// other read a later frame, which a redraw in between could leave without
-/// the palette.
-fn wait_for_both_suggestions(harness: &mut PtyHarness) -> Result<()> {
-    harness.wait_for_screen("both suggestions for `al`", SETTLE, |screen| {
-        screen.contains_text("alice-from-server") && screen.contains_text("alfred-from-server")
-    })
-}
-
 fn complete_highlighted_row(harness: &mut PtyHarness) -> Result<()> {
     harness.settle_plain_text_input();
     harness.inject_key(&Key::Tab)
@@ -144,7 +135,16 @@ const MCP_COMPOSER_STEPS: &[Step] = &[
     },
     Step::Phase("complete_prompt_argument"),
     Step::TypeText("/mcp:fixture:greet al"),
-    Step::Custom(wait_for_both_suggestions),
+    // Both rows: a frame can reach the screen over more than one read, so
+    // one row showing does not mean the other has.
+    Step::WaitText {
+        text: "alfred-from-server",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "alice-from-server",
+        timeout: SETTLE,
+    },
     Step::Custom(complete_highlighted_row),
     Step::WaitText {
         text: "/mcp:fixture:greet alice-from-server",

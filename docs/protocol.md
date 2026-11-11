@@ -263,6 +263,7 @@ A session's `options` are what a frontend shows as its settings and command menu
 | `kind` | Fields | Change |
 | --- | --- | --- |
 | `model` | `model` (`{provider, model}`), optionally `auth` and `setup` | Switches to one of `model.available`, keeping the reasoning level; a model that cannot keep it is refused. `auth` names the auth profile to run the model on, as `--auth` does; one the model's provider does not take is `InvalidParams`. Without it, the session keeps its auth when the provider takes it, else uses one that has credentials. A change that moves the session to another model tells clients which prompt file it now runs on, as a `notice`, unless `setup` is `true`: a launch flag or a host's setup sends that, as it sets the session up rather than switching it. |
+| `model_after_compaction` | `model`, optionally `auth` | Switches as `model` does, only if the session's current or last prompted turn is a `/compact` that reduced the conversation. It waits behind that turn like any change and is dropped, with `options` as they were, when the turn did not compact. A client sends it once a `/compact` it asked for started, to return to the model the session compacted from even if the client stops following the session; a change sent after it still applies last. |
 | `reasoning` | `level` | Spends one of `reasoning.available` on later turns. |
 | `fast_mode` | `enabled` | Turns fast mode on, for a model that has it, or off. |
 | `permission_mode` | `mode` | Gates later turns' tool calls with `mode`. |
