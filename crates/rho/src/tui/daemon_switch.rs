@@ -35,6 +35,7 @@ impl App {
         self.input_ui.set_command_palette_dismissed(false);
         self.clamp_command_selection();
         self.start_follow_ups = None;
+        self.daemon_compact_handoff = None;
         self.pending.clear_follow_ups();
         self.goal = None;
         self.pending.clear_steering();
