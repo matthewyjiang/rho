@@ -124,7 +124,12 @@ impl Sessions {
         let applied = if superseded {
             Ok(Applied::Superseded)
         } else {
-            change.apply(runtime, &session.config(), &auths).await
+            let config = if matches!(change, Change::PermissionMode(_)) {
+                session.config_for_permission_change().await
+            } else {
+                session.config()
+            };
+            change.apply(runtime, &config, &auths).await
         };
         let applied = match applied {
             // The session keeps a setting with its file from its first

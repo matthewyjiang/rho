@@ -38,13 +38,15 @@ impl SessionRuntime {
     /// Applies `mode` to later prompts. The host holds the runtime between
     /// prompts, so none is in flight. On error the session keeps its old
     /// mode: a mode this session's config cannot run, such as auto without
-    /// a classifier model, is [`SettingChangeError::Unsupported`].
+    /// a classifier model, is [`SettingChangeError::Unsupported`]. Auto
+    /// rebuilds even when the session already runs it, so a classifier model
+    /// picked since takes effect.
     pub(crate) async fn set_permission_mode(
         &mut self,
         mode: PermissionMode,
         process_config: &Config,
     ) -> Result<(), SettingChangeError> {
-        if self.permission.mode == mode {
+        if self.permission.mode == mode && mode != PermissionMode::Auto {
             return Ok(());
         }
         let mut config = model_scoped_config(&self.current_model(), process_config);

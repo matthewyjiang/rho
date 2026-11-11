@@ -130,18 +130,75 @@ pub(super) const AUTO_PERMISSION_MODE_STARTUP_STEPS: &[Step] = &[
 
 pub(super) const AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID: &str =
     "auto_permission_mode_recovered_handoff";
+// Covers: the same resume when the daemon holds the session.
+// Owner: interactive TUI as a daemon client
+#[cfg(unix)]
+pub(super) const DAEMON_AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID: &str =
+    "daemon_auto_permission_mode_recovered_handoff";
+
+pub(super) const AUTO_RECOVERED_HANDOFF_SCENARIO: Scenario = Scenario::new(
+    AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID,
+    "Resume a session under Auto without a classifier and force the model pick",
+    AUTO_RECOVERED_HANDOFF_SIZE,
+    &[],
+    /*smoke*/ false,
+);
+#[cfg(unix)]
+pub(super) const DAEMON_AUTO_RECOVERED_HANDOFF_SCENARIO: Scenario = Scenario::new(
+    DAEMON_AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID,
+    "Resume a daemon session under Auto without a classifier and force the model pick",
+    AUTO_RECOVERED_HANDOFF_SIZE,
+    &[],
+    /*smoke*/ false,
+);
+const AUTO_RECOVERED_HANDOFF_SIZE: PtySize = PtySize {
+    rows: 16,
+    cols: 100,
+};
 
 /// Two-process scenario: seed a real session (with agent identity), rewrite its
 /// assistant message to carry non-replayable provider context, switch config to
 /// Auto without a classifier, resume, continue the handoff, then confirm the
 /// classifier gate still opens.
 // Owner: interactive TUI
-pub(super) fn is_auto_recovered_handoff_scenario(name: &str) -> bool {
-    name == AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID
+pub(super) fn auto_recovered_handoff_scenario(name: &str) -> Option<SessionHost> {
+    match name {
+        AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID => Some(SessionHost::InProcess),
+        #[cfg(unix)]
+        DAEMON_AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID => Some(SessionHost::Daemon),
+        _ => None,
+    }
+}
+
+/// Where the recovered-handoff scenario's sessions run.
+#[derive(Clone, Copy)]
+pub(super) enum SessionHost {
+    InProcess,
+    #[cfg(unix)]
+    Daemon,
+}
+
+impl SessionHost {
+    fn id(self) -> &'static str {
+        match self {
+            Self::InProcess => AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID,
+            #[cfg(unix)]
+            Self::Daemon => DAEMON_AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID,
+        }
+    }
+
+    fn launch(self, plan: crate::env::RhoLaunchPlan) -> crate::env::RhoLaunchPlan {
+        match self {
+            Self::InProcess => plan,
+            #[cfg(unix)]
+            Self::Daemon => plan.with_env("RHO_TUI_DAEMON", "1"),
+        }
+    }
 }
 
 pub(super) fn run_auto_recovered_handoff(
     runner: &crate::scenario::ScenarioRunner,
+    host: SessionHost,
 ) -> anyhow::Result<crate::scenario::ScenarioOutcome> {
     use std::fs;
 
@@ -153,10 +210,7 @@ pub(super) fn run_auto_recovered_handoff(
         scenario::ScenarioOutcome,
     };
 
-    const SIZE: PtySize = PtySize {
-        rows: 16,
-        cols: 100,
-    };
+    const SIZE: PtySize = AUTO_RECOVERED_HANDOFF_SIZE;
     const SEED_PROMPT: &str = "recovered auto handoff seed";
 
     let home = IsolatedHome::new()?;
@@ -176,8 +230,10 @@ permission_mode = "bypass"
 credential_store = "file"
 "#,
     )?;
-    let seed_plan = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
-        .with_env("OPENAI_API_KEY", "sk-test-matrix");
+    let seed_plan = host.launch(
+        RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
+            .with_env("OPENAI_API_KEY", "sk-test-matrix"),
+    );
     let mut seed = PtyHarness::spawn_named(&seed_plan, "auto_recovered_seed")?;
     seed.enable_timing(runner.record_timing);
     if let Some(root) = &runner.artifact_root {
@@ -198,7 +254,7 @@ credential_store = "file"
             let _ = seed.kill();
         }
         return Ok(ScenarioOutcome {
-            id: AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID.into(),
+            id: host.id().into(),
             passed: false,
             message: format!("seed phase failed: {error:#}"),
             timing: seed.timing().clone(),
@@ -212,12 +268,13 @@ credential_store = "file"
     inject_non_replayable_provider_context(&session_path, StoredProviderRewrite::ToAnthropic)?;
     setup_auto_without_classifier(&home)?;
 
-    let resume_plan = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
-        .with_env("OPENAI_API_KEY", "sk-test-matrix")
-        .with_arg("--resume")
-        .with_arg(&session_id);
-    let mut harness =
-        PtyHarness::spawn_named(&resume_plan, AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID)?;
+    let resume_plan = host.launch(
+        RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
+            .with_env("OPENAI_API_KEY", "sk-test-matrix")
+            .with_arg("--resume")
+            .with_arg(&session_id),
+    );
+    let mut harness = PtyHarness::spawn_named(&resume_plan, host.id())?;
     harness.enable_timing(runner.record_timing);
     if let Some(root) = &runner.artifact_root {
         harness.set_artifact_writer(ArtifactWriter::new(root));
@@ -248,7 +305,7 @@ credential_store = "file"
 
     Ok(match result {
         Ok(()) => ScenarioOutcome {
-            id: AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID.into(),
+            id: host.id().into(),
             passed: true,
             message: "ok".into(),
             timing: harness.timing().clone(),
@@ -259,7 +316,7 @@ credential_store = "file"
                 let _ = harness.kill();
             }
             ScenarioOutcome {
-                id: AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID.into(),
+                id: host.id().into(),
                 passed: false,
                 message: format!("{error:#}"),
                 timing: harness.timing().clone(),

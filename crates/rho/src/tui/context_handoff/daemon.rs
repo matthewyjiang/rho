@@ -71,6 +71,13 @@ impl App {
                 "could not read provider context: {error}"
             ))),
         }
+        // The Auto gate waited for this answer; a handoff that opened runs
+        // it once resolved.
+        if let Err(error) = self.reconcile_daemon_auto_classifier_gate() {
+            self.insert_entry(&Entry::Error(format!(
+                "could not change permission mode: {error:#}"
+            )));
+        }
     }
 
     fn offer_daemon_context_handoff(&mut self, report: &ProviderContextReport) {

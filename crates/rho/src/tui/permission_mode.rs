@@ -16,6 +16,26 @@ pub(super) enum PermissionPersistence {
     UntilExit,
 }
 
+/// Why the Auto gate dropped a session to Supervised.
+#[derive(Clone, Copy)]
+enum AutoClassifierDemote {
+    /// The person dismissed the classifier picker.
+    NotSelected,
+    /// No model could serve as the classifier.
+    NoneAvailable,
+}
+
+impl AutoClassifierDemote {
+    fn status(self) -> &'static str {
+        match self {
+            Self::NotSelected => "permission mode set to supervised: no classifier model selected",
+            Self::NoneAvailable => {
+                "permission mode set to supervised: no classifier model available; run /refresh-models"
+            }
+        }
+    }
+}
+
 /// Cycle from most restrictive to least restrictive, then wrap back to Plan.
 /// Auto is only reachable when the session has a classifier model configured.
 fn next_cycle_mode(current: PermissionMode, classifier_configured: bool) -> PermissionMode {
@@ -139,6 +159,9 @@ impl App {
         persistence: PermissionPersistence,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            return self.apply_daemon_permission_mode(mode, persistence);
+        }
         let previous = agent.permission_mode();
         let previous_config = agent.config_snapshot();
         let mut current_config = previous_config.clone();
@@ -174,6 +197,24 @@ impl App {
         Ok(())
     }
 
+    /// [`Self::apply_permission_mode`] for a daemon session, which applies
+    /// the mode and reports it in its options.
+    fn apply_daemon_permission_mode(
+        &mut self,
+        mode: PermissionMode,
+        persistence: PermissionPersistence,
+    ) -> anyhow::Result<()> {
+        match persistence {
+            PermissionPersistence::Save => self
+                .info
+                .services
+                .config_repository
+                .update(|config| config.permission_mode = mode)?,
+            PermissionPersistence::UntilExit => {}
+        }
+        self.configure_daemon(rho_protocol::SessionChange::PermissionMode { mode: mode.into() })
+    }
+
     pub(super) fn permission_classifier_model_configured(&self) -> bool {
         self.info
             .runtime
@@ -191,47 +232,66 @@ impl App {
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if self.info.session.daemon.is_some() {
+        let Some(demote) = self.auto_classifier_gate() else {
             return Ok(());
-        }
-        if self.pending_auto_classifier_demote {
-            self.pending_auto_classifier_demote = false;
-            if self.info.runtime.permission_mode == PermissionMode::Auto
-                && !self.permission_classifier_model_configured()
-            {
-                self.fallback_auto_without_classifier(agent).await?;
-            }
-            return Ok(());
-        }
-        if self.exclusive.setup_step().is_some() {
-            return Ok(());
-        }
-        if !matches!(self.input_ui.composer(), ComposerMode::Input) {
-            return Ok(());
-        }
-        if self.info.runtime.permission_mode != PermissionMode::Auto {
-            return Ok(());
-        }
-        if self.permission_classifier_model_configured() {
-            return Ok(());
-        }
-        if self.open_permission_classifier_model_prompt(
-            InternalAgentModelPickerOrigin::PermissionModeStartup,
-        ) {
-            return Ok(());
-        }
-        // Empty model catalog: Auto would fail closed on every gated tool.
-        // Drop to Supervised so the session can still ask a human.
+        };
         self.apply_permission_mode(
             PermissionMode::Supervised,
             PermissionPersistence::Save,
             agent,
         )
         .await?;
-        self.set_status(
-            "permission mode set to supervised: no classifier model available; run /refresh-models",
-        );
+        self.set_status(demote.status());
         Ok(())
+    }
+
+    /// [`Self::reconcile_auto_classifier_gate`] for a daemon session, which
+    /// opens in Auto without a model too and needs no runtime handle to
+    /// change its mode.
+    pub(super) fn reconcile_daemon_auto_classifier_gate(&mut self) -> anyhow::Result<()> {
+        let Some(demote) = self.auto_classifier_gate() else {
+            return Ok(());
+        };
+        self.apply_daemon_permission_mode(PermissionMode::Supervised, PermissionPersistence::Save)?;
+        self.set_status(demote.status());
+        Ok(())
+    }
+
+    /// Opens the classifier picker when the gate needs it, or says why
+    /// Auto must fall back to Supervised. Startup Auto without a classifier
+    /// cannot run gated tools; Supervised keeps the same capability gate and
+    /// asks a human instead.
+    fn auto_classifier_gate(&mut self) -> Option<AutoClassifierDemote> {
+        if self.pending_auto_classifier_demote {
+            self.pending_auto_classifier_demote = false;
+            return (self.info.runtime.permission_mode == PermissionMode::Auto
+                && !self.permission_classifier_model_configured())
+            .then_some(AutoClassifierDemote::NotSelected);
+        }
+        if self.exclusive.setup_step().is_some() {
+            return None;
+        }
+        if !matches!(self.input_ui.composer(), ComposerMode::Input) {
+            return None;
+        }
+        // A resumed daemon session's handoff dialog opens first when its
+        // report answers, which runs the gate again.
+        if self.awaited_daemon_report == Some(rho_protocol::SessionReport::ProviderContext) {
+            return None;
+        }
+        if self.info.runtime.permission_mode != PermissionMode::Auto {
+            return None;
+        }
+        if self.permission_classifier_model_configured() {
+            return None;
+        }
+        if self.open_permission_classifier_model_prompt(
+            InternalAgentModelPickerOrigin::PermissionModeStartup,
+        ) {
+            return None;
+        }
+        // Empty model catalog: Auto would fail closed on every gated tool.
+        Some(AutoClassifierDemote::NoneAvailable)
     }
 
     pub(super) fn open_permission_classifier_model_prompt(
@@ -278,27 +338,18 @@ impl App {
             InternalAgentModelPickerOrigin::PermissionModeStartup => {
                 // Auto is already active; the picker only stored the model.
                 self.pending_auto_classifier_demote = false;
+                if self.info.session.daemon.is_some() {
+                    // Setting Auto again makes the daemon's session read the
+                    // model the picker saved.
+                    self.configure_daemon(rho_protocol::SessionChange::PermissionMode {
+                        mode: PermissionMode::Auto.into(),
+                    })?;
+                }
                 self.sync_internal_agents_runtime_config(agent);
                 self.set_status("permission mode: auto");
             }
             _ => {}
         }
-        Ok(())
-    }
-
-    /// Startup Auto without a classifier cannot run gated tools. Supervised keeps
-    /// the same capability gate and asks a human instead.
-    pub(super) async fn fallback_auto_without_classifier(
-        &mut self,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        self.apply_permission_mode(
-            PermissionMode::Supervised,
-            PermissionPersistence::Save,
-            agent,
-        )
-        .await?;
-        self.set_status("permission mode set to supervised: no classifier model selected");
         Ok(())
     }
 
