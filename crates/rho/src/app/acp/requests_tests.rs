@@ -139,6 +139,7 @@ fn launch_flags_and_host_request_make_the_session_setup() {
             ],
             without: BTreeSet::from([SessionPart::Tools]),
             child_threads: ChildThreads::Host,
+            idle_wake: rho_protocol::IdleWake::Never,
         }
     );
     assert_eq!(
