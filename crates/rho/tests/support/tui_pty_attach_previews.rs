@@ -56,7 +56,7 @@ fn delegated_argument_previews(host: SessionHost) {
     parent
         .wait_for_text("delegated write dispatched", wait)
         .unwrap();
-    attach_view::open(&mut parent, wait);
+    attach_view::open(&mut parent, "worker", wait);
     parent.inject_key(&Key::Ctrl('o')).unwrap();
     parent.wait_for_text("FIRST_WRITE_FRAGMENT", wait).unwrap();
     let journal = find_journal(&home.home.join(".rho")).expect("delegated journal");
@@ -75,7 +75,7 @@ fn delegated_argument_previews(host: SessionHost) {
     // Reopen the view so a fresh reader joins mid-run and still sees the
     // replaceable preview.
     attach_view::leave(&mut parent, wait);
-    attach_view::open(&mut parent, wait);
+    attach_view::open(&mut parent, "worker", wait);
     parent
         .wait_for_text(".rho-tui-fixture-streamed-write.txt", wait)
         .unwrap();
@@ -108,7 +108,7 @@ fn delegated_argument_previews(host: SessionHost) {
                 .is_some_and(|(_, after)| after.contains("Worked for"))
         })
         .unwrap();
-    attach_view::open(&mut parent, wait);
+    attach_view::open(&mut parent, "worker", wait);
     parent
         .wait_for_text("streamed write completed successfully", wait)
         .unwrap();

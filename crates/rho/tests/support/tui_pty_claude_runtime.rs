@@ -177,7 +177,11 @@ fn fake_claude_runtime_end_to_end_success() {
     );
 
     // Replay the real on-disk artifacts in the in-place attach view.
-    attach_view::open(&mut harness, WaitTimeout::secs(10, "attach view"));
+    attach_view::open(
+        &mut harness,
+        "claude-planner",
+        WaitTimeout::secs(10, "attach view"),
+    );
     for (text, label) in [
         (format!("attach {run_id}"), "attach startup"),
         ("Say hello in one short sentence.".into(), "attach prompt"),

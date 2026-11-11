@@ -135,7 +135,11 @@ fn fake_cursor_acp_runtime_end_to_end() {
 
     // Replay the on-disk artifacts in the in-place attach view: the shell card
     // and final text survive.
-    attach_view::open(&mut harness, WaitTimeout::secs(10, "attach view"));
+    attach_view::open(
+        &mut harness,
+        "cursor-worker",
+        WaitTimeout::secs(10, "attach view"),
+    );
     harness
         .wait_for_text(
             &format!("attach {run_id}"),
