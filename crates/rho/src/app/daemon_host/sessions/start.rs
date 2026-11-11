@@ -9,7 +9,7 @@
 //! the first one does.
 
 use rho_protocol::{
-    ErrorCode, IdempotencyKey, ProjectTrustMismatch, RpcError, SessionPromptParams,
+    ErrorCode, IdempotencyKey, ProjectTrustMismatch, PromptAuthor, RpcError, SessionPromptParams,
     SessionPromptResponse, SessionSetup, TurnId,
 };
 use rho_sdk::CancellationToken;
@@ -111,6 +111,12 @@ impl Sessions {
                 "the prompt's idempotency key is empty",
             ));
         }
+        if params.author == PromptAuthor::Unknown {
+            return Err(RpcError::new(
+                ErrorCode::InvalidParams,
+                "the prompt's author is one this daemon does not know",
+            ));
+        }
         let input = prompt_content::user_input(&params.content).map_err(|error| {
             RpcError::new(
                 ErrorCode::InvalidParams,
@@ -144,7 +150,7 @@ impl Sessions {
                         stopping: self.stopping.clone(),
                         limit: params.timeout_ms.map(TurnLimit::starting_now),
                     }
-                    .spawn(input);
+                    .spawn(input, params.author);
                     break (id, start);
                 }
                 Entered::SentAgain { id, start } => break (id, start),

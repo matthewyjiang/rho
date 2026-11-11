@@ -68,6 +68,7 @@ impl Adapter {
         let (began, turn) = oneshot::channel();
         live.deliver(&link, Control::Arm { waiter, turn }).await?;
         let params = SessionPromptParams {
+            author: rho_protocol::PromptAuthor::Person,
             session: live.id.clone(),
             content: requests::prompt_content(content),
             timeout_ms: None,

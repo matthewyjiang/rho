@@ -687,10 +687,6 @@ struct App {
     /// started, to say whether the session kept the source model; see
     /// `context_handoff::daemon`.
     daemon_compact_handoff: bool,
-    /// The `/workflow:` prompt the hub sent the daemon session whose user
-    /// message has not come back yet, at most until the turn under way
-    /// ends or another session is followed; see `daemon_workflows`.
-    daemon_hub_launch: Option<String>,
     /// The open `/info` overlay's read of the daemon session's compaction.
     info_compaction_read: daemon_reports::InfoCompactionRead,
     /// The report the person last asked the daemon for and still waits on;

@@ -3158,6 +3158,26 @@
       ],
       "type": "object"
     },
+    "PromptAuthor": {
+      "anyOf": [
+        {
+          "const": "person",
+          "description": "The person: the daemon saves the prompt as their message and shows\nit to attached clients.",
+          "type": "string"
+        },
+        {
+          "const": "client",
+          "description": "The client, sending a command on the person's behalf, as a workflow\nhub's start is: the daemon runs it without saving or showing a user\nmessage for it. Only a `/workflow:` start may come from the client;\nany other prompt ends before it began, as a command the session\ncannot run does.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Who a prompt speaks for, which decides whether the daemon keeps it as a\nuser message. Protocol minors may add authors."
+    },
     "ProtocolVersion": {
       "description": "A protocol version. Major 0 is the unstable protocol: every minor may\nchange anything. From major 1 on, minors add optional fields, methods,\nand error codes, and only majors may change anything.",
       "properties": {
@@ -5425,6 +5445,10 @@
     "SessionPromptParams": {
       "description": "Params of [`SESSION_PROMPT`].",
       "properties": {
+        "author": {
+          "$ref": "#/$defs/PromptAuthor",
+          "description": "Who the prompt speaks for; absent, the person."
+        },
         "content": {
           "description": "The user message: at least one block, or the prompt is refused as\n[`crate::ErrorCode::InvalidParams`], as is one with an image whose\ndata is not a base64 PNG, JPEG, GIF, or WebP of the declared type\nwithin the daemon's image limit. Text and images reach the model as\nwritten. A resource reaches it as its text, and a resource link as\nits description, else its name, each fenced under its URI (#1670). A\nslash command the message starts with that the session runs, such as\n`/init`, a prompt template, or an MCP prompt, is expanded first, as\n`rho run` expands it.",
           "items": {

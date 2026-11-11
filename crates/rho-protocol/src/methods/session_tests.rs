@@ -9,6 +9,7 @@ use super::*;
 #[test]
 fn a_prompt_carries_its_message_as_content_blocks() {
     let params = SessionPromptParams {
+        author: PromptAuthor::Person,
         session: SessionId::new("s1"),
         content: vec![
             ContentBlock::Text {
