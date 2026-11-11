@@ -164,14 +164,8 @@ impl App {
                     // The daemon's figure includes the response under way,
                     // so the local estimate of its output starts over.
                     self.usage.live_stream.clear();
-                    // The daemon's figure counts its keep-warm pings, which
-                    // the totals add as their own row, as in process.
-                    let cost_usd_micros = cost_usd_micros
-                        .map(|cost| cost.saturating_sub(self.usage.extra.cache_warm));
-                    self.usage.cumulative_usage = Some(rho_providers::model::ModelUsage {
-                        cost_usd_micros,
-                        ..Default::default()
-                    });
+                    self.usage.daemon_spend = Some(cost_usd_micros);
+                    self.sync_daemon_main_cost();
                 }
                 DaemonView::CacheWarm {
                     warming,

@@ -4390,7 +4390,7 @@
           "description": "The daemon's keep-warm of the session's provider prompt cache\nchanged: it started or stopped warming, sent a ping, or a ping\ncost something. Sent only for a session whose `process` tool offers\n`keep_warm`. Why warming stopped early is a [`Self::Notice`].",
           "properties": {
             "cost_usd_micros": {
-              "description": "What the session's pings have cost since the daemon loaded it,\nin millionths of a US dollar; [`Self::Usage`]'s cost counts it\ntoo. Absent while no ping had a price.",
+              "description": "What the session's pings have cost since the daemon loaded it\nor its conversation last moved, in millionths of a US dollar.\n[`Self::Usage`]'s cost counts the pings too: a client that shows\nthem apart takes this out of the latest usage cost. Absent while\nno ping had a price.",
               "format": "uint64",
               "minimum": 0,
               "type": [

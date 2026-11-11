@@ -533,7 +533,8 @@ async fn compact(
     // not wait for the compaction.
     view.began();
     let compacted = runtime.compact(scope, instructions).await;
-    if let Some(keep) = &view.session.cache_warm {
+    // A compaction that was cancelled or failed left the prefix as it was.
+    if let (Ok(Some(_)), Some(keep)) = (&compacted, &view.session.cache_warm) {
         keep.prefix_rewritten();
     }
     let end = match &compacted {
@@ -701,6 +702,9 @@ impl DaemonView {
         // Here, so a turn whose task panicked frees the watcher too.
         if let Some(wake) = &self.session.idle_wake {
             wake.turn_ended();
+        }
+        if let Some(keep) = &self.session.cache_warm {
+            keep.turn_ended();
         }
         match start {
             Some(PromptStart::Began) => self.began(),

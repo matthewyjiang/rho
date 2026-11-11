@@ -240,9 +240,11 @@ pub enum SessionEvent {
         /// holds it and no turn runs. Absent otherwise.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         warming: Option<CacheWarmProgress>,
-        /// What the session's pings have cost since the daemon loaded it,
-        /// in millionths of a US dollar; [`Self::Usage`]'s cost counts it
-        /// too. Absent while no ping had a price.
+        /// What the session's pings have cost since the daemon loaded it
+        /// or its conversation last moved, in millionths of a US dollar.
+        /// [`Self::Usage`]'s cost counts the pings too: a client that shows
+        /// them apart takes this out of the latest usage cost. Absent while
+        /// no ping had a price.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cost_usd_micros: Option<u64>,
     },

@@ -24,7 +24,7 @@ use rho_providers::model::{models_dev::cached_model_metadata, ModelMetadata, Mod
 use rho_sdk::{CancellationToken, ModelCallMetrics};
 use tokio::sync::Notify;
 
-use super::{super::jobs::SessionJob, LoadedSession, Sessions};
+use super::{super::jobs::SessionJob, cost, LoadedSession, Sessions};
 use crate::{
     app::session_runtime::SessionRuntime,
     cache_warm::{
@@ -73,6 +73,9 @@ struct Warming {
     /// What the session's pings have cost since it was loaded, or since its
     /// conversation last moved.
     cost_usd_micros: Option<u64>,
+    /// How many times the conversation moved. A ping sent before a move is
+    /// the old conversation's spend, not this one's.
+    conversation: u64,
     /// What the session's clients were last told.
     reported: Report,
 }
@@ -112,6 +115,7 @@ impl KeepWarm {
                 },
                 priced: None,
                 cost_usd_micros: None,
+                conversation: 0,
                 reported: Report::default(),
             }),
             route,
@@ -122,6 +126,13 @@ impl KeepWarm {
 
     /// The session's run started: its turn owns the cache from here.
     pub(super) fn run_started(&self) {
+        self.changed.notify_one();
+    }
+
+    /// The session's turn ended, however it did: a process it started may
+    /// hold the cache though no model call followed the start, as when the
+    /// turn was cancelled or its next call failed.
+    pub(super) fn turn_ended(&self) {
         self.changed.notify_one();
     }
 
@@ -269,29 +280,32 @@ impl LoadedSession {
             .unwrap_or_else(PoisonError::into_inner)
             .as_ref()
             .is_some_and(ProcessManager::has_keep_warm_hold);
-        // A turn under way or a change applying holds the runtime, and its
-        // own requests refresh the cache. Asked only for a hold, so a
-        // session nothing warms never contends for its runtime.
-        let runtime = (enabled && held)
+        let now = now();
+        let warms = enabled && held;
+        // Only a turn pauses the warming: its own requests refresh the cache.
+        let turn_under_way = self.turn_under_way();
+        // Asked only for an idle hold, so a session nothing warms never
+        // contends for its runtime.
+        let runtime = (warms && !turn_under_way)
             .then(|| self.runtime.try_lock().ok())
             .flatten();
-        let idle_runtime = runtime
-            .as_ref()
-            .and_then(|runtime| runtime.as_ref())
-            .filter(|_| {
-                !matches!(self.jobs.session_job(&self.id), SessionJob::Busy(_))
-                    && self.turn().hold.is_none()
-            });
-        let gate = if !enabled || !held {
+        let idle_runtime = runtime.as_ref().and_then(|runtime| runtime.as_ref());
+        if warms && !turn_under_way && (idle_runtime.is_none() || self.turn().hold.is_some()) {
+            // Something else has the runtime for a moment: a turn that just
+            // ended, a settings change, a client's request. That is no
+            // pause, so the warmer and what clients were told stay as they
+            // are, and the next look decides.
+            return Some(now + HOLD_POLL);
+        }
+        let gate = if !warms {
             WarmGate::Released
-        } else if idle_runtime.is_none() {
+        } else if turn_under_way {
             WarmGate::Paused
         } else if !keep.route.is_supported() {
             WarmGate::Unsupported
         } else {
             WarmGate::Holding
         };
-        let now = now();
         let mut warming = keep.warming();
         let metadata = match (gate, idle_runtime, &config) {
             (WarmGate::Holding, Some(runtime), Some(config)) => warming.hold_on(runtime, config),
@@ -310,6 +324,7 @@ impl LoadedSession {
                 self.send_cache_warm_ping(
                     ping,
                     SentPing {
+                        conversation: warming.conversation,
                         generation: warming.warmer.generation(),
                         sent_at: now,
                         metadata,
@@ -340,26 +355,46 @@ impl LoadedSession {
                     error: Some(error),
                 },
             };
-            if let Some(session) = session.upgrade() {
-                session.cache_warm_ping_finished(&sent, &outcome);
-            }
+            let Some(session) = session.upgrade() else {
+                return;
+            };
+            // The ledger has the ping now, so the session's cost is told
+            // again with it, ahead of the pings' own cost: clients take the
+            // second out of the first. A turn under way tells its own.
+            let usage = if session.turn_under_way() {
+                None
+            } else {
+                session.live().streamed_usage()
+            };
+            let usage = cost::priced(usage.into_iter().collect(), &session.id).await;
+            session.cache_warm_ping_finished(&sent, &outcome, usage);
         });
     }
 
-    /// Applies a finished ping. Its spend always counts; a ping the hold or
-    /// the route no longer describes changes nothing else.
-    fn cache_warm_ping_finished(&self, sent: &SentPing, outcome: &CacheWarmOutcome) {
+    /// Applies a finished ping, telling clients `usage`, the session's cost
+    /// with the ping in it, first. Its spend counts toward the conversation
+    /// it was sent in; a ping the hold or the route no longer describes
+    /// changes nothing else.
+    fn cache_warm_ping_finished(
+        &self,
+        sent: &SentPing,
+        outcome: &CacheWarmOutcome,
+        usage: Vec<wire::SessionEvent>,
+    ) {
         let Some(keep) = &self.cache_warm else {
             return;
         };
         let mut warming = keep.warming();
-        if let Some(cost) = ping_cost(&outcome.usage, sent.metadata.as_ref()) {
-            warming.cost_usd_micros = Some(
-                warming
-                    .cost_usd_micros
-                    .unwrap_or_default()
-                    .saturating_add(cost),
-            );
+        if warming.conversation == sent.conversation {
+            if let Some(cost) = ping_cost(&outcome.usage, sent.metadata.as_ref()) {
+                warming.cost_usd_micros = Some(
+                    warming
+                        .cost_usd_micros
+                        .unwrap_or_default()
+                        .saturating_add(cost),
+                );
+            }
+            self.feed.publish(usage);
         }
         if warming.warmer.is_current(sent.generation) {
             let result = PingResult::classify(outcome);
@@ -387,7 +422,14 @@ impl LoadedSession {
         warming.warmer.reset();
         warming.last_prefix_read = None;
         warming.cost_usd_micros = None;
+        warming.conversation = warming.conversation.wrapping_add(1);
         self.report_cache_warm(&mut warming, now());
+    }
+
+    /// Whether a turn of the session is queued, running, or waiting for
+    /// input.
+    fn turn_under_way(&self) -> bool {
+        matches!(self.jobs.session_job(&self.id), SessionJob::Busy(_))
     }
 
     fn tell_cache_warm_halt(&self, halt: WarmHalt, detail: Option<&str>, max_pings: u32) {
@@ -415,6 +457,8 @@ impl LoadedSession {
 
 /// A ping on its way: what applying its outcome needs.
 struct SentPing {
+    /// [`Warming::conversation`] when the ping started.
+    conversation: u64,
     /// The warmer's generation when the ping started.
     generation: u64,
     sent_at: Instant,

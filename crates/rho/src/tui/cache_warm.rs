@@ -184,7 +184,27 @@ impl App {
     ) {
         self.usage.daemon_cache_warm = warming;
         self.usage.extra.cache_warm = cost_usd_micros;
+        self.sync_daemon_main_cost();
         self.sync_cache_warm_status();
+    }
+
+    /// Derives the followed daemon session's main cost from what its host
+    /// last reported. The host's spend counts its keep-warm pings, which the
+    /// totals add as their own row, as in process, so they come out of it
+    /// here, whichever of the two reports came last.
+    pub(super) fn sync_daemon_main_cost(&mut self) {
+        let Some(spend) = self.usage.daemon_spend else {
+            return;
+        };
+        let pings = self.usage.extra.cache_warm;
+        let cost_usd_micros = spend
+            .map(|spend| spend.saturating_sub(pings))
+            // Spend that was all pings is no main cost, as in process.
+            .filter(|main| *main > 0 || pings == 0);
+        self.usage.cumulative_usage = Some(ModelUsage {
+            cost_usd_micros,
+            ..ModelUsage::default()
+        });
     }
 
     /// The counter to show: the daemon's for a session it hosts, else this

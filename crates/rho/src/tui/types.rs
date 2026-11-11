@@ -178,6 +178,10 @@ pub(super) struct UsageUi {
     /// The counter the followed daemon session's host last reported, which
     /// stands in for `cache_warm`'s own there.
     pub(in crate::tui) daemon_cache_warm: Option<crate::cache_warm::WarmProgress>,
+    /// The followed daemon session's whole spend as its host last reported
+    /// it, pings included: `None` before any report, `Some(None)` while
+    /// nothing had a price. The main cost is this less `extra.cache_warm`.
+    pub(in crate::tui) daemon_spend: Option<Option<u64>>,
 }
 
 impl UsageUi {
