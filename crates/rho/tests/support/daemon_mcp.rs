@@ -441,9 +441,26 @@ async fn the_caps_refuse_starts_past_their_limits() {
     let new = |prompt: String| json!({"workspace": sandbox.workspace, "prompt": prompt});
 
     let too_deep = call(&deep, "new", new("hello".into())).await;
-    let running = call(&busy, "new", new(bash(BLOCKED))).await.unwrap();
+    let running = call(
+        &busy,
+        "new",
+        new(bash(&format!("touch started; {BLOCKED}"))),
+    )
+    .await
+    .unwrap();
     let session = running["session"].clone();
     let too_many = call(&busy, "new", new("hello".into())).await;
+    // Steer only once bash runs. A steer that lands before the first model
+    // request joins it, and the fixture answers that text instead of calling
+    // bash, so the turn ends on its own before the cancel (#1852).
+    let started = sandbox.workspace.join("started");
+    tokio::time::timeout(DEADLINE, async {
+        while !started.exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("bash starts");
     let steered = call(&busy, "steer", json!({"session": session, "text": "hurry"})).await;
     let cancelled = call(&busy, "cancel", json!({"session": session})).await;
     let settled = call(
