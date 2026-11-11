@@ -479,8 +479,9 @@ pub(crate) fn mcp_check(mcp: &DoctorMcp) -> DoctorCheck {
     match mcp {
         DoctorMcp::Summary(summary) => mcp_summary_check(summary),
         DoctorMcp::Reading => DoctorCheck::new(id, label, DoctorStatus::Checking, "checking"),
-        DoctorMcp::Unreadable(error) => DoctorCheck::new(id, label, DoctorStatus::Warn, "unknown")
-            .with_hint(format!("could not read the session's MCP servers: {error}")),
+        DoctorMcp::Unreadable(error) => {
+            DoctorCheck::new(id, label, DoctorStatus::Warn, "unknown").with_hint(error.as_str())
+        }
     }
 }
 

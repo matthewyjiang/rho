@@ -116,7 +116,10 @@ impl App {
             None => DoctorMcp::Summary(self.mcp_report.summary()),
             Some(session) => match session.request_mcp() {
                 Ok(()) => DoctorMcp::Reading,
-                Err(error) => DoctorMcp::Unreadable(error.to_string()),
+                // Worded as the read's own error, which `/mcp` shows too.
+                Err(error) => {
+                    DoctorMcp::Unreadable(format!("could not read session MCP inventory: {error}"))
+                }
             },
         };
         let report = build_report(DoctorInputs {

@@ -43,7 +43,8 @@ pub(crate) enum DoctorMcp {
     /// the row with [`mcp_check`] through [`DoctorReport::replace_checks`]
     /// once they arrive.
     Reading,
-    /// Why a daemon session's servers could not be read.
+    /// Why a daemon session's servers could not be read, as the whole
+    /// hint: the host's error already names what failed.
     Unreadable(String),
 }
 
