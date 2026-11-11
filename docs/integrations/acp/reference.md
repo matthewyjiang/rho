@@ -155,7 +155,7 @@ Every `agent_message_chunk` and `agent_thought_chunk` carries a `messageId`. Con
 
 A `tool_call`'s `kind` follows what the tool does: `read`, `search`, `edit`, `execute`, or `fetch`. An `apply_patch` call whose every file section deletes a file is `delete`, and one whose every section moves a file is `move`; mixed patches are `edit`. `todo` calls are `think` and `exit_plan_mode` calls are `switch_mode`. Other tools are `other`.
 
-`locations` are absolute paths, resolved against the session's `cwd`. On v1 Rho sends 0-based rows, as Zed reads them and as Zed's own tools send them: line 1 of a file is `0`. On v2, which defines `line` as 1-based, it is `1`. A `read_file` call with an `offset` names that line. When a call finishes, its final `tool_call_update` replaces the locations with what the result points at: each file an edit or `write` changed, at its first changed line (no line for new or emptied files), or the first 20 files a `grep` matched, at each one's first shown match. Zed opens every location it gets, and its own grep sends at most 20. Other results keep the started locations.
+`locations` are absolute paths, resolved against the session's `cwd`. `line` is 1-based on v1 and v2 alike, as ACP defines it: line 1 of a file is `1`. A `read_file` call with an `offset` names that line. When a call finishes, its final `tool_call_update` replaces the locations with what the result points at: each file an edit or `write` changed, at its first changed line (no line for new or emptied files), or the first 20 files a `grep` matched, at each one's first shown match. Zed opens every location it gets, and its own grep sends at most 20. Other results keep the started locations.
 
 ### File diffs
 

@@ -99,8 +99,8 @@ fn message_chunks_carry_ids_live_and_across_loads() {
     assert_eq!(loads[0], loads[1]);
 }
 
-// Covers: tool calls point hosts at lines the real tools know, as the 0-based
-// rows Zed reads: a read at its offset, a grep at each matched file's first
+// Covers: tool calls point hosts at lines the real tools know, as the 1-based
+// lines ACP defines: a read at its offset, a grep at each matched file's first
 // hit, and an edit at its first changed line, all as absolute paths.
 // Owner: ACP wire contract, through the real server and coding tools
 #[test]
@@ -132,17 +132,17 @@ fn tool_call_locations_name_known_lines() {
         (
             json!({"name": "read_file", "arguments": {"path": "a.txt", "offset": 2}}),
             "tool_call",
-            json!([{"path": a, "line": 1}]),
+            json!([{"path": a, "line": 2}]),
         ),
         (
             json!({"name": "grep", "arguments": {"pattern": "beta"}}),
             "tool_call_update",
-            json!([{"path": a, "line": 1}, {"path": b, "line": 2}]),
+            json!([{"path": a, "line": 2}, {"path": b, "line": 3}]),
         ),
         (
             json!({"name": "str_replace", "arguments": {"path": "a.txt", "old_string": "gamma", "new_string": "delta"}}),
             "tool_call_update",
-            json!([{"path": a, "line": 2}]),
+            json!([{"path": a, "line": 3}]),
         ),
     ] {
         let mut call = call;

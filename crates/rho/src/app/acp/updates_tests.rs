@@ -275,7 +275,7 @@ fn tool_calls_open_a_card_then_patch_it() {
         raw_input: Some(json!({"path": "src/lib.rs"})),
         locations: Some(vec![wire::Location {
             path: "/w/src/lib.rs".into(),
-            line: Some(3),
+            line: Some(0),
         }]),
         ..tool_update("c1")
     };
@@ -317,7 +317,7 @@ fn tool_calls_open_a_card_then_patch_it() {
                     .kind(ToolKind::Edit)
                     .status(ToolCallStatus::Pending)
                     .raw_input(json!({"path": "src/lib.rs"}))
-                    .locations(vec![ToolCallLocation::new("/w/src/lib.rs").line(3_u32)]),
+                    .locations(vec![ToolCallLocation::new("/w/src/lib.rs").line(1_u32)]),
             ),
             SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
                 ToolCallId::new("c1"),

@@ -197,11 +197,10 @@ pub(super) fn tool_call_update(update: v1::ToolCallUpdate) -> Result<v2::ToolCal
     )
 }
 
-/// v2 counts `line` from 1 and rejects 0. Rho's v1 locations count from 0,
-/// so the same row is one higher here.
+/// Both versions count `line` from 1, so the v1 row carries over unchanged.
 fn location(location: v1::ToolCallLocation) -> v2::ToolCallLocation {
     v2::ToolCallLocation::new(location.path)
-        .line(location.line.map(|row| row.saturating_add(1)))
+        .line(location.line)
         .meta(location.meta)
 }
 

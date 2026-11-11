@@ -31,11 +31,11 @@ fn v1_updates_take_their_v2_shapes() {
             })),
         ),
         (
-            "a location's first line is 1",
+            "a location keeps its 1-based line",
             v1::SessionUpdate::ToolCallUpdate(v1::ToolCallUpdate::new(
                 "call-1",
                 v1::ToolCallUpdateFields::new().locations(vec![
-                    v1::ToolCallLocation::new("/work/notes.txt").line(0),
+                    v1::ToolCallLocation::new("/work/notes.txt").line(1),
                     v1::ToolCallLocation::new("/work/new.txt"),
                 ]),
             )),
