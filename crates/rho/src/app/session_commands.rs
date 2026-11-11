@@ -186,7 +186,7 @@ pub(crate) async fn resolve(
         return run_as_agent(input, &agent_id, model_override, task, scope, commands);
     }
     let parsed = match crate::commands::parse_command(text) {
-        Ok(None) => first_line_command(text),
+        Ok(None) => first_line_command(text, commands),
         parsed => parsed,
     };
     match parsed {
@@ -196,16 +196,19 @@ pub(crate) async fn resolve(
     }
 }
 
-/// The command on a multiline prompt's first line, for the commands that
-/// take a free-form request a pasted body can span: the agent creator and
+/// The command on a multiline prompt's first line, for the commands whose
+/// arguments a pasted body can span: the built-ins `commands` runs and
 /// `/$skill`. The shared parser declines multiline text, and any other
 /// command there stays prose.
-fn first_line_command(text: &str) -> Result<Option<CommandInvocation>, CommandParseError> {
+fn first_line_command(
+    text: &str,
+    commands: CommandSet,
+) -> Result<Option<CommandInvocation>, CommandParseError> {
     let Some((first_line, _)) = text.split_once('\n') else {
         return Ok(None);
     };
     match crate::commands::parse_command(first_line) {
-        Ok(Some(invocation)) if invocation.id == CommandId::CreateAgent => Ok(Some(invocation)),
+        Ok(Some(invocation)) if commands.built_in(invocation.id).is_some() => Ok(Some(invocation)),
         Err(CommandParseError::Unknown(name)) if name.starts_with('$') => {
             Err(CommandParseError::Unknown(name))
         }
@@ -219,9 +222,12 @@ fn built_in(
     scope: &CommandScope<'_>,
     commands: CommandSet,
 ) -> Result<PromptCommand, CommandRejected> {
+    // The whole text after the command, as a pasted body spans lines the
+    // invocation's arguments stop short of.
+    let args = leading_text(&input).map_or("", command_args);
     match commands.built_in(invocation.id) {
         Some(BuiltInCommand::Compact) => Ok(PromptCommand::Compact {
-            instructions: (!invocation.args.is_empty()).then_some(invocation.args),
+            instructions: (!args.is_empty()).then(|| args.to_owned()),
         }),
         Some(BuiltInCommand::Init) => {
             let model_prompt = init_turn::model_prompt(scope.cwd, scope.permission_mode, |name| {
@@ -234,12 +240,7 @@ fn built_in(
             })
         }
         Some(BuiltInCommand::CreateAgent) => {
-            // The whole text after the command, as a pasted request spans
-            // lines the invocation's arguments stop short of.
-            let request = crate::commands::create_agent_request(
-                &invocation.name,
-                leading_text(&input).map_or("", command_args),
-            );
+            let request = crate::commands::create_agent_request(&invocation.name, args);
             let model_prompt =
                 create_agent_turn::model_prompt(request, |name| scope.tools.contains(name))
                     .map_err(|error| CommandRejected(error.to_string()))?;

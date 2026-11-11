@@ -148,6 +148,11 @@ async fn resolve_routes_prompts_to_commands() {
             Resolved::Rejected,
         ),
         (
+            "compact with pasted multiline instructions",
+            "/compact\nkeep the API notes\nand the plan",
+            Resolved::Compact(Some("keep the API notes\nand the plan".into())),
+        ),
+        (
             "agent creator with a pasted multiline request",
             "/agents create\nreview the parser\nread only",
             Resolved::Rejected,
