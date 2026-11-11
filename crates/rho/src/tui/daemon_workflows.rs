@@ -148,18 +148,7 @@ impl App {
         let runs = &mut self.daemon_rail.workflows;
         let rows = shown_drives(jobs)
             .into_iter()
-            .filter_map(|(run, job)| {
-                let until = if may_still_change(job.state) {
-                    now
-                } else {
-                    job.updated_at
-                };
-                Some(WorkflowRailSummary {
-                    failed: job.state == JobState::Failed,
-                    elapsed_seconds: until.saturating_sub(job.created_at),
-                    ..runs.progress(run)?
-                })
-            })
+            .filter_map(|(run, job)| Some(drive_row(job, runs.progress(run)?, now)))
             .collect();
         self.workflow_panel.ingest(rows);
     }
@@ -190,6 +179,24 @@ impl WorkflowRuns {
         self.loaded
             .insert(run, (stored.state.state.revision, row.clone()));
         Some(row)
+    }
+}
+
+/// The rail row of a run whose newest drive is `job`, from `progress`, its
+/// saved state, at `now` (Unix seconds). The daemon ends a drive `Failed`
+/// for a failed, denied, or blocked outcome too, which the saved state
+/// tells apart, so only a drive that failed while its run still reads as
+/// live failed on its own, as a drive that errors does in process.
+fn drive_row(job: &JobSummary, progress: WorkflowRailSummary, now: u64) -> WorkflowRailSummary {
+    let until = if may_still_change(job.state) {
+        now
+    } else {
+        job.updated_at
+    };
+    WorkflowRailSummary {
+        failed: job.state == JobState::Failed && progress.is_live(),
+        elapsed_seconds: until.saturating_sub(job.created_at),
+        ..progress
     }
 }
 

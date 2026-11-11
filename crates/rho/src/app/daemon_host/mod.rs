@@ -405,11 +405,12 @@ impl Service for DaemonHost {
     }
 
     async fn list_jobs(&self) -> JobListResponse {
+        // A drive marks its run finished before its job ends, so a job read
+        // first that has ended is already in the tracker read second.
+        let records = self.jobs.list();
         let undelivered = self.sessions.undelivered_workflow_runs();
         JobListResponse {
-            jobs: self
-                .jobs
-                .list()
+            jobs: records
                 .into_iter()
                 .map(|record| {
                     let queue = self.sessions.subagents().queue_place(&record.id);

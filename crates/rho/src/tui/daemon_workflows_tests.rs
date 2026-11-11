@@ -3,8 +3,11 @@ use std::path::PathBuf;
 use pretty_assertions::assert_eq;
 use rho_protocol::{JobId, JobKind, JobState, JobSummary};
 
-use super::shown_drives;
-use crate::workflow::RunId;
+use super::{drive_row, shown_drives};
+use crate::{
+    tools::workflow_tracker::WorkflowRailSummary,
+    workflow::{RunId, RunLifecycle, WorkflowOutcome},
+};
 
 fn drive(id: &str, run: RunId, created_at: u64, state: JobState) -> JobSummary {
     JobSummary {
@@ -67,4 +70,73 @@ fn a_run_shows_until_its_session_is_given_its_result() {
             (owed, "owed".to_owned()),
         ]
     );
+}
+
+// Covers: a finished drive's row says how the run ended as in process: the
+// daemon ends a denied or blocked drive `Failed`, and the row still says
+// denied or blocked from the saved run; only a drive that failed while its
+// run reads as live shows as failed on its own. A live row's time runs to
+// now and an ended row's stops when its drive ended.
+// Owner: daemon workflow rail (pure row)
+#[test]
+fn a_drive_row_keeps_the_saved_runs_verdict() {
+    let saved = |lifecycle, outcome| WorkflowRailSummary {
+        run_id: "run".into(),
+        workflow_name: "pty-background".into(),
+        lifecycle,
+        outcome,
+        failed: false,
+        completed_tasks: 1,
+        total_tasks: 3,
+        active_task: None,
+        elapsed_seconds: 0,
+    };
+    let cases = [
+        (
+            JobState::Failed,
+            RunLifecycle::Completed,
+            Some(WorkflowOutcome::Denial),
+            false,
+            20,
+        ),
+        (
+            JobState::Failed,
+            RunLifecycle::Completed,
+            Some(WorkflowOutcome::Blocked),
+            false,
+            20,
+        ),
+        (
+            JobState::Failed,
+            RunLifecycle::NeedsRecovery,
+            None,
+            false,
+            20,
+        ),
+        (JobState::Failed, RunLifecycle::Running, None, true, 20),
+        (
+            JobState::Completed,
+            RunLifecycle::Completed,
+            Some(WorkflowOutcome::Success),
+            false,
+            20,
+        ),
+        (JobState::Running, RunLifecycle::Running, None, false, 90),
+    ];
+
+    for (state, lifecycle, outcome, failed, elapsed_seconds) in cases {
+        let job = JobSummary {
+            updated_at: 30,
+            ..drive("drive", RunId::new(), 10, state)
+        };
+        assert_eq!(
+            drive_row(&job, saved(lifecycle, outcome), /*now*/ 100),
+            WorkflowRailSummary {
+                failed,
+                elapsed_seconds,
+                ..saved(lifecycle, outcome)
+            },
+            "{state:?} drive of a {lifecycle:?} run",
+        );
+    }
 }
