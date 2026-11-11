@@ -24,7 +24,7 @@ use rho_providers::model::{models_dev::cached_model_metadata, ModelMetadata, Mod
 use rho_sdk::{CancellationToken, ModelCallMetrics};
 use tokio::sync::Notify;
 
-use super::{super::jobs::SessionJob, cost, LoadedSession, Sessions};
+use super::{cost, LoadedSession, Sessions};
 use crate::{
     app::session_runtime::SessionRuntime,
     cache_warm::{
@@ -431,7 +431,11 @@ impl LoadedSession {
     /// Whether a turn of the session is queued, running, or waiting for
     /// input.
     fn turn_under_way(&self) -> bool {
-        matches!(self.jobs.session_job(&self.id), SessionJob::Busy(_))
+        // The session's own job, not any job that writes it: a subagent's
+        // job writes the subagent's session, and pauses nothing here.
+        self.jobs
+            .get(&self.job)
+            .is_some_and(|job| job.state.in_progress())
     }
 
     fn tell_cache_warm_halt(&self, halt: WarmHalt, detail: Option<&str>, max_pings: u32) {
