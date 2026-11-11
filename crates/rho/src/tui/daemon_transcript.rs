@@ -345,8 +345,6 @@ impl App {
         self.finish_streams();
         self.reset_streams();
         let compact_turn = self.daemon_compact_turn.take();
-        // A hub start whose prompt never came back hides no later prompt.
-        self.daemon_hub_launch = None;
         // The daemon withdrew the turn's own requests before it said the
         // turn ended. A prompt still open is a subagent's question, which
         // outlives the turn.
@@ -358,6 +356,10 @@ impl App {
         if !self.turn.is_provider_turn() {
             return;
         }
+        // A hub start whose prompt never came back hides no later prompt.
+        // Only a turn's own end says so: a rest that tidies an idle session
+        // may show between the hub's send and its prompt coming back.
+        self.daemon_hub_launch = None;
         self.daemon_rail.turn_ended();
         self.daemon_turn_rested_for_info();
         // Read before `stop_loading` clears the turn clock.
