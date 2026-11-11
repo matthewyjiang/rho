@@ -355,6 +355,12 @@ fn ollama_device_login_needs_enter(host: SessionHost) {
             WaitTimeout::secs(10, "device login finished"),
         )
         .unwrap();
+    // The daemon shares this process's home, so it signs with the key shown.
+    let screen = harness.screen().contents();
+    assert!(
+        !screen.contains(DIFFERENT_DEVICE_KEY),
+        "one device key must not be reported as two:\n{screen}"
+    );
 
     harness.submit_text("/logout ollama-cloud-device").unwrap();
     harness
@@ -377,6 +383,58 @@ fn ollama_device_login_needs_enter(host: SessionHost) {
         .wait_for_text(
             "no stored credentials for ollama-cloud were present",
             WaitTimeout::secs(10, "cancelled login recorded nothing"),
+        )
+        .unwrap();
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}
+
+/// The start of the error a daemon session's device login shows when the
+/// daemon signs with another key than the one this TUI showed.
+const DIFFERENT_DEVICE_KEY: &str = "the rho daemon signs in with a different device key";
+
+// Covers: a daemon that keeps its Ollama device key in another home than the
+// TUI's records a key the user was not shown, so the TUI names the key the
+// daemon will sign with, and the login still finishes.
+// Owner: interactive TUI as a daemon client (#1667)
+#[cfg(unix)]
+#[test]
+fn daemon_device_login_names_a_daemon_key_that_differs_from_the_one_shown() {
+    let home = IsolatedHome::new().unwrap();
+    let daemon_home = home.path().join("daemon-home");
+    std::fs::create_dir_all(&daemon_home).unwrap();
+    // Started before the TUI, which then uses it rather than start one with
+    // its own home. Same fixture mode as the TUI's matrix launch.
+    let started = home
+        .command(env!("CARGO_BIN_EXE_rho"))
+        .args(["daemon", "start"])
+        .env("HOME", &daemon_home)
+        .env("RHO_TUI_TEST_MODE", "matrix")
+        .env("RHO_TUI_FIXTURE_WORKSPACE", &home.workspace)
+        .status()
+        .unwrap();
+    assert!(started.success(), "rho daemon start: {started}");
+    let plan = ollama_plan(&home, SessionHost::Daemon)
+        .with_env("SSH_CONNECTION", "127.0.0.1 1 127.0.0.1 2");
+    let mut harness = PtyHarness::spawn_named(&plan, "ollama_device_key_mismatch").unwrap();
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+
+    harness.submit_text("/login ollama-cloud-device").unwrap();
+    harness
+        .wait_for_text("Enter done", WaitTimeout::secs(10, "device prompt"))
+        .unwrap();
+    harness.inject_key(&Key::Enter).unwrap();
+    harness
+        .wait_for_text(
+            DIFFERENT_DEVICE_KEY,
+            WaitTimeout::secs(10, "daemon key reported"),
+        )
+        .unwrap();
+    harness
+        .wait_for_text(
+            "stored credentials for ollama-cloud",
+            WaitTimeout::secs(10, "device login finished"),
         )
         .unwrap();
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
@@ -491,12 +549,6 @@ fn ollama_is_refreshed_and_listed_after_login(host: SessionHost) {
         !config.contains("[providers.ollama]"),
         "logout must remove the login record:\n{config}"
     );
-
-    // The daemon refuses to open a session whose auth has no login, so a
-    // TUI following one has nothing to start signed out in yet.
-    if matches!(host, SessionHost::Daemon) {
-        return;
-    }
 
     // A saved Ollama selection without its login starts signed out, and
     // startup asks nothing of the server.

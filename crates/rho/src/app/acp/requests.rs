@@ -65,6 +65,8 @@ impl Launch {
             child_threads: self.child_threads,
             // An ACP client is told of a turn only as its own prompt's.
             idle_wake: rho_protocol::IdleWake::Never,
+            // A missing login is the ACP client's `auth_required`.
+            sign_in: rho_protocol::SignIn::Required,
         }
     }
 }

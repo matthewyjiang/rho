@@ -41,7 +41,7 @@ pub(super) async fn open(
     added_dirs: &AddedDirs,
 ) -> anyhow::Result<tui::DaemonSession> {
     use rho_protocol::{
-        ChildThreads, IdleWake, ModelRef, SessionChange, SessionPart, SessionSetup,
+        ChildThreads, IdleWake, ModelRef, SessionChange, SessionPart, SessionSetup, SignIn,
     };
 
     use crate::{app::session_options::reasoning_to_wire, session::Session, tui::LaunchChange};
@@ -126,6 +126,9 @@ pub(super) async fn open(
             // The TUI follows the session, so it shows the turn the daemon
             // starts when a workflow or background process finishes.
             idle_wake: IdleWake::Turn,
+            // A session without a login opens signed out, as in process,
+            // and the TUI offers /login.
+            sign_in: SignIn::Later,
         },
     };
 

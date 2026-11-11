@@ -6,6 +6,7 @@
 //! session options, so those arrive as call-site policy.
 
 use std::{
+    borrow::Cow,
     num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::Arc,
@@ -13,10 +14,12 @@ use std::{
 
 use rho_providers::{
     auth::provider_credentials::ApplicationCredentialSource,
+    model::ModelError,
     providers::{build_automation_provider, UnavailableProvider},
 };
 use rho_sdk::{
-    provider::ModelProvider, ApprovalRequestReceiver, ApprovalSession, Session, SessionOptions,
+    model::ModelIdentity, provider::ModelProvider, ApprovalRequestReceiver, ApprovalSession,
+    Session, SessionOptions,
 };
 
 use super::{
@@ -78,12 +81,13 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
 
 /// Whether an assembled session must sign in to its model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SignIn {
+pub(crate) enum SignIn {
     /// Assembly fails when the model's credential is missing.
     Required,
-    /// The session is only read, so it runs no turn: a model that cannot be
-    /// signed in to is stood in for by one that fails every request.
-    NotNeeded,
+    /// The session may open without it, when it is only read or its client
+    /// signs in later: a model that cannot be signed in to is stood in for
+    /// by one that fails every request.
+    Optional,
 }
 
 /// Whether an assembled session starts its workspace's hooks.
@@ -199,24 +203,39 @@ where
         approval,
         session_options,
     } = options;
+    // A host logged in through its endpoint (Ollama) and not logged in is
+    // missing its credential like a provider without a key.
+    let (login_config, missing_login) =
+        match super::endpoint_login::with_disk_login(config, &config_path) {
+            Ok(login_config) => (login_config, None),
+            Err(error) => match (error.downcast::<ModelError>(), sign_in) {
+                (Ok(missing), SignIn::Optional) => (Cow::Borrowed(config), Some(missing)),
+                (Ok(missing), SignIn::Required) => return Err(missing.into()),
+                (Err(error), _) => return Err(error),
+            },
+        };
     // from_config already scopes custom-provider resolution. Do not hold a
     // thread-local overlay across the catalog await: Tokio may resume on
     // another worker and Drop would pop the wrong stack.
-    let sdk_options = SdkBootstrapOptions::from_config(
-        &*super::endpoint_login::with_disk_login(config, &config_path)?,
-        cwd,
-    )?;
+    let sdk_options = SdkBootstrapOptions::from_config(&login_config, cwd)?;
     let credentials = ApplicationCredentialSource::new(environment.credentials());
-    // Automation and ACP normally skip the catalog fetch, but catalog-constructed
-    // providers need the hydrate before build; a no-op for the rest.
-    sdk_options.provider.ensure_catalog_for_construction().await;
-    let provider = match (
-        build_automation_provider(sdk_options.provider, &credentials),
-        sign_in,
-    ) {
+    let built = match missing_login {
+        Some(missing) => Err(missing),
+        None => {
+            // Automation and ACP normally skip the catalog fetch, but
+            // catalog-constructed providers need the hydrate before build; a
+            // no-op for the rest.
+            sdk_options.provider.ensure_catalog_for_construction().await;
+            build_automation_provider(sdk_options.provider, &credentials)
+        }
+    };
+    let provider = match (built, sign_in) {
         (Ok(provider), _) => provider,
         (Err(error), SignIn::Required) => return Err(error.into()),
-        (Err(error), SignIn::NotNeeded) => Arc::new(UnavailableProvider::new(error)),
+        (Err(error), SignIn::Optional) => Arc::new(UnavailableProvider::standing_in_for(
+            ModelIdentity::new(&login_config.provider, "unavailable", &login_config.model),
+            error,
+        )),
     };
     let live_provider = Arc::clone(&provider);
     let workspace_root = sdk_options.workspace.root.clone();
