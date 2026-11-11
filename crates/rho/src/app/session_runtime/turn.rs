@@ -166,6 +166,10 @@ impl SessionRuntime {
             self.drive_prompt(prompt, start, displays, &mut io),
         )
         .await;
+        // A retry of the failed turn still owes the answer, so the debt
+        // outlives failures and ends with a turn that did not fail.
+        self.owes_parent_action =
+            result.is_err() && (self.owes_parent_action || delegation.delivered_parent_action());
         self.held_notices = delegation.hold_notices();
         result
     }

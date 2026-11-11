@@ -340,8 +340,13 @@ async fn drive_goal(
         }
         // Where prompts end while their subagents run, the goal still waits
         // for them: it neither retries nor is judged ahead of their results.
+        // A failed turn that was given a child's request to act is the
+        // exception, as in process: the child waits for the retry.
         let background = session.idle_wake.as_ref().map(IdleWatch::background);
-        if let Some(background) = background.filter(|background| background.subagents_hold_turn()) {
+        let answers_child = ended.is_err() && runtime.owes_parent_action();
+        if let Some(background) =
+            background.filter(|background| !answers_child && background.subagents_hold_turn())
+        {
             notice(&session, "waiting for delegated agents".into());
             tokio::select! {
                 biased;
