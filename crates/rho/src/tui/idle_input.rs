@@ -20,6 +20,18 @@ pub(super) struct HeldTurn {
     pub(super) media: Vec<ChatMedia>,
     /// Kept so `esc` can hand the prompt back exactly as it was typed.
     pub(super) paste_segments: Vec<PasteSegment>,
+    pub(super) origin: HeldOrigin,
+}
+
+/// Where a held turn came from, which decides how it is sent once its wait
+/// is over and what `esc` does with it meanwhile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum HeldOrigin {
+    /// The composer: `esc` hands the prompt back to it.
+    Composer,
+    /// The workflow hub of a daemon session, whose launch is a prompt the
+    /// person never typed: `esc` cancels it.
+    WorkflowHub,
 }
 
 impl App {
@@ -395,11 +407,17 @@ impl App {
         media: Vec<ChatMedia>,
         paste_segments: Vec<PasteSegment>,
     ) {
-        self.held_turns.push_back(HeldTurn {
+        self.hold(HeldTurn {
             turn,
             media,
             paste_segments,
+            origin: HeldOrigin::Composer,
         });
+    }
+
+    /// Holds `held` until the session's tool sources loaded.
+    pub(super) fn hold(&mut self, held: HeldTurn) {
+        self.held_turns.push_back(held);
         self.turn
             .set_activity_phase(ActivityPhase::LoadingToolSources);
         self.turn.start_loading_if_needed();
@@ -409,26 +427,33 @@ impl App {
     /// Hand the most recently held turn back to the composer, so `esc` unwinds
     /// prompts newest first instead of leaving them to run. Does nothing unless
     /// the composer is empty, so it cannot overwrite something the person has
-    /// started typing since.
+    /// started typing since. A workflow the hub started is cancelled instead,
+    /// whatever the composer holds: the composer never held its command.
     fn take_back_held_turn(&mut self) {
-        if !self.input_ui.text().is_empty() || !self.input_ui.attachments().is_empty() {
-            return;
+        let composer_in_use =
+            !self.input_ui.text().is_empty() || !self.input_ui.attachments().is_empty();
+        match self.held_turns.back().map(|held| held.origin) {
+            Some(HeldOrigin::Composer) if composer_in_use => return,
+            Some(HeldOrigin::Composer | HeldOrigin::WorkflowHub) | None => {}
         }
         let Some(HeldTurn {
             turn,
             media,
             paste_segments,
-            ..
+            origin,
         }) = self.held_turns.pop_back()
         else {
             return;
         };
-        self.restore_pending_prompt(QueuedPrompt {
-            prompt: turn.model,
-            display_prompt: turn.display,
-            paste_segments,
-            media,
-        });
+        match origin {
+            HeldOrigin::Composer => self.restore_pending_prompt(QueuedPrompt {
+                prompt: turn.model,
+                display_prompt: turn.display,
+                paste_segments,
+                media,
+            }),
+            HeldOrigin::WorkflowHub => {}
+        }
         if !self.held_turns.is_empty() {
             // Older holds are still waiting. Leave their status alone: writing
             // any status here would hand `status_source` back to `Other`, and
@@ -491,6 +516,7 @@ impl App {
             turn,
             media,
             paste_segments,
+            origin,
         }) = self.held_turns.pop_front()
         else {
             return Ok(false);
@@ -499,7 +525,9 @@ impl App {
         if self.held_turns.is_empty() {
             self.clear_tool_sources_loading_activity();
         }
-        if self.info.session.daemon.is_some() {
+        if origin == HeldOrigin::WorkflowHub {
+            self.send_daemon_workflow(turn, terminal).await?;
+        } else if self.info.session.daemon.is_some() {
             self.submit_daemon_turn(turn, media, paste_segments, terminal)
                 .await?;
         } else {

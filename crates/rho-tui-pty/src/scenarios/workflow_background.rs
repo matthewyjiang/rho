@@ -6,18 +6,11 @@
 //! Owner: interactive workflow lifecycle; existing CLI scenarios use a matrix
 //! driver and never exercise model-facing tools or source-start persistence.
 
-use std::{
-    ffi::CString,
-    fs::{self, OpenOptions},
-    io::{ErrorKind, Write},
-    os::unix::{ffi::OsStrExt, fs::OpenOptionsExt},
-    path::Path,
-    time::{Duration, Instant},
-};
+use std::{fs, path::Path};
 
 use anyhow::{ensure, Context, Result};
 
-use super::{assert_helpers::wait_for_turn_completion_after, DEFAULT_SIZE, STARTUP, STREAM};
+use super::{assert_helpers::wait_for_turn_completion_after, fifo, DEFAULT_SIZE, STARTUP, STREAM};
 use crate::{
     env::IsolatedHome,
     keys::{Key, MouseButton},
@@ -95,13 +88,9 @@ pub(super) const DAEMON_WORKFLOW_HUB_PLANNED_RETRY_SCENARIO: Scenario = Scenario
 .with_env(DAEMON_SESSION);
 
 pub(super) fn setup_workflow(home: &IsolatedHome) -> Result<()> {
-    let gate = CString::new(home.workspace.join(GATE).as_os_str().as_bytes())?;
     // A FIFO read blocks in the real command runner until the PTY writes it.
     // No Python, fixture runtime, polling shell, or timing-based release.
-    let created = unsafe { libc::mkfifo(gate.as_ptr(), libc::S_IRUSR | libc::S_IWUSR) };
-    if created != 0 {
-        return Err(std::io::Error::last_os_error()).context("create workflow release FIFO");
-    }
+    fifo::create(&home.workspace.join(GATE))?;
     let directory = home.workspace.join(".rho/workflows");
     fs::create_dir_all(&directory)?;
     // The retry's held command spans seven bounded waits before release:
@@ -419,31 +408,7 @@ pub(super) fn release_gate(harness: &mut PtyHarness) -> Result<()> {
         .working_directory()
         .context("workflow working directory")?
         .join(GATE);
-    let deadline = Instant::now() + STREAM.duration;
-    loop {
-        match OpenOptions::new()
-            .write(true)
-            .custom_flags(libc::O_NONBLOCK)
-            .open(&gate)
-        {
-            Ok(mut writer) => {
-                return writer
-                    .write_all(b"release\n")
-                    .context("release workflow command")
-            }
-            Err(error)
-                if error.raw_os_error() == Some(libc::ENXIO)
-                    || error.kind() == ErrorKind::WouldBlock => {}
-            Err(error) => return Err(error).context("open workflow release FIFO"),
-        }
-        ensure!(
-            harness.is_running() && Instant::now() < deadline,
-            "workflow command never opened its release FIFO:\n{}",
-            harness.screen().debug_dump()
-        );
-        // Poll PTY output while waiting on the explicit reader-ready condition.
-        harness.pump(Duration::from_millis(25));
-    }
+    fifo::release(harness, &gate)
 }
 
 fn wait_for_completion(harness: &mut PtyHarness, run_id: &str) -> Result<()> {

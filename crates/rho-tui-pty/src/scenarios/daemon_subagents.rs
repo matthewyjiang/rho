@@ -1,7 +1,8 @@
-//! The subagent, attach-view and goal-delegation scenarios again, with the
-//! session in the daemon and the TUI following it (`RHO_TUI_DAEMON=1`,
-//! #1667). Each runs the steps of the in-process scenario it names, so the
-//! two cannot drift; the goal retry differs in its last reply (see its steps).
+//! The subagent, attach-view, tool-turn and goal-delegation scenarios again,
+//! with the session in the daemon and the TUI following it
+//! (`RHO_TUI_DAEMON=1`, #1667). Each runs the steps of the in-process scenario
+//! it names, so the two cannot drift; the goal retry differs in its last reply
+//! (see its steps).
 
 use super::{
     agent_messages::AGENT_MESSAGES_SCENARIO,
@@ -24,6 +25,7 @@ use super::{
         COMPLETION_AFTER_NEW_SCENARIO, QUIET_SUBAGENT_SCENARIO, RUNNING_NOTICES_SCENARIO,
         STREAMING_NOTICE_SCENARIO,
     },
+    steering::RETRACT_STEERING_DURING_TOOL_SCENARIO,
     subagent_rail::SUBAGENT_RAIL_MOUSE_SCENARIO,
     DEFAULT_SIZE,
 };
@@ -98,6 +100,16 @@ pub(super) const QUIET_SUBAGENT_RUNNING_NOTICES: Scenario = in_daemon(
 pub(super) const STREAMING_BOUNDARY_NOTICE: Scenario = in_daemon(
     "daemon_streaming_boundary_notice",
     &STREAMING_NOTICE_SCENARIO,
+);
+
+pub(super) const BOUNDARY_NOTIFICATIONS: Scenario = in_daemon(
+    "daemon_boundary_notifications",
+    &super::boundary_notifications::SCENARIO,
+);
+
+pub(super) const RETRACT_STEERING_DURING_TOOL: Scenario = in_daemon(
+    "daemon_retract_steering_during_tool",
+    &RETRACT_STEERING_DURING_TOOL_SCENARIO,
 );
 
 pub(super) const SUBAGENT_COMPLETION_AFTER_NEW: Scenario = in_daemon(

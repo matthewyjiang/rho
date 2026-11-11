@@ -5,6 +5,7 @@ use ratatui::{
 
 use super::*;
 use crate::tui::{
+    idle_input::HeldOrigin,
     render::{display_width, truncate_one_line},
     theme::Theme,
 };
@@ -82,7 +83,10 @@ impl App {
                     width,
                     "  ",
                     "HOLD",
-                    "esc edit",
+                    match held.origin {
+                        HeldOrigin::Composer => "esc edit",
+                        HeldOrigin::WorkflowHub => "esc cancel",
+                    },
                     &held.turn.display,
                     Theme::warning(),
                     /*selected*/ false,

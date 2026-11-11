@@ -76,10 +76,16 @@ impl App {
                     replayed: _,
                 } => {
                     // Replayed into a running turn, as a reattach's tail
-                    // is: what the stream still holds came before it.
+                    // or a reopen mid-reply is: what the stream still holds
+                    // came before it, and the turn shows the phase the text
+                    // put it in live.
                     let streaming = self.turn.is_provider_turn();
                     if streaming {
                         self.finish_streams();
+                        self.turn.set_activity_phase(match kind {
+                            StreamKind::Assistant => ActivityPhase::Responding,
+                            StreamKind::Reasoning => ActivityPhase::Thinking,
+                        });
                     }
                     match (opens, streaming) {
                         (true, true) => {

@@ -1352,6 +1352,15 @@ fn daemon_restart_keeps_the_tui_following_its_session() {
     assert_pass("daemon_restart");
 }
 
+// Covers: with RHO_TUI_DAEMON=1, a prompt sent while a restarted daemon
+// connects the session's MCP servers again is held, as at startup, and
+// runs once they have.
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_restart_holds_a_prompt_while_mcp_connects_again() {
+    assert_pass("daemon_restart_mcp");
+}
+
 // Covers: a goal set from the TUI lives in the daemon session: a TUI that
 // reopens the session after quitting sees it blocked and resumes it.
 // Owner: daemon goal controller and the TUI as its client (#1667)
@@ -1603,6 +1612,17 @@ fn daemon_runs_the_workflow_the_hub_starts() {
     assert_pass("daemon_workflow");
 }
 
+// Covers: with RHO_TUI_DAEMON=1, a workflow the hub starts during MCP
+// connect is held, Esc cancels it, and one still held starts once the
+// servers connected.
+// Owner: interactive TUI as a daemon client
+// Requires the verified-handle workflow command adapter; other platforms fail closed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn daemon_holds_a_hub_workflow_start_during_mcp_connect() {
+    assert_pass("daemon_workflow_hold");
+}
+
 // Covers: with RHO_TUI_DAEMON=1, a turn ends while the workflow its tools
 // started runs on, and the daemon delivers the result to the idle session.
 // Owner: interactive TUI as a daemon client (#1667)
@@ -1692,6 +1712,20 @@ fn daemon_quiet_subagent_notices_wait_for_a_turn() {
     }
 }
 
+// Covers: with RHO_TUI_DAEMON=1, a background failure pending during a tool
+// is folded in before the parent turn completes, and steering queued during
+// a tool can be inspected and retracted.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_tool_turns_take_notices_and_retracted_steering() {
+    for scenario in [
+        "daemon_boundary_notifications",
+        "daemon_retract_steering_during_tool",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
 // Covers: with RHO_TUI_DAEMON=1, /attach lists a daemon session's running
 // subagents, opens and cycles the in-place view, and shows a parent's
 // message there once applied.
@@ -1727,4 +1761,12 @@ fn daemon_attach_view_follows_the_parents_turn() {
 #[test]
 fn daemon_mcp_inventory_uses_the_session_without_waiting_for_the_turn() {
     assert_pass("daemon_mcp_inventory");
+}
+
+// Covers: with RHO_TUI_DAEMON=1, a configured MCP server's command runs once,
+// in the daemon, and the TUI starts no second copy of it.
+// Owner: interactive TUI as a daemon client.
+#[test]
+fn daemon_mcp_servers_start_only_in_the_daemon() {
+    assert_pass("daemon_mcp_owner");
 }

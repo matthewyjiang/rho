@@ -41,6 +41,10 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
         return super::daemon_login::run(runner);
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
+    if name == super::daemon_workflow_hold::SCENARIO.id {
+        return super::daemon_workflow_hold::run(runner);
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     if name == super::daemon_workflow::SCENARIO.id {
         return super::daemon_workflow::run(runner);
     }
@@ -69,6 +73,10 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
         return super::daemon_detach::run(runner);
     }
     #[cfg(unix)]
+    if name == super::daemon_restart_mcp::SCENARIO.id {
+        return super::daemon_restart_mcp::run(runner);
+    }
+    #[cfg(unix)]
     if name == super::daemon_restart::SCENARIO.id {
         return super::daemon_restart::run(runner);
     }
@@ -79,6 +87,10 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     #[cfg(unix)]
     if name == super::daemon_mcp::SCENARIO.id {
         return super::daemon_mcp::run(runner);
+    }
+    #[cfg(unix)]
+    if name == super::daemon_mcp_owner::SCENARIO.id {
+        return super::daemon_mcp_owner::run(runner);
     }
     #[cfg(unix)]
     if name == super::daemon_doctor::SCENARIO.id {
