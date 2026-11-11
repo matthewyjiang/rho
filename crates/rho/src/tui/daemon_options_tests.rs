@@ -140,3 +140,40 @@ fn a_signed_out_first_launch_has_a_model_to_choose_only_from_another_auth() {
         assert_eq!(app.daemon_setup_can_choose_model(), can_choose);
     }
 }
+
+// Covers: a model switch this TUI asked for says where it landed, except
+// the one `/login` sent after storing credentials: its status line already
+// names the model and the credentials, and stays (#1818).
+// Owner: tui daemon session options
+#[test]
+fn a_switch_login_asked_for_keeps_logins_status_line() {
+    const LOGIN: &str = "stored credentials for anthropic and selected anthropic/model";
+    let statuses: Vec<_> = [true, false]
+        .into_iter()
+        .map(|by_login| {
+            let mut app = crate::tui::tests::test_app();
+            app.show_daemon_options(options_on("openai", "api-key"));
+            let switched = options_on("anthropic", "anthropic-api-key");
+            let model = switched.model.current.clone();
+            app.daemon_option_requests
+                .push_back(rho_protocol::SessionChange::Model {
+                    model: model.clone(),
+                    auth: None,
+                });
+            app.daemon_login_selected = by_login.then_some(model);
+            app.set_status(LOGIN);
+
+            app.show_daemon_options(switched);
+
+            app.last_status
+        })
+        .collect();
+
+    assert_eq!(
+        statuses,
+        vec![
+            LOGIN.to_owned(),
+            "model switched to anthropic/model with reasoning off".to_owned(),
+        ]
+    );
+}
