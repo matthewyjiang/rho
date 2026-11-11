@@ -7,7 +7,7 @@
 
 use crate::{agent::ADVISOR_AGENT_ID, config::InternalAgentModelConfig};
 
-use super::RuntimeModelView;
+use super::{model_names::ModelNames, RuntimeModelView};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum AdvisorStatus {
@@ -21,15 +21,16 @@ pub(super) enum AdvisorStatus {
 }
 
 impl AdvisorStatus {
-    pub(super) fn new(advisor_mode: bool, model: Option<&InternalAgentModelConfig>) -> Self {
-        Self::of(
-            advisor_mode,
-            model.map(InternalAgentModelConfig::display_reference),
-        )
+    pub(super) fn new(
+        advisor_mode: bool,
+        model: Option<&InternalAgentModelConfig>,
+        names: ModelNames<'_>,
+    ) -> Self {
+        Self::of(advisor_mode, model.map(|model| names.internal_agent(model)))
     }
 
     /// The status of `advisor_mode` with the advisor model `model`, as its
-    /// reference reads.
+    /// name reads.
     pub(super) fn of(advisor_mode: bool, model: Option<String>) -> Self {
         match (advisor_mode, model) {
             (false, _) => Self::Off,
@@ -38,10 +39,11 @@ impl AdvisorStatus {
         }
     }
 
-    pub(super) fn from_runtime(info: &RuntimeModelView) -> Self {
+    pub(super) fn from_runtime(info: &RuntimeModelView, names: ModelNames<'_>) -> Self {
         Self::new(
             info.advisor_mode,
             info.internal_agents.get(ADVISOR_AGENT_ID),
+            names,
         )
     }
 

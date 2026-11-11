@@ -932,6 +932,10 @@ impl App {
         } else {
             self.statusline.update_model(&self.info.runtime);
         }
+        self.statusline.update_model_name(
+            self.model_names()
+                .name(&self.info.runtime.provider, &self.info.runtime.model),
+        );
         let display_usage = super::usage_cost::display_usage_with_live(
             self.usage.cumulative_usage.as_ref(),
             &self.usage.live_stream,

@@ -122,12 +122,11 @@ impl App {
         let said_by_login =
             switched && self.daemon_login_selected.take().as_ref() == Some(&options.model.current);
         if switched && !said_by_login {
+            let current = &options.model.current;
             self.set_status(format!(
                 "model switched to {} with reasoning {reasoning}",
-                rho_providers::provider::model_reference(
-                    &options.model.current.provider,
-                    &options.model.current.model,
-                )
+                super::model_names::ModelNames::new(&options.model.available)
+                    .reference(&current.provider, &current.model)
             ));
         }
         if let Ok(mode) = PermissionMode::try_from(options.permission_mode.current) {

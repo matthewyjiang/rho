@@ -378,7 +378,10 @@ fn kind_line(node: &WorkflowNodeSnapshot) -> String {
             ..
         } => {
             let model = match (provider.as_deref(), model.as_deref()) {
-                (Some(provider), Some(model)) => format!(" · {provider}/{model}"),
+                (Some(provider), Some(model)) => format!(
+                    " · {}",
+                    crate::tui::model_names::ModelNames::default().reference(provider, model)
+                ),
                 (None, Some(model)) => format!(" · {model}"),
                 _ => String::new(),
             };

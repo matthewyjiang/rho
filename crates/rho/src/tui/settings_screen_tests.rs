@@ -2,8 +2,8 @@ use pretty_assertions::assert_eq;
 
 use super::{ConfigPage, SettingsUpdate};
 use crate::tui::{
-    advisor_status::AdvisorStatus, daemon_settings::tests::settings, streaming_mode::StreamingMode,
-    tests::test_app,
+    advisor_status::AdvisorStatus, daemon_settings::tests::settings,
+    model_names::tests::with_catalog_names, streaming_mode::StreamingMode, tests::test_app,
 };
 use crate::tui::{daemon_settings::SettingsNamespace, ComposerMode};
 
@@ -18,11 +18,14 @@ fn advisor_surfaces_follow_the_daemon_settings() {
     app.show_daemon_settings(SettingsUpdate::Loaded(Box::new(settings())));
 
     assert_eq!(
-        (before, app.advisor_status()),
+        (
+            before,
+            with_catalog_names(&[("openai", "gpt-5.5", "GPT-5.5")], || app.advisor_status())
+        ),
         (
             AdvisorStatus::Off,
             AdvisorStatus::Reviewing {
-                model: "openai/gpt-5.5".into()
+                model: "GPT-5.5".into()
             }
         )
     );
