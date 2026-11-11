@@ -336,9 +336,10 @@ impl App {
     /// tidies those.
     ///
     /// Pending work settles as an in-process turn's does: an interrupted
-    /// turn hands it back to the composer, any other keeps steers it never
-    /// applied as follow-ups, and a completed one arms the next follow-up,
-    /// which the app loop sends once the composer is free.
+    /// turn hands it back to the composer, unless the person's cancel of
+    /// questions ended it; any other keeps steers it never applied as
+    /// follow-ups, and a completed one arms the next follow-up, which the
+    /// app loop sends once the composer is free.
     async fn end_daemon_turn(&mut self, rest: Rest) {
         // What the stream still holds of the reply shows before the turn's
         // closing rows, and nothing of it outlasts the turn.
@@ -365,7 +366,7 @@ impl App {
         self.daemon_turn_rested_for_info();
         // Read before `stop_loading` clears the turn clock.
         let worked = self.turn.elapsed_at(Instant::now());
-        if matches!(rest, Rest::Interrupted) {
+        if matches!(rest, Rest::Interrupted) && !questions_cancelled {
             self.restore_pending_work_to_input();
         } else {
             self.preserve_unapplied_steering_as_follow_ups();
