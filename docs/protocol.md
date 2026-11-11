@@ -187,7 +187,7 @@ A turn that ends sends one `turn_ended` event; the `state` that records the job'
 | `max_steps` | `completed` | The turn used its model-step limit before the model answered; `text` is its last step's reply, possibly empty. |
 | `cancelled` | `cancelled` | A client cancelled the turn. |
 | `timed_out` | `timed_out` | The daemon cancelled the turn at its prompt's `timeout_ms`, which it repeats. |
-| `failed` | `failed` | The `error`: its `kind` (`authentication`, `provider`, `tool_host`, `configuration`, or `other`) and a `message`. An authentication failure's message names only the provider, the auth, and how to log in, never the provider's own text, which may echo credentials. Any other failure whose provider sent a diagnostic shows it first, as a `notice`. |
+| `failed` | `failed` | The `error`: its `kind` (`authentication`, `provider`, `tool_host`, `configuration`, or `other`) and a `message`. An authentication failure's message names only the provider, the auth, and how to log in, never the provider's own text, which may echo credentials. Any other failure whose provider sent a diagnostic shows it first, as a `notice`. An authentication failure's diagnostic goes to the [daemon's log](/daemon#logs) only. |
 
 A client that resets finds, after the saved conversation, the `turn_ended` of each turn since the last one that saved to it. Outcomes are not saved with the conversation.
 

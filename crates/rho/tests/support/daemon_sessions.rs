@@ -604,6 +604,37 @@ async fn a_turn_tells_clients_how_it_ended() {
     }
 }
 
+// Covers: the provider diagnostic an authentication failure keeps from
+// clients, since it may echo credentials, is written to the daemon's log
+// as a warning, so the person running the daemon can read it.
+// Owner: daemon turn failure reporting.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_authentication_failures_diagnostic_goes_to_the_daemon_log_only() {
+    // The `auth-failure` fixture provider's diagnostic.
+    const DIAGNOSTIC: &str = "Authorization: Bearer fixture-secret";
+    let sandbox = Sandbox::new();
+    let client = sandbox.start_daemon("auth-failure").await;
+    let session = sandbox.new_session(&client).await;
+    let (mut watcher, _) = Follower::attach(&sandbox, &session, Vec::new(), None).await;
+    let _ = sandbox.prompt(&client, &session).await;
+    watcher.read_until(is_state(JobState::Failed)).await;
+
+    let log = sandbox.isolated.daemon_log();
+    let logged: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains(DIAGNOSTIC))
+        .collect();
+    assert!(
+        matches!(logged[..], [line] if line.contains(" WARN ")),
+        "one warning carries the diagnostic; log:\n{log}"
+    );
+    let told = serde_json::to_string(&watcher.events).unwrap();
+    assert!(
+        !told.contains("fixture-secret"),
+        "clients were told the diagnostic: {told}"
+    );
+}
+
 // Covers: `/compact` runs in a daemon session with no model turn: clients
 // see the command, one compaction that starts and completes under one id,
 // its usage, then what the compaction did as an agent message, which the
