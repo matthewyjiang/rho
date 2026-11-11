@@ -151,14 +151,43 @@ pub(in crate::app) async fn unattended_runtime_on(
     runtime: rho_sdk::Rho,
     provider: Arc<dyn ModelProvider>,
 ) -> SessionRuntime {
+    let host = HostCapabilities {
+        questions,
+        ..HostCapabilities::unattended(UnattendedApprovals::Alone)
+    };
+    saved_runtime_on(root, config, host, runtime, provider).await
+}
+
+/// [`unattended_runtime_on`] for a host that runs the session's children
+/// as its own threads, and so wakes the idle session itself, as T3 Code
+/// does.
+pub(in crate::app) async fn host_woken_runtime_on(
+    root: &Path,
+    config: &Config,
+    runtime: rho_sdk::Rho,
+    provider: Arc<dyn ModelProvider>,
+) -> SessionRuntime {
+    let host = HostCapabilities {
+        children: ChildAgents::HostThreads,
+        ..HostCapabilities::unattended(UnattendedApprovals::Alone)
+    };
+    saved_runtime_on(root, config, host, runtime, provider).await
+}
+
+/// A runtime around a [`built_with`] session on the SDK `runtime`, saved in
+/// a new file under `root`, which is also its workspace, for `host`.
+async fn saved_runtime_on(
+    root: &Path,
+    config: &Config,
+    host: HostCapabilities,
+    runtime: rho_sdk::Rho,
+    provider: Arc<dyn ModelProvider>,
+) -> SessionRuntime {
     let stored = StoredSession::create_in_root(root, root).expect("test session file");
     let id = rho_sdk::SessionId::from_string(stored.id()).expect("stored ids are session ids");
     let built = built_with(config, id, runtime, provider).await;
     let mut build = test_build(config, root);
-    build.host = HostCapabilities {
-        questions,
-        ..HostCapabilities::unattended(UnattendedApprovals::Alone)
-    };
+    build.host = host;
     SessionRuntime::for_tests_with(build, built, SessionStorage::saved(stored), config)
 }
 

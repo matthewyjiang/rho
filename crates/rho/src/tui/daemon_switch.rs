@@ -79,7 +79,6 @@ impl App {
         self.daemon_option_requests.clear();
         self.daemon_login_selected = None;
         self.daemon_title = None;
-        self.daemon_hub_launch = None;
         self.awaited_daemon_report = None;
         self.reset_daemon_mcp_offers();
         // Held for the session left behind, as `/new` drops them in process.

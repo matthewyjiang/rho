@@ -64,6 +64,7 @@ async fn seen_in_a_turn(
     let call = json!({"id": "bash", "name": "bash", "arguments": {"command": record}});
     client
         .request::<SessionPrompt>(&SessionPromptParams {
+            author: rho_protocol::PromptAuthor::Person,
             session: session.clone(),
             content: vec![ContentBlock::Text {
                 text: call.to_string(),

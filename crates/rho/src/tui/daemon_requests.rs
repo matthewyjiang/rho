@@ -31,9 +31,9 @@ use rho_protocol::{
         SessionProcesses, SessionPrompt, SessionRename,
     },
     ClientEnvironment, ClientError, ConfigSetParams, ConfigWriter, ContentBlock, ErrorCode,
-    IdempotencyKey, JobListParams, ProcessOutputParams, SessionChange, SessionConfigureParams,
-    SessionDeleteParams, SessionId, SessionInspectParams, SessionMcpParams, SessionProcessesParams,
-    SessionPromptParams, SessionRenameParams, SessionReport,
+    IdempotencyKey, JobListParams, ProcessOutputParams, PromptAuthor, SessionChange,
+    SessionConfigureParams, SessionDeleteParams, SessionId, SessionInspectParams, SessionMcpParams,
+    SessionProcessesParams, SessionPromptParams, SessionRenameParams, SessionReport,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -47,6 +47,7 @@ enum Request {
     Configure(SessionChange, Asked),
     Prompt {
         content: Vec<ContentBlock>,
+        author: PromptAuthor,
         result: oneshot::Sender<anyhow::Result<()>>,
     },
 }
@@ -389,7 +390,11 @@ impl DaemonRequests {
                     // daemon may refuse a prompt its turn already saved,
                     // and the restarted daemon then answers with that turn
                     // instead of running the prompt again.
-                    Request::Prompt { content, result } => {
+                    Request::Prompt {
+                        content,
+                        author,
+                        result,
+                    } => {
                         let key = IdempotencyKey::new(uuid::Uuid::new_v4().to_string());
                         let answer = on_attachment(&mut target, |link, session| {
                             let params = SessionPromptParams {
@@ -399,6 +404,7 @@ impl DaemonRequests {
                                 environment: ClientEnvironment::of_this_process(),
                                 idempotency_key: Some(key.clone()),
                                 grant: None,
+                                author,
                             };
                             async move {
                                 let answer = link.request::<SessionPrompt>(&params).await;
@@ -497,10 +503,15 @@ impl DaemonRequests {
     pub(super) fn prompt(
         &self,
         content: Vec<ContentBlock>,
+        author: PromptAuthor,
     ) -> anyhow::Result<oneshot::Receiver<anyhow::Result<()>>> {
         let (result, response) = oneshot::channel();
         self.sender
-            .send(Request::Prompt { content, result })
+            .send(Request::Prompt {
+                content,
+                author,
+                result,
+            })
             .map_err(|_| anyhow::anyhow!(LOST))?;
         Ok(response)
     }

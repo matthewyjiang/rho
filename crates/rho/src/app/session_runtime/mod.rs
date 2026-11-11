@@ -108,13 +108,13 @@ pub(crate) use session_tools::SessionTools;
 pub(crate) use settings::SettingChangeError;
 #[cfg(test)]
 pub(in crate::app) use test_support::{
-    unattended_runtime_on, unsaved_unattended_runtime_on, HangUntilCancel,
+    host_woken_runtime_on, unattended_runtime_on, unsaved_unattended_runtime_on, HangUntilCancel,
 };
 pub(crate) use title::TitleJob;
 use title::TitleState;
 pub(crate) use tree::SelectNodeError;
 pub(crate) use turn::{Turn, TurnIo, TurnOutcome, TurnStart};
-pub(crate) use workflow::WorkflowStart;
+pub(crate) use workflow::{StartedBy, WorkflowStart};
 pub(crate) use workspace_rewind::{RewindError, RewoundConversation};
 
 /// A request the session recognizes but cannot run, such as a TUI-only

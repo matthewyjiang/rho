@@ -1,22 +1,18 @@
-mod batch;
 mod budget;
 mod classify;
 mod transcript;
 mod verdict;
 
-pub(crate) use batch::{BatchMember, BatchRequest};
 use budget::{TranscriptBudget, TranscriptOverBudget};
 pub(crate) use classify::{
     check_screen_config, classify_capability_request, screen_allow_percent, screen_warning,
-    ClassifierModel, ClassifyRequest, ScreenOutcome, ScreenStep, DECISION_SCREEN_ID,
+    ClassifyRequest, DECISION_SCREEN_ID,
 };
 #[cfg(test)]
 pub(crate) use transcript::render_classifier_transcript;
-use verdict::{batch_review_questions, BATCH_POLICY};
 pub(crate) use verdict::{
-    review_verdict, screen_allow_probability, screen_verdict, ClassifierVerdict, ScreenVerdict,
-    CLASSIFIER_POLICY, DEFAULT_SCREEN_ALLOW_PERCENT, REVIEW_QUESTION, SCREEN_ALLOW_PERCENT_RANGE,
-    SCREEN_QUESTION,
+    review_verdict, screen_verdict, ClassifierVerdict, ScreenVerdict, CLASSIFIER_POLICY,
+    DEFAULT_SCREEN_ALLOW_PERCENT, REVIEW_QUESTION, SCREEN_ALLOW_PERCENT_RANGE, SCREEN_QUESTION,
 };
 
 #[cfg(test)]
@@ -30,7 +26,3 @@ mod verdict_tests;
 #[cfg(test)]
 #[path = "classify_tests.rs"]
 mod classify_tests;
-
-#[cfg(test)]
-#[path = "batch_tests.rs"]
-mod batch_tests;

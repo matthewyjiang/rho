@@ -23,7 +23,7 @@ use {
 use super::acp;
 use super::{
     agent_binding::{root_host_tools, AgentBinder, AgentInvocation, AgentRole, LaunchTools},
-    automation, classifier_eval, cli_config, compaction_eval,
+    automation, cli_config,
     config_repository::ConfigRepository,
     daemon_cli, doctor_cli, interactive, login, mcp_cli, plugins_cli,
     sdk_config::SdkBootstrapOptions,
@@ -222,16 +222,6 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
     }
     if let Some(Command::Doctor { json }) = &cli.command {
         return Ok(EarlyDispatch::Handled(doctor_cli::run(*json, cli).await));
-    }
-    if let Some(Command::CompactionEval(args)) = &cli.command {
-        return Ok(EarlyDispatch::Handled(
-            compaction_eval::run(args, cli).await,
-        ));
-    }
-    if let Some(Command::ClassifierEval(args)) = &cli.command {
-        return Ok(EarlyDispatch::Handled(
-            classifier_eval::run(args, cli).await,
-        ));
     }
     #[cfg(debug_assertions)]
     if let Some(Command::AcpFixtureAgent(args)) = &cli.command {
