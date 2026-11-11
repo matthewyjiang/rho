@@ -499,6 +499,7 @@ impl SubagentManager {
         snapshots
     }
 
+    #[cfg(test)]
     pub fn has_running_for_session(&self, session_id: &str) -> bool {
         self.inner
             .lock()

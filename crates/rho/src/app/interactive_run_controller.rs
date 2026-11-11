@@ -176,41 +176,15 @@ pub(crate) struct FinishedRun {
     pub(crate) pending_turn: Option<PendingTurn>,
 }
 
-/// Exact durability reached before a turn succeeds, fails, or rolls back.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) enum DisplayCommit {
-    #[default]
-    Unsaved,
-    Checkpoint(Vec<Message>),
-    Complete,
-}
-
 #[derive(Default)]
 pub(crate) struct InteractiveRunController {
     active: Option<Run>,
     state: InteractiveState,
     pending_turn: Option<PendingTurn>,
     pending_context_usage: Option<ContextUsage>,
-    last_turn_display_commit: DisplayCommit,
 }
 
 impl InteractiveRunController {
-    pub(crate) fn reset_display_committed(&mut self) {
-        self.last_turn_display_commit = DisplayCommit::Unsaved;
-    }
-
-    pub(crate) fn mark_display_committed(&mut self) {
-        self.last_turn_display_commit = DisplayCommit::Complete;
-    }
-
-    pub(crate) fn mark_display_checkpoint(&mut self, display: Vec<Message>) {
-        self.last_turn_display_commit = DisplayCommit::Checkpoint(display);
-    }
-
-    pub(crate) fn take_last_turn_display_commit(&mut self) -> DisplayCommit {
-        std::mem::take(&mut self.last_turn_display_commit)
-    }
-
     pub(crate) fn checkpoint_compaction(
         &mut self,
         snapshot: &rho_sdk::SessionSnapshot,

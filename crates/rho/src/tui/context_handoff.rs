@@ -559,7 +559,6 @@ impl App {
         self.clamp_command_selection();
         self.reset_streams();
         self.end_busy_ui();
-        self.goal = None;
         self.reset_usage();
         self.usage.current_context = None;
         let entries = self.transcript_entries(&display_history);

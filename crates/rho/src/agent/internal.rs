@@ -10,7 +10,6 @@ use crate::config::{InternalAgentModelConfig, InternalAgentTarget};
 use super::{AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolPolicy};
 
 pub(crate) const SESSION_TITLE_AGENT_ID: &str = "session-title";
-pub(crate) const GOAL_JUDGE_AGENT_ID: &str = "goal-judge";
 pub(crate) const ADVISOR_AGENT_ID: &str = "advisor";
 pub(crate) const PERMISSION_CLASSIFIER_AGENT_ID: &str = "permission-classifier";
 pub(crate) const COMPACTION_AGENT_ID: &str = "compaction";
@@ -40,21 +39,6 @@ static INTERNAL_AGENTS: LazyLock<Vec<InternalAgent>> = LazyLock::new(|| {
                 description: "Internal agent that names chat sessions. Reserved; cannot be overridden or delegated."
                     .to_string(),
                 prompt: PromptPolicy::Replace(crate::tui::SESSION_TITLE_PROMPT.into()),
-                runtime: AgentRuntimeSpec::Rho {
-                    tools: ToolPolicy::Allow(BTreeSet::new()),
-                    model: ModelPolicy::Inherit,
-                    reasoning: Some(ReasoningLevel::Low),
-                },
-            },
-            requires_own_model: false,
-            accepts_claude_runtime: false,
-        },
-        InternalAgent {
-            definition: AgentDefinition {
-                id: AgentId::new(GOAL_JUDGE_AGENT_ID).expect("valid internal agent ID"),
-                description: "Internal agent that evaluates goal completion. Reserved; cannot be overridden or delegated."
-                    .to_string(),
-                prompt: PromptPolicy::Replace(crate::goal::GOAL_JUDGE_PROMPT.into()),
                 runtime: AgentRuntimeSpec::Rho {
                     tools: ToolPolicy::Allow(BTreeSet::new()),
                     model: ModelPolicy::Inherit,

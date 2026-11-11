@@ -25,7 +25,7 @@ fn encodes_root_record_reports() {
         (ProgramStatus::Done, report("state=done:app=rho")),
         (
             ProgramStatus::Blocked {
-                kind: Some(BlockedKind::Permission),
+                kind: BlockedKind::Permission,
                 message: "waiting for approval".into(),
             },
             report(&format!(
@@ -35,10 +35,10 @@ fn encodes_root_record_reports() {
         ),
         (
             ProgramStatus::Blocked {
-                kind: None,
+                kind: BlockedKind::Question,
                 message: "  \n".into(),
             },
-            report("state=blocked:app=rho"),
+            report("state=blocked:app=rho:kind=question"),
         ),
         (
             ProgramStatus::Error {

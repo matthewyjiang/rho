@@ -27,6 +27,7 @@ async fn prompt(
     key: &str,
 ) -> Result<TurnId, Option<ErrorCode>> {
     let prompted = sessions.prompt(SessionPromptParams {
+        author: rho_protocol::PromptAuthor::Person,
         session: session_to_wire(session.id.clone()),
         content: vec![ContentBlock::Text {
             text: "hello".into(),
@@ -87,6 +88,7 @@ async fn a_prompt_sent_again_with_its_key_starts_no_second_turn() {
     // A turn cancelled while it waits for the runtime ends before it began.
     let held = session.runtime.try_lock().unwrap();
     let unbegun = sessions.prompt(SessionPromptParams {
+        author: rho_protocol::PromptAuthor::Person,
         session: session_to_wire(session.id.clone()),
         content: vec![ContentBlock::Text {
             text: "hello".into(),

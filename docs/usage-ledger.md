@@ -1,6 +1,6 @@
 # Usage ledger
 
-Rho's usage ledger is a durable, provider-neutral SQLite interface for accounting tools. It is separate from session persistence and is not rebuildable from transcripts. Rho writes one row for each provider request across interactive, automation, delegated-agent, compaction, title-generation, and goal-evaluation paths.
+Rho's usage ledger is a durable, provider-neutral SQLite interface for accounting tools. It is separate from session persistence and is not rebuildable from transcripts. Rho writes one row for each provider request across interactive, automation, delegated-agent, compaction, and title-generation paths.
 
 ## Location and access
 
@@ -27,7 +27,7 @@ Each row represents one actual provider request. `event_id` is the primary key, 
 | `step_index`, `attempt_index` | Optional one-based orchestration step and provider-attempt indexes. |
 | `workspace_path` | Optional workspace identity as recorded by the caller. |
 | `provider`, `model` | Exact provider and model identities used for the request, without pricing aliases. |
-| `purpose` | Open string describing why the model was called. Documented values are `agent`, `subagent`, `compaction`, `title`, `goal`, `advisor`, and `side`. |
+| `purpose` | Open string describing why the model was called. Documented values are `agent`, `subagent`, `compaction`, `title`, `advisor`, and `side`. |
 | `request_outcome` | `completed`, `failed`, or `cancelled`. Usage observed before failure or cancellation is still recorded. |
 | `input_tokens` | Uncached input tokens. |
 | `output_tokens` | Output tokens. |

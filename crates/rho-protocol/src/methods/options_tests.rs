@@ -104,7 +104,6 @@ fn options_changed_leaves_out_what_the_model_lacks() {
                     input_hint: Some("<query>".into()),
                 },
             ],
-            goal: None,
             added_dirs: Vec::new(),
         }),
     };

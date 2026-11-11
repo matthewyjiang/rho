@@ -224,11 +224,7 @@ fn internal_agents_are_visible_but_not_selectable() {
     let root = tempfile::tempdir().unwrap();
     let catalog = AgentCatalog::discover_with_home(root.path(), None).unwrap();
 
-    for id in [
-        SESSION_TITLE_AGENT_ID,
-        GOAL_JUDGE_AGENT_ID,
-        ADVISOR_AGENT_ID,
-    ] {
+    for id in [SESSION_TITLE_AGENT_ID, ADVISOR_AGENT_ID] {
         assert!(catalog.find(id).is_err());
     }
     assert!(catalog

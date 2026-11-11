@@ -10,10 +10,8 @@
 //! idempotency key, so one a stopping daemon refused goes again on the
 //! restarted daemon without running twice (#1777). Cancel and answers
 //! deliberately bypass this queue, since they may unblock that change. MCP
-//! inventory reads, renames, goal actions, and settings writes use an
-//! independent control worker to stay usable during the turn: a goal runs as
-//! one long turn, which a queued change would otherwise hold `/goal clear`
-//! behind.
+//! inventory reads, renames, and settings writes use an independent control
+//! worker to stay usable during the turn.
 //!
 //! A change still queued here when the TUI quits is not sent: context from a
 //! `!` command that finished behind a change waiting for the turn is lost
@@ -33,8 +31,8 @@ use rho_protocol::{
         SessionProcesses, SessionPrompt, SessionRename,
     },
     ClientEnvironment, ClientError, ConfigSetParams, ConfigWriter, ContentBlock, ErrorCode,
-    IdempotencyKey, JobListParams, ProcessOutputParams, SessionChange, SessionConfigureParams,
-    SessionDeleteParams, SessionGoalAction, SessionId, SessionInspectParams, SessionMcpParams,
+    IdempotencyKey, JobListParams, ProcessOutputParams, PromptAuthor, SessionChange,
+    SessionConfigureParams, SessionDeleteParams, SessionId, SessionInspectParams, SessionMcpParams,
     SessionProcessesParams, SessionPromptParams, SessionRenameParams, SessionReport,
 };
 use tokio::sync::{mpsc, oneshot, watch};
@@ -49,6 +47,7 @@ enum Request {
     Configure(SessionChange, Asked),
     Prompt {
         content: Vec<ContentBlock>,
+        author: PromptAuthor,
         result: oneshot::Sender<anyhow::Result<()>>,
     },
 }
@@ -132,7 +131,6 @@ where
 /// A request that must not wait behind a queued change.
 enum Control {
     Mcp,
-    Goal(SessionGoalAction),
     Rename(String),
     Jobs,
     /// The session's processes, and the output named, if any.
@@ -210,30 +208,6 @@ impl DaemonRequests {
                             None => Err(LOST.to_owned()),
                         };
                         let _ = control_views.send(DaemonView::McpInventory(result));
-                    }
-                    Control::Goal(action) => {
-                        let verb = goal_verb(&action);
-                        let answer = on_attachment(&mut control_target, |link, session| {
-                            let action = action.clone();
-                            async move {
-                                link.request::<SessionConfigure>(&SessionConfigureParams {
-                                    session,
-                                    change: SessionChange::Goal { action },
-                                })
-                                .await
-                            }
-                        })
-                        .await;
-                        // The goal's OptionsChanged, not this response, is
-                        // authoritative.
-                        let error = match answer {
-                            Some((_, Ok(_))) => continue,
-                            Some((_, Err(error))) => error.to_string(),
-                            None => LOST.to_owned(),
-                        };
-                        let _ = control_views.send(DaemonView::Error(format!(
-                            "could not {verb} the goal: {error}"
-                        )));
                     }
                     Control::Jobs => {
                         let answer = on_attachment(&mut control_target, |link, _| async move {
@@ -416,7 +390,11 @@ impl DaemonRequests {
                     // daemon may refuse a prompt its turn already saved,
                     // and the restarted daemon then answers with that turn
                     // instead of running the prompt again.
-                    Request::Prompt { content, result } => {
+                    Request::Prompt {
+                        content,
+                        author,
+                        result,
+                    } => {
                         let key = IdempotencyKey::new(uuid::Uuid::new_v4().to_string());
                         let answer = on_attachment(&mut target, |link, session| {
                             let params = SessionPromptParams {
@@ -426,6 +404,7 @@ impl DaemonRequests {
                                 environment: ClientEnvironment::of_this_process(),
                                 idempotency_key: Some(key.clone()),
                                 grant: None,
+                                author,
                             };
                             async move {
                                 let answer = link.request::<SessionPrompt>(&params).await;
@@ -461,12 +440,6 @@ impl DaemonRequests {
     pub(super) fn request_mcp(&self) -> anyhow::Result<()> {
         self.control
             .send(Control::Mcp)
-            .map_err(|_| anyhow::anyhow!(LOST))
-    }
-
-    pub(super) fn goal(&self, action: SessionGoalAction) -> anyhow::Result<()> {
-        self.control
-            .send(Control::Goal(action))
             .map_err(|_| anyhow::anyhow!(LOST))
     }
 
@@ -530,10 +503,15 @@ impl DaemonRequests {
     pub(super) fn prompt(
         &self,
         content: Vec<ContentBlock>,
+        author: PromptAuthor,
     ) -> anyhow::Result<oneshot::Receiver<anyhow::Result<()>>> {
         let (result, response) = oneshot::channel();
         self.sender
-            .send(Request::Prompt { content, result })
+            .send(Request::Prompt {
+                content,
+                author,
+                result,
+            })
             .map_err(|_| anyhow::anyhow!(LOST))?;
         Ok(response)
     }
@@ -543,15 +521,5 @@ impl Drop for DaemonRequests {
     fn drop(&mut self) {
         self.task.abort();
         self.control_task.abort();
-    }
-}
-
-/// The verb a refused goal action's error says, as in `could not set the goal`.
-fn goal_verb(action: &SessionGoalAction) -> &'static str {
-    match action {
-        SessionGoalAction::Set { .. } => "set",
-        SessionGoalAction::Clear => "clear",
-        SessionGoalAction::Resume => "resume",
-        _ => "change",
     }
 }

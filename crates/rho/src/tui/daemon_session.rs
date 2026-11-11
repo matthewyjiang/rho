@@ -747,6 +747,7 @@ mod unix {
         pub(in crate::tui) async fn prompt(
             &mut self,
             content: Vec<ContentBlock>,
+            author: rho_protocol::PromptAuthor,
         ) -> anyhow::Result<()> {
             // A restart the TUI has not caught up with yet: attach again
             // first, so the prompt reaches the restarted daemon.
@@ -758,7 +759,7 @@ mod unix {
                 .requests
                 .as_ref()
                 .expect("attached session has requests")
-                .prompt(content)?;
+                .prompt(content, author)?;
             // The requests queue sends it under one idempotency key, again
             // on the restarted daemon when this one refused it as stopping,
             // which may be after its turn already saved the prompt: the

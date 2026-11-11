@@ -59,7 +59,6 @@ fn options() -> wire::SessionOptions {
             ],
         },
         commands: Vec::new(),
-        goal: None,
         added_dirs: Vec::new(),
     }
 }

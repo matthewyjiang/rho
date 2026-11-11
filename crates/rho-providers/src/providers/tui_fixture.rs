@@ -11,7 +11,6 @@ mod codemode_stream;
 mod compact;
 mod docs_demo;
 mod edit;
-mod goal;
 mod init;
 mod plan_exit;
 mod quiet_subagent;
@@ -61,7 +60,6 @@ const CLAUDE_AGENT_ERROR_CALL_ID: &str = "tui-fixture-claude-agent-error";
 const BACKGROUND_CLAUDE_AGENT_CALL_ID: &str = "tui-fixture-background-claude-agent";
 const CURSOR_AGENT_CALL_ID: &str = "tui-fixture-cursor-agent";
 const ANTIGRAVITY_AGENT_CALL_ID: &str = "tui-fixture-antigravity-agent";
-const GOAL_RETRY_AGENT_CALL_ID: &str = "tui-fixture-goal-retry-agent";
 const AGENTS_LIST_CALL_ID: &str = "tui-fixture-agents-list";
 const BACKGROUND_QUESTIONNAIRE_COMPLETION: &str =
     "background agent questionnaire completed with color blue";
@@ -177,9 +175,6 @@ async fn fixture_stream(
     if let Some(response) = plan_exit::intercept_held(&prompt, &request).await {
         return response;
     }
-    if let Some(response) = goal::intercept(&prompt, &request, &events).await {
-        return response;
-    }
     if prompt == "fixture streaming controls" {
         return streaming_controls::stream(&request, &events).await;
     }
@@ -243,9 +238,6 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
         return review;
     }
     if let Some(response) = response_scenarios::compaction(request) {
-        return response;
-    }
-    if let Some(response) = goal::intercept_response(request) {
         return response;
     }
     if let Some(response) = init::intercept(request) {

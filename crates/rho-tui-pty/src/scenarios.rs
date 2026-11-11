@@ -36,8 +36,6 @@ mod daemon_detach;
 #[cfg(unix)]
 mod daemon_doctor;
 #[cfg(unix)]
-mod daemon_goal;
-#[cfg(unix)]
 mod daemon_login;
 #[cfg(unix)]
 mod daemon_mcp;
@@ -87,7 +85,6 @@ mod fast_discovery;
 mod fifo;
 mod file_palette;
 mod first_run;
-mod goal;
 #[cfg(unix)]
 mod header_hints;
 mod hooks;
@@ -187,10 +184,6 @@ use file_palette::FILE_PATH_AUTOCOMPLETE_SCENARIO;
 use first_run::{
     setup_prompt_template, FIRST_RUN_DECISION_HOST_STEPS, FIRST_RUN_ENV, FIRST_RUN_SETUP_STEPS,
     FIRST_RUN_SIGNIN_ENV, FIRST_RUN_SKIP_STEPS, SIGNED_OUT_SETUP_STEPS,
-};
-use goal::{
-    GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_QUESTIONNAIRE_STEPS,
-    GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS, GOAL_WAITS_FOR_SUBAGENTS_STEPS,
 };
 #[cfg(unix)]
 use header_hints::HEADER_HINTS_SCENARIO;
@@ -426,13 +419,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     plan_exit::DAEMON_APPROVE_SCENARIO,
     #[cfg(unix)]
     init_command::DAEMON_INIT_PLAN_SCENARIO,
-    plan_exit::GOAL_SCENARIO,
     plan_exit::IDLE_COMPLETION_SCENARIO,
     plan_exit::KEEP_SCENARIO,
     plan_exit::FAILED_SCENARIO,
     plan_exit::QUEUED_CYCLE_SCENARIO,
-    #[cfg(unix)]
-    plan_exit::DAEMON_GOAL_SCENARIO,
     #[cfg(unix)]
     plan_exit::DAEMON_DELEGATED_COMPLETION_SCENARIO,
     #[cfg(unix)]
@@ -634,17 +624,9 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     daemon_subagents::ATTACH_VIEW_QUIT_RESTORES,
     #[cfg(unix)]
-    daemon_subagents::GOAL_WAITS_FOR_SUBAGENTS,
-    #[cfg(unix)]
-    daemon_subagents::GOAL_QUESTIONNAIRE,
-    #[cfg(unix)]
-    daemon_subagents::GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY,
-    #[cfg(unix)]
     daemon_restart::SCENARIO,
     #[cfg(unix)]
     daemon_restart_mcp::SCENARIO,
-    #[cfg(unix)]
-    daemon_goal::SCENARIO,
     #[cfg(unix)]
     daemon_mcp::SCENARIO,
     #[cfg(unix)]
@@ -868,40 +850,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
         LOGIN_OLLAMA_STEPS,
         false,
     ),
-    Scenario::new(
-        "goal_blocked_and_resumed",
-        "Pause a goal for user action, inspect it, then resume it",
-        DEFAULT_SIZE,
-        GOAL_BLOCKED_AND_RESUMED_STEPS,
-        false,
-    ),
-    Scenario::new(
-        "goal_waits_for_subagents",
-        "Wait for delegated runs before prompting an active goal to continue",
-        DEFAULT_SIZE,
-        GOAL_WAITS_FOR_SUBAGENTS_STEPS,
-        false,
-    ),
-    Scenario::new(
-        "goal_questionnaire",
-        "Answer a background child questionnaire while an active goal waits",
-        DEFAULT_SIZE,
-        GOAL_QUESTIONNAIRE_STEPS,
-        false,
-    ),
-    Scenario::new(
-        "goal_waits_for_subagents_during_retry",
-        "Wait for delegated runs before retrying a failed goal turn",
-        DEFAULT_SIZE,
-        GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS,
-        false,
-    ),
     BACKGROUND_AGENT_AUTO_DELIVERY_SCENARIO,
     SUBAGENT_RAIL_MOUSE_SCENARIO,
     #[cfg(unix)]
     quiet_subagent::QUIET_SUBAGENT_SCENARIO,
-    #[cfg(unix)]
-    quiet_subagent::GOAL_ACTION_RETRY_SCENARIO,
     #[cfg(unix)]
     quiet_subagent::RUNNING_NOTICES_SCENARIO,
     #[cfg(unix)]

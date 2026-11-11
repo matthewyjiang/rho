@@ -83,7 +83,6 @@ fn options_on(provider: &str, auth: &str) -> rho_protocol::SessionOptions {
             available: Vec::new(),
         },
         commands: Vec::new(),
-        goal: None,
         added_dirs: Vec::new(),
     }
 }

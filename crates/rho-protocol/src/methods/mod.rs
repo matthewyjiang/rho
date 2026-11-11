@@ -67,7 +67,6 @@ mod catalog;
 mod config;
 mod daemon;
 mod event;
-mod goal;
 mod grant;
 mod input;
 mod inspect;
@@ -110,7 +109,6 @@ pub use event::{
     SessionEvent, SteerId, StreamId, ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
     TurnId,
 };
-pub use goal::{SessionGoal, SessionGoalAction, SessionGoalPhase, SessionGoalStep};
 pub use grant::{GrantAccess, GrantWorkspaces, SessionGrant};
 pub use input::{
     ApprovalAsk, ApprovalSource, Ask, Choice, DefaultAnswer, DefaultStyle, InputAnswer, InputAsker,
@@ -147,13 +145,14 @@ pub use process::{
     SessionProcessesParams, SessionProcessesResponse, SESSION_PROCESSES,
 };
 pub use session::{
-    ClientEnvironment, DetachReason, ProjectTrustMismatch, Replay, SessionAttachParams,
-    SessionAttachResponse, SessionCancelParams, SessionCancelResponse, SessionDetachParams,
-    SessionDetachResponse, SessionDetachedParams, SessionEventParams, SessionId, SessionNewParams,
-    SessionNewResponse, SessionObserveParams, SessionPromptParams, SessionPromptResponse,
-    SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
-    UnsteerOutcome, SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH, SESSION_DETACHED,
-    SESSION_EVENT, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT, SESSION_STEER, SESSION_UNSTEER,
+    ClientEnvironment, DetachReason, ProjectTrustMismatch, PromptAuthor, Replay,
+    SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
+    SessionDetachParams, SessionDetachResponse, SessionDetachedParams, SessionEventParams,
+    SessionId, SessionNewParams, SessionNewResponse, SessionObserveParams, SessionPromptParams,
+    SessionPromptResponse, SessionSteerParams, SessionSteerResponse, SessionUnsteerParams,
+    SessionUnsteerResponse, UnsteerOutcome, SESSION_ATTACH, SESSION_CANCEL, SESSION_DETACH,
+    SESSION_DETACHED, SESSION_EVENT, SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT, SESSION_STEER,
+    SESSION_UNSTEER,
 };
 pub use setup::{ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, SessionSetup, SignIn};
 pub use store::{

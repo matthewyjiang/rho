@@ -105,7 +105,6 @@ fn build(
                 .collect(),
         },
         commands,
-        goal: None,
         added_dirs: Vec::new(),
     }
 }

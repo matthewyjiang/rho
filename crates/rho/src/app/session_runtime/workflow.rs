@@ -30,18 +30,28 @@ pub(crate) enum WorkflowStart {
     Cancelled,
     /// The run is going in the background; `notice` is the reply the prompt
     /// was saved with, for the host to show, `inserted` the prompt's user
-    /// message as saved, and `reply` the notice as saved.
+    /// message as saved, if the person sent it, and `reply` the notice as
+    /// saved.
     Started {
         notice: String,
-        inserted: InsertedMessage,
+        inserted: Option<InsertedMessage>,
         reply: InsertedMessage,
     },
 }
 
+/// Who sent a `/workflow:` prompt.
+pub(crate) enum StartedBy<'a> {
+    /// The person, whose prompt, `display` as they sent it, is saved as
+    /// their message.
+    Person { display: &'a UserInput },
+    /// A host on the person's behalf, as a workflow hub: the start saves no
+    /// user message, as an in-process hub's does not.
+    Host,
+}
+
 impl SessionRuntime {
     /// Starts `launch`'s run within `prompt`, records the run id in
-    /// context, and saves the prompt. `display` is the command as the user
-    /// sent it.
+    /// context, and saves the prompt as `by` says.
     ///
     /// A cancel stops a source's planning; a saved plan and a run have none
     /// to stop. Once the run exists it keeps going: cancel
@@ -49,7 +59,7 @@ impl SessionRuntime {
     pub(crate) async fn start_workflow(
         &mut self,
         prompt: &PromptScope,
-        display: &UserInput,
+        by: StartedBy<'_>,
         launch: WorkflowLaunch,
         process_config: &Config,
     ) -> anyhow::Result<WorkflowStart> {
@@ -162,7 +172,7 @@ impl SessionRuntime {
             "{}\n\n{started}",
             starting_notice(&start, &workflow_name, &run_id)
         );
-        let (inserted, reply) = self.record_started(display, model, &notice)?;
+        let (inserted, reply) = self.record_started(by, model, &notice)?;
         Ok(WorkflowStart::Started {
             notice,
             inserted,
@@ -170,26 +180,31 @@ impl SessionRuntime {
         })
     }
 
-    /// Adds the run id to model context and saves the prompt with `notice` as
-    /// its reply, returning the prompt's user message and the reply as
-    /// saved (see [`Self::append_context`]).
+    /// Adds the run id to model context and saves `notice`, after the
+    /// person's prompt when `by` is the person, returning the prompt's user
+    /// message and the notice as saved (see [`Self::append_context`]).
     fn record_started(
         &mut self,
-        display: &UserInput,
+        by: StartedBy<'_>,
         model: String,
         notice: &str,
-    ) -> anyhow::Result<(InsertedMessage, InsertedMessage)> {
-        let (inserted, [reply]) = self
-            .append_context(
-                model,
-                Message::User(display.blocks().to_vec()),
-                [Message::assistant_text(notice)],
-            )
-            // Hosts such as ACP show only the outermost message, so keep the
-            // cause inline.
-            .map_err(|error| {
-                anyhow::anyhow!("workflow started, but could not save its run id: {error:#}")
-            })?;
-        Ok((inserted, reply))
+    ) -> anyhow::Result<(Option<InsertedMessage>, InsertedMessage)> {
+        let saved = match by {
+            StartedBy::Person { display } => self
+                .append_context(
+                    model,
+                    Message::User(display.blocks().to_vec()),
+                    [Message::assistant_text(notice)],
+                )
+                .map(|(inserted, [reply])| (Some(inserted), reply)),
+            StartedBy::Host => self
+                .append_context(model, Message::assistant_text(notice), [])
+                .map(|(reply, [])| (None, reply)),
+        };
+        // Hosts such as ACP show only the outermost message, so keep the
+        // cause inline.
+        saved.map_err(|error| {
+            anyhow::anyhow!("workflow started, but could not save its run id: {error:#}")
+        })
     }
 }

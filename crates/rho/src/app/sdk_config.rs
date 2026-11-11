@@ -16,8 +16,8 @@ use {
 
 /// Step budget for one application run.
 ///
-/// The agent loop historically had no step limit; long goal-mode turns rely on
-/// that. This keeps the SDK's small default from truncating turns while still
+/// The agent loop historically had no step limit; long turns rely on that.
+/// This keeps the SDK's small default from truncating turns while still
 /// bounding a runaway loop.
 pub(crate) fn run_step_limit() -> std::num::NonZeroUsize {
     std::num::NonZeroUsize::new(10_000).expect("step limit is nonzero")

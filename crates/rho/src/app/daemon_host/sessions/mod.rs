@@ -71,7 +71,6 @@ mod child_questions;
 mod configure;
 mod cost;
 mod feed;
-mod goal;
 mod grant;
 mod idle_wake;
 mod inputs;
@@ -190,8 +189,6 @@ struct LoadedSession {
     /// The workflow runs the session started; reads never wait for the
     /// active turn.
     workflows: crate::tools::workflow_tracker::WorkflowRunTracker,
-    /// Goal lifecycle shared with control requests while the runtime is busy.
-    goal: Mutex<goal::GoalControl>,
     /// Turns the runtime's events into the feed's; only the turn under way
     /// and its steers use it, each briefly and never across an await.
     live: Mutex<LiveEvents>,
@@ -237,6 +234,12 @@ struct TurnSlot {
     /// still waiting for the runtime when one lands is dropped (see
     /// `configure`).
     plan_switches: u64,
+    /// How many turns prompts have started.
+    prompts: u64,
+    /// The prompted turn, as `prompts` counted it, whose `/compact` last
+    /// reduced the conversation, which a
+    /// [`rho_protocol::SessionChange::ModelAfterCompaction`] waits for.
+    compacted_prompt: Option<u64>,
 }
 
 /// A turn a prompt naming `key` started, as a prompt sent again with the
@@ -433,7 +436,6 @@ impl LoadedSession {
             processes: Mutex::new(runtime.tools().processes().cloned()),
             workflows: runtime.tools().workflow_tracker().clone(),
             feed,
-            goal: Mutex::default(),
             job,
             jobs,
             runtime: Arc::new(tokio::sync::Mutex::new(Some(runtime))),
@@ -453,6 +455,8 @@ impl LoadedSession {
                 residency: Residency::InUse,
                 hold: None,
                 plan_switches: 0,
+                prompts: 0,
+                compacted_prompt: None,
             }),
         }
     }
@@ -528,7 +532,6 @@ impl LoadedSession {
         // cancel. Lock order: the turn lock, then the prompt gate's
         // slot inside `handle.cancel()`; nothing takes them the other way.
         turn.cancel.cancel();
-        self.cancel_goal();
         self.handle.cancel();
     }
 }

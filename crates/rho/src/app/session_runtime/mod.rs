@@ -54,7 +54,6 @@ mod context;
 mod credentials;
 mod delegation;
 mod events;
-mod goal;
 mod handle;
 mod inspect;
 mod left_out;
@@ -109,13 +108,13 @@ pub(crate) use session_tools::SessionTools;
 pub(crate) use settings::SettingChangeError;
 #[cfg(test)]
 pub(in crate::app) use test_support::{
-    unattended_runtime_on, unsaved_unattended_runtime_on, HangUntilCancel,
+    host_woken_runtime_on, unattended_runtime_on, unsaved_unattended_runtime_on, HangUntilCancel,
 };
 pub(crate) use title::TitleJob;
 use title::TitleState;
 pub(crate) use tree::SelectNodeError;
 pub(crate) use turn::{Turn, TurnIo, TurnOutcome, TurnStart};
-pub(crate) use workflow::WorkflowStart;
+pub(crate) use workflow::{StartedBy, WorkflowStart};
 pub(crate) use workspace_rewind::{RewindError, RewoundConversation};
 
 /// A request the session recognizes but cannot run, such as a TUI-only
@@ -195,8 +194,6 @@ pub(crate) struct SessionRuntime {
     reopen_notice: Option<String>,
     /// Child notice binding kept between prompts, since children outlive them.
     held_notices: Option<HeldNotices>,
-    /// See [`Self::owes_parent_action`].
-    owes_parent_action: bool,
     /// Where the questions of the session's subagents go when the host
     /// takes them itself (see [`Self::host_takes_child_questions`]);
     /// `None` while each prompt takes them for its own run.
@@ -243,7 +240,6 @@ impl SessionRuntime {
             unsaved_compaction: false,
             reopen_notice,
             held_notices: None,
-            owes_parent_action: false,
             child_questions: None,
             settings,
             checkpoints_paused: false,
@@ -387,15 +383,6 @@ impl SessionRuntime {
     /// (see [`BackgroundWait::of`]).
     pub(crate) fn background_wait(&self) -> BackgroundWait {
         BackgroundWait::of(self.build.host.children, self.build.host.idle_turns)
-    }
-
-    /// Whether the last turn failed after the model was given a child's
-    /// request that the parent act, so the child may wait for an answer only
-    /// a retry of that turn gives: the request itself is not delivered again.
-    // Only the daemon's goal loop, unix-only so far, asks.
-    #[cfg_attr(not(unix), allow(dead_code))]
-    pub(crate) fn owes_parent_action(&self) -> bool {
-        self.owes_parent_action
     }
 
     /// Whether background work the session's prompts started still runs or

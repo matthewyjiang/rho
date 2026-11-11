@@ -23,7 +23,7 @@ fn only_user_agents_are_delete_targets() {
     }
     let catalog = AgentCatalog::discover_with_home(cwd.path(), Some(home.path())).expect("catalog");
 
-    let origins = ["mine", "project", "shared", "reviewer", "goal-judge"]
+    let origins = ["mine", "project", "shared", "reviewer", "session-title"]
         .map(|id| delete_target(&catalog, id).map(|target| target.origin));
 
     assert_eq!(

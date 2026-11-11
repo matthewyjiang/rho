@@ -13,11 +13,9 @@
 //! request it read to completion.
 //!
 //! A permission mode change still waiting when an approved plan switches
-//! the mode is dropped, whichever turn of the run it was sent during: one
-//! run, as a `/goal` loop, holds the runtime across all its turns. The
-//! in-process TUI applies such a change at the end of the turn it was sent
-//! during, so the approval, at the end of the same or a later turn, sets
-//! the mode the session ends in either way.
+//! the mode is dropped. The in-process TUI applies such a change at the end
+//! of the turn it was sent during, so the approval, at the end of the same
+//! turn, sets the mode the session ends in either way.
 //!
 //! Only a loaded session takes a change: a client attaches first, which
 //! loads it. A change that applies is kept with the session's file, so a
@@ -78,9 +76,12 @@ impl Sessions {
         params: SessionConfigureParams,
     ) -> Result<SessionConfigureResponse, RpcError> {
         self.refuse_when_stopping()?;
-        if let wire::SessionChange::Goal { action } = params.change {
-            return self.configure_goal(params.session, action).await;
-        }
+        // A model change that waits on a `/compact`, which the turn under
+        // way or last done must be.
+        let after_compaction = matches!(
+            params.change,
+            wire::SessionChange::ModelAfterCompaction { .. }
+        );
         let change = Change::parse(params.change)?;
         let not_loaded = || {
             RpcError::new(
@@ -92,7 +93,7 @@ impl Sessions {
             .loaded_session(&params.session)
             .await?
             .ok_or_else(not_loaded)?;
-        let (held, queued, plan_switches) = {
+        let (held, queued, plan_switches, prompt) = {
             // `None` once the idle unload took the session after the lookup.
             let mut turn = session.enter().ok_or_else(not_loaded)?;
             let held = Held::change(&session, &mut turn).ok_or_else(being_deleted)?;
@@ -100,7 +101,12 @@ impl Sessions {
             // turn under, as the change counts: a turn started before this
             // runs first, even one not holding the runtime yet, and a prompt
             // that sees the count starts a turn that queues behind it.
-            (held, Queued::join(&session.runtime), turn.plan_switches)
+            (
+                held,
+                Queued::join(&session.runtime),
+                turn.plan_switches,
+                turn.prompts,
+            )
         };
         // Behind the turn under way and the changes queued before this one.
         // The stop first: a turn that outlives the stop's drain must not
@@ -119,8 +125,15 @@ impl Sessions {
         // before this ran first, and one queued after runs once this is
         // done, so the options this publishes are never older than one.
         let auths = available_auths(runtime.credentials()).await;
-        let superseded = matches!(change, Change::PermissionMode(_))
-            && session.turn().plan_switches != plan_switches;
+        let superseded = {
+            let turn = session.turn();
+            match change {
+                Change::PermissionMode(_) => turn.plan_switches != plan_switches,
+                // Dropped unless that turn compacted.
+                _ if after_compaction => turn.compacted_prompt != Some(prompt),
+                _ => false,
+            }
+        };
         let applied = if superseded {
             Ok(Applied::Superseded)
         } else {
@@ -202,7 +215,8 @@ enum Applied {
     /// What every loaded session's options show was read again.
     SharedOptions,
     /// Nothing: a plan approved after the change was sent set the
-    /// permission mode it asked for.
+    /// permission mode it asked for, or the `/compact` a model change
+    /// waited on did not reduce the conversation.
     Superseded,
 }
 
@@ -212,6 +226,11 @@ impl Change {
             wire::SessionChange::Model { model, auth, setup } => {
                 Ok(Self::Model { model, auth, setup })
             }
+            wire::SessionChange::ModelAfterCompaction { model, auth } => Ok(Self::Model {
+                model,
+                auth,
+                setup: false,
+            }),
             wire::SessionChange::Reasoning { level } => reasoning_from_wire(level)
                 .map(Self::Reasoning)
                 .ok_or_else(|| invalid("unknown reasoning level")),

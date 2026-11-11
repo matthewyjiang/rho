@@ -42,15 +42,6 @@ pub(super) enum RunningTerminalError {
     Terminal(anyhow::Error),
 }
 
-impl RunningTerminalError {
-    pub(super) fn into_anyhow(self) -> anyhow::Error {
-        match self {
-            Self::Recoverable(error) => error.into(),
-            Self::Terminal(error) => error,
-        }
-    }
-}
-
 impl From<std::io::Error> for RunningTerminalError {
     fn from(error: std::io::Error) -> Self {
         Self::Terminal(error.into())
@@ -401,7 +392,6 @@ impl App {
             CommandId::Export => self.execute_export_command(&invocation),
             CommandId::Mcp => self.execute_mcp_command(),
             CommandId::Title => self.execute_title_command(&invocation),
-            CommandId::Goal => self.execute_goal_command_during_turn(invocation),
             CommandId::Model => self.execute_model_command_during_turn(invocation),
             CommandId::Limits => {
                 self.start_limits_command();

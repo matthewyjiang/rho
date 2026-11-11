@@ -38,7 +38,7 @@ fn model_choice(options: &rho_protocol::ModelOptions, reference: &str) -> anyhow
 /// The setting `change` changes, as an error names it.
 pub(super) fn setting_name(change: &SessionChange) -> &'static str {
     match change {
-        SessionChange::Model { .. } => "model",
+        SessionChange::Model { .. } | SessionChange::ModelAfterCompaction { .. } => "model",
         SessionChange::Reasoning { .. } => "reasoning level",
         SessionChange::FastMode { .. } => "fast mode",
         SessionChange::PermissionMode { .. } => "permission mode",
@@ -57,10 +57,12 @@ pub(super) fn setting_name(change: &SessionChange) -> &'static str {
 /// in-process TUI refuses one with.
 pub(super) fn change_failure(change: &SessionChange) -> String {
     match change {
-        SessionChange::Model { model, .. } => format!(
-            "could not switch to {}",
-            rho_providers::provider::model_reference(&model.provider, &model.model)
-        ),
+        SessionChange::Model { model, .. } | SessionChange::ModelAfterCompaction { model, .. } => {
+            format!(
+                "could not switch to {}",
+                rho_providers::provider::model_reference(&model.provider, &model.model)
+            )
+        }
         _ => format!("could not change the {}", setting_name(change)),
     }
 }
@@ -453,10 +455,6 @@ impl App {
                 }
             }
             CommandId::Fast => self.set_daemon_fast(invocation.args.trim()),
-            CommandId::Goal => {
-                self.execute_daemon_goal_command(&invocation.args);
-                Ok(())
-            }
             CommandId::Advisor => {
                 self.execute_daemon_advisor_command(&invocation.args);
                 Ok(())

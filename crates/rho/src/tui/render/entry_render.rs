@@ -66,14 +66,18 @@ pub(in crate::tui) fn render_entry_with_options(
             width,
             inner_width,
             render_assistant_content,
-            assistant.worked_for.map(crate::tui::goal::worked_summary),
+            assistant
+                .worked_for
+                .map(crate::tui::elapsed::worked_summary),
         ),
         Entry::Reasoning(reasoning) => render_markdown_entry_with_summary(
             &reasoning.text,
             width,
             inner_width,
             render_reasoning_content,
-            reasoning.thought_for.map(crate::tui::goal::thought_summary),
+            reasoning
+                .thought_for
+                .map(crate::tui::elapsed::thought_summary),
         ),
         _ => {
             let mut lines = Vec::new();

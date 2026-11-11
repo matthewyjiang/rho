@@ -17,7 +17,7 @@ impl App {
         };
         let turn = match outcome {
             TurnOutcome::Completed => ProposalTurn::Completed,
-            TurnOutcome::Interrupted | TurnOutcome::Cancelled | TurnOutcome::Failed(_) => {
+            TurnOutcome::Interrupted | TurnOutcome::Cancelled | TurnOutcome::Failed { .. } => {
                 ProposalTurn::Unfinished
             }
         };

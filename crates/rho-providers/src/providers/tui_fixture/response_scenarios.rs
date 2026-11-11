@@ -147,14 +147,6 @@ pub(super) fn intercept(
             describe_agent_notification(request, &prompt)
         )));
     }
-    if prompt.starts_with("Continue working toward this goal:") {
-        return Some(completed("goal continued before delegated agent finished"));
-    }
-    if prompt.starts_with("Resume the following goal after it was blocked") {
-        return Some(completed(
-            "verified that the fixture release is now published",
-        ));
-    }
     if prompt == "fixture steer detail" {
         return Some(completed(
             "steering applied exactly once: fixture steer detail",

@@ -85,26 +85,6 @@ fn wait_signal(
     }
 }
 
-// Covers a consumed action request stranding the failed parent turn behind the
-// still-running child. Ordinary goal retries retain their completion wait.
-fn goal_action_retry(harness: &mut PtyHarness) -> Result<()> {
-    let cwd = harness
-        .working_directory()
-        .context("scenario working directory")?
-        .to_path_buf();
-    let socket = UnixDatagram::bind(cwd.join(".quiet-parent-pty.sock"))?;
-    socket.set_nonblocking(true)?;
-    harness.submit_text("/goal fixture quiet action retry")?;
-    harness.wait_for_text("quiet child dispatched", STREAM)?;
-    wait_signal(harness, &socket, &mut HashSet::new(), "action")?;
-    socket.send_to(b"!", cwd.join(".quiet-child-action.sock"))?;
-    harness.wait_for_text("quiet delivery requests=2 occurrences=[0, 0, 1]", STREAM)?;
-    harness.submit_text("/goal clear")?;
-    harness.wait_for_text("goal cleared", STREAM)?;
-    resume_and_check_message(harness, "quiet-decision-required")?;
-    Ok(())
-}
-
 // The accepted failed turn owns the receipt. A retry must not duplicate it on
 // resume, and folding a notice into a human prompt must not discard it.
 fn resume_and_check_message(harness: &mut PtyHarness, message: &str) -> Result<()> {
@@ -267,21 +247,6 @@ pub(super) const QUIET_SUBAGENT_SCENARIO: Scenario = Scenario::new(
             timeout: STARTUP,
         },
         Step::Custom(quiet_notices_then_action),
-        Step::ExitCommand,
-    ],
-    /*smoke*/ true,
-);
-
-pub(super) const GOAL_ACTION_RETRY_SCENARIO: Scenario = Scenario::new(
-    "goal_subagent_action_retry",
-    "Retry failed parent action without waiting for the blocked child to finish",
-    DEFAULT_SIZE,
-    &[
-        Step::WaitText {
-            text: "gpt-5.5",
-            timeout: STARTUP,
-        },
-        Step::Custom(goal_action_retry),
         Step::ExitCommand,
     ],
     /*smoke*/ true,

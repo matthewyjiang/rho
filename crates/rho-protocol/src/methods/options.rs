@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{PermissionMode, SessionGoal, SessionGoalAction, SessionId};
+use super::{PermissionMode, SessionId};
 
 /// Make one change to a loaded session between its turns: a change sent
 /// during a turn, waiting for input included, waits for the turn to end,
@@ -62,6 +62,20 @@ pub enum SessionChange {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         setup: bool,
     },
+    /// Switch to `model` as [`Self::Model`] does, only if the session's
+    /// current or last prompted turn is a `/compact` that reduced the
+    /// conversation. Queued behind that turn like any change, it applies once
+    /// the turn ends having compacted and is dropped otherwise, leaving the
+    /// session's options as they were. A host sends it once a `/compact` it
+    /// asked for started, to return to the model the session compacted from,
+    /// so the switch back outlives the host and a change queued after it
+    /// still applies last.
+    ModelAfterCompaction {
+        model: ModelRef,
+        /// As [`Self::Model`]'s `auth`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auth: Option<String>,
+    },
     /// Spend `level`, one of [`ReasoningOptions::available`], on later turns.
     Reasoning { level: ReasoningLevel },
     /// Turn fast mode on or off. Turning it on needs a model that has it
@@ -69,8 +83,6 @@ pub enum SessionChange {
     FastMode { enabled: bool },
     /// Gate later turns' tool calls with `mode`.
     PermissionMode { mode: PermissionMode },
-    /// Control the loaded session's goal without waiting for its turn.
-    Goal { action: SessionGoalAction },
     /// Add `text` to what the model reads from its next turn on, without a
     /// turn of its own, and save it with the session as a user row that
     /// reads `display`. Clients attached now see no event for it: the one
@@ -132,10 +144,6 @@ pub struct SessionOptions {
     pub permission_mode: PermissionModeOptions,
     /// The commands a prompt may start with or mention, in menu order.
     pub commands: Vec<SessionCommand>,
-    /// The daemon-owned goal, absent after completion, clear, or cancel.
-    /// Kept while the session is loaded, not across daemon restarts.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub goal: Option<Box<SessionGoal>>,
     /// The directories the session's tools reach besides its workspace.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub added_dirs: Vec<PathBuf>,

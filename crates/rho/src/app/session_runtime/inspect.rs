@@ -82,7 +82,9 @@ impl SessionRuntime {
                     &current,
                     AuthPick::AnyOf(auths),
                 )
-                .is_ok()
+                // The resolver falls back to the provider's default auth,
+                // which has no credentials unless `auths` lists it.
+                .is_ok_and(|selection| auths.contains(&selection.auth))
             },
         )
     }

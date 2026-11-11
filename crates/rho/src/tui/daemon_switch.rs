@@ -35,8 +35,8 @@ impl App {
         self.input_ui.set_command_palette_dismissed(false);
         self.clamp_command_selection();
         self.start_follow_ups = None;
+        self.daemon_compact_handoff = false;
         self.pending.clear_follow_ups();
-        self.goal = None;
         self.pending.clear_steering();
         self.pending.clear_input_action();
         self.pending_input_changed();
@@ -80,7 +80,6 @@ impl App {
         self.daemon_option_requests.clear();
         self.daemon_login_selected = None;
         self.daemon_title = None;
-        self.daemon_hub_launch = None;
         self.awaited_daemon_report = None;
         self.reset_daemon_mcp_offers();
         // Held for the session left behind, as `/new` drops them in process.

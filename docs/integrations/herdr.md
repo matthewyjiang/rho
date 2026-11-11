@@ -37,7 +37,7 @@ Rho keeps Herdr in sync with the session:
 | State | When |
 | --- | --- |
 | `working` | A model turn or tool run is in progress |
-| `blocked` | Rho waits on you (approval, questionnaire), auth is missing, or a goal is blocked |
+| `blocked` | Rho waits on you (approval, questionnaire) or auth is missing |
 | `idle` | The session is resting and not waiting on user input |
 
 On exit, Rho releases the agent marker for the pane.

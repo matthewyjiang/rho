@@ -318,6 +318,7 @@ impl Sandbox {
     ) -> Result<TurnId, Option<ErrorCode>> {
         client
             .request::<SessionPrompt>(&SessionPromptParams {
+                author: rho_protocol::PromptAuthor::Person,
                 session: session.clone(),
                 content: vec![ContentBlock::Text { text: text.into() }],
                 timeout_ms: None,
@@ -357,6 +358,7 @@ impl Sandbox {
     ) {
         client
             .request::<SessionPrompt>(&SessionPromptParams {
+                author: rho_protocol::PromptAuthor::Person,
                 session: session.clone(),
                 content: vec![ContentBlock::Text {
                     text: call.to_string(),
@@ -741,6 +743,7 @@ async fn a_prompts_image_and_resource_reach_the_model() {
     for content in refused {
         let refusal = client
             .request::<SessionPrompt>(&SessionPromptParams {
+                author: rho_protocol::PromptAuthor::Person,
                 session: session.clone(),
                 content: content.clone(),
                 timeout_ms: None,
@@ -758,6 +761,7 @@ async fn a_prompts_image_and_resource_reach_the_model() {
     }
     client
         .request::<SessionPrompt>(&SessionPromptParams {
+            author: rho_protocol::PromptAuthor::Person,
             session: session.clone(),
             content: vec![
                 ContentBlock::Text {

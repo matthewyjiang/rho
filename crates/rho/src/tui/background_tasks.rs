@@ -8,7 +8,7 @@
 //!
 //! Adding a task: add a [`TaskId`] variant, a [`UiOutput`] or
 //! [`SessionOutput`] variant, and its arm in the matching `apply_*` below.
-//! `Ui` outputs apply in every loop (idle, running turn, goal waits);
+//! `Ui` outputs apply in every loop (idle, running turn);
 //! `Session` outputs may change the session or runtime and apply only in the
 //! idle loop.
 
