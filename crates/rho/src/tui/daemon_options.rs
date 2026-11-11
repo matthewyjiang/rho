@@ -229,7 +229,7 @@ impl App {
     pub(super) fn daemon_model_picker(&self) -> Option<UiPicker> {
         let options = self.daemon_options.as_ref()?;
         let offered = super::model_picker::offered_models(&options.model);
-        let scope = self.resolved_model_picker_scope();
+        let scope = self.conversation_model_picker_scope();
         let picker = if self.is_provider_turn_ui() {
             let pending =
                 self.daemon_option_requests
@@ -264,9 +264,20 @@ impl App {
                     &model.provider,
                     &model.model,
                 );
+                // A level asked for and not yet confirmed is the one the
+                // daemon applies before this switch.
+                let reasoning = self
+                    .daemon_option_requests
+                    .iter()
+                    .rev()
+                    .find_map(|change| match change {
+                        SessionChange::Reasoning { level } => reasoning_from_wire(*level),
+                        _ => None,
+                    })
+                    .unwrap_or(self.info.runtime.reasoning);
                 if let Err(requested) = super::reasoning_metadata::resolve_model_switch_reasoning(
                     &capabilities,
-                    self.info.runtime.reasoning,
+                    reasoning,
                     self.info.runtime.reasoning_source,
                     super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
                 ) {

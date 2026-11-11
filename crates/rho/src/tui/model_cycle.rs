@@ -26,22 +26,35 @@ enum CycleTarget {
 }
 
 impl App {
-    /// Scope the next model picker should open on.
+    /// Scope the next model picker over the signed-in catalogue should open
+    /// on, as the internal-agent pickers are.
     ///
     /// An explicit Ctrl-O choice sticks until the user toggles again. Until
     /// then, prefer pinned and recompute on every open so a first-run picker
     /// that opened on all still shows pins after the user adds one.
     pub(super) fn resolved_model_picker_scope(&self) -> model_picker::ModelPickerScope {
-        self.usable_model_picker_scope(
-            self.model_picker_scope_override
-                .unwrap_or(model_picker::ModelPickerScope::Pinned),
+        model_picker::effective_model_picker_scope(
+            self.preferred_model_picker_scope(),
+            &self.info.runtime.favorite_models,
+            &self.available_auths,
         )
     }
 
-    /// `scope` as a picker can show it here: pinned only when a pin is
-    /// usable, among the models a daemon session offers or the signed-in
-    /// catalogue.
-    fn usable_model_picker_scope(
+    /// [`Self::resolved_model_picker_scope`] for the conversation's own
+    /// picker, which a daemon session fills with the models it offers.
+    pub(super) fn conversation_model_picker_scope(&self) -> model_picker::ModelPickerScope {
+        self.usable_conversation_scope(self.preferred_model_picker_scope())
+    }
+
+    fn preferred_model_picker_scope(&self) -> model_picker::ModelPickerScope {
+        self.model_picker_scope_override
+            .unwrap_or(model_picker::ModelPickerScope::Pinned)
+    }
+
+    /// `scope` as the conversation's picker can show it: pinned only when a
+    /// pin is among the models a daemon session offers, or else the
+    /// signed-in catalogue.
+    fn usable_conversation_scope(
         &self,
         scope: model_picker::ModelPickerScope,
     ) -> model_picker::ModelPickerScope {
@@ -65,7 +78,7 @@ impl App {
             return picker;
         }
         self.refresh_available_auths();
-        let scope = self.resolved_model_picker_scope();
+        let scope = self.conversation_model_picker_scope();
         model_picker::model_picker(&self.info.runtime, &self.available_auths, scope)
     }
 
@@ -74,7 +87,7 @@ impl App {
             return picker;
         }
         self.refresh_available_auths();
-        let scope = self.resolved_model_picker_scope();
+        let scope = self.conversation_model_picker_scope();
         model_picker::model_picker_during_run(
             &self.info.runtime,
             self.pending_model_selection
@@ -126,13 +139,14 @@ impl App {
     }
 
     pub(super) fn toggle_model_picker_scope(&mut self) -> anyhow::Result<()> {
-        let (value, filter) = match self.input_ui.composer() {
+        let (value, filter, conversation) = match self.input_ui.composer() {
             ComposerMode::Picker(picker) if picker.is_model_list() => (
                 picker
                     .selected_item()
                     .map(|item| item.value.clone())
                     .unwrap_or_default(),
                 picker.filter.clone(),
+                picker.is_conversation_model(),
             ),
             _ => return Ok(()),
         };
@@ -140,9 +154,21 @@ impl App {
             return Ok(());
         }
         self.refresh_available_auths();
-        let current = self.resolved_model_picker_scope();
+        // Each picker toggles among the models it lists.
+        let (current, usable) = if conversation {
+            let current = self.conversation_model_picker_scope();
+            (current, self.usable_conversation_scope(current.other()))
+        } else {
+            let current = self.resolved_model_picker_scope();
+            let usable = model_picker::effective_model_picker_scope(
+                current.other(),
+                &self.info.runtime.favorite_models,
+                &self.available_auths,
+            );
+            (current, usable)
+        };
         let next = current.other();
-        if self.usable_model_picker_scope(next) != next {
+        if usable != next {
             self.set_status("no pinned models");
             return Ok(());
         }

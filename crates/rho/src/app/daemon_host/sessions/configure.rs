@@ -301,16 +301,19 @@ impl Change {
             Self::Model { model, auth } => {
                 let selection = model_selection(runtime, &model, auth.as_deref(), auths)?;
                 let previous = runtime.current_model();
+                // A model chosen before the first prompt, as a launch or a
+                // host's setup does, is the session's start, not a switch.
+                let started = runtime.has_conversation();
                 return runtime
                     .switch_model(&selection, config)
                     .await
                     .map(|()| {
                         let current = runtime.current_model();
                         // The prompt follows the model alone: a change that
-                        // kept the model, as a launch naming the session's
-                        // own does, has no other prompt file to report.
-                        let moved = (current.provider, current.model)
-                            != (previous.provider, previous.model);
+                        // kept the model has no other prompt file to report.
+                        let moved = started
+                            && (current.provider, current.model)
+                                != (previous.provider, previous.model);
                         Applied::Setting {
                             notice: moved.then(|| runtime.model_prompt_notice()).flatten(),
                         }
