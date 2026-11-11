@@ -37,7 +37,7 @@ use crate::{
         session_events::{outcome, CompactionEnd},
         session_runtime::{
             CommandRejected, InsertedMessage, PlanReport, PromptScope, SessionEvent,
-            SessionRuntime, TitleJob, Turn, TurnControl, TurnIo, TurnOutcome, TurnView,
+            SessionRuntime, StartedBy, TitleJob, Turn, TurnControl, TurnIo, TurnOutcome, TurnView,
             UnsavedCompaction, WorkflowStart,
         },
         workflow_cli::discover::WorkflowLaunch,
@@ -118,7 +118,10 @@ pub(super) enum Ran {
 }
 
 enum TurnInput {
-    Prompt(UserInput),
+    Prompt {
+        input: UserInput,
+        author: wire::PromptAuthor,
+    },
     Goal(Turn),
     /// No prompt: the turn's first boundary delivers the background
     /// results that wait (see [`super::idle_wake`]).
@@ -142,10 +145,10 @@ pub(super) struct TurnTask {
 }
 
 impl TurnTask {
-    /// Runs the turn of `input` in a daemon task, which tells
-    /// [`StartedTurn::start`] how the turn began.
-    pub(super) fn spawn(self, input: UserInput) {
-        tokio::spawn(self.run(TurnInput::Prompt(input)));
+    /// Runs the turn of `input`, which `author` sent, in a daemon task,
+    /// which tells [`StartedTurn::start`] how the turn began.
+    pub(super) fn spawn(self, input: UserInput, author: wire::PromptAuthor) {
+        tokio::spawn(self.run(TurnInput::Prompt { input, author }));
     }
 
     /// Start a host-constructed goal turn without parsing its displayed command.
@@ -203,8 +206,9 @@ impl TurnTask {
                         let config = session.config_for_turn(runtime).await;
                         let turn = async {
                             let ended = match input {
-                                TurnInput::Prompt(input) => {
-                                    run_turn(runtime, &mut view, input, &config, &cancel).await
+                                TurnInput::Prompt { input, author } => {
+                                    run_turn(runtime, &mut view, input, author, &config, &cancel)
+                                        .await
                                 }
                                 TurnInput::Goal(turn) => {
                                     run_goal_turn(runtime, &mut view, turn.into(), &config, &cancel)
@@ -399,11 +403,13 @@ async fn report_title(session: Weak<LoadedSession>, title: TitleJob) {
 /// Begins a prompt of `input` on `runtime` and runs it: the T3 wake
 /// watcher's wait when it is one, its slash command when it starts with one
 /// the daemon runs, else a model turn on it. A command the daemon cannot run
-/// fails the turn as a configuration error before the prompt is saved.
+/// fails the turn as a configuration error before the prompt is saved, as
+/// does a prompt from the client, `author`, that does not start a workflow.
 async fn run_turn(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,
     input: UserInput,
+    author: wire::PromptAuthor,
     config: &Config,
     cancel: &CancellationToken,
 ) -> anyhow::Result<Ran> {
@@ -438,7 +444,15 @@ async fn run_turn(
             command = session_commands::resolve(input.clone(), &commands, DAEMON_COMMANDS) => command,
         }
     };
-    let mut turn = match command? {
+    let command = command?;
+    // Only a workflow start runs without the person's message; any other
+    // prompt from the client would reach the model unseen.
+    if author != wire::PromptAuthor::Person && !matches!(command, PromptCommand::StartWorkflow(_)) {
+        anyhow::bail!(CommandRejected(
+            "only a workflow start may come from the client".into()
+        ));
+    }
+    let mut turn = match command {
         PromptCommand::Turn {
             input: model,
             calls,
@@ -467,7 +481,7 @@ async fn run_turn(
             return compact(runtime, view, &scope, &input, instructions).await;
         }
         PromptCommand::StartWorkflow(start) => {
-            return start_workflow(runtime, view, &scope, input, start, config).await;
+            return start_workflow(runtime, view, &scope, input, author, start, config).await;
         }
     };
     // The command stays the shown message; the model gets its expansion.
@@ -566,19 +580,27 @@ async fn compact(
 }
 
 /// Starts `launch`'s workflow run within `scope`, without a model turn. The
-/// runtime saves the prompt, `display`, with the start's notice as its
-/// reply; clients see both as a reload replays them, and the turn answers
-/// with the notice.
+/// runtime saves the start's notice, after the prompt, `display`, when the
+/// person sent it; clients see what was saved as a reload replays it, and
+/// the turn answers with the notice. A start the client sent on the
+/// person's behalf, as a workflow hub's, has no user message, as in
+/// process.
 async fn start_workflow(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,
     scope: &PromptScope,
     display: UserInput,
+    author: wire::PromptAuthor,
     launch: WorkflowLaunch,
     config: &Config,
 ) -> anyhow::Result<Ran> {
+    let by = match author {
+        wire::PromptAuthor::Person => StartedBy::Person { display: &display },
+        // `prompt` refuses an author it does not know.
+        _ => StartedBy::Host,
+    };
     let (notice, inserted, reply) = match runtime
-        .start_workflow(scope, &display, launch, config)
+        .start_workflow(scope, by, launch, config)
         .await
         // The command was refused, or failed as it started: either way no
         // model ran, and sending it again is the person's call.
@@ -593,10 +615,11 @@ async fn start_workflow(
     };
     let shown = {
         let mut live = view.session.live();
-        vec![
-            live.shown_prompt(&display, &inserted),
-            live.shown_reply(&reply, notice.clone()),
-        ]
+        let prompt = inserted.map(|inserted| live.shown_prompt(&display, &inserted));
+        prompt
+            .into_iter()
+            .chain([live.shown_reply(&reply, notice.clone())])
+            .collect::<Vec<_>>()
     };
     view.session.feed.publish(shown);
     view.began();

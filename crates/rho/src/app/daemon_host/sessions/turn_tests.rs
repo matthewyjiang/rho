@@ -397,7 +397,7 @@ async fn a_cancel_before_the_prompt_begins_saves_nothing() {
         stopping: rho_sdk::CancellationToken::new(),
         limit: None,
     }
-    .spawn(UserInput::text("hello"));
+    .spawn(UserInput::text("hello"), rho_protocol::PromptAuthor::Person);
     let start = began(start).await;
     // Released once the turn recorded its end.
     let messages = session
@@ -414,6 +414,45 @@ async fn a_cancel_before_the_prompt_begins_saves_nothing() {
             Some(JobState::Ended(TurnEnd::Cancelled)),
             Some(0)
         )
+    );
+}
+
+// Covers: a prompt the client sends on the person's behalf runs only as a
+// workflow start; any other ends the turn as a configuration failure before
+// it saves anything, so it never reaches the model unseen.
+// Owner: daemon session turn task.
+#[tokio::test]
+async fn a_client_prompt_that_starts_no_workflow_saves_nothing() {
+    let root = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
+    let job = started_job(&jobs);
+    let session = loaded_session(root.path(), &jobs, job.clone()).await;
+
+    let (turn, start) = started_turn(&session, rho_sdk::CancellationToken::new());
+    TurnTask {
+        session: Arc::clone(&session),
+        turn,
+        stopping: rho_sdk::CancellationToken::new(),
+        limit: None,
+    }
+    .spawn(UserInput::text("hello"), rho_protocol::PromptAuthor::Client);
+    let start = began(start).await;
+    // Released once the turn recorded its end.
+    let messages = session
+        .runtime
+        .lock()
+        .await
+        .as_ref()
+        .map(|runtime| runtime.history_for_tests().len());
+    let kind = match start {
+        Some(PromptStart::Ended(rho_protocol::TurnOutcome::Failed { error })) => Some(error.kind),
+        _ => None,
+    };
+
+    assert_eq!(
+        (kind, messages),
+        (Some(rho_protocol::TurnErrorKind::Configuration), Some(0))
     );
 }
 
@@ -496,7 +535,7 @@ async fn the_daemon_times_a_turn_out_at_its_limit() {
             stopping: rho_sdk::CancellationToken::new(),
             limit: Some(TurnLimit::starting_now(case.timeout_ms)),
         }
-        .spawn(UserInput::text("hello"));
+        .spawn(UserInput::text("hello"), rho_protocol::PromptAuthor::Person);
         if case.cancelled_first {
             session.cancel_turn();
         }

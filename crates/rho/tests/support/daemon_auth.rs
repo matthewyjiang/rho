@@ -104,6 +104,7 @@ mode = "off"
     ) -> Result<JobState, RpcError> {
         client
             .request::<SessionPrompt>(&SessionPromptParams {
+                author: rho_protocol::PromptAuthor::Person,
                 session: session.clone(),
                 content: vec![ContentBlock::Text {
                     text: "hello".into(),

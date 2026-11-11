@@ -115,7 +115,7 @@ pub(crate) use title::TitleJob;
 use title::TitleState;
 pub(crate) use tree::SelectNodeError;
 pub(crate) use turn::{Turn, TurnIo, TurnOutcome, TurnStart};
-pub(crate) use workflow::WorkflowStart;
+pub(crate) use workflow::{StartedBy, WorkflowStart};
 pub(crate) use workspace_rewind::{RewindError, RewoundConversation};
 
 /// A request the session recognizes but cannot run, such as a TUI-only

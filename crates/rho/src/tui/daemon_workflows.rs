@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use rho_protocol::{JobState, JobSummary, TurnOutcome};
+use rho_protocol::{JobState, JobSummary, PromptAuthor, TurnOutcome};
 
 use super::{
     daemon_jobs::may_still_change,
@@ -57,24 +57,23 @@ impl App {
     }
 
     /// Sends `turn`, a workflow launch. The prompt is the hub's spelling,
-    /// not something to type: it stays out of the input history, the user
-    /// message the daemon shows for it gets no row, and a prompt that could
-    /// not be sent is reported without touching the composer's draft. A
-    /// session reopened later replays the prompt as the daemon saved it.
+    /// not something to type: it stays out of the input history, the
+    /// daemon keeps no user message for it, as in process, and a prompt
+    /// that could not be sent is reported without touching the composer's
+    /// draft.
     pub(super) async fn send_daemon_workflow(
         &mut self,
         turn: TurnPrompt,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
-        self.daemon_hub_launch = Some(turn.display.clone());
-        let sent = self.request_daemon_turn(&turn, &[]).await;
+        let sent = self
+            .request_daemon_prompt(&turn, &[], PromptAuthor::Client)
+            .await;
         // Why the prompt found no attachment shows first.
         self.show_taken_daemon_views(terminal).await?;
         let Err(error) = sent else {
             return Ok(());
         };
-        // No turn began, so no user message comes back.
-        self.daemon_hub_launch = None;
         let ended = error
             .downcast_ref::<rho_protocol::ClientError>()
             .and_then(rho_protocol::ClientError::turn_ended);

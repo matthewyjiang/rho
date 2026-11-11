@@ -275,6 +275,7 @@ impl SessionControl {
     ) -> Result<(), ControlError> {
         self.daemon
             .request::<SessionPrompt>(&SessionPromptParams {
+                author: rho_protocol::PromptAuthor::Person,
                 session: session.clone(),
                 content,
                 timeout_ms: None,

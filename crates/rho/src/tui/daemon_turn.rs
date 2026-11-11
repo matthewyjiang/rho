@@ -13,7 +13,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use rho_protocol::{TurnErrorKind, TurnOutcome};
+use rho_protocol::{PromptAuthor, TurnErrorKind, TurnOutcome};
 
 use super::{
     daemon_prompt, daemon_session,
@@ -196,13 +196,26 @@ impl App {
         turn: &TurnPrompt,
         media: &[ChatMedia],
     ) -> anyhow::Result<()> {
+        self.request_daemon_prompt(turn, media, PromptAuthor::Person)
+            .await
+    }
+
+    /// [`Self::request_daemon_turn`] for a prompt `author` sends: the
+    /// daemon keeps no user message for one the TUI sends on the person's
+    /// behalf, as the workflow hub's start.
+    pub(super) async fn request_daemon_prompt(
+        &mut self,
+        turn: &TurnPrompt,
+        media: &[ChatMedia],
+        author: PromptAuthor,
+    ) -> anyhow::Result<()> {
         // The person moved on from a report still on its way.
         self.awaited_daemon_report = None;
         let Some(session) = self.info.session.daemon.as_mut() else {
             anyhow::bail!("no daemon session is open");
         };
         session
-            .prompt(daemon_prompt::prompt_content(turn, media))
+            .prompt(daemon_prompt::prompt_content(turn, media), author)
             .await
     }
 
