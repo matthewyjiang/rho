@@ -51,6 +51,7 @@ enum Change {
     Model {
         model: wire::ModelRef,
         auth: Option<String>,
+        setup: bool,
     },
     Reasoning(ReasoningLevel),
     FastMode {
@@ -197,7 +198,9 @@ enum Applied {
 impl Change {
     fn parse(change: wire::SessionChange) -> Result<Self, RpcError> {
         match change {
-            wire::SessionChange::Model { model, auth } => Ok(Self::Model { model, auth }),
+            wire::SessionChange::Model { model, auth, setup } => {
+                Ok(Self::Model { model, auth, setup })
+            }
             wire::SessionChange::Reasoning { level } => reasoning_from_wire(level)
                 .map(Self::Reasoning)
                 .ok_or_else(|| invalid("unknown reasoning level")),
@@ -315,12 +318,9 @@ impl Change {
                     },
                 });
             }
-            Self::Model { model, auth } => {
+            Self::Model { model, auth, setup } => {
                 let selection = model_selection(runtime, &model, auth.as_deref(), auths)?;
                 let previous = runtime.current_model();
-                // A model chosen before the first prompt, as a launch or a
-                // host's setup does, is the session's start, not a switch.
-                let started = runtime.has_conversation();
                 return runtime
                     .switch_model(&selection, config)
                     .await
@@ -328,7 +328,7 @@ impl Change {
                         let current = runtime.current_model();
                         // The prompt follows the model alone: a change that
                         // kept the model has no other prompt file to report.
-                        let moved = started
+                        let moved = !setup
                             && (current.provider, current.model)
                                 != (previous.provider, previous.model);
                         Applied::Setting {

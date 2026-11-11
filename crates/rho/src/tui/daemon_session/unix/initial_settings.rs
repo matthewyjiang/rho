@@ -18,6 +18,7 @@ pub(super) fn changes_between(from: &SessionOptions, to: &SessionOptions) -> Vec
         changes.push(SessionChange::Model {
             model: to.model.current.clone(),
             auth: Some(to.model.auth.clone()),
+            setup: true,
         });
     }
     if let Some(reasoning) = to.reasoning.as_ref().filter(|reasoning| {

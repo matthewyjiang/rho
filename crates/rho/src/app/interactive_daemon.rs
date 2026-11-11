@@ -86,6 +86,7 @@ pub(super) async fn open(
         (true, _) => changes.push(LaunchChange::Change(SessionChange::Model {
             model: launch_model(),
             auth: auth.is_some().then(|| config.auth.clone()),
+            setup: true,
         })),
         // The flag may name another provider's profile, which the launch's
         // config then holds.

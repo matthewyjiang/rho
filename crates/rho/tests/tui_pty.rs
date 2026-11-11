@@ -253,7 +253,9 @@ fn remember_appends_instructions_without_model_turn() {
 // interrupt the interactive session. Owner: interactive TUI lifecycle.
 #[test]
 fn model_prompt_switch_and_invalid_file_recovery() {
-    assert_pass("model_prompt_switch");
+    for scenario in ["model_prompt_switch", "model_prompt_before_first_prompt"] {
+        assert_pass(scenario);
+    }
 }
 
 // Covers: /init must target the root, /new must reload it without changing the
@@ -1429,6 +1431,7 @@ fn daemon_model_switches_match_the_in_process_tui() {
         "daemon_statusline_model_click",
         "daemon_statusline_no_reasoning_click",
         "daemon_model_prompt_switch",
+        "daemon_model_prompt_before_first_prompt",
         "daemon_cycle_reasoning_idle",
         "daemon_cycle_reasoning_queued",
     ] {

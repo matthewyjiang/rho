@@ -72,6 +72,14 @@ pub(super) const MODEL_PROMPTS: Scenario = Scenario {
     ..model_prompts::MODEL_PROMPTS_SCENARIO
 };
 
+pub(super) const MODEL_PROMPT_BEFORE_FIRST_PROMPT: Scenario = Scenario {
+    id: "daemon_model_prompt_before_first_prompt",
+    description:
+        "Name the prompt file of a model a new daemon session chose before its first prompt",
+    env: OPENAI_AND_XAI_ENV,
+    ..model_prompts::BEFORE_FIRST_PROMPT_SCENARIO
+};
+
 pub(super) const CYCLE_REASONING_IDLE: Scenario = Scenario {
     id: "daemon_cycle_reasoning_idle",
     description: "Keep or normalize a daemon session's reasoning across pinned model cycles",

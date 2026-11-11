@@ -629,6 +629,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     daemon_model::MODEL_PROMPTS,
     #[cfg(unix)]
+    daemon_model::MODEL_PROMPT_BEFORE_FIRST_PROMPT,
+    #[cfg(unix)]
     daemon_model::CYCLE_REASONING_IDLE,
     #[cfg(unix)]
     daemon_model::CYCLE_REASONING_QUEUED,
@@ -669,6 +671,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     .with_setup(setup_pinned_models)
     .with_env(OPENAI_AND_XAI_KEY_ENV),
     model_prompts::MODEL_PROMPTS_SCENARIO,
+    model_prompts::BEFORE_FIRST_PROMPT_SCENARIO,
     model_cycle_reasoning::IDLE,
     model_cycle_reasoning::QUEUED,
     config_2x_upgrade::IN_PROCESS,

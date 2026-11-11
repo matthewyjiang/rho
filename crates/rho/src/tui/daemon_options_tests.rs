@@ -207,6 +207,7 @@ fn the_model_picker_lays_offered_models_out_by_pin_and_pending_switch() {
                 model: "grok".into(),
             },
             auth: None,
+            setup: false,
         });
     assert_eq!(
         rows(&app),
@@ -247,6 +248,7 @@ fn a_switch_login_asked_for_keeps_logins_status_line() {
             let change = rho_protocol::SessionChange::Model {
                 model: model.clone(),
                 auth: None,
+                setup: false,
             };
             app.daemon_option_requests.push_back(change.clone());
             match switch {

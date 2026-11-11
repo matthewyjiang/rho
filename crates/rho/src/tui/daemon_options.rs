@@ -288,7 +288,11 @@ impl App {
                     return Ok(());
                 }
                 let asked = self.daemon_option_requests.len();
-                self.configure_daemon(SessionChange::Model { model, auth: None })?;
+                self.configure_daemon(SessionChange::Model {
+                    model,
+                    auth: None,
+                    setup: false,
+                })?;
                 // First-run setup ends with its model, once the daemon was
                 // asked for it: a change that could not be sent leaves the
                 // step open under its error. One the daemon then refuses
@@ -348,7 +352,11 @@ impl App {
             (CycleDirection::Backward, None) => available.len() - 1,
         };
         let model = available[next].model.clone();
-        self.configure_daemon(SessionChange::Model { model, auth: None })
+        self.configure_daemon(SessionChange::Model {
+            model,
+            auth: None,
+            setup: false,
+        })
     }
 
     pub(super) fn cycle_daemon_reasoning(&mut self) -> anyhow::Result<()> {

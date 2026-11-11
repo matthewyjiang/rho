@@ -181,6 +181,7 @@ fn model_change(value: &str, models: &wire::ModelOptions) -> Result<SessionChang
         Some(choice) => Ok(SessionChange::Model {
             model: choice.model.clone(),
             auth: None,
+            setup: false,
         }),
         None => Err(AcpError::invalid_params().data(format!("unknown model '{value}'"))),
     }

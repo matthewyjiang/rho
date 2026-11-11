@@ -197,6 +197,7 @@ fn picks_become_daemon_changes() {
             Ok(SessionChange::Model {
                 auth: None,
                 model: model_ref("openrouter", "openai/gpt-4"),
+                setup: false,
             }),
         ),
         (

@@ -18,6 +18,7 @@ fn every_session_change_round_trips_through_its_wire_form() {
                     model: "gpt-5.5".into(),
                 },
                 auth: None,
+                setup: false,
             },
             json!({"kind": "model", "model": {"provider": "openai", "model": "gpt-5.5"}}),
         ),
@@ -28,11 +29,13 @@ fn every_session_change_round_trips_through_its_wire_form() {
                     model: "gpt-5.5".into(),
                 },
                 auth: Some("codex".into()),
+                setup: true,
             },
             json!({
                 "kind": "model",
                 "model": {"provider": "openai", "model": "gpt-5.5"},
                 "auth": "codex",
+                "setup": true,
             }),
         ),
         (

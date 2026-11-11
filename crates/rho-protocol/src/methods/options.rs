@@ -54,6 +54,13 @@ pub enum SessionChange {
         /// credentials.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         auth: Option<String>,
+        /// Whether the change sets the session up as it opens, as a launch
+        /// flag or a host's setup does, rather than switching its model.
+        /// A switch that moves the session to another model tells its
+        /// clients which prompt file it now runs on, in a
+        /// [`super::SessionEvent::Notice`]; a setup change does not.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        setup: bool,
     },
     /// Spend `level`, one of [`ReasoningOptions::available`], on later turns.
     Reasoning { level: ReasoningLevel },
