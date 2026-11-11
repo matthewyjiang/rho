@@ -3,10 +3,11 @@
 //!
 //! A statusline field press runs that field's slash command through the event
 //! loop's [`PointerAction`], exactly like typing it, opens its picker directly
-//! when no command opens it, or steps the reasoning effort like Shift+Tab. A press on an attachment's `✕` button
-//! removes that attachment. Hover for both derives from the last pointer cell
-//! at draw time, so scroll, resize, and removal re-anchor it without extra
-//! state, and hover and clicks share one gate ([`App::chrome_pointer_live`]).
+//! when no command opens it, or steps the reasoning effort like Shift+Tab. A
+//! press on an attachment's `✕` button removes that attachment. Hover for both
+//! derives from the last pointer cell at draw time, so scroll, resize, and
+//! removal re-anchor it without extra state, and hover and clicks share one
+//! gate ([`App::chrome_pointer_live`]).
 
 use std::time::Instant;
 
