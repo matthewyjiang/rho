@@ -565,6 +565,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     codemode_stream::CODEMODE_CARD_SCENARIO,
     codemode_stream::CODEMODE_LARGE_SCRIPT_SCENARIO,
+    #[cfg(unix)]
+    codemode_stream::DAEMON_CODEMODE_LARGE_SCRIPT_SCENARIO,
     Scenario::new(
         "progress_tool",
         "Run the fixture progress tool to completion",
@@ -711,6 +713,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_prompt::DAEMON_PROMPT_SCENARIO,
     #[cfg(unix)]
     daemon_prompt::DAEMON_CANCEL_SCENARIO,
+    #[cfg(unix)]
+    daemon_prompt::DAEMON_STREAM_COST_SCENARIO,
     #[cfg(unix)]
     daemon_approval::DAEMON_APPROVAL_SCENARIO,
     #[cfg(unix)]

@@ -46,6 +46,27 @@ pub(super) const DAEMON_CANCEL_SCENARIO: Scenario = Scenario::new(
 .with_setup(write_daemon_config)
 .with_env(ENV);
 
+// Covers: the statusline's cost follows a response while the daemon still
+// streams it, and the finished turn's cost counts that response once.
+// Owner: interactive TUI as a daemon client
+pub(super) const DAEMON_STREAM_COST_SCENARIO: Scenario = Scenario::new(
+    "daemon_stream_cost",
+    "Show a daemon turn's cost while its response streams",
+    DEFAULT_SIZE,
+    &[
+        Step::Phase("startup"),
+        Step::WaitText {
+            text: "gpt-5.5",
+            timeout: STARTUP,
+        },
+        Step::Custom(stream_cost),
+        Step::ExitCommand,
+    ],
+    /*smoke*/ false,
+)
+.with_setup(write_daemon_config)
+.with_env(ENV);
+
 const DAEMON_PROMPT_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -116,6 +137,30 @@ fn assert_one_user_row(harness: &mut PtyHarness) -> Result<()> {
     anyhow::ensure!(
         count == 1,
         "expected the prompt once, found it {count} times"
+    );
+    Ok(())
+}
+
+/// The fixture reports a dollar of usage with each of its four chunks and
+/// holds the response open between them.
+fn stream_cost(harness: &mut PtyHarness) -> Result<()> {
+    const RELEASE: &str = ".rho-fixture-release-streaming-controls";
+    harness.set_phase("streaming");
+    harness.submit_text("fixture streaming controls")?;
+    for cost in ["$1.000", "$2.000", "$3.000", "$4.000"] {
+        harness.wait_for_text(cost, STREAM)?;
+        anyhow::ensure!(
+            harness.screen().contains_text("esc abort"),
+            "{cost} showed only after the response ended"
+        );
+        super::release_fixture(harness, RELEASE)?;
+    }
+    harness.set_phase("finished");
+    harness.wait_for_text("Buffered completion delivered.", STREAM)?;
+    harness.wait_for_text(IDLE_COMPOSER, SETTLE)?;
+    anyhow::ensure!(
+        harness.screen().contains_text("$4.000"),
+        "the finished turn's cost is not the four dollars its response reported"
     );
     Ok(())
 }

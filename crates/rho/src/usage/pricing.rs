@@ -38,3 +38,25 @@ pub(crate) fn catalog_cost_usd_micros(usage: &ModelUsage, metadata: &ModelMetada
 pub(crate) fn cost_component(tokens: u64, micros_per_million: Option<u64>) -> u128 {
     tokens as u128 * micros_per_million.unwrap_or_default() as u128 / 1_000_000
 }
+
+/// `usage` less `baseline`, field by field: what a cumulative count gained
+/// since the baseline was taken.
+pub(crate) fn usage_difference(usage: &ModelUsage, baseline: Option<&ModelUsage>) -> ModelUsage {
+    let baseline = baseline.cloned().unwrap_or_default();
+    ModelUsage {
+        input_tokens: subtract_optional(usage.input_tokens, baseline.input_tokens),
+        output_tokens: subtract_optional(usage.output_tokens, baseline.output_tokens),
+        cache_read_tokens: subtract_optional(usage.cache_read_tokens, baseline.cache_read_tokens),
+        cache_write_tokens: subtract_optional(
+            usage.cache_write_tokens,
+            baseline.cache_write_tokens,
+        ),
+        total_tokens: subtract_optional(usage.total_tokens, baseline.total_tokens),
+        context_window: usage.context_window,
+        cost_usd_micros: subtract_optional(usage.cost_usd_micros, baseline.cost_usd_micros),
+    }
+}
+
+fn subtract_optional(value: Option<u64>, baseline: Option<u64>) -> Option<u64> {
+    value.map(|value| value.saturating_sub(baseline.unwrap_or_default()))
+}

@@ -76,14 +76,7 @@ async fn stream_edit(
     complete_after_sleep: bool,
 ) -> Result<ModelResponse, ProviderError> {
     // Seed the target so the real str_replace tool can apply against it.
-    let cwd = std::env::current_dir().map_err(|error| {
-        ProviderError::new(
-            rho_sdk::ProviderErrorKind::Other,
-            format!("fixture setup: current_dir failed: {error}"),
-            rho_sdk::Retryability::Permanent,
-        )
-    })?;
-    let target = cwd.join(file_name);
+    let target = super::release::workspace_path(file_name);
     std::fs::write(&target, ORIGINAL).map_err(|error| {
         ProviderError::new(
             rho_sdk::ProviderErrorKind::Other,

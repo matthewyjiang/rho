@@ -1162,6 +1162,22 @@ fn daemon_cancel_interrupts_the_turn_and_returns_to_idle() {
     assert_pass("daemon_cancel");
 }
 
+// Covers: with RHO_TUI_DAEMON=1, the statusline's cost follows a response
+// while the daemon streams it, and the finished turn counts it once.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_stream_cost_follows_the_response() {
+    assert_pass("daemon_stream_cost");
+}
+
+// Covers: with RHO_TUI_DAEMON=1, a streamed call's small tail shows once
+// the model's stream pauses, though its card is sent only as it grows.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_streamed_call_shows_its_tail_when_the_stream_pauses() {
+    assert_pass("daemon_codemode_large_script_stream");
+}
+
 // Covers: with RHO_TUI_DAEMON=1 in supervised mode, a daemon turn's write
 // opens the TUI's approval prompt, Allow once answers the daemon, and the
 // turn completes with the write done.

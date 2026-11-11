@@ -127,8 +127,9 @@ pub(super) fn intercept(
         } else {
             // Capture the model-visible approval result, not the host's decision
             // slot. The PTY checks that optional feedback survives into history.
-            std::fs::write(".rho-fixture-plan-feedback", approval_result)
-                .and_then(|()| std::fs::write(".rho-fixture-plan-implementation", prompt))
+            let receipt = super::release::workspace_path;
+            std::fs::write(receipt(".rho-fixture-plan-feedback"), approval_result)
+                .and_then(|()| std::fs::write(receipt(".rho-fixture-plan-implementation"), prompt))
                 .map_err(|error| {
                     ProviderError::new(
                         ProviderErrorKind::Other,

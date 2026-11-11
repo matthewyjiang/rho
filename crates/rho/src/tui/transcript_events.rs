@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use ratatui::{backend::Backend, Terminal};
 
-use crate::tui::DefaultTerminal;
+use crate::{tui::DefaultTerminal, usage::pricing::usage_difference};
 
 use super::{
     activity::ActivityPhase,
@@ -23,9 +23,7 @@ use super::{
     markdown_image::markdown_image_suffix_may_have_changed,
     render::padded_content_width,
     stream::StreamFragment,
-    usage_cost::{
-        add_optional, merge_usage, usage_difference, usage_with_estimated_cost, CostSource,
-    },
+    usage_cost::{add_optional, merge_usage, usage_with_estimated_cost, CostSource},
     App, AssistantEntry, Entry, FinalAnswerDelta, LiveStreamPreview, ReasoningEntry, StreamKind,
     ToolEntry,
 };

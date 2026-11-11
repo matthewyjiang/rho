@@ -652,6 +652,68 @@ fn a_discarded_response_drops_what_it_proposed() {
     );
 }
 
+// Covers: a call opens while the provider still streams its arguments, once
+// it has an id, a name, and arguments to show; starting it keeps the call's
+// id rather than closing the streamed card as failed; and a discarded
+// response closes the calls its stream opened.
+// Owner: session event live mapping
+#[test]
+fn a_streamed_call_opens_pending_and_keeps_its_id_when_it_starts() {
+    let tool_set = AppToolSet::disabled();
+    let mut live = live(&tool_set);
+    let streamed = |id: Option<&str>, arguments: &str| {
+        SessionEvent::Run(RunEvent::ToolCallUpdated {
+            index: 0,
+            id: id.map(str::to_owned),
+            name: id.map(|_| "bash".to_owned()),
+            arguments_delta: arguments.to_owned(),
+        })
+    };
+    let events = [
+        // Named before it has arguments: nothing to show yet.
+        streamed(Some("call-1"), ""),
+        streamed(Some("call-1"), r#"{"command":"l"#),
+        // Its card follows its arguments.
+        streamed(Some("call-1"), "s"),
+        // Sent once the arguments grew by a quarter.
+        streamed(Some("call-1"), " -la /tmp"),
+        proposed("call-1", "ls"),
+        started("call-1", ToolMetadata::default()),
+        step(100),
+        streamed(Some("call-2"), r#"{"command":"pwd"#),
+        SessionEvent::Run(RunEvent::ProviderStreamReset {
+            reason: ProviderStreamResetReason::InvalidResponse,
+            detail: "retry".into(),
+        }),
+    ];
+    let seen: Vec<_> = map_all(&mut live, &events)
+        .into_iter()
+        .filter_map(|event| match event {
+            WireEvent::ToolCall(update) => Some((
+                update.id.as_str().to_owned(),
+                update.status,
+                update.display.is_some(),
+            )),
+            WireEvent::ResponseDiscarded => Some(("discarded".to_owned(), None, false)),
+            _ => None,
+        })
+        .collect();
+    let (first, second) = (seen[0].0.clone(), seen[3].0.clone());
+
+    assert_eq!(
+        seen,
+        [
+            (first.clone(), Some(ToolStatus::Pending), true),
+            (first.clone(), None, true),
+            (first.clone(), Some(ToolStatus::InProgress), true),
+            (second.clone(), Some(ToolStatus::Pending), true),
+            (second.clone(), Some(ToolStatus::Failed), false),
+            ("discarded".to_owned(), None, false),
+        ]
+    );
+    assert_ne!(first, second);
+}
+
 // Covers: usage reports the context window the session's model is
 // configured with, when the mapper was given one.
 // Owner: session event live mapping
@@ -671,6 +733,81 @@ fn usage_reports_the_configured_window() {
             cost_usd_micros: None,
         }]
     );
+}
+
+// Covers: a streamed card held back for its arguments to grow is the
+// host's to send when the stream pauses, once, under the call's id.
+// Owner: session event live mapping
+#[test]
+fn a_held_streamed_card_goes_out_when_the_host_asks() {
+    let tool_set = AppToolSet::disabled();
+    let mut live = live(&tool_set);
+    let streamed = |arguments: &str| {
+        SessionEvent::Run(RunEvent::ToolCallUpdated {
+            index: 0,
+            id: Some("call-1".to_owned()),
+            name: Some("bash".to_owned()),
+            arguments_delta: arguments.to_owned(),
+        })
+    };
+    let opened = map_all(&mut live, &[streamed(r#"{"command":"l"#)]);
+    let [WireEvent::ToolCall(opened)] = opened.as_slice() else {
+        panic!("expected the call to open: {opened:?}");
+    };
+    // Too little more to send by itself.
+    assert_eq!(map_all(&mut live, &[streamed("s")]), Vec::new());
+    assert!(live.holds_previews());
+
+    let held = live.held_previews();
+    let [WireEvent::ToolCall(update)] = held.as_slice() else {
+        panic!("expected the held card: {held:?}");
+    };
+    assert_eq!(
+        (&update.id, update.status, update.display.is_some()),
+        (&opened.id, None, true)
+    );
+    assert_eq!(
+        (live.holds_previews(), live.held_previews()),
+        (false, Vec::new())
+    );
+
+    // A card still held when its call has run is dropped, not opened as a
+    // second call.
+    map_all(&mut live, &[streamed("x")]);
+    map_all(
+        &mut live,
+        &[
+            started("call-1", ToolMetadata::default()),
+            finished("call-1", ToolCompletion::Unavailable),
+        ],
+    );
+    assert_eq!(live.held_previews(), Vec::new());
+}
+
+// Covers: a host that prices a streaming response gets the step's context
+// fill again, and none before any step reported one.
+// Owner: session event live mapping
+#[test]
+fn streamed_usage_repeats_the_steps_fill() {
+    let tool_set = AppToolSet::disabled();
+    let mut live = live(&tool_set);
+    let before = live.streamed_usage();
+    map_all(&mut live, &[step(100)]);
+    assert_eq!((before, live.streamed_usage()), (None, Some(usage(100))));
+
+    // It arrives between a reply's chunks, which stay one message.
+    let mut reply = map_all(&mut live, &[delta("Hel")]);
+    live.streamed_usage();
+    reply.extend(map_all(&mut live, &[delta("lo")]));
+    let messages: Vec<_> = reply
+        .iter()
+        .filter_map(|event| match event {
+            WireEvent::AgentMessageChunk { message, .. } => Some(message),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0], messages[1]);
 }
 
 // Covers: a background result's card carries its body as markdown, with

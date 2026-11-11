@@ -14,7 +14,7 @@ use std::{
 };
 
 use rho_protocol as wire;
-use rho_sdk::{CancellationToken, UserInput};
+use rho_sdk::{CancellationToken, RunEvent, UserInput};
 use tokio::{
     sync::{mpsc, watch},
     time::Instant,
@@ -671,10 +671,35 @@ impl DaemonView {
         &mut self,
         mut events: mpsc::UnboundedReceiver<SessionEvent>,
         control: mpsc::UnboundedSender<TurnControl>,
+        mut cost: cost::TurnCost,
     ) {
-        while let Some(event) = events.recv().await {
-            let wire = self.session.live().map(&event);
-            let wire = cost::priced(wire, &self.session.id).await;
+        loop {
+            // A streamed card held back for more arguments goes out when
+            // the stream pauses instead.
+            let event = if self.session.live().holds_previews() {
+                match tokio::time::timeout(PREVIEW_PAUSE, events.recv()).await {
+                    Ok(event) => event,
+                    Err(_) => {
+                        let held = self.session.live().held_previews();
+                        self.session.feed.publish(held);
+                        continue;
+                    }
+                }
+            } else {
+                events.recv().await
+            };
+            let Some(event) = event else {
+                break;
+            };
+            let wire = {
+                let mut live = self.session.live();
+                let mut wire = live.map(&event);
+                if matches!(event, SessionEvent::Run(RunEvent::UsageUpdated { .. })) {
+                    wire.extend(live.streamed_usage());
+                }
+                wire
+            };
+            let wire = cost.priced(&event, wire, &self.session.id).await;
             self.session.feed.publish(wire);
             if matches!(event, SessionEvent::MessageInserted(_)) {
                 self.began();
@@ -684,6 +709,12 @@ impl DaemonView {
         }
     }
 }
+
+/// How long a model's stream may pause before the card of what it wrote
+/// last is sent though its arguments grew little: long enough that a card
+/// per pause stays at four a second for a stream that only trickles, short
+/// enough to read as the stream itself.
+const PREVIEW_PAUSE: std::time::Duration = std::time::Duration::from_millis(250);
 
 impl Drop for DaemonView {
     fn drop(&mut self) {
@@ -700,13 +731,17 @@ impl Drop for DaemonView {
 impl TurnView for DaemonView {
     fn open_turn<'v>(
         &'v mut self,
-        _runtime: &SessionRuntime,
+        runtime: &SessionRuntime,
     ) -> (TurnIo, impl Future<Output = ()> + Send + use<'v>) {
         let (events, event_receiver) = mpsc::unbounded_channel();
         let (control_sender, control) = mpsc::unbounded_channel();
         (
             TurnIo { events, control },
-            self.show(event_receiver, control_sender),
+            self.show(
+                event_receiver,
+                control_sender,
+                cost::TurnCost::on(&runtime.current_model()),
+            ),
         )
     }
 

@@ -142,7 +142,8 @@ async fn show(view: &mut DaemonView, events: Vec<SessionEvent>) {
     }
     drop(event_sender);
     let (control, _control_receiver) = mpsc::unbounded_channel();
-    view.show(event_receiver, control).await;
+    view.show(event_receiver, control, super::cost::TurnCost::unpriced())
+        .await;
 }
 
 /// A turn that shows `events`, and the job's `state` and the prompt
