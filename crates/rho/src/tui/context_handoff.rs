@@ -5,6 +5,9 @@
 //! the send itself is confirmed by `send_confirm` before the next turn starts.
 //! Compaction can salvage portable text. It does not make native blocks
 //! sendable to an incompatible model.
+//!
+//! A daemon session holds its own conversation, so the TUI that follows one
+//! asks from what the daemon reports; see [`daemon`].
 
 use crate::session::Session;
 use crate::tui::DefaultTerminal;
@@ -17,6 +20,8 @@ use super::{
     InlineChoiceModal, InlineChoiceOption, InlineChoicePending, InteractiveModelSelection,
     InteractiveRuntime,
 };
+
+mod daemon;
 
 pub(super) const ACTION_USE_SOURCE: &str = "use-source";
 pub(super) const ACTION_COMPACT: &str = "compact";
@@ -271,6 +276,8 @@ impl App {
         }
         if !had_recovered_messages {
             self.insert_runtime_notices(agent);
+            // A daemon session's conversation is the daemon's to recover.
+            self.request_daemon_context_handoff();
             return Ok(());
         }
 
@@ -377,6 +384,10 @@ impl App {
             target_selection,
             materialize,
         } = pending;
+        if self.info.session.daemon.is_some() {
+            self.resolve_daemon_context_handoff(value, source_selection)?;
+            return self.reconcile_auto_classifier_gate(agent).await;
+        }
         if let Some(value) = value {
             let decision =
                 decision_from_value(value).unwrap_or(ContextHandoffDecision::ContinueDirect);
