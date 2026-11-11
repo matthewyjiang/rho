@@ -4942,6 +4942,11 @@
           "const": "compaction",
           "description": "The session's compaction settings as token counts, what its\ncompactions removed, and what the latest one did and cost.",
           "type": "string"
+        },
+        {
+          "const": "provider_context",
+          "description": "The provider-native context in the session's conversation that its\nmodel cannot be sent, the model that produced it, and whether\ncompacting could summarize the conversation first.",
+          "type": "string"
         }
       ]
     },

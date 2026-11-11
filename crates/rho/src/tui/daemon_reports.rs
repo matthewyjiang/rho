@@ -10,6 +10,9 @@
 //! already opened: no one waits on that answer, so it changes no status and
 //! is dropped once the overlay closed. The daemon refuses the read during a
 //! turn, so [`InfoCompactionRead`] asks again when the turn ends.
+//!
+//! The provider-context report a resumed session is asked for opens the
+//! handoff dialog (`context_handoff::daemon`); no one waits on it either.
 
 use rho_protocol::SessionReport;
 
@@ -62,6 +65,7 @@ fn name(report: SessionReport) -> &'static str {
         SessionReport::Context => "context",
         SessionReport::Hooks => "hooks",
         SessionReport::Compaction => "compaction",
+        SessionReport::ProviderContext => "provider context",
         // `SessionReport` is non-exhaustive; the TUI asks only for the above.
         _ => "report",
     }
@@ -153,9 +157,10 @@ impl App {
         report: SessionReport,
         result: Result<serde_json::Value, ReportRefusal>,
     ) {
-        if report == SessionReport::Compaction {
-            self.show_daemon_info_compaction(result);
-            return;
+        match report {
+            SessionReport::Compaction => return self.show_daemon_info_compaction(result),
+            SessionReport::ProviderContext => return self.show_daemon_provider_context(result),
+            _ => {}
         }
         let result = result.map_err(|refusal| refusal.message);
         // An answer to a report the person asked for before another, or

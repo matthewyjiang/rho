@@ -5,6 +5,7 @@ use crate::{
     app::{
         compaction_report::CompactionReport,
         context_report::{mcp_tool_servers, ContextReport},
+        provider_context_report::ProviderContextReport,
     },
     compaction::CompactionConfig,
     config::Config,
@@ -42,6 +43,28 @@ impl SessionRuntime {
             last_provider_check: session.last_compaction_decision().map(Into::into),
             last_compaction: self.built.diagnostics.last_compaction(),
         })
+    }
+
+    /// What of the conversation the session's model cannot be sent, and
+    /// whether a `/compact` under `process_config`'s compaction settings
+    /// would summarize any of it. Scans the committed history, so hosts read
+    /// it on demand.
+    pub(crate) fn provider_context_report(&self, process_config: &Config) -> ProviderContextReport {
+        let session = &self.built.session;
+        let history = session.history();
+        let config = model_scoped_config(&self.current_model(), process_config);
+        let target_tokens = CompactionConfig::from(&config).target_tokens_for_context(
+            self.configured_context_window(),
+            rho_sdk::CompactionTrigger::Manual,
+            session.estimate_context(&history),
+        );
+        let can_compact = crate::compaction::partition_messages_for_compaction(
+            &history,
+            &self.built.tools.specs(),
+            target_tokens,
+        )
+        .is_some();
+        ProviderContextReport::new(&history, self.built.provider.identity(), can_compact)
     }
 
     /// Reads the session's hooks again from their files and reports them

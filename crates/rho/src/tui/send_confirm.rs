@@ -7,17 +7,22 @@
 //! later send can consume is an explicit "Send for this session"
 //! acknowledgement, which [`SendOmissions::covers`] scopes to one session,
 //! one target model, and the exact native blocks the user was warned about.
+//!
+//! A daemon session holds its own conversation, so its sends pass the gate
+//! in [`daemon`], on what the daemon reports.
 
 use std::collections::BTreeSet;
-use std::hash::{DefaultHasher, Hash, Hasher};
 
+use crate::app::provider_context_report::block_fingerprint;
 use crate::tui::DefaultTerminal;
 use rho_providers::model::Message;
 use rho_sdk::model::{
     handoff::{self, HandoffReport},
-    ModelIdentity, ProviderContextBlock,
+    ModelIdentity,
 };
 use rho_sdk::SessionId;
+
+mod daemon;
 
 use super::{
     prompt_turn::FailedTurn, subagent_delivery::TurnBoundaryDelivery, App, ChatMedia, ComposerMode,
@@ -68,17 +73,6 @@ impl SendOmissions {
             && self.target == current.target
             && current.blocks.is_subset(&self.blocks)
     }
-}
-
-/// In-process identity of one native block. A collision could only skip a
-/// warning, never change what is sent.
-fn block_fingerprint(block: &ProviderContextBlock) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    block.identity.hash(&mut hasher);
-    block.kind.hash(&mut hasher);
-    block.position.hash(&mut hasher);
-    block.data.to_string().hash(&mut hasher);
-    hasher.finish()
 }
 
 pub(super) enum SendPayload {
@@ -200,7 +194,9 @@ impl SendSubmission {
         self
     }
 
-    fn into_cancelled_payload(self) -> SendPayload {
+    /// The work itself, for a cancellation to put back or a daemon session
+    /// to send: neither starts a provider in this process.
+    fn into_payload(self) -> SendPayload {
         self.payload
     }
 
@@ -347,27 +343,38 @@ impl App {
             ));
         }
         let report = handoff::report_message_omissions(&history, &omissions.target);
+        self.confirm_send(
+            PendingConfirmSend {
+                submission,
+                omissions,
+                can_compact: agent.can_compact(),
+            },
+            &report,
+        );
+        None
+    }
 
+    /// Opens the confirmation that owns `pending` until the person answers
+    /// it; `report` is what it says the model will not receive.
+    fn confirm_send(&mut self, pending: PendingConfirmSend, report: &HandoffReport) {
         let target_label = rho_providers::provider::model_reference(
             &self.info.runtime.provider,
             &self.info.runtime.model,
         );
-        let can_compact = agent.can_compact();
-        let choice = confirm_send_choice(&target_label, &report, can_compact)
-            .inspect_err(|error| tracing::warn!(%error, "confirm-send choice unavailable"))
-            .ok()?;
+        let choice = match confirm_send_choice(&target_label, report, pending.can_compact) {
+            Ok(choice) => choice,
+            Err(error) => {
+                tracing::warn!(%error, "confirm-send choice unavailable");
+                return;
+            }
+        };
         self.input_ui
             .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
                 choice,
-                pending: InlineChoicePending::ConfirmSend(Box::new(PendingConfirmSend {
-                    submission,
-                    omissions,
-                    can_compact,
-                })),
+                pending: InlineChoicePending::ConfirmSend(Box::new(pending)),
                 parent_picker: None,
             }));
         self.set_status("confirm send");
-        None
     }
 
     pub(super) async fn resolve_send_confirm(
@@ -397,6 +404,10 @@ impl App {
                 self.start_approved_submission(submission, terminal, agent)
                     .await?;
             }
+            Some(ACTION_COMPACT_SEND) if can_compact && self.info.session.daemon.is_some() => {
+                self.compact_then_send_to_daemon(submission, omissions, terminal)
+                    .await?;
+            }
             Some(ACTION_COMPACT_SEND) if can_compact => {
                 let submission = submission.approve_for(omissions.target).after_compact();
                 if let Err((err, submission)) = self.start_compact_send(agent, Box::new(submission))
@@ -421,6 +432,9 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            return self.submit_daemon_submission(submission, terminal).await;
+        }
         let Some(submission) = self.gate_send(submission, agent) else {
             return Ok(());
         };
@@ -532,7 +546,7 @@ impl App {
         source: CancellationSource,
         agent: &mut InteractiveRuntime,
     ) {
-        match submission.into_cancelled_payload() {
+        match submission.into_payload() {
             SendPayload::Turn {
                 turn,
                 media,

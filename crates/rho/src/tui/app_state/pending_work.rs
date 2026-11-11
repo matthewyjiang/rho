@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 
 use crate::tui::{
     pending_input::{AcceptedSteering, PendingInputAction, PendingInputPanel},
+    send_confirm::SendOmissions,
     QueuedPrompt,
 };
 
@@ -16,6 +17,9 @@ pub(in crate::tui) struct PendingWorkUi {
     input_panel: PendingInputPanel,
     input_action: Option<PendingInputAction>,
     queued_prompts: VecDeque<QueuedPrompt>,
+    /// Consent to omit provider-native context from the follow-up a daemon
+    /// session compacts before; see `send_confirm::daemon`.
+    compact_send_consent: Option<SendOmissions>,
 }
 
 impl PendingWorkUi {
@@ -83,6 +87,15 @@ impl PendingWorkUi {
 
     pub(in crate::tui) fn clear_follow_ups(&mut self) {
         self.queued_prompts.clear();
+        self.compact_send_consent = None;
+    }
+
+    pub(in crate::tui) fn set_compact_send_consent(&mut self, consent: SendOmissions) {
+        self.compact_send_consent = Some(consent);
+    }
+
+    pub(in crate::tui) fn take_compact_send_consent(&mut self) -> Option<SendOmissions> {
+        self.compact_send_consent.take()
     }
 
     pub(in crate::tui) fn clear_steering(&mut self) {
