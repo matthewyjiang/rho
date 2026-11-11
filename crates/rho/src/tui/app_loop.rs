@@ -680,8 +680,9 @@ impl App {
         // Tick the occupant first so a journal read error cannot leave panel
         // costs half-applied.
         let mut changed = self.refresh_exclusive_screen()?;
-        // The daemon's jobs feed a daemon session's rail as they arrive
-        // (`daemon_jobs`); this process's manager has no runs of it.
+        // The daemon's jobs and processes feed a daemon session's rails as
+        // they arrive (`daemon_jobs`); this process's managers have none of
+        // its runs.
         let panel_changed = if self.info.session.daemon.is_some() {
             self.refresh_daemon_rail();
             false
@@ -693,9 +694,8 @@ impl App {
             self.refresh_attach_picker();
         }
         changed |= panel_changed;
-        changed |= self.process_panel.update(agent.processes());
-        // A daemon session's workflow rows arrive with its jobs too.
         if self.info.session.daemon.is_none() {
+            changed |= self.process_panel.update(agent.processes());
             changed |= self
                 .workflow_panel
                 .update(agent.workflow_tracker(), agent.session_id().as_str());

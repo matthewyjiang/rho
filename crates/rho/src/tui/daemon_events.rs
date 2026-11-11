@@ -128,6 +128,12 @@ pub(super) enum DaemonView {
     Login(LoginUpdate),
     /// The daemon's jobs, asked for to refresh the subagent rail.
     Jobs(Result<Vec<rho_protocol::JobSummary>, String>),
+    /// The session's processes, asked for to refresh the process rail, and
+    /// the output `asked` for the peek view.
+    Processes {
+        asked: Option<rho_protocol::ProcessOutputParams>,
+        result: Result<rho_protocol::SessionProcessesResponse, String>,
+    },
     /// The daemon's settings, read once the session attached and again on
     /// each reconnect, or why they could not be read.
     SettingsLoaded(Result<Box<super::daemon_settings::DaemonSettings>, String>),

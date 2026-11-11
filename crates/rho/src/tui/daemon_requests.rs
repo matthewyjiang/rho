@@ -31,12 +31,13 @@ use std::{
 use rho_protocol::{
     methods::{
         ConfigSet, JobList, SessionConfigure, SessionDelete, SessionInspect, SessionMcp,
-        SessionPrompt, SessionRename,
+        SessionProcesses, SessionPrompt, SessionRename,
     },
     ClientEnvironment, ClientError, ConfigSetParams, ConfigWriter, ContentBlock, ErrorCode,
-    IdempotencyKey, JobListParams, SessionChange, SessionConfigureParams, SessionDeleteParams,
-    SessionGoalAction, SessionId, SessionInspectParams, SessionMcpInventory, SessionMcpParams,
-    SessionMcpStatus, SessionPromptParams, SessionRenameParams, SessionReport,
+    IdempotencyKey, JobListParams, ProcessOutputParams, SessionChange, SessionConfigureParams,
+    SessionDeleteParams, SessionGoalAction, SessionId, SessionInspectParams, SessionMcpInventory,
+    SessionMcpParams, SessionMcpStatus, SessionProcessesParams, SessionPromptParams,
+    SessionRenameParams, SessionReport,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -136,6 +137,8 @@ enum Control {
     Goal(SessionGoalAction),
     Rename(String),
     Jobs,
+    /// The session's processes, and the output named, if any.
+    Processes(Option<ProcessOutputParams>),
     Inspect(SessionReport),
     /// Deletes saved sessions, in order; `result` takes each one's refusal.
     Delete {
@@ -257,6 +260,27 @@ impl DaemonRequests {
                             None => Err(LOST.to_owned()),
                         };
                         let _ = control_views.send(DaemonView::Jobs(jobs));
+                    }
+                    Control::Processes(output) => {
+                        let answer = on_attachment(&mut control_target, |link, session| {
+                            let output = output.clone();
+                            async move {
+                                link.request::<SessionProcesses>(&SessionProcessesParams {
+                                    session,
+                                    output,
+                                })
+                                .await
+                            }
+                        })
+                        .await;
+                        let result = match answer {
+                            Some((_, answer)) => answer.map_err(|error| error.to_string()),
+                            None => Err(LOST.to_owned()),
+                        };
+                        let _ = control_views.send(DaemonView::Processes {
+                            asked: output,
+                            result,
+                        });
                     }
                     Control::Inspect(report) => {
                         let answer =
@@ -469,6 +493,15 @@ impl DaemonRequests {
     pub(super) fn request_jobs(&self) -> anyhow::Result<()> {
         self.control
             .send(Control::Jobs)
+            .map_err(|_| anyhow::anyhow!(LOST))
+    }
+
+    pub(super) fn request_processes(
+        &self,
+        output: Option<ProcessOutputParams>,
+    ) -> anyhow::Result<()> {
+        self.control
+            .send(Control::Processes(output))
             .map_err(|_| anyhow::anyhow!(LOST))
     }
 

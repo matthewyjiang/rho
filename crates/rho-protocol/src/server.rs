@@ -34,15 +34,16 @@ use crate::{
         SessionHoldResponse, SessionId, SessionInspect, SessionInspectParams,
         SessionInspectResponse, SessionList, SessionListParams, SessionListResponse, SessionMcp,
         SessionMcpInventory, SessionMcpParams, SessionNew, SessionNewParams, SessionNewResponse,
-        SessionObserve, SessionObserveParams, SessionPrompt, SessionPromptParams,
-        SessionPromptResponse, SessionRename, SessionRenameParams, SessionRenameResponse,
-        SessionSteer, SessionSteerParams, SessionSteerResponse, SessionUnsteer,
-        SessionUnsteerParams, SessionUnsteerResponse, Status, Stop, AUTH_CHOOSE_STORE, AUTH_KEY,
-        AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, CONFIG_REGISTER,
-        CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST,
-        SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE,
-        SESSION_DETACH, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP, SESSION_NEW,
-        SESSION_OBSERVE, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
+        SessionObserve, SessionObserveParams, SessionProcesses, SessionProcessesParams,
+        SessionProcessesResponse, SessionPrompt, SessionPromptParams, SessionPromptResponse,
+        SessionRename, SessionRenameParams, SessionRenameResponse, SessionSteer,
+        SessionSteerParams, SessionSteerResponse, SessionUnsteer, SessionUnsteerParams,
+        SessionUnsteerResponse, Status, Stop, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST, AUTH_LOGIN,
+        AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET,
+        DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER,
+        SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH,
+        SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP, SESSION_NEW, SESSION_OBSERVE,
+        SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -175,6 +176,13 @@ pub trait Service: SettingsService + Send + Sync {
         &self,
         params: SessionMcpParams,
     ) -> impl Future<Output = Result<SessionMcpInventory, RpcError>> + Send;
+
+    /// Handles `rho/session/processes`: read the loaded session's background
+    /// processes, and one's retained output, without waiting for a turn.
+    fn session_processes(
+        &self,
+        params: SessionProcessesParams,
+    ) -> impl Future<Output = Result<SessionProcessesResponse, RpcError>> + Send;
 
     /// Handles `rho/session/inspect`: read a report about the loaded
     /// session between its turns, refusing while one runs.
@@ -629,6 +637,7 @@ enum ServiceCall {
     HoldSession(SessionHoldParams),
     ConfigureSession(SessionConfigureParams),
     SessionMcp(SessionMcpParams),
+    SessionProcesses(SessionProcessesParams),
     InspectSession(SessionInspectParams),
     ListSessions(SessionListParams),
     RenameSession(SessionRenameParams),
@@ -735,6 +744,9 @@ impl ServiceCall {
                 decode_params::<SessionConfigure>(params).map(Self::ConfigureSession)
             }
             SESSION_MCP => decode_params::<SessionMcp>(params).map(Self::SessionMcp),
+            SESSION_PROCESSES => {
+                decode_params::<SessionProcesses>(params).map(Self::SessionProcesses)
+            }
             SESSION_INSPECT => decode_params::<SessionInspect>(params).map(Self::InspectSession),
             SESSION_LIST => decode_params::<SessionList>(params).map(Self::ListSessions),
             SESSION_RENAME => decode_params::<SessionRename>(params).map(Self::RenameSession),
@@ -767,6 +779,7 @@ impl ServiceCall {
             | Self::AnswerSession(SessionAnswerParams { session, .. })
             | Self::HoldSession(SessionHoldParams { session, .. })
             | Self::SessionMcp(SessionMcpParams { session, .. })
+            | Self::SessionProcesses(SessionProcessesParams { session, .. })
             | Self::InspectSession(SessionInspectParams { session, .. })
             | Self::ConfigureSession(SessionConfigureParams { session, .. })
             | Self::RenameSession(SessionRenameParams { session, .. }) => Some(session),
@@ -826,6 +839,9 @@ impl ServiceCall {
             }
             Self::SessionMcp(params) => {
                 encode_result::<SessionMcp>(&service.session_mcp(params).await?)
+            }
+            Self::SessionProcesses(params) => {
+                encode_result::<SessionProcesses>(&service.session_processes(params).await?)
             }
             Self::InspectSession(params) => {
                 encode_result::<SessionInspect>(&service.inspect_session(params).await?)

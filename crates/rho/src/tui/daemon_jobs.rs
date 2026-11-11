@@ -1,5 +1,6 @@
 //! The rails of a daemon session: the subagent and workflow runs the
-//! session started, as the daemon's jobs name them.
+//! session started, as the daemon's jobs name them, and the background
+//! processes it started (`daemon_processes`).
 //!
 //! The daemon lists a job per subagent run and per drive of a workflow run
 //! (`rho/job/list`), which says whose it is; what a run is doing is in the
@@ -32,35 +33,73 @@ const RAIL_POLL: Duration = Duration::from_millis(500);
 /// (`subagent_manager.rs`).
 pub(super) const ENDED_RETENTION: Duration = Duration::from_secs(10);
 
-/// What the rails remember between job lists.
+/// When a rail asks the daemon for its rows: when a session is first
+/// followed, once whenever a turn ends, and while its rows may change, at
+/// most once per [`RAIL_POLL`].
 #[derive(Default)]
-pub(super) struct DaemonRail {
-    /// When the last job list was asked for; `None` while one is owed
+pub(super) struct RailPoll {
+    /// When the rows were last asked for; `None` while a read is owed
     /// whatever the session is doing: before the first, after a session
     /// switch, and once a turn ended.
     asked: Option<Instant>,
-    /// Whether that list has not been answered yet.
+    /// Whether that read has not been answered yet.
     waiting: bool,
-    /// Whether the last list named a run the rails show, which may change
+    /// Whether the last answer named a row the rail shows, which may change
     /// with no turn running, or failed, so that nothing is known. The
-    /// list, not the rows, says so: a run whose files could not be read
+    /// answer, not the rows, says so: a run whose files could not be read
     /// just then has no row and is still going.
-    shows_runs: bool,
+    shows: bool,
+}
+
+impl RailPoll {
+    /// Whether to ask now. `may_change` says the rows may have changed
+    /// since the last answer for a reason the answer could not know.
+    pub(super) fn due(&self, may_change: bool) -> bool {
+        !self.waiting
+            && self
+                .asked
+                .is_none_or(|asked| (may_change || self.shows) && asked.elapsed() >= RAIL_POLL)
+    }
+
+    pub(super) fn asked(&mut self) {
+        self.asked = Some(Instant::now());
+        self.waiting = true;
+    }
+
+    /// Takes an answer; `shows` as the field says.
+    pub(super) fn answered(&mut self, shows: bool) {
+        self.waiting = false;
+        self.shows = shows;
+    }
+
+    /// Owes the rail one more read, whatever the session is doing.
+    pub(super) fn owe(&mut self) {
+        self.asked = None;
+    }
+}
+
+/// What the rails remember between reads.
+#[derive(Default)]
+pub(super) struct DaemonRail {
+    jobs: RailPoll,
+    pub(super) processes: RailPoll,
     pub(super) subagents: SubagentRuns,
     pub(super) workflows: WorkflowRuns,
 }
 
 impl DaemonRail {
-    /// Owes the rails one more job list: a turn ended, and may have started
-    /// a run since the last list, however briefly it ran.
+    /// Owes the rails one more read each: a turn ended, and may have
+    /// started a run or a process since the last, however briefly it ran.
     pub(super) fn turn_ended(&mut self) {
-        self.asked = None;
+        self.jobs.owe();
+        self.processes.owe();
     }
 
     /// Whether the rails show runs that change with no turn running, so
-    /// the idle loop keeps asking after them.
+    /// the idle loop keeps asking after them. A process row keeps the loop
+    /// ticking itself, as in process.
     pub(super) fn shows_runs(&self) -> bool {
-        self.shows_runs
+        self.jobs.shows
     }
 }
 
@@ -116,44 +155,38 @@ pub(super) fn may_still_change(state: JobState) -> bool {
 }
 
 impl App {
-    /// Asks the daemon for its jobs when the rails are due a refresh. The
-    /// answer arrives as a view; see [`Self::show_daemon_jobs`].
+    /// Asks the daemon for its jobs and the session's processes when the
+    /// rails are due a refresh. The answers arrive as views; see
+    /// [`Self::show_daemon_jobs`] and [`Self::show_daemon_processes`].
     pub(super) fn refresh_daemon_rail(&mut self) {
+        self.refresh_daemon_processes();
         let Some(session) = &self.info.session.daemon else {
             return;
         };
         // A run starts only in a turn, and changes only while it shows.
-        let may_change = self.turn.is_provider_turn() || self.daemon_rail.shows_runs;
-        let rail = &mut self.daemon_rail;
-        let due = rail
-            .asked
-            .is_none_or(|asked| may_change && asked.elapsed() >= RAIL_POLL);
-        if rail.waiting || !due || session.request_jobs().is_err() {
-            return;
+        let jobs = &mut self.daemon_rail.jobs;
+        if jobs.due(self.turn.is_provider_turn()) && session.request_jobs().is_ok() {
+            jobs.asked();
         }
-        rail.asked = Some(Instant::now());
-        rail.waiting = true;
     }
 
     /// Puts the followed session's runs among `jobs` on the subagent and
     /// workflow rails. A failed list keeps the rows the rails have and is
     /// asked for again; the next one replaces them.
     pub(super) fn show_daemon_jobs(&mut self, jobs: Result<Vec<JobSummary>, String>) {
-        self.daemon_rail.waiting = false;
-        let Some(session) = &self.info.session.daemon else {
-            return;
-        };
-        let Ok(jobs) = jobs else {
+        let (Some(session), Ok(jobs)) = (&self.info.session.daemon, jobs) else {
             // Whether a run shows is unknown, such as one the turn that
             // just ended started.
-            self.daemon_rail.shows_runs = true;
+            self.daemon_rail.jobs.answered(/*shows*/ true);
             return;
         };
         let session = session.id().to_owned();
         let now = subagent::unix_now_secs();
         let workflows = rail_jobs(&jobs, &session, JobKind::Workflow, now);
         let subagents = rail_jobs(&jobs, &session, JobKind::Subagent, now);
-        self.daemon_rail.shows_runs = !workflows.is_empty() || !subagents.is_empty();
+        self.daemon_rail
+            .jobs
+            .answered(!workflows.is_empty() || !subagents.is_empty());
         self.show_daemon_workflows(&workflows, now);
         self.show_daemon_subagents(&subagents, now);
     }
@@ -163,6 +196,7 @@ impl App {
         self.daemon_rail = DaemonRail::default();
         self.subagent_panel.ingest(Vec::new());
         self.workflow_panel.ingest(Vec::new());
+        self.process_panel.ingest(Vec::new());
     }
 }
 

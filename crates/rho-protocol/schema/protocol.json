@@ -2978,6 +2978,134 @@
         }
       ]
     },
+    "ProcessChunk": {
+      "description": "One piece of a process's output.",
+      "properties": {
+        "cursor": {
+          "description": "Its place in the process's output; cursors only grow.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stream": {
+          "$ref": "#/$defs/ProcessStream"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cursor",
+        "stream",
+        "text"
+      ],
+      "type": "object"
+    },
+    "ProcessOutput": {
+      "description": "A process and the output the session retains of it from a cursor on.",
+      "properties": {
+        "chunks": {
+          "description": "The retained chunks from [`ProcessOutputParams::from`] on, in order.",
+          "items": {
+            "$ref": "#/$defs/ProcessChunk"
+          },
+          "type": "array"
+        },
+        "first_cursor": {
+          "description": "The cursor of the oldest chunk the session still retains. Above 0,\nearlier output was evicted, and a client drops the chunks it holds\nbelow it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "next_cursor": {
+          "description": "What to send as [`ProcessOutputParams::from`] to read on from here.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "process": {
+          "$ref": "#/$defs/SessionProcess",
+          "description": "The process as it is now, also once it left\n[`SessionProcessesResponse::processes`]."
+        }
+      },
+      "required": [
+        "process",
+        "first_cursor",
+        "next_cursor",
+        "chunks"
+      ],
+      "type": "object"
+    },
+    "ProcessOutputParams": {
+      "description": "Which of a process's retained output [`SESSION_PROCESSES`] reads.",
+      "properties": {
+        "from": {
+          "description": "Read the chunks from this cursor on: 0 for everything retained, or\nthe last answer's [`ProcessOutput::next_cursor`] for what is new.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "process": {
+          "description": "The process, by its [`SessionProcess::id`].",
+          "type": "string"
+        }
+      },
+      "required": [
+        "process",
+        "from"
+      ],
+      "type": "object"
+    },
+    "ProcessState": {
+      "anyOf": [
+        {
+          "enum": [
+            "starting",
+            "running",
+            "failed_to_start"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "exited",
+          "description": "It exited by itself.",
+          "type": "string"
+        },
+        {
+          "const": "terminated",
+          "description": "The session stopped it.",
+          "type": "string"
+        },
+        {
+          "const": "timed_out",
+          "description": "It ran past its time limit and was stopped.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Where a background process is. Protocol minors may add states."
+    },
+    "ProcessStream": {
+      "anyOf": [
+        {
+          "enum": [
+            "stdout",
+            "stderr"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "The stream a chunk was written to. Protocol minors may add streams."
+    },
     "ProjectTrustMismatch": {
       "description": "The `data` of a [`crate::ErrorCode::ProjectTrustMismatch`] error: the\n`RHO_TRUST_PROJECT_*` variables the session's trust and the prompting\nclient's differ in. At least one list has a name.",
       "properties": {
@@ -4834,6 +4962,103 @@
           "type": "string"
         }
       ]
+    },
+    "SessionProcess": {
+      "description": "One background process of a session.",
+      "properties": {
+        "command": {
+          "description": "The command line it runs.",
+          "type": "string"
+        },
+        "elapsed_seconds": {
+          "description": "Seconds since it started; for one that ended, until it ended.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "exit_code": {
+          "description": "Its exit code, once it ended with one.",
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "The id the session's `process` tool names it by.",
+          "type": "string"
+        },
+        "quiet_seconds": {
+          "description": "Seconds since its last output. Absent before any output and once\nit ended.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/ProcessState"
+        }
+      },
+      "required": [
+        "id",
+        "command",
+        "state",
+        "elapsed_seconds"
+      ],
+      "type": "object"
+    },
+    "SessionProcessesParams": {
+      "description": "Params of [`SESSION_PROCESSES`].",
+      "properties": {
+        "output": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProcessOutputParams"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The process whose retained output to read too."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId",
+          "description": "The loaded session whose processes to read."
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
+    "SessionProcessesResponse": {
+      "description": "Result of [`SESSION_PROCESSES`]: a point-in-time read, not a\nsubscription.",
+      "properties": {
+        "output": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProcessOutput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The output asked for; absent when none was, and when the session\nno longer knows the process."
+        },
+        "processes": {
+          "description": "The processes still running, and those that ended whose result the\nsession's model has not been given yet, oldest first.",
+          "items": {
+            "$ref": "#/$defs/SessionProcess"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "processes"
+      ],
+      "type": "object"
     },
     "SessionPromptParams": {
       "description": "Params of [`SESSION_PROMPT`].",
@@ -6745,6 +6970,14 @@
       },
       "result": {
         "$ref": "#/$defs/SessionAttachResponse"
+      }
+    },
+    "rho/session/processes": {
+      "params": {
+        "$ref": "#/$defs/SessionProcessesParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionProcessesResponse"
       }
     },
     "rho/session/prompt": {

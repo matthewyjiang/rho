@@ -21,6 +21,7 @@
 //! | [`SESSION_OBSERVE`] | [`SessionObserveParams`] | [`SessionAttachResponse`] |
 //! | [`SESSION_DETACH`] | [`SessionDetachParams`] | [`SessionDetachResponse`] |
 //! | [`SESSION_MCP`] | [`SessionMcpParams`] | [`SessionMcpInventory`] |
+//! | [`SESSION_PROCESSES`] | [`SessionProcessesParams`] | [`SessionProcessesResponse`] |
 //! | [`SESSION_INSPECT`] | [`SessionInspectParams`] | [`SessionInspectResponse`] |
 //! | [`SESSION_CONFIGURE`] | [`SessionConfigureParams`] | [`SessionConfigureResponse`] |
 //! | [`SESSION_LIST`] | [`SessionListParams`] | [`SessionListResponse`] |
@@ -72,6 +73,7 @@ mod login;
 mod mcp;
 mod options;
 mod outcome;
+mod process;
 mod session;
 mod setup;
 mod store;
@@ -134,6 +136,10 @@ pub use options::{
     SessionConfigureResponse, SessionOptions, SESSION_CONFIGURE,
 };
 pub use outcome::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome};
+pub use process::{
+    ProcessChunk, ProcessOutput, ProcessOutputParams, ProcessState, ProcessStream, SessionProcess,
+    SessionProcessesParams, SessionProcessesResponse, SESSION_PROCESSES,
+};
 pub use session::{
     ClientEnvironment, DetachReason, ProjectTrustMismatch, Replay, SessionAttachParams,
     SessionAttachResponse, SessionCancelParams, SessionCancelResponse, SessionDetachParams,
@@ -235,6 +241,7 @@ protocol! {
         SessionDetach = SESSION_DETACH: SessionDetachParams => SessionDetachResponse,
         SessionConfigure = SESSION_CONFIGURE: SessionConfigureParams => SessionConfigureResponse,
         SessionMcp = SESSION_MCP: SessionMcpParams => SessionMcpInventory,
+        SessionProcesses = SESSION_PROCESSES: SessionProcessesParams => SessionProcessesResponse,
         SessionInspect = SESSION_INSPECT: SessionInspectParams => SessionInspectResponse,
         SessionList = SESSION_LIST: SessionListParams => SessionListResponse,
         SessionRename = SESSION_RENAME: SessionRenameParams => SessionRenameResponse,

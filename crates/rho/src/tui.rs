@@ -67,6 +67,7 @@ mod daemon_jobs;
 mod daemon_launch;
 mod daemon_login;
 mod daemon_options;
+mod daemon_processes;
 mod daemon_prompt;
 mod daemon_reports;
 #[cfg(unix)]

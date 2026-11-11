@@ -134,6 +134,10 @@ pub use methods::{
     SessionConfigureResponse, SessionOptions, SESSION_CONFIGURE,
 };
 pub use methods::{
+    ProcessChunk, ProcessOutput, ProcessOutputParams, ProcessState, ProcessStream, SessionProcess,
+    SessionProcessesParams, SessionProcessesResponse, SESSION_PROCESSES,
+};
+pub use methods::{
     SessionDeleteParams, SessionDeleteResponse, SessionListParams, SessionListResponse,
     SessionRenameParams, SessionRenameResponse, SessionSummary, SESSION_DELETE, SESSION_LIST,
     SESSION_RENAME,

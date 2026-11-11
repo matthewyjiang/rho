@@ -82,6 +82,13 @@ impl DaemonSession {
         match *self {}
     }
 
+    pub(in crate::tui) fn request_processes(
+        &self,
+        _output: Option<rho_protocol::ProcessOutputParams>,
+    ) -> anyhow::Result<()> {
+        match *self {}
+    }
+
     pub(in crate::tui) fn set_config(
         &self,
         _params: rho_protocol::ConfigSetParams,
