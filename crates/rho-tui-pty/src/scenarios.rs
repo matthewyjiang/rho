@@ -55,6 +55,7 @@ mod daemon_switch;
 #[cfg(unix)]
 mod daemon_tree;
 // Starts a real command workflow, as `workflow_background` does.
+mod config_2x_upgrade;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod daemon_workflow;
 mod diff_viewer;
@@ -619,6 +620,9 @@ const ALL_SCENARIOS: &[Scenario] = &[
     model_prompts::MODEL_PROMPTS_SCENARIO,
     model_cycle_reasoning::IDLE,
     model_cycle_reasoning::QUEUED,
+    config_2x_upgrade::IN_PROCESS,
+    #[cfg(unix)]
+    config_2x_upgrade::DAEMON,
     permission_cycle::IDLE,
     permission_cycle::REMAPPED,
     permission_cycle::QUEUED,
