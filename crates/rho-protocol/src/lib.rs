@@ -13,7 +13,10 @@
 //!    ([`ProtocolVersion::is_compatible_with`]), or replies
 //!    [`ErrorCode::VersionMismatch`] with a [`VersionMismatch`] saying which
 //!    side to change and, for a client newer than the daemon, what
-//!    restarting the daemon would cost ([`RestartCost`]).
+//!    restarting the daemon would cost ([`RestartCost`]). It accepts a
+//!    client of another build ([`BuildId`]) that speaks its version, and
+//!    answers with a [`BuildSkew`] that says requests may fail and what a
+//!    restart would cost.
 //! 3. The client sends requests such as [`methods::DAEMON_STATUS`]. The
 //!    daemon serves them concurrently and answers each one when it completes,
 //!    so responses can arrive out of order; each carries its request's id.
@@ -64,6 +67,7 @@
 //! change while the major is 0, and each release against the last one's
 //! from major 1 on.
 
+mod build_id;
 mod client;
 mod declared;
 pub mod display;
@@ -80,6 +84,7 @@ mod server_streams;
 mod subscription;
 mod version;
 
+pub use build_id::BuildId;
 pub use client::{Client, ClientError, DaemonNotification, Notifications};
 pub use error::ErrorCode;
 pub use forward::ConfigWatch;
@@ -157,4 +162,6 @@ pub use methods::{
 pub use server::{serve_connection, Service, CLOSE_GRACE};
 pub use server_settings::SettingsService;
 pub use subscription::{subscription, Published, Publisher, Subscription};
-pub use version::{ProtocolVersion, RestartCost, VersionFix, VersionMismatch, PROTOCOL_VERSION};
+pub use version::{
+    BuildSkew, ProtocolVersion, RestartCost, VersionFix, VersionMismatch, PROTOCOL_VERSION,
+};

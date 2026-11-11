@@ -67,7 +67,7 @@ async fn accept_hello(reader: &mut DaemonReader, write: &mut DaemonWriter) {
             "id": hello.id,
             "result": {
                 "protocol": PROTOCOL_VERSION,
-                "daemon": {"version": "test", "pid": 1},
+                "daemon": {"version": "test", "pid": 1, "build": "daemon build"},
                 "capabilities": [],
             },
         })],
@@ -134,7 +134,7 @@ async fn handshake_maps_incompatible_daemons_to_version_mismatch() {
                 "id": 1,
                 "result": {
                     "protocol": newer,
-                    "daemon": {"version": "9.0.0", "pid": 1},
+                    "daemon": {"version": "9.0.0", "pid": 1, "build": "daemon build"},
                     "capabilities": [],
                 },
             }),

@@ -5,7 +5,7 @@ use std::{collections::BTreeSet, path::PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{CredentialStoreStatus, ProtocolVersion};
+use crate::{BuildId, BuildSkew, CredentialStoreStatus, ProtocolVersion};
 
 /// Handshake. Must be the first request on every connection.
 pub const HELLO: &str = "rho/hello";
@@ -116,6 +116,11 @@ pub struct HelloParams {
     /// refused.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub capabilities: BTreeSet<ClientCapability>,
+    /// Which wire the client speaks. One other than the daemon's gets
+    /// [`HelloResponse::skew`]. A client not built from `rho-protocol` has
+    /// no build id, sends none, and hears nothing about builds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<BuildId>,
 }
 
 /// The running daemon process.
@@ -124,6 +129,8 @@ pub struct DaemonInfo {
     /// The daemon's rho version.
     pub version: String,
     pub pid: u32,
+    /// Which wire the daemon speaks.
+    pub build: BuildId,
 }
 
 /// Result of [`HELLO`].
@@ -133,6 +140,10 @@ pub struct HelloResponse {
     /// client's.
     pub protocol: ProtocolVersion,
     pub daemon: DaemonInfo,
+    /// Set when the hello named another build than the daemon's: requests
+    /// may fail, and this says what restarting the daemon would cost.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skew: Option<BuildSkew>,
 }
 
 /// Params of [`DAEMON_STATUS`].

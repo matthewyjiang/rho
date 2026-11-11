@@ -24,9 +24,9 @@ use crate::{
         SessionEventParams, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT, CONFIG_CHANGED,
         SESSION_DETACHED, SESSION_EVENT,
     },
-    ClientHello, ErrorCode, FrameError, HelloParams, HelloResponse, Message, MessageReader,
-    MessageWriter, ParseError, Request, RequestId, Response, RpcError, VersionMismatch,
-    PROTOCOL_VERSION,
+    BuildId, ClientHello, ErrorCode, FrameError, HelloParams, HelloResponse, Message,
+    MessageReader, MessageWriter, ParseError, Request, RequestId, Response, RpcError,
+    VersionMismatch, PROTOCOL_VERSION,
 };
 
 /// A handshaken connection to the daemon.
@@ -131,7 +131,9 @@ type Write = (Message, oneshot::Sender<Result<(), FrameError>>);
 impl Client {
     /// Sends `rho/hello` as `hello` and returns the connection once the
     /// daemon accepts this client's protocol, with its notifications. The
-    /// connection keeps the role and capabilities `hello` declares.
+    /// connection keeps the role and capabilities `hello` declares. The
+    /// hello names this crate's [`BuildId`], so the answer's
+    /// [`HelloResponse::skew`] says whether the daemon is another build.
     ///
     /// An incompatible daemon yields [`ClientError::VersionMismatch`], whether
     /// the daemon rejects the hello or reports an incompatible version.
@@ -174,6 +176,7 @@ impl Client {
             client,
             role,
             capabilities,
+            build: Some(BuildId::of_this_crate()),
         };
         let hello = match this.request::<Hello>(&params).await {
             Ok(hello) => hello,

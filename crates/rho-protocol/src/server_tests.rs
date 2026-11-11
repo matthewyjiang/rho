@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::BTreeSet, sync::Mutex, time::Duration};
 
 use pretty_assertions::assert_eq;
 use tokio::{
@@ -18,11 +18,11 @@ use crate::{
         AUTH_LOGIN_PROMPT, CONFIG_CHANGED, DAEMON_STATUS, DAEMON_STOP, SESSION_ANSWER,
         SESSION_DETACHED, SESSION_EVENT, SESSION_HOLD, SESSION_PROMPT,
     },
-    subscription, AuthChooseStoreParams, AuthChooseStoreResponse, ConfigChangedParams,
+    subscription, AuthChooseStoreParams, AuthChooseStoreResponse, ClientRole, ConfigChangedParams,
     ConfigGetResponse, ConfigNamespace, ConfigRegisterResponse, ConfigRevision, ConfigSchema,
-    ConfigSetResponse, ConfigWatch, CredentialStoreKind, CredentialStoreStatus, LoginRelay,
-    ProtocolVersion, Published, Publisher, RequestId, SettingEntry, SettingKey, SettingValue,
-    StoreSelectedBy, ValueSource,
+    ConfigSetResponse, ConfigWatch, CredentialStoreKind, CredentialStoreStatus, HelloParams,
+    LoginRelay, ProtocolVersion, Published, Publisher, RequestId, SettingEntry, SettingKey,
+    SettingValue, StoreSelectedBy, ValueSource,
 };
 
 /// Failure bound for each response a test waits for. The tests synchronize
@@ -51,6 +51,7 @@ fn test_info() -> DaemonInfo {
     DaemonInfo {
         version: "test".into(),
         pid: 1,
+        build: BuildId::new("daemon build"),
     }
 }
 
@@ -286,23 +287,53 @@ const UNUSED: RestartCost = RestartCost {
     clients: 0,
 };
 
-/// The refusal of a test service nobody uses.
+/// The restart costs of a test service nobody uses.
 macro_rules! nobody_uses_it {
     () => {
         fn refused_newer(&self, _: ProtocolVersion) -> RestartCost {
             UNUSED
         }
+
+        fn skewed(&self, _: &ClientInfo, _: &BuildId) -> RestartCost {
+            UNUSED
+        }
     };
 }
 
-/// Answers every request at once, and reports that restarting it costs
-/// `restart`.
+/// A handshake hook a service heard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Heard {
+    Skewed,
+    Hello,
+}
+
+/// Answers every request at once, reports that restarting it costs
+/// `restart`, and records the handshake hooks it heard, in order.
 struct FakeService {
     restart: RestartCost,
+    heard: Mutex<Vec<Heard>>,
+}
+
+impl FakeService {
+    fn costing(restart: RestartCost) -> Self {
+        Self {
+            restart,
+            heard: Mutex::default(),
+        }
+    }
 }
 
 impl Service for FakeService {
+    fn hello(&self, _: &ClientInfo) {
+        self.heard.lock().unwrap().push(Heard::Hello);
+    }
+
     fn refused_newer(&self, _: ProtocolVersion) -> RestartCost {
+        self.restart
+    }
+
+    fn skewed(&self, _: &ClientInfo, _: &BuildId) -> RestartCost {
+        self.heard.lock().unwrap().push(Heard::Skewed);
         self.restart
     }
 
@@ -639,24 +670,45 @@ async fn dispatch_enforces_the_handshake_and_rejects_unknown_requests() {
         ),
     ];
     for (name, lines, expected) in cases {
-        let service = FakeService { restart: UNUSED };
+        let service = FakeService::costing(UNUSED);
         assert_eq!(exchange(service, &lines).await, expected, "{name}");
     }
 }
 
 /// What a daemon whose restart costs `restart` answers the hello of a client
-/// that speaks `protocol`.
+/// that speaks `protocol` and names `build`, and the handshake hooks its
+/// service heard.
 async fn hello_answer(
     restart: RestartCost,
     protocol: ProtocolVersion,
-) -> Result<HelloResponse, VersionMismatch> {
+    build: Option<&BuildId>,
+) -> (Result<HelloResponse, VersionMismatch>, Vec<Heard>) {
     let (client, server) = duplex(64 * 1024);
-    let server = tokio::spawn(async move {
-        let service = Arc::new(FakeService { restart });
-        serve_connection(server, &test_info(), service, std::future::pending()).await
+    let service = Arc::new(FakeService::costing(restart));
+    let server = tokio::spawn({
+        let service = Arc::clone(&service);
+        async move { serve_connection(server, &test_info(), service, std::future::pending()).await }
     });
+    let hello = HelloParams {
+        protocol,
+        client: ClientInfo {
+            name: "test".into(),
+            version: "0".into(),
+        },
+        role: ClientRole::Frontend,
+        capabilities: BTreeSet::new(),
+        build: build.cloned(),
+    };
     let (read, mut write) = tokio::io::split(client);
-    send_lines(&mut write, &[hello_line(1, protocol)]).await;
+    send_lines(
+        &mut write,
+        &[request_with_params(
+            1,
+            HELLO,
+            serde_json::to_value(hello).unwrap(),
+        )],
+    )
+    .await;
     write.shutdown().await.unwrap();
     let line = tokio::time::timeout(RESPONSE_DEADLINE, MessageReader::new(read).read_line())
         .await
@@ -667,28 +719,42 @@ async fn hello_answer(
     let Message::Response(Response { outcome, .. }) = Message::parse(&line).unwrap() else {
         panic!("expected a response");
     };
-    match outcome {
+    let answer = match outcome {
         Ok(hello) => Ok(serde_json::from_value(hello).unwrap()),
         Err(refusal) => {
             assert_eq!(refusal.error_code(), Some(ErrorCode::VersionMismatch));
             Err(serde_json::from_value(refusal.data.expect("the mismatch")).unwrap())
         }
-    }
+    };
+    let heard = service.heard.lock().unwrap().clone();
+    (answer, heard)
 }
 
 // Covers: the daemon's version-skew policy at the handshake (#1776). A
 // client of its protocol version is accepted. A newer client is refused and
 // told that restarting the daemon is the fix and what that would cost; an
 // older one is told to change itself, with no cost, since no daemon restart
-// helps it.
+// helps it. A client of its version that names another build is accepted
+// and told what a restart would cost, asked of the service before it hears
+// the hello, so that client is not counted; one that names the daemon's
+// build, or none, hears nothing of builds.
 // Owner: protocol server handshake.
 #[tokio::test]
-async fn hello_accepts_the_daemons_version_and_tells_any_other_which_side_to_change() {
+async fn hello_tells_a_client_of_another_version_or_build_what_to_change() {
     let newer = ProtocolVersion::new(PROTOCOL_VERSION.major, PROTOCOL_VERSION.minor + 1);
     let older = ProtocolVersion::new(0, 0);
+    let daemon_build = test_info().build;
+    let another_build = BuildId::new("another build");
     let in_use = RestartCost {
         in_progress: 2,
         clients: 1,
+    };
+    let accepted = |skew| {
+        Ok(HelloResponse {
+            protocol: PROTOCOL_VERSION,
+            daemon: test_info(),
+            skew,
+        })
     };
     let refusal = |client, fix, restart| VersionMismatch {
         daemon: PROTOCOL_VERSION,
@@ -699,19 +765,29 @@ async fn hello_accepts_the_daemons_version_and_tells_any_other_which_side_to_cha
 
     assert_eq!(
         (
-            hello_answer(in_use, PROTOCOL_VERSION).await,
-            hello_answer(in_use, newer).await,
-            hello_answer(UNUSED, newer).await,
-            hello_answer(in_use, older).await,
+            hello_answer(in_use, PROTOCOL_VERSION, Some(&daemon_build)).await,
+            hello_answer(in_use, PROTOCOL_VERSION, Some(&another_build)).await,
+            hello_answer(in_use, PROTOCOL_VERSION, None).await,
+            hello_answer(in_use, newer, Some(&another_build)).await,
+            hello_answer(UNUSED, newer, None).await,
+            hello_answer(in_use, older, None).await,
         ),
         (
-            Ok(HelloResponse {
-                protocol: PROTOCOL_VERSION,
-                daemon: test_info(),
-            }),
-            Err(refusal(newer, VersionFix::RestartDaemon, Some(in_use))),
-            Err(refusal(newer, VersionFix::RestartDaemon, Some(UNUSED))),
-            Err(refusal(older, VersionFix::UpdateClient, None)),
+            (accepted(None), vec![Heard::Hello]),
+            (
+                accepted(Some(BuildSkew { restart: in_use })),
+                vec![Heard::Skewed, Heard::Hello],
+            ),
+            (accepted(None), vec![Heard::Hello]),
+            (
+                Err(refusal(newer, VersionFix::RestartDaemon, Some(in_use))),
+                vec![],
+            ),
+            (
+                Err(refusal(newer, VersionFix::RestartDaemon, Some(UNUSED))),
+                vec![],
+            ),
+            (Err(refusal(older, VersionFix::UpdateClient, None)), vec![]),
         )
     );
 }

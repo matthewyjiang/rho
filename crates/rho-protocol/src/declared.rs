@@ -30,6 +30,7 @@ impl Declared {
             client,
             role,
             capabilities,
+            build: _,
         } = hello;
         if let Some(refused) = capabilities
             .iter()
