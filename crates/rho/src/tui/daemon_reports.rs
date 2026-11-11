@@ -129,8 +129,14 @@ impl App {
     fn show_daemon_info_compaction(&mut self, result: Result<serde_json::Value, ReportRefusal>) {
         match result {
             Err(refusal) if refusal.busy => {
-                let step = self.info_compaction_read.refused_as_busy();
-                self.step_info_compaction(step);
+                let (next, ask) = self.info_compaction_read.refused_as_busy();
+                // Until the read goes again the section says why it waits:
+                // a job other than the session's turn may hold the session,
+                // and no turn of this session need ever end.
+                if !ask {
+                    self.apply_info_compaction(Err(refusal.message));
+                }
+                self.step_info_compaction((next, ask));
             }
             result => {
                 self.info_compaction_read = InfoCompactionRead::Idle;

@@ -118,6 +118,7 @@ impl App {
                     self.handle_agent_event(compact_started_event(), terminal)?;
                     self.set_status("compacting context");
                 }
+                DaemonView::CompactTurnOver => self.daemon_compact_turn = None,
                 DaemonView::CompactionEnded(outcome) => {
                     let status = outcome.status_label();
                     self.handle_agent_event(compact_finished_event(outcome), terminal)?;

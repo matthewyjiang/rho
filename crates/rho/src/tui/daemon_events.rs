@@ -100,6 +100,9 @@ pub(super) enum DaemonView {
     /// The compaction under way ended: its card closes, and the status
     /// line says how.
     CompactionEnded(CompactionUiOutcome),
+    /// The turn a `/compact` prompt started is over, live or replayed:
+    /// what follows shows as any turn's does.
+    CompactTurnOver,
     /// The session's checklist, replacing the last; `None` while it has none.
     Plan(Option<TodoList>),
     /// How full the model's context is.
@@ -214,6 +217,10 @@ pub(super) struct DaemonEvents {
     running: HashMap<WireCallId, ToolCard>,
     /// Why a turn failed, which that turn's `failed` job state shows.
     failure: Option<(TurnId, String)>,
+    /// Whether the turn under way is one a `/compact` prompt started, from
+    /// its compaction starting until the job's state says the turn ended
+    /// or the next prompt arrives.
+    compact_turn: bool,
     /// Where the replay under way ends, as its attach answered: the job's
     /// state, and the turn it is of. `None` once the replay is over.
     replay_end: Option<(JobState, Option<TurnId>)>,
@@ -288,12 +295,14 @@ impl DaemonEvents {
         match event {
             SessionEvent::UserMessage { content, steer, .. } => {
                 self.end_messages();
-                let mut views: Vec<_> = steer
-                    .as_ref()
-                    .and_then(steering_id)
-                    .map(DaemonView::SteerApplied)
-                    .into_iter()
-                    .collect();
+                // A replay cut short of the turn's end still ends it here.
+                let mut views: Vec<_> = self.compact_turn_over().into_iter().collect();
+                views.extend(
+                    steer
+                        .as_ref()
+                        .and_then(steering_id)
+                        .map(DaemonView::SteerApplied),
+                );
                 let text = user_text(&content);
                 if !text.is_empty() {
                     views.push(DaemonView::User(text));
@@ -323,7 +332,12 @@ impl DaemonEvents {
                 },
                 DaemonView::Spend(cost_usd_micros),
             ],
-            SessionEvent::Compaction { status, .. } => compaction(status),
+            SessionEvent::Compaction { status, .. } => {
+                let views = compaction(status);
+                self.compact_turn |=
+                    matches!(views[..], [DaemonView::CompactionStarted { command: true }]);
+                views
+            }
             SessionEvent::ResponseDiscarded => {
                 // What the provider streamed stays; the retry's text starts
                 // new messages below this notice.
@@ -356,19 +370,27 @@ impl DaemonEvents {
                 DaemonView::Notice(format!("session titled: {title}")),
                 DaemonView::Title(title),
             ],
-            SessionEvent::State { state, turn } => match &self.replay_end {
-                // A reset's is history, unless it is of the turn the
-                // replay ends under way, which shows busy from where its
-                // rows start; the replay's end says the rest. A tail's is
-                // news, as live.
-                Some((end, under_way))
-                    if self.reset
-                        && !(in_progress(*end) && in_progress(state) && turn == *under_way) =>
-                {
-                    Vec::new()
+            SessionEvent::State { state, turn } => {
+                let mut views = match &self.replay_end {
+                    // A reset's is history, unless it is of the turn the
+                    // replay ends under way, which shows busy from where its
+                    // rows start; the replay's end says the rest. A tail's is
+                    // news, as live.
+                    Some((end, under_way))
+                        if self.reset
+                            && !(in_progress(*end) && in_progress(state) && turn == *under_way) =>
+                    {
+                        Vec::new()
+                    }
+                    Some(_) | None => vec![self.turn(state, turn.as_ref())],
+                };
+                // After the rest, which a live `/compact` turn shows as its
+                // compaction's; a replayed one shows no rest at all.
+                if !in_progress(state) {
+                    views.extend(self.compact_turn_over());
                 }
-                Some(_) | None => vec![self.turn(state, turn.as_ref())],
-            },
+                views
+            }
             SessionEvent::InputRequested { request } => {
                 self.inputs.requested(*request).into_iter().collect()
             }
@@ -382,6 +404,11 @@ impl DaemonEvents {
             // `Unknown`, or an event a newer daemon sends.
             _ => Vec::new(),
         }
+    }
+
+    /// Ends the `/compact` turn under way, if any.
+    fn compact_turn_over(&mut self) -> Option<DaemonView> {
+        std::mem::take(&mut self.compact_turn).then_some(DaemonView::CompactTurnOver)
     }
 
     /// Whether a turn runs once the job is in `state`, of turn `turn`, as

@@ -3,10 +3,11 @@ use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     display::{Presentation, ToolCard, ToolCardStatus, ToolFamily, ToolHeader},
-    AnswerStop, ApprovalAsk, ApprovalSource, Ask, Choice, ContentBlock, InputAnswer, InputRequest,
-    InputRequestId, InputTimeout, JobState, MessageId, Operation, PathScope, Question, QuestionAsk,
-    Replay, Resolution, RetryReason, Selection, SessionEvent, SteerId, ToolCallId as WireCallId,
-    ToolCallUpdate, ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome,
+    AnswerStop, ApprovalAsk, ApprovalSource, Ask, Choice, CompactionId, CompactionStatus,
+    CompactionTrigger, ContentBlock, InputAnswer, InputRequest, InputRequestId, InputTimeout,
+    JobState, MessageId, Operation, PathScope, Question, QuestionAsk, Replay, Resolution,
+    RetryReason, Selection, SessionEvent, SteerId, ToolCallId as WireCallId, ToolCallUpdate,
+    ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome,
 };
 use rho_sdk::{ProviderErrorKind, ProviderStreamResetReason, SteeringId, ToolCallId};
 
@@ -140,6 +141,74 @@ fn replayed_text_is_marked_until_the_replay_ends() {
     events.end_replay();
 
     assert_eq!((during, replayed(events.map(chunk("m2")))), (true, false));
+}
+
+// Covers: a `/compact` turn is over once its job rests or the next prompt
+// arrives, replayed or live, so the TUI stops showing what follows as part
+// of it. A reset replays a rested turn's state as history, with no rest to
+// show, and a later turn's reply was dropped along with the `/compact`
+// reply. An automatic compaction starts no such turn.
+// Owner: tui daemon session events
+#[test]
+fn a_compact_turn_is_over_when_its_job_rests_or_the_next_prompt_arrives() {
+    let started = |trigger| {
+        Step::Event(SessionEvent::Compaction {
+            id: CompactionId::new("c1"),
+            status: CompactionStatus::Started {
+                trigger: Some(trigger),
+            },
+        })
+    };
+    let command = || started(CompactionTrigger::Command);
+    let opened = |command| DaemonView::CompactionStarted { command };
+    let attached = || Step::Attached(Vec::new(), JobState::Idle);
+    let cases = [
+        (
+            "replayed, the job rested",
+            vec![
+                Step::Reset,
+                attached(),
+                command(),
+                state(JobState::Completed),
+            ],
+            vec![DaemonView::Clear, opened(true), DaemonView::CompactTurnOver],
+        ),
+        (
+            "replayed, cut short of the rest",
+            vec![Step::Reset, attached(), command(), user("next")],
+            vec![
+                DaemonView::Clear,
+                opened(true),
+                DaemonView::CompactTurnOver,
+                DaemonView::User("next".into()),
+            ],
+        ),
+        (
+            "live, after the rest it shows",
+            vec![
+                command(),
+                state(JobState::Running),
+                state(JobState::Completed),
+            ],
+            vec![
+                opened(true),
+                DaemonView::Turn(TurnState::Running),
+                resting(Rest::Ready),
+                DaemonView::CompactTurnOver,
+            ],
+        ),
+        (
+            "an automatic compaction",
+            vec![
+                started(CompactionTrigger::Automatic),
+                state(JobState::Completed),
+            ],
+            vec![opened(false), resting(Rest::Ready)],
+        ),
+    ];
+    for (name, steps, views) in cases {
+        assert_eq!(map(steps), views, "{name}");
+    }
 }
 
 // Covers: a live retry says why as the in-process TUI's retry hint does, a
