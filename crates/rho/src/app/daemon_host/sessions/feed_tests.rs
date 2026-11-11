@@ -267,6 +267,7 @@ fn an_attach_reports_open_requests_as_they_stand() {
             answer: wire::InputAnswer::KeepPlanning { feedback: None },
             reason: "safe".into(),
         }),
+        asker: Default::default(),
     };
     let feed = idle_feed();
     feed.publish([

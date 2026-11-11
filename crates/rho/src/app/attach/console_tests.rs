@@ -25,6 +25,7 @@ fn approve(id: u64, operation: Operation, reason: &str) -> InputRequest {
         }),
         tool_call: None,
         timeout: None,
+        asker: Default::default(),
     }
 }
 
@@ -60,6 +61,7 @@ fn question(id: u64, default: Option<&str>) -> InputRequest {
             answer: InputAnswer::Dismiss,
             reason: "nobody answered".into(),
         }),
+        asker: Default::default(),
     }
 }
 
@@ -346,6 +348,7 @@ fn a_reset_shows_a_plan_approval_again_with_its_plan() {
         }),
         tool_call: None,
         timeout: None,
+        asker: Default::default(),
     };
     let mut console = Console::new(Vec::new());
     console

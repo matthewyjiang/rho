@@ -194,8 +194,9 @@ fn a_request_hands_the_turn_only_the_answers_it_takes() {
     }
 }
 
-// Covers: a subagent's question is not the turn's: the turn's end leaves
-// it open, and no turn waits on it, so the job does not wait for input.
+// Covers: a subagent's question is not the turn's: clients are told whose
+// it is, the turn's end leaves it open, and no turn waits on it, so the job
+// does not wait for input.
 // Owner: daemon input requests.
 #[test]
 fn a_subagents_question_outlives_the_turn() {
@@ -203,17 +204,20 @@ fn a_subagents_question_outlives_the_turn() {
     let (turns, _turn) = open(&mut inputs, &approval(0));
     let (control, _answers) = mpsc::unbounded_channel();
     inputs.note(Asker::Subagent, &control, &question("q"), UNIX_EPOCH);
-    let subagents = opened(&mut inputs).id;
+    let asked = opened(&mut inputs);
+    let subagents = asked.id;
 
     inputs.withdraw_turn();
 
     assert_eq!(
         (
+            asked.asker,
             inputs.take_events(),
             inputs.waiting(),
             inputs.answer(subagents, InputAnswer::Decline).is_ok(),
         ),
         (
+            wire::InputAsker::Subagent,
             vec![wire::SessionEvent::InputResolved {
                 id: turns,
                 resolution: Resolution::Withdrawn,

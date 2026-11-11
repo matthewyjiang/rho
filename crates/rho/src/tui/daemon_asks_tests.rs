@@ -19,6 +19,7 @@ fn plan_request(modes: Vec<WireMode>) -> InputRequest {
         }),
         tool_call: None,
         timeout: None,
+        asker: Default::default(),
     }
 }
 

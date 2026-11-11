@@ -26,7 +26,7 @@ use std::{
 };
 
 use futures_util::FutureExt;
-use rho_protocol::{InputAnswer, InputRequest, InputRequestId, InputTimeout};
+use rho_protocol::{InputAnswer, InputAsker, InputRequest, InputRequestId, InputTimeout};
 use rho_sdk::{ApprovalDecision, HostInputRequest};
 use tokio::sync::oneshot;
 
@@ -42,8 +42,8 @@ use crate::permission::PermissionMode;
 pub(super) struct DaemonAnswers {
     shown: Option<Shown>,
     waiting: VecDeque<InputRequest>,
-    /// Requests whose questions the person cancelled, which cancels the
-    /// turn: their withdrawal goes unsaid.
+    /// Requests whose questions the person cancelled: their closing goes
+    /// unsaid.
     cancelled: HashSet<InputRequestId>,
     /// The person's cancel of questions cancelled the running turn, whose
     /// end then says the questionnaire was cancelled, as in process.
@@ -53,6 +53,7 @@ pub(super) struct DaemonAnswers {
 /// The request whose prompt is open.
 struct Shown {
     id: InputRequestId,
+    asker: InputAsker,
     reply: Reply,
     /// Whether the request still times out, so the person's first touch of
     /// its form holds it.
@@ -74,10 +75,10 @@ enum Reaction {
     Answer(InputAnswer),
     /// Cancelled a plan approval, which cancels the turn, as in process.
     CancelTurn,
-    /// Cancelled questions: dismisses them, then cancels the turn if one
-    /// runs. They may be a subagent's, which outlive the turn, so the
-    /// cancel alone would leave the subagent waiting.
-    DismissQuestions,
+    /// Cancelled questions: dismisses them, then, when they are the turn's
+    /// own, cancels the turn if one runs, as in process. The dismiss comes
+    /// first: the cancel alone would leave a subagent's question waiting.
+    DismissQuestions(InputAsker),
     /// The prompt closed without a reply: another client may answer.
     Nothing,
 }
@@ -181,12 +182,15 @@ impl App {
                 self.cancel_daemon_turn().await;
                 return Ok(());
             }
-            Some((id, Reaction::DismissQuestions)) => {
+            Some((id, Reaction::DismissQuestions(asker))) => {
                 self.daemon_answers.cancelled.insert(id);
                 if let Some(session) = self.info.session.daemon.as_mut() {
                     session.answer(id, InputAnswer::Dismiss).await;
                 }
-                if self.daemon_turn_runs() {
+                // An asker a newer daemon names is taken for the turn, as
+                // before the daemon said whose a request is.
+                let turns_question = !matches!(asker, InputAsker::Subagent);
+                if turns_question && self.daemon_turn_runs() {
                     self.daemon_answers.questions_cancelled_turn = true;
                     self.cancel_daemon_turn().await;
                     return Ok(());
@@ -265,9 +269,9 @@ impl App {
             }
             Reply::Questions(reply) => {
                 match questionnaire_reaction(reply.now_or_never()?, questions_answer) {
-                    Reaction::CancelTurn => Reaction::DismissQuestions,
+                    Reaction::CancelTurn => Reaction::DismissQuestions(shown.asker),
                     reaction @ (Reaction::Answer(_)
-                    | Reaction::DismissQuestions
+                    | Reaction::DismissQuestions(_)
                     | Reaction::Nothing) => reaction,
                 }
             }
@@ -300,6 +304,7 @@ impl App {
                 Ok(reply) => {
                     self.daemon_answers.shown = Some(Shown {
                         id: request.id,
+                        asker: request.asker,
                         reply,
                         times_out: request.timeout.is_some(),
                     });

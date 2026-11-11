@@ -213,6 +213,18 @@ async fn fixture_stream(
         )
         .await?;
     }
+    let refused = tool_result(&request, QUESTIONNAIRE_CALL_ID)
+        .is_some_and(|result| result.status == rho_sdk::model::ToolResultStatus::Failed);
+    if prompt == "fixture child questionnaire" && refused {
+        // A child whose question was cancelled finishes only once released,
+        // so its result cannot reach the parent's turn before the PTY checks
+        // how that turn went on.
+        release::wait_for_release_or_cancel(
+            ".rho-fixture-release-refused-child",
+            &request.cancellation,
+        )
+        .await?;
+    }
     let response = fixture_response(&request)?;
     let ModelResponse::Assistant(blocks) = &response;
     for block in blocks {

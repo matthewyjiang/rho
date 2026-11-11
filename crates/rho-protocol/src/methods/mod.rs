@@ -110,7 +110,7 @@ pub use event::{
 pub use goal::{SessionGoal, SessionGoalAction, SessionGoalPhase, SessionGoalStep};
 pub use grant::{GrantAccess, GrantWorkspaces, SessionGrant};
 pub use input::{
-    ApprovalAsk, ApprovalSource, Ask, Choice, DefaultAnswer, DefaultStyle, InputAnswer,
+    ApprovalAsk, ApprovalSource, Ask, Choice, DefaultAnswer, DefaultStyle, InputAnswer, InputAsker,
     InputRequest, InputRequestId, InputTimeout, Operation, PathScope, PermissionMode,
     PlanApprovalAsk, Question, QuestionAsk, Resolution, Selection, SessionAnswerParams,
     SessionAnswerResponse, SessionControlAction, SessionHoldParams, SessionHoldResponse,

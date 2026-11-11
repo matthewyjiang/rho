@@ -231,6 +231,10 @@ impl Inputs {
                 ask,
                 tool_call: tool_call.map(wire_tool_call),
                 timeout: wire_timeout,
+                asker: match asker {
+                    Asker::Turn => wire::InputAsker::Turn,
+                    Asker::Subagent => wire::InputAsker::Subagent,
+                },
             }),
         });
     }

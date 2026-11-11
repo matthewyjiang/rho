@@ -40,6 +40,14 @@ pub(super) const LATE_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO: Scenario = Scenar
     /*smoke*/ false,
 );
 
+pub(super) const CANCEL_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO: Scenario = Scenario::new(
+    "cancel_background_agent_questionnaire",
+    "Cancel a background agent's questionnaire while its parent's turn runs",
+    DEFAULT_SIZE,
+    CANCEL_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
+    /*smoke*/ false,
+);
+
 fn assert_agent_tool_hides_raw_json(harness: &mut crate::PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
     if screen.contains("\"agent_id\"")
@@ -220,6 +228,80 @@ const LATE_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS: &[Step] = &[
     Step::WaitQuiet {
         quiet_for: Duration::from_millis(250),
         timeout: SETTLE,
+    },
+    Step::ExitCommand,
+];
+
+fn release_refused_child(harness: &mut crate::PtyHarness) -> Result<()> {
+    super::release_fixture(harness, ".rho-fixture-release-refused-child")
+}
+
+/// Fails once anything said the parent's turn was cancelled. Reads the raw
+/// output: the status can be repainted or scrolled off the screen since.
+fn assert_parent_turn_not_cancelled(harness: &mut crate::PtyHarness) -> Result<()> {
+    let output = String::from_utf8_lossy(harness.raw_output());
+    for said in ["model interrupted", "questionnaire cancelled"] {
+        if output.contains(said) {
+            anyhow::bail!("cancelling the child's questionnaire ended the parent turn: {said}");
+        }
+    }
+    Ok(())
+}
+
+// Covers: Esc at a subagent's questionnaire while its parent's turn runs
+// dismisses only the questionnaire; the parent's turn runs on to its end.
+// Owner: interactive delegated-questionnaire routing. Holds the parent's
+// turn open until the form is cancelled, as the answering scenario does.
+const CANCEL_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("spawn_background_questionnaire_agent"),
+    Step::SubmitText("fixture background questionnaire"),
+    Step::WaitText {
+        text: "asks: Background questionnaire",
+        timeout: STREAM,
+    },
+    // The modal controls show once the form takes keys, so Esc reaches it
+    // rather than the running turn.
+    Step::WaitText {
+        text: "Esc cancel",
+        timeout: STREAM,
+    },
+    Step::Phase("cancel_child_questionnaire"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "cancelled questionnaire for agent",
+        timeout: STREAM,
+    },
+    // The composer offers to abort only while a turn runs.
+    Step::WaitText {
+        text: "esc abort",
+        timeout: STREAM,
+    },
+    Step::Custom(assert_parent_turn_not_cancelled),
+    Step::Phase("parent_turn_runs_to_its_end"),
+    Step::Custom(release_background_questionnaire_parent),
+    // Only the held parent request's own reply says this; a cancelled
+    // parent never gives it. The fixture holds the child's result meanwhile.
+    Step::WaitText {
+        text: "background questionnaire agent dispatched: agent",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "Worked for",
+        timeout: STREAM,
+    },
+    Step::Custom(assert_parent_turn_not_cancelled),
+    Step::Phase("child_result_follows"),
+    Step::Custom(release_refused_child),
+    // The fixture's own line for a child whose question went unanswered,
+    // whichever way the refusal reached it.
+    Step::WaitText {
+        text: "background agent questionnaire received wrong answer",
+        timeout: STREAM,
     },
     Step::ExitCommand,
 ];

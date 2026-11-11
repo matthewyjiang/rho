@@ -15,6 +15,7 @@ use super::{
     },
     background_agents::{
         BACKGROUND_AGENT_AUTO_DELIVERY_SCENARIO, BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
+        CANCEL_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
         LATE_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
     },
     goal::{
@@ -66,6 +67,11 @@ pub(super) const BACKGROUND_AGENT_QUESTIONNAIRE: Scenario = in_daemon(
 pub(super) const LATE_BACKGROUND_AGENT_QUESTIONNAIRE: Scenario = in_daemon(
     "daemon_late_background_agent_questionnaire",
     &LATE_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
+);
+
+pub(super) const CANCEL_BACKGROUND_AGENT_QUESTIONNAIRE: Scenario = in_daemon(
+    "daemon_cancel_background_agent_questionnaire",
+    &CANCEL_BACKGROUND_AGENT_QUESTIONNAIRE_SCENARIO,
 );
 
 pub(super) const SUBAGENT_RAIL_MOUSE: Scenario =
