@@ -99,11 +99,9 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
                 "{host}: resuming a pre-1.11 session exited cleanly"
             );
 
-            let picker = harness.insert(spawn(&plan)?);
+            let picker = harness.insert(spawn(&plan.clone().with_arg("--resume"))?);
             picker.set_phase(format!("{host}_resume_picker"));
-            picker.wait_for_text("gpt-5.5", STARTUP)?;
-            picker.submit_text("/resume")?;
-            picker.wait_for_text("Resume session", STREAM)?;
+            picker.wait_for_text("Resume session", STARTUP)?;
             picker.wait_for_text(CURRENT_PROMPT, STREAM)?;
             let code = picker.quit_with_exit_command()?;
             anyhow::ensure!(code == 0, "{host}: picker session exited with code {code}");
