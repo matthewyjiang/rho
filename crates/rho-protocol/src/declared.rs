@@ -92,6 +92,13 @@ fn may_declare(role: ClientRole, capability: ClientCapability) -> bool {
 
 /// The capability `method` needs, if it needs one. A new method that acts
 /// for a person, as an answer does, belongs here.
+///
+/// Answering and holding are the only gated methods, on purpose. An agent
+/// connection may change settings (`rho/config/set` and the other settings
+/// methods) and reconfigure a session (`rho/session/configure`): agents
+/// legitimately tune the sessions they run, and a role is declared, not
+/// authenticated, so gating them would stop no process that meant to call
+/// them. Custom per-method permissions may come after the beta (#1810).
 fn needed_by(method: &str) -> Option<ClientCapability> {
     match method {
         SESSION_ANSWER | SESSION_HOLD => Some(ClientCapability::Answer),
