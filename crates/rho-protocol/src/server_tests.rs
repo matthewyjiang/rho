@@ -47,13 +47,10 @@ fn test_status() -> DaemonStatus {
     }
 }
 
-fn test_info() -> ServerInfo {
-    ServerInfo {
-        daemon: DaemonInfo {
-            version: "test".into(),
-            pid: 1,
-        },
-        capabilities: Vec::new(),
+fn test_info() -> DaemonInfo {
+    DaemonInfo {
+        version: "test".into(),
+        pid: 1,
     }
 }
 
@@ -115,6 +112,34 @@ macro_rules! hosts_no_sessions {
         }
 
         async fn session_mcp(&self, _: SessionMcpParams) -> Result<SessionMcpInventory, RpcError> {
+            Err(no_such_session())
+        }
+
+        async fn session_mcp_catalog(
+            &self,
+            _: SessionMcpCatalogParams,
+        ) -> Result<SessionMcpCatalog, RpcError> {
+            Err(no_such_session())
+        }
+
+        async fn session_mcp_resource(
+            &self,
+            _: SessionMcpResourceParams,
+        ) -> Result<SessionMcpResourceResponse, RpcError> {
+            Err(no_such_session())
+        }
+
+        async fn session_mcp_complete(
+            &self,
+            _: SessionMcpCompleteParams,
+        ) -> Result<SessionMcpCompleteResponse, RpcError> {
+            Err(no_such_session())
+        }
+
+        async fn observe_session(
+            &self,
+            _: SessionObserveParams,
+        ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
             Err(no_such_session())
         }
 
@@ -682,8 +707,7 @@ async fn hello_accepts_the_daemons_version_and_tells_any_other_which_side_to_cha
         (
             Ok(HelloResponse {
                 protocol: PROTOCOL_VERSION,
-                daemon: test_info().daemon,
-                capabilities: Vec::new(),
+                daemon: test_info(),
             }),
             Err(refusal(newer, VersionFix::RestartDaemon, Some(in_use))),
             Err(refusal(newer, VersionFix::RestartDaemon, Some(UNUSED))),
