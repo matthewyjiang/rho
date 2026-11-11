@@ -204,6 +204,10 @@ impl CacheWarmer {
     /// The prompt prefix was rewritten, as by a compaction. A ping in flight
     /// read the old prefix, so its result says nothing of the new one: it is
     /// orphaned, and the budget and any halt stay as they are.
+    // The in-process TUI cannot tell a compaction that rewrote the prefix
+    // from one that failed (`ViewModelEvent::rewrites_prompt_prefix`), so
+    // only the daemon, unix-only so far, calls this (#1665).
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn prefix_rewritten(&mut self) {
         if self.in_flight {
             self.in_flight = false;
