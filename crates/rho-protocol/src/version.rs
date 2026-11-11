@@ -20,7 +20,7 @@ pub struct ProtocolVersion {
 /// outside this repository has run against it (#1776). Until the beta the
 /// wire changes without raising the minor: nothing is released, and the
 /// version is set once then.
-pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::new(0, 5);
+pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::new(0, 1);
 
 impl ProtocolVersion {
     pub const fn new(major: u16, minor: u16) -> Self {
