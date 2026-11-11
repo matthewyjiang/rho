@@ -38,11 +38,9 @@ impl App {
 
     /// The daemon session's MCP servers stopped connecting: as when the
     /// in-process load lands, held prompts may go and an open `/mcp`
-    /// shows where the servers ended up.
+    /// shows where the servers ended up. The session already counts them
+    /// loaded by the time it sends the view.
     pub(super) fn show_daemon_tool_sources_loaded(&mut self) {
-        if let Some(session) = self.info.session.daemon.as_mut() {
-            session.tool_sources_loaded();
-        }
         if self.status_source == StatusSource::ToolSourcesLoading {
             self.set_status_quiet("");
         }
