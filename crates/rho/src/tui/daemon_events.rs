@@ -170,6 +170,9 @@ pub(super) enum DaemonView {
     /// Status-line feedback.
     Status(String),
     Notice(String),
+    /// A notice the daemon sent. It ends the reply under way, as any event
+    /// between a message's chunks does on the wire.
+    DaemonNotice(String),
     /// A background result or a child's message the model was given, as
     /// the card an in-process turn shows for it.
     Card(Box<rho_protocol::display::NotificationCard>),
@@ -417,7 +420,7 @@ impl DaemonEvents {
                     None => DaemonView::Notice(card_text(title, &plain)),
                 }]
             }
-            SessionEvent::Notice { text } => vec![DaemonView::Notice(text)],
+            SessionEvent::Notice { text } => vec![DaemonView::DaemonNotice(text)],
             SessionEvent::TurnEnded { turn, outcome } => {
                 let views = self.turn_ended(turn, outcome);
                 self.end_messages();

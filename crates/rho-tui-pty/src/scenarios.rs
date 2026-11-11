@@ -896,6 +896,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     quiet_subagent::GOAL_ACTION_RETRY_SCENARIO,
     #[cfg(unix)]
+    quiet_subagent::DAEMON_GOAL_ACTION_RETRY_SCENARIO,
+    #[cfg(unix)]
     quiet_subagent::RUNNING_NOTICES_SCENARIO,
     #[cfg(unix)]
     quiet_subagent::STREAMING_NOTICE_SCENARIO,

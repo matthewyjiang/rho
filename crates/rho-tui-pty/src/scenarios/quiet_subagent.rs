@@ -286,3 +286,11 @@ pub(super) const GOAL_ACTION_RETRY_SCENARIO: Scenario = Scenario::new(
     ],
     /*smoke*/ true,
 );
+
+/// The same steps with the session in the daemon (`RHO_TUI_DAEMON=1`).
+pub(super) const DAEMON_GOAL_ACTION_RETRY_SCENARIO: Scenario = Scenario {
+    id: "daemon_goal_subagent_action_retry",
+    env: &[("RHO_TUI_DAEMON", "1")],
+    smoke: false,
+    ..GOAL_ACTION_RETRY_SCENARIO
+};

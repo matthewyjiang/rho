@@ -1338,10 +1338,16 @@ fn quiet_subagent_notices_coalesce_without_extra_requests() {
 }
 
 // Covers: a failed parent action under /goal retries without waiting for the
-// blocked child. Owner: interactive turn orchestration (PTY)
+// blocked child, in process and in a daemon session, whose TUI shows each
+// goal turn's reply whole. Owner: interactive turn orchestration (PTY)
 #[test]
 fn goal_retries_a_failed_action_without_waiting_for_children() {
-    assert_pass("goal_subagent_action_retry");
+    for scenario in [
+        "goal_subagent_action_retry",
+        "daemon_goal_subagent_action_retry",
+    ] {
+        assert_pass(scenario);
+    }
 }
 
 // Covers: boundary notices keep a streaming message intact, and a pending
