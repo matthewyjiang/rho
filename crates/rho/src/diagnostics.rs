@@ -147,15 +147,6 @@ impl RuntimeState {
     }
 }
 
-/// Where finished compaction records go.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CompactionLedger {
-    /// The usage ledger, for `/spend` and the #1280 metrics.
-    Usage,
-    /// Nowhere. Offline replays must not mix into real usage.
-    Off,
-}
-
 /// Whether a ledger write has to finish before the caller continues.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CompactionSave {
@@ -175,7 +166,6 @@ pub(crate) struct CapturedCompaction {
 #[derive(Clone, Debug)]
 pub struct RuntimeDiagnostics {
     state: Arc<RwLock<RuntimeState>>,
-    ledger: CompactionLedger,
     /// Records handed to the ledger during tests. Production saves skip this.
     #[cfg(test)]
     saves: Arc<Mutex<Vec<CapturedCompaction>>>,
@@ -183,17 +173,7 @@ pub struct RuntimeDiagnostics {
 
 impl RuntimeDiagnostics {
     pub fn new(config: &Config) -> Self {
-        Self::with_ledger(config, CompactionLedger::Usage)
-    }
-
-    /// Diagnostics whose compaction records are kept in memory only.
-    pub(crate) fn without_ledger(config: &Config) -> Self {
-        Self::with_ledger(config, CompactionLedger::Off)
-    }
-
-    fn with_ledger(config: &Config, ledger: CompactionLedger) -> Self {
         Self {
-            ledger,
             #[cfg(test)]
             saves: Arc::new(Mutex::new(Vec::new())),
             state: Arc::new(RwLock::new(RuntimeState {
@@ -241,14 +221,9 @@ impl RuntimeDiagnostics {
                 save,
                 record: record.clone(),
             });
-        match (self.ledger, save) {
-            (CompactionLedger::Off, _) => {}
-            (CompactionLedger::Usage, CompactionSave::Deferred) => {
-                crate::usage::save_compaction(Some(record));
-            }
-            (CompactionLedger::Usage, CompactionSave::Inline) => {
-                crate::usage::save_compaction_inline(Some(record));
-            }
+        match save {
+            CompactionSave::Deferred => crate::usage::save_compaction(Some(record)),
+            CompactionSave::Inline => crate::usage::save_compaction_inline(Some(record)),
         }
     }
 

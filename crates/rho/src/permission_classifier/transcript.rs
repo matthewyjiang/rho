@@ -56,7 +56,7 @@ pub(crate) fn render_classifier_transcript(
 /// surface as a [`super::TranscriptOverBudget`] inside the returned error.
 ///
 /// The ID is a parameter because only the SDK can attach one to an
-/// [`ApprovalRequest`]; the classifier eval supplies replayed call IDs.
+/// [`ApprovalRequest`].
 pub(super) fn render_with_pending_call(
     history: &[Message],
     pending: &ApprovalRequest,
@@ -66,37 +66,6 @@ pub(super) fn render_with_pending_call(
     let mut tail = vec!["pending_capability:".to_owned()];
     tail.extend(format_pending_capability(pending)?);
     render(history, pending_call_id.as_slice(), tail, budget)
-}
-
-/// One request of a batch the agent made at once, under the ID its question
-/// asks about, which is not a tool-call ID.
-pub(super) struct LabeledPending<'a> {
-    pub label: &'a str,
-    pub pending: &'a ApprovalRequest,
-    pub call_id: Option<&'a str>,
-}
-
-/// [`render_with_pending_call`] for several pending requests. Each section is
-/// headed by its label and names the tool call that made it, when known, so
-/// requests with identical capabilities stay bound to their own calls.
-pub(super) fn render_with_pending_calls(
-    history: &[Message],
-    pendings: &[LabeledPending<'_>],
-    budget: TranscriptBudget,
-) -> anyhow::Result<String> {
-    let mut tail = Vec::new();
-    for pending in pendings {
-        tail.push(format!("pending_capability {}:", pending.label));
-        if let Some(call_id) = pending.call_id {
-            tail.push(field("call_id", json_str(call_id)));
-        }
-        tail.extend(format_pending_capability(pending.pending)?);
-    }
-    let call_ids: Vec<&str> = pendings
-        .iter()
-        .filter_map(|pending| pending.call_id)
-        .collect();
-    render(history, &call_ids, tail, budget)
 }
 
 /// The history lines followed by `tail`, fitted into `budget`. Answered calls
