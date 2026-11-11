@@ -37,14 +37,16 @@ impl App {
             match view {
                 DaemonView::Clear => self.clear_daemon_transcript(),
                 DaemonView::InputsReset => self.drop_daemon_inputs(),
-                DaemonView::User(text) => {
+                DaemonView::User { text, replayed } => {
                     self.finish_streams();
-                    // The hub's own prompt has no row, as in process.
-                    if self
-                        .daemon_hub_launch
-                        .take_if(|sent| *sent == text)
-                        .is_none()
-                    {
+                    // The hub's own prompt has no row, as in process. A
+                    // replayed row is history, whatever it reads.
+                    let hub_launch = !replayed
+                        && self
+                            .daemon_hub_launch
+                            .take_if(|sent| *sent == text)
+                            .is_some();
+                    if !hub_launch {
                         self.insert_entry(&Entry::User(text));
                     }
                 }
@@ -343,6 +345,8 @@ impl App {
         self.finish_streams();
         self.reset_streams();
         let compact_turn = self.daemon_compact_turn.take();
+        // A hub start whose prompt never came back hides no later prompt.
+        self.daemon_hub_launch = None;
         // The daemon withdrew the turn's own requests before it said the
         // turn ended. A prompt still open is a subagent's question, which
         // outlives the turn.

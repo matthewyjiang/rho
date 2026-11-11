@@ -80,6 +80,7 @@ impl App {
         self.daemon_option_requests.clear();
         self.daemon_login_selected = None;
         self.daemon_title = None;
+        self.daemon_hub_launch = None;
         self.awaited_daemon_report = None;
         // Held for the session left behind, as `/new` drops them in process.
         self.held_turns.clear();

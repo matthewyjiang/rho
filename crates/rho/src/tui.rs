@@ -683,7 +683,8 @@ struct App {
     /// `daemon_transcript`.
     daemon_compact_turn: Option<daemon_transcript::DaemonCompactTurn>,
     /// The `/workflow:` prompt the hub sent the daemon session whose user
-    /// message has not come back yet; see `daemon_workflows`.
+    /// message has not come back yet, at most until the turn under way
+    /// ends or another session is followed; see `daemon_workflows`.
     daemon_hub_launch: Option<String>,
     /// The open `/info` overlay's read of the daemon session's compaction.
     info_compaction_read: daemon_reports::InfoCompactionRead,
