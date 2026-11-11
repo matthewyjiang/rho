@@ -21,10 +21,6 @@ impl DaemonSession {
         match *self {}
     }
 
-    pub(in crate::tui) fn tool_sources_loaded(&mut self) {
-        match *self {}
-    }
-
     pub(in crate::tui) fn goal(
         &self,
         _action: rho_protocol::SessionGoalAction,

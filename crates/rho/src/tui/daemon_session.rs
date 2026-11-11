@@ -270,10 +270,10 @@ mod unix {
         logins: Option<mpsc::UnboundedReceiver<LoginEvent>>,
         /// Whether the session's tool sources still load.
         tool_sources: ToolSources,
-        /// The watch of them while they load, started by each attach: the
-        /// first, and the one after a daemon restart. Only it says they
+        /// The one watch of them while they load, started by each attach:
+        /// the first, and the one after a daemon restart. Only it says they
         /// have loaded.
-        reconnecting: Option<tool_sources::Watch>,
+        tool_source_watch: Option<tool_sources::Watch>,
     }
 
     impl DaemonSession {
@@ -371,7 +371,7 @@ mod unix {
             let config_changes = route_config(&daemon);
             let settings = load_settings(&link).await;
             let tool_sources = ToolSources::read(&link, &id).await;
-            let reconnecting = tool_sources::Watch::of(tool_sources, &link, &id);
+            let tool_source_watch = tool_sources::Watch::of(tool_sources, &link, &id);
             let (target, requests) = watch::channel(Target::Attached {
                 link,
                 session: id.clone(),
@@ -403,7 +403,7 @@ mod unix {
                 reattach: None,
                 logins: None,
                 tool_sources,
-                reconnecting,
+                tool_source_watch,
             };
             session.pending.push(settings_loaded(settings));
             for change in queued {
@@ -490,7 +490,7 @@ mod unix {
                 Some(update) = auth::next_login(&mut self.logins) => {
                     views.push(DaemonView::Login(update));
                 }
-                () = tool_sources::loaded(&mut self.reconnecting) => {
+                () = tool_sources::loaded(&mut self.tool_source_watch) => {
                     self.tool_sources = ToolSources::Loaded;
                     views.push(DaemonView::ToolSourcesLoaded);
                 }
@@ -563,7 +563,8 @@ mod unix {
                         self.routed = routed;
                         // A prompt waits again while the restarted daemon
                         // loads the session's tool sources again.
-                        self.reconnecting = tool_sources::Watch::of(tool_sources, &link, &session);
+                        self.tool_source_watch =
+                            tool_sources::Watch::of(tool_sources, &link, &session);
                         if self.tool_sources == ToolSources::Loading
                             && tool_sources == ToolSources::Loaded
                         {
@@ -643,7 +644,7 @@ mod unix {
                         views.push(DaemonView::Status(RECONNECTING.into()));
                         // Its connection closes next, and a read that fails
                         // counts as loaded: the reattach reads them again.
-                        self.reconnecting = None;
+                        self.tool_source_watch = None;
                         // The connection the session is attached on, taken
                         // now: the daemon closes it next.
                         let old = match self.target.send_replace(Target::Reconnecting) {
