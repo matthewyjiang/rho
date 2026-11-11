@@ -294,23 +294,51 @@ credential_store = "file"
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
+/// Where the TUI under test runs its session.
+#[derive(Clone, Copy)]
+enum SessionHost {
+    InProcess,
+    /// In the daemon the TUI follows (`RHO_TUI_DAEMON=1`, #1667).
+    Daemon,
+}
+
+/// A 32x140 matrix launch in `home` whose session runs in `host`.
+fn ollama_plan(home: &IsolatedHome, host: SessionHost) -> RhoLaunchPlan {
+    let plan = RhoLaunchPlan::matrix(
+        PathBuf::from(env!("CARGO_BIN_EXE_rho")),
+        home,
+        PtySize {
+            rows: 32,
+            cols: 140,
+        },
+    );
+    match host {
+        SessionHost::InProcess => plan,
+        SessionHost::Daemon => plan.with_env("RHO_TUI_DAEMON", "1"),
+    }
+}
+
 // Covers: an Ollama device login counts only after Enter, logout signs Rho
 // out, and Esc on the prompt records nothing.
 // Owner: interactive login lifecycle.
 #[test]
 fn ollama_device_login_needs_enter_and_logout_signs_out() {
+    ollama_device_login_needs_enter(SessionHost::InProcess);
+}
+
+// Covers: the same with RHO_TUI_DAEMON=1, where the daemon records the
+// login: not before Enter, and not at all after Esc.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_ollama_device_login_needs_enter_and_logout_signs_out() {
+    ollama_device_login_needs_enter(SessionHost::Daemon);
+}
+
+fn ollama_device_login_needs_enter(host: SessionHost) {
     let home = IsolatedHome::new().unwrap();
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
-    let plan = RhoLaunchPlan::matrix(
-        binary,
-        &home,
-        PtySize {
-            rows: 32,
-            cols: 140,
-        },
-    )
-    // Headless on every platform, so no real browser opens.
-    .with_env("SSH_CONNECTION", "127.0.0.1 1 127.0.0.1 2");
+    let plan = ollama_plan(&home, host)
+        // Headless on every platform, so no real browser opens.
+        .with_env("SSH_CONNECTION", "127.0.0.1 1 127.0.0.1 2");
     let mut harness = PtyHarness::spawn_named(&plan, "ollama_device_login").unwrap();
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
@@ -395,17 +423,22 @@ fn spawn_fake_ollama() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize
 // Owner: interactive provider setup.
 #[test]
 fn ollama_is_refreshed_and_listed_only_after_login() {
+    ollama_is_refreshed_and_listed_after_login(SessionHost::InProcess);
+}
+
+// Covers: the same with RHO_TUI_DAEMON=1, where the daemon records and
+// forgets the login.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_ollama_is_refreshed_and_listed_only_after_login() {
+    ollama_is_refreshed_and_listed_after_login(SessionHost::Daemon);
+}
+
+fn ollama_is_refreshed_and_listed_after_login(host: SessionHost) {
     let home = IsolatedHome::new().unwrap();
     let original_config = std::fs::read_to_string(&home.config_path).unwrap();
     let (ollama_base, ollama_requests) = spawn_fake_ollama();
-    let plan = RhoLaunchPlan::matrix(
-        PathBuf::from(env!("CARGO_BIN_EXE_rho")),
-        &home,
-        PtySize {
-            rows: 32,
-            cols: 140,
-        },
-    );
+    let plan = ollama_plan(&home, host);
     let mut harness = PtyHarness::spawn_named(&plan, "ollama_login_only").unwrap();
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
@@ -435,13 +468,7 @@ fn ollama_is_refreshed_and_listed_only_after_login() {
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "restart"))
         .unwrap();
-    harness.submit_text("/model").unwrap();
-    harness
-        .wait_for_text(
-            "no cached provider models",
-            WaitTimeout::secs(10, "ollama list dropped"),
-        )
-        .unwrap();
+    expect_no_ollama_model_listed(&mut harness, host, "ollama list dropped");
 
     // A keyless login is still a login, so /logout ollama signs it out.
     keyless_ollama_login_lists_its_model(&mut harness, &ollama_base);
@@ -453,23 +480,23 @@ fn ollama_is_refreshed_and_listed_only_after_login() {
     harness.submit_text("/new").unwrap();
     harness
         .wait_for_text_gone(
-            "no cached provider models",
+            "logged out of ollama",
             WaitTimeout::secs(10, "fresh transcript"),
         )
         .unwrap();
-    harness.submit_text("/model").unwrap();
-    harness
-        .wait_for_text(
-            "no cached provider models",
-            WaitTimeout::secs(10, "logout drops the ollama list"),
-        )
-        .unwrap();
+    expect_no_ollama_model_listed(&mut harness, host, "logout drops the ollama list");
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
     let config = std::fs::read_to_string(&home.config_path).unwrap();
     assert!(
         !config.contains("[providers.ollama]"),
         "logout must remove the login record:\n{config}"
     );
+
+    // The daemon refuses to open a session whose auth has no login, so a
+    // TUI following one has nothing to start signed out in yet.
+    if matches!(host, SessionHost::Daemon) {
+        return;
+    }
 
     // A saved Ollama selection without its login starts signed out, and
     // startup asks nothing of the server.
@@ -496,6 +523,31 @@ fn ollama_is_refreshed_and_listed_only_after_login() {
         served_before,
         "startup must not probe an Ollama that is not logged in"
     );
+}
+
+/// Opens `/model` and checks it lists no model of the fake Ollama server.
+/// In process nothing else is cached, so the picker does not open; a daemon
+/// session's picker always offers the session's own model.
+fn expect_no_ollama_model_listed(harness: &mut PtyHarness, host: SessionHost, what: &'static str) {
+    harness.submit_text("/model").unwrap();
+    match host {
+        SessionHost::InProcess => {
+            harness
+                .wait_for_text("no cached provider models", WaitTimeout::secs(10, what))
+                .unwrap();
+        }
+        SessionHost::Daemon => {
+            harness
+                .wait_for_text("select model", WaitTimeout::secs(10, what))
+                .unwrap();
+            let screen = harness.screen().contents();
+            assert!(!screen.contains("llama-pty"), "{what}:\n{screen}");
+            harness.inject_key(&Key::Esc).unwrap();
+            harness
+                .wait_for_text_gone("select model", WaitTimeout::secs(5, "picker closed"))
+                .unwrap();
+        }
+    }
 }
 
 /// Runs `/login ollama` against `base` with no key, then checks the login
