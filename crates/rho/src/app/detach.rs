@@ -210,6 +210,7 @@ async fn start(
         .session;
     client
         .request::<SessionPrompt>(&SessionPromptParams {
+            author: rho_protocol::PromptAuthor::Person,
             session: session.clone(),
             content: vec![ContentBlock::Text { text }],
             timeout_ms,

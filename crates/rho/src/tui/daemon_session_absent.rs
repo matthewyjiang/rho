@@ -159,6 +159,7 @@ impl DaemonSession {
     pub(in crate::tui) async fn prompt(
         &mut self,
         _content: Vec<rho_protocol::ContentBlock>,
+        _author: rho_protocol::PromptAuthor,
     ) -> anyhow::Result<()> {
         match *self {}
     }

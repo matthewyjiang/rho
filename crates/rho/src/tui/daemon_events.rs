@@ -73,12 +73,8 @@ pub(super) enum DaemonView {
     Clear,
     /// Drop input prompts before rebuilding them from a tail replay.
     InputsReset,
-    /// A user message, as the transcript shows it. `replayed` when it is
-    /// history, not a prompt the daemon just took.
-    User {
-        text: String,
-        replayed: bool,
-    },
+    /// A user message, as the transcript shows it.
+    User(String),
     /// More of the agent's reply or reasoning. `opens` starts a new
     /// transcript row, as a new message does, instead of extending the last.
     /// `replayed` text was said before this TUI followed: history, to
@@ -361,10 +357,7 @@ impl DaemonEvents {
                 );
                 let text = user_text(&content);
                 if !text.is_empty() {
-                    views.push(DaemonView::User {
-                        text,
-                        replayed: self.replay_end.is_some(),
-                    });
+                    views.push(DaemonView::User(text));
                 }
                 views
             }
