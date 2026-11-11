@@ -201,6 +201,16 @@ impl CacheWarmer {
         };
     }
 
+    /// The prompt prefix was rewritten, as by a compaction. A ping in flight
+    /// read the old prefix, so its result says nothing of the new one: it is
+    /// orphaned, and the budget and any halt stay as they are.
+    pub(crate) fn prefix_rewritten(&mut self) {
+        if self.in_flight {
+            self.in_flight = false;
+            self.generation = self.generation.wrapping_add(1);
+        }
+    }
+
     /// Generation a ping started now belongs to.
     pub(crate) fn generation(&self) -> u64 {
         self.generation

@@ -152,7 +152,9 @@ impl KeepWarm {
     /// A compaction rewrote the prompt prefix, so the cache holds nothing of
     /// it until the next request.
     pub(super) fn prefix_rewritten(&self) {
-        self.warming().last_prefix_read = None;
+        let mut warming = self.warming();
+        warming.last_prefix_read = None;
+        warming.warmer.prefix_rewritten();
     }
 
     /// The warming state, brought up to date with the route: a route that

@@ -235,6 +235,7 @@ impl App {
     pub(super) fn record_agent_event(&mut self, event: ViewModelEvent) -> Option<Entry> {
         if event.rewrites_prompt_prefix() {
             self.usage.cache_stats.prompt_prefix_reset();
+            self.usage.cache_warm.prefix_rewritten();
         }
         match event {
             ViewModelEvent::RunStarted => {

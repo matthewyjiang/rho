@@ -394,3 +394,21 @@ fn release_drops_an_in_flight_ping_so_a_new_hold_can_warm() {
 // Covers: `/clear` while a ping is in flight. The provider already billed the
 // prefix read, so the send must finish and reach the usage ledger, while its
 // result stays out of the new conversation.
+
+// Covers: a compaction while a ping is in flight. The ping read the old
+// prefix, so it must not count as a read of the rewritten one.
+// Owner: cache-warm scheduler
+#[test]
+fn a_prefix_rewrite_orphans_the_ping_in_flight() {
+    let t0 = Instant::now();
+    let mut warmer = warmer(t0);
+    assert_eq!(
+        warmer.step(t0 + TTL - PING_MARGIN, WarmGate::Holding),
+        WarmStep::Ping
+    );
+    let sent_in = warmer.scheduler.generation();
+
+    warmer.scheduler.prefix_rewritten();
+
+    assert!(!warmer.scheduler.is_current(sent_in));
+}
