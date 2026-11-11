@@ -110,7 +110,36 @@ fn map(steps: Vec<Step>) -> Vec<DaemonView> {
             Step::Refused(id, refusal) => views.extend(events.answer_refused(id, refusal)),
         }
     }
+    // The tables compare what text shows, not when it was said; the test
+    // below owns `replayed`.
+    for view in &mut views {
+        if let DaemonView::Text { replayed, .. } = view {
+            *replayed = false;
+        }
+    }
     views
+}
+
+// Covers: text the daemon replays is marked as said before, so the TUI
+// writes it as history; text after the replay ends is live.
+// Owner: tui daemon session events
+#[test]
+fn replayed_text_is_marked_until_the_replay_ends() {
+    let mut events = DaemonEvents::default();
+    let chunk = |message: &str| SessionEvent::AgentMessageChunk {
+        message: MessageId::new(message),
+        text: "text".into(),
+    };
+    let replayed = |views: Vec<DaemonView>| match views.as_slice() {
+        [DaemonView::Text { replayed, .. }] => *replayed,
+        other => panic!("expected one text view: {other:?}"),
+    };
+    events.replay(Replay::Reset);
+    events.attached(Vec::new(), JobState::Running, Some(TurnId::new(TURN)));
+    let during = replayed(events.map(chunk("m1")));
+    events.end_replay();
+
+    assert_eq!((during, replayed(events.map(chunk("m2")))), (true, false));
 }
 
 fn user(text: &str) -> Step {
@@ -207,6 +236,7 @@ fn text(kind: StreamKind, text: &str, opens: bool) -> DaemonView {
         kind,
         text: text.into(),
         opens,
+        replayed: false,
     }
 }
 

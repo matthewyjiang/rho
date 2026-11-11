@@ -88,6 +88,12 @@ const DAEMON_PROMPT_STEPS: &[Step] = &[
         text: IDLE_COMPOSER,
         timeout: SETTLE,
     },
+    // Nothing of the reply's stream outlasts the turn: a spinner left
+    // running would keep the screen changing.
+    Step::WaitQuiet {
+        quiet_for: std::time::Duration::from_millis(250),
+        timeout: SETTLE,
+    },
     Step::Custom(assert_one_user_row),
     Step::ExitCommand,
 ];

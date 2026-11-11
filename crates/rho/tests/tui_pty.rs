@@ -1210,6 +1210,14 @@ fn daemon_streamed_call_shows_its_tail_when_the_stream_pauses() {
     assert_pass("daemon_codemode_large_script_stream");
 }
 
+// Covers: with RHO_TUI_DAEMON=1, `output_streaming` holds and reveals the
+// daemon turn's text as it does an in-process turn's.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_streaming_controls_hold_and_reveal_output() {
+    assert_pass("daemon_streaming_controls");
+}
+
 // Covers: with RHO_TUI_DAEMON=1 in supervised mode, a daemon turn's write
 // opens the TUI's approval prompt, Allow once answers the daemon, and the
 // turn completes with the write done.

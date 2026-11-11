@@ -56,10 +56,13 @@ pub(super) enum DaemonView {
     User(String),
     /// More of the agent's reply or reasoning. `opens` starts a new
     /// transcript row, as a new message does, instead of extending the last.
+    /// `replayed` text was said before this TUI followed: history, to
+    /// write as it stands rather than stream.
     Text {
         kind: StreamKind,
         text: String,
         opens: bool,
+        replayed: bool,
     },
     /// A tool call's running card, opened or replaced.
     ToolRunning {
@@ -378,7 +381,12 @@ impl DaemonEvents {
             self.reply.push_str(&text);
         }
         self.open_message = Some((kind, message));
-        DaemonView::Text { kind, text, opens }
+        DaemonView::Text {
+            kind,
+            text,
+            opens,
+            replayed: self.replay_end.is_some(),
+        }
     }
 
     /// The next text, of any message, starts a new row.
@@ -446,6 +454,7 @@ impl DaemonEvents {
                         kind: StreamKind::Assistant,
                         text,
                         opens: true,
+                        replayed: self.replay_end.is_some(),
                     }];
                 }
                 match final_answer_delta(&self.reply, &text) {
@@ -456,6 +465,7 @@ impl DaemonEvents {
                         kind: StreamKind::Assistant,
                         text: suffix.to_owned(),
                         opens: self.reply.is_empty(),
+                        replayed: self.replay_end.is_some(),
                     }],
                     // A retried reply arrives as its own message, which the
                     // transcript already shows after the discarded one.

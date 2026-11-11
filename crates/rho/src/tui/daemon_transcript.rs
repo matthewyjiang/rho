@@ -27,13 +27,51 @@ impl App {
             match view {
                 DaemonView::Clear => self.clear_daemon_transcript(),
                 DaemonView::InputsReset => self.drop_daemon_inputs(),
-                DaemonView::User(text) => self.insert_entry(&Entry::User(text)),
-                DaemonView::Text { kind, text, opens } => {
+                DaemonView::User(text) => {
+                    self.finish_streams();
+                    self.insert_entry(&Entry::User(text));
+                }
+                // A running turn's text goes through the stream an
+                // in-process turn's does, which holds, paces and previews
+                // it as `output_streaming` says. History, and a turn this
+                // TUI is not showing busy, is written as it stands.
+                DaemonView::Text {
+                    kind,
+                    text,
+                    opens,
+                    replayed: false,
+                } if self.turn.is_provider_turn() => {
+                    if opens {
+                        // A new message starts a new row, after any notice
+                        // held for the last one's end, and from a clean
+                        // stream, as each in-process step does.
+                        self.finish_streams();
+                        self.reset_streams();
+                    }
+                    self.handle_agent_event(
+                        match kind {
+                            StreamKind::Assistant => ViewModelEvent::OutputDelta(text),
+                            StreamKind::Reasoning => ViewModelEvent::ReasoningDelta(text),
+                        },
+                        terminal,
+                    )?;
+                }
+                DaemonView::Text {
+                    kind,
+                    text,
+                    opens,
+                    replayed: _,
+                } => {
+                    // Replayed into a running turn, as a reattach's tail
+                    // is: what the stream still holds came before it.
                     if self.turn.is_provider_turn() {
-                        self.turn.set_activity_phase(match kind {
-                            StreamKind::Assistant => ActivityPhase::Responding,
-                            StreamKind::Reasoning => ActivityPhase::Thinking,
-                        });
+                        self.finish_streams();
+                        // A chunk that continues the message leaves the
+                        // stream its fence and wrap state for the live
+                        // text that follows.
+                        if opens {
+                            self.reset_streams();
+                        }
                     }
                     if opens {
                         self.open_transcript_row(kind.entry(text));
@@ -80,6 +118,9 @@ impl App {
                     )?;
                 }
                 DaemonView::Spend(cost_usd_micros) => {
+                    // The daemon's figure includes the response under way,
+                    // so the local estimate of its output starts over.
+                    self.usage.live_stream.clear();
                     self.usage.cumulative_usage = Some(rho_providers::model::ModelUsage {
                         cost_usd_micros,
                         ..Default::default()
@@ -109,14 +150,23 @@ impl App {
                     let _ = self.take_accepted_steering(std::slice::from_ref(&id));
                 }
                 DaemonView::SteerDelivered(id) => self.record_delivered_steering(&id),
-                DaemonView::InputOpened(request) => self.ask_daemon_input(*request).await,
+                DaemonView::InputOpened(request) => {
+                    // The reply so far shows above what it asks.
+                    self.finish_streams();
+                    self.ask_daemon_input(*request).await;
+                }
                 DaemonView::InputClosed { id, notice } => {
                     self.close_daemon_input(id, notice).await;
                 }
                 DaemonView::InputHeld(id) => self.daemon_input_held(id),
                 DaemonView::Status(text) => self.set_status(text),
+                // Held until the message under way ends, as in process: a
+                // notice such as a new title does not break into a reply.
                 DaemonView::Notice(text) => self.insert_entry(&Entry::Notice(text)),
-                DaemonView::Error(text) => self.insert_entry(&Entry::Error(text)),
+                DaemonView::Error(text) => {
+                    self.finish_streams();
+                    self.insert_entry(&Entry::Error(text));
+                }
             }
         }
         Ok(())
@@ -157,6 +207,9 @@ impl App {
     /// keeps its chrome and clock, but its rows are gone: the replay's
     /// running state places its start again, as a first attach does.
     fn clear_daemon_transcript(&mut self) {
+        // Before the rows go: what the stream held is replayed with them.
+        self.reset_streams();
+        self.usage.live_stream.clear();
         self.set_history_entries(Vec::new());
         self.turn.clear_tool_calls();
         self.set_todo_list(None);
@@ -193,6 +246,10 @@ impl App {
     /// applied as follow-ups, and a completed one arms the next follow-up,
     /// which the app loop sends once the composer is free.
     async fn end_daemon_turn(&mut self, rest: Rest) {
+        // What the stream still holds of the reply shows before the turn's
+        // closing rows, and nothing of it outlasts the turn.
+        self.finish_streams();
+        self.reset_streams();
         // A turn withdraws its requests before it ends, so any prompt still
         // open is one the TUI can no longer follow.
         self.drop_daemon_inputs();
