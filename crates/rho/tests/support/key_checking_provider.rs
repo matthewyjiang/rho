@@ -1,6 +1,7 @@
 //! An OpenAI-compatible provider over real HTTP that checks the key every
 //! request presents, for tests of signing in and out: ACP's
-//! (`acp_auth_required.rs`) and the daemon's (`daemon_auth.rs`).
+//! (`acp_auth_required.rs`), the daemon's (`daemon_auth.rs`), and the
+//! daemon TUI's (`tui_pty_login.rs`).
 
 use std::{
     io::{BufRead, BufReader, Read, Write},

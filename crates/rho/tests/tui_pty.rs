@@ -21,6 +21,8 @@ mod claude_runtime;
 mod composer_unicode;
 #[path = "support/tui_pty_cursor_runtime.rs"]
 mod cursor_runtime;
+#[path = "support/key_checking_provider.rs"]
+mod key_checking_provider;
 #[path = "support/tui_pty_login.rs"]
 mod login;
 
