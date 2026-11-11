@@ -4988,6 +4988,15 @@
     "SessionMcpResourceParams": {
       "description": "Params of [`SESSION_MCP_RESOURCE`].",
       "properties": {
+        "max_text_bytes": {
+          "description": "The most bytes of each text body the client will use. A longer body\nmay come back cut short at a character boundary, still longer than\nthis, so the client can tell there was more. Absent, text bodies\ncome back whole. Blob bodies always do.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "server": {
           "description": "Qualified identity of the server, as [`SessionMcpResource::server`].",
           "type": "string"

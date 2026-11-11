@@ -18,6 +18,7 @@ impl DaemonMcp {
         self,
         _server: String,
         _uri: String,
+        _max_text_bytes: usize,
     ) -> Result<Vec<crate::tools::mcp::McpResourceContent>, String> {
         match self {}
     }

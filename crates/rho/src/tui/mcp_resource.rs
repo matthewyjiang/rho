@@ -76,7 +76,10 @@ async fn read_resource_attachment(
     uri: String,
     max_output_bytes: usize,
 ) -> MediaAttachOutcome {
-    match source.read_resource(server, uri.clone()).await {
+    match source
+        .read_resource(server, uri.clone(), max_output_bytes)
+        .await
+    {
         Ok(contents) => {
             let outcome = resource_attachment(&uri, &contents, max_output_bytes);
             match outcome {

@@ -52,11 +52,32 @@ impl Sessions {
                 };
                 RpcError::new(code, error.to_string())
             })?;
+        let max_text_bytes = params
+            .max_text_bytes
+            .map(|max| usize::try_from(max).unwrap_or(usize::MAX));
         let response = SessionMcpResourceResponse {
-            contents: contents.into_iter().map(content_to_wire).collect(),
+            contents: contents
+                .into_iter()
+                .map(|content| match (content, max_text_bytes) {
+                    (
+                        McpResourceContent::Text {
+                            uri,
+                            mime_type,
+                            text,
+                        },
+                        Some(max),
+                    ) => McpResourceContent::Text {
+                        uri,
+                        mime_type,
+                        text: cut_text(text, max),
+                    },
+                    (content, _) => content,
+                })
+                .map(content_to_wire)
+                .collect(),
         };
         // A longer line would end the connection, and the session's
-        // attachment with it, so the read is refused instead.
+        // attachment with it, so what still does not fit is refused.
         let limit = MAX_LINE_BYTES - RESPONSE_ENVELOPE_BYTES;
         let size = serde_json::to_vec(&response)
             .map_err(|error| RpcError::new(ErrorCode::InternalError, error.to_string()))?
@@ -65,8 +86,8 @@ impl Sessions {
             return Err(RpcError::new(
                 ErrorCode::InternalError,
                 format!(
-                    "resource is {size} bytes as a response, over the {limit}-byte limit \
-                     (MAX_LINE_BYTES less RESPONSE_ENVELOPE_BYTES)"
+                    "resource is {size} bytes as a response, over the daemon protocol's \
+                     {limit}-byte response limit"
                 ),
             ));
         }
@@ -115,6 +136,20 @@ impl Sessions {
     }
 }
 
+/// The longest a UTF-8 character encodes to.
+const UTF8_CHAR_BYTES: usize = 4;
+
+/// Cuts `text` for a client that uses at most `max` bytes of it. The cut
+/// keeps those bytes and at least one more, so the client's own cut lands
+/// where it would on the whole text and still finds there was more.
+fn cut_text(mut text: String, max: usize) -> String {
+    let keep = max.saturating_add(UTF8_CHAR_BYTES);
+    if text.len() > keep {
+        text.truncate(rho_sdk::floor_char_boundary(&text, keep));
+    }
+    text
+}
+
 fn content_to_wire(content: McpResourceContent) -> SessionMcpResourceContent {
     match content {
         McpResourceContent::Text {
@@ -138,3 +173,7 @@ fn content_to_wire(content: McpResourceContent) -> SessionMcpResourceContent {
         McpResourceContent::Unsupported => SessionMcpResourceContent::Unknown,
     }
 }
+
+#[cfg(test)]
+#[path = "mcp_tests.rs"]
+mod tests;

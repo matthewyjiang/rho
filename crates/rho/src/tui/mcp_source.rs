@@ -62,18 +62,21 @@ pub(super) enum McpSource {
 }
 
 impl McpSource {
-    /// One resource's bodies, or why the read failed.
+    /// One resource's bodies, or why the read failed. The caller uses at
+    /// most `max_text_bytes` of each text body, so a daemon need not send
+    /// the rest of a longer one.
     pub(super) async fn read_resource(
         self,
         server: String,
         uri: String,
+        max_text_bytes: usize,
     ) -> Result<Vec<McpResourceContent>, String> {
         match self {
             Self::InProcess(catalog) => catalog
                 .read_resource(&server, &uri)
                 .await
                 .map_err(|error| error.to_string()),
-            Self::Daemon(mcp) => mcp.read_resource(server, uri).await,
+            Self::Daemon(mcp) => mcp.read_resource(server, uri, max_text_bytes).await,
         }
     }
 

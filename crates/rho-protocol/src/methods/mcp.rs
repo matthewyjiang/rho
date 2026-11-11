@@ -169,7 +169,8 @@ pub struct SessionMcpResource {
 /// Read one resource from a loaded session's MCP server, without waiting
 /// for the session's active turn. Does not load a session. A server the
 /// session has not connected is [`crate::ErrorCode::InvalidParams`]; a read
-/// the server refuses or fails, or one too large for a protocol line, is
+/// the server refuses or fails, or one still too large for a protocol line
+/// once its text is cut to [`SessionMcpResourceParams::max_text_bytes`], is
 /// [`crate::ErrorCode::InternalError`] with the reason as its message.
 pub const SESSION_MCP_RESOURCE: &str = "rho/session/mcp/resource";
 
@@ -182,6 +183,12 @@ pub struct SessionMcpResourceParams {
     /// A concrete URI: a listed one, or a template with its placeholders
     /// filled in.
     pub uri: String,
+    /// The most bytes of each text body the client will use. A longer body
+    /// may come back cut short at a character boundary, still longer than
+    /// this, so the client can tell there was more. Absent, text bodies
+    /// come back whole. Blob bodies always do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_text_bytes: Option<u64>,
 }
 
 /// Result of [`SESSION_MCP_RESOURCE`].

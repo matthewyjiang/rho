@@ -89,16 +89,20 @@ impl DaemonMcp {
     }
 
     /// One resource's bodies, or why the read failed, in the daemon's words.
+    /// A text body longer than `max_text_bytes` may arrive cut short, still
+    /// longer than that.
     pub(in crate::tui) async fn read_resource(
         mut self,
         server: String,
         uri: String,
+        max_text_bytes: usize,
     ) -> Result<Vec<McpResourceContent>, String> {
         let answer = on_attachment(&mut self.target, |link, session| {
             let params = SessionMcpResourceParams {
                 session,
                 server: server.clone(),
                 uri: uri.clone(),
+                max_text_bytes: Some(max_text_bytes as u64),
             };
             async move { link.request::<SessionMcpResourceRead>(&params).await }
         })
