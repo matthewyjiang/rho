@@ -182,8 +182,8 @@ while os.read(sys.stdin.fileno(), 1024):
 #[test]
 fn fake_child_grow_picks_up_late_fable() {
     let state = run_two_paint_child(
-        r"\033[2J\033[HCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n",
-        r"\033[2J\033[HCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n33%% used\nResets in 2d\n",
+        r"\033[2J\033[H❯ /usage\nCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n",
+        r"\033[2J\033[H❯ /usage\nCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n33%% used\nResets in 2d\n",
         |screen| matches!(screen, UsageScreen::Incomplete),
     )
     .expect("fake /usage");
@@ -205,8 +205,8 @@ fn fake_child_grow_picks_up_late_fable() {
 #[test]
 fn fake_child_completed_refresh_returns_current_percentages() {
     let state = run_two_paint_child(
-        r"\033[2J\033[HCurrent session\n0%% used\nCurrent week (all models)\n0%% used\nCurrent week (Fable)\n0%% used\nRefreshing…\n",
-        r"\033[2J\033[HCurrent session\n14%% used\nCurrent week (all models)\n27%% used\nCurrent week (Fable)\n38%% used\nEsc to cancel\n",
+        r"\033[2J\033[H❯ /usage\nCurrent session\n0%% used\nCurrent week (all models)\n0%% used\nCurrent week (Fable)\n0%% used\nRefreshing…\n",
+        r"\033[2J\033[H❯ /usage\nCurrent session\n14%% used\nCurrent week (all models)\n27%% used\nCurrent week (Fable)\n38%% used\nEsc to cancel\n",
         |screen| matches!(screen, UsageScreen::Refreshing),
     )
     .expect("fake /usage");
@@ -228,7 +228,7 @@ fn fake_child_refresh_failure_rejects_cached_windows() {
     let script = r#"
 printf '? for shortcuts\n'
 IFS= read -r command
-printf '\033[2J\033[HCurrent session\n10%% used\nCurrent week (all models)\n20%% used\nFailed to load usage data: response error\n'
+printf '\033[2J\033[H❯ /usage\nCurrent session\n10%% used\nCurrent week (all models)\n20%% used\nFailed to load usage data: response error\n'
 exec cat >/dev/null
 "#;
     let result = run_child("/bin/bash", &["-c", script]);
@@ -252,7 +252,7 @@ fn fake_child_unfinished_refresh_never_returns_live() {
             r#"
 printf '? for shortcuts\n'
 IFS= read -r command
-printf '\033[2J\033[HCurrent session\n0%% used\nCurrent week (all models)\n0%% used\nRefreshing…\n'
+printf '\033[2J\033[H❯ /usage\nCurrent session\n0%% used\nCurrent week (all models)\n0%% used\nRefreshing…\n'
 {ending}
 "#
         );

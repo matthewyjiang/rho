@@ -51,17 +51,21 @@ pub(crate) fn named_window_keys(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// True when window body lines (`% used`, `Resets ...`) appear before the
-/// first window header, which means the panel top scrolled off the viewport.
-pub(crate) fn starts_mid_window(text: &str) -> bool {
+/// True when the panel top is not on screen. An intact panel always has
+/// chrome (prompt echo, stats, tab row) above its first window header. A
+/// clip mid-window leaves an orphaned `% used` or `Resets` line up there; a
+/// clip on a window boundary leaves only blank rows or nothing at all.
+pub(crate) fn panel_top_hidden(text: &str) -> bool {
     let lines: Vec<String> = text.lines().map(strip_box_drawing).collect();
     let line_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
     let first_header = find_headers(&line_refs)
         .first()
         .map_or(line_refs.len(), |hit| hit.line);
-    line_refs[..first_header].iter().any(|line| {
-        parse_used_percent(line).is_some() || line.to_ascii_lowercase().starts_with("resets")
-    })
+    let above = &line_refs[..first_header];
+    above.iter().all(|line| line.is_empty())
+        || above.iter().any(|line| {
+            parse_used_percent(line).is_some() || line.to_ascii_lowercase().starts_with("resets")
+        })
 }
 
 fn find_headers(lines: &[&str]) -> Vec<HeaderHit> {

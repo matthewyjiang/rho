@@ -20,7 +20,7 @@ use super::auth::{self, ClaudeAuthError};
 #[cfg(any(unix, test))]
 use super::rate_limit::RateLimitState;
 #[cfg(any(unix, test))]
-use super::usage_parse::{named_window_keys, parse_usage_screen, starts_mid_window};
+use super::usage_parse::{named_window_keys, panel_top_hidden, parse_usage_screen};
 #[cfg(unix)]
 use super::{executable, rate_limit};
 #[cfg(unix)]
@@ -313,7 +313,7 @@ enum UsageScreen {
     Refreshing,
     /// The panel names a window that has no percentage yet.
     Incomplete,
-    /// Windows parsed, but window lines sit above the first header: the
+    /// Windows parsed, but the chrome above the first header is missing: the
     /// panel outgrew the PTY and scrolled its top off the viewport.
     Clipped,
     Ready(RateLimitState),
@@ -353,9 +353,9 @@ fn classify_usage_screen(screen: &str, now_unix: i64) -> UsageScreen {
     match parse_usage_screen(screen, now_unix) {
         Some(state) if waiting_on_named_windows(screen, Some(&state)) => UsageScreen::Incomplete,
         // Some plans (Ultra) have no "Current session" window, so a missing
-        // 5-hour header is not a clip. An orphaned "% used" or "Resets" line
-        // above the first header is: its header scrolled off the top.
-        Some(_) if starts_mid_window(screen) => UsageScreen::Clipped,
+        // 5-hour header is not a clip. Judge the clip from the panel top
+        // instead; accepting a clipped read would drop cached windows.
+        Some(_) if panel_top_hidden(screen) => UsageScreen::Clipped,
         Some(state) => UsageScreen::Ready(state),
         None => UsageScreen::Incomplete,
     }
