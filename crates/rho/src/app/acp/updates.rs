@@ -426,8 +426,10 @@ fn tool_content(content: &wire::ToolContent) -> Option<ToolCallContent> {
     })
 }
 
+/// ACP counts `line` from 1 on v1 and v2 alike; the daemon's rows count from 0.
 fn location(location: &wire::Location) -> ToolCallLocation {
-    ToolCallLocation::new(location.path.clone()).line(location.line)
+    ToolCallLocation::new(location.path.clone())
+        .line(location.line.map(|row| row.saturating_add(1)))
 }
 
 fn plan_entry(entry: &wire::PlanEntry) -> PlanEntry {

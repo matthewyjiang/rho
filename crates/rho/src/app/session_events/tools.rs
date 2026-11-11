@@ -77,8 +77,7 @@ fn patch_kind(arguments: &Value) -> ToolKind {
 /// The paths a started call names, absolute against the session directory.
 /// A read names the line it starts at.
 ///
-/// Lines are 0-based rows, as Zed reads ACP locations and as its own tools
-/// send them.
+/// Lines are 0-based rows; ACP hosts get them 1-based.
 pub(super) fn started_locations(
     name: &str,
     arguments: Option<&Value>,
