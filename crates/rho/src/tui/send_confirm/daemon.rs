@@ -12,7 +12,8 @@
 //! that prompt alone, so it is not asked for again and no other prompt is
 //! sent under it. A cancelled compaction returns the prompt to the composer
 //! with the rest of the pending work, without the consent; a failed one
-//! leaves it parked with it.
+//! leaves it parked with it. A compaction the daemon cannot start parks
+//! nothing: the prompt returns to the composer.
 //!
 //! A prompt held while the session's MCP servers connect keeps the model it
 //! was confirmed for (`HeldOrigin::Confirmed`), so its release asks again
@@ -25,7 +26,7 @@ use crate::app::provider_context_report::ProviderContextReport;
 use crate::commands::CommandId;
 use crate::tui::{
     idle_input::{HeldOrigin, HeldTurn},
-    App, DefaultTerminal, QueuedPrompt, TurnPrompt,
+    App, DefaultTerminal, Entry, QueuedPrompt, TurnPrompt,
 };
 
 impl SendSubmission {
@@ -159,7 +160,9 @@ impl App {
     }
 
     /// Compacts the daemon session, then sends `submission` as the next
-    /// queued message under the consent `omissions` records.
+    /// queued message under the consent `omissions` records. The prompt is
+    /// parked only once the daemon took the compaction: one it cannot start
+    /// returns the prompt to the composer under the reason, as in process.
     pub(super) async fn compact_then_send_to_daemon(
         &mut self,
         submission: SendSubmission,
@@ -167,15 +170,35 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         let (_, prompt) = submission.into_daemon_turn();
+        let compact = TurnPrompt::command("/compact".into(), "/compact".into());
+        let started = if self.daemon_tool_sources_loading() {
+            // The daemon would start it only once they connected, and the
+            // TUI would wait for it meanwhile.
+            Err(anyhow::anyhow!(
+                "the session's MCP servers are still connecting"
+            ))
+        } else {
+            self.request_daemon_turn(&compact, &[]).await
+        };
+        if let Err(error) = started {
+            self.show_taken_daemon_views(terminal).await?;
+            let ended = error
+                .downcast_ref::<rho_protocol::ClientError>()
+                .and_then(rho_protocol::ClientError::turn_ended);
+            // A compaction that ended before it began has the daemon's own
+            // rows to say how.
+            if ended.is_none() {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not compact before send: {error:#}"
+                )));
+            }
+            self.restore_pending_prompt(prompt);
+            self.set_status("send cancelled");
+            return Ok(());
+        }
         self.pending.park_compact_send(prompt, omissions);
         self.pending_input_changed();
         self.select_pending_recall_target();
-        let compact = TurnPrompt {
-            // Not the person's input, so it stays out of the input history.
-            history: String::new(),
-            ..TurnPrompt::command("/compact".into(), "/compact".into())
-        };
-        self.send_daemon_command(compact, Vec::new(), Vec::new(), terminal)
-            .await
+        self.show_taken_daemon_views(terminal).await
     }
 }
