@@ -185,10 +185,7 @@ impl Sessions {
                 None => {}
             }
             if unless_attached && session.feed.followed() {
-                return Err(RpcError::new(
-                    ErrorCode::SessionInUse,
-                    format!("session {id} is open in a client; close it there first"),
-                ));
+                return Err(open_in_a_client(id));
             }
             match self.jobs.session_job(id) {
                 SessionJob::Busy(job) if job == session.job => return Err(busy(TURN_UNDER_WAY)),
@@ -220,11 +217,21 @@ impl Sessions {
             *slot = Some(runtime);
             return Err(error);
         }
-        // Only the stop takes a session out of `loaded` while its reopen
-        // lock is held, as it is here.
-        if !self.evict(id, session, &mut session.turn()) {
-            *slot = Some(runtime);
-            return Err(stopping());
+        {
+            let mut turn = session.turn();
+            // Again, under the lock that evicts: a client that attached
+            // while the checks above waited is not detached by the delete,
+            // and one that attaches from here finds the session gone.
+            if unless_attached && session.feed.followed() {
+                *slot = Some(runtime);
+                return Err(open_in_a_client(id));
+            }
+            // Only the stop takes a session out of `loaded` while its
+            // reopen lock is held, as it is here.
+            if !self.evict(id, session, &mut turn) {
+                *slot = Some(runtime);
+                return Err(stopping());
+            }
         }
         drop(slot);
         runtime.shutdown().await;
@@ -285,6 +292,18 @@ fn invalid(message: impl Into<String>) -> RpcError {
     RpcError::new(ErrorCode::InvalidParams, message)
 }
 
+/// The refusal of a delete that spares a session a client follows.
+fn open_in_a_client(id: &SessionId) -> RpcError {
+    RpcError::new(
+        ErrorCode::SessionInUse,
+        format!("session {id} is open in a client; close it there first"),
+    )
+}
+
 fn busy(message: &str) -> RpcError {
     RpcError::new(ErrorCode::SessionBusy, message)
 }
+
+#[cfg(test)]
+#[path = "catalog_tests.rs"]
+mod tests;
