@@ -212,7 +212,7 @@ impl App {
     }
 
     /// Candidates for one token. A mention fuzzy-searches the whole workspace
-    /// index plus the MCP catalog (an in-memory listing refreshed at connect,
+    /// index plus what the session's MCP servers offer (an in-memory listing,
     /// so this stays a local lookup on every keystroke). A shell word lists one
     /// directory, one component at a time, as a shell does.
     fn discover_file_palette_matches(&mut self, token: &FileMention) -> FilePaletteMatches {
@@ -224,12 +224,7 @@ impl App {
                     &token.query,
                     self.palette_caches.workspace_mut(),
                 );
-                let resources = if self.mcp_catalog.is_empty() {
-                    Vec::new()
-                } else {
-                    self.mcp_catalog.resources()
-                };
-                file_picker::file_palette_matches(discovered, &resources, &token.query)
+                file_picker::file_palette_matches(discovered, &self.mcp_resources(), &token.query)
             }
             PathTokenSource::ShellWord => FilePaletteMatches::shell_words(
                 shell_palette::shell_word_candidates(&cwd, &token.query),

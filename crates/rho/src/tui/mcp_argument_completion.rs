@@ -155,17 +155,8 @@ impl App {
         let text = self.input_ui.text();
         let (server, name) =
             crate::tools::mcp::prompt_command::parse_command(commands::command_prefix(text)?)?;
-        let prompt = self
-            .mcp_catalog
-            .prompts()
-            .into_iter()
-            .find(|prompt| prompt.server == server && prompt.name == name)?;
-        argument_under_cursor(
-            text,
-            self.input_ui.cursor(),
-            &prompt,
-            self.mcp_catalog.completion_support(&server),
-        )
+        let (prompt, support) = self.mcp_prompt(&server, &name)?;
+        argument_under_cursor(text, self.input_ui.cursor(), &prompt, support)
     }
 
     /// Collect a finished lookup and start the next one. Returns whether the
@@ -189,20 +180,18 @@ impl App {
         if let McpCompletionStep::Ask(key) =
             self.mcp_argument_completions.next_step(wanted.as_ref())
         {
-            let catalog = self.mcp_catalog.clone();
-            let request = key.clone();
+            let McpCompletionKey {
+                server,
+                prompt,
+                argument,
+                typed,
+            } = key.clone();
             self.mcp_argument_completions.pending = Some(PendingCompletion {
                 key,
-                handle: tokio::spawn(async move {
-                    catalog
-                        .complete_prompt_argument(
-                            &request.server,
-                            &request.prompt,
-                            &request.argument,
-                            &request.typed,
-                        )
-                        .await
-                }),
+                handle: tokio::spawn(
+                    self.mcp_source()
+                        .complete_prompt_argument(server, prompt, argument, typed),
+                ),
             });
         }
         redraw

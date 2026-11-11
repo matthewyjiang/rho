@@ -33,6 +33,8 @@
 //! TUI's daemon paths compile everywhere and never run there.
 
 #[cfg(unix)]
+pub(super) use unix::DaemonMcp;
+#[cfg(unix)]
 pub(crate) use unix::DaemonSession;
 
 use super::daemon_events::DaemonView;
@@ -49,6 +51,8 @@ pub(super) async fn next_views(session: &mut Option<DaemonSession>) -> Vec<Daemo
 #[cfg(not(unix))]
 #[path = "daemon_session_absent.rs"]
 mod absent;
+#[cfg(not(unix))]
+pub(super) use absent::DaemonMcp;
 #[cfg(not(unix))]
 pub(crate) use absent::DaemonSession;
 
@@ -92,10 +96,12 @@ mod unix {
 
     mod auth;
     mod initial_settings;
+    mod mcp;
     mod requests;
     mod tool_sources;
 
     use initial_settings::{carry, changes_between, configure_all, Refused};
+    pub(in crate::tui) use mcp::DaemonMcp;
     use tool_sources::ToolSources;
 
     const LOST: &str = "lost the connection to the rho daemon";

@@ -5,7 +5,39 @@ use super::{super::daemon_launch::DaemonTarget, DaemonView};
 
 pub(crate) enum DaemonSession {}
 
+/// Reads from a daemon session's MCP servers: uninhabited, as the session.
+#[derive(Clone)]
+pub(in crate::tui) enum DaemonMcp {}
+
+impl DaemonMcp {
+    pub(in crate::tui) async fn offers(self) -> Option<crate::tui::mcp_source::McpOffers> {
+        match self {}
+    }
+
+    pub(in crate::tui) async fn read_resource(
+        self,
+        _server: String,
+        _uri: String,
+    ) -> Result<Vec<crate::tools::mcp::McpResourceContent>, String> {
+        match self {}
+    }
+
+    pub(in crate::tui) async fn complete_prompt_argument(
+        self,
+        _server: String,
+        _prompt: String,
+        _argument: String,
+        _typed: String,
+    ) -> Vec<String> {
+        match self {}
+    }
+}
+
 impl DaemonSession {
+    pub(in crate::tui) fn mcp(&self) -> DaemonMcp {
+        match *self {}
+    }
+
     pub(in crate::tui) fn configure(
         &self,
         _change: rho_protocol::SessionChange,

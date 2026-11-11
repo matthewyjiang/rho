@@ -103,7 +103,7 @@ async fn attached(target: &mut watch::Receiver<Target>) -> Option<(Arc<Link>, Se
 /// such a request waits until the session moved off that connection and is
 /// sent again, so it applies on the restarted daemon. After a stop, the
 /// session's following ends instead.
-async fn on_attachment<T, F, Fut>(
+pub(super) async fn on_attachment<T, F, Fut>(
     target: &mut watch::Receiver<Target>,
     mut send: F,
 ) -> Option<(Arc<Link>, Result<T, ClientError>)>

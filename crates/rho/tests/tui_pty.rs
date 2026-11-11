@@ -449,6 +449,18 @@ fn mcp_hold_take_back_returns_the_prompt() {
     assert_pass("mcp_hold_take_back");
 }
 
+// Covers: a resource picked from `@` reaches the model as an attachment,
+// and an MCP prompt command's argument completes from its server, whether
+// the session runs in process or the daemon holds it (RHO_TUI_DAEMON=1): a
+// TUI that reads only servers of its own offers neither in a daemon session.
+// Owner: interactive TUI, in process and as a daemon client (#1667)
+#[test]
+fn mcp_resources_and_prompt_arguments_reach_the_composer() {
+    for scenario in ["mcp_composer", "daemon_mcp_composer"] {
+        assert_pass(scenario);
+    }
+}
+
 // Covers: with RHO_TUI_DAEMON=1, MCP startup behaves as in process: /mcp
 // reports a connecting server, a turn held during connect starts once the
 // servers settle, and Esc takes a held turn back.

@@ -4,8 +4,14 @@ use std::path::Path;
 #[cfg(unix)]
 use std::path::PathBuf;
 
+#[cfg(unix)]
+use rho_protocol::{
+    SessionMcpCatalog, SessionMcpPrompt, SessionMcpPromptArgument, SessionMcpResource,
+};
 use rho_protocol::{SessionMcpInventory, SessionMcpMode, SessionMcpServer, SessionMcpStatus};
 
+#[cfg(unix)]
+use crate::tools::mcp::McpCompletionSupport;
 use crate::tools::mcp::{McpCatalog, McpLoadMode, McpServerStatus, McpSessionReport};
 
 #[cfg(unix)]
@@ -42,6 +48,56 @@ impl SessionMcp {
                 .as_ref()
                 .is_some_and(|loaded| !*loaded.borrow()),
             ..session_mcp_inventory(&self.report, &self.catalog, &self.config_path)
+        }
+    }
+
+    /// The session's connected servers, to fetch from: a resource to read,
+    /// or values for a prompt argument.
+    pub(super) fn servers(&self) -> &McpCatalog {
+        &self.catalog
+    }
+
+    /// What those servers offer now, as a client's composer lists it.
+    pub(super) fn offered(&self) -> SessionMcpCatalog {
+        SessionMcpCatalog {
+            prompts: self
+                .catalog
+                .prompts()
+                .into_iter()
+                .map(|prompt| SessionMcpPrompt {
+                    completes_arguments: match self.catalog.completion_support(&prompt.server) {
+                        McpCompletionSupport::Declared => true,
+                        McpCompletionSupport::Absent => false,
+                    },
+                    server: prompt.server,
+                    name: prompt.name,
+                    title: prompt.title,
+                    description: prompt.description,
+                    arguments: prompt
+                        .arguments
+                        .into_iter()
+                        .map(|argument| SessionMcpPromptArgument {
+                            name: argument.name,
+                            description: argument.description,
+                            required: argument.required,
+                        })
+                        .collect(),
+                })
+                .collect(),
+            resources: self
+                .catalog
+                .resources()
+                .into_iter()
+                .map(|resource| SessionMcpResource {
+                    server: resource.server,
+                    uri: resource.uri,
+                    name: resource.name,
+                    title: resource.title,
+                    description: resource.description,
+                    mime_type: resource.mime_type,
+                    templated: resource.templated,
+                })
+                .collect(),
         }
     }
 }
