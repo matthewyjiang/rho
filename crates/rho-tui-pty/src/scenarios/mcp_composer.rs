@@ -94,6 +94,25 @@ fn accept_highlighted_row(harness: &mut PtyHarness) -> Result<()> {
     harness.inject_key(&Key::Enter)
 }
 
+/// Waits for the server's answer to the finished value `al`.
+///
+/// Suggestions are cached per typed value, and each key typed hides the rows
+/// until its own answer lands. When the TUI lags the paced typing, the screen
+/// can still show the rows answered for `a` once typing ends, and the frame
+/// for `l` then clears them. The rows alone cannot tell the two answers apart,
+/// so wait for a frame whose composer already shows `al`: frames are whole,
+/// and the only rows such a frame can show are the answer to `al`.
+fn wait_for_completions_of_al(harness: &mut PtyHarness) -> Result<()> {
+    harness.wait_for_screen("completions of \"al\"", SETTLE, |screen| {
+        screen
+            .rows_text()
+            .iter()
+            .any(|row| row.trim_end() == "> /mcp:fixture:greet al")
+            && screen.contains_text("alice-from-server")
+            && screen.contains_text("alfred-from-server")
+    })
+}
+
 fn complete_highlighted_row(harness: &mut PtyHarness) -> Result<()> {
     harness.settle_plain_text_input();
     harness.inject_key(&Key::Tab)
@@ -135,16 +154,7 @@ const MCP_COMPOSER_STEPS: &[Step] = &[
     },
     Step::Phase("complete_prompt_argument"),
     Step::TypeText("/mcp:fixture:greet al"),
-    // Both rows: a frame can reach the screen over more than one read, so
-    // one row showing does not mean the other has.
-    Step::WaitText {
-        text: "alfred-from-server",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "alice-from-server",
-        timeout: SETTLE,
-    },
+    Step::Custom(wait_for_completions_of_al),
     Step::Custom(complete_highlighted_row),
     Step::WaitText {
         text: "/mcp:fixture:greet alice-from-server",
