@@ -81,6 +81,14 @@ pub(crate) fn root_host_tools(config: &Config, launch: LaunchTools) -> AgentCapa
         tools.remove(&ToolCapability::Agent);
         tools.remove(&ToolCapability::Agents);
     }
+    // The fixture matrix's progress tool, for every host that runs a root
+    // session: in process and in the daemon alike.
+    #[cfg(debug_assertions)]
+    if std::env::var_os("RHO_TUI_TEST_MODE").as_deref() == Some(std::ffi::OsStr::new("matrix")) {
+        tools.insert(ToolCapability::Extension(
+            crate::tools::tui_fixture::NAME.into(),
+        ));
+    }
     tools
 }
 

@@ -632,6 +632,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     daemon_subagents::STREAMING_BOUNDARY_NOTICE,
     #[cfg(unix)]
+    daemon_subagents::BOUNDARY_NOTIFICATIONS,
+    #[cfg(unix)]
+    daemon_subagents::RETRACT_STEERING_DURING_TOOL,
+    #[cfg(unix)]
     daemon_subagents::SUBAGENT_COMPLETION_AFTER_NEW,
     #[cfg(unix)]
     daemon_subagents::ATTACH_PICKER,
