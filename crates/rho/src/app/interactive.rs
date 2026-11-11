@@ -190,6 +190,11 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
         agent,
         unavailable_error: missing_auth_model_error,
         launch_added_dirs: added_dirs,
+        tool_source_attach: match &daemon {
+            // The daemon's session connects them.
+            Some(_) => super::tools_prompt::ToolSourceAttach::None,
+            None => super::tools_prompt::ToolSourceAttach::Connect,
+        },
     })
     .await?;
     // Background credential reads must stop writing to stderr before the TUI

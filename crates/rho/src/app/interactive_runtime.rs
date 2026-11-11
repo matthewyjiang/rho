@@ -97,6 +97,10 @@ pub(crate) struct InteractiveRuntimeOptions<'a> {
     pub(crate) unavailable_error: Option<rho_providers::model::ModelError>,
     /// `--add-dir` directories granted to every session this process opens.
     pub(crate) launch_added_dirs: crate::added_dirs::AddedDirs,
+    /// Whether this runtime loads MCP servers and OpenAPI sources. A TUI
+    /// that follows a daemon session loads none: the daemon's session
+    /// owns them, and a second set here would start every server twice.
+    pub(crate) tool_source_attach: crate::app::tools_prompt::ToolSourceAttach,
 }
 
 pub(crate) struct InteractiveRuntime {

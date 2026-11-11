@@ -41,6 +41,7 @@ pub(crate) async fn test_startup_runtime(
                 "startup fixture",
             )),
             launch_added_dirs: Default::default(),
+            tool_source_attach: crate::app::tools_prompt::ToolSourceAttach::Connect,
         },
         catalog_names,
     )

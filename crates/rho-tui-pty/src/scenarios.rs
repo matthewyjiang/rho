@@ -42,6 +42,8 @@ mod daemon_login;
 #[cfg(unix)]
 mod daemon_mcp;
 #[cfg(unix)]
+mod daemon_mcp_owner;
+#[cfg(unix)]
 mod daemon_mcp_startup;
 #[cfg(unix)]
 mod daemon_model;
@@ -640,6 +642,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_goal::SCENARIO,
     #[cfg(unix)]
     daemon_mcp::SCENARIO,
+    #[cfg(unix)]
+    daemon_mcp_owner::SCENARIO,
     #[cfg(unix)]
     daemon_doctor::SCENARIO,
     #[cfg(unix)]
