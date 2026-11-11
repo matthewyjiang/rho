@@ -44,6 +44,7 @@ use crate::{
 
 mod advisor;
 mod agent;
+pub(in crate::app) mod agent_catalog;
 mod approval_policy;
 mod build;
 mod compact;

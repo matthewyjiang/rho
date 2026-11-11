@@ -227,6 +227,7 @@ fn a_session_reopens_on_its_latest_job_unless_one_writes_it() {
             JobId::generate(),
             PathBuf::from("/work"),
             Some(session.clone()),
+            "run".into(),
         )
     };
     let other = JobRecord::new_session(
@@ -421,8 +422,10 @@ fn a_run_a_session_started_is_under_that_sessions_grant() {
         PathBuf::from("/work"),
         crate::workflow::RunId::new(),
     );
-    let node = JobRecord::new_subagent(workflow.id.clone(), PathBuf::from("/work"), None);
-    let orphan = JobRecord::new_subagent(JobId::generate(), PathBuf::from("/work"), None);
+    let subagent =
+        |parent: JobId| JobRecord::new_subagent(parent, PathBuf::from("/work"), None, "run".into());
+    let node = subagent(workflow.id.clone());
+    let orphan = subagent(JobId::generate());
     let ids = [&session, &workflow, &node, &orphan].map(|record| record.id.clone());
     for record in [session, workflow, node, orphan] {
         registry.register(record).unwrap();

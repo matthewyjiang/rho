@@ -190,6 +190,7 @@ impl App {
                 || agent
                     .processes()
                     .is_some_and(crate::tools::process::ProcessManager::has_pending_notification)
+                || (self.info.session.daemon.is_some() && self.subagent_panel.is_active())
                 || self.pending_subagent_questionnaire.is_some()
                 || self.subagent_inbox.has_queued_questionnaires()
                 || self.subagent_inbox.has_parent_action_requests();
@@ -677,9 +678,15 @@ impl App {
         // Tick the occupant first so a journal read error cannot leave panel
         // costs half-applied.
         let mut changed = self.refresh_exclusive_screen()?;
-        let panel_changed = self
-            .subagent_panel
-            .update(agent.subagents(), agent.session_id().as_str());
+        // The daemon's jobs feed a daemon session's rail as they arrive
+        // (`daemon_subagents`); this process's manager has no runs of it.
+        let panel_changed = if self.info.session.daemon.is_some() {
+            self.refresh_daemon_rail();
+            false
+        } else {
+            self.subagent_panel
+                .update(agent.subagents(), agent.session_id().as_str())
+        };
         if panel_changed {
             self.refresh_attach_picker();
         }

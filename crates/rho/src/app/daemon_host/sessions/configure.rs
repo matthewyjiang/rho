@@ -39,6 +39,7 @@ enum Change {
     FastMode { enabled: bool },
     PermissionMode(PermissionMode),
     Context { text: String, display: String },
+    AgentCatalog,
 }
 
 impl Sessions {
@@ -104,7 +105,11 @@ impl Sessions {
             // What it saved joins the transcript a reset replays; no turn's
             // end would move it there before the next prompt. The turn
             // before it stops replaying its end, as when a turn follows.
-            Ok(Applied::Rows) => {
+            Ok(Applied::Rows { notice }) => {
+                // Told live first; a later reset replays the saved rows.
+                session
+                    .feed
+                    .publish(notice.map(|text| wire::SessionEvent::Notice { text: text.into() }));
                 super::turn::save_transcript(&session, runtime);
                 Ok(())
             }
@@ -122,8 +127,9 @@ impl Sessions {
 enum Applied {
     /// A setting changed, which the session now keeps.
     Setting,
-    /// Rows were saved, which the transcript takes.
-    Rows,
+    /// Rows may have been saved, which the transcript takes, with a notice
+    /// to tell the session's clients now.
+    Rows { notice: Option<&'static str> },
 }
 
 impl Change {
@@ -141,6 +147,7 @@ impl Change {
                 Err(invalid("context to add must not be empty"))
             }
             wire::SessionChange::Context { text, display } => Ok(Self::Context { text, display }),
+            wire::SessionChange::AgentCatalog => Ok(Self::AgentCatalog),
             // A change of a later protocol minor fails to decode before it
             // gets here; the arm keeps the match open to new variants.
             _ => Err(invalid("unknown change")),
@@ -157,11 +164,22 @@ impl Change {
             Self::Context { text, display } => {
                 return runtime
                     .append_context(text, Message::user_text(display), [])
-                    .map(|_| Applied::Rows)
+                    .map(|_| Applied::Rows { notice: None })
                     .map_err(|error| {
                         RpcError::new(
                             ErrorCode::InternalError,
                             format!("could not save the context: {error:#}"),
+                        )
+                    })
+            }
+            Self::AgentCatalog => {
+                return runtime
+                    .sync_agent_catalog()
+                    .map(|notice| Applied::Rows { notice })
+                    .map_err(|error| {
+                        RpcError::new(
+                            ErrorCode::InternalError,
+                            format!("could not read the agent definitions: {error:#}"),
                         )
                     })
             }

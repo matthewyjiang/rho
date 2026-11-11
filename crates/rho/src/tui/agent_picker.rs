@@ -681,6 +681,16 @@ impl super::App {
             self.input_ui.set_composer(ComposerMode::Input);
             return None;
         };
+        if self.info.session.daemon.is_some() {
+            // The daemon reads the definitions itself and tells the model;
+            // its notice says when it had to.
+            if let Err(error) = self.configure_daemon(rho_protocol::SessionChange::AgentCatalog) {
+                self.insert_entry(&super::Entry::Error(format!(
+                    "could not tell the model about the agent change: {error}"
+                )));
+            }
+            return Some(self.agents_picker(catalog));
+        }
         match agent.sync_agent_catalog(&catalog) {
             Ok(Some(display)) => self.insert_entry(&super::Entry::Notice(display.into())),
             Ok(None) => {}

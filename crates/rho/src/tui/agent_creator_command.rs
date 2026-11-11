@@ -26,9 +26,25 @@ impl App {
         terminal: &mut crate::tui::DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            // The daemon offers the skill only to a session that can run it.
+            let offered = self.daemon_options.as_ref().is_some_and(|options| {
+                options.commands.iter().any(|command| {
+                    command.kind == rho_protocol::CommandKind::Skill
+                        && command.name == "rho-agent-creator"
+                })
+            });
+            if !offered {
+                self.insert_entry(&Entry::Error(
+                    "could not start agent creator: the session does not offer the rho-agent-creator skill".into(),
+                ));
+                self.set_status("agent creator unavailable");
+                return Ok(());
+            }
+        }
         let missing_tools = ["skill", "questionnaire", "read_file", "write", "rho"]
             .into_iter()
-            .filter(|name| !agent.has_tool(name))
+            .filter(|name| self.info.session.daemon.is_none() && !agent.has_tool(name))
             .collect::<Vec<_>>();
         if !missing_tools.is_empty() {
             self.insert_entry(&Entry::Error(format!(

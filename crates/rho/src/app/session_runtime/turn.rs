@@ -17,9 +17,9 @@ use super::{
     prompt_gate::ActiveWork,
     pump::{pump, AppliedDisplays, ApprovalSource, EventSource, PumpSources},
     title::TitleState,
-    PromptScope, SessionRuntime,
+    PromptScope, QuestionSupport, SessionRuntime,
 };
-use crate::config::Config;
+use crate::{app::subagent_manager::SubagentManager, config::Config};
 
 /// A model turn: `model` is what the run sends, `display` the prompt as the
 /// user sent it, which the turn saves for display. `calls` run as one host
@@ -239,6 +239,17 @@ impl SessionRuntime {
         // Plan approvals belong to the tool set, which outlives this prompt
         // and is swapped by an agent rebind, so they are handed back after.
         let mut plan_approvals = self.built.tools.take_plan_permission_requests();
+        // Bound for this run, which stays open while the session's
+        // subagents work, and only when a person can be asked: a subagent
+        // of an unbound parent gets no questionnaire tool.
+        let mut child_questions = match self.build.host.questions {
+            QuestionSupport::Available => self
+                .built
+                .tools
+                .subagents()
+                .map(SubagentManager::bind_host_input),
+            QuestionSupport::Unavailable => None,
+        };
         let pumped = pump(
             PumpSources {
                 cancel,
@@ -254,10 +265,18 @@ impl SessionRuntime {
                 }),
                 hooks: self.built.runtime.hooks(),
                 session: self.built.session.id(),
+                child_questions: child_questions.as_mut(),
             },
             io,
         )
         .await;
+        // Nobody listens between runs: a subagent still working asks
+        // nothing rather than queueing a question for a later turn.
+        if child_questions.take().is_some() {
+            if let Some(manager) = self.built.tools.subagents() {
+                manager.unbind_host_input();
+            }
+        }
         self.built
             .tools
             .restore_plan_permission_requests(plan_approvals);

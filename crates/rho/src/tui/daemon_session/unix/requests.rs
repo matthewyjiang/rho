@@ -30,6 +30,18 @@ impl DaemonSession {
             .goal(action)
     }
 
+    /// Ask for the daemon's jobs without waiting for the active turn;
+    /// they arrive as `DaemonView::Jobs`.
+    pub(in crate::tui) fn request_jobs(&self) -> anyhow::Result<()> {
+        if self.ended {
+            anyhow::bail!(LOST);
+        }
+        self.requests
+            .as_ref()
+            .expect("attached session has requests")
+            .request_jobs()
+    }
+
     /// Rename the session without waiting for the active turn; its
     /// `TitleChanged` event reports the new title.
     pub(in crate::tui) fn rename(&self, title: String) -> anyhow::Result<()> {

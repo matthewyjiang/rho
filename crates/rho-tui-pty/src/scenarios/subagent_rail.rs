@@ -93,3 +93,56 @@ pub(super) const SUBAGENT_RAIL_MOUSE_SCENARIO: Scenario = Scenario::new(
     SUBAGENT_RAIL_MOUSE_STEPS,
     /*smoke*/ false,
 );
+
+#[cfg(unix)]
+fn wait_for_subagent_row(harness: &mut PtyHarness) -> Result<()> {
+    active_subagent_row(harness).map(|_| ())
+}
+
+// Covers: a daemon session's subagent shows on the rail of the TUI that
+// follows it, and `/attach` opens that run's transcript, though the run
+// lives in the daemon and not in this process.
+// Owner: interactive TUI as a daemon client
+#[cfg(unix)]
+pub(super) const DAEMON_SUBAGENT_RAIL_SCENARIO: Scenario = Scenario::new(
+    "daemon_subagent_rail",
+    "Show a daemon session's subagent on the rail and attach to it",
+    DEFAULT_SIZE,
+    &[
+        Step::Phase("startup"),
+        Step::WaitText {
+            text: "gpt-5.5",
+            timeout: STARTUP,
+        },
+        Step::Phase("spawn_long_running_subagent"),
+        Step::SubmitText("fixture subagent rail"),
+        Step::WaitText {
+            text: "subagent rail fixture dispatched",
+            timeout: STREAM,
+        },
+        Step::Custom(wait_for_subagent_row),
+        Step::Phase("attach_from_picker"),
+        Step::SubmitText("/attach"),
+        Step::WaitText {
+            text: "attach subagent",
+            timeout: STREAM,
+        },
+        Step::Key(crate::keys::Key::Enter),
+        Step::WaitText {
+            text: "q back",
+            timeout: STREAM,
+        },
+        Step::Key(crate::keys::Key::Esc),
+        Step::WaitTextGone {
+            text: "q back",
+            timeout: STREAM,
+        },
+        Step::ExitCommand,
+    ],
+    /*smoke*/ false,
+)
+.with_setup(super::daemon_resume::write_daemon_config)
+.with_env(&[
+    ("RHO_TUI_DAEMON", "1"),
+    ("OPENAI_API_KEY", "sk-test-matrix"),
+]);

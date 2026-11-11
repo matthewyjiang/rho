@@ -1234,6 +1234,14 @@ fn daemon_tui_switches_the_session_it_follows() {
     assert_pass("daemon_switch");
 }
 
+// Covers: a daemon session's subagent shows on the following TUI's rail,
+// and `/attach` opens its transcript.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_subagent_shows_on_the_rail_and_attaches() {
+    assert_pass("daemon_subagent_rail");
+}
+
 // Covers: an unported command refuses visibly and the next prompt still runs.
 // Owner: interactive TUI daemon command boundary.
 #[test]

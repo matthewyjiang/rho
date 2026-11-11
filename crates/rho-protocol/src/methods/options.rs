@@ -60,6 +60,11 @@ pub enum SessionChange {
     /// that sent it shows its own notice, and a later reset replays the
     /// row. An empty `text` is [`crate::ErrorCode::InvalidParams`].
     Context { text: String, display: String },
+    /// Read the workspace's agent definitions again and tell the model, from
+    /// its next turn on, which agents it can now delegate to. A client sends
+    /// it after it wrote or removed a definition. Clients see a
+    /// [`super::SessionEvent::Notice`] when the model had to be told.
+    AgentCatalog,
 }
 
 /// Result of [`SESSION_CONFIGURE`], once the change applied, after the turn

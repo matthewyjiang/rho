@@ -807,6 +807,11 @@ mod unix {
             }
         }
 
+        /// The session's id, saved or not.
+        pub(in crate::tui) fn id(&self) -> &str {
+            self.id.as_str()
+        }
+
         /// Asks the turn under way, if any, to stop. A closed connection
         /// has already ended what the TUI followed, so it asks nothing.
         pub(in crate::tui) async fn cancel(&self) -> anyhow::Result<()> {

@@ -178,7 +178,8 @@ impl ChildObserver for ChildJobs {
             status,
             queue,
         } = run;
-        let record = JobRecord::new_subagent(self.parent.clone(), workspace, session);
+        let record =
+            JobRecord::new_subagent(self.parent.clone(), workspace, session, run_id.clone());
         let job = record.id.clone();
         if let Err(error) = self.jobs.register(record) {
             unlisted(&error, &self.parent, &run_id, "subagent");

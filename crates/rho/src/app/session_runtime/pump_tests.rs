@@ -25,6 +25,7 @@ use crate::{
         turn::TurnIo,
         QuestionSupport,
     },
+    app::subagent_host_input::SubagentHostInputRequest,
     permission::PermissionMode,
     tools::plan_exit::{PlanPermissionAnswer, PlanPermissionRequest},
 };
@@ -75,6 +76,8 @@ struct Harness {
     run_events: Option<UnboundedSender<RunEvent>>,
     approvals: UnboundedSender<PendingApproval>,
     plans: UnboundedSender<PlanPermissionRequest>,
+    /// Where the session's subagents put their questions.
+    child_questions: tokio::sync::mpsc::Sender<SubagentHostInputRequest>,
     cancel: CancellationToken,
     /// What the session's hooks were told.
     hooks: Arc<RecordingObserver>,
@@ -86,6 +89,7 @@ impl Harness {
         let (run_events, mut run_rx) = unbounded_channel();
         let (approvals, mut approval_rx) = unbounded_channel();
         let (plans, mut plan_rx) = unbounded_channel();
+        let (child_questions, mut child_rx) = tokio::sync::mpsc::channel(4);
         let (events_tx, events) = unbounded_channel();
         let (control, control_rx) = unbounded_channel();
         let cancel = CancellationToken::new();
@@ -107,6 +111,7 @@ impl Harness {
                     displays: None,
                     hooks: dispatcher,
                     session: &session,
+                    child_questions: Some(&mut child_rx),
                 },
                 &mut io,
             )
@@ -118,6 +123,7 @@ impl Harness {
             run_events: Some(run_events),
             approvals,
             plans,
+            child_questions,
             cancel,
             hooks,
             pump,
@@ -369,6 +375,83 @@ async fn hooks_hear_of_each_request_put_to_the_host() {
                 (HookInputKind::Question, "Confirm".into()),
             ],
             Vec::new(),
+        )
+    );
+}
+
+/// A question a subagent asks, and where its answer arrives.
+fn child_question() -> (
+    SubagentHostInputRequest,
+    HostInputId,
+    oneshot::Receiver<Result<rho_sdk::HostInputResponse, rho_sdk::Error>>,
+) {
+    let request = question();
+    let id = request.id().clone();
+    let (response, answered) = oneshot::channel();
+    let asked = SubagentHostInputRequest {
+        run_id: "ab12cd".into(),
+        agent_id: "worker".into(),
+        parent_session_id: SessionId::new(),
+        request,
+        response,
+    };
+    (asked, id, answered)
+}
+
+// Covers: a subagent's question reaches the host as a question of the
+// turn, named by a notice, and the host's answer reaches the subagent, not
+// the parent's run; one whose subagent stops waiting is withdrawn, and one
+// still open when the turn is cancelled is withdrawn
+// and its subagent told nobody will answer, as is one asked afterwards.
+// Owner: session runtime turn pump.
+#[tokio::test]
+async fn a_subagents_question_is_answered_through_the_turn() {
+    let mut harness = Harness::start(QuestionSupport::Available);
+    let (asked, answered_id, answered) = child_question();
+    harness.child_questions.send(asked).await.unwrap();
+    let first = [harness.next().await, harness.next().await];
+    harness.answer(TurnControl::AnswerQuestion {
+        id: answered_id.clone(),
+        answer: Ok(rho_sdk::HostInputResponse::new().answer("go", ["yes"])),
+    });
+    let answer = answered.await.expect("the answer reaches the subagent");
+
+    let (asked, abandoned_id, abandoned) = child_question();
+    harness.child_questions.send(asked).await.unwrap();
+    let abandoned_ask = [harness.next().await, harness.next().await];
+    drop(abandoned);
+    let given_up = harness.next().await;
+
+    let (asked, open_id, open) = child_question();
+    harness.child_questions.send(asked).await.unwrap();
+    let second = [harness.next().await, harness.next().await];
+    harness.cancel.cancel();
+    let withdrawn = harness.next().await;
+    let (late, _, late_reply) = child_question();
+    harness.child_questions.send(late).await.unwrap();
+
+    assert_eq!(
+        (
+            first,
+            answer
+                .ok()
+                .and_then(|answer| answer.answers().get("go").cloned()),
+            abandoned_ask,
+            given_up,
+            second,
+            withdrawn,
+            open.await.is_err(),
+            late_reply.await.is_err(),
+        ),
+        (
+            [Seen::Notice, Seen::QuestionAsked(answered_id)],
+            Some(vec!["yes".to_owned()]),
+            [Seen::Notice, Seen::QuestionAsked(abandoned_id.clone())],
+            Seen::QuestionWithdrawn(abandoned_id),
+            [Seen::Notice, Seen::QuestionAsked(open_id.clone())],
+            Seen::QuestionWithdrawn(open_id),
+            true,
+            true,
         )
     );
 }

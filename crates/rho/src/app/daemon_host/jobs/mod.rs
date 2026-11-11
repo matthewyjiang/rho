@@ -88,9 +88,13 @@ pub(super) enum JobSubject {
     /// One subagent run, started by the session or workflow job that is its
     /// parent. `session` is the Rho session it writes; `None` for a run on
     /// another runtime (Claude, Cursor, Antigravity), which keeps its own.
+    /// `run` is the run's id, which names its artifact directory; `None`
+    /// in a record written before jobs kept it.
     Subagent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         session: Option<rho_sdk::SessionId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run: Option<String>,
     },
     /// One drive of workflow run `workflow_run`, started by the session job
     /// that is its parent. The run's agent nodes are its subagent jobs.
@@ -199,16 +203,20 @@ impl JobRecord {
         )
     }
 
-    /// A new job for a subagent run that job `parent` started in
+    /// A new job for subagent run `run` that job `parent` started in
     /// `workspace`, waiting for capacity.
     pub(super) fn new_subagent(
         parent: JobId,
         workspace: PathBuf,
         session: Option<rho_sdk::SessionId>,
+        run: String,
     ) -> Self {
         Self::new(
             JobId::generate(),
-            JobSubject::Subagent { session },
+            JobSubject::Subagent {
+                session,
+                run: Some(run),
+            },
             JobState::Queued,
             workspace,
             Some(parent),

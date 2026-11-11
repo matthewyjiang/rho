@@ -81,6 +81,7 @@ impl App {
         self.sessions_hub_state.clear();
         self.daemon_option_requests.clear();
         self.daemon_title = None;
+        self.reset_daemon_rail();
         self.reset_session_view(terminal)?;
         // What the attach answered with, the session's options among it:
         // a session at rest sends nothing more until it is prompted.
