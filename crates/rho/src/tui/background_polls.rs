@@ -38,14 +38,10 @@ impl App {
             self.mcp_report = agent.mcp_report().clone();
             self.mcp_catalog = agent.mcp_catalog().clone();
             self.refresh_provisional_history();
-            // A daemon session's servers may still connect: the status is
-            // theirs then, and `ToolSourcesLoaded` clears it.
-            if !self.tool_sources_pending(agent) {
-                if self.status_source == StatusSource::ToolSourcesLoading {
-                    self.set_status_quiet("");
-                }
-                self.clear_tool_sources_loading_activity();
+            if self.status_source == StatusSource::ToolSourcesLoading {
+                self.set_status_quiet("");
             }
+            self.clear_tool_sources_loading_activity();
             if let Some(openapi) = &changes.openapi {
                 for error in &openapi.errors {
                     self.insert_entry(&Entry::Error(error.clone()));

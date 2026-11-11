@@ -1680,3 +1680,11 @@ fn daemon_attach_view_follows_the_parents_turn() {
 fn daemon_mcp_inventory_uses_the_session_without_waiting_for_the_turn() {
     assert_pass("daemon_mcp_inventory");
 }
+
+// Covers: with RHO_TUI_DAEMON=1, a configured MCP server's command runs once,
+// in the daemon, and the TUI starts no second copy of it.
+// Owner: interactive TUI as a daemon client.
+#[test]
+fn daemon_mcp_servers_start_only_in_the_daemon() {
+    assert_pass("daemon_mcp_owner");
+}

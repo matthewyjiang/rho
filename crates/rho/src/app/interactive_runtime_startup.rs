@@ -50,6 +50,7 @@ pub(super) async fn initialize(
         agent,
         unavailable_error,
         launch_added_dirs,
+        tool_source_attach,
     } = options;
     let agent_id = agent.id().to_string();
     let agent_fingerprint = agent.fingerprint().to_string();
@@ -104,7 +105,7 @@ pub(super) async fn initialize(
         // Interactive sessions bind a model below, so opted-in servers may ask
         // for completions.
         mcp_sampling: crate::app::tools_prompt::McpSamplingSupport::Available,
-        tool_source_attach: crate::app::tools_prompt::ToolSourceAttach::Connect,
+        tool_source_attach,
         mcp_authorization: crate::tools::mcp::McpAuthorizationMode::from_process(),
         await_catalog_names: false,
         defer_tool_sources: true,

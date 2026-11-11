@@ -81,6 +81,10 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
         return super::daemon_mcp::run(runner);
     }
     #[cfg(unix)]
+    if name == super::daemon_mcp_owner::SCENARIO.id {
+        return super::daemon_mcp_owner::run(runner);
+    }
+    #[cfg(unix)]
     if name == super::daemon_doctor::SCENARIO.id {
         return super::daemon_doctor::run(runner);
     }
