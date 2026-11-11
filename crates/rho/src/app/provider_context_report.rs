@@ -30,14 +30,27 @@ pub(crate) struct ProviderContextReport {
     pub(crate) source: Option<ModelIdentity>,
     /// Whether compacting would summarize any of the conversation.
     pub(crate) can_compact: bool,
+    /// Whether the session may switch to `source` on an auth it has
+    /// credentials for. A daemon of an older build does not say, and its
+    /// TUI does not offer the switch.
+    #[serde(default)]
+    pub(crate) source_selectable: bool,
 }
 
 impl ProviderContextReport {
-    pub(crate) fn new(history: &[Message], target: ModelIdentity, can_compact: bool) -> Self {
+    /// The report on `history` for `target`, where `selectable` says
+    /// whether the session may switch to a model.
+    pub(crate) fn new(
+        history: &[Message],
+        target: ModelIdentity,
+        can_compact: bool,
+        selectable: impl FnOnce(&ModelIdentity) -> bool,
+    ) -> Self {
         let omissions = handoff::report_message_omissions(history, &target);
         let mut omitted = handoff::omitted_message_context(history, &target).peekable();
         let source = omitted.peek().map(|block| block.identity.clone());
         let blocks = omitted.map(block_fingerprint).collect();
+        let source_selectable = source.as_ref().is_some_and(selectable);
         Self {
             target,
             omitted: omissions.omitted_provider_context,
@@ -45,6 +58,7 @@ impl ProviderContextReport {
             blocks,
             source,
             can_compact,
+            source_selectable,
         }
     }
 

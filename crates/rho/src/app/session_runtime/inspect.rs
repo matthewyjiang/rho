@@ -6,6 +6,7 @@ use crate::{
         compaction_report::CompactionReport,
         context_report::{mcp_tool_servers, ContextReport},
         provider_context_report::ProviderContextReport,
+        session_options::{resolve_model, AuthPick},
     },
     compaction::CompactionConfig,
     config::Config,
@@ -45,11 +46,16 @@ impl SessionRuntime {
         })
     }
 
-    /// What of the conversation the session's model cannot be sent, and
-    /// whether a `/compact` under `process_config`'s compaction settings
-    /// would summarize any of it. Scans the committed history, so hosts read
-    /// it on demand.
-    pub(crate) fn provider_context_report(&self, process_config: &Config) -> ProviderContextReport {
+    /// What of the conversation the session's model cannot be sent, whether
+    /// a `/compact` under `process_config`'s compaction settings would
+    /// summarize any of it, and whether the session may switch to the model
+    /// that produced it on one of `auths`. Scans the committed history, so
+    /// hosts read it on demand.
+    pub(crate) fn provider_context_report(
+        &self,
+        process_config: &Config,
+        auths: &[String],
+    ) -> ProviderContextReport {
         let session = &self.built.session;
         let history = session.history();
         let config = model_scoped_config(&self.current_model(), process_config);
@@ -64,7 +70,21 @@ impl SessionRuntime {
             target_tokens,
         )
         .is_some();
-        ProviderContextReport::new(&history, self.built.provider.identity(), can_compact)
+        let current = self.current_model();
+        ProviderContextReport::new(
+            &history,
+            self.built.provider.identity(),
+            can_compact,
+            |source| {
+                resolve_model(
+                    &source.provider,
+                    &source.model,
+                    &current,
+                    AuthPick::AnyOf(auths),
+                )
+                .is_ok()
+            },
+        )
     }
 
     /// Reads the session's hooks again from their files and reports them

@@ -5,10 +5,14 @@ use super::*;
 // "Send anyway" starts the turn. With multiple follow-ups, rejection or a
 // failed confirmed turn must park the remainder rather than arm idle delivery.
 // "Send for this session" stops the modal for the unchanged omitted blocks.
+// "Compact, then continue" compacts on the source model and continues on the
+// runtime model, after which a send no longer asks.
 // Owner: interactive TUI
 pub(super) const SEND_CONFIRM_HANDOFF_ID: &str = "send_confirm_handoff";
 // Covers: the same handoff and confirmations when the daemon holds the
-// conversation, which the TUI then reads from the daemon's report.
+// conversation, which the TUI then reads from the daemon's report; and a
+// "Compact, then send" the daemon cannot start, while the session's MCP
+// servers connect, returns the prompt to the composer with nothing queued.
 // Owner: interactive TUI as a daemon client
 #[cfg(unix)]
 pub(super) const DAEMON_SEND_CONFIRM_HANDOFF_ID: &str = "daemon_send_confirm_handoff";
@@ -74,6 +78,8 @@ const SEED_PROMPT: &str = "hello there";
 const SEND_PROMPT: &str = "confirmed prompt";
 const SESSION_PROMPT: &str = "acknowledged prompt";
 const UNGATED_PROMPT: &str = "ungated prompt";
+const REFUSED_COMPACT_PROMPT: &str = "refused compact prompt";
+const COMPACTED_PROMPT: &str = "compacted prompt";
 
 #[derive(Clone, Copy)]
 enum QueuedStop {
@@ -136,6 +142,142 @@ fn assert_queued_stop(
     harness.wait_for_text("editing queued follow-up", SETTLE)?;
     harness.inject_key(&Key::Ctrl('c'))?;
     Ok(())
+}
+
+/// A later resume of the scenario's session.
+#[derive(Clone, Copy)]
+enum ResumePhase {
+    /// "Compact, then send" while the session's MCP servers connect again
+    /// after the daemon restarted in place: the daemon session cannot
+    /// compact, so the prompt goes back to the composer and nothing is
+    /// queued.
+    #[cfg(unix)]
+    CompactSendRefused,
+    /// "Compact, then continue" on the loaded-session handoff: the session
+    /// compacts on the native blocks' model, then sends on the runtime model
+    /// without asking, since the blocks were summarized away.
+    CompactThenContinue,
+}
+
+impl ResumePhase {
+    /// Resumes `session_id` on `host`, runs this phase, and quits. Config
+    /// the phase writes lasts for this resume alone.
+    fn run(
+        self,
+        runner: &crate::scenario::ScenarioRunner,
+        home: &crate::env::IsolatedHome,
+        host: SessionHost,
+        (session_id, session_path): (&str, &std::path::Path),
+    ) -> anyhow::Result<()> {
+        use crate::{artifacts::ArtifactWriter, env::RhoLaunchPlan, harness::PtyHarness};
+
+        // A daemon that hosted the last run holds the session and config it
+        // loaded.
+        home.stop_daemon();
+        let config = std::fs::read_to_string(&home.config_path)?;
+        let result = (|| {
+            if matches!(self, Self::CompactThenContinue) {
+                // A sandbox has no model cache, so the provider's default is
+                // the Anthropic model a daemon session may switch to.
+                let session = std::fs::read_to_string(session_path)?;
+                std::fs::write(
+                    session_path,
+                    session.replace("\"claude-fable-5\"", "\"claude-sonnet-4-5\""),
+                )?;
+            }
+            let mut plan = RhoLaunchPlan::matrix(&runner.binary, home, SIZE)
+                .with_env("OPENAI_API_KEY", "sk-test-matrix")
+                .with_arg("--resume")
+                .with_arg(session_id);
+            if matches!(self, Self::CompactThenContinue) {
+                // The native blocks' model, so the handoff can compact on it.
+                plan = plan.with_env("ANTHROPIC_API_KEY", "sk-test-matrix");
+            }
+            let plan = host.launch(plan);
+            let mut harness = PtyHarness::spawn_named(&plan, host.id())?;
+            harness.enable_timing(runner.record_timing);
+            if let Some(root) = &runner.artifact_root {
+                harness.set_artifact_writer(ArtifactWriter::new(root));
+            }
+            let result = self.drive(runner, home, &mut harness).and_then(|()| {
+                let code = harness.quit_with_exit_command()?;
+                anyhow::ensure!(code == 0, "session exited with code {code}");
+                Ok(())
+            });
+            if harness.is_running() {
+                let _ = harness.kill();
+            }
+            result
+        })();
+        home.stop_daemon();
+        std::fs::write(&home.config_path, config)?;
+        result
+    }
+
+    fn drive(
+        self,
+        runner: &crate::scenario::ScenarioRunner,
+        home: &crate::env::IsolatedHome,
+        harness: &mut crate::harness::PtyHarness,
+    ) -> anyhow::Result<()> {
+        match self {
+            #[cfg(unix)]
+            Self::CompactSendRefused => {
+                harness.set_phase("compact_send_refused");
+                harness.wait_for_text("How should Rho continue", STARTUP)?;
+                harness.inject_key(&Key::Enter)?;
+                harness.wait_for_text("Type a message", SETTLE)?;
+                harness.submit_text(REFUSED_COMPACT_PROMPT)?;
+                harness.wait_for_text("Send to openai/gpt-5.5?", SETTLE)?;
+                harness.wait_for_text("Compact, then send", SETTLE)?;
+                // A server that never connects holds the restarted daemon's
+                // session in loading for the rest of the phase.
+                let config = std::fs::read_to_string(&home.config_path)?;
+                std::fs::write(
+                    &home.config_path,
+                    format!(
+                        r#"{config}
+
+[mcp.servers.slow-stdio]
+transport = "stdio"
+command = "sleep"
+args = ["120"]
+"#
+                    ),
+                )?;
+                let restart = home
+                    .command(&runner.binary)
+                    .args(["daemon", "restart"])
+                    .output()?;
+                anyhow::ensure!(
+                    restart.status.success(),
+                    "rho daemon restart failed: {}",
+                    String::from_utf8_lossy(&restart.stderr)
+                );
+                harness.wait_for_text("reconnected to rho daemon", STREAM)?;
+                harness.inject_key(&Key::Char('2'))?;
+                harness.wait_for_text("could not compact before send", SETTLE)?;
+                harness.assert_screen_contains(REFUSED_COMPACT_PROMPT)?;
+                anyhow::ensure!(
+                    !harness.screen().contains_text("follow-up"),
+                    "a compaction that never started queued the prompt"
+                );
+                harness.inject_key(&Key::Ctrl('c'))?;
+            }
+            Self::CompactThenContinue => {
+                harness.set_phase("compact_then_continue");
+                harness.wait_for_text("How should Rho continue", STARTUP)?;
+                harness.wait_for_text("Compact, then continue", SETTLE)?;
+                harness.inject_key(&Key::Char('2'))?;
+                harness.wait_for_text("context compacted", STREAM)?;
+                harness.submit_text(COMPACTED_PROMPT)?;
+                harness.wait_for_text(&format!("fixture response: {COMPACTED_PROMPT}"), STREAM)?;
+                // Back on the runtime model once the compaction ended.
+                harness.assert_screen_contains("OpenAI · gpt-5.5")?;
+            }
+        }
+        Ok(())
+    }
 }
 
 pub(super) fn run_send_confirm_handoff(
@@ -251,7 +393,17 @@ pub(super) fn run_send_confirm_handoff(
         if code != 0 {
             anyhow::bail!("session exited with code {code}");
         }
-        Ok(())
+        #[cfg(unix)]
+        if matches!(host, SessionHost::Daemon) {
+            ResumePhase::CompactSendRefused.run(
+                runner,
+                &home,
+                host,
+                (&session_id, &session_path),
+            )?;
+        }
+        // Runs last: the compaction summarizes the native blocks away.
+        ResumePhase::CompactThenContinue.run(runner, &home, host, (&session_id, &session_path))
     })();
 
     Ok(match result {

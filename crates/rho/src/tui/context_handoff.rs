@@ -385,7 +385,8 @@ impl App {
             materialize,
         } = pending;
         if self.info.session.daemon.is_some() {
-            self.resolve_daemon_context_handoff(value, source_selection)?;
+            self.resolve_daemon_context_handoff(value, source_selection, terminal)
+                .await?;
             return self.reconcile_auto_classifier_gate(agent).await;
         }
         if let Some(value) = value {
