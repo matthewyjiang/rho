@@ -8,19 +8,34 @@
 //!
 //! "Compact, then send" parks the prompt first in the follow-up queue and
 //! sends `/compact`, which the daemon runs as a turn. The queue sends the
-//! prompt when that turn completes, and the consent given here covers it
-//! once, so it is not asked for again. A cancelled compaction returns the
-//! prompt to the composer with the rest of the pending work; a failed one
-//! leaves it parked.
+//! prompt when that turn completes, and the consent given here goes with
+//! that prompt alone, so it is not asked for again and no other prompt is
+//! sent under it. A cancelled compaction returns the prompt to the composer
+//! with the rest of the pending work, without the consent; a failed one
+//! leaves it parked with it.
+//!
+//! A prompt held while the session's MCP servers connect keeps the model it
+//! was confirmed for (`HeldOrigin::Confirmed`), so its release asks again
+//! only if the session's model changed meanwhile.
 
 use rho_sdk::SessionId;
 
 use super::{PendingConfirmSend, SendOmissions, SendPayload, SendSubmission};
 use crate::app::provider_context_report::ProviderContextReport;
 use crate::commands::CommandId;
-use crate::tui::{App, DefaultTerminal, QueuedPrompt, TurnPrompt};
+use crate::tui::{
+    idle_input::{HeldOrigin, HeldTurn},
+    App, DefaultTerminal, QueuedPrompt, TurnPrompt,
+};
 
 impl SendSubmission {
+    /// Sends this under `consent`, when the person gave one for this prompt
+    /// before the session compacted for it.
+    pub(in crate::tui) fn with_compact_consent(mut self, consent: Option<SendOmissions>) -> Self {
+        self.compact_consent = consent;
+        self
+    }
+
     /// The turn this asks a daemon session for, and the same prompt as the
     /// follow-up queue holds one.
     pub(in crate::tui) fn into_daemon_turn(self) -> (TurnPrompt, QueuedPrompt) {
@@ -56,16 +71,16 @@ impl SendOmissions {
 
 impl App {
     /// The omission gate for a prompt to the followed daemon session.
-    /// Returns ownership when no confirmation is needed, this exact
-    /// submission was approved for the model the session still runs on, or
-    /// consent already covers the omissions; otherwise the confirmation
-    /// takes it.
+    /// Returns ownership, approved for the model the session runs on, when
+    /// no confirmation is needed, this exact submission was approved for
+    /// that model, or consent already covers the omissions; otherwise the
+    /// confirmation takes it.
     ///
     /// A report the daemon cannot give does not hold the prompt back: the
     /// daemon answers the prompt itself, and says why when it refuses it.
     pub(in crate::tui) async fn gate_daemon_send(
         &mut self,
-        submission: SendSubmission,
+        mut submission: SendSubmission,
     ) -> Option<SendSubmission> {
         let report = match self.read_daemon_provider_context().await {
             Ok(report) => report,
@@ -81,9 +96,7 @@ impl App {
         if submission.is_approved_for(&omissions.target) {
             return Some(submission);
         }
-        // Taken by the first send it could cover, so it never outlives the
-        // prompt it was given for.
-        let compacted = self.pending.take_compact_send_consent();
+        let compacted = submission.compact_consent.take();
         let consents = [
             self.acknowledged_send_omissions.as_ref(),
             compacted.as_ref(),
@@ -94,7 +107,7 @@ impl App {
             .any(|consent| consent.covers(&omissions))
             || omissions.blocks.is_empty()
         {
-            return Some(submission);
+            return Some(submission.approve_for(omissions.target));
         }
         let can_compact = report.can_compact && self.daemon_offers_built_in(CommandId::Compact);
         self.confirm_send(
@@ -129,7 +142,18 @@ impl App {
         let Some(submission) = self.gate_daemon_send(submission).await else {
             return Ok(());
         };
+        let confirmed_for = submission.approved_for.clone();
         let (turn, prompt) = submission.into_daemon_turn();
+        if self.daemon_tool_sources_loading() {
+            self.hold(HeldTurn {
+                turn,
+                media: prompt.media,
+                paste_segments: prompt.paste_segments,
+                // Unread report: nothing was confirmed, so the release asks.
+                origin: confirmed_for.map_or(HeldOrigin::Composer, HeldOrigin::Confirmed),
+            });
+            return Ok(());
+        }
         self.send_daemon_turn(turn, prompt.media, prompt.paste_segments, terminal)
             .await
     }
@@ -143,8 +167,7 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         let (_, prompt) = submission.into_daemon_turn();
-        self.pending.push_follow_up_front(prompt);
-        self.pending.set_compact_send_consent(omissions);
+        self.pending.park_compact_send(prompt, omissions);
         self.pending_input_changed();
         self.select_pending_recall_target();
         let compact = TurnPrompt {
@@ -152,7 +175,7 @@ impl App {
             history: String::new(),
             ..TurnPrompt::command("/compact".into(), "/compact".into())
         };
-        self.send_daemon_turn(compact, Vec::new(), Vec::new(), terminal)
+        self.send_daemon_command(compact, Vec::new(), Vec::new(), terminal)
             .await
     }
 }

@@ -83,7 +83,7 @@ impl App {
                     // confirmation either.
                     if invocation.id == CommandId::Compact {
                         return self
-                            .send_daemon_turn(turn, media, paste_segments, terminal)
+                            .send_daemon_command(turn, media, paste_segments, terminal)
                             .await;
                     }
                     return self

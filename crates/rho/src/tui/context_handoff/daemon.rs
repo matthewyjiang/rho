@@ -38,10 +38,13 @@ impl App {
         if session.saved_id().is_none() {
             return;
         }
-        if let Err(error) = session.inspect(SessionReport::ProviderContext) {
-            self.insert_entry(&Entry::Error(format!(
+        match session.inspect(SessionReport::ProviderContext) {
+            // A prompt or a switch to another session stops the wait, so an
+            // answer that arrives after the person moved on opens nothing.
+            Ok(()) => self.awaited_daemon_report = Some(SessionReport::ProviderContext),
+            Err(error) => self.insert_entry(&Entry::Error(format!(
                 "could not read provider context: {error}"
-            )));
+            ))),
         }
     }
 
@@ -50,6 +53,10 @@ impl App {
         &mut self,
         result: Result<serde_json::Value, ReportRefusal>,
     ) {
+        if self.awaited_daemon_report != Some(SessionReport::ProviderContext) {
+            return;
+        }
+        self.awaited_daemon_report = None;
         let report = result
             .map_err(|refusal| (!refusal.busy).then_some(refusal.message))
             .and_then(|value| {
@@ -67,8 +74,10 @@ impl App {
     }
 
     fn offer_daemon_context_handoff(&mut self, report: &ProviderContextReport) {
-        // A late answer must not replace what the person opened meanwhile.
-        if !matches!(self.input_ui.composer(), ComposerMode::Input) {
+        // A late answer must not replace what the person opened meanwhile,
+        // nor open over a turn another client started: the send gate asks
+        // before this TUI's next prompt.
+        if !matches!(self.input_ui.composer(), ComposerMode::Input) || self.daemon_turn_runs() {
             return;
         }
         let omissions = report.omissions();

@@ -12,7 +12,8 @@
 //! turn, so [`InfoCompactionRead`] asks again when the turn ends.
 //!
 //! The provider-context report a resumed session is asked for opens the
-//! handoff dialog (`context_handoff::daemon`); no one waits on it either.
+//! handoff dialog (`context_handoff::daemon`), while the person has not
+//! moved on, by the same rule.
 
 use rho_protocol::SessionReport;
 

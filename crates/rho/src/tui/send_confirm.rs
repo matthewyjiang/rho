@@ -110,6 +110,9 @@ pub(super) struct SendSubmission {
     payload: SendPayload,
     approved_for: Option<ModelIdentity>,
     allow_auto_compact: bool,
+    /// Consent given for this prompt before a daemon session compacted for
+    /// it; see [`daemon`].
+    compact_consent: Option<SendOmissions>,
 }
 
 /// A submission released by the omission gate. Keeping this wrapper distinct
@@ -161,6 +164,7 @@ impl SendSubmission {
             },
             approved_for: None,
             allow_auto_compact: true,
+            compact_consent: None,
         }
     }
 
@@ -169,6 +173,7 @@ impl SendSubmission {
             payload: SendPayload::GoalRetry(failed_turn),
             approved_for: None,
             allow_auto_compact: false,
+            compact_consent: None,
         }
     }
 
@@ -177,10 +182,11 @@ impl SendSubmission {
             payload: SendPayload::TurnBoundary(delivery),
             approved_for: None,
             allow_auto_compact: false,
+            compact_consent: None,
         }
     }
 
-    fn approve_for(mut self, identity: ModelIdentity) -> Self {
+    pub(in crate::tui) fn approve_for(mut self, identity: ModelIdentity) -> Self {
         self.approved_for = Some(identity);
         self
     }
@@ -220,6 +226,7 @@ impl AuthorizedSendSubmission {
             payload,
             approved_for,
             allow_auto_compact,
+            compact_consent: _,
         } = self.0;
         let identity = approved_for.expect("the omission gate always records its identity");
         (payload, SendAuthorization(identity), allow_auto_compact)

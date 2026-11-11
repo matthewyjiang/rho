@@ -18,6 +18,7 @@ use rho_protocol::{TurnErrorKind, TurnOutcome};
 use super::{
     daemon_prompt, daemon_session,
     during_turn::RunningTerminalError,
+    idle_input::{HeldOrigin, HeldTurn},
     pending_input::{AcceptedSteering, PendingInputAction},
     send_confirm::SendSubmission,
     App, ChatMedia, DaemonSession, DefaultTerminal, Entry, FrameScheduler, InteractiveRuntime,
@@ -36,6 +37,10 @@ impl App {
     /// (`send_confirm::daemon`): every prompt that starts a model request
     /// goes through here. One held while the session's MCP servers connect
     /// is confirmed when it is released, as in process.
+    ///
+    /// The daemon starts a turn only once those servers connected, and the
+    /// TUI would wait for it meanwhile, so every path to
+    /// [`Self::send_daemon_turn`] holds the turn here until they have.
     pub(super) async fn submit_daemon_turn(
         &mut self,
         turn: TurnPrompt,
@@ -51,7 +56,30 @@ impl App {
         self.submit_daemon_submission(submission, terminal).await
     }
 
-    fn daemon_tool_sources_loading(&self) -> bool {
+    /// Sends a command that is no send to confirm, as `/compact`, which
+    /// passes no confirmation in process either: held like a prompt while
+    /// the session's MCP servers connect, and released the same way.
+    pub(super) async fn send_daemon_command(
+        &mut self,
+        turn: TurnPrompt,
+        media: Vec<ChatMedia>,
+        paste_segments: Vec<PasteSegment>,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        if self.daemon_tool_sources_loading() {
+            self.hold(HeldTurn {
+                turn,
+                media,
+                paste_segments,
+                origin: HeldOrigin::Command,
+            });
+            return Ok(());
+        }
+        self.send_daemon_turn(turn, media, paste_segments, terminal)
+            .await
+    }
+
+    pub(super) fn daemon_tool_sources_loading(&self) -> bool {
         self.info
             .session
             .daemon
@@ -59,11 +87,11 @@ impl App {
             .is_some_and(super::DaemonSession::tool_sources_loading)
     }
 
-    /// Asks the daemon to run `turn` with `media`, unconfirmed: a prompt
-    /// that already passed the send gate, or `/compact`, which passes none
-    /// in process either. On a refusal the transcript says why and the
-    /// composer gets the prompt back, so the caller clears the composer
-    /// before calling. A turn that ended before
+    /// Asks the daemon to run `turn` with `media`, now and unconfirmed: the
+    /// caller already held it while the session's MCP servers connected and
+    /// passed the send gate where one applies. On a refusal the transcript
+    /// says why and the composer gets the prompt back, so the caller clears
+    /// the composer before calling. A turn that ended before
     /// it saved its prompt is not a refusal: the daemon's own rows say how
     /// it ended, so the prompt comes back without another. A command the
     /// daemon refused, as `/init` in plan mode, does not come back either:
@@ -75,13 +103,6 @@ impl App {
         paste_segments: Vec<PasteSegment>,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
-        // The daemon starts the turn only once the session's MCP servers
-        // connected, and the TUI would wait for it meanwhile: hold it here,
-        // as in process, until they have.
-        if self.daemon_tool_sources_loading() {
-            self.hold_turn(turn, media, paste_segments);
-            return Ok(());
-        }
         if let Err(error) = self.request_daemon_turn(&turn, &media).await {
             // Why the prompt found no attachment, such as a failed reattach
             // after a daemon restart, shows first.
@@ -139,13 +160,14 @@ impl App {
             return Ok(false);
         }
         self.start_follow_ups = None;
-        let Some(prompt) = self.pending.pop_follow_up() else {
+        let Some((prompt, consent)) = self.pending.pop_follow_up_with_consent() else {
             return Ok(false);
         };
         self.pending_input_changed();
         self.select_pending_recall_target();
         let turn = TurnPrompt::standard(prompt.prompt, prompt.display_prompt);
-        let submission = SendSubmission::turn(turn, prompt.media, prompt.paste_segments);
+        let submission = SendSubmission::turn(turn, prompt.media, prompt.paste_segments)
+            .with_compact_consent(consent);
         // A confirmation takes the prompt, which it sends or returns to the
         // composer; the rest of the queue stays parked.
         let Some(submission) = self.gate_daemon_send(submission).await else {
