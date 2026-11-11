@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use rho_protocol::{JobState, JobSummary};
+use rho_protocol::{JobState, JobSummary, TurnOutcome};
 
 use super::{daemon_jobs::may_still_change, turn_prompt::TurnPrompt, App, DefaultTerminal, Entry};
 use crate::{
@@ -36,12 +36,23 @@ impl App {
         let sent = self.request_daemon_turn(&turn, &[]).await;
         // Why the prompt found no attachment shows first.
         self.show_taken_daemon_views(terminal).await?;
-        if let Err(error) = sent {
-            self.insert_entry(&Entry::Error(format!(
+        let Err(error) = sent else {
+            return Ok(());
+        };
+        let ended = error
+            .downcast_ref::<rho_protocol::ClientError>()
+            .and_then(rho_protocol::ClientError::turn_ended);
+        match ended {
+            // The daemon's rows say how the start ended.
+            Some(
+                TurnOutcome::Failed { .. } | TurnOutcome::Cancelled | TurnOutcome::TimedOut { .. },
+            ) => {}
+            // Not sent, or ended in a way this rho cannot show.
+            Some(_) | None => self.insert_entry(&Entry::Error(format!(
                 "could not start the workflow: {error:#}"
-            )));
-            self.set_status("start failed");
+            ))),
         }
+        self.set_status("start failed");
         Ok(())
     }
 

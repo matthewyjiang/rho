@@ -21,7 +21,7 @@ use crate::app::daemon_host::{
 const TEST_BUDGET: Duration = Duration::from_secs(5);
 
 /// A daemon's sessions with nothing loaded, recording jobs under `home`.
-fn new_sessions(home: &TempDir) -> Sessions {
+fn new_sessions(home: &TempDir) -> Arc<Sessions> {
     Sessions::new(
         Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap())),
         home.path(),

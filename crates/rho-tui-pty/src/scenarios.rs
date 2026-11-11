@@ -19,6 +19,7 @@ mod compact;
 mod composer_unicode;
 mod composer_vim;
 mod config;
+mod config_2x_upgrade;
 mod context_overlay;
 mod continue_latest;
 mod conversation_tree;
@@ -38,6 +39,8 @@ mod daemon_goal;
 mod daemon_login;
 #[cfg(unix)]
 mod daemon_mcp;
+#[cfg(unix)]
+mod daemon_model;
 #[cfg(unix)]
 mod daemon_options;
 #[cfg(unix)]
@@ -342,6 +345,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     workflow_background::WORKFLOW_BACKGROUND_SCENARIO,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     workflow_background::WORKFLOW_HUB_PLANNED_RETRY_SCENARIO,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    workflow_background::DAEMON_WORKFLOW_BACKGROUND_SCENARIO,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    workflow_background::DAEMON_WORKFLOW_HUB_PLANNED_RETRY_SCENARIO,
     PASTE_MULTILINE_SCENARIO,
     composer_unicode::COMPOSER_UNICODE_SCENARIO,
     composer_vim::COMPOSER_VIM_SCENARIO,
@@ -595,6 +602,18 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     daemon_options::PERMISSION_MODE,
     #[cfg(unix)]
+    daemon_model::OPEN_MODEL_PICKER,
+    #[cfg(unix)]
+    daemon_model::CYCLE_AND_PINNED_MODEL_PICKER,
+    #[cfg(unix)]
+    daemon_model::STATUSLINE_MODEL_CLICK,
+    #[cfg(unix)]
+    daemon_model::MODEL_PROMPTS,
+    #[cfg(unix)]
+    daemon_model::CYCLE_REASONING_IDLE,
+    #[cfg(unix)]
+    daemon_model::CYCLE_REASONING_QUEUED,
+    #[cfg(unix)]
     daemon_config::DAEMON_CONFIG,
     #[cfg(unix)]
     daemon_config::DAEMON_ADVISOR,
@@ -627,6 +646,9 @@ const ALL_SCENARIOS: &[Scenario] = &[
     model_prompts::MODEL_PROMPTS_SCENARIO,
     model_cycle_reasoning::IDLE,
     model_cycle_reasoning::QUEUED,
+    config_2x_upgrade::IN_PROCESS,
+    #[cfg(unix)]
+    config_2x_upgrade::DAEMON,
     permission_cycle::IDLE,
     permission_cycle::REMAPPED,
     permission_cycle::QUEUED,

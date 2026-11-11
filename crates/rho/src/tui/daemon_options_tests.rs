@@ -141,6 +141,83 @@ fn a_signed_out_first_launch_has_a_model_to_choose_only_from_another_auth() {
     }
 }
 
+// Covers: a daemon session's model picker lists the models the daemon
+// offers under the TUI's own pins and scope, as the in-process picker does,
+// and a picker opened mid-turn marks the model already asked for.
+// Owner: tui daemon session options
+#[test]
+fn the_model_picker_lays_offered_models_out_by_pin_and_pending_switch() {
+    let choice = |provider: &str, model: &str| ModelChoice {
+        model: ModelRef {
+            provider: provider.into(),
+            model: model.into(),
+        },
+        label: model.to_uppercase(),
+    };
+    let rows = |app: &crate::tui::App| {
+        let picker = app.daemon_model_picker().expect("daemon options are shown");
+        let rows: Vec<_> = picker
+            .items
+            .iter()
+            .map(|item| {
+                let badge = item.badge.as_ref().map(|badge| badge.text.clone());
+                (item.value.clone(), badge)
+            })
+            .collect();
+        (picker.title.clone(), rows)
+    };
+    let row = |value: &str, badge: Option<&str>| (value.to_owned(), badge.map(str::to_owned));
+    let mut app = crate::tui::tests::test_app();
+    let mut options = options_on("openai", "api-key");
+    options.model.available = vec![
+        choice("openai", "model"),
+        choice("xai", "grok"),
+        choice("poolside", "laguna"),
+    ];
+    app.show_daemon_options(options);
+
+    assert_eq!(
+        rows(&app),
+        (
+            "select model · all".to_owned(),
+            vec![
+                row("openai/model", Some("selected")),
+                row("xai/grok", None),
+                row("poolside/laguna", None),
+            ]
+        ),
+        "no pins"
+    );
+
+    app.info.runtime.favorite_models = vec!["xai/grok".into(), "not/offered".into()];
+    assert_eq!(
+        rows(&app),
+        (
+            "select model · pinned".to_owned(),
+            vec![row("xai/grok", Some("pinned"))]
+        ),
+        "a pin the daemon offers"
+    );
+
+    app.begin_provider_turn_ui();
+    app.daemon_option_requests
+        .push_back(rho_protocol::SessionChange::Model {
+            model: ModelRef {
+                provider: "xai".into(),
+                model: "grok".into(),
+            },
+            auth: None,
+        });
+    assert_eq!(
+        rows(&app),
+        (
+            "select model for next turn · pinned".to_owned(),
+            vec![row("xai/grok", Some("pinned, pending"))]
+        ),
+        "a switch queued behind the turn"
+    );
+}
+
 /// Who asked for the model switch whose options arrive.
 #[derive(Clone, Copy)]
 enum Switch {

@@ -133,6 +133,9 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
     let daemon = match SessionHost::from_env() {
         SessionHost::InProcess => None,
         SessionHost::Daemon => {
+            // Before the daemon builds the session's options from the cache.
+            #[cfg(debug_assertions)]
+            crate::tui::seed_matrix_model_cache();
             Some(daemon::open(cli, &config, &agent, &startup_session, &cwd, &added_dirs).await?)
         }
     };

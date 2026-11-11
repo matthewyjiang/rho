@@ -1576,6 +1576,21 @@
       "description": "A client's own name for one prompt, which makes sending it again\nsafe ([`super::SessionPromptParams::idempotency_key`]). Any\nnon-empty string the client will not reuse for another prompt of\nthe session, such as a UUID.",
       "type": "string"
     },
+    "IdleWake": {
+      "description": "What the daemon does when a session's background work (a workflow run\nor a background process) finishes while none of its turns runs. The\ndaemon reads it, so it has no `Unknown`.",
+      "oneOf": [
+        {
+          "const": "never",
+          "description": "Nothing. A prompt's turn stays open until the background work it\nstarted finishes, so its result reaches the model within that turn;\na result of older work waits for the session's next prompt.",
+          "type": "string"
+        },
+        {
+          "const": "turn",
+          "description": "The daemon starts a turn that gives the model the result, as the\nterminal UI does. A prompt's turn ends while the work it started\nruns on. For a client that follows the session's events and shows a\nturn it did not send. A session whose host runs its children\n([`ChildThreads::Host`]) is woken through that host instead.",
+          "type": "string"
+        }
+      ]
+    },
     "InputAnswer": {
       "description": "An answer to an input request. Each [`Ask`] lists the answers it takes;\nany other is [`crate::ErrorCode::InvalidParams`].",
       "oneOf": [
@@ -4785,6 +4800,10 @@
         "child_threads": {
           "$ref": "#/$defs/ChildThreads",
           "description": "Who runs the children the session's `agent` tool starts: the daemon,\nwhen absent, or the client's host. Like the MCP servers that host\nthreads go through, it is the opening client's and never saved."
+        },
+        "idle_wake": {
+          "$ref": "#/$defs/IdleWake",
+          "description": "What the daemon does when the session's background work finishes\nwhile no turn runs: nothing, when absent, or a turn of its own. Like\n[`Self::child_threads`], it is the opening client's and never saved."
         },
         "mcp_servers": {
           "description": "MCP servers the client provides, which the session connects next to\nthose in config; one replaces a config server of the same name. An\nentry the daemon cannot connect safely, such as plain HTTP to a host\nother than this machine, is not connected, yet still replaces the\nconfig server of its name. When a name repeats, the last entry wins.\nThese servers may not sample the user's model. The session does not\nsave them, since their `env` and `headers` may hold secrets.",

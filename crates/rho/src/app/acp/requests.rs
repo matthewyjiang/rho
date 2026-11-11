@@ -63,6 +63,8 @@ impl Launch {
             mcp_servers: protocol_servers(servers),
             without,
             child_threads: self.child_threads,
+            // An ACP client is told of a turn only as its own prompt's.
+            idle_wake: rho_protocol::IdleWake::Never,
         }
     }
 }

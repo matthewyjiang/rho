@@ -70,6 +70,8 @@ pub(crate) struct HostCapabilities {
     pub(crate) questions: QuestionSupport,
     /// Who runs the `agent` tool's children.
     pub(crate) children: ChildAgents,
+    /// Whether the host starts a turn when background work finishes idle.
+    pub(crate) idle_turns: IdleTurns,
     /// Where the session's in-process agent runs take capacity: its
     /// subagents, and its workflow runs' agent nodes, which run in process
     /// even when the host's threads run its subagents.
@@ -108,6 +110,7 @@ impl HostCapabilities {
         Self {
             questions: QuestionSupport::Unavailable,
             children: ChildAgents::InProcess,
+            idle_turns: IdleTurns::Never,
             subagent_pool: SubagentPool::Own,
             environment: Default::default(),
             mcp_authorization: McpAuthorizationMode::from_process(),
@@ -228,6 +231,19 @@ pub(crate) enum ChildAgents {
     // Only the daemon, unix-only so far, opens host-threads sessions (#1665).
     #[cfg_attr(not(unix), allow(dead_code))]
     HostThreads,
+}
+
+/// Whether the host starts a turn of its own on the idle session when a
+/// workflow run or background process of the session finishes. The client
+/// that opens the session chooses it; nothing is saved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IdleTurns {
+    /// A prompt waits for the work it started.
+    Never,
+    /// The host starts a turn that delivers the result, so no prompt waits.
+    // Only the daemon, unix-only so far, starts turns of its own (#1665).
+    #[cfg_attr(not(unix), allow(dead_code))]
+    Host,
 }
 
 /// Builds a session as `build` says, with the permission state of

@@ -52,11 +52,11 @@ pub(crate) use wire::{
 };
 
 #[path = "config_migrate_2x.rs"]
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "install and upgrade call it from #1666")
-)]
 mod migrate_2x;
+
+#[path = "config_upgrade_2x.rs"]
+mod upgrade_2x;
+pub(crate) use upgrade_2x::upgrade_2x;
 
 /// `runtime` value that selects the Claude Code CLI for an internal agent.
 /// Matches the agent frontmatter vocabulary (`runtime: claude-cli`).

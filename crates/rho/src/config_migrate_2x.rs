@@ -5,7 +5,8 @@
 //! keys, `tui` client settings move to `clients/tui.toml`, the theme and
 //! chords move to `tui.toml`, and plaintext web-search keys come out for the
 //! credential store. Keys that did not move keep their comments and order.
-//! The caller writes the files, backs up the original, and shows the report.
+//! [`super::upgrade_2x`] writes the files, backs up the original, and builds
+//! the notice from the report.
 
 use rho_providers::credentials::WebSearchCredential;
 use toml_edit::{DocumentMut, Item, Value};
@@ -54,9 +55,6 @@ pub(crate) enum Change {
     Dropped { key: String },
     /// A plaintext web-search key, now in [`Migrated::secrets`].
     Secret { key: String },
-    /// 3.0 cannot express what 2.x did; the key stays, so loading names it
-    /// until the user picks a 3.0 value.
-    Unresolved { key: String },
 }
 
 /// Flat and grouped 2.x keys whose value moves unchanged, as
@@ -200,8 +198,8 @@ const TITLE_KEYS: &[(&str, &str)] = &[
 
 const SESSION_TITLE_ENTRY: &str = "internal_agents.session-title";
 
-/// Rewrites one 2.x `config.toml`. Never fails: what 3.0 cannot express
-/// stays in [`Migrated::agent`] and is reported as [`Change::Unresolved`].
+/// Rewrites one 2.x `config.toml`. Never fails: a key 3.0 does not read
+/// is dropped or rewritten to the nearest 3.0 value, and reported.
 pub(crate) fn migrate_2x(doc: DocumentMut) -> Migrated {
     let mut agent = ConfigDocument::from(doc);
     let mut client_tui = ConfigDocument::default();
@@ -327,7 +325,8 @@ pub(crate) fn migrate_2x(doc: DocumentMut) -> Migrated {
 /// `backend`, the way the 2.x loader read them.
 ///
 /// `hosted = true` with `provider = "disabled"` meant native-only search,
-/// which 3.0 cannot express without enabling a backend, so both keys stay.
+/// which 3.0 cannot express without enabling a backend. It becomes `off`
+/// rather than search through a backend the user had disabled.
 fn migrate_web_search(agent: &mut ConfigDocument, report: &mut Vec<Change>) {
     const HOSTED: &str = "web_search.hosted";
     const PROVIDER: &str = "web_search.provider";
@@ -350,12 +349,6 @@ fn migrate_web_search(agent: &mut ConfigDocument, report: &mut Vec<Change>) {
         .as_ref()
         .and_then(Item::as_str)
         .map(|value| value.trim().to_ascii_lowercase());
-    if hosted && provider.as_deref() == Some("disabled") {
-        for key in [HOSTED, PROVIDER] {
-            report.push(Change::Unresolved { key: key.into() });
-        }
-        return;
-    }
     let (mode, backend) = match provider.as_deref() {
         Some("disabled") => (WebSearchMode::Off, None),
         Some("exa") => (legacy_mode(hosted), Some(SearchBackend::Exa)),

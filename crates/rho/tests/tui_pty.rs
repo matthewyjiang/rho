@@ -178,6 +178,17 @@ fn permission_cycle_is_session_only() {
     }
 }
 
+// Covers: a home whose config.toml rho 2.x wrote starts, in process and as
+// a daemon client, with its display and keybinding settings still applied
+// and the original kept as a backup.
+// Owner: interactive startup through PTY
+#[test]
+fn a_2x_config_starts_and_keeps_its_tui_settings() {
+    for scenario in ["config_2x_upgrade", "daemon_config_2x_upgrade"] {
+        assert_pass(scenario);
+    }
+}
+
 // Covers: repeated presses queue from the pending mode, not the active mode,
 // and cancellation applies the last queued policy before the next idle press.
 // Owner: interactive queued permission shortcut through PTY
@@ -1272,6 +1283,25 @@ fn daemon_commands_match_the_in_process_palette_and_replies() {
     }
 }
 
+// Covers: with RHO_TUI_DAEMON=1, `/model`, the pin cycle and the model
+// picker behave as in process: the pinned and all views, pinning from the
+// picker, the prompt file a switch lands on, a refused switch, and the
+// reasoning level a cycle keeps or rounds, idle or queued behind a turn.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_model_switches_match_the_in_process_tui() {
+    for scenario in [
+        "daemon_open_model_picker",
+        "daemon_cycle_and_pinned_model_picker",
+        "daemon_statusline_model_click",
+        "daemon_model_prompt_switch",
+        "daemon_cycle_reasoning_idle",
+        "daemon_cycle_reasoning_queued",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
 // Covers: with RHO_TUI_DAEMON=1 in supervised mode, a daemon turn's write
 // opens the TUI's approval prompt, Allow once answers the daemon, and the
 // turn completes with the write done.
@@ -1361,6 +1391,26 @@ fn daemon_saves_and_deletes_a_key_for_the_tui() {
 #[test]
 fn daemon_runs_the_workflow_the_hub_starts() {
     assert_pass("daemon_workflow");
+}
+
+// Covers: with RHO_TUI_DAEMON=1, a turn ends while the workflow its tools
+// started runs on, and the daemon delivers the result to the idle session.
+// Owner: interactive TUI as a daemon client (#1667)
+// Requires the verified-handle workflow command adapter; other platforms fail closed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn daemon_workflow_tools_run_in_the_background() {
+    assert_pass("daemon_workflow_background");
+}
+
+// Covers: with RHO_TUI_DAEMON=1, a failed hub launch reports its ready run
+// to the model while idle, and Retry starts that run under the same id.
+// Owner: interactive TUI as a daemon client (#1667)
+// Requires the verified-handle workflow command adapter; other platforms fail closed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn daemon_workflow_hub_retries_planned_run() {
+    assert_pass("daemon_workflow_hub_planned_retry");
 }
 
 // Covers: a daemon session's turn is checkpointed, and `/rewind` has the

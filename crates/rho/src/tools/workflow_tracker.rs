@@ -465,6 +465,45 @@ impl WorkflowRunTracker {
     }
 }
 
+/// What a host starts in the background, as its notice says.
+pub(crate) enum BackgroundStart<'a> {
+    /// A workflow source, planned with its declared default inputs or with
+    /// inputs given.
+    Source { default_inputs: bool },
+    /// The saved plan `plan_id`.
+    Plan { plan_id: &'a str },
+    /// A run that existed already.
+    Resume,
+}
+
+/// The notice a host shows as it starts run `run_id` of `workflow_name` in
+/// the background. The TUI and the daemon share it, so a hub start reads
+/// the same whichever runs it.
+pub(crate) fn starting_notice(
+    start: &BackgroundStart<'_>,
+    workflow_name: &str,
+    run_id: &str,
+) -> String {
+    let short = |id: &str| id.chars().take(8).collect::<String>();
+    let run = short(run_id);
+    let started = match start {
+        BackgroundStart::Source { default_inputs } => {
+            let inputs = if *default_inputs {
+                " Default inputs."
+            } else {
+                ""
+            };
+            format!("Starting '{workflow_name}' in the background (run {run}).{inputs}")
+        }
+        BackgroundStart::Plan { plan_id } => format!(
+            "Starting plan {} in the background (run {run}).",
+            short(plan_id)
+        ),
+        BackgroundStart::Resume => format!("Resuming run {run} in the background."),
+    };
+    format!("{started} Completion is delivered automatically.")
+}
+
 pub(crate) fn start_context_prompts(
     run_id: &str,
     workflow_name: &str,

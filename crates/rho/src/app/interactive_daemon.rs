@@ -40,7 +40,9 @@ pub(super) async fn open(
     cwd: &Path,
     added_dirs: &AddedDirs,
 ) -> anyhow::Result<tui::DaemonSession> {
-    use rho_protocol::{ChildThreads, ModelRef, SessionChange, SessionPart, SessionSetup};
+    use rho_protocol::{
+        ChildThreads, IdleWake, ModelRef, SessionChange, SessionPart, SessionSetup,
+    };
 
     use crate::{app::session_options::reasoning_to_wire, session::Session, tui::LaunchChange};
 
@@ -121,6 +123,9 @@ pub(super) async fn open(
             mcp_servers: Vec::new(),
             without,
             child_threads: ChildThreads::Daemon,
+            // The TUI follows the session, so it shows the turn the daemon
+            // starts when a workflow or background process finishes.
+            idle_wake: IdleWake::Turn,
         },
     };
 

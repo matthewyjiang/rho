@@ -125,7 +125,7 @@ pub use methods::{
     AuthLoginFinishedParams, AuthLoginParams, AuthLoginPromptParams, AuthLoginResponse, AuthStatus,
     AuthSummary, LoginFlow, LoginId, LoginOutcome, LoginPrompt,
 };
-pub use methods::{ChildThreads, McpServer, SecretMap, SessionPart, SessionSetup};
+pub use methods::{ChildThreads, IdleWake, McpServer, SecretMap, SessionPart, SessionSetup};
 pub use methods::{
     CommandKind, FastModeOptions, ModelChoice, ModelOptions, ModelRef, PermissionModeOptions,
     ReasoningLevel, ReasoningOptions, SessionChange, SessionCommand, SessionConfigureParams,

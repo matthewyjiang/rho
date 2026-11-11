@@ -264,6 +264,7 @@ async fn open_runtime(
         left_out,
         questions,
         children,
+        idle_turns,
         added_dirs,
         host_mcp,
         persistence,
@@ -323,6 +324,7 @@ async fn open_runtime(
         host: HostCapabilities {
             questions,
             children,
+            idle_turns,
             subagent_pool: subagents.pool_for(job.clone()),
             environment: environment.clone(),
             mcp_authorization: McpAuthorizationMode::NonInteractive,

@@ -9,8 +9,7 @@ use rho_providers::model::favorites::CycleDirection;
 use super::{
     config_row::{permission_mode_picker, ConfigRow},
     settings_screen::ConfigPage,
-    App, CommandId, CommandInvocation, ComposerMode, Entry, PickerBadge, PickerBadgeTone,
-    PickerItem, UiPicker,
+    App, CommandId, CommandInvocation, ComposerMode, Entry, UiPicker,
 };
 use crate::{app::reasoning_from_wire, permission::PermissionMode};
 
@@ -54,30 +53,21 @@ pub(super) fn setting_name(change: &SessionChange) -> &'static str {
     }
 }
 
+/// How an error says `change` was not made: a model switch in the words the
+/// in-process TUI refuses one with.
+pub(super) fn change_failure(change: &SessionChange) -> String {
+    match change {
+        SessionChange::Model { model, .. } => format!(
+            "could not switch to {}",
+            rho_providers::provider::model_reference(&model.provider, &model.model)
+        ),
+        _ => format!("could not change the {}", setting_name(change)),
+    }
+}
+
 fn next_choice<T: Copy + PartialEq>(current: T, available: &[T]) -> Option<T> {
     let index = available.iter().position(|value| *value == current)?;
     available.get((index + 1) % available.len()).copied()
-}
-
-fn model_picker(options: &SessionOptions) -> UiPicker {
-    UiPicker::models(
-        "select model",
-        options
-            .model
-            .available
-            .iter()
-            .map(|choice| PickerItem {
-                badge: (choice.model == options.model.current).then_some(PickerBadge {
-                    text: "selected".into(),
-                    tone: PickerBadgeTone::Selected,
-                }),
-                ..PickerItem::new(
-                    choice.label.clone(),
-                    format!("{}/{}", choice.model.provider, choice.model.model),
-                )
-            })
-            .collect(),
-    )
 }
 
 /// What a change asked for mid-turn says when it has no wording of its own.
@@ -111,10 +101,14 @@ impl App {
             .as_ref()
             .and_then(|reasoning| reasoning_from_wire(reasoning.current))
             .unwrap_or(rho_providers::reasoning::ReasoningLevel::Off);
-        self.info.set_reasoning(
-            reasoning,
-            rho_providers::model::ReasoningRequestSource::Explicit,
-        );
+        // A level that moved with the model is the daemon's rounding, not
+        // one the user asked for; otherwise it is as explicit as it was.
+        let source = if model_changed && reasoning != self.info.runtime.reasoning {
+            rho_providers::model::ReasoningRequestSource::PersistedOrDefault
+        } else {
+            self.info.runtime.reasoning_source
+        };
+        self.info.set_reasoning(reasoning, source);
         // A switch this TUI asked for says where it landed, with the
         // reasoning level the daemon gave the new model.
         let switched = self.daemon_options.as_ref().is_some_and(|shown| {
@@ -210,8 +204,8 @@ impl App {
                 self.daemon_option_requests.push_back(change);
             }
             Err(error) => self.insert_entry(&Entry::Error(format!(
-                "could not change the {}: {error}",
-                setting_name(&change)
+                "{}: {error}",
+                change_failure(&change)
             ))),
         }
         Ok(())
@@ -230,9 +224,30 @@ impl App {
                 .is_some_and(|options| options.model.available.len() > 1)
     }
 
+    /// The in-process model picker over the models the daemon offers:
+    /// pins, scope and badges are the TUI's own, as the pin list is.
     pub(super) fn daemon_model_picker(&self) -> Option<UiPicker> {
-        let mut picker = model_picker(self.daemon_options.as_ref()?);
-        picker.select_badged();
+        let options = self.daemon_options.as_ref()?;
+        let offered = super::model_picker::offered_models(&options.model);
+        let scope = self.conversation_model_picker_scope();
+        let picker = if self.is_provider_turn_ui() {
+            let pending =
+                self.daemon_option_requests
+                    .iter()
+                    .rev()
+                    .find_map(|change| match change {
+                        SessionChange::Model { model, .. } => Some(model),
+                        _ => None,
+                    });
+            super::model_picker::offered_model_picker_during_run(
+                &self.info.runtime,
+                pending,
+                offered,
+                scope,
+            )
+        } else {
+            super::model_picker::offered_model_picker(&self.info.runtime, offered, scope)
+        };
         Some(picker.with_config_page(ConfigPage::SessionModel))
     }
 
@@ -242,6 +257,37 @@ impl App {
         };
         match model_choice(&options.model, reference) {
             Ok(model) => {
+                // The daemon rounds a level the model lacks, as a pin cycle
+                // wants. A model picked by name keeps a level the user
+                // asked for, or is refused, as in process.
+                let capabilities = rho_providers::model::models_dev::current_reasoning_capabilities(
+                    &model.provider,
+                    &model.model,
+                );
+                // A level asked for and not yet confirmed is the one the
+                // daemon applies before this switch.
+                let reasoning = self
+                    .daemon_option_requests
+                    .iter()
+                    .rev()
+                    .find_map(|change| match change {
+                        SessionChange::Reasoning { level } => reasoning_from_wire(*level),
+                        _ => None,
+                    })
+                    .unwrap_or(self.info.runtime.reasoning);
+                if let Err(requested) = super::reasoning_metadata::resolve_model_switch_reasoning(
+                    &capabilities,
+                    reasoning,
+                    self.info.runtime.reasoning_source,
+                    super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
+                ) {
+                    self.insert_entry(&Entry::Error(format!(
+                        "could not switch to {}: reasoning level '{requested}' is not supported",
+                        rho_providers::provider::model_reference(&model.provider, &model.model)
+                    )));
+                    self.set_status("model switch rejected");
+                    return Ok(());
+                }
                 let asked = self.daemon_option_requests.len();
                 self.configure_daemon(SessionChange::Model { model, auth: None })?;
                 // First-run setup ends with its model, once the daemon was
@@ -270,12 +316,11 @@ impl App {
         let favorites = rho_providers::model::favorites::normalized_favorite_models(
             &self.info.runtime.favorite_models,
         );
-        let available: Vec<_> = options
-            .model
-            .available
+        // In pin order, as the in-process cycle goes.
+        let available: Vec<_> = favorites
             .iter()
-            .filter(|choice| {
-                favorites.iter().any(|favorite| {
+            .filter_map(|favorite| {
+                options.model.available.iter().find(|choice| {
                     favorite.provider == choice.model.provider
                         && favorite.model == choice.model.model
                 })
@@ -332,6 +377,9 @@ impl App {
             .unwrap_or(reasoning.current);
         if let Some(level) = next_choice(current, &available) {
             self.configure_daemon(SessionChange::Reasoning { level })?;
+            // Asked for by name: a later `/model` keeps it or is refused.
+            self.info.runtime.reasoning_source =
+                rho_providers::model::ReasoningRequestSource::Explicit;
         }
         Ok(())
     }
