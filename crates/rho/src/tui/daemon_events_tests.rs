@@ -203,7 +203,10 @@ fn a_compact_turn_is_over_when_its_job_rests_or_the_next_prompt_arrives() {
                 DaemonView::Clear,
                 opened(true),
                 DaemonView::CompactTurnOver,
-                DaemonView::User("next".into()),
+                DaemonView::User {
+                    text: "next".into(),
+                    replayed: true,
+                },
             ],
         ),
         (
@@ -401,7 +404,10 @@ fn session_events_map_to_transcript_views() {
                 Step::ReplayEnded,
             ],
             vec![
-                DaemonView::User("hello".into()),
+                DaemonView::User {
+                    text: "hello".into(),
+                    replayed: false,
+                },
                 text(StreamKind::Assistant, "Good ", true),
                 DaemonView::InputsReset,
                 text(StreamKind::Assistant, "morning.", false),
@@ -454,7 +460,10 @@ fn session_events_map_to_transcript_views() {
             ],
             vec![
                 DaemonView::Clear,
-                DaemonView::User("read lib.rs".into()),
+                DaemonView::User {
+                    text: "read lib.rs".into(),
+                    replayed: false,
+                },
                 text(StreamKind::Reasoning, "planning", true),
                 text(StreamKind::Assistant, "Let me ", true),
                 text(StreamKind::Assistant, "read it.", false),
@@ -705,7 +714,10 @@ fn job_states_and_steers_map_to_turn_views() {
             vec![
                 DaemonView::Clear,
                 DaemonView::Turn(TurnState::Running),
-                DaemonView::User("now".into()),
+                DaemonView::User {
+                    text: "now".into(),
+                    replayed: true,
+                },
                 DaemonView::Turn(TurnState::Running),
             ],
         ),
@@ -726,7 +738,10 @@ fn job_states_and_steers_map_to_turn_views() {
             vec![
                 DaemonView::SteerDelivered(steer()),
                 DaemonView::SteerApplied(steer()),
-                DaemonView::User("check the tests too".into()),
+                DaemonView::User {
+                    text: "check the tests too".into(),
+                    replayed: false,
+                },
             ],
         ),
     ];

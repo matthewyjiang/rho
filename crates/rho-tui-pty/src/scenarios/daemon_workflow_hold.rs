@@ -66,7 +66,8 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         ensure!(started.len() == 1, "the hub started one run: {started:?}");
 
         release_gate(&mut harness)?;
-        harness.wait_for_text("✓ done · 3/3 tasks", STREAM)?;
+        // The daemon gives the idle session the result in a turn of its own.
+        harness.wait_for_text("(pty-background) finished - success", STREAM)?;
         ensure!(
             harness.quit_with_exit_command()? == 0,
             "the TUI exited with an error"

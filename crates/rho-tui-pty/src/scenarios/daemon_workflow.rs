@@ -25,9 +25,10 @@ pub(super) const SCENARIO: Scenario = Scenario::new(
 );
 
 // Covers: the hub's Start row in a daemon session starts the run in the
-// daemon, not in this process: the workflow rail shows its progress, the
-// run is still going on the rail of a TUI that reopens the session after
-// the first one quit, and it finishes once released. `/codemode only`
+// daemon, not in this process, with no row for the prompt the hub sent:
+// the workflow rail shows its progress, the run is still going on the rail
+// of a TUI that reopens the session after the first one quit, and its
+// result arrives once released. `/codemode only`
 // saves the mode through the daemon, where `/codemode` then reads it.
 // Owner: interactive TUI as a daemon client
 pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
@@ -55,6 +56,14 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         // The only source is the first hub row.
         harness.inject_key(&Key::Enter)?;
         assert_live_rail(&mut harness)?;
+        // The start's notice follows the prompt the hub sent for it, which
+        // is the hub's spelling and has no row, as in process.
+        harness.wait_for_text("Starting 'pty-background'", STREAM)?;
+        ensure!(
+            !harness.screen().contains_text("/workflow:pty-background"),
+            "the hub's start shows its prompt:\n{}",
+            harness.screen().debug_dump()
+        );
         let started = record_ids(&runs)?;
         ensure!(started.len() == 1, "the hub started one run: {started:?}");
 
@@ -65,7 +74,8 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         harness = spawn(&plan.clone().with_arg("--resume").with_arg(&session_id))?;
         assert_live_rail(&mut harness)?;
         release_gate(&mut harness)?;
-        harness.wait_for_text("✓ done · 3/3 tasks", STREAM)?;
+        // The daemon gives the idle session the result in a turn of its own.
+        harness.wait_for_text("(pty-background) finished - success", STREAM)?;
         ensure!(
             record_ids(&runs)? == started,
             "the reopened session started no second run"

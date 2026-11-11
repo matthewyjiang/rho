@@ -11,8 +11,10 @@
 //! one can start or change, at most once per [`RAIL_POLL`].
 //!
 //! In process, a finished row leaves its rail when its result reaches the
-//! parent's transcript. The daemon delivers results itself, so here a
-//! finished row leaves [`ENDED_RETENTION`] after its run ended.
+//! parent's transcript. The daemon delivers results itself. A finished
+//! subagent row leaves when the transcript shows its result, or
+//! [`ENDED_RETENTION`] after its run ended; a workflow row leaves as its
+//! run ends (`daemon_workflows`).
 
 use std::{
     collections::HashSet,
