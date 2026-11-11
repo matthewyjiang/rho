@@ -6794,7 +6794,7 @@
   },
   "protocol": {
     "major": 0,
-    "minor": 5
+    "minor": 1
   },
   "title": "rho daemon protocol"
 }

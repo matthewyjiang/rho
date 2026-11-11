@@ -11,7 +11,8 @@ new minor, so a client can tell from `rho/hello` what it may receive.
 
 Major 0 is the unstable protocol (#1776): it may change anything, and a
 change needs no new minor. Nothing of it is released while 3.0 is built, so
-its version stays put and is set once, at the beta. The exception is the
+its minor may not rise: it stays put and is set once, at the beta. It may
+fall, to reset the version earlier changes raised. The exception is the
 handshake a client and daemon of different versions still exchange, the
 version `rho/hello` names and the data of the error that refuses it, which
 may only be added to at any major.
@@ -368,17 +369,23 @@ def check(baseline: dict, current: dict, baseline_name: str) -> list[str]:
     """Why `current` may not ship after `baseline`; empty when it may."""
     before, after = facts(baseline), facts(current)
     old, new = version(baseline), version(current)
-    if new < old:
+    unstable = old[0] == new[0] == 0
+    if new < old and not unstable:
         return [f"PROTOCOL_VERSION {new[0]}.{new[1]} is below {baseline_name}'s {old[0]}.{old[1]}"]
     if new[0] > old[0]:
         return []
-    if new[0] == 0:
+    if unstable:
         # An unstable minor may change anything but the handshake.
         problems = [
             f"{problem} (clients and daemons of every version read the handshake, so it may "
             "only gain optional fields)"
             for problem in breaking_changes(handshake(before), handshake(after))
         ]
+        if new[1] > old[1]:
+            problems.append(
+                f"PROTOCOL_VERSION rose from {old[0]}.{old[1]} to {new[0]}.{new[1]}; major 0 is "
+                "unreleased, so its version stays put until the beta sets it once"
+            )
     else:
         problems = [
             f"{problem} (needs a new protocol major)" for problem in breaking_changes(before, after)

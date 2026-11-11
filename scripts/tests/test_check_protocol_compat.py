@@ -349,15 +349,25 @@ class UnstableProtocolTests(unittest.TestCase):
     def check(self, current: dict) -> list[str]:
         return check_protocol_compat.check(self.UNSTABLE, current, "the base")
 
-    def test_any_change_is_allowed_with_or_without_a_new_minor(self) -> None:
+    def test_any_change_is_allowed_without_a_new_minor(self) -> None:
         for name, change in [
             ("an added method", add_method),
             ("a removed method", remove_method),
             ("a retyped field", retype_field),
         ]:
             with self.subTest(name):
-                self.assertEqual(self.check(self.at(change, 0, 5)), [])
                 self.assertEqual(self.check(self.at(change, 0, 4)), [])
+
+    def test_the_minor_may_be_reset_but_not_raised(self) -> None:
+        # Nothing of major 0 is released, so the beta sets its version once.
+        self.assertEqual(self.check(self.at(add_method, 0, 1)), [])
+        self.assertEqual(
+            self.check(self.at(add_method, 0, 5)),
+            [
+                "PROTOCOL_VERSION rose from 0.4 to 0.5; major 0 is unreleased, so its version "
+                "stays put until the beta sets it once"
+            ],
+        )
 
     def test_the_handshake_may_only_gain_optional_fields(self) -> None:
         # A client and a daemon of different versions still read these, so a
@@ -381,7 +391,7 @@ class UnstableProtocolTests(unittest.TestCase):
             ("the rest of a hello changes", rename_client_field, []),
         ]:
             with self.subTest(name):
-                problems = self.check(self.at(change, 0, 5))
+                problems = self.check(self.at(change, 0, 4))
                 self.assertEqual([problem.split(":")[0] for problem in problems], expected)
 
     def test_unstable_only_holds_a_change_to_its_base_while_both_are_unstable(self) -> None:
@@ -389,7 +399,7 @@ class UnstableProtocolTests(unittest.TestCase):
         # would fail the release rules; between two commits it breaks none.
         stable = {**COMMITTED, "protocol": {"major": 1, "minor": 0}}
         for name, baseline, current, expected in [
-            ("both unstable", self.UNSTABLE, self.at(remove_method, 0, 3), 1),
+            ("both unstable", self.UNSTABLE, self.at(remove_method, 0, 5), 1),
             ("entering major 0", stable, self.at(remove_method, 0, 1), 0),
             ("leaving major 0", self.UNSTABLE, self.at(remove_method, 1, 0), 0),
             ("both stable", stable, self.at(add_method, 1, 0), 0),
