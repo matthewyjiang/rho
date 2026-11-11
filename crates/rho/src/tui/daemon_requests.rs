@@ -39,7 +39,7 @@ use rho_protocol::{
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
-use super::{daemon_events::DaemonView, daemon_options::setting_name};
+use super::{daemon_events::DaemonView, daemon_options::change_failure};
 use crate::app::daemon_client::Link;
 
 enum Request {
@@ -346,7 +346,7 @@ impl DaemonRequests {
             while let Some(request) = requests.recv().await {
                 match request {
                     Request::Configure(change, asked) => {
-                        let setting = setting_name(&change);
+                        let failure = change_failure(&change);
                         let saves_rows = matches!(
                             change,
                             SessionChange::Context { .. } | SessionChange::AddDirectory { .. }
@@ -376,9 +376,7 @@ impl DaemonRequests {
                             let _ = views.send(DaemonView::ConfigureFinished);
                         }
                         if let Some(error) = error {
-                            let _ = views.send(DaemonView::Error(format!(
-                                "could not change the {setting}: {error}"
-                            )));
+                            let _ = views.send(DaemonView::Error(format!("{failure}: {error}")));
                         }
                         // OptionsChanged, not an optimistic local update, is
                         // authoritative. The response describes the same change.

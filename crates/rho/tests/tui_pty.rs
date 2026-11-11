@@ -1254,6 +1254,25 @@ fn daemon_commands_match_the_in_process_palette_and_replies() {
     }
 }
 
+// Covers: with RHO_TUI_DAEMON=1, `/model`, the pin cycle and the model
+// picker behave as in process: the pinned and all views, pinning from the
+// picker, the prompt file a switch lands on, a refused switch, and the
+// reasoning level a cycle keeps or rounds, idle or queued behind a turn.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_model_switches_match_the_in_process_tui() {
+    for scenario in [
+        "daemon_open_model_picker",
+        "daemon_cycle_and_pinned_model_picker",
+        "daemon_statusline_model_click",
+        "daemon_model_prompt_switch",
+        "daemon_cycle_reasoning_idle",
+        "daemon_cycle_reasoning_queued",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
 // Covers: with RHO_TUI_DAEMON=1 in supervised mode, a daemon turn's write
 // opens the TUI's approval prompt, Allow once answers the daemon, and the
 // turn completes with the write done.

@@ -307,6 +307,18 @@ impl SessionRuntime {
         }
     }
 
+    /// Which model prompt file the session runs on, in the words the
+    /// in-process TUI reports after a model switch. `None` for a session
+    /// whose prompt does not follow its model.
+    #[cfg(unix)]
+    pub(crate) fn model_prompt_notice(&self) -> Option<String> {
+        self.built.prompt_template.as_ref().map(|_| {
+            crate::app::model_prompt_metadata::provenance_notice(
+                self.built.prompt.provenance.as_ref(),
+            )
+        })
+    }
+
     /// Whether the session keeps a file at all, or lives in memory alone.
     pub(crate) fn persistence(&self) -> crate::session::SessionPersistence {
         self.storage.persistence()
