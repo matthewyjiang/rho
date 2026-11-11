@@ -13,8 +13,8 @@
 //! In process, a finished row leaves its rail when its result reaches the
 //! parent's transcript. The daemon delivers results itself. A finished
 //! subagent row leaves when the transcript shows its result, or
-//! [`ENDED_RETENTION`] after its run ended; a workflow row leaves as its
-//! run ends (`daemon_workflows`).
+//! [`ENDED_RETENTION`] after its run ended; a workflow row leaves once the
+//! daemon no longer lists its result as pending (`daemon_workflows`).
 
 use std::{
     collections::HashSet,
@@ -106,8 +106,9 @@ impl DaemonRail {
 }
 
 /// The jobs of `kind` the session `session` started itself that a rail
-/// shows: those that may still change, and those ended no longer than
-/// [`ENDED_RETENTION`] before `now` (Unix seconds). A workflow's agent
+/// shows: those that may still change, those whose result the session has
+/// yet to be given, and those ended no longer than [`ENDED_RETENTION`]
+/// before `now` (Unix seconds). A workflow's agent
 /// nodes are not the session's own, and keep their artifacts elsewhere.
 pub(super) fn rail_jobs<'a>(
     jobs: &'a [JobSummary],
@@ -136,6 +137,7 @@ pub(super) fn rail_jobs<'a>(
         })
         .filter(|job| {
             may_still_change(job.state)
+                || job.result_pending
                 || now.saturating_sub(job.updated_at) < ENDED_RETENTION.as_secs()
         })
         .collect()

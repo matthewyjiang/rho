@@ -395,6 +395,23 @@ impl WorkflowRunTracker {
             })
     }
 
+    /// The runs of the session that finished and whose result has not been
+    /// delivered yet.
+    pub(crate) fn undelivered_runs(&self, session_id: &str) -> Vec<String> {
+        self.inner
+            .lock()
+            .expect("workflow tracker lock")
+            .runs
+            .values()
+            .filter(|entry| {
+                entry.session_id.as_deref() == Some(session_id)
+                    && entry.finished.is_some()
+                    && !entry.observed
+            })
+            .map(|entry| entry.run_id.clone())
+            .collect()
+    }
+
     /// Whether a run for the session that started at or after `since` is
     /// still live. Headless prompts wait only for their own runs.
     pub fn has_live_started_since(&self, session_id: &str, since: Instant) -> bool {

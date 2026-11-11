@@ -132,6 +132,13 @@ pub struct JobSummary {
     /// The workflow run a [`JobKind::Workflow`] job drives.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow_run: Option<String>,
+    /// Whether the result of a [`JobKind::Workflow`] job's run has yet to
+    /// reach the session that started it. A run's result is pending once
+    /// its drive ends, until the daemon gives the session the result in a
+    /// turn, at once when the session is idle. `false` for other jobs, and
+    /// for a run whose session the daemon has not loaded.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub result_pending: bool,
     /// Unix time, in seconds, when the job was created.
     pub created_at: u64,
     /// Unix time, in seconds, of the job's last state change.

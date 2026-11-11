@@ -96,6 +96,7 @@ mod test_sessions;
 mod tool_sources;
 mod turn;
 mod unload;
+mod workflows;
 
 use super::settings::ConfigStore;
 use child_questions::ChildQuestions;
@@ -186,6 +187,9 @@ struct LoadedSession {
     /// The session's background processes, when it may run any; reads
     /// never wait for the active turn.
     processes: Mutex<Option<crate::tools::process::ProcessManager>>,
+    /// The workflow runs the session started; reads never wait for the
+    /// active turn.
+    workflows: crate::tools::workflow_tracker::WorkflowRunTracker,
     /// Goal lifecycle shared with control requests while the runtime is busy.
     goal: Mutex<goal::GoalControl>,
     /// Turns the runtime's events into the feed's; only the turn under way
@@ -427,6 +431,7 @@ impl LoadedSession {
             live: Mutex::new(live),
             mcp: Mutex::new(crate::app::session_mcp::SessionMcp::of(&runtime)),
             processes: Mutex::new(runtime.tools().processes().cloned()),
+            workflows: runtime.tools().workflow_tracker().clone(),
             feed,
             goal: Mutex::default(),
             job,

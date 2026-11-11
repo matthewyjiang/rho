@@ -151,6 +151,8 @@ mod workflow;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod workflow_background;
 mod workflow_hub_unsupported;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+mod workflow_result_rail;
 mod workspace_rewind;
 mod write_stream;
 mod zen_tool_run;
@@ -378,6 +380,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     workflow_background::DAEMON_WORKFLOW_BACKGROUND_SCENARIO,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     workflow_background::DAEMON_WORKFLOW_HUB_PLANNED_RETRY_SCENARIO,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    workflow_result_rail::SCENARIO,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    workflow_result_rail::DAEMON_SCENARIO,
     PASTE_MULTILINE_SCENARIO,
     composer_unicode::COMPOSER_UNICODE_SCENARIO,
     composer_vim::COMPOSER_VIM_SCENARIO,

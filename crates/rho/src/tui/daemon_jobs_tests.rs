@@ -17,6 +17,7 @@ fn job(id: &str, kind: JobKind, parent: Option<&str>) -> JobSummary {
         session: None,
         run: None,
         workflow_run: None,
+        result_pending: false,
         created_at: 0,
         updated_at: 0,
         error: None,
@@ -44,8 +45,9 @@ fn run(id: &str, parent: &str, state: JobState, updated_at: u64) -> JobSummary {
 
 // Covers: the rail shows the runs the followed session started itself,
 // whatever order the jobs list in, and drops a finished run once it ended
-// long enough ago, so a workflow's agent nodes, another session's children
-// and old history never show.
+// long enough ago unless its result is still owed to the session, so a
+// workflow's agent nodes, another session's children and old history never
+// show.
 // Owner: daemon subagent rail (pure selection)
 #[test]
 fn the_rail_takes_the_sessions_live_and_just_ended_runs() {
@@ -55,6 +57,17 @@ fn the_rail_takes_the_sessions_live_and_just_ended_runs() {
         // A workflow's agent node, which the workflow panel shows.
         run("node", "workflow", JobState::Running, 0),
         job("workflow", JobKind::Workflow, Some("mine")),
+        JobSummary {
+            state: JobState::Completed,
+            updated_at: NOW - 60,
+            result_pending: true,
+            ..job("owed", JobKind::Workflow, Some("mine"))
+        },
+        JobSummary {
+            state: JobState::Completed,
+            updated_at: NOW - 60,
+            ..job("delivered", JobKind::Workflow, Some("mine"))
+        },
         session("mine", "s1"),
         session("theirs", "s2"),
         run("live", "mine", JobState::Running, 0),
@@ -80,7 +93,7 @@ fn the_rail_takes_the_sessions_live_and_just_ended_runs() {
         ),
         (
             vec!["run-early", "run-live", "run-queued", "run-fresh"],
-            vec!["workflow"],
+            vec!["workflow", "owed"],
         )
     );
 }
