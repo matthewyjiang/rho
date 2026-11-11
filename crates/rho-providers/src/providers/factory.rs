@@ -69,14 +69,26 @@ pub fn build_sdk_provider(
 /// need a hand-maintained clone ladder for every credential variant.
 #[derive(Debug)]
 pub struct UnavailableProvider {
+    identity: rho_sdk::model::ModelIdentity,
     error: ProviderError,
     message: String,
 }
 
 impl UnavailableProvider {
     pub fn new(error: ModelError) -> Self {
+        Self::standing_in_for(
+            rho_sdk::model::ModelIdentity::new("unavailable", "unavailable", "unavailable"),
+            error,
+        )
+    }
+
+    /// One that stands in for `identity`'s model until it can be built, and
+    /// reports that model as its own, so a session it runs keeps naming the
+    /// model it will use once signed in.
+    pub fn standing_in_for(identity: rho_sdk::model::ModelIdentity, error: ModelError) -> Self {
         let message = error.to_string();
         Self {
+            identity,
             error: super::sdk_contract::provider_error_from_model_error(error),
             message,
         }
@@ -85,7 +97,7 @@ impl UnavailableProvider {
 
 impl rho_sdk::provider::ModelProvider for UnavailableProvider {
     fn identity(&self) -> rho_sdk::model::ModelIdentity {
-        rho_sdk::model::ModelIdentity::new("unavailable", "unavailable", "unavailable")
+        self.identity.clone()
     }
 
     fn send_turn<'a>(

@@ -93,6 +93,9 @@ impl SubagentHostInputBridge {
                     .into(),
                 source: None,
             })?;
+        // Counted before the parent can take it, so a turn that sees the
+        // questionnaire arrive also sees it open.
+        let _open = OpenQuestion::new(&self.open);
         let (response_tx, response_rx) = oneshot::channel();
         let pending = SubagentHostInputRequest {
             run_id: run_id.into(),
@@ -108,7 +111,6 @@ impl SubagentHostInputBridge {
             })?,
             () = cancellation.cancelled() => return Err(Error::Cancelled),
         }
-        let _open = OpenQuestion::new(&self.open);
         tokio::select! {
             result = response_rx => result.map_err(|_| Error::Interrupted {
                 message: "delegated questionnaire was dropped without a response".into(),

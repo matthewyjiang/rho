@@ -6,6 +6,7 @@
 //! session options, so those arrive as call-site policy.
 
 use std::{
+    borrow::Cow,
     num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::Arc,
@@ -13,10 +14,12 @@ use std::{
 
 use rho_providers::{
     auth::provider_credentials::ApplicationCredentialSource,
+    model::ModelError,
     providers::{build_automation_provider, UnavailableProvider},
 };
 use rho_sdk::{
-    provider::ModelProvider, ApprovalRequestReceiver, ApprovalSession, Session, SessionOptions,
+    model::ModelIdentity, provider::ModelProvider, ApprovalRequestReceiver, ApprovalSession,
+    Session, SessionOptions,
 };
 
 use super::{
@@ -48,6 +51,7 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub mcp_elicitation: crate::tools::mcp::McpElicitationSupport,
     pub mcp_sampling: McpSamplingSupport,
     pub tool_source_attach: super::tools_prompt::ToolSourceAttach,
+    pub tool_source_load: super::tools_prompt::ToolSourceLoad,
     /// Whether the session starts its workspace's hooks.
     pub hook_start: HookStart,
     /// Whether the session must sign in to its model.
@@ -77,12 +81,13 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
 
 /// Whether an assembled session must sign in to its model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SignIn {
+pub(crate) enum SignIn {
     /// Assembly fails when the model's credential is missing.
     Required,
-    /// The session is only read, so it runs no turn: a model that cannot be
-    /// signed in to is stood in for by one that fails every request.
-    NotNeeded,
+    /// The session may open without it, when it is only read or its client
+    /// signs in later: a model that cannot be signed in to is stood in for
+    /// by one that fails every request.
+    Optional,
 }
 
 /// Whether an assembled session starts its workspace's hooks.
@@ -122,6 +127,18 @@ pub(super) struct BuiltSession {
     pub prompt_template: Option<crate::prompt::ModelPromptTemplate>,
     pub prompt: super::active_prompt::ActivePrompt,
     pub diagnostics: RuntimeDiagnostics,
+    /// The tool sources still loading, when the session defers them.
+    pub tool_sources: Option<super::tools_prompt::PendingToolSources>,
+    /// Whether `provider` was built from the model's credentials.
+    pub provider_credentials: ProviderCredentials,
+}
+
+/// Whether an assembled session's provider was built from its model's
+/// credentials, or stands in for one that could not be ([`SignIn::Optional`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ProviderCredentials {
+    Found,
+    Missing,
 }
 
 impl BuiltSession {
@@ -178,6 +195,7 @@ where
         mcp_elicitation,
         mcp_sampling,
         tool_source_attach,
+        tool_source_load,
         hook_start,
         sign_in,
         mcp_authorization,
@@ -195,24 +213,42 @@ where
         approval,
         session_options,
     } = options;
+    // A host logged in through its endpoint (Ollama) and not logged in is
+    // missing its credential like a provider without a key.
+    let (login_config, missing_login) =
+        match super::endpoint_login::with_disk_login(config, &config_path) {
+            Ok(login_config) => (login_config, None),
+            Err(error) => match (error.downcast::<ModelError>(), sign_in) {
+                (Ok(missing), SignIn::Optional) => (Cow::Borrowed(config), Some(missing)),
+                (Ok(missing), SignIn::Required) => return Err(missing.into()),
+                (Err(error), _) => return Err(error),
+            },
+        };
     // from_config already scopes custom-provider resolution. Do not hold a
     // thread-local overlay across the catalog await: Tokio may resume on
     // another worker and Drop would pop the wrong stack.
-    let sdk_options = SdkBootstrapOptions::from_config(
-        &*super::endpoint_login::with_disk_login(config, &config_path)?,
-        cwd,
-    )?;
+    let sdk_options = SdkBootstrapOptions::from_config(&login_config, cwd)?;
     let credentials = ApplicationCredentialSource::new(environment.credentials());
-    // Automation and ACP normally skip the catalog fetch, but catalog-constructed
-    // providers need the hydrate before build; a no-op for the rest.
-    sdk_options.provider.ensure_catalog_for_construction().await;
-    let provider = match (
-        build_automation_provider(sdk_options.provider, &credentials),
-        sign_in,
-    ) {
-        (Ok(provider), _) => provider,
+    let built = match missing_login {
+        Some(missing) => Err(missing),
+        None => {
+            // Automation and ACP normally skip the catalog fetch, but
+            // catalog-constructed providers need the hydrate before build; a
+            // no-op for the rest.
+            sdk_options.provider.ensure_catalog_for_construction().await;
+            build_automation_provider(sdk_options.provider, &credentials)
+        }
+    };
+    let (provider, provider_credentials) = match (built, sign_in) {
+        (Ok(provider), _) => (provider, ProviderCredentials::Found),
         (Err(error), SignIn::Required) => return Err(error.into()),
-        (Err(error), SignIn::NotNeeded) => Arc::new(UnavailableProvider::new(error)),
+        (Err(error), SignIn::Optional) => (
+            Arc::new(UnavailableProvider::standing_in_for(
+                ModelIdentity::new(&login_config.provider, "unavailable", &login_config.model),
+                error,
+            )) as Arc<dyn ModelProvider>,
+            ProviderCredentials::Missing,
+        ),
     };
     let live_provider = Arc::clone(&provider);
     let workspace_root = sdk_options.workspace.root.clone();
@@ -221,6 +257,7 @@ where
         tools: tool_set,
         mut prompt,
         mut prompt_template,
+        pending_tool_sources,
         ..
     } = assemble_tools_and_prompt(ToolsAndPromptOptions {
         config,
@@ -238,7 +275,10 @@ where
         tool_source_attach,
         mcp_authorization,
         await_catalog_names: false,
-        defer_tool_sources: false,
+        defer_tool_sources: match tool_source_load {
+            super::tools_prompt::ToolSourceLoad::Inline => false,
+            super::tools_prompt::ToolSourceLoad::Deferred => true,
+        },
         diagnostics,
         agent,
         added_dirs,
@@ -248,6 +288,12 @@ where
         subagent_pool,
     })
     .await?;
+    // Wrapped at once, so a failure below stops the load as it drops.
+    let tool_sources = pending_tool_sources.map(|load| {
+        super::tools_prompt::PendingToolSources::Loading(
+            super::tools_prompt::DeferredToolSources::follow(load),
+        )
+    });
     let tool_set = extend_tools(tool_set);
     if let Some(suffix) = system_prompt_suffix {
         let retained = format!("\n\n{suffix}");
@@ -362,6 +408,8 @@ where
             prompt_template,
             prompt,
             diagnostics: diagnostics.clone(),
+            tool_sources,
+            provider_credentials,
         },
         workspace_root,
         session_writes,

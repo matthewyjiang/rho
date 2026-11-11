@@ -4884,6 +4884,10 @@
           },
           "type": "array"
         },
+        "sign_in": {
+          "$ref": "#/$defs/SignIn",
+          "description": "Whether the session may open before its model's auth profile has\nusable credentials: not, when absent, so the open fails with\n[`crate::ErrorCode::SignInRequired`], or signed out. Like\n[`Self::child_threads`], it is the opening client's and never saved."
+        },
         "without": {
           "description": "Parts of the session left out, as `rho`'s `--no-tools`,\n`--no-system-prompt`, and `--no-subagents` leave them out, and\nquestions a client cannot show. The session saves all but\n[`SessionPart::Questions`] and [`SessionPart::Saving`]; a reopen\nleaves out the saved parts and these, except\n[`SessionPart::Saving`], which only a new session takes.",
           "items": {
@@ -5293,6 +5297,21 @@
         }
       ],
       "description": "A setting's value; which variant a setting takes follows its\n[`SettingKind`]: a choice is [`Self::Text`]."
+    },
+    "SignIn": {
+      "description": "When a session's model needs credentials. The daemon reads it, so it has\nno `Unknown`.",
+      "oneOf": [
+        {
+          "const": "required",
+          "description": "To open: a session without them does not open.",
+          "type": "string"
+        },
+        {
+          "const": "later",
+          "description": "From its first turn: a session without them opens signed out, as the\nterminal UI starts, and its turns fail on the missing credentials\nuntil a sign-in.",
+          "type": "string"
+        }
+      ]
     },
     "StatusParams": {
       "description": "Params of [`DAEMON_STATUS`].",

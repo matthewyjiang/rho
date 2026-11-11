@@ -19,7 +19,7 @@ use crate::{
         },
         subagent_messaging::NoticePoster,
         subagent_pool::SubagentPool,
-        tools_prompt::{McpSamplingSupport, ToolSourceAttach},
+        tools_prompt::{McpSamplingSupport, ToolSourceAttach, ToolSourceLoad},
     },
     config::Config,
     credential_store::AppCredentialStore,
@@ -88,14 +88,20 @@ pub(crate) struct HostCapabilities {
     pub(crate) parent_notices: Option<Arc<dyn NoticePoster>>,
     /// Whether the host runs the session or only reads what it saved.
     pub(crate) session_use: SessionUse,
+    /// When a session the host runs loads its MCP servers and OpenAPI
+    /// sources: deferred, its prompts wait for them. A rebind loads its
+    /// own inline, since it runs within a prompt.
+    pub(crate) tool_sources: ToolSourceLoad,
 }
 
 /// Whether a host runs a session or only reads what it saved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SessionUse {
     /// The host runs its turns: the session connects its MCP servers and
-    /// OpenAPI sources and starts its workspace's hooks as it opens.
-    Run,
+    /// OpenAPI sources and starts its workspace's hooks as it opens, and
+    /// opens without a credential for its model only when the host signs in
+    /// later.
+    Run(SignIn),
     /// The host reads what the session saved, then shuts it down without a
     /// turn: nothing of the session starts, neither tool sources nor hooks,
     /// and opening it saves nothing to its file.
@@ -116,7 +122,8 @@ impl HostCapabilities {
             mcp_authorization: McpAuthorizationMode::from_process(),
             approvals: ApprovalPolicy::Unattended(approvals),
             parent_notices: None,
-            session_use: SessionUse::Run,
+            session_use: SessionUse::Run(SignIn::Required),
+            tool_sources: ToolSourceLoad::Inline,
         }
     }
 }
@@ -257,6 +264,7 @@ pub(super) async fn build_session(
     config: &Config,
     workspace: &Path,
     added_dirs: &AddedDirs,
+    tool_source_load: ToolSourceLoad,
     session_options: impl FnOnce(Arc<dyn ModelProvider>) -> anyhow::Result<SessionOptions>,
 ) -> anyhow::Result<(BuiltSession, SessionPermission)> {
     ensure_auto_classifier_model(config, build.host.environment.credentials().as_ref())?;
@@ -293,16 +301,17 @@ pub(super) async fn build_session(
         },
         mcp_sampling: McpSamplingSupport::Unavailable,
         tool_source_attach: match build.host.session_use {
-            SessionUse::Run => ToolSourceAttach::Connect,
+            SessionUse::Run(_) => ToolSourceAttach::Connect,
             SessionUse::Read => ToolSourceAttach::None,
         },
+        tool_source_load,
         hook_start: match build.host.session_use {
-            SessionUse::Run => HookStart::Start,
+            SessionUse::Run(_) => HookStart::Start,
             SessionUse::Read => HookStart::Skip,
         },
         sign_in: match build.host.session_use {
-            SessionUse::Run => SignIn::Required,
-            SessionUse::Read => SignIn::NotNeeded,
+            SessionUse::Run(sign_in) => sign_in,
+            SessionUse::Read => SignIn::Optional,
         },
         mcp_authorization: build.host.mcp_authorization,
         diagnostics: &build.launch.diagnostics,

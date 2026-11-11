@@ -18,6 +18,7 @@ use crate::{
         agent_binding::{AgentBinder, AgentInvocation, AgentRole, BoundAgent, ModelOverride},
         interactive_runtime::startup::session_options_for_id,
         session_assembly::BuiltSession,
+        tools_prompt::ToolSourceLoad,
     },
     config::Config,
     session::Session as StoredSession,
@@ -153,6 +154,9 @@ impl SessionRuntime {
                     &config,
                     &cwd,
                     &added_dirs,
+                    // A rebind runs within a prompt, which must find its
+                    // tools there.
+                    ToolSourceLoad::Inline,
                     |_| Ok(session_options_for_id(id)),
                 ))
                 .await

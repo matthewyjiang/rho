@@ -76,6 +76,8 @@ pub(super) struct StatusLineState {
     context_usage: Option<ContextUsage>,
     provider: String,
     model: String,
+    /// The model's display name, shown in place of its id when known.
+    model_name: Option<String>,
     fast_mode_active: bool,
     zen_mode: bool,
     reasoning: ReasoningLevel,
@@ -131,6 +133,7 @@ impl Default for StatusLineState {
             context_usage: None,
             provider: String::new(),
             model: String::new(),
+            model_name: None,
             fast_mode_active: false,
             zen_mode: false,
             reasoning: ReasoningLevel::default(),
@@ -156,6 +159,7 @@ impl StatusLineState {
             context_usage: None,
             provider: info.provider.clone(),
             model: info.model.clone(),
+            model_name: None,
             fast_mode_active: info.fast_mode_active(),
             zen_mode: info.zen_mode,
             reasoning: info.reasoning,
@@ -281,6 +285,14 @@ impl StatusLine {
             self.state.usage = usage.cloned();
             self.state.context_usage = context_usage.cloned();
             self.state.extra_cost_usd_micros = extra_cost_usd_micros;
+            self.invalidate();
+        }
+    }
+
+    /// Sets the model's display name; `None` shows the model id.
+    pub(super) fn update_model_name(&mut self, model_name: Option<String>) {
+        if self.state.model_name != model_name {
+            self.state.model_name = model_name;
             self.invalidate();
         }
     }
@@ -685,10 +697,11 @@ fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
         ));
     }
 
+    let model = state.model_name.as_deref().unwrap_or(&state.model);
     let model = if state.fast_mode_active {
-        format!("{} (fast)", state.model)
+        format!("{model} (fast)")
     } else {
-        state.model.clone()
+        model.to_owned()
     };
     if !model.is_empty() {
         fields.push(field(

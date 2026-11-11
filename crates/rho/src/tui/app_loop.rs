@@ -115,7 +115,7 @@ impl App {
         // signed-out session needs no history entry that would scroll away.
         self.start_setup_screen(terminal);
         self.reconcile_auto_classifier_gate(agent).await?;
-        if agent.tool_sources_pending() {
+        if self.tool_sources_pending(agent) {
             self.set_status_quiet("loading external tools");
             // Claim the status so the hydrate poll clears it when loading
             // lands before the first prompt.
@@ -703,7 +703,7 @@ impl App {
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
         changed |= self.claim_non_main_costs(agent);
         changed |= self.apply_finished_ui_tasks();
-        self.restore_tool_sources_hold_activity_if_needed(agent.tool_sources_pending());
+        self.restore_tool_sources_hold_activity_if_needed(self.tool_sources_pending(agent));
         if self.activity_status().is_some() {
             self.turn.start_loading_if_needed();
         }

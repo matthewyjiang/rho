@@ -94,6 +94,8 @@ async fn model_prompt_switch_rebinds_advisor_with_live_history() {
         prompt_template: Some(template),
         prompt: active,
         diagnostics,
+        tool_sources: None,
+        provider_credentials: crate::app::session_assembly::ProviderCredentials::Found,
     };
     let stored = StoredSession::create_in_root(home.path(), home.path()).unwrap();
     let mut runtime = SessionRuntime::for_tests(built, SessionStorage::saved(stored), &config);

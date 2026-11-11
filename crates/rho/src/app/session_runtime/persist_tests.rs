@@ -43,6 +43,8 @@ async fn runtime(
         prompt_template: None,
         prompt: Default::default(),
         diagnostics: RuntimeDiagnostics::new(&config),
+        tool_sources: None,
+        provider_credentials: crate::app::session_assembly::ProviderCredentials::Found,
     };
     SessionRuntime::for_tests(built, storage, &config)
 }

@@ -65,6 +65,12 @@ pub struct SessionSetup {
     /// [`Self::child_threads`], it is the opening client's and never saved.
     #[serde(default, skip_serializing_if = "IdleWake::is_never")]
     pub idle_wake: IdleWake,
+    /// Whether the session may open before its model's auth profile has
+    /// usable credentials: not, when absent, so the open fails with
+    /// [`crate::ErrorCode::SignInRequired`], or signed out. Like
+    /// [`Self::child_threads`], it is the opening client's and never saved.
+    #[serde(default, skip_serializing_if = "SignIn::is_required")]
+    pub sign_in: SignIn,
 }
 
 impl SessionSetup {
@@ -127,6 +133,28 @@ impl IdleWake {
     /// out.
     pub fn is_never(&self) -> bool {
         *self == Self::Never
+    }
+}
+
+/// When a session's model needs credentials. The daemon reads it, so it has
+/// no `Unknown`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SignIn {
+    /// To open: a session without them does not open.
+    #[default]
+    Required,
+    /// From its first turn: a session without them opens signed out, as the
+    /// terminal UI starts, and its turns fail on the missing credentials
+    /// until a sign-in.
+    Later,
+}
+
+impl SignIn {
+    /// Whether the session needs credentials to open, so the wire leaves
+    /// it out.
+    pub fn is_required(&self) -> bool {
+        *self == Self::Required
     }
 }
 

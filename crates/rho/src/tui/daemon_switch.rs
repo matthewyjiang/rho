@@ -81,6 +81,9 @@ impl App {
         self.daemon_login_selected = None;
         self.daemon_title = None;
         self.awaited_daemon_report = None;
+        // Held for the session left behind, as `/new` drops them in process.
+        self.held_turns.clear();
+        self.clear_tool_sources_loading_activity();
         self.reset_daemon_rail();
         self.drop_daemon_login();
         self.reset_session_view(terminal)?;

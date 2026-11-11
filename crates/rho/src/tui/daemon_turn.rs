@@ -43,6 +43,19 @@ impl App {
         paste_segments: Vec<PasteSegment>,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        // The daemon starts the turn only once the session's MCP servers
+        // connected, and the TUI would wait for it meanwhile: hold it here,
+        // as in process, until they have.
+        if self
+            .info
+            .session
+            .daemon
+            .as_ref()
+            .is_some_and(super::DaemonSession::tool_sources_loading)
+        {
+            self.hold_turn(turn, media, paste_segments);
+            return Ok(());
+        }
         if let Err(error) = self.request_daemon_turn(&turn, &media).await {
             // Why the prompt found no attachment, such as a failed reattach
             // after a daemon restart, shows first.

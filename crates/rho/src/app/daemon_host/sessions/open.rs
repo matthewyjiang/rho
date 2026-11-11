@@ -17,6 +17,9 @@
 //! of the session's (see `subagents.rs`), unless its setup has the client's
 //! host run them as its own threads, and an MCP server's browser login
 //! is refused rather than left waiting for a terminal nobody watches.
+//! A session whose model has no usable credentials opens only when its
+//! setup's `sign_in` is `later`, signed out as the TUI starts; otherwise
+//! the open fails with `SignInRequired`.
 //!
 //! The session's processes, MCP servers, hooks, OpenAPI sources, CLI agents,
 //! and workflow runs use its client's environment, not the daemon's (#1659):
@@ -43,10 +46,12 @@ use crate::{
             root_host_tools, AgentBinder, AgentInvocation, AgentRole, BoundAgent, LaunchTools,
         },
         cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
+        session_assembly::SignIn,
         session_runtime::{
-            ApprovalPolicy, HostCapabilities, RunShape, SessionBuild, SessionLaunch,
+            ApprovalPolicy, ChildAgents, HostCapabilities, RunShape, SessionBuild, SessionLaunch,
             SessionOpening, SessionRole, SessionRuntime, SessionUse,
         },
+        tools_prompt::ToolSourceLoad,
     },
     caller_context::CallerContext,
     config::Config,
@@ -173,11 +178,15 @@ pub(super) async fn open_session(
         Opening::Saved(stored) => Some(stored),
     };
     let setup = Setup::resolve(&with.setup, opening.cwd(), saved)?;
+    let sign_in = match with.setup.sign_in {
+        rho_protocol::SignIn::Required => SignIn::Required,
+        rho_protocol::SignIn::Later => SignIn::Optional,
+    };
     open_runtime(
         opening,
         SessionEnvironment::new(with.environment.clone()),
         setup,
-        SessionUse::Run,
+        SessionUse::Run(sign_in),
         subagents,
         settings,
         job,
@@ -331,6 +340,13 @@ async fn open_runtime(
             approvals: ApprovalPolicy::Host,
             parent_notices: None,
             session_use,
+            // Opening never waits for a slow MCP server, as the in-process
+            // TUI's first frame does not. A host's threads bind its task
+            // tools when the session is built, so they need its MCP first.
+            tool_sources: match children {
+                ChildAgents::InProcess => ToolSourceLoad::Deferred,
+                ChildAgents::HostThreads => ToolSourceLoad::Inline,
+            },
         },
         run: RunShape {
             role: SessionRole::Daemon,

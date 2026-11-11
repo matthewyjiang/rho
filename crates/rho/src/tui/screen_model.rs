@@ -146,7 +146,7 @@ impl App {
                 match self.info.runtime.internal_agents.get(DECISION_SCREEN_ID) {
                     Some(screen) => format!(
                         "permission mode: auto. The screen keeps {}",
-                        screen.display_reference()
+                        self.model_names().internal_agent(screen)
                     ),
                     None => "permission mode: auto. The classifier model answers the screen".into(),
                 }
@@ -184,7 +184,7 @@ impl App {
         }
         let label = selection
             .as_ref()
-            .map(InternalAgentModelConfig::display_reference)
+            .map(|selection| self.model_names().internal_agent(selection))
             .unwrap_or_else(|| "the classifier model".into());
         let saved = match selection {
             Some(selection) => {

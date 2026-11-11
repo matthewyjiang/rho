@@ -238,3 +238,28 @@ async fn ensure_awaits_when_the_catalog_snapshot_is_stale() {
     );
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }
+
+/// Covers: a name two models from one provider share does not name either
+/// on its own, so text that shows one model keeps its id; a name only one
+/// model carries still does.
+/// Owner: pure unit
+#[test]
+fn a_shared_name_names_neither_model_on_its_own() {
+    with_empty_caches(|| {
+        replace_cached_provider_models_for_tests(
+            "anthropic",
+            &[
+                provider_model("claude-sol", "Claude Sol"),
+                provider_model("claude-sol-pro", "Claude Sol"),
+                provider_model("claude-fable-5", "Claude Fable 5"),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            ["claude-sol", "claude-sol-pro", "claude-fable-5"]
+                .map(|model| unambiguous_model_display_name("anthropic", model)),
+            [None, None, Some("Claude Fable 5".to_string())]
+        );
+    });
+}

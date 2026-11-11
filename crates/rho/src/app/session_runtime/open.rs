@@ -148,11 +148,18 @@ impl SessionRuntime {
         } = opening;
         let config = session_config(process_config, &host_mcp);
         let agent = build.launch.agent.clone();
-        let credentials = SessionCredentials::Read(AppCredentialStore::generation());
-        let (built, permission) = build_session(&build, &agent, &config, cwd, &added_dirs, |_| {
-            Ok(session_options_for_id(id))
-        })
+        let read = AppCredentialStore::generation();
+        let (built, permission) = build_session(
+            &build,
+            &agent,
+            &config,
+            cwd,
+            &added_dirs,
+            build.host.tool_sources,
+            |_| Ok(session_options_for_id(id)),
+        )
         .await?;
+        let credentials = SessionCredentials::opened(read, built.provider_credentials);
         let storage = match persistence {
             SessionPersistence::Saved => SessionStorage::deferred(
                 cwd.to_path_buf(),
@@ -204,14 +211,22 @@ impl SessionRuntime {
             },
             build.host.environment.credentials().as_ref(),
         )?;
-        let credentials = SessionCredentials::Read(AppCredentialStore::generation());
-        let (built, permission) =
-            build_session(&build, &agent, &config, cwd, &added_dirs, |provider| {
+        let read = AppCredentialStore::generation();
+        let (built, permission) = build_session(
+            &build,
+            &agent,
+            &config,
+            cwd,
+            &added_dirs,
+            build.host.tool_sources,
+            |provider| {
                 let snapshot = stored
                     .snapshot_for_resume(provider.identity(), prompt_cache_key(stored.id()))?;
                 Ok(SessionOptions::from_snapshot(snapshot))
-            })
-            .await?;
+            },
+        )
+        .await?;
+        let credentials = SessionCredentials::opened(read, built.provider_credentials);
         // Reported with the first turn, because hosts such as T3 Code
         // discard live updates while a load is in flight.
         let reopen_notice = built

@@ -117,6 +117,8 @@ pub(super) async fn built_with(
         prompt_template: None,
         prompt: Default::default(),
         diagnostics: RuntimeDiagnostics::new(config),
+        tool_sources: None,
+        provider_credentials: crate::app::session_assembly::ProviderCredentials::Found,
     }
 }
 
@@ -203,7 +205,8 @@ pub(in crate::app) fn test_build(config: &Config, workspace_root: &Path) -> Sess
             mcp_authorization: McpAuthorizationMode::NonInteractive,
             approvals: ApprovalPolicy::Host,
             parent_notices: None,
-            session_use: super::SessionUse::Run,
+            session_use: super::SessionUse::Run(crate::app::session_assembly::SignIn::Required),
+            tool_sources: crate::app::tools_prompt::ToolSourceLoad::Inline,
         },
         run: RunShape {
             role: SessionRole::Daemon,
