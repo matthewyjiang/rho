@@ -970,3 +970,7 @@ fn ended_early(outcome: &TurnOutcome) -> RpcError {
 #[cfg(test)]
 #[path = "open_failed_tests.rs"]
 mod open_failed_tests;
+
+#[cfg(test)]
+#[path = "restored_reopen_tests.rs"]
+mod restored_reopen_tests;

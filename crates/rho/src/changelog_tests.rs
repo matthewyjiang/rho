@@ -1,9 +1,9 @@
 use pretty_assertions::assert_eq;
 
 use super::{
-    bundled_current_display, latest_section, parse_request, section_for_latest_tag,
-    section_for_version, ChangelogGroup, ChangelogRequest, ChangelogRequestError, ChangelogSection,
-    ChangelogSource, BUNDLED_CHANGELOG,
+    bundled_current_display, current_display, latest_section, parse_request,
+    section_for_latest_tag, section_for_version, ChangelogDisplay, ChangelogGroup,
+    ChangelogRequest, ChangelogRequestError, ChangelogSection, ChangelogSource, BUNDLED_CHANGELOG,
 };
 
 const SAMPLE: &str = r#"# Changelog
@@ -118,17 +118,48 @@ fn parse_request_accepts_current_and_latest_only() {
     );
 }
 
-// Covers: the packaged changelog must include a section for this crate version.
+// Covers: the packaged changelog must resolve this crate version: to its own
+// section once released, or to the last release for a pre-release build.
 // Owner: pure unit
 #[test]
-fn bundled_changelog_contains_this_package_version() {
-    let display = bundled_current_display(env!("CARGO_PKG_VERSION"))
-        .expect("bundled changelog should include this package version");
-    assert_eq!(display.source, ChangelogSource::Bundled);
-    assert_eq!(display.section.version, env!("CARGO_PKG_VERSION"));
+fn bundled_changelog_resolves_this_package_version() {
+    let version = env!("CARGO_PKG_VERSION");
+    let display = bundled_current_display(version)
+        .expect("bundled changelog should resolve this package version");
+    let expected = section_for_version(BUNDLED_CHANGELOG, version)
+        .or_else(|| latest_section(BUNDLED_CHANGELOG));
+    assert_eq!(
+        (display.source, Some(display.section)),
+        (ChangelogSource::Bundled, expected)
+    );
     assert!(
         latest_section(BUNDLED_CHANGELOG).is_some_and(|section| !section.groups.is_empty()),
         "bundled changelog should parse at least one user-facing section"
+    );
+}
+
+// Covers: a pre-release build with no section of its own shows the last
+// release and says so; a release with no section stays an error rather
+// than showing another version's notes as its own.
+// Owner: pure unit
+#[test]
+fn unreleased_build_shows_the_last_release() {
+    let last_release = latest_section(SAMPLE).expect("the sample has release notes");
+    assert_eq!(last_release.version, "1.25.1");
+
+    assert_eq!(
+        (
+            current_display(SAMPLE, "2.0.0-dev"),
+            current_display(SAMPLE, "2.0.0"),
+        ),
+        (
+            Ok(ChangelogDisplay {
+                section: last_release,
+                source: ChangelogSource::Bundled,
+                note: Some("v2.0.0-dev is unreleased; showing the last release, v1.25.1".into()),
+            }),
+            Err("no changelog section for v2.0.0 in the bundled release notes".into()),
+        )
     );
 }
 

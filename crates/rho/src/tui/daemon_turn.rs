@@ -128,6 +128,8 @@ impl App {
         turn: &TurnPrompt,
         media: &[ChatMedia],
     ) -> anyhow::Result<()> {
+        // The person moved on from a report still on its way.
+        self.awaited_daemon_report = None;
         let Some(session) = self.info.session.daemon.as_mut() else {
             anyhow::bail!("no daemon session is open");
         };

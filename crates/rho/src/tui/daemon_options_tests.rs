@@ -217,3 +217,54 @@ fn the_model_picker_lays_offered_models_out_by_pin_and_pending_switch() {
         "a switch queued behind the turn"
     );
 }
+
+/// Who asked for the model switch whose options arrive.
+#[derive(Clone, Copy)]
+enum Switch {
+    /// `/login`, after storing credentials.
+    Login,
+    /// The person, with `/model`.
+    Model,
+    /// The person, after the daemon refused the same switch from `/login`.
+    ModelAfterRefusedLogin,
+}
+
+// Covers: a model switch this TUI asked for says where it landed, except
+// the one `/login` sent after storing credentials: its status line already
+// names the model and the credentials, and stays. A login switch the
+// daemon refused quiets nothing later (#1818).
+// Owner: tui daemon session options
+#[test]
+fn a_switch_login_asked_for_keeps_logins_status_line() {
+    const LOGIN: &str = "stored credentials for anthropic and selected anthropic/model";
+    let kept: Vec<_> = [Switch::Login, Switch::Model, Switch::ModelAfterRefusedLogin]
+        .into_iter()
+        .map(|switch| {
+            let mut app = crate::tui::tests::test_app();
+            app.show_daemon_options(options_on("openai", "api-key"));
+            let switched = options_on("anthropic", "anthropic-api-key");
+            let model = switched.model.current.clone();
+            let change = rho_protocol::SessionChange::Model {
+                model: model.clone(),
+                auth: None,
+            };
+            app.daemon_option_requests.push_back(change.clone());
+            match switch {
+                Switch::Login => app.daemon_login_selected = Some(model),
+                Switch::Model => {}
+                Switch::ModelAfterRefusedLogin => {
+                    app.daemon_login_selected = Some(model);
+                    app.finish_daemon_option_request();
+                    app.daemon_option_requests.push_back(change);
+                }
+            }
+            app.set_status(LOGIN);
+
+            app.show_daemon_options(switched);
+
+            app.last_status == LOGIN
+        })
+        .collect();
+
+    assert_eq!(kept, vec![true, false, false]);
+}

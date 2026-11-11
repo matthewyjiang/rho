@@ -391,6 +391,20 @@ impl JobRegistry {
         Ok(record.moved())
     }
 
+    /// Forgets how job `id`'s last turn ended, once the session's
+    /// conversation moved to a point of its tree that may not hold that
+    /// turn, so a later daemon that reopens the session does not tell its
+    /// clients an answer the conversation lacks. The job keeps its state
+    /// and the turn's id, which a prompt sent again with its key still
+    /// finds.
+    pub(in crate::app::daemon_host) fn forget_outcome(&self, id: &JobId) {
+        let mut jobs = self.lock();
+        if let Some(record) = jobs.get_mut(id).filter(|record| record.outcome.is_some()) {
+            record.outcome = None;
+            persist(&self.store, record);
+        }
+    }
+
     /// Forgets job `id` and deletes its record. A record that cannot be
     /// deleted is logged, and a restarted daemon lists the job again.
     pub(in crate::app::daemon_host) fn remove(&self, id: &JobId) {

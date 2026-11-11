@@ -1,5 +1,10 @@
 //! `/context` and `/hooks` against a daemon session: the daemon reads the
 //! report from the session it owns, and the overlay opens when it answers.
+//!
+//! An answer opens its overlay only while the person still waits on it:
+//! [`App::awaited_daemon_report`] names the report asked for last, and a
+//! prompt or a switch to another session stops the wait, so an answer that
+//! arrives after the person moved on is dropped.
 
 use rho_protocol::SessionReport;
 
@@ -25,7 +30,10 @@ impl App {
             .as_ref()
             .expect("a daemon report requires a session");
         match session.inspect(report) {
-            Ok(()) => self.set_status_quiet(format!("reading {}", name(report))),
+            Ok(()) => {
+                self.awaited_daemon_report = Some(report);
+                self.set_status_quiet(format!("reading {}", name(report)));
+            }
             Err(error) => self.insert_entry(&Entry::Error(format!(
                 "could not read {}: {error}",
                 name(report)
@@ -39,6 +47,12 @@ impl App {
         report: SessionReport,
         result: Result<serde_json::Value, String>,
     ) {
+        // An answer to a report the person asked for before another, or
+        // before moving on, is not what they wait on.
+        if self.awaited_daemon_report != Some(report) {
+            return;
+        }
+        self.awaited_daemon_report = None;
         // A late answer must not replace what the person opened meanwhile.
         if result.is_ok() && !matches!(self.input_ui.composer(), ComposerMode::Input) {
             return;
@@ -61,3 +75,7 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "daemon_reports_tests.rs"]
+mod tests;

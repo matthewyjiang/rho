@@ -1,8 +1,39 @@
+use pretty_assertions::assert_eq;
+
 use crate::tui::{
     daemon_events::{Rest, TurnState},
     tests::test_app,
-    Entry,
+    Entry, StreamKind,
 };
+
+// Covers: a replayed chunk that continues the message a running turn
+// streams, as a reattach's tail brings, leaves the stream knowing what it
+// said: a code block it opened stays open for the live text that follows,
+// and the turn's answer still completes the message rather than
+// mismatching it (#1818).
+// Owner: daemon transcript (tail replay into a live stream)
+#[test]
+fn a_replayed_continuation_keeps_the_stream_in_step_with_the_message() {
+    let mut app = test_app();
+    app.streams.assistant_stream.push_delta("Here:\n");
+    app.finish_streams();
+
+    app.continue_stream_with_replayed(StreamKind::Assistant, "```rust\nlet a = 1;\n");
+
+    let shown = match app.history.entries() {
+        [Entry::Assistant(reply)] => reply.text.clone(),
+        _ => String::new(),
+    };
+    let said = "Here:\n```rust\nlet a = 1;\n";
+    assert_eq!(
+        (
+            app.streams.code_fence(StreamKind::Assistant).is_open(),
+            app.streams.assistant_stream.emitted_text(),
+            shown.as_str(),
+        ),
+        (true, said, said)
+    );
+}
 
 // Covers: a reset replay during a running turn must not leave the turn's
 // start pointing into the old transcript, which stamps the duration on an

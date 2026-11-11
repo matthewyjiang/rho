@@ -298,6 +298,8 @@ pub(super) fn save_transcript(session: &LoadedSession, runtime: &SessionRuntime)
 /// The new stream then says that the session rests with no turn to show,
 /// since the job's last turn may not be part of the conversation any more
 /// and its answer must not show over it, and how full the context is now.
+/// The job forgets that turn's outcome for the same reason, so a reopened
+/// session's feed does not replay it either.
 ///
 /// [`Feed::restart`]: super::feed::Feed::restart
 pub(super) async fn restart_transcript(session: &LoadedSession, runtime: &SessionRuntime) {
@@ -317,6 +319,7 @@ pub(super) async fn restart_transcript(session: &LoadedSession, runtime: &Sessio
             .saved_history()
             .is_some_and(|saved| saved.display_rows().is_err());
     let usage = cost::priced(vec![usage], &session.id).await;
+    session.jobs.forget_outcome(&session.job);
     session.feed.restart(saved.unwrap_or_default());
     let rests = wire::SessionEvent::State {
         state: wire::JobState::Idle,
