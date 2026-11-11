@@ -97,6 +97,12 @@ pub struct SessionRenameResponse {}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionDeleteParams {
     pub session: SessionId,
+    /// Refuse a session a client is attached to, as
+    /// [`crate::ErrorCode::SessionInUse`], rather than detach its clients:
+    /// for a client that deletes sessions it is not showing and cannot
+    /// tell which of them another client has open.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unless_attached: bool,
 }
 
 /// Result of [`SESSION_DELETE`]: the session's files are gone, with those

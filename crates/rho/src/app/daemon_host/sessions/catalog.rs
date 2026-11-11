@@ -114,7 +114,10 @@ impl Sessions {
         let _reopening = self.reopening.lock(&id).await;
         let loaded = self.loaded().get(&id).cloned();
         match &loaded {
-            Some(session) => self.unload_to_delete(&id, session).await?,
+            Some(session) => {
+                self.unload_to_delete(&id, session, params.unless_attached)
+                    .await?;
+            }
             None => {
                 if let SessionJob::Busy(job) = self.jobs.session_job(&id) {
                     return Err(writing(&job, &id));
@@ -167,6 +170,7 @@ impl Sessions {
         &self,
         id: &SessionId,
         session: &Arc<LoadedSession>,
+        unless_attached: bool,
     ) -> Result<(), RpcError> {
         let held = {
             // Under the turn lock a prompt starts its turn under, so this
@@ -179,6 +183,12 @@ impl Sessions {
                 // finds another under way.
                 Some(Hold::Deleting) => return Err(being_deleted()),
                 None => {}
+            }
+            if unless_attached && session.feed.followed() {
+                return Err(RpcError::new(
+                    ErrorCode::SessionInUse,
+                    format!("session {id} is open in a client; close it there first"),
+                ));
             }
             match self.jobs.session_job(id) {
                 SessionJob::Busy(job) if job == session.job => return Err(busy(TURN_UNDER_WAY)),

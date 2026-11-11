@@ -29,13 +29,13 @@ use std::{
 
 use rho_protocol::{
     methods::{
-        ConfigSet, JobList, SessionConfigure, SessionInspect, SessionMcp, SessionPrompt,
-        SessionRename,
+        ConfigSet, JobList, SessionConfigure, SessionDelete, SessionInspect, SessionMcp,
+        SessionPrompt, SessionRename,
     },
     ClientEnvironment, ClientError, ConfigSetParams, ConfigWriter, ContentBlock, ErrorCode,
-    IdempotencyKey, JobListParams, SessionChange, SessionConfigureParams, SessionGoalAction,
-    SessionId, SessionInspectParams, SessionMcpParams, SessionPromptParams, SessionRenameParams,
-    SessionReport,
+    IdempotencyKey, JobListParams, SessionChange, SessionConfigureParams, SessionDeleteParams,
+    SessionGoalAction, SessionId, SessionInspectParams, SessionMcpParams, SessionPromptParams,
+    SessionRenameParams, SessionReport,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -133,11 +133,34 @@ enum Control {
     Rename(String),
     Jobs,
     Inspect(SessionReport),
+    /// Deletes saved sessions, in order; `result` takes each one's refusal.
+    Delete {
+        sessions: Vec<String>,
+        result: oneshot::Sender<Vec<Result<(), String>>>,
+    },
     /// A settings write; `label` names it in a refusal.
     SetConfig {
         params: ConfigSetParams,
         label: String,
     },
+}
+
+/// Deletes saved sessions through the daemon, which can let go of one it
+/// holds open: see [`DaemonRequests::deleter`].
+#[derive(Clone)]
+pub(super) struct SessionDeleter(mpsc::UnboundedSender<Control>);
+
+impl SessionDeleter {
+    /// Asks the daemon to delete each of `sessions`; one answer each, in
+    /// order, a refusal as the daemon worded it.
+    pub(super) async fn delete(&self, sessions: Vec<String>) -> Vec<Result<(), String>> {
+        let lost = vec![Err(LOST.to_owned()); sessions.len()];
+        let (result, answers) = oneshot::channel();
+        if self.0.send(Control::Delete { sessions, result }).is_err() {
+            return lost;
+        }
+        answers.await.unwrap_or(lost)
+    }
 }
 
 pub(super) struct DaemonRequests {
@@ -259,6 +282,34 @@ impl DaemonRequests {
                         let _ = control_views.send(DaemonView::Error(format!(
                             "could not rename session: {error}"
                         )));
+                    }
+                    Control::Delete { sessions, result } => {
+                        let mut answers = Vec::with_capacity(sessions.len());
+                        for session in sessions {
+                            // A session this TUI left is no longer attached;
+                            // one a client still shows, this TUI's own
+                            // included, is not this delete's to take.
+                            let params = SessionDeleteParams {
+                                session: SessionId::new(session),
+                                unless_attached: true,
+                            };
+                            let answer = on_attachment(&mut control_target, |link, _| {
+                                let params = params.clone();
+                                async move { link.request::<SessionDelete>(&params).await }
+                            })
+                            .await;
+                            answers.push(match answer {
+                                Some((_, Ok(_))) => Ok(()),
+                                // The daemon's own words name the session
+                                // and what holds it.
+                                Some((_, Err(ClientError::Rpc { error, .. }))) => {
+                                    Err(error.message)
+                                }
+                                Some((_, Err(error))) => Err(error.to_string()),
+                                None => Err(LOST.to_owned()),
+                            });
+                        }
+                        let _ = result.send(answers);
                     }
                     Control::SetConfig { mut params, label } => {
                         params.writer = Some(writer.clone());
@@ -406,6 +457,12 @@ impl DaemonRequests {
         self.control
             .send(Control::Rename(title))
             .map_err(|_| anyhow::anyhow!(LOST))
+    }
+
+    /// A handle that deletes sessions through the daemon, for work that
+    /// outlives a borrow of the session.
+    pub(super) fn deleter(&self) -> SessionDeleter {
+        SessionDeleter(self.control.clone())
     }
 
     /// Writes settings without waiting for the active turn.

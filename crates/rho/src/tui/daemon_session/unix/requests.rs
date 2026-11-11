@@ -57,6 +57,19 @@ impl DaemonSession {
             .request_jobs()
     }
 
+    /// A blocking delete of saved sessions through the daemon, which can
+    /// let go of one it holds open: one answer per id, in order. For the
+    /// blocking pool only, never a runtime thread.
+    pub(in crate::tui) fn deleter(&self) -> crate::tui::sessions_hub_tasks::DeleteHeld {
+        let deleter = self
+            .requests
+            .as_ref()
+            .expect("attached session has requests")
+            .deleter();
+        let runtime = tokio::runtime::Handle::current();
+        Box::new(move |sessions| runtime.block_on(deleter.delete(sessions)))
+    }
+
     /// Rename the session without waiting for the active turn; its
     /// `TitleChanged` event reports the new title.
     pub(in crate::tui) fn rename(&self, title: String) -> anyhow::Result<()> {

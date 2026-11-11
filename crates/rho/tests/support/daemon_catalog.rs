@@ -265,6 +265,48 @@ async fn a_rename_reaches_attached_clients_and_the_list() {
     );
 }
 
+// Covers: a delete that asks to spare attached sessions refuses one a
+// client follows, as in use, and deletes it once that client has left: a
+// client deleting sessions it is not showing never takes another's (#1667).
+// Owner: daemon session catalog.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_delete_can_spare_a_session_a_client_is_attached_to() {
+    let sandbox = Sandbox::new();
+    let client = sandbox.start_daemon("fixed").await;
+    let session = saved_session(&sandbox, &client, sandbox.workspace.clone()).await;
+    let params = SessionDeleteParams {
+        session: session.clone(),
+        unless_attached: true,
+    };
+
+    let (watcher, _notifications) = follow(&sandbox, &session).await;
+    let while_attached = call::<SessionDelete>(&client, &params)
+        .await
+        .map_err(|error| error.error_code());
+    drop(watcher);
+    // The daemon reads the watcher's close on its own task.
+    let after_it_left = tokio::time::timeout(DEADLINE, async {
+        loop {
+            match call::<SessionDelete>(&client, &params).await {
+                Err(error) if error.error_code() == Some(ErrorCode::SessionInUse) => {
+                    tokio::task::yield_now().await;
+                }
+                answer => break answer.map_err(|error| error.error_code()),
+            }
+        }
+    })
+    .await
+    .expect("the daemon noticed the watcher leave");
+
+    assert_eq!(
+        (while_attached, after_it_left),
+        (
+            Err(Some(ErrorCode::SessionInUse)),
+            Ok(rho_protocol::SessionDeleteResponse {})
+        )
+    );
+}
+
 // Covers: deleting an idle session the daemon has loaded detaches its
 // attached client as `deleted`, drops it from the list, and leaves nothing
 // to reattach, while the other session stays listed (#1670, #1667).
@@ -281,6 +323,7 @@ async fn a_delete_detaches_a_loaded_sessions_clients_and_removes_it() {
         &client,
         &SessionDeleteParams {
             session: deleted.clone(),
+            unless_attached: false,
         },
     )
     .await
@@ -335,6 +378,7 @@ async fn a_delete_removes_a_session_the_daemon_has_not_loaded() {
     let delete = || {
         let params = SessionDeleteParams {
             session: session.clone(),
+            unless_attached: false,
         };
         let client = &client;
         async move { call::<SessionDelete>(client, &params).await }
@@ -373,6 +417,7 @@ async fn a_delete_is_refused_while_the_turn_runs() {
         &client,
         &SessionDeleteParams {
             session: session.clone(),
+            unless_attached: false,
         },
     )
     .await;

@@ -28,6 +28,10 @@ impl DaemonSession {
         match *self {}
     }
 
+    pub(in crate::tui) fn deleter(&self) -> crate::tui::sessions_hub_tasks::DeleteHeld {
+        match *self {}
+    }
+
     pub(in crate::tui) fn inspect(
         &self,
         _report: rho_protocol::SessionReport,
