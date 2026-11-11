@@ -1,5 +1,5 @@
 use agent_client_protocol::{
-    schema::v1::{
+    v1::schema::{
         AvailableCommand, AvailableCommandInput, SessionConfigOptionValue, SessionId,
         SetSessionConfigOptionRequest, UnstructuredCommandInput,
     },
@@ -187,7 +187,7 @@ fn picks_become_daemon_changes() {
             "mode",
             "sideways".into(),
             Toggles::Select,
-            Err(ErrorCode::InvalidParams),
+            Err(ErrorCode::INVALID_PARAMS),
         ),
         (
             "model",
@@ -203,7 +203,7 @@ fn picks_become_daemon_changes() {
             "model",
             "anthropic/claude".into(),
             Toggles::Select,
-            Err(ErrorCode::InvalidParams),
+            Err(ErrorCode::INVALID_PARAMS),
         ),
         (
             "thought_level",
@@ -217,7 +217,7 @@ fn picks_become_daemon_changes() {
             "thought_level",
             "max".into(),
             Toggles::Select,
-            Err(ErrorCode::InvalidParams),
+            Err(ErrorCode::INVALID_PARAMS),
         ),
         (
             "fast_mode",
@@ -229,7 +229,7 @@ fn picks_become_daemon_changes() {
             "fast_mode",
             SessionConfigOptionValue::boolean(true),
             Toggles::Select,
-            Err(ErrorCode::InvalidParams),
+            Err(ErrorCode::INVALID_PARAMS),
         ),
         (
             "fast_mode",
@@ -241,13 +241,13 @@ fn picks_become_daemon_changes() {
             "fast_mode",
             "on".into(),
             Toggles::Boolean,
-            Err(ErrorCode::InvalidParams),
+            Err(ErrorCode::INVALID_PARAMS),
         ),
         (
             "verbosity",
             "high".into(),
             Toggles::Select,
-            Err(ErrorCode::InvalidParams),
+            Err(ErrorCode::INVALID_PARAMS),
         ),
     ];
     for (id, value, toggles, expected) in cases {

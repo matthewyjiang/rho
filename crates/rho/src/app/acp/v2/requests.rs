@@ -4,8 +4,8 @@
 //! Like [`super::updates`], shapes v2 only widened cross through
 //! [`super::bridge`]; redesigned ones are mapped here.
 
-use agent_client_protocol::schema::{v1, v2, ProtocolVersion};
 use agent_client_protocol::Error as AcpError;
+use agent_client_protocol::{schema::ProtocolVersion, v1::schema as v1, v2::schema as v2};
 
 use rho_protocol::SessionOptions;
 

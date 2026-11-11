@@ -24,7 +24,8 @@ mod v2;
 use std::{collections::BTreeSet, future::Future, pin::Pin, sync::Arc};
 
 use agent_client_protocol::{
-    schema::v1::{
+    schema::ProtocolVersion,
+    v1::schema::{
         AgentAuthCapabilities, AgentCapabilities, AuthenticateRequest, CancelNotification,
         CloseSessionRequest, CompleteElicitationNotification, CreateElicitationRequest,
         CreateElicitationResponse, DeleteSessionRequest, Implementation, InitializeRequest,
@@ -37,9 +38,8 @@ use agent_client_protocol::{
         SessionNotification, SessionResumeCapabilities, SetSessionConfigOptionRequest,
         SetSessionModeRequest,
     },
-    schema::ProtocolVersion,
-    Agent, Client, ConnectTo, ConnectionTo, Error as AcpError, JsonRpcResponse, Responder, Role,
-    Stdio,
+    v1::{ConnectionTo, Responder},
+    Agent, Client, ConnectTo, Error as AcpError, JsonRpcResponse, Role, Stdio,
 };
 use rho_protocol::{methods::SessionList, ChildThreads, SessionListParams, SessionPart};
 use tokio::signal::unix::{signal, Signal, SignalKind};
@@ -288,7 +288,7 @@ async fn stopped(stops: &mut ShutdownSignals, hangup: &mut Signal) {
 /// The ACP v1 agent for one connection.
 fn v1_agent(adapter: Arc<Adapter>) -> impl ConnectTo<Client> {
     Agent
-        .builder()
+        .v1()
         .name("rho")
         .on_receive_request(
             {
@@ -523,6 +523,13 @@ where
             Err(error) => responder.respond_with_error(error),
         }
     })
+}
+
+/// `resource_not_found` as ACP v1 writes it, for a session the host names
+/// that this adapter does not hold. The adapter speaks v1 on every
+/// connection, so v2 hosts get the same error.
+fn resource_not_found(uri: Option<String>) -> AcpError {
+    agent_client_protocol::v1::schema::Error::resource_not_found(uri).into()
 }
 
 fn acp_error(error: AcpError) -> anyhow::Error {

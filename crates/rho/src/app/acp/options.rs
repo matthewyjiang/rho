@@ -16,7 +16,7 @@
 //! advertised that way.
 
 use agent_client_protocol::{
-    schema::v1::{
+    v1::schema::{
         AvailableCommand, AvailableCommandInput, SessionConfigOption, SessionConfigOptionCategory,
         SessionConfigSelectOption, SessionMode, SessionModeState, SetSessionConfigOptionRequest,
         UnstructuredCommandInput,

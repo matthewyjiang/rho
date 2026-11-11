@@ -29,7 +29,7 @@ use std::{
 };
 
 use agent_client_protocol::{
-    schema::v1::{
+    v1::schema::{
         CloseSessionRequest, CloseSessionResponse, DeleteSessionRequest, DeleteSessionResponse,
         LoadSessionRequest, McpServer, MessageId, NewSessionRequest, ResumeSessionRequest,
         SessionId as AcpSessionId, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
@@ -222,7 +222,7 @@ impl Live {
         link.fence().await;
         self.inbound
             .send(Inbound::Control(control))
-            .map_err(|_| AcpError::resource_not_found(Some(self.id.as_str().to_owned())))
+            .map_err(|_| super::resource_not_found(Some(self.id.as_str().to_owned())))
     }
 }
 
@@ -292,7 +292,7 @@ impl Adapter {
         let live = self
             .sessions
             .get(&id.0)
-            .ok_or_else(|| AcpError::resource_not_found(Some(id.0.to_string())))?;
+            .ok_or_else(|| super::resource_not_found(Some(id.0.to_string())))?;
         {
             // Held across the reattach, so concurrent requests reattach once.
             let _attaching = live.attaching.lock().await;
@@ -303,7 +303,7 @@ impl Adapter {
                 Attachment::Deleted => {
                     self.sessions.remove(&id.0);
                     self.forget(&live);
-                    return Err(AcpError::resource_not_found(Some(id.0.to_string())));
+                    return Err(super::resource_not_found(Some(id.0.to_string())));
                 }
             }
         }

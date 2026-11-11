@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v1;
+use agent_client_protocol::v1::schema as v1;
 use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
 
@@ -28,6 +28,24 @@ fn v1_updates_take_their_v2_shapes() {
                 "sessionUpdate": "tool_call_update",
                 "toolCallId": "call-1",
                 "status": "completed",
+            })),
+        ),
+        (
+            "a location's first line is 1",
+            v1::SessionUpdate::ToolCallUpdate(v1::ToolCallUpdate::new(
+                "call-1",
+                v1::ToolCallUpdateFields::new().locations(vec![
+                    v1::ToolCallLocation::new("/work/notes.txt").line(0),
+                    v1::ToolCallLocation::new("/work/new.txt"),
+                ]),
+            )),
+            Some(json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call-1",
+                "locations": [
+                    {"path": "/work/notes.txt", "line": 1},
+                    {"path": "/work/new.txt"},
+                ],
             })),
         ),
         (
@@ -77,6 +95,7 @@ fn v1_updates_take_their_v2_shapes() {
             Some(json!({
                 "sessionUpdate": "available_commands_update",
                 "availableCommands": [{
+                    "type": "command",
                     "name": "compact",
                     "description": "Compact the context",
                     "input": {"type": "text", "hint": "instructions"},

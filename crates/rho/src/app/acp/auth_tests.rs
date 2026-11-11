@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v1::{AuthMethod, AuthMethodAgent, AuthMethodTerminal};
+use agent_client_protocol::v1::schema::{AuthMethod, AuthMethodAgent, AuthMethodTerminal};
 use pretty_assertions::assert_eq;
 use rho_protocol::{AuthKind, AuthStatus, AuthSummary};
 

@@ -1,6 +1,6 @@
 use std::sync::atomic::AtomicU64;
 
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     PermissionOptionKind, RequestPermissionOutcome, SelectedPermissionOutcome, SessionId, ToolKind,
 };
 use pretty_assertions::assert_eq;
@@ -54,7 +54,7 @@ fn permission_request_offers_three_options_on_the_asking_card() {
             ("reject_once", PermissionOptionKind::RejectOnce),
         ]
     );
-    let card = |request: &agent_client_protocol::schema::v1::RequestPermissionRequest| {
+    let card = |request: &agent_client_protocol::v1::schema::RequestPermissionRequest| {
         (
             request.tool_call.tool_call_id.0.to_string(),
             request.tool_call.fields.kind,

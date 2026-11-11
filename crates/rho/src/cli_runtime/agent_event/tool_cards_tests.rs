@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v1::{Terminal, ToolCallUpdateFields};
+use agent_client_protocol::v1::schema::{Terminal, ToolCallUpdateFields};
 use pretty_assertions::assert_eq;
 
 use super::*;

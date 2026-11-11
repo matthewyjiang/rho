@@ -3,7 +3,7 @@
 pub(crate) mod render;
 mod tool_cards;
 
-use agent_client_protocol::schema::v1::{SessionUpdate, StopReason};
+use agent_client_protocol::v1::schema::{SessionUpdate, StopReason};
 
 /// Protocol-level vocabulary for external agents, rendered into artifact-level
 /// `StreamEffect`s. ACP delivers updates over stdio; an in-process runtime such

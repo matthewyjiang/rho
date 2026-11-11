@@ -15,7 +15,7 @@ use std::{
 };
 
 use agent_client_protocol::{
-    schema::v1::{
+    v1::schema::{
         AuthMethod, AuthMethodAgent, AuthMethodTerminal, AuthenticateResponse,
         CompleteElicitationNotification, CreateElicitationRequest, CreateElicitationResponse,
         ElicitationAction, ElicitationId, ElicitationRequestScope, ElicitationUrlMode,

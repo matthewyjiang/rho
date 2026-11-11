@@ -10,7 +10,7 @@ use crate::{
     },
     session_environment::Ambient,
 };
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     AuthMethod, AuthMethodId, Meta, RequestPermissionRequest, SessionConfigId,
     SessionConfigValueId, SessionModeId, SessionUpdate,
 };

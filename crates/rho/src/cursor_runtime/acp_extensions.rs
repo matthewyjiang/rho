@@ -1,7 +1,7 @@
 //! Answers to Cursor's blocking ACP extensions and wire-diff normalization.
 //! Nonblocking todos/task/image requests tolerate method_not_found in Cursor.
 
-use agent_client_protocol::schema::v1::{SessionUpdate, ToolCallContent};
+use agent_client_protocol::v1::schema::{SessionUpdate, ToolCallContent};
 use serde::Serialize;
 use serde_json::Value;
 

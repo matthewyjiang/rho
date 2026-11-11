@@ -16,7 +16,7 @@
 //! Auto, Allow edits, and Supervised are refused: Rho answers agy's
 //! permission requests itself and cannot put a human in front of them.
 
-use agent_client_protocol::schema::v1::{RequestPermissionRequest, ToolKind};
+use agent_client_protocol::v1::schema::{RequestPermissionRequest, ToolKind};
 
 use crate::{
     acp_runtime::permission::PermissionDecision, agent::AntigravityTool, permission::PermissionMode,

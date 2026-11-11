@@ -15,9 +15,10 @@ mod updates;
 
 use std::{future::Future, sync::Arc};
 
-use agent_client_protocol::schema::{v1, v2};
+use agent_client_protocol::{v1::schema as v1, v2::schema as v2};
 use agent_client_protocol::{
-    Agent, Client, ConnectTo, Error as AcpError, JsonRpcResponse, Responder, V2ConnectionTo,
+    v2::{ConnectionTo as V2ConnectionTo, Responder},
+    Agent, Client, ConnectTo, Error as AcpError, JsonRpcResponse,
 };
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -177,7 +178,9 @@ pub(super) fn agent(agent: Arc<Adapter>) -> impl ConnectTo<Client> {
                             cx: V2ConnectionTo<Client>| {
                     let agent = Arc::clone(&agent);
                     let port = V2Port::new(cx.clone());
-                    let request_id = responder.id().clone();
+                    // The v1 adapter scopes its elicitations by the v1 form of
+                    // the same wire id.
+                    let request_id = v1::RequestId::from(responder.raw_id().clone());
                     // A host that cancels sign-in cancels the login with it.
                     let cancellation = responder.cancellation();
                     spawn_response(&cx, responder, async move {

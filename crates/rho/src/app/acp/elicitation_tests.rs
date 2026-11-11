@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     CreateElicitationResponse, ElicitationAcceptAction, ElicitationAction, SessionId,
 };
 use pretty_assertions::assert_eq;

@@ -5,7 +5,7 @@ use crate::acp_runtime::{
     test_support::{TestPolicy, TEST_BUDGET},
 };
 use agent_client_protocol::{
-    schema::v1::{
+    v1::schema::{
         ContentChunk, Cost, PermissionOption, PermissionOptionKind, SessionUpdate, StopReason,
         ToolCallUpdate, ToolCallUpdateFields, UsageUpdate,
     },

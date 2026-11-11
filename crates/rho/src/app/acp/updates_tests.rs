@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     AvailableCommand, AvailableCommandsUpdate, CompactionId, CompactionStatus, CompactionUpdate,
     ConfigOptionUpdate, ContentBlock, ContentChunk, Cost, CurrentModeUpdate, Diff, MessageId,
     Notice, NoticeSeverity, Plan, PlanEntry, PlanEntryPriority, PlanEntryStatus, ResourceLink,

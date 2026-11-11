@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, path::PathBuf};
 
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     ContentBlock, Cost, Plan, PlanEntryStatus, SessionUpdate, StopReason, ToolCallId, UsageUpdate,
 };
 use rho_protocol::display::{ToolCard, ToolCardStatus, ToolFamily, ToolHeader};

@@ -16,7 +16,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use agent_client_protocol::schema::v1::InitializeRequest;
+use agent_client_protocol::v1::schema::InitializeRequest;
 
 use super::AcpClientPort;
 

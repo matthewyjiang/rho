@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, path::PathBuf};
 
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     AudioContent, BlobResourceContents, ContentBlock as AcpContentBlock, EmbeddedResource,
     EmbeddedResourceResource, EnvVariable, ImageContent, McpServer as AcpMcpServer, McpServerHttp,
     McpServerStdio, ResourceLink, TextContent, TextResourceContents,

@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 
-use agent_client_protocol::schema::v1::{
+use agent_client_protocol::v1::schema::{
     BooleanPropertySchema, CreateElicitationRequest, CreateElicitationResponse, ElicitationAction,
     ElicitationContentValue, ElicitationFormMode, ElicitationSchema, ElicitationSessionScope,
     EnumOption, MultiSelectPropertySchema, SessionId, StringPropertySchema, ToolCallId,
@@ -222,7 +222,7 @@ fn select(
     title: String,
     description: Option<String>,
     defaults: Vec<String>,
-) -> agent_client_protocol::schema::v1::ElicitationPropertySchema {
+) -> agent_client_protocol::v1::schema::ElicitationPropertySchema {
     let options = question.choices.iter().map(option).collect::<Vec<_>>();
     if selection == Selection::Many {
         return MultiSelectPropertySchema::titled(options)

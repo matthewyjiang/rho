@@ -12,7 +12,7 @@ use crate::{
     subagent::RunState,
 };
 use agent_client_protocol::{
-    schema::v1::{
+    v1::schema::{
         ContentChunk, CurrentModeUpdate, PermissionOption, PermissionOptionKind,
         SessionConfigOption, SessionConfigSelectOption, SessionUpdate, StopReason, ToolCall,
         ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
@@ -488,7 +488,7 @@ async fn message_waiting_at_prompt_time_is_steered_once_the_turn_runs() {
         ..script(vec![vec![
             Step::BeforeQueued {
                 update: Box::new(SessionUpdate::Plan(
-                    agent_client_protocol::schema::v1::Plan::new(Vec::new()),
+                    agent_client_protocol::v1::schema::Plan::new(Vec::new()),
                 )),
             },
             text("working"),
