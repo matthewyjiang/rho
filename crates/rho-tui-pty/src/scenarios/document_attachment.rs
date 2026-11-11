@@ -31,32 +31,6 @@ fn drop_document_path(harness: &mut PtyHarness) -> Result<()> {
     harness.paste(&shell_escaped_path)
 }
 
-fn paste_attachment_that_goal_clear_must_discard(harness: &mut PtyHarness) -> Result<()> {
-    let path = harness
-        .working_directory()
-        .context("document scenario has no working directory")?
-        .join("must-not-leak.txt");
-    harness.paste(&path.to_string_lossy())
-}
-
-fn assert_goal_clear_discarded_attachment(harness: &mut PtyHarness) -> Result<()> {
-    let label = "[txt: must-not-leak.txt · 28 chars]";
-    let composer_rows = harness
-        .screen()
-        .rows_text()
-        .into_iter()
-        .rev()
-        .take(6)
-        .collect::<Vec<_>>();
-    if composer_rows.iter().any(|row| row.contains(label)) {
-        anyhow::bail!(
-            "/goal clear left queued media in the composer:\n{}",
-            harness.screen().contents()
-        );
-    }
-    Ok(())
-}
-
 const DOCUMENT_ATTACHMENT_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -82,22 +56,6 @@ const DOCUMENT_ATTACHMENT_STEPS: &[Step] = &[
         quiet_for: Duration::from_millis(200),
         timeout: SETTLE,
     },
-    Step::Phase("goal_clear_discards_attachment"),
-    Step::Custom(paste_attachment_that_goal_clear_must_discard),
-    Step::WaitText {
-        text: "[txt: must-not-leak.txt · 28 chars]",
-        timeout: SETTLE,
-    },
-    Step::SubmitText("/goal clear"),
-    Step::WaitText {
-        text: "no active goal",
-        timeout: SETTLE,
-    },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(100),
-        timeout: SETTLE,
-    },
-    Step::Custom(assert_goal_clear_discarded_attachment),
     Step::ExitCommand,
 ];
 

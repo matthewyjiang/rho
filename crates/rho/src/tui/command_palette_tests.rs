@@ -3,18 +3,18 @@ use crate::tui::composer_buffer::ComposerEditKey;
 use pretty_assertions::assert_eq;
 
 #[test]
-fn goal_lifecycle_action_completion_replaces_placeholder() {
+fn argument_choice_completion_replaces_placeholder() {
     let mut app = test_app();
-    app.input_ui.set_text("/goal ".to_string());
+    app.input_ui.set_text("/codemode ".to_string());
     app.input_ui.set_cursor(app.input_ui.text().chars().count());
     app.clamp_command_selection();
     app.input_ui.move_command_selection(1);
 
-    let clear = app.selected_command().unwrap();
-    app.complete_command_choice(&clear);
+    let on = app.selected_command().unwrap();
+    app.complete_command_choice(&on);
 
-    assert_eq!(app.input_ui.text(), "/goal clear");
-    assert_eq!(app.input_ui.cursor(), "/goal clear".chars().count());
+    assert_eq!(app.input_ui.text(), "/codemode on");
+    assert_eq!(app.input_ui.cursor(), "/codemode on".chars().count());
     assert_eq!(
         app.input_ui.submission_mode(),
         InputSubmissionMode::ParseCommands
@@ -206,7 +206,7 @@ fn dismiss_on_esc_clears_only_a_bare_slash() {
 #[test]
 fn enter_keeps_bare_command_until_an_argument_row_is_picked() {
     let mut app = test_app();
-    app.input_ui.set_text("/goal ".to_string());
+    app.input_ui.set_text("/codemode ".to_string());
     app.input_ui.set_cursor(app.input_ui.text().chars().count());
     app.clamp_command_selection();
     let matches = app.command_matches();
@@ -218,7 +218,7 @@ fn enter_keeps_bare_command_until_an_argument_row_is_picked() {
 
     // Moving the cursor back into the command token changes the palette
     // question, so the pick does not survive it.
-    app.input_ui.set_text("/goal".to_string());
+    app.input_ui.set_text("/codemode".to_string());
     app.input_ui.set_cursor(app.input_ui.text().chars().count());
     app.input_changed();
     assert!(!app.input_ui.command_selection_explicit());
@@ -230,7 +230,7 @@ fn enter_keeps_bare_command_until_an_argument_row_is_picked() {
 #[test]
 fn clamping_below_a_pick_drops_the_explicit_flag() {
     let mut app = test_app();
-    app.input_ui.set_text("/goal ".to_string());
+    app.input_ui.set_text("/codemode ".to_string());
     app.input_ui.set_cursor(app.input_ui.text().chars().count());
     app.clamp_command_selection();
     app.input_ui.move_command_selection(1);

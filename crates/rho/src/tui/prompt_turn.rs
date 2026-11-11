@@ -1,36 +1,22 @@
 use super::program_status::ProgramStatus;
 use super::subagent_delivery::TurnBoundaryDelivery;
 use super::*;
-use crate::app::interactive_runtime::DisplayCommit;
 
 #[path = "turn_continuation.rs"]
 mod continuation;
 
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct FailedTurn {
-    /// Failure text belongs to the outcome, not terminal-reporting side effects.
-    message: String,
+/// What one provider turn sends: the model input, and the rows the session
+/// saves and shows for it.
+struct OutgoingTurn {
     input: rho_sdk::UserInput,
     display_user: Vec<Message>,
-    display_commit: DisplayCommit,
     notification_context: Option<String>,
-    boundary_recovery: Vec<BoundaryRecovery>,
     /// Skills its host batch loads before the first model request.
     skills: Vec<String>,
     generate_session_title_after_completion: bool,
-    session_title_user: Option<String>,
-    /// Keep action-request retries runnable even after delivery consumed the notice.
-    parent_action_required: bool,
 }
 
-/// Accepted in-turn input is replayed only if its durable checkpoint was lost.
-#[derive(Clone, Debug, PartialEq)]
-struct BoundaryRecovery {
-    model: String,
-    display: Message,
-}
-
-impl FailedTurn {
+impl OutgoingTurn {
     fn from_prompt(prompt: TurnPrompt, media: Vec<ChatMedia>) -> Result<Self, rho_sdk::Error> {
         let display = prompt.persisted_display.unwrap_or(prompt.display);
         let mut display_content = Vec::with_capacity(1 + media.len());
@@ -44,23 +30,12 @@ impl FailedTurn {
         model_content.extend(media.into_iter().map(ChatMedia::model_block));
 
         Ok(Self {
-            message: String::new(),
             input: rho_sdk::UserInput::content(model_content)?,
             display_user: vec![Message::User(display_content)],
-            display_commit: DisplayCommit::Unsaved,
             notification_context: None,
-            boundary_recovery: Vec::new(),
             skills: prompt.skills,
             generate_session_title_after_completion: false,
-            session_title_user: None,
-            parent_action_required: false,
         })
-    }
-
-    /// Newer failed deliveries can precede an action retry. Keep the queue
-    /// runnable until every action retry has been consumed.
-    pub(super) fn retries_need_parent_action(retries: &VecDeque<Self>) -> bool {
-        retries.iter().any(|retry| retry.parent_action_required)
     }
 
     fn session_title_user_message(&self) -> String {
@@ -69,7 +44,7 @@ impl FailedTurn {
             .iter()
             .find(|message| matches!(message, Message::User(_)))
         else {
-            return self.session_title_user.clone().unwrap_or_default();
+            return String::new();
         };
         blocks
             .iter()
@@ -81,41 +56,6 @@ impl FailedTurn {
             .join("\n")
     }
 
-    /// Retry model input even when its display is already saved. Unsaved display
-    /// must travel with the next attempt so persistence can recover it.
-    fn prepare_retry(&mut self) {
-        if self.generate_session_title_after_completion
-            && !matches!(self.display_commit, DisplayCommit::Unsaved)
-        {
-            self.session_title_user = Some(self.session_title_user_message());
-        }
-        match std::mem::take(&mut self.display_commit) {
-            DisplayCommit::Unsaved => {}
-            DisplayCommit::Complete => {
-                self.display_user.clear();
-                self.boundary_recovery.clear();
-            }
-            DisplayCommit::Checkpoint(saved) => {
-                for message in saved {
-                    if let Some(index) = self
-                        .display_user
-                        .iter()
-                        .position(|display| display == &message)
-                    {
-                        self.display_user.remove(index);
-                    }
-                    if let Some(index) = self
-                        .boundary_recovery
-                        .iter()
-                        .position(|recovery| recovery.display == message)
-                    {
-                        self.boundary_recovery.remove(index);
-                    }
-                }
-            }
-        }
-    }
-
     fn attach_notification_context(&mut self, notification: String) {
         self.notification_context = Some(crate::tools::agent::merge_notification_context(
             self.notification_context.as_deref(),
@@ -124,14 +64,7 @@ impl FailedTurn {
     }
 
     fn model_input(&self) -> Result<rho_sdk::UserInput, rho_sdk::Error> {
-        let mut notification = self.notification_context.clone();
-        for recovery in &self.boundary_recovery {
-            notification = Some(crate::tools::agent::merge_notification_context(
-                notification.as_deref(),
-                &recovery.model,
-            ));
-        }
-        let Some(notification) = notification else {
+        let Some(notification) = self.notification_context.clone() else {
             return Ok(self.input.clone());
         };
         let mut content = Vec::with_capacity(1 + self.input.blocks().len());
@@ -147,7 +80,6 @@ enum PromptTurnRequest {
         media: Vec<ChatMedia>,
     },
     Boundary(TurnBoundaryDelivery),
-    Retry(FailedTurn),
 }
 
 async fn questionnaire_reply(
@@ -210,22 +142,6 @@ impl App {
         .await
     }
 
-    pub(super) async fn retry_failed_prompt_turn(
-        &mut self,
-        failed_turn: FailedTurn,
-        authorization: super::send_confirm::SendAuthorization,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<TurnOutcome> {
-        self.run_prompt_turn_request(
-            PromptTurnRequest::Retry(failed_turn),
-            authorization,
-            terminal,
-            agent,
-        )
-        .await
-    }
-
     fn run_single_prompt_turn_request<'a>(
         &'a mut self,
         request: PromptTurnRequest,
@@ -253,7 +169,7 @@ impl App {
             }
             anyhow::bail!("send authorization became stale before provider start");
         }
-        let (mut failed_turn, prepared_boundary) = match request {
+        let (mut outgoing, prepared_boundary) = match request {
             PromptTurnRequest::New { prompt, media } => {
                 if !prompt.history.is_empty() {
                     self.push_input_history(&prompt.history);
@@ -271,10 +187,10 @@ impl App {
                     &prompt.display,
                     &media,
                 )));
-                let mut failed_turn = FailedTurn::from_prompt(prompt, media)?;
-                failed_turn.generate_session_title_after_completion =
+                let mut outgoing = OutgoingTurn::from_prompt(prompt, media)?;
+                outgoing.generate_session_title_after_completion =
                     generate_session_title_after_completion;
-                (failed_turn, None)
+                (outgoing, None)
             }
             PromptTurnRequest::Boundary(delivery) => {
                 if let Err(error) = self.ensure_session(agent) {
@@ -282,45 +198,28 @@ impl App {
                     return Err(error);
                 }
                 self.sync_herdr_session().await;
-                let failed_turn = FailedTurn {
-                    message: String::new(),
+                let outgoing = OutgoingTurn {
                     input: rho_sdk::UserInput::text(delivery.model.clone()),
                     display_user: vec![delivery.transcript.display_message()],
-                    display_commit: DisplayCommit::Unsaved,
                     notification_context: None,
-                    boundary_recovery: Vec::new(),
                     skills: Vec::new(),
                     generate_session_title_after_completion: false,
-                    session_title_user: None,
-                    parent_action_required: false,
                 };
-                (failed_turn, Some(delivery))
-            }
-            PromptTurnRequest::Retry(mut failed_turn) => {
-                self.ensure_session(agent)?;
-                self.sync_herdr_session().await;
-                self.insert_entry(&Entry::Notice(
-                    "retrying the previous goal turn without duplicating the prompt".into(),
-                ));
-                failed_turn.prepare_retry();
-                (failed_turn, None)
+                (outgoing, Some(delivery))
             }
         };
 
         // A prepared standalone turn already owns its model and display input.
-        // Human turns and retries fold new arrivals in without replacing the human.
+        // Human turns fold new arrivals in without replacing the human.
         let mut pending_boundary = prepared_boundary.or_else(|| {
             let delivery = self.collect_turn_boundary_prompts(agent)?;
-            failed_turn.attach_notification_context(delivery.model.clone());
-            failed_turn
+            outgoing.attach_notification_context(delivery.model.clone());
+            outgoing
                 .display_user
                 .push(delivery.transcript.display_message());
             Some(delivery)
         });
-        failed_turn.parent_action_required |= pending_boundary
-            .as_ref()
-            .is_some_and(|boundary| boundary.batch.requires_parent_action());
-        let model_input = match failed_turn.model_input() {
+        let model_input = match outgoing.model_input() {
             Ok(input) => input,
             Err(error) => {
                 if let Some(boundary) = pending_boundary.take() {
@@ -349,8 +248,8 @@ impl App {
         let mut boundary_requests = match agent
             .start_with_boundary_inputs(
                 model_input,
-                Some(failed_turn.display_user.clone()),
-                failed_turn
+                Some(outgoing.display_user.clone()),
+                outgoing
                     .skills
                     .iter()
                     .map(|name| crate::skills::mention::load_call(name))
@@ -484,12 +383,7 @@ impl App {
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }
                 Some(request) = boundary_requests.recv() => {
-                    if let Some((model, transcript)) = self.deliver_running_boundary(request, agent).await {
-                        // Acceptance is not a durable save. Retain findings and
-                        // display receipts if this run later rolls back and retries.
-                        let display = transcript.display_message();
-                        failed_turn.display_user.push(display.clone());
-                        failed_turn.boundary_recovery.push(BoundaryRecovery { model, display });
+                    if let Some(transcript) = self.deliver_running_boundary(request, agent).await {
                         pending_boundary_display.push_back(transcript);
                     }
                 }
@@ -638,7 +532,6 @@ impl App {
         self.turn.clear_tool_calls();
         tool_call_active.store(false, Ordering::SeqCst);
         let result = agent.finish_run().await;
-        failed_turn.display_commit = agent.take_last_turn_display_commit();
         let inline_shell_error = match self.finish_all_inline_shells().await {
             Ok(()) => self.insert_deferred_inline_shell_context(agent).err(),
             Err(error) => Some(error),
@@ -654,7 +547,6 @@ impl App {
                     inline_shell_error
                         .expect("inline shell error checked above")
                         .to_string(),
-                    failed_turn,
                     interrupted_tool_entries,
                 );
                 self.debug_assert_provider_turn_sync(agent);
@@ -670,9 +562,9 @@ impl App {
                 if let Some(elapsed) = turn_elapsed {
                     self.attach_turn_worked(elapsed);
                 }
-                if failed_turn.generate_session_title_after_completion {
+                if outgoing.generate_session_title_after_completion {
                     self.start_session_title_generation(
-                        &failed_turn.session_title_user_message(),
+                        &outgoing.session_title_user_message(),
                         outcome.text(),
                         agent,
                     );
@@ -694,15 +586,10 @@ impl App {
                 self.debug_assert_provider_turn_sync(agent);
                 self.turn.stop_loading();
                 self.finish_streams();
-                let notice = if self.goal.is_some() {
-                    "questionnaire cancelled; goal left active"
-                } else {
-                    "questionnaire cancelled"
-                };
                 self.retain_interrupted_tools(interrupted_tool_entries);
                 self.reset_streams();
                 self.turn.set_current_turn_start(None);
-                self.set_status(notice);
+                self.set_status("questionnaire cancelled");
                 TurnOutcome::Cancelled
             }
             Err(error)
@@ -727,8 +614,7 @@ impl App {
                     Ok(_) => "model run failed".into(),
                     Err(error) => error.to_string(),
                 });
-                let outcome =
-                    self.finalize_failed_turn(message, failed_turn, interrupted_tool_entries);
+                let outcome = self.finalize_failed_turn(message, interrupted_tool_entries);
                 self.debug_assert_provider_turn_sync(agent);
                 outcome
             }
@@ -746,7 +632,10 @@ impl App {
         }
         self.insert_cache_miss_notices(completed);
         self.insert_runtime_notices(agent);
-        if matches!(&outcome, TurnOutcome::Failed(_) | TurnOutcome::Cancelled) {
+        if matches!(
+            &outcome,
+            TurnOutcome::Failed { .. } | TurnOutcome::Cancelled
+        ) {
             self.preserve_unapplied_steering_as_follow_ups();
         }
         self.clear_accepted_steering();
@@ -797,7 +686,6 @@ impl App {
     fn finalize_failed_turn(
         &mut self,
         message: String,
-        mut failed_turn: FailedTurn,
         interrupted_tool_entries: Vec<ToolEntry>,
     ) -> TurnOutcome {
         self.finish_streams();
@@ -808,8 +696,7 @@ impl App {
         self.turn.stop_loading();
         self.insert_entry(&Entry::Error(message.clone()));
         self.set_status("error");
-        failed_turn.message = message;
-        TurnOutcome::Failed(Box::new(failed_turn))
+        TurnOutcome::Failed { message }
     }
 
     /// Both terminal attention channels defer settlement until the next input wait.
@@ -817,8 +704,8 @@ impl App {
         self.settled_program_status = match outcome {
             TurnOutcome::Completed => ProgramStatus::Done,
             TurnOutcome::Interrupted | TurnOutcome::Cancelled => ProgramStatus::Idle,
-            TurnOutcome::Failed(turn) => ProgramStatus::Error {
-                message: turn.message.clone(),
+            TurnOutcome::Failed { message } => ProgramStatus::Error {
+                message: message.clone(),
             },
         };
         self.notifier.turn_finished();

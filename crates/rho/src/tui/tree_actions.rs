@@ -145,7 +145,6 @@ impl App {
         self.input_ui.set_cursor(0);
         self.input_ui.set_command_palette_dismissed(false);
         self.reset_streams();
-        self.goal = None;
         self.reset_usage();
         self.usage.current_context = None;
         self.set_history_entries(entries);

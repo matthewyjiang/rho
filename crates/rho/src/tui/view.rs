@@ -27,8 +27,8 @@ use super::{
 };
 use super::{
     history_cache::{HistoryLineSlice, HistoryRenderSettings},
-    App, CodeBlockCopyTarget, ComposerMode, Entry, GoalStatus, LineFill, ReasoningChrome,
-    SessionHeaderCache, StreamKind, Theme,
+    App, CodeBlockCopyTarget, ComposerMode, Entry, LineFill, ReasoningChrome, SessionHeaderCache,
+    StreamKind, Theme,
 };
 #[cfg(test)]
 use super::{ActiveFrame, DEFAULT_TUI_HEIGHT};
@@ -902,19 +902,6 @@ impl App {
             .visible_start(history_len, height)
     }
 
-    fn goal_status(&self) -> Option<GoalStatus> {
-        if self.info.session.daemon.is_some() {
-            return self
-                .daemon_goal()
-                .map(super::daemon_goal::daemon_goal_status);
-        }
-        self.goal.as_ref().map(|goal| GoalStatus {
-            turns: goal.turns,
-            elapsed: goal.elapsed(),
-            blocked: goal.is_blocked(),
-        })
-    }
-
     fn refresh_statusline_state(&mut self) {
         self.statusline
             .update_signed_in(self.setup_state().signed_in);
@@ -957,8 +944,7 @@ impl App {
     }
 
     pub(super) fn statusline_lines(&mut self, width: usize) -> &[Line<'static>] {
-        let goal = self.goal_status();
         self.refresh_statusline_state();
-        self.statusline.lines(width, goal)
+        self.statusline.lines(width)
     }
 }

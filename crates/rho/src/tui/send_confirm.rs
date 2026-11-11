@@ -25,9 +25,9 @@ use rho_sdk::SessionId;
 mod daemon;
 
 use super::{
-    prompt_turn::FailedTurn, subagent_delivery::TurnBoundaryDelivery, App, ChatMedia, ComposerMode,
-    Entry, InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending,
-    InteractiveRuntime, PasteSegment, TurnOutcome, TurnPrompt,
+    subagent_delivery::TurnBoundaryDelivery, App, ChatMedia, ComposerMode, Entry, InlineChoice,
+    InlineChoiceModal, InlineChoiceOption, InlineChoicePending, InteractiveRuntime, PasteSegment,
+    TurnPrompt,
 };
 
 pub(super) const ACTION_SEND: &str = "send";
@@ -80,23 +80,8 @@ pub(super) enum SendPayload {
         turn: TurnPrompt,
         media: Vec<ChatMedia>,
         paste_segments: Vec<PasteSegment>,
-        origin: TurnOrigin,
     },
-    GoalRetry(FailedTurn),
     TurnBoundary(TurnBoundaryDelivery),
-}
-
-/// Origin of a submitted turn and the state transition to apply on cancellation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum TurnOrigin {
-    /// Return the exact user-authored prompt to the composer.
-    User,
-    /// Remove the goal that was created before its first turn was gated.
-    InitialGoal,
-    /// Put a blocked goal back into its pre-verification state.
-    GoalResume,
-    /// Drop a model-generated continuation; it was never composer input.
-    GoalContinuation,
 }
 
 #[derive(Clone, Copy)]
@@ -134,45 +119,14 @@ impl SendSubmission {
         media: Vec<ChatMedia>,
         paste_segments: Vec<PasteSegment>,
     ) -> Self {
-        Self::turn_with_origin(turn, media, paste_segments, TurnOrigin::User)
-    }
-
-    pub(super) fn initial_goal(turn: TurnPrompt, media: Vec<ChatMedia>) -> Self {
-        Self::turn_with_origin(turn, media, Vec::new(), TurnOrigin::InitialGoal)
-    }
-
-    pub(super) fn goal_resume(turn: TurnPrompt) -> Self {
-        Self::turn_with_origin(turn, Vec::new(), Vec::new(), TurnOrigin::GoalResume)
-    }
-
-    pub(super) fn goal_continuation(turn: TurnPrompt) -> Self {
-        Self::turn_with_origin(turn, Vec::new(), Vec::new(), TurnOrigin::GoalContinuation)
-    }
-
-    fn turn_with_origin(
-        turn: TurnPrompt,
-        media: Vec<ChatMedia>,
-        paste_segments: Vec<PasteSegment>,
-        origin: TurnOrigin,
-    ) -> Self {
         Self {
             payload: SendPayload::Turn {
                 turn,
                 media,
                 paste_segments,
-                origin,
             },
             approved_for: None,
             allow_auto_compact: true,
-            compact_consent: None,
-        }
-    }
-
-    pub(super) fn goal_retry(failed_turn: FailedTurn) -> Self {
-        Self {
-            payload: SendPayload::GoalRetry(failed_turn),
-            approved_for: None,
-            allow_auto_compact: false,
             compact_consent: None,
         }
     }
@@ -215,7 +169,7 @@ impl SendSubmission {
     pub(super) fn turn_display(&self) -> Option<&str> {
         match &self.payload {
             SendPayload::Turn { turn, .. } => Some(&turn.display),
-            SendPayload::GoalRetry(_) | SendPayload::TurnBoundary(_) => None,
+            SendPayload::TurnBoundary(_) => None,
         }
     }
 }
@@ -451,84 +405,34 @@ impl App {
                 turn,
                 media,
                 paste_segments,
-                origin,
-            } => match origin {
-                TurnOrigin::User => {
-                    if allow_auto_compact {
-                        self.run_turn_sequence_after_send_gate(
-                            turn,
-                            media,
-                            paste_segments,
-                            authorization,
-                            terminal,
-                            agent,
-                        )
-                        .await
-                    } else {
-                        self.run_turn_sequence_without_auto_compact(
-                            turn,
-                            media,
-                            authorization,
-                            terminal,
-                            agent,
-                        )
-                        .await
-                    }
-                }
-                TurnOrigin::InitialGoal | TurnOrigin::GoalContinuation => {
-                    let outcome = self
-                        .run_prompt_turn(turn, media, authorization, terminal, agent)
-                        .await?;
-                    self.resume_goal_after_confirmed_turn(outcome, terminal, agent)
-                        .await
-                }
-                TurnOrigin::GoalResume => {
-                    let outcome = self
-                        .run_prompt_turn(turn, media, authorization, terminal, agent)
-                        .await?;
-                    self.finish_goal_resumption_turn(outcome.kind());
-                    self.resume_goal_after_confirmed_turn(outcome, terminal, agent)
-                        .await
-                }
-            },
-            SendPayload::GoalRetry(failed_turn) => {
-                let outcome = self
-                    .retry_failed_prompt_turn(failed_turn, authorization, terminal, agent)
-                    .await?;
-                self.resume_goal_after_confirmed_turn(outcome, terminal, agent)
+            } => {
+                if allow_auto_compact {
+                    self.run_turn_sequence_after_send_gate(
+                        turn,
+                        media,
+                        paste_segments,
+                        authorization,
+                        terminal,
+                        agent,
+                    )
                     .await
+                } else {
+                    self.run_turn_sequence_without_auto_compact(
+                        turn,
+                        media,
+                        authorization,
+                        terminal,
+                        agent,
+                    )
+                    .await
+                }
             }
             SendPayload::TurnBoundary(delivery) => {
-                let outcome = self
-                    .run_turn_boundary_prompt_turn(delivery, authorization, terminal, agent)
+                self.run_turn_boundary_prompt_turn(delivery, authorization, terminal, agent)
                     .await?;
-                self.resume_goal_after_confirmed_turn(outcome, terminal, agent)
-                    .await
+                Ok(())
             }
         }
-    }
-
-    async fn resume_goal_after_confirmed_turn(
-        &mut self,
-        outcome: TurnOutcome,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let outcome_kind = outcome.kind();
-        let pending_retries = match outcome {
-            TurnOutcome::Failed(failed_turn) => std::collections::VecDeque::from([*failed_turn]),
-            TurnOutcome::Completed | TurnOutcome::Interrupted | TurnOutcome::Cancelled => {
-                std::collections::VecDeque::new()
-            }
-        };
-        if super::goal_command::should_resume_goal_after_turn(
-            outcome_kind,
-            self.goal.as_ref().map(super::GoalState::loop_state),
-            self.should_quit,
-        ) {
-            self.continue_goal(terminal, agent, pending_retries).await?;
-        }
-        Ok(())
     }
 
     pub(super) fn cancel_send_submission(
@@ -558,7 +462,6 @@ impl App {
                 turn,
                 media,
                 paste_segments,
-                origin,
             } => {
                 let prompt = super::QueuedPrompt {
                     prompt: turn.model,
@@ -566,9 +469,8 @@ impl App {
                     paste_segments,
                     media,
                 };
-                self.apply_turn_cancellation(origin, prompt, source);
+                self.apply_turn_cancellation(prompt, source);
             }
-            SendPayload::GoalRetry(_) => self.set_status("goal retry cancelled"),
             SendPayload::TurnBoundary(delivery) => {
                 self.restore_turn_boundary_batch(agent, delivery.batch);
                 self.set_status("send cancelled");
@@ -576,42 +478,7 @@ impl App {
         }
     }
 
-    fn apply_turn_cancellation(
-        &mut self,
-        origin: TurnOrigin,
-        prompt: super::QueuedPrompt,
-        source: CancellationSource,
-    ) {
-        match origin {
-            TurnOrigin::InitialGoal => {
-                self.goal = None;
-            }
-            TurnOrigin::GoalResume => {
-                if let Some(goal) = self.goal.as_mut() {
-                    goal.interrupt_verification();
-                }
-            }
-            TurnOrigin::User | TurnOrigin::GoalContinuation => {}
-        }
-
-        if matches!(origin, TurnOrigin::GoalContinuation) {
-            self.set_status("goal continuation cancelled");
-            return;
-        }
-
-        // Goal-owned turns carry synthetic model prompts whose display text is
-        // only a command label. If a compact-time draft occupies the composer,
-        // putting that synthetic prompt into the ordinary editable queue would
-        // erase its origin and later run it as a normal user message. Roll back
-        // the goal state above and leave the newer draft intact instead.
-        if matches!(source, CancellationSource::Compact)
-            && !self.composer_available_for_pending_edit()
-            && !matches!(origin, TurnOrigin::User)
-        {
-            self.set_status("goal send cancelled; current draft preserved");
-            return;
-        }
-
+    fn apply_turn_cancellation(&mut self, prompt: super::QueuedPrompt, source: CancellationSource) {
         match source {
             CancellationSource::DirectConfirmation => self.restore_pending_prompt(prompt),
             CancellationSource::Compact if self.composer_available_for_pending_edit() => {

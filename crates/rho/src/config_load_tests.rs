@@ -316,7 +316,7 @@ auth = "anthropic-api-key"
 fn internal_agents_that_cannot_delegate_fall_back_to_the_rho_runtime() {
     let (config, warnings) = parse_settings(
         r#"
-[internal_agents.goal-judge]
+[internal_agents.compaction]
 runtime = "claude-cli"
 model = "opus"
 "#,
@@ -324,7 +324,7 @@ model = "opus"
     .unwrap();
 
     assert_eq!(
-        conversation_triple(&config, "goal-judge"),
+        conversation_triple(&config, "compaction"),
         (
             config.provider.clone(),
             config.model.clone(),
@@ -336,7 +336,7 @@ model = "opus"
         vec![ConfigWarning::Normalized {
             key: "internal_agents.runtime",
             from: "\"claude-cli\"".into(),
-            to: "\"rho\" with the conversation selection; agent 'goal-judge' cannot delegate"
+            to: "\"rho\" with the conversation selection; agent 'compaction' cannot delegate"
                 .into(),
         }]
     );
@@ -419,7 +419,7 @@ model = "@deep"
 deep = "anthropic/claude-opus-4-8"
 fast = "gpt-5.5-mini"
 
-[internal_agents.goal-judge]
+[internal_agents.compaction]
 reasoning = "high"
 "#,
     )
@@ -434,7 +434,7 @@ reasoning = "high"
                 .internal_agent_model("plugin-deep")
                 .and_then(crate::config::InternalAgentModelConfig::rho)
                 .map(|rho| (rho.provider.as_str(), rho.model.as_str())),
-            conversation_triple(&config, "goal-judge"),
+            conversation_triple(&config, "compaction"),
         ),
         (
             None,
@@ -459,6 +459,25 @@ reasoning = "high"
             })
             .to_vec()
     );
+}
+
+// Covers: a `goal-judge` table left from before `/goal` was removed, empty as
+// the old full example had it or filled in, loads without an entry and
+// without the catalog-agent warning. Owner: config load
+#[test]
+fn a_leftover_goal_judge_table_is_dropped_quietly() {
+    for table in [
+        "[internal_agents.goal-judge]\n",
+        "[internal_agents.goal-judge]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\n",
+    ] {
+        let (config, warnings) = parse_settings(table).unwrap();
+
+        assert_eq!(
+            (config.internal_agent_model("goal-judge"), warnings),
+            (None, Vec::new()),
+            "{table}"
+        );
+    }
 }
 
 // Covers: a custom host configured before Rho shipped a built-in of the same

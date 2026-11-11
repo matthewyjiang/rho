@@ -829,7 +829,6 @@ impl Service for AttachService {
                     available: Vec::new(),
                 },
                 commands: Vec::new(),
-                goal: None,
                 added_dirs: Vec::new(),
             },
         };

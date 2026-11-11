@@ -37,7 +37,6 @@ impl App {
         self.start_follow_ups = None;
         self.daemon_compact_handoff = false;
         self.pending.clear_follow_ups();
-        self.goal = None;
         self.pending.clear_steering();
         self.pending.clear_input_action();
         self.pending_input_changed();

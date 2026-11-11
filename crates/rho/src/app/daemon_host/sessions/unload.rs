@@ -106,7 +106,6 @@ impl Sessions {
         let idle_since = {
             let mut turn = session.turn();
             let busy = matches!(self.jobs.session_job(id), SessionJob::Busy(_))
-                || session.has_goal()
                 || turn.hold.is_some()
                 || session.feed.followed()
                 || session.runtime_keeps_loaded();
@@ -165,10 +164,10 @@ impl Sessions {
 impl Sessions {
     /// How many loaded sessions with no turn under way have work of their
     /// own a restart would cut short, which keeps an upgrade waiting
-    /// (#1713): background work their prompts started, a goal, a queued
-    /// settings change, or, for one a client follows, nothing saved yet, so
-    /// a restarted daemon could not reopen it for that client. Turns under
-    /// way are the job registry's to count.
+    /// (#1713): background work their prompts started, a queued settings
+    /// change, or, for one a client follows, nothing saved yet, so a
+    /// restarted daemon could not reopen it for that client. Turns under way
+    /// are the job registry's to count.
     pub(in crate::app::daemon_host) fn upgrade_blockers(&self) -> usize {
         // Collected first: the turn lock comes before `loaded`, never after.
         let loaded: Vec<_> = self
@@ -190,7 +189,7 @@ impl LoadedSession {
     /// Whether restarting the daemon would cut short work of the session's
     /// own; see [`Sessions::upgrade_blockers`].
     fn keeps_upgrade_waiting(&self) -> bool {
-        if self.has_goal() || self.turn().hold.is_some() {
+        if self.turn().hold.is_some() {
             return true;
         }
         match self.runtime.try_lock() {

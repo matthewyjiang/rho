@@ -112,13 +112,11 @@ fn plan_exit_keep_planning() {
     assert_pass("plan_exit_keep_planning");
 }
 
-// Covers: handoff from both goal and idle completion drivers must run before returning.
+// Covers: handoff from the idle completion driver must run before returning.
 // Owner: interactive turn orchestration (PTY).
 #[test]
-fn plan_exit_non_composer_drivers() {
-    for scenario in ["plan_exit_goal", "plan_exit_idle_completion"] {
-        assert_pass(scenario);
-    }
+fn plan_exit_idle_completion_driver() {
+    assert_pass("plan_exit_idle_completion");
 }
 
 // Covers: a proposal turn failing after approval must discard intent, not execute.
@@ -301,17 +299,12 @@ fn daemon_plan_exit_approve_carries_feedback() {
     assert_pass("daemon_plan_exit_approve");
 }
 
-// Covers: with RHO_TUI_DAEMON=1, /goal and a delegated child's completion
-// hand an approved plan to the implementation turn.
+// Covers: with RHO_TUI_DAEMON=1, a delegated child's completion hands an
+// approved plan to the implementation turn.
 // Owner: interactive TUI as a daemon client (#1667)
 #[test]
-fn daemon_plan_exit_non_composer_drivers() {
-    for scenario in [
-        "daemon_plan_exit_goal",
-        "daemon_plan_exit_delegated_completion",
-    ] {
-        assert_pass(scenario);
-    }
+fn daemon_plan_exit_delegated_completion_driver() {
+    assert_pass("daemon_plan_exit_delegated_completion");
 }
 
 // Covers: with RHO_TUI_DAEMON=1, a proposal turn failing after approval
@@ -1018,42 +1011,6 @@ fn disabled_skill_command(host: SessionHost) {
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
-// Covers: a goal is judged only after its delegated run reported, in process
-// and on a daemon session, whose prompts end while their subagents run.
-// Owner: goal loop (TUI in process, daemon goal controller) (PTY)
-#[test]
-fn goal_waits_for_subagents_before_evaluation() {
-    for scenario in [
-        "goal_waits_for_subagents",
-        "daemon_goal_waits_for_subagents",
-    ] {
-        assert_pass(scenario);
-    }
-}
-
-// Covers: a goal waiting on a subagent's question is judged after its answer
-// and the subagent's result, in process and on a daemon session.
-// Owner: goal loop and delegated-questionnaire routing (PTY)
-#[test]
-fn goal_answers_background_agent_questionnaire_while_waiting() {
-    for scenario in ["goal_questionnaire", "daemon_goal_questionnaire"] {
-        assert_pass(scenario);
-    }
-}
-
-// Covers: a failed goal turn is retried only after its delegated run
-// reported, in process and on a daemon session.
-// Owner: goal loop (TUI in process, daemon goal controller) (PTY)
-#[test]
-fn goal_waits_for_subagents_before_retrying() {
-    for scenario in [
-        "goal_waits_for_subagents_during_retry",
-        "daemon_goal_waits_for_subagents_during_retry",
-    ] {
-        assert_pass(scenario);
-    }
-}
-
 // Covers: full prompt expansion survives streaming and launch while collapsed
 // receipts and finished errors remain visible above the retained prompt.
 // Owner: interactive UX; the scenario holds each intermediate phase explicitly.
@@ -1363,13 +1320,6 @@ fn quiet_subagent_notices_coalesce_without_extra_requests() {
     }
 }
 
-// Covers: a failed parent action under /goal retries without waiting for the
-// blocked child. Owner: interactive turn orchestration (PTY)
-#[test]
-fn goal_retries_a_failed_action_without_waiting_for_children() {
-    assert_pass("goal_subagent_action_retry");
-}
-
 // Covers: boundary notices keep a streaming message intact, and a pending
 // background failure is folded in before the parent turn completes.
 // Owner: interactive turn orchestration (PTY)
@@ -1434,14 +1384,6 @@ fn daemon_restart_keeps_the_tui_following_its_session() {
 #[test]
 fn daemon_restart_holds_a_prompt_while_mcp_connects_again() {
     assert_pass("daemon_restart_mcp");
-}
-
-// Covers: a goal set from the TUI lives in the daemon session: a TUI that
-// reopens the session after quitting sees it blocked and resumes it.
-// Owner: daemon goal controller and the TUI as its client (#1667)
-#[test]
-fn daemon_goal_outlives_the_tui_that_set_it() {
-    assert_pass("daemon_goal");
 }
 
 // Covers: with RHO_TUI_DAEMON=1, a prompt sent from the TUI runs in the

@@ -39,7 +39,6 @@ impl InteractiveRuntime {
         if self.runs.state() != InteractiveState::Idle || self.is_compacting() {
             return Err(Error::SessionBusy);
         }
-        self.runs.reset_display_committed();
         if let Some(snapshot) = self.sessions.pending_replacement() {
             self.rebuild_session(
                 snapshot,

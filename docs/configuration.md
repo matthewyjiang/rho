@@ -141,19 +141,19 @@ When `cache_miss_notices` is on, a completed turn that re-billed a large uncache
 
 `show_header_hints` controls the keyboard hint block under the session header. It defaults to on. Turning it off hides the shortcut list; a signed-out session still shows its `/login` hints.
 
-`notifications` defaults to on. While the terminal is unfocused, Rho notifies when an approval or questionnaire opens or a turn finishes; a goal run or queued follow-ups notify once, when Rho waits for you again. iTerm2, WezTerm, Ghostty, and kitty get an OSC 9 desktop notification. Other terminals, and anything inside tmux or screen, get a terminal bell. Rho only knows the terminal is unfocused if it reports focus changes; in tmux, set `focus-events on`. Under [Herdr](/integrations/herdr) Rho sends none, because Herdr shows pane state itself.
+`notifications` defaults to on. While the terminal is unfocused, Rho notifies when an approval or questionnaire opens or a turn finishes; queued follow-ups notify once, when Rho waits for you again. iTerm2, WezTerm, Ghostty, and kitty get an OSC 9 desktop notification. Other terminals, and anything inside tmux or screen, get a terminal bell. Rho only knows the terminal is unfocused if it reports focus changes; in tmux, set `focus-events on`. Under [Herdr](/integrations/herdr) Rho sends none, because Herdr shows pane state itself.
 
 Separately from `notifications`, Rho reports its state to terminals that support the [Program Status Protocol](https://www.superlogical.com/rex/docs/build/program-status) (OSC 7501), such as Ghostty, so tabs and agent dashboards can show it:
 
 | State | When |
 | --- | --- |
 | `working` | A turn is running |
-| `blocked` | An approval or questionnaire waits for you, no provider is signed in, or a goal is blocked |
+| `blocked` | An approval or questionnaire waits for you, or no provider is signed in |
 | `done` | A turn finished |
 | `error` | A turn failed and was not retried |
 | `idle` | Rho started, or you interrupted or cancelled the turn |
 
-Like notifications, `done` and `error` are reported once Rho waits for you, so a goal run or queued follow-ups do not report between turns. Rho clears its status on exit. Messages are the wait reason, the sign-in hint, a blocked goal's reason as the model wrote it, or the first line of an error; prompts and assistant replies are never sent. Rho reports only after the terminal answers the protocol's support query at startup, and tmux and screen do not forward it. Set `RHO_PROGRAM_STATUS=1` to report without asking, for example when SSH latency delays the reply, or `RHO_PROGRAM_STATUS=0` to turn reports off.
+Like notifications, `done` and `error` are reported once Rho waits for you, so queued follow-ups do not report between turns. Rho clears its status on exit. Messages are the wait reason, the sign-in hint, or the first line of an error; prompts and assistant replies are never sent. Rho reports only after the terminal answers the protocol's support query at startup, and tmux and screen do not forward it. Set `RHO_PROGRAM_STATUS=1` to report without asking, for example when SSH latency delays the reply, or `RHO_PROGRAM_STATUS=0` to turn reports off.
 
 `/login`, `/logout`, `/refresh-models`, and `/model` handle credentials, model lists, and the conversation model. Use `/agents` to inspect reserved internal agents and set their model overrides.
 
@@ -311,7 +311,7 @@ image_input = false
 
 ## Internal agent models
 
-Rho uses reserved internal agents for session titles, `/goal` completion, the [`advisor`](/configuration/advisor-mode) tool, Auto permission classification, and [compaction summaries](/configuration/compaction#summarizer-model). Most roles follow the active conversation provider, model, and auth. Run `/agents`, select the role, and press Enter to choose a model. **Use conversation model** removes that role's override. Changes apply to the next invocation and save at once.
+Rho uses reserved internal agents for session titles, the [`advisor`](/configuration/advisor-mode) tool, Auto permission classification, and [compaction summaries](/configuration/compaction#summarizer-model). Most roles follow the active conversation provider, model, and auth. Run `/agents`, select the role, and press Enter to choose a model. **Use conversation model** removes that role's override. Changes apply to the next invocation and save at once.
 
 `advisor` and `permission-classifier` have no default and no conversation-model fallback. Advisor mode stays inactive until a model is chosen. Interactive startup opens the classifier picker for Auto when no model is set; cancelling it falls back to Supervised. The classifier defaults to low reasoning when a model is first selected.
 

@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
 
 use ratatui::{
     style::Style,
@@ -25,7 +25,7 @@ use {
 
 #[path = "statusline_path.rs"]
 pub(super) mod path;
-use path::{compact_cwd, fit_cwd_row, format_cwd_left};
+use path::{compact_cwd, fit_cwd_row};
 
 #[cfg(test)]
 use path::{fit_cwd, shorten_path_display};
@@ -98,7 +98,6 @@ pub(super) struct StatusLineState {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct StatusLineCache {
     width: usize,
-    goal: Option<GoalStatus>,
     theme_generation: u64,
     lines: Vec<Line<'static>>,
     /// Clickable field spans painted on [`FIELDS_ROW`] by the same render.
@@ -114,13 +113,6 @@ pub(super) const FIELDS_ROW: usize = 1;
 pub(super) struct StatusLine {
     state: StatusLineState,
     cache: StatusLineCache,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct GoalStatus {
-    pub(super) turns: usize,
-    pub(super) elapsed: Duration,
-    pub(super) blocked: bool,
 }
 
 impl Default for StatusLineState {
@@ -328,16 +320,14 @@ impl StatusLine {
         }
     }
 
-    pub(super) fn lines(&mut self, width: usize, goal: Option<GoalStatus>) -> &[Line<'static>] {
+    pub(super) fn lines(&mut self, width: usize) -> &[Line<'static>] {
         let theme_generation = Theme::generation();
         if self.cache.lines.is_empty()
             || self.cache.width != width
-            || self.cache.goal != goal
             || self.cache.theme_generation != theme_generation
         {
-            let (lines, hits) = statusline_lines(&self.state, width, goal.as_ref());
+            let (lines, hits) = statusline_lines(&self.state, width);
             self.cache.width = width;
-            self.cache.goal = goal;
             self.cache.theme_generation = theme_generation;
             self.cache.lines = lines;
             self.cache.hits = hits;
@@ -541,36 +531,17 @@ fn resolve_context_field(state: &StatusLineState) -> Option<(String, Style, u8)>
 fn statusline_lines(
     state: &StatusLineState,
     width: usize,
-    goal: Option<&GoalStatus>,
 ) -> (Vec<Line<'static>>, Vec<StatusFieldHit>) {
-    let goal = goal.map(|goal| {
-        let state = if goal.blocked { "blocked" } else { "active" };
-        [
-            format!(
-                "goal: {state} • {} turn{} • {}",
-                goal.turns,
-                if goal.turns == 1 { "" } else { "s" },
-                super::goal::format_elapsed(goal.elapsed)
-            ),
-            format!("goal: {state}"),
-            state.into(),
-        ]
-    });
     let cwd_path = compact_cwd(&state.cwd);
-    let cwd_branch = state.branch.as_deref();
-    let cwd_extra = state.cwd_extra.as_ref();
-    let top_left = match cwd_extra {
-        Some(extra) => format!("{}{}", format_cwd_left(&cwd_path, cwd_branch), extra.text),
-        None => format_cwd_left(&cwd_path, cwd_branch),
-    };
-    let top_right = goal
-        .as_ref()
-        .map(|candidates| fit_right_status(&top_left, candidates, width))
-        .unwrap_or_default();
     let (bottom_left, bottom_right) = pack_bottom_status(state, width);
     let (fields_row, hits) = status_fields_line(&bottom_left, &bottom_right, width, state.hovered);
     let lines = vec![
-        render_cwd_row(&cwd_path, cwd_branch, cwd_extra, top_right, width),
+        render_cwd_row(
+            &cwd_path,
+            state.branch.as_deref(),
+            state.cwd_extra.as_ref(),
+            width,
+        ),
         fields_row,
     ];
     debug_assert_eq!(lines.len(), FIELDS_ROW + 1);
@@ -834,93 +805,19 @@ fn status_cost(state: &StatusLineState) -> Option<String> {
     session_total_cost_usd_micros(main_cost_micros, state.extra_cost_usd_micros).map(format_usd)
 }
 
-fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {
-    let full = &candidates[0];
-    if display_width(left) + display_width(full) < width {
-        return full.clone();
-    }
-
-    let separator_width = usize::from(!left.is_empty());
-    let available = width
-        .saturating_sub(display_width(left) + separator_width)
-        .max(width.saturating_div(2))
-        .max(1);
-    candidates
-        .iter()
-        .find(|candidate| display_width(candidate) <= available)
-        .cloned()
-        .unwrap_or_else(|| {
-            truncate_one_line(candidates.last().expect("status has a value"), available)
-        })
-}
-
 fn render_cwd_row(
     path: &str,
     branch: Option<&str>,
     extra: Option<&CwdExtra>,
-    right: String,
     width: usize,
 ) -> Line<'static> {
     let extra_text = extra.map(|extra| extra.text.as_str());
-    let extra_width = extra_text.map(display_width).unwrap_or(0);
-    let full_left = format_cwd_left(path, branch);
-    let left_width = display_width(&full_left) + extra_width;
-    let (left, right, extra) = match row_side_fit(left_width, &right, width) {
-        None => (full_left, right, extra),
-        Some((left_budget, right)) => {
-            let (left, show_extra) = fit_cwd_row(path, branch, extra_text, left_budget);
-            (left, right, extra.filter(|_| show_extra))
-        }
-    };
-    cwd_row_line(left, extra, right, width)
-}
-
-fn cwd_row_line(
-    left: String,
-    extra: Option<&CwdExtra>,
-    right: String,
-    width: usize,
-) -> Line<'static> {
+    let (left, show_extra) = fit_cwd_row(path, branch, extra_text, width);
     let mut spans = vec![Span::styled(left, Theme::dim())];
-    if let Some(extra) = extra {
+    if let Some(extra) = extra.filter(|_| show_extra) {
         spans.push(Span::styled(extra.text.clone(), extra.style()));
     }
-    status_row_spans(spans, right, width)
-}
-
-/// Shared left/right budget math for a status row.
-///
-/// Returns `None` when both sides already fit. Otherwise right is head-truncated
-/// first, then the caller fits left into the remaining budget.
-fn row_side_fit(left_width: usize, right: &str, width: usize) -> Option<(usize, String)> {
-    if right.is_empty() {
-        return Some((width, String::new()));
-    }
-
-    let right_width = display_width(right);
-    if left_width + right_width + usize::from(left_width > 0) <= width {
-        return None;
-    }
-
-    let right_budget = right_width.min(width.saturating_div(2).max(1));
-    let right = truncate_one_line(right, right_budget);
-    let right_width = display_width(&right);
-    let left_budget = width.saturating_sub(right_width + 1).max(1);
-    Some((left_budget, right))
-}
-
-fn status_row_spans(mut left: Vec<Span<'static>>, right: String, width: usize) -> Line<'static> {
-    if right.is_empty() {
-        return Line::from(left);
-    }
-    let left_width: usize = left
-        .iter()
-        .map(|span| display_width(span.content.as_ref()))
-        .sum();
-    let gap = " ".repeat(width.saturating_sub(left_width + display_width(&right)));
-    left.push(Span::styled(gap, Theme::dim()));
-    left.push(Span::styled(right, Theme::dim()));
-    Line::from(left)
+    Line::from(spans)
 }
 
 #[cfg(test)]

@@ -35,7 +35,6 @@ mod executable;
 mod export;
 mod external_editor;
 mod frontmatter;
-mod goal;
 mod herdr;
 mod history_message;
 mod hooks;

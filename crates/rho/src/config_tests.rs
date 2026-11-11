@@ -244,7 +244,7 @@ fn effective_internal_agent_models_are_independent() {
     );
 
     let title = config.effective_internal_agent_model("session-title");
-    let judge = config.effective_internal_agent_model("goal-judge");
+    let judge = config.effective_internal_agent_model("compaction");
 
     assert_eq!(title.provider, "anthropic");
     assert_eq!(title.model, "claude-haiku-4-5");
@@ -330,7 +330,7 @@ auth = "api-key"
 [model.aliases]
 local = "ollama/local-model"
 
-[internal_agents.goal-judge]
+[internal_agents.compaction]
 provider = "ollama"
 model = "judge-model"
 
@@ -347,7 +347,7 @@ model = "title-model"
     assert_eq!(config.auth, "none");
     assert_eq!(
         config
-            .internal_agent_model("goal-judge")
+            .internal_agent_model("compaction")
             .unwrap()
             .expect_rho()
             .auth,

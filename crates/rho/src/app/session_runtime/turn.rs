@@ -147,9 +147,6 @@ impl SessionRuntime {
         mut io: TurnIo,
     ) -> anyhow::Result<TurnOutcome> {
         let stored = self.stored()?.cloned();
-        // The debt belongs to a failed turn and its retries, which continue
-        // it; a new prompt starts without one.
-        let owed = matches!(start, TurnStart::Continue) && self.owes_parent_action;
         let mut delegation = Delegation::attach(
             &self.built.session,
             BackgroundSources::of(&self.built.tools),
@@ -169,9 +166,6 @@ impl SessionRuntime {
             self.drive_prompt(prompt, start, displays, &mut io),
         )
         .await;
-        // A retry of the failed turn still owes the answer, so the debt
-        // outlives failures and ends with a turn that did not fail.
-        self.owes_parent_action = result.is_err() && (owed || delegation.delivered_parent_action());
         self.held_notices = delegation.hold_notices();
         result
     }
