@@ -5,7 +5,9 @@
 //! connection of its own (`app::daemon_client`, which starts the daemon
 //! when none runs) and attaches to it: at launch before the TUI takes the
 //! terminal, so a refusal reads as an ordinary startup error, and again
-//! for each session the TUI switches to (`daemon_switch`). The app loop then waits on
+//! for each session the TUI switches to (`daemon_switch`). A daemon of
+//! another build than the TUI shows its notice at launch and after each
+//! reattach, not for a switch. The app loop then waits on
 //! [`next_views`], which maps what the daemon sent since through
 //! [`DaemonEvents`]: the reset replay of the saved conversation first, then
 //! live events. Once the replay is over, the job state the attach answered
@@ -284,8 +286,26 @@ mod unix {
 
     impl DaemonSession {
         /// Opens or resumes `target` as `launch` says, attaches to it, and
-        /// applies `settings`. The daemon starts when none runs.
+        /// applies `settings`, at launch. The daemon starts when none runs.
+        /// A daemon of another build than this process shows its notice,
+        /// once: a session the TUI switches to reaches the same daemon.
         pub(crate) async fn open(
+            launch: DaemonLaunch,
+            target: DaemonTarget,
+            settings: InitialSettings,
+        ) -> anyhow::Result<Self> {
+            let mut session = Self::follow(launch, target, settings).await?;
+            let skew = session.daemon.current().await.and_then(|link| link.skew());
+            if let Some(skew) = skew {
+                session.pending.push(DaemonView::Notice(skew.to_string()));
+            }
+            Ok(session)
+        }
+
+        /// Opens or resumes `target` as `launch` says, on a connection of
+        /// its own, attaches to it, and applies `settings`. The daemon
+        /// starts when none runs.
+        async fn follow(
             launch: DaemonLaunch,
             target: DaemonTarget,
             settings: InitialSettings,
@@ -436,7 +456,7 @@ mod unix {
                 }
                 (DaemonTarget::New, None) | (DaemonTarget::Resume(_), _) => InitialSettings::Kept,
             };
-            Self::open(self.launch.clone(), target, settings).await
+            Self::follow(self.launch.clone(), target, settings).await
         }
 
         /// The session's id, once a resume, saved title, or catalog lookup
@@ -542,6 +562,7 @@ mod unix {
             self.reattach = None;
             let mut views = std::mem::take(&mut self.pending);
             let mut lost_conversation = false;
+            let mut skew = None;
             match reattached {
                 Ok(Reattached { response, relinked }) => {
                     if let Some(Relinked {
@@ -577,6 +598,7 @@ mod unix {
                             views.push(DaemonView::ToolSourcesLoaded);
                         }
                         self.tool_sources = tool_sources;
+                        skew = link.skew();
                         self.target.send_replace(Target::Attached { link, session });
                     }
                     self.position.reattached(&response);
@@ -584,11 +606,15 @@ mod unix {
                     self.saved |= response.title.is_some();
                     self.workspace = response.workspace.clone();
                     views.extend(begin_replay(&mut self.events, &response));
+                    // After the replay, which clears the transcript.
                     if lost_conversation {
-                        // After the replay, which clears the transcript.
                         views.push(DaemonView::Notice(
                             "the daemon restarted, and this unsaved session's conversation went with it; this is a new session".into(),
                         ));
+                    }
+                    // The restarted daemon may still be another build.
+                    if let Some(skew) = skew {
+                        views.push(DaemonView::Notice(skew.to_string()));
                     }
                 }
                 Err(error) => {
