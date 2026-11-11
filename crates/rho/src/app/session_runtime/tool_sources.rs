@@ -29,6 +29,16 @@ impl SessionRuntime {
         }
     }
 
+    /// Reads `true` once the session's deferred tool sources finished
+    /// loading, which is when its prompts stop waiting for them; `None`
+    /// when none are loading.
+    pub(crate) fn tool_sources_progress(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        match self.built.tool_sources.as_ref()? {
+            PendingToolSources::Loading(sources) => Some(sources.progress()),
+            PendingToolSources::Unbound => None,
+        }
+    }
+
     /// Attaches the deferred tool sources once they finished loading and
     /// rebuilds the runtime with them, and says whether it did. Until they
     /// loaded, and once the runtime runs with them, it does nothing.

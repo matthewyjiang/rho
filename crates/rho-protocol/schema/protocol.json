@@ -4675,6 +4675,10 @@
             "$ref": "#/$defs/SessionMcpServer"
           },
           "type": "array"
+        },
+        "tool_sources_loading": {
+          "description": "Whether the session still loads the tool sources it opened with, its\nMCP servers and OpenAPI sources. Its prompts wait until it has. No\nserver reads [`SessionMcpStatus::Connecting`] for an OpenAPI source,\nso this is the only sign that one loads.",
+          "type": "boolean"
         }
       },
       "required": [

@@ -25,7 +25,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Duration,
 };
 
 use rho_protocol::{
@@ -35,9 +34,8 @@ use rho_protocol::{
     },
     ClientEnvironment, ClientError, ConfigSetParams, ConfigWriter, ContentBlock, ErrorCode,
     IdempotencyKey, JobListParams, ProcessOutputParams, SessionChange, SessionConfigureParams,
-    SessionDeleteParams, SessionGoalAction, SessionId, SessionInspectParams, SessionMcpInventory,
-    SessionMcpParams, SessionMcpStatus, SessionProcessesParams, SessionPromptParams,
-    SessionRenameParams, SessionReport,
+    SessionDeleteParams, SessionGoalAction, SessionId, SessionInspectParams, SessionMcpParams,
+    SessionProcessesParams, SessionPromptParams, SessionRenameParams, SessionReport,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -176,8 +174,6 @@ pub(super) struct DaemonRequests {
     task: tokio::task::JoinHandle<()>,
     control: mpsc::UnboundedSender<Control>,
     control_task: tokio::task::JoinHandle<()>,
-    /// Watches the session's MCP servers connect, while any do.
-    tool_sources_task: Option<tokio::task::JoinHandle<()>>,
     /// Set once a change saved rows, which saves a session that had
     /// nothing saved yet.
     saved_rows: Arc<AtomicBool>,
@@ -186,9 +182,7 @@ pub(super) struct DaemonRequests {
 impl DaemonRequests {
     /// Sends to where `target` says the session is attached, never to a
     /// connection the session has not attached on.
-    /// While `tool_sources` load, it watches them until they have, and
-    /// then sends [`DaemonView::ToolSourcesLoaded`].
-    pub(super) fn new(target: watch::Receiver<Target>, tool_sources: ToolSources) -> Self {
+    pub(super) fn new(target: watch::Receiver<Target>) -> Self {
         let (sender, mut requests) = mpsc::unbounded_channel();
         let (views, receiver) = mpsc::unbounded_channel();
         let (control, mut control_requests) = mpsc::unbounded_channel();
@@ -198,13 +192,6 @@ impl DaemonRequests {
         let mut control_target = target.clone();
         let mut target = target;
         let control_views = views.clone();
-        let tool_sources_task = match tool_sources {
-            ToolSources::Loading => Some(tokio::spawn(watch_tool_sources(
-                target.clone(),
-                views.clone(),
-            ))),
-            ToolSources::Loaded => None,
-        };
         // Control requests bypass configure, which can wait for a turn to end.
         let control_task = tokio::spawn(async move {
             while let Some(request) = control_requests.recv().await {
@@ -462,7 +449,6 @@ impl DaemonRequests {
             task,
             control,
             control_task,
-            tool_sources_task,
             saved_rows,
         }
     }
@@ -557,68 +543,7 @@ impl Drop for DaemonRequests {
     fn drop(&mut self) {
         self.task.abort();
         self.control_task.abort();
-        if let Some(task) = &self.tool_sources_task {
-            task.abort();
-        }
     }
-}
-
-/// Whether the session's MCP servers still connect. The daemon connects
-/// them after the session opens, and its prompts wait for them, so the
-/// TUI holds a prompt meanwhile as it does in process.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ToolSources {
-    Loading,
-    Loaded,
-}
-
-impl ToolSources {
-    fn of(inventory: &SessionMcpInventory) -> Self {
-        if inventory
-            .servers
-            .iter()
-            .any(|server| server.status == SessionMcpStatus::Connecting)
-        {
-            Self::Loading
-        } else {
-            Self::Loaded
-        }
-    }
-
-    /// Reads the inventory of `session`, attached on `link`. One that
-    /// cannot be read counts as loaded, so no prompt waits on it forever.
-    pub(super) async fn read(link: &Link, session: &SessionId) -> Self {
-        link.request::<SessionMcp>(&SessionMcpParams {
-            session: session.clone(),
-        })
-        .await
-        .map_or(Self::Loaded, |inventory| Self::of(&inventory))
-    }
-}
-
-/// How late a held prompt can start after the session's servers connect.
-/// Each check is one read of an inventory the daemon keeps in memory, and
-/// checks run only while a server connects.
-const TOOL_SOURCES_CHECK: Duration = Duration::from_millis(100);
-
-/// Checks the session's inventory until no server connects, then says so.
-async fn watch_tool_sources(
-    mut target: watch::Receiver<Target>,
-    views: mpsc::UnboundedSender<DaemonView>,
-) {
-    loop {
-        tokio::time::sleep(TOOL_SOURCES_CHECK).await;
-        let answer = on_attachment(&mut target, |link, session| async move {
-            link.request::<SessionMcp>(&SessionMcpParams { session })
-                .await
-        })
-        .await;
-        match answer {
-            Some((_, Ok(inventory))) if ToolSources::of(&inventory) == ToolSources::Loading => {}
-            _ => break,
-        }
-    }
-    let _ = views.send(DaemonView::ToolSourcesLoaded);
 }
 
 /// The verb a refused goal action's error says, as in `could not set the goal`.

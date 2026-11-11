@@ -82,6 +82,7 @@ What a session runs, and what its job states mean, is described in [Sessions and
 - `config_path`: the configuration file the daemon opened the session with.
 - `mode`: `native`, `unsupported_agent`, or `tools_disabled`.
 - `servers`: configured servers, including disabled and failed entries. Each has its qualified `identity`, `enabled`, startup `status` (`connected`, `connecting`, `disabled`, `invalid_config`, `failed`, `timed_out`, or `not_loaded`), exported `tool_count`, and human-readable `detail`.
+- `tool_sources_loading`: `true` while the session still loads the tool sources it opened with, its MCP servers and OpenAPI sources. Its prompts wait until it has. An OpenAPI source is not a server, so with only OpenAPI sources this is the one sign that the session loads. Omitted when `false`.
 
 Details include transport, startup errors, exported tools, tools added or withdrawn since startup, the last failed keepalive ping, current MCP prompt commands, and resource counts. Treat `detail` as presentation text, not a machine-readable contract. `status` describes startup; subsequent reachability is reported in the details. Reissue the request for a fresh snapshot; no inventory subscription is created. It reads shared maintenance handles rather than locking the runtime, so a running model turn or a queued configure does not delay it.
 

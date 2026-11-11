@@ -29,6 +29,12 @@ pub struct SessionMcpInventory {
     pub mode: SessionMcpMode,
     /// Configured servers in inventory order, including disabled and failed ones.
     pub servers: Vec<SessionMcpServer>,
+    /// Whether the session still loads the tool sources it opened with, its
+    /// MCP servers and OpenAPI sources. Its prompts wait until it has. No
+    /// server reads [`SessionMcpStatus::Connecting`] for an OpenAPI source,
+    /// so this is the only sign that one loads.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tool_sources_loading: bool,
 }
 
 /// How a session treated its MCP configuration.

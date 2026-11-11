@@ -156,6 +156,11 @@ impl DeferredToolSources {
         *self.loaded.borrow()
     }
 
+    /// Reads `true` once the load finished, without a borrow of the session.
+    pub(crate) fn progress(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.loaded.clone()
+    }
+
     /// What the load produced. Call once [`Self::is_loaded`].
     pub(crate) async fn outcome(mut self) -> Result<ToolSourcesOutcome, tokio::task::JoinError> {
         match (&mut self.relay).await {

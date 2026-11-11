@@ -81,7 +81,7 @@ mod unix {
         daemon_events::{DaemonEvents, DaemonView, LoginUpdate, Rest, TurnState},
         daemon_inputs::AnswerRefusal,
         daemon_options::setting_name,
-        daemon_requests::{DaemonRequests, Target, ToolSources},
+        daemon_requests::{DaemonRequests, Target},
         daemon_settings::DaemonSettings,
         daemon_settings_read::{load_settings, route_config, settings_loaded},
     };
@@ -96,6 +96,7 @@ mod unix {
     mod tool_sources;
 
     use initial_settings::{carry, changes_between, configure_all, Refused};
+    use tool_sources::ToolSources;
 
     const LOST: &str = "lost the connection to the rho daemon";
 
@@ -267,11 +268,12 @@ mod unix {
         reattach: Option<Reattach>,
         /// The events of the interactive login under way, if any.
         logins: Option<mpsc::UnboundedReceiver<LoginEvent>>,
-        /// Whether the session's MCP servers still connect.
+        /// Whether the session's tool sources still load.
         tool_sources: ToolSources,
-        /// The watch of them connecting again after a daemon restart; while
-        /// it runs, only it says they have.
-        reconnecting: Option<tool_sources::Reconnecting>,
+        /// The watch of them while they load, started by each attach: the
+        /// first, and the one after a daemon restart. Only it says they
+        /// have loaded.
+        reconnecting: Option<tool_sources::Watch>,
     }
 
     impl DaemonSession {
@@ -369,6 +371,7 @@ mod unix {
             let config_changes = route_config(&daemon);
             let settings = load_settings(&link).await;
             let tool_sources = ToolSources::read(&link, &id).await;
+            let reconnecting = tool_sources::Watch::of(tool_sources, &link, &id);
             let (target, requests) = watch::channel(Target::Attached {
                 link,
                 session: id.clone(),
@@ -396,11 +399,11 @@ mod unix {
                 events,
                 pending,
                 ended: false,
-                requests: Some(DaemonRequests::new(requests, tool_sources)),
+                requests: Some(DaemonRequests::new(requests)),
                 reattach: None,
                 logins: None,
                 tool_sources,
-                reconnecting: None,
+                reconnecting,
             };
             session.pending.push(settings_loaded(settings));
             for change in queued {
@@ -487,7 +490,7 @@ mod unix {
                 Some(update) = auth::next_login(&mut self.logins) => {
                     views.push(DaemonView::Login(update));
                 }
-                () = tool_sources::connected(&mut self.reconnecting) => {
+                () = tool_sources::loaded(&mut self.reconnecting) => {
                     self.tool_sources = ToolSources::Loaded;
                     views.push(DaemonView::ToolSourcesLoaded);
                 }
@@ -559,14 +562,8 @@ mod unix {
                         self.id = session.clone();
                         self.routed = routed;
                         // A prompt waits again while the restarted daemon
-                        // connects the session's servers again.
-                        self.reconnecting = match tool_sources {
-                            ToolSources::Loading => Some(tool_sources::Reconnecting::watch(
-                                Arc::clone(&link),
-                                session.clone(),
-                            )),
-                            ToolSources::Loaded => None,
-                        };
+                        // loads the session's tool sources again.
+                        self.reconnecting = tool_sources::Watch::of(tool_sources, &link, &session);
                         if self.tool_sources == ToolSources::Loading
                             && tool_sources == ToolSources::Loaded
                         {
@@ -644,6 +641,9 @@ mod unix {
                     }
                     Some(Routed::Detached(DetachReason::Restarting)) => {
                         views.push(DaemonView::Status(RECONNECTING.into()));
+                        // Its connection closes next, and a read that fails
+                        // counts as loaded: the reattach reads them again.
+                        self.reconnecting = None;
                         // The connection the session is attached on, taken
                         // now: the daemon closes it next.
                         let old = match self.target.send_replace(Target::Reconnecting) {
