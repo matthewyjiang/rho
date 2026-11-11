@@ -48,6 +48,8 @@ mod daemon_restart;
 #[cfg(unix)]
 mod daemon_resume;
 #[cfg(unix)]
+mod daemon_rewind;
+#[cfg(unix)]
 mod daemon_switch;
 #[cfg(unix)]
 mod daemon_tree;
@@ -689,6 +691,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_reports::SCENARIO,
     #[cfg(unix)]
     daemon_tree::SCENARIO,
+    #[cfg(unix)]
+    daemon_rewind::SCENARIO,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     daemon_workflow::SCENARIO,
     #[cfg(unix)]
@@ -711,8 +715,6 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_approval::DAEMON_APPROVAL_DENY_SCENARIO,
     #[cfg(unix)]
     daemon_options::PERMISSION_MODE,
-    #[cfg(unix)]
-    daemon_options::GATED_COMMAND,
     #[cfg(unix)]
     daemon_config::DAEMON_CONFIG,
     #[cfg(unix)]

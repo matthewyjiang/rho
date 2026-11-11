@@ -28,7 +28,11 @@ use super::{being_deleted, options::available_auths, queued::Queued, stopping, H
 use crate::{
     app::{
         session_options::{reasoning_from_wire, resolve_model},
-        session_runtime::{AddDirError, SelectNodeError, SessionRuntime, SettingChangeError},
+        session_runtime::{
+            AddDirError, RewindError, RewoundConversation, SelectNodeError, SessionRuntime,
+            SettingChangeError,
+        },
+        workspace_rewind::rewind_audit_text,
     },
     config::Config,
     permission::PermissionMode,
@@ -46,6 +50,7 @@ enum Change {
     AddDirectory(PathBuf),
     ModelCatalog,
     SelectNode(NodeId),
+    RewindWorkspace(NodeId),
 }
 
 impl Sessions {
@@ -120,8 +125,12 @@ impl Sessions {
                 Ok(())
             }
             // Every client replays the conversation as it now stands.
-            Ok(Applied::Restarted) => {
+            Ok(Applied::Restarted { notice }) => {
                 super::turn::restart_transcript(&session, runtime).await;
+                // After the restart, so the clients it detached replay it.
+                session
+                    .feed
+                    .publish(notice.map(|text| wire::SessionEvent::Notice { text }));
                 Ok(())
             }
             Ok(Applied::SharedOptions) => {
@@ -147,8 +156,9 @@ enum Applied {
     /// Rows may have been saved, which the transcript takes, with a notice
     /// to tell the session's clients now.
     Rows { notice: Option<String> },
-    /// The conversation moved to another node of the session's tree.
-    Restarted,
+    /// The conversation moved to another node of the session's tree, with
+    /// a notice to tell the session's clients once they replay it.
+    Restarted { notice: Option<String> },
     /// What every loaded session's options show was read again.
     SharedOptions,
 }
@@ -176,6 +186,9 @@ impl Change {
             wire::SessionChange::ModelCatalog => Ok(Self::ModelCatalog),
             wire::SessionChange::SelectNode { node } => NodeId::from_string(node)
                 .map(Self::SelectNode)
+                .map_err(|error| invalid(format!("{error:#}"))),
+            wire::SessionChange::RewindWorkspace { checkpoint } => NodeId::from_string(checkpoint)
+                .map(Self::RewindWorkspace)
                 .map_err(|error| invalid(format!("{error:#}"))),
             // A change of a later protocol minor fails to decode before it
             // gets here; the arm keeps the match open to new variants.
@@ -235,12 +248,41 @@ impl Change {
             }
             Self::SelectNode(node) => {
                 return match runtime.select_node(&node, config).await {
-                    Ok(()) => Ok(Applied::Restarted),
+                    Ok(()) => Ok(Applied::Restarted { notice: None }),
                     Err(SelectNodeError::Change(error)) => Err(setting_error(error)),
                     Err(error @ (SelectNodeError::Unsaved | SelectNodeError::UnknownNode(_))) => {
                         Err(invalid(error.to_string()))
                     }
                 };
+            }
+            Self::RewindWorkspace(checkpoint) => {
+                let rewind = runtime
+                    .rewind_workspace(&checkpoint, config)
+                    .await
+                    .map_err(|error| match error {
+                        RewindError::Refused(error) => invalid(format!("{error:#}")),
+                        RewindError::Failed(error) => RpcError::new(
+                            ErrorCode::InternalError,
+                            format!("could not rewind the workspace: {error:#}"),
+                        ),
+                    })?;
+                let audit = |restored| rewind_audit_text(&rewind.audit, runtime.cwd(), restored);
+                return Ok(match rewind.conversation {
+                    RewoundConversation::Restored => Applied::Restarted {
+                        notice: Some(audit(true)),
+                    },
+                    RewoundConversation::Kept => Applied::Rows {
+                        notice: Some(audit(false)),
+                    },
+                    // The files changed all the same, which every client
+                    // must learn, then why the conversation stayed.
+                    RewoundConversation::Failed(error) => Applied::Rows {
+                        notice: Some(format!(
+                            "{}\ncould not restore the conversation: {error}",
+                            audit(false)
+                        )),
+                    },
+                });
             }
             Self::Model(model) => {
                 let selection = model_selection(runtime, &model, auths)?;

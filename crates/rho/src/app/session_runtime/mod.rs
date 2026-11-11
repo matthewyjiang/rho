@@ -75,6 +75,7 @@ mod title;
 mod tree;
 mod turn;
 mod workflow;
+mod workspace_rewind;
 
 pub(crate) use added_dirs::AddDirError;
 pub(crate) use agent::AgentTask;
@@ -114,6 +115,7 @@ use title::TitleState;
 pub(crate) use tree::SelectNodeError;
 pub(crate) use turn::{Turn, TurnIo, TurnOutcome, TurnStart};
 pub(crate) use workflow::WorkflowStart;
+pub(crate) use workspace_rewind::{RewindError, RewoundConversation};
 
 /// A request the session recognizes but cannot run, such as a TUI-only
 /// command, an MCP prompt missing arguments, or `/agent:` on a session that
@@ -194,6 +196,9 @@ pub(crate) struct SessionRuntime {
     held_notices: Option<HeldNotices>,
     /// Whether the session's saves record its settings for a reopen.
     settings: SettingsPolicy,
+    /// Set once checkpoint storage failed or filled: later turns take no
+    /// workspace checkpoint.
+    checkpoints_paused: bool,
 }
 
 impl SessionRuntime {
@@ -230,6 +235,7 @@ impl SessionRuntime {
             reopen_notice,
             held_notices: None,
             settings,
+            checkpoints_paused: false,
         }
     }
 

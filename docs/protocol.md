@@ -149,7 +149,7 @@ The daemon buffers up to 16 MiB of a session's recent events for clients that re
 
 The daemon detaches a client with `rho/session/detached`, after which no event of that session arrives:
 
-- `lagged`: the client fell 4096 events behind, the daemon unloaded the session, as a delete that fails after it unloaded the session does, or the session's conversation moved to another node of its tree (`select_node`). A turn never waits for a client; attach again with the cursor to catch up.
+- `lagged`: the client fell 4096 events behind, the daemon unloaded the session, as a delete that fails after it unloaded the session does, or the session's conversation moved to another node of its tree (`select_node`, `rewind_workspace`). A turn never waits for a client; attach again with the cursor to catch up.
 - `daemon_stopping`: the daemon is stopping.
 - `restarting`: the daemon is re-executing in place, for an upgrade or `rho/daemon/restart`, and closes the connection next. Connect again and attach with the cursor; the restarted daemon answers with a `reset` replay.
 - `deleted`: `rho/session/delete` deleted the session.
@@ -235,6 +235,7 @@ A session's `options` are what a frontend shows as its settings and command menu
 | `agent_catalog` | | Reads the workspace's agent definitions again and tells the model, from its next turn on, which agents it can now delegate to; clients get a `notice` when the model had to be told. |
 | `add_directory` | `path` | Lets the session's tools reach the directory at the absolute `path`, and tells the model so from its next turn on, with a saved row; clients get a `notice`. A path that is not a directory, or one the session already reaches, is `InvalidParams`. |
 | `select_node` | `node` | Continues the conversation from `node`, the id of a node in the session's saved tree, which a client reads from the session's file (no method lists them yet): later turns branch from it, and the nodes after it stay in the tree. The daemon detaches every attached client as `lagged`; attaching again replays the conversation up to `node`. A node the tree does not hold, or a session with nothing saved, is `InvalidParams`. |
+| `rewind_workspace` | `checkpoint` | Puts back the files the turn of workspace checkpoint `checkpoint` (the id of the node its turn ended on, which a client reads from the session's checkpoint journal; no method lists them yet) changed, where they still hold what that turn left, and, when every one was put back, continues the conversation from before that turn as `select_node` does. Clients get what became of each file as a `notice`, which also says so when the files were put back but the conversation could not be moved. A checkpoint the session does not have, a session in plan mode, or one with nothing saved is `InvalidParams`. |
 | `model_catalog` | | Reads the model lists again, after a client refreshed the lists the daemon shares on disk; every loaded session's options follow. |
 | `context` | `text`, `display` | Adds `text` to what the model reads from its next turn on, with no turn of its own, and saves it as a user row reading `display`. Attached clients get no event for it; a later reset replays the row. Empty `text` is `InvalidParams`. |
 

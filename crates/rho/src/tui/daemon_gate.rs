@@ -1,10 +1,10 @@
 //! The single policy boundary for commands against a daemon-owned session.
 //!
-//! A command that still reads or mutates InteractiveRuntime must not silently
-//! operate on the unused in-process session. Keep this match exhaustive: every
+//! A command must not silently operate on the unused in-process session, so
+//! each says how it reaches the daemon's. Keep this match exhaustive: every
 //! new builtin needs an intentional daemon classification.
 
-use crate::commands::{CommandId, CommandInvocation};
+use crate::commands::CommandId;
 
 use super::{App, Entry};
 
@@ -13,7 +13,6 @@ pub(super) enum CommandRoute {
     Ui,
     Options,
     Prompt,
-    Unavailable,
 }
 
 pub(super) fn command_route(command: CommandId) -> CommandRoute {
@@ -75,9 +74,10 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Workflow
         // Read from the session's file, which the daemon shares; the
         // daemon moves the session to the node chosen.
-        | CommandId::Tree => CommandRoute::Ui,
-        // Workspace rewind needs checkpoints the daemon does not take yet.
-        CommandId::Rewind => CommandRoute::Unavailable,
+        | CommandId::Tree
+        // Checkpoints are read from the session's folder too; the daemon
+        // restores the files and the conversation.
+        | CommandId::Rewind => CommandRoute::Ui,
     }
 }
 
@@ -138,19 +138,6 @@ impl App {
         choices
     }
 
-    pub(super) fn refuse_daemon_command(&mut self, invocation: &CommandInvocation) -> bool {
-        self.refuse_daemon_action(invocation.id, &invocation.name)
-    }
-
-    /// Also used by shortcuts and startup navigation that bypass slash dispatch.
-    pub(super) fn refuse_daemon_action(&mut self, id: CommandId, name: &str) -> bool {
-        if self.info.session.daemon.is_none() || command_route(id) != CommandRoute::Unavailable {
-            return false;
-        }
-        self.daemon_command_unavailable(name);
-        true
-    }
-
     /// `/config` edits the daemon's settings; in process there is no
     /// daemon to save them (#1720).
     pub(super) fn execute_config_command(&mut self) {
@@ -161,8 +148,7 @@ impl App {
         }
     }
 
-    /// The mirror of [`Self::daemon_command_unavailable`]: `/name` changes
-    /// settings, which only the daemon saves.
+    /// `/name` changes settings, which only the daemon saves.
     pub(super) fn needs_daemon(&mut self, name: &str) {
         let notice = if cfg!(unix) {
             format!("/{name} needs the rho daemon: start rho with RHO_TUI_DAEMON=1")
@@ -173,6 +159,8 @@ impl App {
         self.set_status(format!("/{name} needs the rho daemon"));
     }
 
+    /// Says that the daemon's session does not offer the prompt command
+    /// `/name`.
     pub(super) fn daemon_command_unavailable(&mut self, name: &str) {
         let notice = format!("/{name} is not available with RHO_TUI_DAEMON yet");
         self.insert_entry(&Entry::Notice(notice.clone()));

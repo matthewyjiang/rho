@@ -76,7 +76,8 @@ saving back on.
 
 ## Workspace checkpoints
 
-Workspace rewind is on by default for saved interactive sessions. Native file
+Workspace rewind is on by default for saved sessions a person prompts: the
+TUI, daemon sessions, `rho run`, and `rho acp`. Native file
 mutations from `write` and the selected edit tool capture the original file once
 per turn, including its contents and basic permissions. Checkpoints are stored
 alongside the transcript at

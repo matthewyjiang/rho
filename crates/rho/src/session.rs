@@ -415,6 +415,37 @@ impl Session {
         store.resolve(id_prefix)?.tree()?.turn_items()
     }
 
+    /// The prompt of each of `turns`, nodes of session `id_prefix`'s tree
+    /// (see [`tree::SessionTree::turn_prompt`]), read without opening the
+    /// session, which another process may hold.
+    pub(crate) fn turn_prompts_by_id(
+        cwd: &Path,
+        id_prefix: &str,
+        turns: impl IntoIterator<Item = tree::NodeId>,
+    ) -> anyhow::Result<std::collections::HashMap<tree::NodeId, String>> {
+        let tree = SessionStore::new(&session_root()?, cwd)
+            .resolve(id_prefix)?
+            .tree()?;
+        Ok(turns
+            .into_iter()
+            .filter_map(|turn| tree.turn_prompt(&turn).map(|prompt| (turn, prompt)))
+            .collect())
+    }
+
+    /// Session `id_prefix`'s workspace checkpoints, reached without opening
+    /// the session, which another process may hold.
+    pub(crate) fn workspace_checkpoint_store_by_id(
+        cwd: &Path,
+        id_prefix: &str,
+    ) -> anyhow::Result<Option<workspace_checkpoint::WorkspaceCheckpointStore>> {
+        let resolved = SessionStore::new(&session_root()?, cwd).resolve(id_prefix)?;
+        workspace_checkpoint::WorkspaceCheckpointStore::at(
+            &resolved.path,
+            &resolved.id,
+            workspace_checkpoint::CheckpointLimits::default(),
+        )
+    }
+
     pub fn export_by_id(cwd: &Path, id_prefix: &str) -> anyhow::Result<SessionExport> {
         Self::export_by_id_in_root(&session_root()?, cwd, id_prefix)
     }
