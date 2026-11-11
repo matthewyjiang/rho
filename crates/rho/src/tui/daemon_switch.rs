@@ -79,6 +79,7 @@ impl App {
         self.sessions_hub_state.clear();
         self.daemon_option_requests.clear();
         self.daemon_login_selected = None;
+        self.daemon_unshown_switch = None;
         self.daemon_title = None;
         self.awaited_daemon_report = None;
         self.reset_daemon_mcp_offers();

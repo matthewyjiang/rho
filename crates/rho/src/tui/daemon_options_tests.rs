@@ -227,45 +227,115 @@ enum Switch {
     Model,
     /// The person, after the daemon refused the same switch from `/login`.
     ModelAfterRefusedLogin,
+    /// `/login`, whose request finished before the options showed it.
+    LoginFinishedFirst,
 }
 
 // Covers: a model switch this TUI asked for says where it landed, except
 // the one `/login` sent after storing credentials: its status line already
-// names the model and the credentials, and stays. A login switch the
-// daemon refused quiets nothing later (#1818).
+// names the model and the credentials, and stays, whichever of its request
+// and its options the TUI sees first. A login switch the daemon refused
+// quiets nothing later (#1818, #1880).
 // Owner: tui daemon session options
 #[test]
 fn a_switch_login_asked_for_keeps_logins_status_line() {
     const LOGIN: &str = "stored credentials for anthropic and selected anthropic/model";
-    let kept: Vec<_> = [Switch::Login, Switch::Model, Switch::ModelAfterRefusedLogin]
-        .into_iter()
-        .map(|switch| {
-            let mut app = crate::tui::tests::test_app();
-            app.show_daemon_options(options_on("openai", "api-key"));
-            let switched = options_on("anthropic", "anthropic-api-key");
-            let model = switched.model.current.clone();
-            let change = rho_protocol::SessionChange::Model {
-                model: model.clone(),
+    let kept: Vec<_> = [
+        Switch::Login,
+        Switch::Model,
+        Switch::ModelAfterRefusedLogin,
+        Switch::LoginFinishedFirst,
+    ]
+    .into_iter()
+    .map(|switch| {
+        let mut app = crate::tui::tests::test_app();
+        app.show_daemon_options(options_on("openai", "api-key"));
+        let switched = options_on("anthropic", "anthropic-api-key");
+        let model = switched.model.current.clone();
+        let change = rho_protocol::SessionChange::Model {
+            model: model.clone(),
+            auth: None,
+            setup: false,
+        };
+        app.daemon_option_requests.push_back(change.clone());
+        match switch {
+            Switch::Login => app.daemon_login_selected = Some(model),
+            Switch::Model => {}
+            Switch::ModelAfterRefusedLogin => {
+                app.daemon_login_selected = Some(model);
+                app.finish_daemon_option_request();
+                app.daemon_option_requests.push_back(change);
+            }
+            Switch::LoginFinishedFirst => {
+                app.daemon_login_selected = Some(model);
+                app.finish_daemon_option_request();
+            }
+        }
+        app.set_status(LOGIN);
+
+        app.show_daemon_options(switched);
+
+        app.last_status == LOGIN
+    })
+    .collect();
+
+    assert_eq!(kept, vec![true, false, false, true]);
+}
+
+/// When a model switch's request finished, relative to the options report
+/// that follows it.
+#[derive(Clone, Copy, Debug)]
+enum Finished {
+    /// After the report showed the switch, as the event stream orders it.
+    AfterOptions,
+    /// Before any report showed it, as when a reattach's response carries
+    /// the options (#1880).
+    BeforeOptions,
+    /// Refused: the next report is on another model.
+    Refused,
+}
+
+// Covers: a pinned-model switch says where it landed whether its request
+// finished before or after the options showing it arrived, and a refused
+// one says nothing when a later report lands elsewhere (#1880).
+// Owner: tui daemon session options
+#[test]
+fn a_switch_says_where_it_landed_whenever_its_request_finished() {
+    const BEFORE: &str = "status before the switch";
+    let announced: Vec<_> = [
+        Finished::AfterOptions,
+        Finished::BeforeOptions,
+        Finished::Refused,
+    ]
+    .into_iter()
+    .map(|finished| {
+        let mut app = crate::tui::tests::test_app();
+        app.show_daemon_options(options_on("openai", "api-key"));
+        let asked = options_on("anthropic", "anthropic-api-key");
+        app.daemon_option_requests
+            .push_back(rho_protocol::SessionChange::Model {
+                model: asked.model.current.clone(),
                 auth: None,
                 setup: false,
-            };
-            app.daemon_option_requests.push_back(change.clone());
-            match switch {
-                Switch::Login => app.daemon_login_selected = Some(model),
-                Switch::Model => {}
-                Switch::ModelAfterRefusedLogin => {
-                    app.daemon_login_selected = Some(model);
-                    app.finish_daemon_option_request();
-                    app.daemon_option_requests.push_back(change);
-                }
+            });
+        app.set_status(BEFORE);
+        match finished {
+            Finished::AfterOptions => {
+                app.show_daemon_options(asked);
+                app.finish_daemon_option_request();
             }
-            app.set_status(LOGIN);
+            Finished::BeforeOptions => {
+                app.finish_daemon_option_request();
+                app.show_daemon_options(asked);
+            }
+            Finished::Refused => {
+                app.finish_daemon_option_request();
+                app.show_daemon_options(options_on("xai", "api-key"));
+            }
+        }
+        app.last_status != BEFORE
+    })
+    .collect();
 
-            app.show_daemon_options(switched);
-
-            app.last_status == LOGIN
-        })
-        .collect();
-
-    assert_eq!(kept, vec![true, false, false]);
+    assert_eq!(announced, vec![true, true, false]);
 }

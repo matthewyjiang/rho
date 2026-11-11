@@ -147,6 +147,7 @@ impl App {
             daemon_options: None,
             daemon_option_requests: std::collections::VecDeque::new(),
             daemon_login_selected: None,
+            daemon_unshown_switch: None,
             daemon_title: None,
             daemon_compact_turn: None,
             daemon_compact_handoff: false,
