@@ -1671,6 +1671,20 @@ fn daemon_quiet_subagent_notices_wait_for_a_turn() {
     }
 }
 
+// Covers: with RHO_TUI_DAEMON=1, a background failure pending during a tool
+// is folded in before the parent turn completes, and steering queued during
+// a tool can be inspected and retracted.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_tool_turns_take_notices_and_retracted_steering() {
+    for scenario in [
+        "daemon_boundary_notifications",
+        "daemon_retract_steering_during_tool",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
 // Covers: with RHO_TUI_DAEMON=1, /attach lists a daemon session's running
 // subagents, opens and cycles the in-place view, and shows a parent's
 // message there once applied.
