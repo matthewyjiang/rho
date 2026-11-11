@@ -201,46 +201,67 @@ fn values_in_the_3_0_files_win_and_rewritten_files_are_backed_up() {
     );
 }
 
-// Covers: plaintext web-search keys go to the store the file selects, and a
-// store that refuses them does not stop the upgrade or leave them in the
-// 3.0 file.
+// Covers: plaintext web-search keys go to the store the file selects and
+// leave the 3.0 file whatever the store answers: a refusal is reported and
+// does not stop the upgrade, and a key the store kept over the 2.x one is
+// reported as ignored, not as moved.
 // Owner: config upgrade
 #[test]
-fn a_refused_web_search_key_does_not_stop_the_upgrade() {
-    let dir = tempfile::tempdir().unwrap();
-    write(
-        dir.path(),
-        "config.toml",
-        "web_search_exa_api_key = \"exa-key\"\n\n[behavior]\ncredential_store = \"file\"\n",
-    );
-
-    let mut asked = None;
-    let upgraded = upgrade_2x(
-        &dir.path().join("config.toml"),
-        dir.path(),
-        |backend, keys| {
-            asked = Some((backend, keys.to_vec()));
-            anyhow::bail!("store is locked")
-        },
-    )
-    .unwrap()
-    .expect("the file holds 2.x keys");
-
-    assert_eq!(
+fn web_search_keys_leave_the_file_whatever_the_store_answers() {
+    type Answer = fn() -> anyhow::Result<Vec<WebSearchCredential>>;
+    let cases: [(&str, Answer, Option<&str>, &[&str]); 2] = [
         (
-            asked,
-            upgraded.secrets_error,
-            read(dir.path(), "config.toml"),
+            "refused",
+            || anyhow::bail!("store is locked"),
+            Some("store is locked"),
+            &[],
         ),
         (
-            Some((
-                Some(CredentialStoreBackend::File),
-                vec![(WebSearchCredential::Exa, "exa-key".to_owned())],
-            )),
-            Some("store is locked".to_owned()),
-            Some("\n[behavior]\ncredential_store = \"file\"\n".to_owned()),
+            "another key stored",
+            || Ok(vec![WebSearchCredential::Exa]),
+            None,
+            &["web_search_exa_api_key"],
+        ),
+    ];
+    for (name, answer, secrets_error, already_set) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "config.toml",
+            "web_search_exa_api_key = \"exa-key\"\n\n[behavior]\ncredential_store = \"file\"\n",
+        );
+
+        let mut asked = None;
+        let upgraded = upgrade_2x(
+            &dir.path().join("config.toml"),
+            dir.path(),
+            |backend, keys| {
+                asked = Some((backend, keys.to_vec()));
+                answer()
+            },
         )
-    );
+        .unwrap()
+        .expect("the file holds 2.x keys");
+
+        assert_eq!(
+            (
+                asked,
+                upgraded.secrets_error.as_deref(),
+                upgraded.already_set,
+                read(dir.path(), "config.toml"),
+            ),
+            (
+                Some((
+                    Some(CredentialStoreBackend::File),
+                    vec![(WebSearchCredential::Exa, "exa-key".to_owned())],
+                )),
+                secrets_error,
+                already_set.iter().map(|key| (*key).to_owned()).collect(),
+                Some("\n[behavior]\ncredential_store = \"file\"\n".to_owned()),
+            ),
+            "{name}"
+        );
+    }
 }
 
 // Covers: only 2.x keys are rewritten. A key neither version knows is left

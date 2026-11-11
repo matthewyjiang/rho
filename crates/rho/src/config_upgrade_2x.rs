@@ -28,8 +28,8 @@ pub(crate) struct Upgraded {
     pub(crate) backup: PathBuf,
     /// What [`migrate_2x`] changed, in order.
     pub(crate) report: Vec<Change>,
-    /// 2.x keys, as the file named them, whose 3.0 file already held a
-    /// different value, which was kept.
+    /// 2.x keys, as the file named them, whose 3.0 file or credential
+    /// store already held a different value, which was kept.
     pub(crate) already_set: Vec<String>,
     /// Why the plaintext web-search keys did not reach the credential
     /// store. They are in [`Self::backup`] only.
@@ -40,7 +40,8 @@ pub(crate) struct Upgraded {
 /// `None` when the file holds no 2.x key, which leaves every file alone.
 ///
 /// `save_secrets` stores the web-search keys 2.x kept in plaintext, given
-/// the credential store the file selects. Its failure does not stop the
+/// the credential store the file selects, and returns the credentials
+/// whose stored key differs and was kept. Its failure does not stop the
 /// upgrade: the keys leave `config.toml` either way, since 3.0 refuses them
 /// there.
 pub(crate) fn upgrade_2x(
@@ -49,7 +50,7 @@ pub(crate) fn upgrade_2x(
     save_secrets: impl FnOnce(
         Option<CredentialStoreBackend>,
         &[(WebSearchCredential, String)],
-    ) -> anyhow::Result<()>,
+    ) -> anyhow::Result<Vec<WebSearchCredential>>,
 ) -> anyhow::Result<Option<Upgraded>> {
     let Some(original) = read(config_path)? else {
         return Ok(None);
@@ -104,17 +105,34 @@ pub(crate) fn upgrade_2x(
     }
 
     let agent = ConfigDocument::from(migrated.agent);
-    let secrets_error = if migrated.secrets.is_empty() {
-        None
-    } else {
+    let mut secrets_error = None;
+    if !migrated.secrets.is_empty() {
         let backend = agent
             .get("behavior.credential_store")
             .and_then(Item::as_str)
             .and_then(|backend| CredentialStoreBackend::parse(backend).ok());
-        save_secrets(backend, &migrated.secrets)
-            .err()
-            .map(|error| format!("{error:#}"))
-    };
+        match save_secrets(backend, &migrated.secrets) {
+            Ok(kept) => {
+                // `migrate_2x` reports one `Secret` per entry of `secrets`,
+                // in the same order.
+                let secret_keys = migrated.report.iter().filter_map(|change| match change {
+                    Change::Secret { key } => Some(key),
+                    Change::Moved { .. } | Change::Rewritten { .. } | Change::Dropped { .. } => {
+                        None
+                    }
+                });
+                already_set.extend(
+                    migrated
+                        .secrets
+                        .iter()
+                        .zip(secret_keys)
+                        .filter(|((credential, _), _)| kept.contains(credential))
+                        .map(|(_, key)| key.clone()),
+                );
+            }
+            Err(error) => secrets_error = Some(format!("{error:#}")),
+        }
+    }
     write(config_path, &agent.text())?;
     Ok(Some(Upgraded {
         backup,
@@ -162,13 +180,14 @@ impl Upgraded {
                     lines.push(format!("note: `{key}`: {from} is now {to}"));
                 }
                 Change::Dropped { key } => ignored.push(key.as_str()),
+                Change::Secret { key } if self.already_set.contains(key) => {}
                 Change::Secret { key } => stored.push(key.as_str()),
             }
         }
         ignored.extend(self.already_set.iter().map(String::as_str));
         if !ignored.is_empty() {
             lines.push(format!(
-                "warning: ignored 2.x keys that 3.0 does not read, or whose 3.0 file already sets another value: {}",
+                "warning: ignored 2.x keys that 3.0 does not read, or that 3.0 already sets to another value: {}",
                 ignored.join(", ")
             ));
         }

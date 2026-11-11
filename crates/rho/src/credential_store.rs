@@ -223,24 +223,28 @@ pub(crate) fn saved_policy_backend(
 }
 
 /// Saves the web-search keys a 2.x config held in plaintext, keeping any
-/// key already stored. Writes to the store `config_backend` (the upgraded
+/// key already stored, and returns the credentials whose stored key
+/// differs and was kept. Writes to the store `config_backend` (the upgraded
 /// file's, else the legacy policy file's) and the environment select,
 /// opened for this call only: startup opens the process's store later.
 pub(crate) fn save_migrated_web_search_keys(
     config_backend: Option<CredentialStoreBackend>,
     keys: &[(WebSearchCredential, String)],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<WebSearchCredential>> {
     let config_backend = match config_backend {
         Some(backend) => Some(backend),
         None => read_legacy_policy_file()?,
     };
     let store = open_credential_store(resolve_backend(config_backend)?)?;
+    let mut kept = Vec::new();
     for (credential, key) in keys {
-        if load_web_search_api_key(store.as_ref(), *credential)?.is_none() {
-            save_web_search_api_key(store.as_ref(), *credential, key)?;
+        match load_web_search_api_key(store.as_ref(), *credential)? {
+            None => save_web_search_api_key(store.as_ref(), *credential, key)?,
+            Some(stored) if stored == *key => {}
+            Some(_) => kept.push(*credential),
         }
     }
-    Ok(())
+    Ok(kept)
 }
 
 /// Why [`set_backend`] did not switch stores.
