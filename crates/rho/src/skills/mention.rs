@@ -15,6 +15,11 @@ use super::Skill;
 /// Tool that loads a skill. Without it, mentions stay prose.
 pub(crate) const SKILL_TOOL: &str = "skill";
 
+/// Why a skill command (`/skill:<name>`, `/$<name>`) is refused in a session
+/// without [`SKILL_TOOL`]; the TUI and the daemon say it alike.
+pub(crate) const NO_SKILL_TOOL: &str =
+    "skill commands are unavailable because the active agent has no skill tool";
+
 /// One whitespace-delimited mention: any currency sigil, then a name. This is
 /// T3's `SKILL_MENTION_PATTERN` (`packages/shared/src/composerInlineTokens.ts`)
 /// with its `(^|\s)` / `(?=\s|$)` delimiters handled by splitting on

@@ -245,7 +245,7 @@ impl App {
                 if self.info.session.daemon.is_some()
                     && super::daemon_gate::command_route(invocation.id)
                         == super::daemon_gate::CommandRoute::Prompt
-                    && self.daemon_prompt_command_available(&invocation.name)
+                    && self.daemon_offers_built_in(invocation.id)
                     && self.daemon_prompt_needs_login()
                 {
                     return self.offer_login_instead_of_turn(turn);
@@ -257,7 +257,17 @@ impl App {
             Ok(None) => {}
             Err(commands::CommandParseError::Unknown(name)) => {
                 if self.info.session.daemon.is_some() {
-                    if !self.daemon_prompt_command_available(&name) {
+                    // `/skill:<name>` goes as the daemon's `/$<name>`, which
+                    // loads the skill or says why the session cannot.
+                    if let Some(skill) = name.strip_prefix("skill:") {
+                        if !self.daemon_may_load_skill(skill) {
+                            self.clear_submitted_input();
+                            self.report_unknown_command(&name);
+                            return Ok(());
+                        }
+                        turn = TurnPrompt::command(turn.model, turn.display)
+                            .with_skill(skill.to_owned());
+                    } else if !self.daemon_prompt_command_available(&name) {
                         self.clear_submitted_input();
                         self.daemon_command_unavailable(&name);
                         return Ok(());

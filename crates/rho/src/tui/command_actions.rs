@@ -75,7 +75,7 @@ impl App {
                     return self.execute_daemon_option_command(&invocation)
                 }
                 super::daemon_gate::CommandRoute::Prompt => {
-                    if !self.daemon_prompt_command_available(&invocation.name) {
+                    if !self.daemon_offers_built_in(invocation.id) {
                         self.daemon_command_unavailable(&invocation.name);
                         return Ok(());
                     }

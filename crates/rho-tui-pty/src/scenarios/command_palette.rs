@@ -208,6 +208,26 @@ pub(super) const PROMPT_TEMPLATE_DURING_TURN_SCENARIO: Scenario = Scenario::new(
     /* smoke */ false,
 );
 
+// Covers: a daemon session runs the agent creator itself: `/agents create`
+// loads the creator skill, and an agent without the creator's tools is told
+// which it lacks, as in process.
+// Owner: interactive TUI as a daemon client
+#[cfg(unix)]
+pub(super) const DAEMON_CREATE_AGENT_COMMAND_SCENARIO: Scenario = Scenario {
+    id: "daemon_create_agent_command",
+    description: "Start the guided agent creator in a daemon session",
+    env: &[("RHO_TUI_DAEMON", "1")],
+    ..CREATE_AGENT_COMMAND_SCENARIO
+};
+
+#[cfg(unix)]
+pub(super) const DAEMON_CREATE_AGENT_MISSING_TOOLS_SCENARIO: Scenario = Scenario {
+    id: "daemon_create_agent_missing_tools",
+    description: "Name the tools a daemon session's agent needs before creation can start",
+    env: &[("RHO_TUI_DAEMON", "1")],
+    ..CREATE_AGENT_MISSING_TOOLS_SCENARIO
+};
+
 // Covers: a daemon session's palette offers a settled command's arguments,
 // so Tab completes `/agents create` and Enter still runs the bare command.
 // Owner: interactive TUI as a daemon client

@@ -195,6 +195,15 @@ impl App {
         match self.parse_input_command() {
             Ok(Some(invocation)) => {
                 self.clear_submitted_input();
+                // A command the daemon runs is queued as typed, with the
+                // pasted body its parsed arguments only mark.
+                if self.info.session.daemon.is_some()
+                    && super::daemon_gate::command_route(invocation.id)
+                        == super::daemon_gate::CommandRoute::Prompt
+                    && self.daemon_offers_built_in(invocation.id)
+                {
+                    return self.queue_prompt(prompt, display_prompt, paste_segments, Vec::new());
+                }
                 self.execute_command_during_turn(invocation, terminal)
                     .await?;
             }
@@ -362,11 +371,12 @@ impl App {
                     return self.execute_daemon_option_command(&invocation)
                 }
                 super::daemon_gate::CommandRoute::Prompt => {
-                    if !self.daemon_prompt_command_available(&invocation.name) {
+                    if !self.daemon_offers_built_in(invocation.id) {
                         self.daemon_command_unavailable(&invocation.name);
                         return Ok(());
                     }
-                    let prompt = format!("/{} {}", invocation.name, invocation.args);
+                    // Raw arguments keep `/agents create`'s sub-action.
+                    let prompt = format!("/{} {}", invocation.name, invocation.raw_args.trim());
                     return self.queue_prompt(prompt.clone(), prompt, Vec::new(), Vec::new());
                 }
                 super::daemon_gate::CommandRoute::Ui => {}

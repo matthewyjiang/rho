@@ -95,7 +95,11 @@ async fn expired(limit: Option<TurnLimit>) -> u64 {
 /// command a session host runs, so the TUI's own commands are the only ones
 /// it refuses.
 pub(super) const DAEMON_COMMANDS: CommandSet = CommandSet {
-    built_ins: &[BuiltInCommand::Compact, BuiltInCommand::Init],
+    built_ins: &[
+        BuiltInCommand::Compact,
+        BuiltInCommand::Init,
+        BuiltInCommand::CreateAgent,
+    ],
     workflows: Hosting::Runs,
     agents: Hosting::Runs,
     sessions_label: "daemon sessions",

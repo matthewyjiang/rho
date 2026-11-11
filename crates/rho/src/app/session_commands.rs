@@ -29,7 +29,7 @@ use crate::{
         session_runtime::{AgentTask, CommandRejected, SessionRuntime, SessionTools},
         workflow_cli::discover::{self as workflows, WorkflowLaunch},
     },
-    commands::{init_turn, CommandId, CommandInvocation, CommandParseError},
+    commands::{create_agent_turn, init_turn, CommandId, CommandInvocation, CommandParseError},
     config::Config,
     permission::PermissionMode,
     prompt_templates,
@@ -47,6 +47,9 @@ pub(crate) enum BuiltInCommand {
     Compact,
     /// `/init`: a model turn that sets up the workspace's agent instructions.
     Init,
+    /// `/create-agent [request]` and `/agents create [request]`: a model
+    /// turn that guides the user to a new agent definition.
+    CreateAgent,
 }
 
 impl BuiltInCommand {
@@ -54,6 +57,7 @@ impl BuiltInCommand {
         match self {
             Self::Compact => CommandId::Compact,
             Self::Init => CommandId::Init,
+            Self::CreateAgent => CommandId::CreateAgent,
         }
     }
 }
@@ -181,10 +185,34 @@ pub(crate) async fn resolve(
         let (model_override, task) = agent_task(task)?;
         return run_as_agent(input, &agent_id, model_override, task, scope, commands);
     }
-    match crate::commands::parse_command(text) {
+    let parsed = match crate::commands::parse_command(text) {
+        Ok(None) => first_line_command(text, commands),
+        parsed => parsed,
+    };
+    match parsed {
         Ok(None) => Ok(turn(input, &[], scope)),
         Ok(Some(invocation)) => built_in(input, invocation, scope, commands),
         Err(CommandParseError::Unknown(name)) => dynamic(input, &name, scope, commands).await,
+    }
+}
+
+/// The command on a multiline prompt's first line, for the commands whose
+/// arguments a pasted body can span: the built-ins `commands` runs and
+/// `/$skill`. The shared parser declines multiline text, and any other
+/// command there stays prose.
+fn first_line_command(
+    text: &str,
+    commands: CommandSet,
+) -> Result<Option<CommandInvocation>, CommandParseError> {
+    let Some((first_line, _)) = text.split_once('\n') else {
+        return Ok(None);
+    };
+    match crate::commands::parse_command(first_line) {
+        Ok(Some(invocation)) if commands.built_in(invocation.id).is_some() => Ok(Some(invocation)),
+        Err(CommandParseError::Unknown(name)) if name.starts_with('$') => {
+            Err(CommandParseError::Unknown(name))
+        }
+        Ok(_) | Err(_) => Ok(None),
     }
 }
 
@@ -194,9 +222,12 @@ fn built_in(
     scope: &CommandScope<'_>,
     commands: CommandSet,
 ) -> Result<PromptCommand, CommandRejected> {
+    // The whole text after the command, as a pasted body spans lines the
+    // invocation's arguments stop short of.
+    let args = leading_text(&input).map_or("", command_args);
     match commands.built_in(invocation.id) {
         Some(BuiltInCommand::Compact) => Ok(PromptCommand::Compact {
-            instructions: (!invocation.args.is_empty()).then_some(invocation.args),
+            instructions: (!args.is_empty()).then(|| args.to_owned()),
         }),
         Some(BuiltInCommand::Init) => {
             let model_prompt = init_turn::model_prompt(scope.cwd, scope.permission_mode, |name| {
@@ -206,6 +237,16 @@ fn built_in(
             Ok(PromptCommand::Turn {
                 input: replace_leading_text(input, model_prompt),
                 calls: vec![mention::load_call(init_turn::SKILL)],
+            })
+        }
+        Some(BuiltInCommand::CreateAgent) => {
+            let request = crate::commands::create_agent_request(&invocation.name, args);
+            let model_prompt =
+                create_agent_turn::model_prompt(request, |name| scope.tools.contains(name))
+                    .map_err(|error| CommandRejected(error.to_string()))?;
+            Ok(PromptCommand::Turn {
+                input: replace_leading_text(input, model_prompt),
+                calls: vec![mention::load_call(create_agent_turn::SKILL)],
             })
         }
         None => Err(CommandRejected(format!(
@@ -305,9 +346,10 @@ async fn dynamic(
     // Spec-following clients send a picked `$skill` command as `/$skill`. It
     // loads first, then any skills mentioned after it.
     if let Some(skill) = name.strip_prefix('$') {
-        if scope.tools.contains(mention::SKILL_TOOL)
-            && scope.skills().iter().any(|known| known.name == skill)
-        {
+        if !scope.tools.contains(mention::SKILL_TOOL) {
+            return Err(CommandRejected(mention::NO_SKILL_TOOL.into()));
+        }
+        if scope.skills().iter().any(|known| known.name == skill) {
             return Ok(turn(input, &[skill], scope));
         }
     }

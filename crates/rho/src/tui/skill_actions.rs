@@ -48,9 +48,7 @@ impl App {
             return Ok(SkillCommandAction::NotSkill);
         };
         if !skill_tool_available {
-            self.insert_entry(&Entry::Error(
-                "skill commands are unavailable because the active agent has no skill tool".into(),
-            ));
+            self.insert_entry(&Entry::Error(crate::skills::mention::NO_SKILL_TOOL.into()));
             self.set_status("skill unavailable");
             return Ok(SkillCommandAction::Rejected);
         }

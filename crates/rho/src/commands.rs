@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 mod availability;
+pub(crate) mod create_agent_turn;
 pub(crate) mod init_turn;
 pub(crate) use availability::CommandContext;
 

@@ -190,12 +190,10 @@ fn pasted_agents_create_request_strips_create_token() {
     app.insert_input_text("/agents create ");
     app.insert_pasted_input_text(&pasted);
     let expanded = app.expanded_input().trim().to_string();
-    let display = app.input_ui.text().trim().to_string();
     let invocation = app.parse_input_command().unwrap().unwrap();
-    let turn = TurnPrompt::standard(expanded.clone(), display.clone());
     assert_eq!(
-        super::super::agent_creator_command::create_agent_model_prompt(&invocation, &turn),
-        format!("Create a new Rho agent through the guided workflow. User request: {pasted}")
+        crate::commands::create_agent_request(&invocation.name, slash_command_args(&expanded)),
+        pasted
     );
 }
 
