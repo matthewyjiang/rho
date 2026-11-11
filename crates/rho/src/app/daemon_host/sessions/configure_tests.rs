@@ -259,3 +259,49 @@ async fn an_added_directory_joins_the_sessions_scope() {
         )
     );
 }
+
+// Covers: a model change sent to follow a `/compact` applies only when the
+// session's current or last prompted turn compacted; after no compaction, or
+// one an earlier turn ran, it is dropped and the session keeps its model.
+// The change names a model no catalog lists, so applying it is refused and
+// dropping it answers with the options as they were.
+// Owner: daemon session settings.
+#[tokio::test]
+async fn a_model_change_after_compaction_waits_for_the_last_turn_to_compact() {
+    let cases = [
+        ("no compaction", None, Ok(())),
+        (
+            "the last turn compacted",
+            Some(1),
+            Err(wire::ErrorCode::InvalidParams.code()),
+        ),
+        ("an earlier turn compacted", Some(0), Ok(())),
+    ];
+    for (name, compacted_prompt, expected) in cases {
+        let (root, home) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        let sessions = new_sessions(&home);
+        let session = load(&sessions, &root, Load::Saved).await;
+        {
+            let mut turn = session.turn();
+            turn.prompts = 1;
+            turn.compacted_prompt = compacted_prompt;
+        }
+
+        let answered = sessions
+            .configure(SessionConfigureParams {
+                session: session_to_wire(session.id.clone()),
+                change: SessionChange::ModelAfterCompaction {
+                    model: wire::ModelRef {
+                        provider: "openai".into(),
+                        model: "no-such-model".into(),
+                    },
+                    auth: None,
+                },
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| error.code);
+
+        assert_eq!(answered, expected, "{name}");
+    }
+}
