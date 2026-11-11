@@ -1718,6 +1718,26 @@ fn daemon_workflow_hub_retries_planned_run() {
     assert_pass("daemon_workflow_hub_planned_retry");
 }
 
+// Covers: a finished workflow row stays on the rail while a busy turn holds
+// back its result, and leaves with the result.
+// Owner: interactive workflow rail
+// Requires the verified-handle workflow command adapter; other platforms fail closed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn workflow_row_waits_for_its_result() {
+    assert_pass("workflow_result_rail");
+}
+
+// Covers: with RHO_TUI_DAEMON=1, a finished workflow row stays on the rail
+// while a busy turn holds back its result, and leaves with it, as in process.
+// Owner: interactive TUI as a daemon client (#1667)
+// Requires the verified-handle workflow command adapter; other platforms fail closed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn daemon_workflow_row_waits_for_its_result() {
+    assert_pass("daemon_workflow_result_rail");
+}
+
 // Covers: a daemon session's turn is checkpointed, and `/rewind` has the
 // daemon put its file and the conversation back.
 // Owner: interactive TUI as a daemon client (#1667)
