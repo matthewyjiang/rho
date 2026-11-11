@@ -74,11 +74,14 @@ fn assert_pass(name: &str) {
     );
 }
 
-// Covers: confirmation rejection/failure parks remaining queued follow-ups.
+// Covers: confirmation rejection/failure parks remaining queued follow-ups,
+// in process and when the daemon holds the conversation.
 // Owner: interactive turn orchestration (PTY).
 #[test]
 fn send_confirm_handoff() {
-    assert_pass("send_confirm_handoff");
+    for scenario in ["send_confirm_handoff", "daemon_send_confirm_handoff"] {
+        assert_pass(scenario);
+    }
 }
 
 // Covers: review a long plan and preserve approval feedback in model history.

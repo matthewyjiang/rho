@@ -207,6 +207,8 @@ credential_store = "file"
     }
 
     let (session_id, session_path) = find_latest_session(&home)?;
+    // A daemon that hosted the seed still holds its session and config.
+    home.stop_daemon();
     inject_non_replayable_provider_context(&session_path, StoredProviderRewrite::ToAnthropic)?;
     setup_auto_without_classifier(&home)?;
 
