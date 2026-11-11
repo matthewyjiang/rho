@@ -461,6 +461,22 @@ fn daemon_mcp_startup_matches_the_in_process_tui() {
     }
 }
 
+// Covers: a daemon session whose only tool sources are OpenAPI sources
+// lists no connecting MCP server, so a TUI that reads loading from the
+// servers alone sends a prompt during the load and waits on the daemon with
+// the keyboard dead. The turn must be held, come back on Esc, and start
+// once the load ends.
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_openapi_load_holds_a_turn_as_mcp_connect_does() {
+    for scenario in [
+        "daemon_openapi_hold_take_back",
+        "daemon_openapi_load_release",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
 #[test]
 fn smoke_cancel_and_resubmit() {
     assert_pass("cancel_and_resubmit");

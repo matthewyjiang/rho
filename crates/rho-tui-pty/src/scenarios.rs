@@ -48,6 +48,8 @@ mod daemon_mcp_startup;
 #[cfg(unix)]
 mod daemon_model;
 #[cfg(unix)]
+mod daemon_openapi_startup;
+#[cfg(unix)]
 mod daemon_options;
 #[cfg(unix)]
 mod daemon_prompt;
@@ -164,7 +166,7 @@ use background_agents::{
     BACKGROUND_AGENT_AUTO_DELIVERY_STEPS, BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
     LATE_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
 };
-use changelog::CHANGELOG_STEPS;
+use changelog::CHANGELOG_SCENARIO;
 use command_palette::{
     CREATE_AGENT_COMMAND_SCENARIO, CREATE_AGENT_MISSING_TOOLS_SCENARIO,
     PROMPT_TEMPLATE_DURING_TURN_SCENARIO, PROMPT_TEMPLATE_HOT_RELOAD_SCENARIO,
@@ -200,7 +202,7 @@ use mcp::{
     MCP_CONNECTING_SCENARIO, MCP_CONNECT_RELEASE_SCENARIO, MCP_HOLD_TAKE_BACK_SCENARIO,
     MCP_INVENTORY_SCENARIO,
 };
-use mermaid::MERMAID_FLOWCHART_RESIZE_STEPS;
+use mermaid::MERMAID_FLOWCHART_RESIZE_SCENARIO;
 use no_save::NO_SAVE_SESSION_SCENARIO;
 use paste::PASTE_MULTILINE_SCENARIO;
 use pickers::{
@@ -229,7 +231,7 @@ use side_chat::{
 use startup::{
     STARTUP_FIRST_FRAME_SCENARIO, STARTUP_PROMPT_STREAM_EXIT_SCENARIO, STARTUP_STREAM_EXIT_SCENARIO,
 };
-use statusline::STATUSLINE_HIERARCHY_STEPS;
+use statusline::STATUSLINE_HIERARCHY_SCENARIO;
 use steering::{
     QUEUE_FOLLOW_UP_DURING_TURN_SCENARIO, RETRACT_STEERING_DURING_TOOL_SCENARIO,
     STEER_APPEARS_IN_TRANSCRIPT_SCENARIO, STEER_DELIVERED_MARKER_SCENARIO,
@@ -523,13 +525,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     PROMPT_TEMPLATE_DURING_TURN_SCENARIO,
     FILE_PATH_AUTOCOMPLETE_SCENARIO,
     SHELL_TAB_COMPLETION_SCENARIO,
-    Scenario::new(
-        "mermaid_flowchart_resize",
-        "Render a long-labelled flowchart, then explain the fallback in a narrow pane",
-        DEFAULT_SIZE,
-        MERMAID_FLOWCHART_RESIZE_STEPS,
-        false,
-    ),
+    MERMAID_FLOWCHART_RESIZE_SCENARIO,
     Scenario::new(
         "runtime_info",
         "Open runtime details immediately, copy the report, and keep fields readable after a narrow resize",
@@ -542,20 +538,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     )
     .with_env(&[("SSH_TTY", "rho-pty-clipboard")]),
-    Scenario::new(
-        "statusline_hierarchy",
-        "Keep ranked statusline identity fields as the terminal narrows",
-        DEFAULT_SIZE,
-        STATUSLINE_HIERARCHY_STEPS,
-        false,
-    ),
-    Scenario::new(
-        "changelog",
-        "Show bundled release notes for the installed version in chat",
-        DEFAULT_SIZE,
-        CHANGELOG_STEPS,
-        false,
-    ),
+    STATUSLINE_HIERARCHY_SCENARIO,
+    CHANGELOG_SCENARIO,
     Scenario::new(
         "conversation_tree",
         "Restore an earlier turn and continue on a new branch",
@@ -710,6 +694,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_mcp_startup::HOLD_TAKE_BACK,
     #[cfg(unix)]
     daemon_mcp_startup::CONNECT_RELEASE,
+    #[cfg(unix)]
+    daemon_openapi_startup::HOLD_TAKE_BACK,
+    #[cfg(unix)]
+    daemon_openapi_startup::LOAD_RELEASE,
     #[cfg(unix)]
     daemon_config::DAEMON_CONFIG,
     #[cfg(unix)]

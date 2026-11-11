@@ -1,10 +1,21 @@
 use anyhow::{ensure, Result};
 
-use crate::{harness::PtyHarness, scenario::Step};
+use crate::{
+    harness::PtyHarness,
+    scenario::{Scenario, Step},
+};
 
-use super::{SETTLE, STARTUP};
+use super::{DEFAULT_SIZE, SETTLE, STARTUP};
 
-pub(super) const CHANGELOG_STEPS: &[Step] = &[
+pub(super) const CHANGELOG_SCENARIO: Scenario = Scenario::new(
+    "changelog",
+    "Show bundled release notes for the installed version in chat",
+    DEFAULT_SIZE,
+    CHANGELOG_STEPS,
+    /*smoke*/ false,
+);
+
+const CHANGELOG_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "rho",

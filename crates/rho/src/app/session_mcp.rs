@@ -19,6 +19,9 @@ pub(super) struct SessionMcp {
     report: McpSessionReport,
     catalog: McpCatalog,
     config_path: PathBuf,
+    /// Reads `true` once the session's deferred tool sources loaded;
+    /// `None` when it deferred none, or runs with them.
+    tool_sources: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
 #[cfg(unix)]
@@ -28,15 +31,24 @@ impl SessionMcp {
             report: runtime.tools().mcp_report().clone(),
             catalog: runtime.tools().mcp_catalog().clone(),
             config_path: runtime.config_path().to_path_buf(),
+            tool_sources: runtime.tool_sources_progress(),
         }
     }
 
     pub(super) fn snapshot(&self) -> SessionMcpInventory {
-        session_mcp_inventory(&self.report, &self.catalog, &self.config_path)
+        SessionMcpInventory {
+            tool_sources_loading: self
+                .tool_sources
+                .as_ref()
+                .is_some_and(|loaded| !*loaded.borrow()),
+            ..session_mcp_inventory(&self.report, &self.catalog, &self.config_path)
+        }
     }
 }
 
 /// Build the same inventory for either host, including live catalog details.
+/// `tool_sources_loading` is the daemon's to set (see
+/// `SessionMcp::snapshot`): the in-process TUI asks its runtime instead.
 pub(crate) fn session_mcp_inventory(
     report: &McpSessionReport,
     catalog: &McpCatalog,
@@ -51,6 +63,7 @@ pub(crate) fn session_mcp_inventory(
             McpLoadMode::UnsupportedAgent => SessionMcpMode::UnsupportedAgent,
             McpLoadMode::ToolsDisabled => SessionMcpMode::ToolsDisabled,
         },
+        tool_sources_loading: false,
         servers: report
             .servers
             .iter()

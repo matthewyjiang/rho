@@ -2,11 +2,22 @@ use std::time::{Duration, Instant};
 
 use anyhow::{ensure, Result};
 
-use crate::{harness::PtyHarness, scenario::Step};
+use crate::{
+    harness::PtyHarness,
+    scenario::{Scenario, Step},
+};
 
-use super::{SETTLE, STARTUP, STREAM};
+use super::{DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
 
-pub(super) const MERMAID_FLOWCHART_RESIZE_STEPS: &[Step] = &[
+pub(super) const MERMAID_FLOWCHART_RESIZE_SCENARIO: Scenario = Scenario::new(
+    "mermaid_flowchart_resize",
+    "Render a long-labelled flowchart, then explain the fallback in a narrow pane",
+    DEFAULT_SIZE,
+    MERMAID_FLOWCHART_RESIZE_STEPS,
+    /*smoke*/ false,
+);
+
+const MERMAID_FLOWCHART_RESIZE_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "gpt-5.5",

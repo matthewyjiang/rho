@@ -4,11 +4,22 @@ use std::time::Duration;
 
 use anyhow::{ensure, Result};
 
-use crate::{harness::PtyHarness, scenario::Step};
+use crate::{
+    harness::PtyHarness,
+    scenario::{Scenario, Step},
+};
 
-use super::{SETTLE, STARTUP};
+use super::{DEFAULT_SIZE, SETTLE, STARTUP};
 
-pub(super) const STATUSLINE_HIERARCHY_STEPS: &[Step] = &[
+pub(super) const STATUSLINE_HIERARCHY_SCENARIO: Scenario = Scenario::new(
+    "statusline_hierarchy",
+    "Keep ranked statusline identity fields as the terminal narrows",
+    DEFAULT_SIZE,
+    STATUSLINE_HIERARCHY_STEPS,
+    /*smoke*/ false,
+);
+
+const STATUSLINE_HIERARCHY_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "gpt-5.5",
