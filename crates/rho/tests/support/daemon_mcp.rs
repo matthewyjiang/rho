@@ -453,14 +453,11 @@ async fn the_caps_refuse_starts_past_their_limits() {
     // Steer only once bash runs. A steer that lands before the first model
     // request joins it, and the fixture answers that text instead of calling
     // bash, so the turn ends on its own before the cancel (#1852).
-    let started = sandbox.workspace.join("started");
-    tokio::time::timeout(DEADLINE, async {
-        while !started.exists() {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("bash starts");
+    sandbox
+        .poll_until("the capped session's bash call to start", async || {
+            sandbox.workspace.join("started").exists().then_some(())
+        })
+        .await;
     let steered = call(&busy, "steer", json!({"session": session, "text": "hurry"})).await;
     let cancelled = call(&busy, "cancel", json!({"session": session})).await;
     let settled = call(
