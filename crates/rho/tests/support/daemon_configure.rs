@@ -65,7 +65,7 @@ pub(super) async fn next_options(
     session: &SessionId,
 ) -> SessionOptions {
     next_event(notifications, session, |event| match event {
-        SessionEvent::OptionsChanged { options } => Some(options),
+        SessionEvent::OptionsChanged { options } => Some(*options),
         _ => None,
     })
     .await
@@ -304,7 +304,7 @@ async fn a_change_sent_during_a_turn_applies_at_its_end_before_the_next_turn() {
     next_event(&mut notifications, &session, |event| {
         seen.push(match event {
             SessionEvent::UserMessage { .. } => Seen::Prompt,
-            SessionEvent::OptionsChanged { options } => Seen::Options(options),
+            SessionEvent::OptionsChanged { options } => Seen::Options(*options),
             _ => return None,
         });
         seen.contains(&Seen::Prompt).then_some(())

@@ -327,7 +327,7 @@ impl Pump {
             }
             SessionEvent::InputRequested { request } => self.inputs.open(*request, &self.context),
             SessionEvent::InputResolved { id, .. } => self.inputs.resolve(id),
-            SessionEvent::OptionsChanged { options } => self.options_changed(options).await,
+            SessionEvent::OptionsChanged { options } => self.options_changed(*options).await,
             // Another client's prompt, or a steer.
             event => self.send_mapped(&event).await,
         }

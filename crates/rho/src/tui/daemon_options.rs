@@ -43,6 +43,7 @@ pub(super) fn setting_name(change: &SessionChange) -> &'static str {
         SessionChange::Reasoning { .. } => "reasoning level",
         SessionChange::FastMode { .. } => "fast mode",
         SessionChange::PermissionMode { .. } => "permission mode",
+        SessionChange::Context { .. } => "session context",
         // `SessionChange` is non-exhaustive; the TUI sends only the above.
         _ => "session setting",
     }
@@ -84,6 +85,7 @@ impl App {
             .runtime
             .model
             .clone_from(&options.model.current.model);
+        self.info.runtime.auth.clone_from(&options.model.auth);
         let reasoning = options
             .reasoning
             .as_ref()

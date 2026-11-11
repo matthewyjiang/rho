@@ -9,6 +9,15 @@ use crate::session::{
 };
 
 impl App {
+    /// The id the followed session is saved under, once it is: the daemon's
+    /// when it holds the session, else this process's.
+    pub(super) fn current_session_id(&self) -> Option<String> {
+        match &self.info.session.daemon {
+            Some(daemon) => daemon.saved_id().map(str::to_owned),
+            None => self.info.session.session_id.clone(),
+        }
+    }
+
     pub(super) async fn execute_resume_command(
         &mut self,
         invocation: CommandInvocation,

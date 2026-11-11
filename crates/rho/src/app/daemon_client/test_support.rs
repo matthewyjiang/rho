@@ -25,6 +25,7 @@ pub(crate) fn attach_response(
         title: None,
         options: SessionOptions {
             model: ModelOptions {
+                auth: "api-key".into(),
                 current: ModelRef {
                     provider: "test".into(),
                     model: "model".into(),

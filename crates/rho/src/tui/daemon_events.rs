@@ -314,7 +314,7 @@ impl DaemonEvents {
             }
             SessionEvent::InputHeld { id } => self.inputs.held(id).into_iter().collect(),
             SessionEvent::OptionsChanged { options } => {
-                vec![DaemonView::Options(Box::new(options))]
+                vec![DaemonView::Options(options)]
             }
             // `Unknown`, or an event a newer daemon sends.
             _ => Vec::new(),

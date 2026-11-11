@@ -13,7 +13,7 @@ impl App {
             );
             return Ok(());
         }
-        let Some(session_id) = self.info.session.session_id.clone() else {
+        let Some(session_id) = self.current_session_id() else {
             self.set_status("no active session to export; send a message first");
             return Ok(());
         };
@@ -50,10 +50,19 @@ impl App {
             self.set_status("usage: /title <name>");
             return Ok(());
         }
-        let Some(session_id) = self.info.session.session_id.clone() else {
+        let Some(session_id) = self.current_session_id() else {
             self.set_status("no active session to rename; send a message first");
             return Ok(());
         };
+        if let Some(daemon) = &self.info.session.daemon {
+            // The daemon holds the session's file; its `TitleChanged`
+            // reports the rename, and it never generates over a set title.
+            if let Err(error) = daemon.rename(title.to_owned()) {
+                self.insert_entry(&Entry::Error(format!("could not rename session: {error}")));
+                self.set_status("rename failed");
+            }
+            return Ok(());
+        }
         // Only cancel pending auto-title after the manual write succeeds so a
         // failed rename leaves generation in place.
         match Session::set_title(&self.info.runtime.cwd, &session_id, title) {

@@ -1218,10 +1218,18 @@ fn header_hints_toggle_live() {
     assert_pass("header_hints_toggle");
 }
 
-// Covers: an unported command refuses visibly without changing instructions.
+// Covers: `/remember`, `/title`, and `!` output land in the daemon's
+// session: a TUI reopening it replays the added rows.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_session_takes_context_added_without_a_turn() {
+    assert_pass("daemon_session_context");
+}
+
+// Covers: an unported command refuses visibly and the next prompt still runs.
 // Owner: interactive TUI daemon command boundary.
 #[test]
-fn daemon_unported_commands_refuse_without_mutating_local_state() {
+fn daemon_unported_commands_refuse_and_keep_the_session_usable() {
     assert_pass("daemon_gated_command");
 }
 

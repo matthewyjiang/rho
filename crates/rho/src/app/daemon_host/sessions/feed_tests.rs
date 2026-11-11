@@ -25,6 +25,7 @@ fn replay(feed: &Feed, after: Option<Cursor>) -> (Replay, Vec<(u64, wire::Sessio
 fn options(mode: wire::PermissionMode) -> wire::SessionOptions {
     wire::SessionOptions {
         model: wire::ModelOptions {
+            auth: "api-key".into(),
             current: wire::ModelRef {
                 provider: "test".into(),
                 model: "model".into(),
@@ -276,7 +277,7 @@ fn options_reach_clients_only_when_they_change() {
     feed.update_options(options(wire::PermissionMode::Plan));
 
     let changed = wire::SessionEvent::OptionsChanged {
-        options: options(wire::PermissionMode::Plan),
+        options: Box::new(options(wire::PermissionMode::Plan)),
     };
     assert_eq!(replay(&feed, None), (Replay::Reset, vec![(1, changed)]));
     assert_eq!(

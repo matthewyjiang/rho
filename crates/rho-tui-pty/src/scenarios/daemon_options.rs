@@ -1,11 +1,7 @@
 //! Daemon settings and command refusals through the real interactive client.
 
-use anyhow::{ensure, Context, Result};
-
 use super::{daemon_resume::write_daemon_config, DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
 use crate::{
-    env::IsolatedHome,
-    harness::PtyHarness,
     keys::Key,
     scenario::{Scenario, Step},
 };
@@ -14,7 +10,6 @@ const ENV: &[(&str, &str)] = &[
     ("RHO_TUI_DAEMON", "1"),
     ("OPENAI_API_KEY", "sk-test-matrix"),
 ];
-const INSTRUCTIONS: &str = "# Project instructions\nKeep this instruction unchanged.\n";
 
 // Covers: /permissions changes the daemon's actual tool policy, not just the
 // local statusline, and its picker opens on the mode in force. A configure queued during a running turn must leave Esc
@@ -101,22 +96,21 @@ pub(super) const PERMISSION_MODE: Scenario = Scenario::new(
 .with_setup(write_daemon_config)
 .with_env(ENV);
 
-// Covers: an unported mutation gets a visible daemon-specific refusal and
-// cannot write instructions or poison the next prompt. Checks the file after
-// a later in-order model response, not a timing-based absence window.
+// Covers: an unported command gets a visible daemon-specific refusal and
+// leaves the session usable for the next prompt.
 // Owner: interactive TUI daemon command boundary
 pub(super) const GATED_COMMAND: Scenario = Scenario::new(
     "daemon_gated_command",
-    "Refuse unported commands without touching the local runtime or instructions",
+    "Refuse unported commands and keep the daemon session usable",
     DEFAULT_SIZE,
     &[
         Step::WaitText {
             text: "Bypass ·",
             timeout: STARTUP,
         },
-        Step::SubmitText("/remember this must not be written"),
+        Step::SubmitText("/tree"),
         Step::WaitText {
-            text: "/remember is not available with RHO_TUI_DAEMON yet",
+            text: "/tree is not available with RHO_TUI_DAEMON yet",
             timeout: SETTLE,
         },
         Step::SubmitText("hello after refusal"),
@@ -128,25 +122,9 @@ pub(super) const GATED_COMMAND: Scenario = Scenario::new(
             text: "Type a message",
             timeout: SETTLE,
         },
-        Step::Custom(assert_instructions_unchanged),
         Step::ExitCommand,
     ],
     /*smoke*/ false,
 )
-.with_setup(write_gate_config)
+.with_setup(write_daemon_config)
 .with_env(ENV);
-
-fn write_gate_config(home: &IsolatedHome) -> Result<()> {
-    write_daemon_config(home)?;
-    std::fs::write(home.workspace.join("AGENTS.md"), INSTRUCTIONS)?;
-    Ok(())
-}
-
-fn assert_instructions_unchanged(harness: &mut PtyHarness) -> Result<()> {
-    let workspace = harness.working_directory().context("missing workspace")?;
-    ensure!(
-        std::fs::read_to_string(workspace.join("AGENTS.md"))? == INSTRUCTIONS,
-        "the refused /remember command changed project instructions"
-    );
-    Ok(())
-}

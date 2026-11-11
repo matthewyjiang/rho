@@ -39,32 +39,36 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Todo
         | CommandId::Config
         | CommandId::Skills
-        | CommandId::Mcp => CommandRoute::Ui,
-        // Session navigation/deletion and title writes need daemon methods;
-        // provider/auth editors and agents still own in-process state. Hubs (/workflow, /attach, /side) likewise
-        // describe the wrong runtime, even when opened read-only.
+        | CommandId::Mcp
+        // Read from this process's disk and config, which the daemon
+        // shares, written through the session (`/title`, `/remember`), or
+        // run beside it on a copy of its transcript (`/side`).
+        | CommandId::Info
+        | CommandId::Doctor
+        | CommandId::Limits
+        | CommandId::Export
+        | CommandId::Title
+        | CommandId::Remember
+        | CommandId::Side => CommandRoute::Ui,
+        // Session navigation and deletion need daemon methods;
+        // provider/auth editors and agents still own in-process state.
+        // Hubs (/workflow, /attach) likewise describe the wrong runtime,
+        // even when opened read-only.
         CommandId::AddDir
         | CommandId::New
         | CommandId::Login
         | CommandId::Logout
         | CommandId::RefreshModels
-        | CommandId::Remember
         | CommandId::Resume
         | CommandId::Rewind
         | CommandId::Sessions
         | CommandId::Tree
         | CommandId::Context
-        | CommandId::Info
         | CommandId::Hooks
         | CommandId::Agents
         | CommandId::Attach
         | CommandId::Codemode
-        | CommandId::Doctor
-        | CommandId::Limits
-        | CommandId::Export
-        | CommandId::Title
         | CommandId::Workflow
-        | CommandId::Side
         | CommandId::CreateAgent => CommandRoute::Unavailable,
     }
 }
@@ -165,16 +169,6 @@ impl App {
         let notice = format!("/{name} is not available with RHO_TUI_DAEMON yet");
         self.insert_entry(&Entry::Notice(notice.clone()));
         self.set_status(notice);
-    }
-
-    /// Both ! and !! are unported: even excluded output currently persists
-    /// through the local session path. Do not start a shell against it.
-    pub(super) fn refuse_daemon_shell(&mut self) -> bool {
-        if self.info.session.daemon.is_none() {
-            return false;
-        }
-        self.daemon_command_unavailable("!shell");
-        true
     }
 
     /// Dynamic commands must be sent verbatim, not expanded with the local
