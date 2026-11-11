@@ -4658,6 +4658,89 @@
       ],
       "type": "object"
     },
+    "SessionMcpCatalog": {
+      "description": "Result of [`SESSION_MCP_CATALOG`], each list ordered by server.",
+      "properties": {
+        "prompts": {
+          "items": {
+            "$ref": "#/$defs/SessionMcpPrompt"
+          },
+          "type": "array"
+        },
+        "resources": {
+          "items": {
+            "$ref": "#/$defs/SessionMcpResource"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "prompts",
+        "resources"
+      ],
+      "type": "object"
+    },
+    "SessionMcpCatalogParams": {
+      "description": "Params of [`SESSION_MCP_CATALOG`].",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/SessionId",
+          "description": "The loaded session whose servers to list."
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "type": "object"
+    },
+    "SessionMcpCompleteParams": {
+      "description": "Params of [`SESSION_MCP_COMPLETE`].",
+      "properties": {
+        "argument": {
+          "description": "The argument's name, as [`SessionMcpPromptArgument::name`].",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "The prompt's name, as [`SessionMcpPrompt::name`].",
+          "type": "string"
+        },
+        "server": {
+          "description": "Qualified identity of the server, as [`SessionMcpPrompt::server`].",
+          "type": "string"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "value": {
+          "description": "What is typed of the argument's value so far; may be empty.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "server",
+        "prompt",
+        "argument",
+        "value"
+      ],
+      "type": "object"
+    },
+    "SessionMcpCompleteResponse": {
+      "description": "Result of [`SESSION_MCP_COMPLETE`].",
+      "properties": {
+        "values": {
+          "description": "Suggested values, best first, as the server ordered them.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "values"
+      ],
+      "type": "object"
+    },
     "SessionMcpInventory": {
       "description": "Result of [`SESSION_MCP`]: a point-in-time inventory, not a subscription.",
       "properties": {
@@ -4723,6 +4806,229 @@
       },
       "required": [
         "session"
+      ],
+      "type": "object"
+    },
+    "SessionMcpPrompt": {
+      "description": "One prompt a server offers, which the session runs as the command\n`mcp:<server>:<name>` (see [`crate::SessionCommand`]).",
+      "properties": {
+        "arguments": {
+          "description": "The arguments it declares, in the server's order.",
+          "items": {
+            "$ref": "#/$defs/SessionMcpPromptArgument"
+          },
+          "type": "array"
+        },
+        "completes_arguments": {
+          "description": "Whether its server suggests values for those arguments, so\n[`SESSION_MCP_COMPLETE`] is worth a request.",
+          "type": "boolean"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "server": {
+          "description": "Qualified identity of the server that offers it.",
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "server",
+        "name"
+      ],
+      "type": "object"
+    },
+    "SessionMcpPromptArgument": {
+      "description": "One argument an MCP prompt declares.",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "SessionMcpResource": {
+      "description": "One resource a server offers: a concrete URI, or a URI template.",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mime_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "server": {
+          "description": "Qualified identity of the server that offers it.",
+          "type": "string"
+        },
+        "templated": {
+          "description": "The URI has placeholders to fill in before\n[`SESSION_MCP_RESOURCE`] can read it.",
+          "type": "boolean"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uri": {
+          "description": "The resource's URI, or its RFC 6570 URI template when `templated`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "server",
+        "uri",
+        "name"
+      ],
+      "type": "object"
+    },
+    "SessionMcpResourceContent": {
+      "anyOf": [
+        {
+          "properties": {
+            "mime_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "const": "text",
+              "type": "string"
+            },
+            "uri": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "uri",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "blob": {
+              "description": "The bytes, base64-encoded.",
+              "type": "string"
+            },
+            "mime_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "blob",
+              "type": "string"
+            },
+            "uri": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "uri",
+            "blob"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "properties": {
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object",
+          "x-rho-other": true
+        }
+      ],
+      "description": "One body of a resource, as its server sent it."
+    },
+    "SessionMcpResourceParams": {
+      "description": "Params of [`SESSION_MCP_RESOURCE`].",
+      "properties": {
+        "max_text_bytes": {
+          "description": "The most bytes of each text body the client will use. A longer body\nmay come back cut short at a character boundary, still longer than\nthis, so the client can tell there was more. Absent, text bodies\ncome back whole. Blob bodies always do.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "server": {
+          "description": "Qualified identity of the server, as [`SessionMcpResource::server`].",
+          "type": "string"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "uri": {
+          "description": "A concrete URI: a listed one, or a template with its placeholders\nfilled in.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "server",
+        "uri"
+      ],
+      "type": "object"
+    },
+    "SessionMcpResourceResponse": {
+      "description": "Result of [`SESSION_MCP_RESOURCE`].",
+      "properties": {
+        "contents": {
+          "description": "The bodies the server sent, in its order. One read may return several.",
+          "items": {
+            "$ref": "#/$defs/SessionMcpResourceContent"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "contents"
       ],
       "type": "object"
     },
@@ -6987,6 +7293,30 @@
       },
       "result": {
         "$ref": "#/$defs/SessionMcpInventory"
+      }
+    },
+    "rho/session/mcp/catalog": {
+      "params": {
+        "$ref": "#/$defs/SessionMcpCatalogParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionMcpCatalog"
+      }
+    },
+    "rho/session/mcp/complete": {
+      "params": {
+        "$ref": "#/$defs/SessionMcpCompleteParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionMcpCompleteResponse"
+      }
+    },
+    "rho/session/mcp/resource": {
+      "params": {
+        "$ref": "#/$defs/SessionMcpResourceParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SessionMcpResourceResponse"
       }
     },
     "rho/session/new": {

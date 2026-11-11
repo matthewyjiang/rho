@@ -11,11 +11,12 @@ use super::*;
 use crate::{
     login_relay,
     methods::{
-        AuthLoginFinishedParams, AuthLoginPromptParams, DetachReason, JobState, LoginId,
-        LoginOutcome, LoginPrompt, ModelOptions, ModelRef, PermissionMode, PermissionModeOptions,
-        Replay, Seq, SessionDetachedParams, SessionEvent, SessionEventParams, SessionId,
-        SessionOptions, StreamId, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT, CONFIG_CHANGED,
-        SESSION_DETACHED, SESSION_EVENT,
+        AuthLoginFinishedParams, AuthLoginPromptParams, ConfigRegisterParams, ConfigSetParams,
+        DetachReason, JobState, LoginId, LoginOutcome, LoginPrompt, ModelOptions, ModelRef,
+        PermissionMode, PermissionModeOptions, Replay, Seq, SessionDetachedParams, SessionEvent,
+        SessionEventParams, SessionId, SessionOptions, StreamId, AUTH_LOGIN_FINISHED,
+        AUTH_LOGIN_PROMPT, CONFIG_CHANGED, DAEMON_STATUS, DAEMON_STOP, SESSION_ANSWER,
+        SESSION_DETACHED, SESSION_EVENT, SESSION_HOLD, SESSION_PROMPT,
     },
     subscription, AuthChooseStoreParams, AuthChooseStoreResponse, ConfigChangedParams,
     ConfigGetResponse, ConfigNamespace, ConfigRegisterResponse, ConfigRevision, ConfigSchema,

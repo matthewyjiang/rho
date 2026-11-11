@@ -200,6 +200,7 @@ impl App {
                 || self.prompt_history.load_pending()
                 || self.pending_session_title.is_some()
                 || self.mcp_argument_completions.is_pending()
+                || self.daemon_mcp_offers.is_pending()
                 || self.exclusive.wants_fast_ticks()
                 || !self.pending_inline_shells.is_empty()
                 || self.history.images().has_pending()
@@ -312,6 +313,7 @@ impl App {
             needs_redraw |= self.poll_pending_session_title()?;
             needs_redraw |= self.reconcile_overlays().await?;
             // The composer decides what to ask about and changes on key events.
+            needs_redraw |= self.poll_daemon_mcp_offers().await;
             needs_redraw |= self.poll_mcp_argument_completion().await;
             needs_redraw |= self.poll_markdown_images();
             let shell_changed = self.finish_completed_inline_shells().await?;

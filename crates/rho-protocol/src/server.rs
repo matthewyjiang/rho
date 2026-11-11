@@ -12,6 +12,7 @@ use tokio::{
     task::JoinSet,
 };
 
+use crate::server_calls::ServiceCall;
 use crate::server_settings::{self, SettingsService};
 use crate::server_streams::{attach, login, AttachRequest};
 use crate::{
@@ -20,35 +21,28 @@ use crate::{
     jsonrpc,
     login_relay::LoginStream,
     methods::{
-        AuthChooseStore, AuthChooseStoreParams, AuthChooseStoreResponse, AuthKey, AuthKeyParams,
-        AuthKeyResponse, AuthList, AuthListParams, AuthListResponse, AuthLogin, AuthLoginCancel,
-        AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse,
-        AuthLogout, AuthLogoutParams, AuthLogoutResponse, ClientInfo, ConfigGet, ConfigGetParams,
-        ConfigRegister, ConfigRegisterParams, ConfigSchemaMethod, ConfigSchemaParams, ConfigSet,
-        ConfigSetParams, Hello, JobList, JobListParams, JobListResponse, Method, Restart,
-        RestartParams, RestartResponse, SessionAnswer, SessionAnswerParams, SessionAnswerResponse,
-        SessionAttach, SessionAttachParams, SessionAttachResponse, SessionCancel,
-        SessionCancelParams, SessionCancelResponse, SessionConfigure, SessionConfigureParams,
-        SessionConfigureResponse, SessionDelete, SessionDeleteParams, SessionDeleteResponse,
-        SessionDetach, SessionDetachParams, SessionDetachResponse, SessionHold, SessionHoldParams,
-        SessionHoldResponse, SessionId, SessionInspect, SessionInspectParams,
-        SessionInspectResponse, SessionList, SessionListParams, SessionListResponse, SessionMcp,
-        SessionMcpInventory, SessionMcpParams, SessionNew, SessionNewParams, SessionNewResponse,
-        SessionObserve, SessionObserveParams, SessionProcesses, SessionProcessesParams,
-        SessionProcessesResponse, SessionPrompt, SessionPromptParams, SessionPromptResponse,
-        SessionRename, SessionRenameParams, SessionRenameResponse, SessionSteer,
-        SessionSteerParams, SessionSteerResponse, SessionUnsteer, SessionUnsteerParams,
-        SessionUnsteerResponse, Status, Stop, AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST, AUTH_LOGIN,
-        AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET,
-        DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER,
-        SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH,
-        SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP, SESSION_NEW, SESSION_OBSERVE,
-        SESSION_PROCESSES, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
+        AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse,
+        AuthListParams, AuthListResponse, AuthLogin, AuthLoginCancelParams,
+        AuthLoginCancelResponse, AuthLoginParams, AuthLoginResponse, AuthLogoutParams,
+        AuthLogoutResponse, ClientInfo, ConfigGet, ConfigGetParams, Hello, JobListResponse, Method,
+        SessionAnswerParams, SessionAnswerResponse, SessionAttach, SessionAttachParams,
+        SessionAttachResponse, SessionCancelParams, SessionCancelResponse, SessionConfigureParams,
+        SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse, SessionDetach,
+        SessionDetachParams, SessionDetachResponse, SessionHoldParams, SessionHoldResponse,
+        SessionInspectParams, SessionInspectResponse, SessionListParams, SessionListResponse,
+        SessionMcpCatalog, SessionMcpCatalogParams, SessionMcpCompleteParams,
+        SessionMcpCompleteResponse, SessionMcpInventory, SessionMcpParams,
+        SessionMcpResourceParams, SessionMcpResourceResponse, SessionNewParams, SessionNewResponse,
+        SessionObserve, SessionObserveParams, SessionProcessesParams, SessionProcessesResponse,
+        SessionPromptParams, SessionPromptResponse, SessionRenameParams, SessionRenameResponse,
+        SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
+        AUTH_LOGIN, CONFIG_GET, HELLO, SESSION_ATTACH, SESSION_DETACH, SESSION_MCP_CATALOG,
+        SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_OBSERVE,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
     MessageWriter, ProtocolVersion, Request, RequestId, Response, RestartCost, RpcError,
-    StatusParams, StopParams, StopResponse, VersionFix, VersionMismatch, PROTOCOL_VERSION,
+    VersionFix, VersionMismatch, PROTOCOL_VERSION,
 };
 
 /// The daemon's answers to post-handshake requests, one method per protocol
@@ -177,6 +171,40 @@ pub trait Service: SettingsService + Send + Sync {
         params: SessionMcpParams,
     ) -> impl Future<Output = Result<SessionMcpInventory, RpcError>> + Send;
 
+    /// Handles `rho/session/mcp/catalog`: list the prompts and resources the
+    /// loaded session's MCP servers offer, without waiting for a turn. A
+    /// service that does not serve it answers `MethodNotFound`, as a daemon
+    /// from before the method does.
+    fn session_mcp_catalog(
+        &self,
+        params: SessionMcpCatalogParams,
+    ) -> impl Future<Output = Result<SessionMcpCatalog, RpcError>> + Send {
+        let _ = params;
+        std::future::ready(Err(not_served(SESSION_MCP_CATALOG)))
+    }
+
+    /// Handles `rho/session/mcp/resource`: read one resource from one of the
+    /// loaded session's MCP servers, without waiting for a turn. Unserved,
+    /// it answers as [`Self::session_mcp_catalog`] does.
+    fn session_mcp_resource(
+        &self,
+        params: SessionMcpResourceParams,
+    ) -> impl Future<Output = Result<SessionMcpResourceResponse, RpcError>> + Send {
+        let _ = params;
+        std::future::ready(Err(not_served(SESSION_MCP_RESOURCE)))
+    }
+
+    /// Handles `rho/session/mcp/complete`: ask one of the loaded session's
+    /// MCP servers for values of a prompt argument, without waiting for a
+    /// turn. Unserved, it answers as [`Self::session_mcp_catalog`] does.
+    fn session_mcp_complete(
+        &self,
+        params: SessionMcpCompleteParams,
+    ) -> impl Future<Output = Result<SessionMcpCompleteResponse, RpcError>> + Send {
+        let _ = params;
+        std::future::ready(Err(not_served(SESSION_MCP_COMPLETE)))
+    }
+
     /// Handles `rho/session/processes`: read the loaded session's background
     /// processes, and one's retained output, without waiting for a turn.
     fn session_processes(
@@ -212,10 +240,7 @@ pub trait Service: SettingsService + Send + Sync {
         params: SessionObserveParams,
     ) -> impl Future<Output = Result<(SessionAttachResponse, Subscription), RpcError>> + Send {
         let _ = params;
-        std::future::ready(Err(RpcError::new(
-            ErrorCode::MethodNotFound,
-            format!("{SESSION_OBSERVE} is not served"),
-        )))
+        std::future::ready(Err(not_served(SESSION_OBSERVE)))
     }
 
     /// Answers `rho/session/list`: a page of the saved sessions a person
@@ -623,36 +648,6 @@ enum Route {
     ConfigGet(ConfigGetParams),
 }
 
-/// A post-handshake request whose params decoded, waiting for the service.
-enum ServiceCall {
-    Status,
-    Stop,
-    Restart,
-    NewSession(SessionNewParams),
-    PromptSession(SessionPromptParams),
-    CancelSession(SessionCancelParams),
-    SteerSession(SessionSteerParams),
-    UnsteerSession(SessionUnsteerParams),
-    AnswerSession(SessionAnswerParams),
-    HoldSession(SessionHoldParams),
-    ConfigureSession(SessionConfigureParams),
-    SessionMcp(SessionMcpParams),
-    SessionProcesses(SessionProcessesParams),
-    InspectSession(SessionInspectParams),
-    ListSessions(SessionListParams),
-    RenameSession(SessionRenameParams),
-    DeleteSession(SessionDeleteParams),
-    ListJobs,
-    SaveAuthKey(AuthKeyParams),
-    LogoutAuth(AuthLogoutParams),
-    ListAuths(AuthListParams),
-    CancelLogin(AuthLoginCancelParams),
-    ChooseStore(AuthChooseStoreParams),
-    ConfigSchema,
-    RegisterConfig(ConfigRegisterParams),
-    SetConfig(ConfigSetParams),
-}
-
 impl Connection {
     /// Answers the handshake, protocol errors, and detaches in place, and
     /// hands attaches and the other service methods on.
@@ -723,167 +718,6 @@ impl Connection {
     }
 }
 
-impl ServiceCall {
-    /// Decodes a post-handshake request for the service, or refuses a method
-    /// the protocol does not define.
-    fn decode(method: &str, params: Option<Value>) -> Result<Self, RpcError> {
-        match method {
-            DAEMON_STATUS => decode_params::<Status>(params).map(|StatusParams {}| Self::Status),
-            DAEMON_STOP => decode_params::<Stop>(params).map(|StopParams {}| Self::Stop),
-            DAEMON_RESTART => {
-                decode_params::<Restart>(params).map(|RestartParams {}| Self::Restart)
-            }
-            SESSION_NEW => decode_params::<SessionNew>(params).map(Self::NewSession),
-            SESSION_PROMPT => decode_params::<SessionPrompt>(params).map(Self::PromptSession),
-            SESSION_CANCEL => decode_params::<SessionCancel>(params).map(Self::CancelSession),
-            SESSION_STEER => decode_params::<SessionSteer>(params).map(Self::SteerSession),
-            SESSION_UNSTEER => decode_params::<SessionUnsteer>(params).map(Self::UnsteerSession),
-            SESSION_ANSWER => decode_params::<SessionAnswer>(params).map(Self::AnswerSession),
-            SESSION_HOLD => decode_params::<SessionHold>(params).map(Self::HoldSession),
-            SESSION_CONFIGURE => {
-                decode_params::<SessionConfigure>(params).map(Self::ConfigureSession)
-            }
-            SESSION_MCP => decode_params::<SessionMcp>(params).map(Self::SessionMcp),
-            SESSION_PROCESSES => {
-                decode_params::<SessionProcesses>(params).map(Self::SessionProcesses)
-            }
-            SESSION_INSPECT => decode_params::<SessionInspect>(params).map(Self::InspectSession),
-            SESSION_LIST => decode_params::<SessionList>(params).map(Self::ListSessions),
-            SESSION_RENAME => decode_params::<SessionRename>(params).map(Self::RenameSession),
-            SESSION_DELETE => decode_params::<SessionDelete>(params).map(Self::DeleteSession),
-            JOB_LIST => decode_params::<JobList>(params).map(|JobListParams {}| Self::ListJobs),
-            AUTH_KEY => decode_params::<AuthKey>(params).map(Self::SaveAuthKey),
-            AUTH_LOGOUT => decode_params::<AuthLogout>(params).map(Self::LogoutAuth),
-            AUTH_LIST => decode_params::<AuthList>(params).map(Self::ListAuths),
-            AUTH_LOGIN_CANCEL => decode_params::<AuthLoginCancel>(params).map(Self::CancelLogin),
-            AUTH_CHOOSE_STORE => decode_params::<AuthChooseStore>(params).map(Self::ChooseStore),
-            CONFIG_SCHEMA => decode_params::<ConfigSchemaMethod>(params)
-                .map(|ConfigSchemaParams {}| Self::ConfigSchema),
-            CONFIG_REGISTER => decode_params::<ConfigRegister>(params).map(Self::RegisterConfig),
-            CONFIG_SET => decode_params::<ConfigSet>(params).map(Self::SetConfig),
-            method => Err(RpcError::new(
-                ErrorCode::MethodNotFound,
-                format!("unknown method {method}"),
-            )),
-        }
-    }
-
-    /// The session the call is about, whose events published before its
-    /// answer the connection sends first.
-    fn session(&self) -> Option<&SessionId> {
-        match self {
-            Self::PromptSession(SessionPromptParams { session, .. })
-            | Self::CancelSession(SessionCancelParams { session, .. })
-            | Self::SteerSession(SessionSteerParams { session, .. })
-            | Self::UnsteerSession(SessionUnsteerParams { session, .. })
-            | Self::AnswerSession(SessionAnswerParams { session, .. })
-            | Self::HoldSession(SessionHoldParams { session, .. })
-            | Self::SessionMcp(SessionMcpParams { session, .. })
-            | Self::SessionProcesses(SessionProcessesParams { session, .. })
-            | Self::InspectSession(SessionInspectParams { session, .. })
-            | Self::ConfigureSession(SessionConfigureParams { session, .. })
-            | Self::RenameSession(SessionRenameParams { session, .. }) => Some(session),
-            Self::Status
-            | Self::Stop
-            | Self::Restart
-            | Self::NewSession(_)
-            | Self::ListSessions(_)
-            | Self::DeleteSession(_)
-            | Self::ListJobs
-            | Self::SaveAuthKey(_)
-            | Self::LogoutAuth(_)
-            | Self::ListAuths(_)
-            | Self::CancelLogin(_)
-            | Self::ChooseStore(_)
-            | Self::ConfigSchema
-            | Self::RegisterConfig(_)
-            | Self::SetConfig(_) => None,
-        }
-    }
-
-    /// Runs the call, returning its answer.
-    async fn run<Svc: Service>(self, service: &Svc) -> Result<Value, RpcError> {
-        match self {
-            Self::Status => encode_result::<Status>(&service.status().await),
-            Self::Stop => {
-                service.stop().await;
-                encode_result::<Stop>(&StopResponse {})
-            }
-            Self::Restart => {
-                service.restart().await;
-                encode_result::<Restart>(&RestartResponse {})
-            }
-            Self::NewSession(params) => {
-                encode_result::<SessionNew>(&service.new_session(params).await?)
-            }
-            Self::PromptSession(params) => {
-                encode_result::<SessionPrompt>(&service.prompt_session(params).await?)
-            }
-            Self::CancelSession(params) => {
-                encode_result::<SessionCancel>(&service.cancel_session(params).await?)
-            }
-            Self::SteerSession(params) => {
-                encode_result::<SessionSteer>(&service.steer_session(params).await?)
-            }
-            Self::UnsteerSession(params) => {
-                encode_result::<SessionUnsteer>(&service.unsteer_session(params).await?)
-            }
-            Self::AnswerSession(params) => {
-                encode_result::<SessionAnswer>(&service.answer_session(params).await?)
-            }
-            Self::HoldSession(params) => {
-                encode_result::<SessionHold>(&service.hold_session(params).await?)
-            }
-            Self::ConfigureSession(params) => {
-                encode_result::<SessionConfigure>(&service.configure_session(params).await?)
-            }
-            Self::SessionMcp(params) => {
-                encode_result::<SessionMcp>(&service.session_mcp(params).await?)
-            }
-            Self::SessionProcesses(params) => {
-                encode_result::<SessionProcesses>(&service.session_processes(params).await?)
-            }
-            Self::InspectSession(params) => {
-                encode_result::<SessionInspect>(&service.inspect_session(params).await?)
-            }
-            Self::ListSessions(params) => {
-                encode_result::<SessionList>(&service.list_sessions(params).await?)
-            }
-            Self::RenameSession(params) => {
-                encode_result::<SessionRename>(&service.rename_session(params).await?)
-            }
-            Self::DeleteSession(params) => {
-                encode_result::<SessionDelete>(&service.delete_session(params).await?)
-            }
-            Self::ListJobs => encode_result::<JobList>(&service.list_jobs().await),
-            Self::SaveAuthKey(params) => {
-                encode_result::<AuthKey>(&service.save_auth_key(params).await?)
-            }
-            Self::LogoutAuth(params) => {
-                encode_result::<AuthLogout>(&service.logout_auth(params).await?)
-            }
-            Self::ListAuths(params) => {
-                encode_result::<AuthList>(&service.list_auths(params).await?)
-            }
-            Self::CancelLogin(params) => {
-                encode_result::<AuthLoginCancel>(&service.cancel_login(params).await?)
-            }
-            Self::ChooseStore(params) => {
-                encode_result::<AuthChooseStore>(&service.choose_store(params).await?)
-            }
-            Self::ConfigSchema => {
-                encode_result::<ConfigSchemaMethod>(&service.config_schema().await?)
-            }
-            Self::RegisterConfig(params) => {
-                encode_result::<ConfigRegister>(&service.register_config(params).await?)
-            }
-            Self::SetConfig(params) => {
-                encode_result::<ConfigSet>(&service.set_config(params).await?)
-            }
-        }
-    }
-}
-
 /// The duty to answer one request handed to the service.
 ///
 /// A call that ends without answering, because its handler panicked or the
@@ -927,10 +761,16 @@ impl Drop for Responder {
     }
 }
 
+/// What a service answers for a method it does not serve, as a daemon from
+/// before the method does.
+fn not_served(method: &str) -> RpcError {
+    RpcError::new(ErrorCode::MethodNotFound, format!("{method} is not served"))
+}
+
 /// Decodes `M`'s params. Absent params decode like `{}`, so params-less
 /// methods accept both. Typing by [`Method`] keeps the server on the same
 /// params type the client sends.
-fn decode_params<M: Method>(params: Option<Value>) -> Result<M::Params, RpcError> {
+pub(crate) fn decode_params<M: Method>(params: Option<Value>) -> Result<M::Params, RpcError> {
     serde_json::from_value(params.unwrap_or_else(|| Value::Object(Map::new())))
         .map_err(|error| RpcError::new(ErrorCode::InvalidParams, error.to_string()))
 }

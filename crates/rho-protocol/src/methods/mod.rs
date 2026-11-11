@@ -21,6 +21,9 @@
 //! | [`SESSION_OBSERVE`] | [`SessionObserveParams`] | [`SessionAttachResponse`] |
 //! | [`SESSION_DETACH`] | [`SessionDetachParams`] | [`SessionDetachResponse`] |
 //! | [`SESSION_MCP`] | [`SessionMcpParams`] | [`SessionMcpInventory`] |
+//! | [`SESSION_MCP_CATALOG`] | [`SessionMcpCatalogParams`] | [`SessionMcpCatalog`] |
+//! | [`SESSION_MCP_RESOURCE`] | [`SessionMcpResourceParams`] | [`SessionMcpResourceResponse`] |
+//! | [`SESSION_MCP_COMPLETE`] | [`SessionMcpCompleteParams`] | [`SessionMcpCompleteResponse`] |
 //! | [`SESSION_PROCESSES`] | [`SessionProcessesParams`] | [`SessionProcessesResponse`] |
 //! | [`SESSION_INSPECT`] | [`SessionInspectParams`] | [`SessionInspectResponse`] |
 //! | [`SESSION_CONFIGURE`] | [`SessionConfigureParams`] | [`SessionConfigureResponse`] |
@@ -127,8 +130,11 @@ pub use login::{
     AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGIN_FINISHED, AUTH_LOGIN_PROMPT,
 };
 pub use mcp::{
-    SessionMcpInventory, SessionMcpMode, SessionMcpParams, SessionMcpServer, SessionMcpStatus,
-    SESSION_MCP,
+    SessionMcpCatalog, SessionMcpCatalogParams, SessionMcpCompleteParams,
+    SessionMcpCompleteResponse, SessionMcpInventory, SessionMcpMode, SessionMcpParams,
+    SessionMcpPrompt, SessionMcpPromptArgument, SessionMcpResource, SessionMcpResourceContent,
+    SessionMcpResourceParams, SessionMcpResourceResponse, SessionMcpServer, SessionMcpStatus,
+    SESSION_MCP, SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
 };
 pub use options::{
     CommandKind, FastModeOptions, ModelChoice, ModelOptions, ModelRef, PermissionModeOptions,
@@ -241,6 +247,9 @@ protocol! {
         SessionDetach = SESSION_DETACH: SessionDetachParams => SessionDetachResponse,
         SessionConfigure = SESSION_CONFIGURE: SessionConfigureParams => SessionConfigureResponse,
         SessionMcp = SESSION_MCP: SessionMcpParams => SessionMcpInventory,
+        SessionMcpCatalogRead = SESSION_MCP_CATALOG: SessionMcpCatalogParams => SessionMcpCatalog,
+        SessionMcpResourceRead = SESSION_MCP_RESOURCE: SessionMcpResourceParams => SessionMcpResourceResponse,
+        SessionMcpComplete = SESSION_MCP_COMPLETE: SessionMcpCompleteParams => SessionMcpCompleteResponse,
         SessionProcesses = SESSION_PROCESSES: SessionProcessesParams => SessionProcessesResponse,
         SessionInspect = SESSION_INSPECT: SessionInspectParams => SessionInspectResponse,
         SessionList = SESSION_LIST: SessionListParams => SessionListResponse,

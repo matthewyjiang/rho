@@ -172,6 +172,7 @@ impl App {
             mcp_catalog,
             mcp_argument_completions:
                 super::mcp_argument_completion::McpArgumentCompletions::default(),
+            daemon_mcp_offers: super::mcp_source::DaemonMcpOffers::default(),
             plugins_report,
             side_chat: None,
             herdr_sync: Default::default(),

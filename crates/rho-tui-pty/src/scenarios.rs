@@ -98,6 +98,7 @@ mod line_editor;
 mod login;
 mod markdown_stream;
 mod mcp;
+mod mcp_composer;
 mod mermaid;
 mod model_cycle_reasoning;
 mod model_prompts;
@@ -539,6 +540,9 @@ const ALL_SCENARIOS: &[Scenario] = &[
     copy_output::COPY_OUTPUT_SCENARIO,
     HOOKS_CONTRACT_SCENARIO,
     MCP_INVENTORY_SCENARIO,
+    mcp_composer::MCP_COMPOSER_SCENARIO,
+    #[cfg(unix)]
+    mcp_composer::DAEMON_MCP_COMPOSER_SCENARIO,
     MCP_CONNECTING_SCENARIO,
     MCP_CONNECT_RELEASE_SCENARIO,
     MCP_HOLD_TAKE_BACK_SCENARIO,

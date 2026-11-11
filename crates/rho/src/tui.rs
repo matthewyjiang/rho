@@ -163,6 +163,7 @@ mod mcp_argument_completion;
 mod mcp_picker;
 mod mcp_prompt;
 mod mcp_resource;
+mod mcp_source;
 mod media_attach;
 mod message_history;
 mod message_render;
@@ -724,6 +725,9 @@ struct App {
     /// Fetched argument suggestions for the MCP prompt being typed, so palette
     /// matching reads a local cache instead of awaiting a server.
     mcp_argument_completions: mcp_argument_completion::McpArgumentCompletions,
+    /// What a daemon session's MCP servers offer, read from the daemon for
+    /// the same matching; an in-process session reads `mcp_catalog`.
+    daemon_mcp_offers: mcp_source::DaemonMcpOffers,
     /// Agent Plugins load report captured at session start for `/doctor`.
     plugins_report: crate::plugins::PluginLoadReport,
     /// In-memory `/side` aside. Survives overlay close until `/new` or resume.

@@ -98,6 +98,12 @@ impl App {
                 .map(super::command_palette::argument_command_choice)
                 .collect();
         }
+        // As in process: values for the argument of an MCP prompt command
+        // already typed, where command matching has nothing left to say.
+        let mcp_arguments = self.mcp_argument_choices();
+        if !mcp_arguments.is_empty() {
+            return mcp_arguments;
+        }
         let Some(prefix) = crate::commands::command_prefix(self.input_ui.text()) else {
             return Vec::new();
         };

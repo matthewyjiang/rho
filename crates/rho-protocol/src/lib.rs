@@ -74,6 +74,7 @@ mod login_relay;
 pub mod methods;
 pub mod schema;
 mod server;
+mod server_calls;
 mod server_settings;
 mod server_streams;
 mod subscription;
@@ -146,6 +147,12 @@ pub use methods::{
     SessionInspectParams, SessionInspectResponse, SessionMcpInventory, SessionMcpMode,
     SessionMcpParams, SessionMcpServer, SessionMcpStatus, SessionReport, SESSION_INSPECT,
     SESSION_MCP,
+};
+pub use methods::{
+    SessionMcpCatalog, SessionMcpCatalogParams, SessionMcpCompleteParams,
+    SessionMcpCompleteResponse, SessionMcpPrompt, SessionMcpPromptArgument, SessionMcpResource,
+    SessionMcpResourceContent, SessionMcpResourceParams, SessionMcpResourceResponse,
+    SESSION_MCP_CATALOG, SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE,
 };
 pub use server::{serve_connection, ServerInfo, Service, CLOSE_GRACE};
 pub use server_settings::SettingsService;

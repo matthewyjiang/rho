@@ -42,6 +42,9 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/session/answer` | `session`, `request`, `answer` | Answers one of the turn's open input requests ([below](#answering-a-turn-s-requests)) and returns `{}` once the daemon has handed the answer to the turn. Needs the `answer` capability. |
 | `rho/session/configure` | `session`, `change` | Changes one of a loaded session's settings for its later turns and returns its `options` ([below](#changing-a-session-s-settings)). |
 | `rho/session/mcp` | `session` | Reads a loaded session's MCP server inventory without waiting for its active turn ([below](#session-mcp-inventory)). |
+| `rho/session/mcp/catalog` | `session` | Lists the prompts and resources a loaded session's MCP servers offer, without waiting for its active turn ([below](#session-mcp-prompts-and-resources)). |
+| `rho/session/mcp/resource` | `session`, `server`, `uri`, `max_text_bytes`? | Reads one resource from one of a loaded session's MCP servers and returns its `contents` ([below](#session-mcp-prompts-and-resources)). |
+| `rho/session/mcp/complete` | `session`, `server`, `prompt`, `argument`, `value` | Asks one of a loaded session's MCP servers for `values` of a prompt argument ([below](#session-mcp-prompts-and-resources)). |
 | `rho/session/processes` | `session`, `output`? | Reads a loaded session's background processes, and one's retained output, without waiting for its active turn ([below](#session-processes)). |
 | `rho/session/inspect` | `session`, `report` | Reads a report about a loaded session between its turns: `context` (what fills the context window, by source), `hooks` (its hooks, read again from their files, and their recent activity), `compaction` (its compaction settings as token counts, what its compactions removed, and what the latest one did and cost), or `provider_context` (the provider-native context in its conversation that its model cannot be sent, the model that produced it, and whether compacting could summarize the conversation first). The `report` it answers with is presentation data whose shape follows the rho version. A session in a turn is `SessionBusy`; an unloaded one `SessionNotLoaded`. |
 | `rho/session/hold` | `session`, `request` | Stops an open input request's timeout, so it waits for an answer ([below](#timeouts)), and returns `{}`. Needs the `answer` capability. |
@@ -85,6 +88,19 @@ What a session runs, and what its job states mean, is described in [Sessions and
 - `tool_sources_loading`: `true` while the session still loads the tool sources it opened with, its MCP servers and OpenAPI sources. Its prompts wait until it has. An OpenAPI source is not a server, so with only OpenAPI sources this is the one sign that the session loads. Omitted when `false`.
 
 Details include transport, startup errors, exported tools, tools added or withdrawn since startup, the last failed keepalive ping, current MCP prompt commands, and resource counts. Treat `detail` as presentation text, not a machine-readable contract. `status` describes startup; subsequent reachability is reported in the details. Reissue the request for a fresh snapshot; no inventory subscription is created. It reads shared maintenance handles rather than locking the runtime, so a running model turn or a queued configure does not delay it.
+
+### Session MCP prompts and resources
+
+Three reads give a client's composer what the session's MCP servers offer a person: resources to pull into a message, and values for the arguments of a prompt command. Each answers for the named loaded session without waiting for its active turn. None loads the session or changes what its model sees. An unloaded session gets `SessionNotLoaded`; an unknown id gets `SessionNotFound`. A daemon from before these methods answers `MethodNotFound`.
+
+`rho/session/mcp/catalog` returns a point-in-time `SessionMcpCatalog`. Reissue it to see what a server added or removed since; no subscription is created.
+
+- `prompts`: each has the `server` that offers it, its `name`, an optional `title` and `description`, the `arguments` it declares (each a `name`, an optional `description`, and `required`), and `completes_arguments`, which is `true` when its server suggests values for them. The session runs a prompt as the command `mcp:<server>:<name>`, which its `options` list.
+- `resources`: each has its `server`, `uri`, `name`, and an optional `title`, `description`, and `mime_type`. With `templated`, the `uri` is an RFC 6570 URI template whose placeholders must be filled in before a read.
+
+`rho/session/mcp/resource` reads the resource at a concrete `uri` from `server` and returns its `contents` in the server's order. Each is `text` (a `uri`, an optional `mime_type`, and the `text`) or `blob` (the same, with the bytes base64-encoded in `blob`); a kind the protocol does not carry is `unknown`. A `server` the session has not connected gets `InvalidParams`. A read the server refuses or fails gets `InternalError` with the server's reason as its message. A client that uses only the start of a text body names how many bytes in `max_text_bytes`: a longer `text` may then come back cut short at a character boundary, still longer than that, so the client can tell there was more. A `blob` always comes back whole. A read whose response still would not fit a protocol line (16 MiB less 1 KiB for the envelope) gets `InternalError`, and its message gives the size and the limit.
+
+`rho/session/mcp/complete` asks `server` for values of `argument` of `prompt`, given the `value` typed so far, and returns `values`, best first. Suggestions are help: a server that has none, does not complete arguments, or fails the request answers with no values and no error.
 
 ### Session processes
 

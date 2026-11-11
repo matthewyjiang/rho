@@ -37,6 +37,9 @@ impl App {
         if changes.tool_inventory_changed {
             self.mcp_report = agent.mcp_report().clone();
             self.mcp_catalog = agent.mcp_catalog().clone();
+            // Matches cached for a mention typed while the servers connected
+            // list none of their resources.
+            self.palette_caches.clear_file();
             self.refresh_provisional_history();
             if self.status_source == StatusSource::ToolSourcesLoading {
                 self.set_status_quiet("");

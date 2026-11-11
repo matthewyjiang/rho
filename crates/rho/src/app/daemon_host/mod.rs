@@ -334,6 +334,27 @@ impl Service for DaemonHost {
         self.sessions.mcp(params).await
     }
 
+    async fn session_mcp_catalog(
+        &self,
+        params: rho_protocol::SessionMcpCatalogParams,
+    ) -> Result<rho_protocol::SessionMcpCatalog, RpcError> {
+        self.sessions.mcp_catalog(params).await
+    }
+
+    async fn session_mcp_resource(
+        &self,
+        params: rho_protocol::SessionMcpResourceParams,
+    ) -> Result<rho_protocol::SessionMcpResourceResponse, RpcError> {
+        self.sessions.mcp_resource(params).await
+    }
+
+    async fn session_mcp_complete(
+        &self,
+        params: rho_protocol::SessionMcpCompleteParams,
+    ) -> Result<rho_protocol::SessionMcpCompleteResponse, RpcError> {
+        self.sessions.mcp_complete(params).await
+    }
+
     async fn inspect_session(
         &self,
         params: rho_protocol::SessionInspectParams,
