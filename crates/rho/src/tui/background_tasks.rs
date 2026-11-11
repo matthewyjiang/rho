@@ -70,7 +70,7 @@ pub(super) enum UiOutput {
         /// Warmer generation when the ping started; see `cache_warm`.
         generation: u64,
         sent_at: std::time::Instant,
-        result: Result<crate::app::interactive_runtime::CacheWarmOutcome, JoinError>,
+        result: Result<crate::cache_warm::CacheWarmOutcome, JoinError>,
     },
 }
 

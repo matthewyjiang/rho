@@ -26,7 +26,6 @@ mod agent_catalog;
 mod cache;
 #[path = "interactive_runtime_cache_warm.rs"]
 mod cache_warm;
-pub(crate) use cache_warm::{CacheWarmOutcome, PING_OUTPUT_TOKENS};
 #[path = "interactive_runtime_codemode.rs"]
 mod codemode;
 #[path = "interactive_runtime_compact.rs"]

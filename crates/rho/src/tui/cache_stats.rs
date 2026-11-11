@@ -17,14 +17,7 @@ use rho_providers::model::{ModelMetadata, ModelUsage};
 use rho_sdk::{ModelCallMetrics, ModelCallProfile};
 
 use super::usage_cost::{format_token_count, format_usd};
-use crate::usage::pricing::cost_component;
-
-/// Misses at or below this are cache-breakpoint granularity, not a real miss.
-///
-/// Receipt: Pi `packages/coding-agent/src/core/cache-stats.ts` uses 1024
-/// because Anthropic cache breakpoints sit on ~1K-token alignment. Smaller
-/// gaps are noise.
-pub(super) const CACHE_MISS_NOISE_FLOOR_TOKENS: u64 = 1024;
+use crate::{cache_warm::CACHE_MISS_NOISE_FLOOR_TOKENS, usage::pricing::cost_component};
 
 /// Token tripwire for a transcript notice after a counted miss.
 ///

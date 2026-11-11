@@ -174,7 +174,10 @@ pub(super) struct UsageUi {
     /// Non-main spend, claimed once per completed subagent/advisor/ping.
     pub(in crate::tui) extra: ExtraCosts,
     /// Keep-warm ping scheduler, independent of billing and the prefix clock.
-    pub(in crate::tui) cache_warm: super::cache_warm::CacheWarmer,
+    pub(in crate::tui) cache_warm: crate::cache_warm::CacheWarmer,
+    /// The counter the followed daemon session's host last reported, which
+    /// stands in for `cache_warm`'s own there.
+    pub(in crate::tui) daemon_cache_warm: Option<crate::cache_warm::WarmProgress>,
 }
 
 impl UsageUi {

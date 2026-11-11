@@ -107,6 +107,15 @@ pub struct Cursor {
     pub seq: Seq,
 }
 
+/// How far a keep-warm has come since the session's last model request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CacheWarmProgress {
+    /// Pings sent since that request.
+    pub pings: u32,
+    /// The most the daemon sends before it lets the cache expire.
+    pub max_pings: u32,
+}
+
 /// One thing that happened in a session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -222,6 +231,21 @@ pub enum SessionEvent {
     /// be withdrawn ([`super::SESSION_UNSTEER`]), and still applies, as a
     /// [`Self::UserMessage`] carrying `id`, at the turn's next model request.
     SteeringDelivered { id: SteerId },
+    /// The daemon's keep-warm of the session's provider prompt cache
+    /// changed: it started or stopped warming, sent a ping, or a ping
+    /// cost something. Sent only for a session whose `process` tool offers
+    /// `keep_warm`. Why warming stopped early is a [`Self::Notice`].
+    CacheWarm {
+        /// The pings sent, while the daemon warms the cache: a process
+        /// holds it and no turn runs. Absent otherwise.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        warming: Option<CacheWarmProgress>,
+        /// What the session's pings have cost since the daemon loaded it,
+        /// in millionths of a US dollar; [`Self::Usage`]'s cost counts it
+        /// too. Absent while no ping had a price.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_usd_micros: Option<u64>,
+    },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]

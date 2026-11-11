@@ -42,7 +42,10 @@ use super::{
     transcript_events::final_answer_delta,
     FinalAnswerDelta, StreamKind,
 };
-use crate::tools::todo::{TodoItem, TodoList, TodoStatus};
+use crate::{
+    cache_warm::WarmProgress,
+    tools::todo::{TodoItem, TodoList, TodoStatus},
+};
 
 /// Why the daemon did not answer a report.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -116,6 +119,13 @@ pub(super) enum DaemonView {
     },
     /// The daemon's cumulative session spend, independent of context tokens.
     Spend(Option<u64>),
+    /// The host's keep-warm: its ping counter while it warms the prompt
+    /// cache, and what its pings have cost since the daemon loaded the
+    /// session, which [`Self::Spend`] counts too.
+    CacheWarm {
+        warming: Option<WarmProgress>,
+        cost_usd_micros: u64,
+    },
     Title(String),
     Options(Box<rho_protocol::SessionOptions>),
     /// On-demand inventory response; ignored if the person closed the picker.
@@ -467,6 +477,16 @@ impl DaemonEvents {
             SessionEvent::OptionsChanged { options } => {
                 vec![DaemonView::Options(options)]
             }
+            SessionEvent::CacheWarm {
+                warming,
+                cost_usd_micros,
+            } => vec![DaemonView::CacheWarm {
+                warming: warming.map(|progress| WarmProgress {
+                    pings: progress.pings,
+                    max_pings: progress.max_pings,
+                }),
+                cost_usd_micros: cost_usd_micros.unwrap_or_default(),
+            }],
             // `Unknown`, or an event a newer daemon sends.
             _ => Vec::new(),
         }

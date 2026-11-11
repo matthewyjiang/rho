@@ -48,8 +48,8 @@ use crate::{
         cli_config::{settle_bound_config, ProviderRefreshStatus, SettledConfig},
         session_assembly::SignIn,
         session_runtime::{
-            ApprovalPolicy, ChildAgents, HostCapabilities, RunShape, SessionBuild, SessionLaunch,
-            SessionOpening, SessionRole, SessionRuntime, SessionUse,
+            ApprovalPolicy, CacheWarming, ChildAgents, HostCapabilities, IdleTurns, RunShape,
+            SessionBuild, SessionLaunch, SessionOpening, SessionRole, SessionRuntime, SessionUse,
         },
         tools_prompt::ToolSourceLoad,
     },
@@ -322,6 +322,14 @@ async fn open_runtime(
         rho_providers::model::ReasoningRequestSource::PersistedOrDefault,
     )
     .await?;
+    // Warming is for a model that ends its turn and sits idle on a process,
+    // which only a session whose turns do not wait for one does. Decided as
+    // the session opens, like the in-process TUI's: the setting's later
+    // changes stop or resume the warming, not the offer.
+    let cache_warming = match idle_turns {
+        IdleTurns::Host if config.keep_cache_warm => CacheWarming::Host(Default::default()),
+        IdleTurns::Host | IdleTurns::Never => CacheWarming::None,
+    };
     let build = SessionBuild {
         launch: SessionLaunch {
             config_path,
@@ -347,6 +355,7 @@ async fn open_runtime(
                 ChildAgents::InProcess => ToolSourceLoad::Deferred,
                 ChildAgents::HostThreads => ToolSourceLoad::Inline,
             },
+            cache_warming,
         },
         run: RunShape {
             role: SessionRole::Daemon,

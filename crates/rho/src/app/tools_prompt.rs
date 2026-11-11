@@ -53,8 +53,8 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     /// Added workspace directories: their AGENTS.md files join instruction
     /// discovery, and delegated agents inherit them.
     pub(crate) added_dirs: &'a crate::added_dirs::AddedDirs,
-    /// Whether `process start` advertises `keep_warm`. Only the interactive
-    /// host runs the cache warmer that honors it.
+    /// Whether `process start` advertises `keep_warm`. Only a host that runs
+    /// the cache warmer that honors it offers it.
     pub(crate) process_keep_warm: crate::tools::process::KeepWarmOffer,
     /// The environment the session's children see.
     pub(crate) environment: crate::session_environment::SessionEnvironment,

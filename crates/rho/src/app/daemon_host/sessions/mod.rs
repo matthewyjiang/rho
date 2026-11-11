@@ -66,6 +66,7 @@ use crate::{
 };
 
 mod budget;
+mod cache_warm;
 mod catalog;
 mod child_questions;
 mod configure;
@@ -99,6 +100,7 @@ mod unload;
 mod workflows;
 
 use super::settings::ConfigStore;
+use cache_warm::KeepWarm;
 use child_questions::ChildQuestions;
 use feed::{Attached, Feed};
 use idle_wake::IdleWatch;
@@ -209,6 +211,10 @@ struct LoadedSession {
     /// The session's side of the watcher that takes its subagents'
     /// questions, when a person can be asked (see [`child_questions`]).
     child_questions: Option<ChildQuestions>,
+    /// The session's side of the watcher that keeps its provider prompt
+    /// cache warm, when its `process` tool offers that (see
+    /// [`cache_warm`]).
+    cache_warm: Option<KeepWarm>,
 }
 
 /// The state a session's turn lock guards.
@@ -425,6 +431,7 @@ impl LoadedSession {
             id: runtime.session_id().clone(),
             wake: T3Wake::of(&runtime, wakes).map(tokio::sync::Mutex::new),
             idle_wake: IdleWatch::of(&runtime),
+            cache_warm: KeepWarm::of(&runtime),
             child_questions: ChildQuestions::of(&mut runtime),
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),
@@ -692,6 +699,7 @@ impl Sessions {
                     let entry = Arc::new(entry);
                     loaded.insert(session, Arc::clone(&entry));
                     self.watch_idle_results(&entry);
+                    self.watch_cache_warm(&entry);
                     self.watch_child_questions(&entry);
                     if let Some(loaded) = tool_sources {
                         tool_sources::attach_when_loaded(&entry, loaded);

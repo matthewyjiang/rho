@@ -112,7 +112,7 @@ pub(super) async fn initialize(
         diagnostics: &diagnostics,
         agent: &agent,
         added_dirs: &added_dirs,
-        // Only this host runs the cache warmer, so only it may offer the flag.
+        // This host's TUI runs the cache warmer, so it may offer the flag.
         process_keep_warm: if config.keep_cache_warm {
             crate::tools::process::KeepWarmOffer::Offered(cache_warm_route.clone())
         } else {

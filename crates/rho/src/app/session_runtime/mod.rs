@@ -48,6 +48,8 @@ mod agent;
 pub(in crate::app) mod agent_catalog;
 mod approval_policy;
 mod build;
+#[cfg(unix)]
+mod cache_warm;
 mod codemode;
 mod compact;
 mod context;
@@ -86,8 +88,8 @@ pub(crate) use approval_policy::{
 #[cfg(test)]
 pub(in crate::app) use build::session_config;
 pub(crate) use build::{
-    ChildAgents, HostCapabilities, IdleTurns, QuestionSupport, RunShape, SessionBuild,
-    SessionLaunch, SessionRole, SessionUse,
+    CacheWarming, ChildAgents, HostCapabilities, IdleTurns, QuestionSupport, RunShape,
+    SessionBuild, SessionLaunch, SessionRole, SessionUse,
 };
 pub(crate) use credentials::CredentialFailure;
 use credentials::SessionCredentials;

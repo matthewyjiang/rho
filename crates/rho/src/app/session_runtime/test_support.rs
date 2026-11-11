@@ -207,6 +207,7 @@ pub(in crate::app) fn test_build(config: &Config, workspace_root: &Path) -> Sess
             parent_notices: None,
             session_use: super::SessionUse::Run(crate::app::session_assembly::SignIn::Required),
             tool_sources: crate::app::tools_prompt::ToolSourceLoad::Inline,
+            cache_warming: crate::app::session_runtime::CacheWarming::None,
         },
         run: RunShape {
             role: SessionRole::Daemon,

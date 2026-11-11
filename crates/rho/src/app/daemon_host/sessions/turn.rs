@@ -367,6 +367,7 @@ pub(super) async fn restart_transcript(session: &LoadedSession, runtime: &Sessio
         tracing::warn!(job = %session.job, %error, "could not rest the job after its conversation moved");
     }
     session.feed.restart(saved.unwrap_or_default());
+    session.cache_warm_conversation_moved();
     let rests = wire::SessionEvent::State {
         state: wire::JobState::Idle,
         turn: None,
@@ -532,6 +533,9 @@ async fn compact(
     // not wait for the compaction.
     view.began();
     let compacted = runtime.compact(scope, instructions).await;
+    if let Some(keep) = &view.session.cache_warm {
+        keep.prefix_rewritten();
+    }
     let end = match &compacted {
         Ok(Some(outcome)) => CompactionEnd::Completed(outcome),
         Ok(None) => CompactionEnd::Cancelled,
@@ -764,6 +768,18 @@ impl DaemonView {
             };
             let wire = cost.priced(&event, wire, &self.session.id).await;
             self.session.feed.publish(wire);
+            if let Some(keep) = &self.session.cache_warm {
+                match &event {
+                    SessionEvent::RunStarted => keep.run_started(),
+                    SessionEvent::Run(RunEvent::ModelCallCompleted { metrics, .. }) => {
+                        keep.model_call_completed(metrics);
+                    }
+                    SessionEvent::Run(RunEvent::CompactionCompleted { .. }) => {
+                        keep.prefix_rewritten();
+                    }
+                    _ => {}
+                }
+            }
             if matches!(event, SessionEvent::MessageInserted(_)) {
                 self.began();
             }

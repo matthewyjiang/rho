@@ -10,6 +10,7 @@ mod app;
     not(unix),
     allow(dead_code, reason = "session control is unix-only (#1665)")
 )]
+mod cache_warm;
 mod caller_context;
 mod changelog;
 mod child_env;
