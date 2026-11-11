@@ -21,6 +21,7 @@ pub(crate) fn attach_response(
         replay_events,
         state,
         turn: turn.map(TurnId::new),
+        turn_elapsed_ms: None,
         inputs: Vec::new(),
         title: None,
         options: SessionOptions {

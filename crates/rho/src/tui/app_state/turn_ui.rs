@@ -159,6 +159,12 @@ impl TurnUi {
         self.loading_spinner.start();
     }
 
+    /// Starts the turn's clock at `since`, as for a turn already under way
+    /// when the TUI began following it.
+    pub(in crate::tui) fn start_loading_at(&mut self, since: Instant) {
+        self.loading_spinner.start_at(since);
+    }
+
     pub(in crate::tui) fn start_loading_if_needed(&mut self) {
         self.loading_spinner.start_if_needed();
     }

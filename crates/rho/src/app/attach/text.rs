@@ -78,6 +78,7 @@ impl<O: Write, E: Write> TextView<O, E> {
             | SessionEvent::InputResolved { .. }
             | SessionEvent::InputHeld { .. }
             | SessionEvent::OptionsChanged { .. }
+            | SessionEvent::ProviderRequest
             // A retry shows only as the response it discarded, if any.
             | SessionEvent::ProviderRetry { .. }
             // The steer shows once it applies, as a user message.

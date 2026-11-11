@@ -24,7 +24,10 @@
 //! call's last card, which a call cut off shows as interrupted, and why a
 //! turn failed, which its job state leaves out.
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use rho_protocol::{
     display::{Presentation, ToolCard, ToolCardStatus},
@@ -170,6 +173,12 @@ pub(super) enum DaemonView {
     },
     /// Input request `id` no longer times out: a client held it.
     InputHeld(InputRequestId),
+    /// The turn under way started at this instant, before the TUI followed
+    /// it: its clock counts from there.
+    TurnSince(Instant),
+    /// The turn sent the provider a model request and waits for its
+    /// response, as an in-process step start shows.
+    Requesting,
     /// The turn asks the provider again, and why when the daemon said
     /// more than that it retries.
     Retrying(Option<ProviderRetryHint>),
@@ -241,6 +250,9 @@ pub(super) struct DaemonEvents {
     /// Where the replay under way ends, as its attach answered: the job's
     /// state, and the turn it is of. `None` once the replay is over.
     replay_end: Option<(JobState, Option<TurnId>)>,
+    /// When the turn the replay ends under way started, as its attach
+    /// answered; taken once the replay is over.
+    turn_since: Option<Instant>,
     /// Whether the last replay is a reset: history, where a tail holds
     /// only events the TUI has yet to see.
     reset: bool,
@@ -282,16 +294,19 @@ impl DaemonEvents {
 
     /// Starts an attachment whose response lists `inputs` as the requests
     /// open now and says its replay ends with the job in `state`, of turn
-    /// `turn`. The replay follows, until [`Self::end_replay`]: none of its
-    /// input requests shows before then.
+    /// `turn`, under way since `turn_since` if it is. The replay follows,
+    /// until [`Self::end_replay`]: none of its input requests shows before
+    /// then.
     pub(super) fn attached(
         &mut self,
         inputs: Vec<InputRequest>,
         state: JobState,
         turn: Option<TurnId>,
+        turn_since: Option<Instant>,
     ) {
         self.inputs.attached(inputs);
         self.replay_end = Some((state, turn));
+        self.turn_since = turn_since;
     }
 
     /// The replay is over, ending where the attach said: whether a turn
@@ -304,10 +319,15 @@ impl DaemonEvents {
                 let rest = self.turn(state, turn.as_ref());
                 // After the rest, which a `/compact` turn the TUI still
                 // shows busy rests on as its compaction ended.
-                let over = (!in_progress(state))
+                let over = (!state.in_progress())
                     .then(|| self.compact_turn_over())
                     .flatten();
-                std::iter::once(rest).chain(over)
+                let since = self
+                    .turn_since
+                    .take()
+                    .filter(|_| state.in_progress())
+                    .map(DaemonView::TurnSince);
+                std::iter::once(rest).chain(over).chain(since)
             })
             .into_iter()
             .flatten()
@@ -399,6 +419,9 @@ impl DaemonEvents {
                     "the provider restarted its response".into(),
                 )]
             }
+            // Replayed too: a reset into the turn under way shows the phase
+            // its latest event set, as for replayed text.
+            SessionEvent::ProviderRequest => vec![DaemonView::Requesting],
             // A replayed retry is history, not what the turn does now.
             SessionEvent::ProviderRetry { .. } if self.replay_end.is_some() => Vec::new(),
             SessionEvent::ProviderRetry {
@@ -443,13 +466,15 @@ impl DaemonEvents {
                     // news, as live.
                     Some((end, under_way))
                         if self.reset
-                            && !(in_progress(*end) && in_progress(state) && turn == *under_way) =>
+                            && !(end.in_progress()
+                                && state.in_progress()
+                                && turn == *under_way) =>
                     {
                         Vec::new()
                     }
                     Some(_) | None => vec![self.turn(state, turn.as_ref())],
                 };
-                if !in_progress(state) && self.compact_turn == CompactTurn::UnderWay {
+                if !state.in_progress() && self.compact_turn == CompactTurn::UnderWay {
                     if views.is_empty() {
                         self.compact_turn = CompactTurn::RestedUnshown;
                     } else {
@@ -636,14 +661,6 @@ impl DaemonEvents {
             _ => Vec::new(),
         }
     }
-}
-
-/// Whether a job in `state` has a turn under way.
-fn in_progress(state: JobState) -> bool {
-    matches!(
-        state,
-        JobState::Running | JobState::Queued | JobState::WaitingForInput
-    )
 }
 
 /// A steer's id as the TUI's pending panel keys it.

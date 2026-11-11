@@ -104,7 +104,12 @@ fn map(steps: Vec<Step>) -> Vec<DaemonView> {
             Step::Reset => views.push(events.replay(Replay::Reset)),
             Step::Tail => views.push(events.replay(Replay::Tail)),
             Step::Attached(inputs, state) => {
-                events.attached(inputs, state, Some(TurnId::new(TURN)));
+                events.attached(
+                    inputs,
+                    state,
+                    Some(TurnId::new(TURN)),
+                    /*turn_since*/ None,
+                );
             }
             Step::ReplayEnded => views.extend(events.end_replay()),
             Step::Answering(id) => events.answering(id),
@@ -136,7 +141,12 @@ fn replayed_text_is_marked_until_the_replay_ends() {
         other => panic!("expected one text view: {other:?}"),
     };
     events.replay(Replay::Reset);
-    events.attached(Vec::new(), JobState::Running, Some(TurnId::new(TURN)));
+    events.attached(
+        Vec::new(),
+        JobState::Running,
+        Some(TurnId::new(TURN)),
+        /*turn_since*/ None,
+    );
     let during = replayed(events.map(chunk("m1")));
     events.end_replay();
 
@@ -247,7 +257,12 @@ fn a_live_retry_says_why_and_a_replayed_one_nothing() {
     let hint = |reason| DaemonView::Retrying(Some(ProviderRetryHint { reason }));
     let mut events = DaemonEvents::default();
     events.replay(Replay::Reset);
-    events.attached(Vec::new(), JobState::Running, Some(TurnId::new(TURN)));
+    events.attached(
+        Vec::new(),
+        JobState::Running,
+        Some(TurnId::new(TURN)),
+        /*turn_since*/ None,
+    );
     let replayed = events.map(retry(RetryReason::RateLimit, None));
     events.end_replay();
     let live: Vec<_> = [

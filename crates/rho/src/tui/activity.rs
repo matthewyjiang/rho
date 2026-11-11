@@ -426,7 +426,11 @@ impl LoadingSpinner {
     pub(super) const FRAME_INTERVAL: Duration = Duration::from_millis(95);
 
     pub(super) fn start(&mut self) {
-        self.started_at = Some(Instant::now());
+        self.start_at(Instant::now());
+    }
+
+    pub(super) fn start_at(&mut self, started_at: Instant) {
+        self.started_at = Some(started_at);
     }
 
     pub(super) fn start_if_needed(&mut self) {

@@ -3605,6 +3605,15 @@
           ],
           "description": "The turn `state` is of: the one under way, or the last one, whose\nend a reset's replay holds as the [`super::SessionEvent::TurnEnded`]\ncarrying this id. Absent only while the session has run no turn."
         },
+        "turn_elapsed_ms": {
+          "description": "How long, in milliseconds, `turn` had been under way when the\nattachment began, so a client shows the turn's clock from its start\nrather than from the attach. Absent while no turn is under way.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "workspace": {
           "description": "The directory the session works in: the one it was saved in, for a\nsession the daemon reopened (#1661).",
           "type": "string"
@@ -4194,6 +4203,19 @@
             "type",
             "id",
             "status"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The turn sent the provider a model request and waits for its\nresponse. Says what the turn is doing until its next event.",
+          "properties": {
+            "type": {
+              "const": "provider_request",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
           ],
           "type": "object"
         },
