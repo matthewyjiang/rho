@@ -405,6 +405,7 @@ impl Service for DaemonHost {
     }
 
     async fn list_jobs(&self) -> JobListResponse {
+        let undelivered = self.sessions.undelivered_workflow_runs();
         JobListResponse {
             jobs: self
                 .jobs
@@ -412,7 +413,7 @@ impl Service for DaemonHost {
                 .into_iter()
                 .map(|record| {
                     let queue = self.sessions.subagents().queue_place(&record.id);
-                    wire::job_summary(record, queue)
+                    wire::job_summary(record, queue, &undelivered)
                 })
                 .collect(),
         }

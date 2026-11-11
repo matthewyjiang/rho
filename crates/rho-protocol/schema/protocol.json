@@ -2084,6 +2084,10 @@
           ],
           "description": "Where the job waits for capacity, when its state is\n[`JobState::Queued`]."
         },
+        "result_pending": {
+          "description": "Whether the result of a [`JobKind::Workflow`] job's run has yet to\nreach the session that started it. A run's result is pending once\nits drive ends, until the daemon gives the session the result in a\nturn, at once when the session is idle. `false` for other jobs, and\nfor a run whose session the daemon has not loaded.",
+          "type": "boolean"
+        },
         "run": {
           "description": "The id of the subagent run a [`JobKind::Subagent`] job follows. For\na run a session started, it names the run's artifact directory\nunder the daemon's rho home.",
           "type": [

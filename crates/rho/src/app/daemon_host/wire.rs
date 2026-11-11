@@ -1,6 +1,8 @@
 //! The host's types as `rho-protocol` sends them. The registry's types stay
 //! the host's own, so its record files and the wire can change apart.
 
+use std::collections::HashSet;
+
 use rho_protocol as wire;
 
 use super::jobs::{JobId, JobRecord, JobState, JobSubject, Moved, TurnEnd};
@@ -67,8 +69,13 @@ pub(super) fn state_event(moved: &Moved) -> wire::SessionEvent {
 }
 
 /// `record` as `rho/job/list` reports it, with where the job waits for
-/// capacity, if it does.
-pub(super) fn job_summary(record: JobRecord, queue: Option<QueuePlace>) -> wire::JobSummary {
+/// capacity, if it does. `undelivered` names the workflow runs whose result
+/// a session has yet to be given.
+pub(super) fn job_summary(
+    record: JobRecord,
+    queue: Option<QueuePlace>,
+    undelivered: &HashSet<String>,
+) -> wire::JobSummary {
     let JobRecord {
         id,
         subject,
@@ -104,6 +111,9 @@ pub(super) fn job_summary(record: JobRecord, queue: Option<QueuePlace>) -> wire:
         grant_limit: grant_limit.map(Into::into),
         session: session.map(session_to_wire),
         run,
+        result_pending: workflow_run
+            .as_ref()
+            .is_some_and(|run| undelivered.contains(run)),
         workflow_run,
         created_at,
         updated_at,

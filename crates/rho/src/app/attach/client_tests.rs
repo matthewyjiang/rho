@@ -15,6 +15,7 @@ fn job(id: &str, kind: JobKind, parent: Option<&str>, session: Option<&str>) -> 
         session: session.map(SessionId::new),
         run: None,
         workflow_run: None,
+        result_pending: false,
         created_at: 0,
         updated_at: 0,
         error: None,

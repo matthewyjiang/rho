@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use rho_protocol::{JobSummary, TurnOutcome};
+use rho_protocol::{JobState, JobSummary, TurnOutcome};
 
 use super::{
     daemon_jobs::may_still_change,
@@ -134,8 +134,8 @@ impl App {
 
     /// Puts `jobs`, the followed session's workflow jobs at `now` (Unix
     /// seconds), on the workflow rail: one row for each run still being
-    /// driven (see [`live_drives`]). A run whose saved state cannot be read
-    /// has no row.
+    /// driven or whose result the session has yet to be given (see
+    /// [`shown_drives`]). A run whose saved state cannot be read has no row.
     pub(super) fn show_daemon_workflows(&mut self, jobs: &[&JobSummary], now: u64) {
         if jobs.is_empty() {
             self.daemon_rail.workflows = WorkflowRuns::default();
@@ -146,11 +146,17 @@ impl App {
             self.daemon_rail.workflows.ops = self.workflow_ops().ok();
         }
         let runs = &mut self.daemon_rail.workflows;
-        let rows = live_drives(jobs)
+        let rows = shown_drives(jobs)
             .into_iter()
             .filter_map(|(run, job)| {
+                let until = if may_still_change(job.state) {
+                    now
+                } else {
+                    job.updated_at
+                };
                 Some(WorkflowRailSummary {
-                    elapsed_seconds: now.saturating_sub(job.created_at),
+                    failed: job.state == JobState::Failed,
+                    elapsed_seconds: until.saturating_sub(job.created_at),
                     ..runs.progress(run)?
                 })
             })
@@ -187,13 +193,12 @@ impl WorkflowRuns {
     }
 }
 
-/// Each run `jobs` still drive with the job driving it, in the order the
-/// runs first appear. A run resumed has a job for each drive, and the one
-/// that began last says where the run is. A run whose drive ended has no
-/// row: the daemon gives the session its result in a turn, at once when the
-/// session is idle, and nothing tells this process when, so the row leaves
-/// as the run ends instead of with the result, as it does in process.
-fn live_drives<'a>(jobs: &[&'a JobSummary]) -> Vec<(RunId, &'a JobSummary)> {
+/// Each run of `jobs` the rail shows with the job that drove it last, in
+/// the order the runs first appear. A run resumed has a job for each drive,
+/// and the one that began last says where the run is. A run shows while
+/// that drive may still change, and then until the session is given its
+/// result, as in process.
+fn shown_drives<'a>(jobs: &[&'a JobSummary]) -> Vec<(RunId, &'a JobSummary)> {
     let mut drives: Vec<(RunId, &JobSummary)> = Vec::new();
     for job in jobs {
         let Some(run) = job
@@ -209,7 +214,7 @@ fn live_drives<'a>(jobs: &[&'a JobSummary]) -> Vec<(RunId, &'a JobSummary)> {
             None => drives.push((run, job)),
         }
     }
-    drives.retain(|(_, job)| may_still_change(job.state));
+    drives.retain(|(_, job)| may_still_change(job.state) || job.result_pending);
     drives
 }
 
