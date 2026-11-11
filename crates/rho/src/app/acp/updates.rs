@@ -135,7 +135,8 @@ impl Updates {
             // ACP has no update for what the turn is doing.
             | SessionEvent::ProviderRetry { .. }
             // The steer shows once it applies, as a user message.
-            | SessionEvent::SteeringDelivered { .. } => Vec::new(),
+            | SessionEvent::SteeringDelivered { .. }
+            | SessionEvent::ReplyEnded => Vec::new(),
             // `Unknown`, or an event a newer daemon sends.
             _ => {
                 tracing::debug!("skipping a session event this rho does not know");

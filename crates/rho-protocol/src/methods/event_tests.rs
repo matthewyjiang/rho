@@ -100,6 +100,7 @@ fn every_session_event_round_trips_through_its_wire_form() {
             },
             json!({"type": "steering_delivered", "id": "s1"}),
         ),
+        (SessionEvent::ReplyEnded, json!({"type": "reply_ended"})),
         (
             SessionEvent::AgentMessageChunk {
                 message: message(),

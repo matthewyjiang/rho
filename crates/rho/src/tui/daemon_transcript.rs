@@ -218,11 +218,8 @@ impl App {
                 // Held until the message under way ends, as in process: a
                 // notice such as a new title does not break into a reply.
                 DaemonView::Notice(text) => self.insert_entry(&Entry::Notice(text)),
-                DaemonView::DaemonNotice(text) => {
-                    // The daemon says nothing else when one of a goal's
-                    // turns ends, so its notice is what ends that reply.
+                DaemonView::ReplyEnded => {
                     self.finish_streams();
-                    self.insert_entry(&Entry::Notice(text));
                 }
                 DaemonView::Card(card) => {
                     // A result reaches the model between its messages, so

@@ -4361,6 +4361,19 @@
           "type": "object"
         },
         {
+          "description": "The agent's reply under way is whole, though the turn goes on: one\nof a goal's model runs ended, and the goal loop waits, retries, or\njudges next. A client that holds what follows a reply until the\nreply ends stops holding. A turn's last reply ends with\n[`Self::TurnEnded`] instead.",
+          "properties": {
+            "type": {
+              "const": "reply_ended",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Any other value: one a later protocol minor adds.",
           "properties": {
             "type": {

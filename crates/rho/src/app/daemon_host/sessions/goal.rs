@@ -329,21 +329,26 @@ async fn drive_goal(
         if cancel.is_cancelled() {
             return ended;
         }
+        // Clients are told only how the goal's last turn ended. Nothing else
+        // says that this turn's reply is over, and an answer the provider
+        // did not stream is sent here.
+        let reply_ended = [wire::SessionEvent::ReplyEnded];
         match &ended {
-            Err(error) => notice(
-                &session,
-                format!(
-                    "could not complete goal turn: {}; retrying while goal remains active",
-                    turn::client_error(runtime, error).message
-                ),
-            ),
-            // Clients are told only how the goal's last turn ended, so an
-            // answer the provider did not stream is sent here.
+            Err(error) => {
+                session.feed.publish(reply_ended);
+                notice(
+                    &session,
+                    format!(
+                        "could not complete goal turn: {}; retrying while goal remains active",
+                        turn::client_error(runtime, error).message
+                    ),
+                );
+            }
             Ok(Ran::Completed(
                 wire::TurnOutcome::Answered { text, .. } | wire::TurnOutcome::MaxSteps { text },
             )) => {
                 let answer = session.live().unstreamed_answer(text);
-                session.feed.publish(answer);
+                session.feed.publish(answer.into_iter().chain(reply_ended));
             }
             Ok(Ran::Completed(_) | Ran::Cancelled) => {}
         }

@@ -222,6 +222,12 @@ pub enum SessionEvent {
     /// be withdrawn ([`super::SESSION_UNSTEER`]), and still applies, as a
     /// [`Self::UserMessage`] carrying `id`, at the turn's next model request.
     SteeringDelivered { id: SteerId },
+    /// The agent's reply under way is whole, though the turn goes on: one
+    /// of a goal's model runs ended, and the goal loop waits, retries, or
+    /// judges next. A client that holds what follows a reply until the
+    /// reply ends stops holding. A turn's last reply ends with
+    /// [`Self::TurnEnded`] instead.
+    ReplyEnded,
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
