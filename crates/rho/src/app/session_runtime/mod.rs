@@ -85,8 +85,8 @@ pub(crate) use approval_policy::{
 #[cfg(test)]
 pub(in crate::app) use build::session_config;
 pub(crate) use build::{
-    ChildAgents, HostCapabilities, QuestionSupport, RunShape, SessionBuild, SessionLaunch,
-    SessionRole, SessionUse,
+    ChildAgents, HostCapabilities, IdleTurns, QuestionSupport, RunShape, SessionBuild,
+    SessionLaunch, SessionRole, SessionUse,
 };
 pub(crate) use credentials::CredentialFailure;
 use credentials::SessionCredentials;
@@ -319,10 +319,10 @@ impl SessionRuntime {
     }
 
     /// Whether running background work holds a prompt open, or the host
-    /// wakes the idle session once it finishes, as the session's children
-    /// say (see [`BackgroundWait::of`]).
+    /// wakes the idle session once it finishes, as the session's host says
+    /// (see [`BackgroundWait::of`]).
     pub(crate) fn background_wait(&self) -> BackgroundWait {
-        BackgroundWait::of(self.build.host.children)
+        BackgroundWait::of(self.build.host.children, self.build.host.idle_turns)
     }
 
     /// Whether background work the session's prompts started still runs or

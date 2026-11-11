@@ -18,7 +18,7 @@ use crate::{
         workflow_runtime::RecoveryDecision,
     },
     config::Config,
-    tools::workflow_tracker::start_context_prompts,
+    tools::workflow_tracker::{start_context_prompts, starting_notice, BackgroundStart},
 };
 
 /// How a `/workflow:` prompt ended.
@@ -63,8 +63,10 @@ impl SessionRuntime {
             &environment,
         )
         .map_err(|error| anyhow::anyhow!("could not open the workflow store: {error:#}"))?;
-        let (run, recovery) = match launch {
+        let plan_id;
+        let (run, recovery, start) = match launch {
             WorkflowLaunch::Source(start) => {
+                let default_inputs = start.inputs.is_empty();
                 let source = start.workflow.relative_path.clone();
                 let failed =
                     |error: anyhow::Error| anyhow::anyhow!("could not start {source}: {error:#}");
@@ -88,7 +90,11 @@ impl SessionRuntime {
                     ) => prepared.map_err(failed)?,
                 };
                 let run = ops.create_launch_run(&prepared).map_err(failed)?;
-                (run, RecoveryDecision::NormalResume)
+                (
+                    run,
+                    RecoveryDecision::NormalResume,
+                    BackgroundStart::Source { default_inputs },
+                )
             }
             WorkflowLaunch::Plan(plan) => {
                 let stored = ops
@@ -97,7 +103,12 @@ impl SessionRuntime {
                 let run = ops
                     .create_confirmed_run(&stored)
                     .map_err(|error| anyhow::anyhow!("could not create run: {error:#}"))?;
-                (run, RecoveryDecision::NormalResume)
+                plan_id = plan.to_string();
+                (
+                    run,
+                    RecoveryDecision::NormalResume,
+                    BackgroundStart::Plan { plan_id: &plan_id },
+                )
             }
             WorkflowLaunch::Resume {
                 run,
@@ -109,7 +120,7 @@ impl SessionRuntime {
                 let recovery = ops
                     .prepare_resume(&run, recover_uncertain)
                     .map_err(|error| anyhow::anyhow!("could not open run: {error:#}"))?;
-                (run, recovery)
+                (run, recovery, BackgroundStart::Resume)
             }
         };
 
@@ -140,10 +151,15 @@ impl SessionRuntime {
         )
         .await
         .map_err(|error| {
-            anyhow::anyhow!("could not start workflow {workflow_name} in the background: {error:#}")
+            anyhow::anyhow!("could not start workflow in the background: {error:#}")
         })?;
 
-        let (model, notice) = start_context_prompts(&run_id, &workflow_name, &program_digest);
+        let (model, started) = start_context_prompts(&run_id, &workflow_name, &program_digest);
+        // The two notices the in-process TUI shows for the same start.
+        let notice = format!(
+            "{}\n\n{started}",
+            starting_notice(&start, &workflow_name, &run_id)
+        );
         let (inserted, reply) = self.record_started(display, model, &notice)?;
         Ok(WorkflowStart::Started {
             notice,

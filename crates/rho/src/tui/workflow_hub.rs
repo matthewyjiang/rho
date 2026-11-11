@@ -15,6 +15,7 @@ use crate::{
         workflow_cli::{self, discover, WorkflowOps},
         workflow_runtime::RecoveryDecision,
     },
+    tools::workflow_tracker::{starting_notice, BackgroundStart},
     workflow::{
         PlanId, PlanInventory, RunId, RunInventory, RunInventoryItem, RunLifecycle, StoredRun,
         UnsupportedRecord, WorkflowError, WorkflowOutcome,
@@ -635,10 +636,8 @@ impl App {
         self.set_status(format!("starting {relative_path}"));
         let ops = self.workflow_ops()?;
         let available_tools = agent.workflow_host_capabilities();
-        let inputs_note = if inputs.is_empty() {
-            " Default inputs."
-        } else {
-            ""
+        let start = BackgroundStart::Source {
+            default_inputs: inputs.is_empty(),
         };
         let prepared = match self
             .prepare_source(&absolute, inputs, &available_tools)
@@ -663,10 +662,10 @@ impl App {
         };
         let run_id = run.manifest.run_id;
         self.input_ui.set_composer(ComposerMode::Input);
-        self.insert_entry(&Entry::Notice(format!(
-            "Starting '{}' in the background (run {}).{inputs_note} Completion is delivered automatically.",
-            run.graph.program.name,
-            short_id(&run_id.to_string())
+        self.insert_entry(&Entry::Notice(starting_notice(
+            &start,
+            run.graph.program.name.as_str(),
+            &run_id.to_string(),
         )));
         self.launch_workflow_execution(run, RecoveryDecision::NormalResume, agent)
             .await
@@ -735,10 +734,12 @@ impl App {
         };
         let run_id = run.manifest.run_id;
         self.input_ui.set_composer(ComposerMode::Input);
-        self.insert_entry(&Entry::Notice(format!(
-            "Starting plan {} in the background (run {}). Completion is delivered automatically.",
-            short_id(&plan_id.to_string()),
-            short_id(&run_id.to_string())
+        self.insert_entry(&Entry::Notice(starting_notice(
+            &BackgroundStart::Plan {
+                plan_id: &plan_id.to_string(),
+            },
+            run.graph.program.name.as_str(),
+            &run_id.to_string(),
         )));
         self.launch_workflow_execution(run, RecoveryDecision::NormalResume, agent)
             .await
@@ -774,9 +775,10 @@ impl App {
             }
         };
         self.input_ui.set_composer(ComposerMode::Input);
-        self.insert_entry(&Entry::Notice(format!(
-            "Resuming run {} in the background. Completion is delivered automatically.",
-            short_id(&run_id.to_string())
+        self.insert_entry(&Entry::Notice(starting_notice(
+            &BackgroundStart::Resume,
+            run.graph.program.name.as_str(),
+            &run_id.to_string(),
         )));
         self.launch_workflow_execution(run, recovery, agent).await
     }

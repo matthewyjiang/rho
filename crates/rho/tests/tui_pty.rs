@@ -1334,6 +1334,26 @@ fn daemon_runs_the_workflow_the_hub_starts() {
     assert_pass("daemon_workflow");
 }
 
+// Covers: with RHO_TUI_DAEMON=1, a turn ends while the workflow its tools
+// started runs on, and the daemon delivers the result to the idle session.
+// Owner: interactive TUI as a daemon client (#1667)
+// Requires the verified-handle workflow command adapter; other platforms fail closed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn daemon_workflow_tools_run_in_the_background() {
+    assert_pass("daemon_workflow_background");
+}
+
+// Covers: with RHO_TUI_DAEMON=1, a failed hub launch reports its ready run
+// to the model while idle, and Retry starts that run under the same id.
+// Owner: interactive TUI as a daemon client (#1667)
+// Requires the verified-handle workflow command adapter; other platforms fail closed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn daemon_workflow_hub_retries_planned_run() {
+    assert_pass("daemon_workflow_hub_planned_retry");
+}
+
 // Covers: a daemon session's turn is checkpointed, and `/rewind` has the
 // daemon put its file and the conversation back.
 // Owner: interactive TUI as a daemon client (#1667)

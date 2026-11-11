@@ -31,8 +31,9 @@ use crate::{
         },
         session_events::{outcome, CompactionEnd},
         session_runtime::{
-            InsertedMessage, PlanReport, PromptScope, SessionEvent, SessionRuntime, TitleJob, Turn,
-            TurnControl, TurnIo, TurnOutcome, TurnView, UnsavedCompaction, WorkflowStart,
+            CommandRejected, InsertedMessage, PlanReport, PromptScope, SessionEvent,
+            SessionRuntime, TitleJob, Turn, TurnControl, TurnIo, TurnOutcome, TurnView,
+            UnsavedCompaction, WorkflowStart,
         },
         workflow_cli::discover::WorkflowLaunch,
     },
@@ -110,6 +111,9 @@ pub(super) enum Ran {
 enum TurnInput {
     Prompt(UserInput),
     Goal(Turn),
+    /// No prompt: the turn's first boundary delivers the background
+    /// results that wait (see [`super::idle_wake`]).
+    Delivery,
 }
 
 /// One turn of a session whose job already recorded the turn's start.
@@ -138,6 +142,12 @@ impl TurnTask {
     /// Start a host-constructed goal turn without parsing its displayed command.
     pub(super) fn spawn_goal(self, input: Turn) {
         tokio::spawn(self.run(TurnInput::Goal(input)));
+    }
+
+    /// Runs a turn with no prompt, which delivers the session's waiting
+    /// background results.
+    pub(super) fn spawn_delivery(self) {
+        tokio::spawn(self.run(TurnInput::Delivery));
     }
 
     async fn run(self, input: TurnInput) {
@@ -190,6 +200,16 @@ impl TurnTask {
                                 TurnInput::Goal(turn) => {
                                     run_goal_turn(runtime, &mut view, turn.into(), &config, &cancel)
                                         .await
+                                }
+                                TurnInput::Delivery => {
+                                    run_goal_turn(
+                                        runtime,
+                                        &mut view,
+                                        crate::app::session_runtime::TurnStart::Continue,
+                                        &config,
+                                        &cancel,
+                                    )
+                                    .await
                                 }
                             };
                             super::goal::drive(
@@ -253,6 +273,9 @@ impl TurnTask {
             }
         };
         view.end(outcome, end);
+        if let Some(wake) = &session.idle_wake {
+            wake.turn_ended();
+        }
         // After the end, so the title follows the turn's events.
         if let Some(title) = title {
             tokio::spawn(report_title(Arc::downgrade(&session), title));
@@ -429,8 +452,9 @@ async fn run_turn(
     })
 }
 
-/// Run a goal continuation or retry with normal persistence, child boundary
-/// delivery, cancellation, and plan handoff. A retry inserts no duplicate prompt.
+/// Run a goal continuation or retry, or a delivery of background results,
+/// with normal persistence, child boundary delivery, cancellation, and plan
+/// handoff. A retry and a delivery insert no prompt.
 pub(super) async fn run_goal_turn(
     runtime: &mut SessionRuntime,
     view: &mut DaemonView,
@@ -523,7 +547,10 @@ async fn start_workflow(
 ) -> anyhow::Result<Ran> {
     let (notice, inserted, reply) = match runtime
         .start_workflow(scope, &display, launch, config)
-        .await?
+        .await
+        // The command was refused, or failed as it started: either way no
+        // model ran, and sending it again is the person's call.
+        .map_err(|error| CommandRejected(format!("{error:#}")))?
     {
         WorkflowStart::Started {
             notice,
