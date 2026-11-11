@@ -583,6 +583,8 @@ fn absolute_document_path_paste_attaches_and_submits_text() {
 #[test]
 fn edit_diff_streams_and_survives_cancellation() {
     assert_pass("edit_diff");
+    #[cfg(unix)]
+    assert_pass("daemon_edit_diff");
 }
 
 // Covers: write content updates before the incomplete call can execute.

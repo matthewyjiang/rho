@@ -45,6 +45,9 @@ pub(super) struct DaemonAnswers {
     /// Requests whose questions the person cancelled, which cancels the
     /// turn: their withdrawal goes unsaid.
     cancelled: HashSet<InputRequestId>,
+    /// The person's cancel of questions cancelled the running turn, whose
+    /// end then says the questionnaire was cancelled, as in process.
+    questions_cancelled_turn: bool,
 }
 
 /// The request whose prompt is open.
@@ -145,6 +148,13 @@ impl App {
         self.withdraw_daemon_prompt();
         self.daemon_answers.waiting.clear();
         self.daemon_answers.cancelled.clear();
+        self.daemon_answers.questions_cancelled_turn = false;
+    }
+
+    /// Whether the person's cancel of questions cancelled the turn that
+    /// ended; read once, as the turn's end shows.
+    pub(super) fn take_questions_cancelled_turn(&mut self) -> bool {
+        std::mem::take(&mut self.daemon_answers.questions_cancelled_turn)
     }
 
     /// Sends the open prompt's reply to the daemon once the person gave it,
@@ -177,6 +187,7 @@ impl App {
                     session.answer(id, InputAnswer::Dismiss).await;
                 }
                 if self.daemon_turn_runs() {
+                    self.daemon_answers.questions_cancelled_turn = true;
                     self.cancel_daemon_turn().await;
                     return Ok(());
                 }

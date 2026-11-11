@@ -345,6 +345,7 @@ impl App {
         self.finish_streams();
         self.reset_streams();
         let compact_turn = self.daemon_compact_turn.take();
+        let questions_cancelled = self.take_questions_cancelled_turn();
         // The daemon withdrew the turn's own requests before it said the
         // turn ended. A prompt still open is a subagent's question, which
         // outlives the turn.
@@ -392,7 +393,12 @@ impl App {
             }
             Rest::Interrupted => {
                 self.end_busy_ui();
-                (Some("model interrupted".to_owned()), ProgramStatus::Idle)
+                let status = if questions_cancelled {
+                    "questionnaire cancelled"
+                } else {
+                    "model interrupted"
+                };
+                (Some(status.to_owned()), ProgramStatus::Idle)
             }
             Rest::Failed { error } => {
                 self.end_busy_ui();
