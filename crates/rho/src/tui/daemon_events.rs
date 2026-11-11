@@ -24,17 +24,18 @@
 //! call's last card, which a call cut off shows as interrupted, and why a
 //! turn failed, which its job state leaves out.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use rho_protocol::{
     display::{Presentation, ToolCard, ToolCardStatus},
     CompactionStatus, ContentBlock, InputRequest, InputRequestId, JobState, LoginId, LoginOutcome,
-    LoginPrompt, MessageId, PlanEntry, PlanStatus, Replay, SessionEvent, SteerId,
+    LoginPrompt, MessageId, PlanEntry, PlanStatus, Replay, RetryReason, SessionEvent, SteerId,
     ToolCallId as WireCallId, ToolCallUpdate, ToolStatus, TurnId, TurnOutcome,
 };
-use rho_sdk::{SteeringId, ToolCallId};
+use rho_sdk::{ProviderErrorKind, ProviderStreamResetReason, SteeringId, ToolCallId};
 
 use super::{
+    activity::ProviderRetryHint,
     compaction_display::{
         cancelled_card, compaction_call_id, failed_card, running_card, unchanged_card,
     },
@@ -122,6 +123,9 @@ pub(super) enum DaemonView {
     },
     /// Input request `id` no longer times out: a client held it.
     InputHeld(InputRequestId),
+    /// The turn asks the provider again, and why when the daemon said
+    /// more than that it retries.
+    Retrying(Option<ProviderRetryHint>),
     /// Status-line feedback.
     Status(String),
     Notice(String),
@@ -300,6 +304,12 @@ impl DaemonEvents {
                     "the provider restarted its response".into(),
                 )]
             }
+            // A replayed retry is history, not what the turn does now.
+            SessionEvent::ProviderRetry { .. } if self.replay_end.is_some() => Vec::new(),
+            SessionEvent::ProviderRetry {
+                reason,
+                retry_after_ms,
+            } => vec![DaemonView::Retrying(retry_hint(reason, retry_after_ms))],
             SessionEvent::Card { title, plain, .. } => {
                 vec![DaemonView::Notice(card_text(title, &plain))]
             }
@@ -569,6 +579,30 @@ fn compaction(status: CompactionStatus) -> DaemonView {
         call,
         presentation: card.into(),
     }
+}
+
+/// The in-process TUI's hint for a retry for `reason`, which reads as the
+/// SDK reason it came from. `None` when the provider only sends a failed
+/// request again, which the in-process TUI shows without a hint too.
+fn retry_hint(reason: RetryReason, retry_after_ms: Option<u64>) -> Option<ProviderRetryHint> {
+    let retry_after = retry_after_ms.map(Duration::from_millis);
+    let reason = match reason {
+        RetryReason::RateLimit => ProviderStreamResetReason::RetryableFailure {
+            kind: ProviderErrorKind::RateLimit,
+            retry_after,
+        },
+        RetryReason::ProviderError => ProviderStreamResetReason::RetryableFailure {
+            kind: ProviderErrorKind::Other,
+            retry_after,
+        },
+        RetryReason::InvalidResponse => ProviderStreamResetReason::InvalidResponse,
+        RetryReason::ContextOverflow => ProviderStreamResetReason::ContextOverflow,
+        RetryReason::RequestFailed => return None,
+        // `Unknown`, or a reason a newer daemon sends: it retries, for a
+        // reason this TUI cannot say.
+        _ => return None,
+    };
+    Some(ProviderRetryHint { reason })
 }
 
 /// A card shown outside the conversation, as a notice: its title, then its

@@ -1,5 +1,6 @@
 //! How a turn ended, as the daemon protocol tells clients (#1669): the
-//! model's answer, or why the turn stopped or failed.
+//! model's answer, or why the turn stopped or failed, and the provider's
+//! diagnostic for a failure that may show one.
 
 use rho_protocol::{AnswerStop, TurnError, TurnErrorKind, TurnOutcome};
 use rho_sdk::{RunOutcome, StopReason};
@@ -36,6 +37,21 @@ pub(crate) fn turn_error(error: &anyhow::Error, provider: &str, auth: &str) -> T
         chain_message(error)
     };
     TurnError { kind, message }
+}
+
+/// The notice that shows a failed turn's provider diagnostic, as the
+/// in-process TUI shows it: `None` when no provider error in `error`'s chain
+/// has one, or when the turn failed to authenticate, since the provider's
+/// details may echo credentials.
+pub(crate) fn diagnostic_notice(error: &anyhow::Error) -> Option<String> {
+    if failure_kind(error) == TurnErrorKind::Authentication {
+        return None;
+    }
+    let diagnostic = error.chain().find_map(|cause| match cause.downcast_ref() {
+        Some(rho_sdk::Error::Provider(provider)) => provider.diagnostic(),
+        _ => None,
+    })?;
+    Some(format!("provider diagnostic:\n{diagnostic}"))
 }
 
 /// `error` and its causes, each said once: an error whose message already

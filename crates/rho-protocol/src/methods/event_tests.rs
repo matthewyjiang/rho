@@ -338,6 +338,20 @@ fn every_session_event_round_trips_through_its_wire_form() {
             json!({"type": "response_discarded"}),
         ),
         (
+            SessionEvent::ProviderRetry {
+                reason: RetryReason::RateLimit,
+                retry_after_ms: Some(5000),
+            },
+            json!({"type": "provider_retry", "reason": "rate_limit", "retry_after_ms": 5000}),
+        ),
+        (
+            SessionEvent::ProviderRetry {
+                reason: RetryReason::RequestFailed,
+                retry_after_ms: None,
+            },
+            json!({"type": "provider_retry", "reason": "request_failed"}),
+        ),
+        (
             SessionEvent::Card {
                 title: "Job done".into(),
                 markdown: "**ok**".into(),

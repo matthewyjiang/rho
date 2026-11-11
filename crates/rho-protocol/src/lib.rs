@@ -96,7 +96,7 @@ pub use methods::{
     InputRequestId, InputTimeout, JobId, JobKind, JobListParams, JobListResponse, JobState,
     JobSummary, Location, MessageId, Operation, PathScope, PendingUpgrade, PermissionMode,
     PlanApprovalAsk, PlanEntry, PlanStatus, ProjectTrustMismatch, Question, QuestionAsk,
-    QueuePlace, Replay, Resolution, RestartParams, RestartResponse, Selection, Seq,
+    QueuePlace, Replay, Resolution, RestartParams, RestartResponse, RetryReason, Selection, Seq,
     SessionAnswerParams, SessionAnswerResponse, SessionAttachParams, SessionAttachResponse,
     SessionCancelParams, SessionCancelResponse, SessionControlAction, SessionDetachParams,
     SessionDetachResponse, SessionDetachedParams, SessionEvent, SessionEventParams, SessionGoal,

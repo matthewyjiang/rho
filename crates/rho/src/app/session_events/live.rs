@@ -7,13 +7,14 @@ use std::{
 
 use rho_protocol::{
     display::Presentation, CompactionId, CompactionStatus, ContentBlock, Location, MessageId,
-    PlanEntry, SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolContent, ToolKind,
-    ToolStatus,
+    PlanEntry, RetryReason, SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolContent,
+    ToolKind, ToolStatus,
 };
 use rho_sdk::{
     model,
     tool::{ToolMetadata, ToolOutput},
-    CompactionOutcome, ContextEstimate, RunEvent, SteeringId, ToolCompletion, UserInput,
+    CompactionOutcome, ContextEstimate, ProviderErrorKind, ProviderStreamResetReason, RunEvent,
+    SteeringId, ToolCompletion, UserInput,
 };
 
 use super::{
@@ -24,7 +25,7 @@ use super::{
 };
 use crate::{
     app::{
-        interactive_presenter::InteractiveToolPresenter,
+        interactive_presenter::{hosted_activity_card, InteractiveToolPresenter},
         session_runtime::{context_window, InsertedMessage, SessionEvent, SessionTools},
     },
     session::tree::ProjectedMessage,
@@ -65,6 +66,10 @@ const UNFINISHED_COMPACTION: &str = "compaction ended without a result";
 /// while the provider still streams its arguments, with the card they draw
 /// so far, and keeps its id once it starts; a discarded response closes the
 /// calls it opened that way as failed.
+///
+/// Each time the run asks the provider again, a provider retry says why. A
+/// tool the provider ran itself, such as its web search, shows as a call
+/// that opens finished.
 ///
 /// The session's checklist goes out as a plan whenever a finished tool
 /// changed it. Each model step reports its context fill as usage, as do a
@@ -487,7 +492,7 @@ impl LiveEvents {
                 // directly or inside code mode.
                 finished.into_iter().chain(self.plan_change()).collect()
             }
-            RunEvent::ProviderStreamReset { .. } => {
+            RunEvent::ProviderStreamReset { reason, .. } => {
                 // The retried response proposes its calls again, and streams
                 // them again: the cards its streamed arguments opened close.
                 self.proposed.clear();
@@ -495,9 +500,15 @@ impl LiveEvents {
                 let discarded = self.fail_pending();
                 discarded
                     .into_iter()
-                    .chain([WireEvent::ResponseDiscarded])
+                    .chain([WireEvent::ResponseDiscarded, provider_retry(reason)])
                     .collect()
             }
+            RunEvent::ProviderRequestRetry => vec![WireEvent::ProviderRetry {
+                reason: RetryReason::RequestFailed,
+                retry_after_ms: None,
+            }],
+            RunEvent::WebSearch { detail } => vec![hosted_activity("web_search", detail)],
+            RunEvent::HostedToolActivity { name, detail } => vec![hosted_activity(name, detail)],
             RunEvent::ToolCallUpdated {
                 index,
                 id,
@@ -525,17 +536,17 @@ impl LiveEvents {
             RunEvent::HostInputRequested { .. } | RunEvent::ToolHostInputRequested { .. } => {
                 Vec::new()
             }
-            // Retries, diagnostics and model-call metrics land as later
-            // minors.
+            // The daemon tells the failed turn's clients the diagnostic
+            // itself (`sessions::turn`), unless the turn failed to
+            // authenticate: it may echo a credential, and this event does
+            // not say which failure it is from.
+            RunEvent::ProviderDiagnostic { .. } => Vec::new(),
+            // Model-call metrics land as a later minor.
             // The daemon reports usage counted mid-response itself
             // ([`Self::streamed_usage`]).
             RunEvent::UsageUpdated { .. }
             | RunEvent::ProviderContextUpdated { .. }
-            | RunEvent::ProviderDiagnostic { .. }
-            | RunEvent::WebSearch { .. }
-            | RunEvent::ProviderRequestRetry
             | RunEvent::ModelCallCompleted { .. }
-            | RunEvent::HostedToolActivity { .. }
             | RunEvent::ProviderServiceTierFallback { .. } => Vec::new(),
             // RunEvent is non_exhaustive; a newer SDK's events wait for the
             // wire to carry them.
@@ -711,118 +722,6 @@ impl LiveEvents {
         Some(WireEvent::tool_call(update(card)))
     }
 
-    /// The card of a call the provider is still streaming: more of the
-    /// arguments of the call at `index` of its output, which names its id
-    /// and tool once it knows them. Nothing until the call has an id, a
-    /// name, and arguments worth showing; then the call opens `pending`
-    /// with the card the TUI draws for it, and each change of that card
-    /// follows.
-    fn streamed_call(
-        &mut self,
-        index: usize,
-        id: Option<&str>,
-        name: Option<&str>,
-        arguments_delta: &str,
-    ) -> Vec<WireEvent> {
-        let presented = self
-            .presenter
-            .preview(index, name.map(str::to_owned), arguments_delta);
-        let preview = self.previews.entry(index).or_default();
-        preview.received += arguments_delta.len();
-        if let Some(presented) = presented {
-            preview.unsent = Some(presented.card);
-        }
-        // The SDK repeats a call's id and name on each delta once known.
-        if let (Some(provider), Some(name)) = (id.filter(|id| !id.is_empty()), name) {
-            preview.call = Some((provider.to_owned(), name.to_owned()));
-        }
-        if preview.sent_at > 0 && preview.received < preview.sent_at + preview.sent_at / 4 {
-            return Vec::new();
-        }
-        self.send_preview(index)
-    }
-
-    /// The cards of streamed calls held back for their arguments to grow
-    /// ([`StreamedPreview`]). A host calls this when the stream pauses, so
-    /// what the model wrote last shows without waiting for more. A card
-    /// ends the open message, as any event but a chunk does.
-    pub(crate) fn held_previews(&mut self) -> Vec<WireEvent> {
-        let held: Vec<usize> = self
-            .previews
-            .iter()
-            .filter(|(_, preview)| preview.unsent.is_some())
-            .map(|(index, _)| *index)
-            .collect();
-        let cards: Vec<_> = held
-            .into_iter()
-            .flat_map(|index| self.send_preview(index))
-            .collect();
-        if !cards.is_empty() {
-            // Called outside [`Self::map`] too.
-            self.message = None;
-        }
-        cards
-    }
-
-    /// Whether [`Self::held_previews`] has a card to send.
-    pub(crate) fn holds_previews(&self) -> bool {
-        self.previews
-            .values()
-            .any(|preview| preview.unsent.is_some() && preview.call.is_some())
-    }
-
-    /// Sends the unsent card of the streamed call at `index`, once the call
-    /// has an id and a name: it opens the call `pending`, or follows it.
-    fn send_preview(&mut self, index: usize) -> Vec<WireEvent> {
-        let Some(preview) = self.previews.get_mut(&index) else {
-            return Vec::new();
-        };
-        let Some((provider, name)) = preview.call.clone() else {
-            return Vec::new();
-        };
-        let Some(card) = preview.unsent.take() else {
-            return Vec::new();
-        };
-        let first = preview.sent_at == 0;
-        preview.sent_at = preview.received.max(1);
-        let display = Some(Presentation::Card(card));
-        match self
-            .announced
-            .get(&provider)
-            .map(|call| (call.state, &call.id))
-        {
-            Some((CallState::Pending, id)) => {
-                return vec![WireEvent::tool_call(ToolCallUpdate {
-                    display,
-                    ..status_update(id.clone(), /*status*/ None)
-                })];
-            }
-            // It started; its own updates draw it from here.
-            Some((CallState::Open, _)) => return Vec::new(),
-            // This step's call, which a card it held back outlived.
-            Some((CallState::Finished, _)) if !first => return Vec::new(),
-            // New, or a later step reusing a finished call's id.
-            Some((CallState::Finished, _)) | None => {}
-        }
-        let (wire_id, superseded) = self.announce(&provider, CallState::Pending);
-        let opened = ToolCallUpdate {
-            status: Some(ToolStatus::Pending),
-            display,
-            ..named_call(
-                wire_id,
-                &name,
-                /*arguments*/ None,
-                &ToolMetadata::default(),
-                &self.workspace,
-                &self.mcp_tools,
-            )
-        };
-        superseded
-            .into_iter()
-            .chain([WireEvent::tool_call(opened)])
-            .collect()
-    }
-
     /// Closes as failed the calls streamed arguments opened that never
     /// started, and forgets the step's streamed previews.
     fn fail_pending(&mut self) -> Vec<WireEvent> {
@@ -871,29 +770,6 @@ impl LiveEvents {
             self.presenter.proposed(call.clone());
         }
     }
-}
-
-/// The card of a call the provider is still streaming, and how much of it
-/// clients have.
-///
-/// A card can hold all the arguments so far, a file's content for one, so
-/// sending each would cost the square of their size. One goes out when the
-/// arguments grew by a quarter since the last: the cards sent then sum to
-/// about five times the arguments (1 / (1 - 1/1.25)), however long they get.
-/// A host that sees the stream pause sends the one held back
-/// ([`LiveEvents::held_previews`]).
-#[derive(Default)]
-struct StreamedPreview {
-    /// The call's provider id and name, once the provider said them.
-    call: Option<(String, String)>,
-    /// The newest card clients were not sent; it waits for the call's id
-    /// and name, and for the arguments to grow enough or the stream to
-    /// pause.
-    unsent: Option<rho_protocol::display::ToolCard>,
-    /// Bytes of arguments received.
-    received: usize,
-    /// `received` when a card was last sent; 0 before the first.
-    sent_at: usize,
 }
 
 /// What a progress or result update shows of a call.
@@ -964,6 +840,50 @@ fn output_content(output: &ToolOutput, cwd: &Path) -> Vec<ToolContent> {
     content
 }
 
+/// The retry that follows a stream reset for `reason`.
+fn provider_retry(reason: &ProviderStreamResetReason) -> WireEvent {
+    let (reason, retry_after) = match reason {
+        ProviderStreamResetReason::RetryableFailure {
+            kind: ProviderErrorKind::RateLimit,
+            retry_after,
+        } => (RetryReason::RateLimit, *retry_after),
+        ProviderStreamResetReason::RetryableFailure { retry_after, .. } => {
+            (RetryReason::ProviderError, *retry_after)
+        }
+        ProviderStreamResetReason::InvalidResponse => (RetryReason::InvalidResponse, None),
+        ProviderStreamResetReason::ContextOverflow => (RetryReason::ContextOverflow, None),
+        // `ProviderStreamResetReason` is non-exhaustive. A reason a newer
+        // SDK adds is still the provider failing a request, and a client
+        // that shows it so says no more than it knows.
+        _ => (RetryReason::ProviderError, None),
+    };
+    WireEvent::ProviderRetry {
+        reason,
+        retry_after_ms: retry_after.map(|wait| u64::try_from(wait.as_millis()).unwrap_or(u64::MAX)),
+    }
+}
+
+/// Hosted tool `name`'s activity, which the provider ran itself, as a call
+/// that opens finished with `detail` and the card the TUI draws for it. Its
+/// id is fresh: no provider call or saved row has one like it, and the run
+/// never updates it.
+fn hosted_activity(name: &str, detail: &str) -> WireEvent {
+    let kind = match name {
+        "web_search" | "x_search" => ToolKind::Search,
+        _ => ToolKind::Other,
+    };
+    let id = ToolCallId::new(format!("hosted-{}", uuid::Uuid::new_v4()));
+    let text = detail.trim();
+    WireEvent::tool_call(ToolCallUpdate {
+        title: Some(name.to_owned()),
+        kind: Some(kind),
+        status: Some(ToolStatus::Completed),
+        content: (!text.is_empty()).then(|| vec![text_content(text)]),
+        display: Some(Presentation::Card(hosted_activity_card(name, detail))),
+        ..status_update(id, /*status*/ None)
+    })
+}
+
 /// The wire id of the message `inserted` names: the one a replay gives its
 /// row, or a fresh one for a message no replay shows.
 fn inserted_message_id(inserted: &InsertedMessage) -> MessageId {
@@ -993,6 +913,10 @@ fn fresh_message_id() -> MessageId {
 fn fresh_compaction_id() -> CompactionId {
     CompactionId::new(format!("compaction-{}", uuid::Uuid::new_v4()))
 }
+
+#[path = "live_previews.rs"]
+mod previews;
+use previews::StreamedPreview;
 
 #[cfg(test)]
 #[path = "live_tests.rs"]

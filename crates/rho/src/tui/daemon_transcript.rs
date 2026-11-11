@@ -156,6 +156,16 @@ impl App {
                     self.close_daemon_input(id, notice).await;
                 }
                 DaemonView::InputHeld(id) => self.daemon_input_held(id),
+                DaemonView::Retrying(hint) if self.turn.is_provider_turn() => {
+                    self.turn
+                        .set_activity_phase(ActivityPhase::RetryingProvider);
+                    if let Some(hint) = hint {
+                        self.set_status(hint.status_label());
+                        self.turn.set_provider_retry(hint);
+                    }
+                }
+                // No turn shows busy to say it retries.
+                DaemonView::Retrying(_) => {}
                 DaemonView::Status(text) => self.set_status(text),
                 // Held until the message under way ends, as in process: a
                 // notice such as a new title does not break into a reply.

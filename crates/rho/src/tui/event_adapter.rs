@@ -1,5 +1,5 @@
-use crate::app::interactive_presenter::InteractiveToolPresenter;
-use rho_protocol::display::{ToolCard, ToolCardStatus, ToolFamily, ToolHeader};
+use crate::app::interactive_presenter::{hosted_activity_card, InteractiveToolPresenter};
+use rho_protocol::display::ToolCard;
 use rho_sdk::{
     model::{ContextUsage, ModelUsage},
     HostInputRequest, ModelCallMetrics, ModelCallProfile, RunEvent,
@@ -342,18 +342,10 @@ impl SdkEventAdapter {
                 })]
             }
             RunEvent::WebSearch { detail } => {
-                vec![provider_native_activity_finished(
-                    "web_search",
-                    detail,
-                    ToolFamily::Web,
-                )]
+                vec![provider_native_activity_finished("web_search", &detail)]
             }
             RunEvent::HostedToolActivity { name, detail } => {
-                vec![provider_native_activity_finished(
-                    &name,
-                    detail,
-                    hosted_tool_family(&name),
-                )]
+                vec![provider_native_activity_finished(&name, &detail)]
             }
             RunEvent::ProviderRequestRetry => {
                 vec![ViewEvent::Update(ViewModelEvent::ProviderRetry)]
@@ -433,33 +425,10 @@ pub(super) fn compact_started_event() -> ViewModelEvent {
     }
 }
 
-fn hosted_tool_family(name: &str) -> ToolFamily {
-    match name {
-        // Hosted X Search is a network lookup; keep the web chrome.
-        "x_search" => ToolFamily::Web,
-        _ => ToolFamily::Default,
-    }
-}
-
-fn provider_native_activity_finished(name: &str, detail: String, family: ToolFamily) -> ViewEvent {
-    // Hosted activity card: verb-only header, optional detail fact, then
-    // "finished". Keeps operator-heavy queries out of `verb(primary)` parens
-    // and gives every hosted lookup the same chrome (not search-only).
-    let mut card = ToolCard::new(ToolCardStatus::Ok, family, ToolHeader::call(name, None));
-    let detail = detail.trim();
-    if !detail.is_empty() {
-        card.push_fact(rho_protocol::display::ToolFact::Text {
-            text: detail.to_owned(),
-        });
-    }
-    // Hosted lookups have no client result body; keep a finished fact so the
-    // card is not a bare header.
-    card.push_fact(rho_protocol::display::ToolFact::Meta {
-        text: "finished".into(),
-    });
+fn provider_native_activity_finished(name: &str, detail: &str) -> ViewEvent {
     ViewEvent::Update(ViewModelEvent::ToolFinished {
         call_id: rho_sdk::ToolCallId::new(),
-        presentation: card.into(),
+        presentation: hosted_activity_card(name, detail).into(),
         image_asset: None,
     })
 }

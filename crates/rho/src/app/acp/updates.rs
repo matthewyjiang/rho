@@ -130,6 +130,8 @@ impl Updates {
             | SessionEvent::InputHeld { .. }
             | SessionEvent::TurnEnded { .. }
             | SessionEvent::OptionsChanged { .. }
+            // ACP has no update for what the turn is doing.
+            | SessionEvent::ProviderRetry { .. }
             // The steer shows once it applies, as a user message.
             | SessionEvent::SteeringDelivered { .. } => Vec::new(),
             // `Unknown`, or an event a newer daemon sends.

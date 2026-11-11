@@ -27,8 +27,8 @@ mod sessions_format;
 mod todo_format;
 #[path = "interactive_presenter_tool_search.rs"]
 mod tool_search_format;
-pub(crate) use format::call_header;
 use format::*;
+pub(crate) use format::{call_header, hosted_activity_card};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ToolPresentation {
