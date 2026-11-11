@@ -9,7 +9,12 @@ use rho_sdk::SystemPrompt;
 
 use super::{model_scoped_config, SessionRuntime};
 use crate::{
-    app::conversation_switch::replace_system_prompt, config::Config, model_identity::PromptModel,
+    app::{
+        conversation_switch::replace_system_prompt,
+        tools_prompt::{DeferredToolSources, PendingToolSources},
+    },
+    config::Config,
+    model_identity::PromptModel,
     tools::mcp::McpConnectOutcome,
 };
 
@@ -18,35 +23,46 @@ impl SessionRuntime {
     /// `None` when none are loading. It borrows nothing, so a host can wait
     /// for it without holding the session.
     pub(crate) fn tool_sources_loaded(&self) -> Option<impl Future<Output = ()> + Send + 'static> {
-        self.built
-            .tool_sources
-            .as_ref()
-            .map(|sources| sources.loaded())
+        match self.built.tool_sources.as_ref()? {
+            PendingToolSources::Loading(sources) => Some(sources.loaded()),
+            PendingToolSources::Unbound => None,
+        }
     }
 
-    /// Attaches the deferred tool sources once they finished loading, and
-    /// says whether it did. Until then, and once they are attached, it
-    /// does nothing.
+    /// Attaches the deferred tool sources once they finished loading and
+    /// rebuilds the runtime with them, and says whether it did. Until they
+    /// loaded, and once the runtime runs with them, it does nothing.
     ///
     /// The system prompt is rendered again with them, as opening renders
     /// it when they load inline: a reopened session's saved prompt was
     /// already replaced at opening, and they attach before the first model
     /// request of each opening (prompts wait for them), so no request has
-    /// cached the prompt they replace. On error the tools are attached but
-    /// the runtime keeps the list it had.
+    /// cached the prompt they replace.
+    ///
+    /// On error the tools stay attached and the runtime keeps the list it
+    /// had; the next call tries the rebuild again.
     pub(crate) async fn attach_loaded_tool_sources(
         &mut self,
         process_config: &Config,
     ) -> anyhow::Result<bool> {
-        if !self
-            .built
-            .tool_sources
-            .as_ref()
-            .is_some_and(|sources| sources.is_loaded())
-        {
-            return Ok(false);
+        match self.built.tool_sources.take() {
+            None => return Ok(false),
+            Some(PendingToolSources::Loading(sources)) if !sources.is_loaded() => {
+                self.built.tool_sources = Some(PendingToolSources::Loading(sources));
+                return Ok(false);
+            }
+            Some(PendingToolSources::Loading(sources)) => self.attach(sources).await,
+            Some(PendingToolSources::Unbound) => {}
         }
-        let sources = self.built.tool_sources.take().expect("checked above");
+        if let Err(error) = self.bind_tool_sources(process_config).await {
+            self.built.tool_sources = Some(PendingToolSources::Unbound);
+            return Err(error);
+        }
+        Ok(true)
+    }
+
+    /// Puts what `sources` loaded into the session's tool set.
+    async fn attach(&mut self, sources: DeferredToolSources) {
         match sources.outcome().await {
             Ok(outcome) => {
                 self.built.tools.attach_mcp(outcome.mcp);
@@ -73,6 +89,11 @@ impl SessionRuntime {
         {
             tracing::warn!("{problem}");
         }
+    }
+
+    /// Renders the system prompt with the tool set's sources and rebuilds
+    /// the runtime on the tool set.
+    async fn bind_tool_sources(&mut self, process_config: &Config) -> anyhow::Result<()> {
         if let Some(template) = self.built.prompt_template.as_mut() {
             template.replace_tool_sources(
                 self.built.tools.mcp_report(),
@@ -92,6 +113,6 @@ impl SessionRuntime {
         let config = model_scoped_config(&self.current_model(), process_config);
         let (mode, writes) = (self.permission.mode, self.permission.writes.clone());
         self.rebuild_runtime(&config, mode, writes).await?;
-        Ok(true)
+        Ok(())
     }
 }

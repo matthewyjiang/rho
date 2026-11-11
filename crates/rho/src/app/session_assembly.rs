@@ -124,7 +124,7 @@ pub(super) struct BuiltSession {
     pub prompt: super::active_prompt::ActivePrompt,
     pub diagnostics: RuntimeDiagnostics,
     /// The tool sources still loading, when the session defers them.
-    pub tool_sources: Option<super::tools_prompt::DeferredToolSources>,
+    pub tool_sources: Option<super::tools_prompt::PendingToolSources>,
 }
 
 impl BuiltSession {
@@ -257,7 +257,11 @@ where
     })
     .await?;
     // Wrapped at once, so a failure below stops the load as it drops.
-    let tool_sources = pending_tool_sources.map(super::tools_prompt::DeferredToolSources::follow);
+    let tool_sources = pending_tool_sources.map(|load| {
+        super::tools_prompt::PendingToolSources::Loading(
+            super::tools_prompt::DeferredToolSources::follow(load),
+        )
+    });
     let tool_set = extend_tools(tool_set);
     if let Some(suffix) = system_prompt_suffix {
         let retained = format!("\n\n{suffix}");

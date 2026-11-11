@@ -172,6 +172,15 @@ impl Drop for DeferredToolSources {
     }
 }
 
+/// A session's deferred tool sources, until its runtime runs with them.
+pub(crate) enum PendingToolSources {
+    /// Still loading, or loaded and not yet attached.
+    Loading(DeferredToolSources),
+    /// Attached to the session's tool set, but the runtime still runs on
+    /// the list it had, since rebuilding it failed. The next attach retries.
+    Unbound,
+}
+
 pub(crate) struct StartupInventory {
     pub(crate) mcp: crate::tools::mcp::McpSessionReport,
     pub(crate) plugins: crate::plugins::PluginLoadReport,
