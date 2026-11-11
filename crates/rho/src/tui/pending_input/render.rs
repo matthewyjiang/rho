@@ -84,7 +84,9 @@ impl App {
                     "  ",
                     "HOLD",
                     match held.origin {
-                        HeldOrigin::Composer => "esc edit",
+                        HeldOrigin::Composer | HeldOrigin::Confirmed(_) | HeldOrigin::Command => {
+                            "esc edit"
+                        }
                         HeldOrigin::WorkflowHub => "esc cancel",
                     },
                     &held.turn.display,

@@ -327,3 +327,61 @@ fn goal_submission_cancellation_applies_typed_state_transition() {
         .complete_verification();
     assert!(colliding_resume.goal.as_ref().unwrap().is_blocked());
 }
+
+// Covers: the consent given with "Compact, then send" on a daemon session
+// goes with the parked prompt alone. A prompt queued ahead of it gets none,
+// and taking the parked prompt off the queue any other way drops the consent,
+// so a later prompt is never sent under it.
+// Owner: send confirm gate
+#[test]
+fn compact_send_consent_goes_with_the_parked_prompt_alone() {
+    use crate::tui::app_state::PendingWorkUi;
+
+    let prompt = |text: &str| QueuedPrompt {
+        prompt: text.into(),
+        display_prompt: text.into(),
+        paste_segments: Vec::new(),
+        media: Vec::new(),
+    };
+    let parked = || {
+        let mut pending = PendingWorkUi::default();
+        let consent = SendOmissions::new(
+            SessionId::new(),
+            ModelIdentity::new("openai-codex", "openai-responses", "gpt-target"),
+            &native_history(&["a"]),
+        );
+        pending.park_compact_send(prompt("parked"), consent);
+        pending
+    };
+    // Each case leaves the queue's pops as (prompt, whether consent came).
+    let pops = |mut pending: PendingWorkUi| {
+        std::iter::from_fn(|| pending.pop_follow_up_with_consent())
+            .map(|(prompt, consent)| (prompt.prompt, consent.is_some()))
+            .collect::<Vec<_>>()
+    };
+
+    let sent = parked();
+    let mut behind_steering = parked();
+    behind_steering.push_follow_up_front(prompt("ahead"));
+    let mut removed = parked();
+    removed.remove_follow_up(0);
+    removed.push_follow_up(prompt("later"));
+    let mut cancelled = parked();
+    let _ = cancelled.drain_queued_prompt_texts().count();
+    cancelled.push_follow_up(prompt("parked"));
+
+    assert_eq!(
+        [
+            pops(sent),
+            pops(behind_steering),
+            pops(removed),
+            pops(cancelled),
+        ],
+        [
+            vec![("parked".to_owned(), true)],
+            vec![("ahead".to_owned(), false), ("parked".to_owned(), true)],
+            vec![("later".to_owned(), false)],
+            vec![("parked".to_owned(), false)],
+        ]
+    );
+}

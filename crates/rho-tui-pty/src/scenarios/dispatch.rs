@@ -23,8 +23,8 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     if config::is_auto_recovered_handoff_scenario(name) {
         return config::run_auto_recovered_handoff(runner);
     }
-    if send_confirm::is_send_confirm_scenario(name) {
-        return send_confirm::run_send_confirm_handoff(runner);
+    if let Some(host) = send_confirm::send_confirm_scenario(name) {
+        return send_confirm::run_send_confirm_handoff(runner, host);
     }
     if resume_scrollback::is_resume_scrollback_scenario(name) {
         return resume_scrollback::run_resume_scrollback(runner);

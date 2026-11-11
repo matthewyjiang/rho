@@ -7,9 +7,67 @@ use super::*;
 // "Send for this session" stops the modal for the unchanged omitted blocks.
 // Owner: interactive TUI
 pub(super) const SEND_CONFIRM_HANDOFF_ID: &str = "send_confirm_handoff";
+// Covers: the same handoff and confirmations when the daemon holds the
+// conversation, which the TUI then reads from the daemon's report.
+// Owner: interactive TUI as a daemon client
+#[cfg(unix)]
+pub(super) const DAEMON_SEND_CONFIRM_HANDOFF_ID: &str = "daemon_send_confirm_handoff";
 
-pub(crate) fn is_send_confirm_scenario(name: &str) -> bool {
-    name == SEND_CONFIRM_HANDOFF_ID
+pub(super) const SCENARIO: crate::scenario::Scenario = crate::scenario::Scenario::new(
+    SEND_CONFIRM_HANDOFF_ID,
+    "Confirm a send whose conversation holds unreplayable native context",
+    SIZE,
+    &[],
+    /*smoke*/ false,
+);
+#[cfg(unix)]
+pub(super) const DAEMON_SCENARIO: crate::scenario::Scenario = crate::scenario::Scenario::new(
+    DAEMON_SEND_CONFIRM_HANDOFF_ID,
+    "Confirm a daemon session's send whose conversation holds unreplayable native context",
+    SIZE,
+    &[],
+    /*smoke*/ false,
+);
+
+const SIZE: crate::pty::PtySize = crate::pty::PtySize {
+    rows: 24,
+    cols: 100,
+};
+
+/// Where the scenario's sessions run.
+#[derive(Clone, Copy)]
+pub(crate) enum SessionHost {
+    InProcess,
+    #[cfg(unix)]
+    Daemon,
+}
+
+impl SessionHost {
+    fn id(self) -> &'static str {
+        match self {
+            Self::InProcess => SEND_CONFIRM_HANDOFF_ID,
+            #[cfg(unix)]
+            Self::Daemon => DAEMON_SEND_CONFIRM_HANDOFF_ID,
+        }
+    }
+
+    fn launch(self, plan: crate::env::RhoLaunchPlan) -> crate::env::RhoLaunchPlan {
+        match self {
+            Self::InProcess => plan,
+            #[cfg(unix)]
+            Self::Daemon => plan.with_env("RHO_TUI_DAEMON", "1"),
+        }
+    }
+}
+
+/// The host `name` runs this scenario on, when it names it.
+pub(crate) fn send_confirm_scenario(name: &str) -> Option<SessionHost> {
+    match name {
+        SEND_CONFIRM_HANDOFF_ID => Some(SessionHost::InProcess),
+        #[cfg(unix)]
+        DAEMON_SEND_CONFIRM_HANDOFF_ID => Some(SessionHost::Daemon),
+        _ => None,
+    }
 }
 
 const SEED_PROMPT: &str = "hello there";
@@ -82,23 +140,20 @@ fn assert_queued_stop(
 
 pub(super) fn run_send_confirm_handoff(
     runner: &crate::scenario::ScenarioRunner,
+    host: SessionHost,
 ) -> anyhow::Result<crate::scenario::ScenarioOutcome> {
     use crate::{
         artifacts::ArtifactWriter,
         env::{IsolatedHome, RhoLaunchPlan},
         harness::PtyHarness,
-        pty::PtySize,
         scenario::ScenarioOutcome,
     };
 
-    const SIZE: PtySize = PtySize {
-        rows: 24,
-        cols: 100,
-    };
-
     let home = IsolatedHome::new()?;
-    let seed_plan = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
-        .with_env("OPENAI_API_KEY", "sk-test-matrix");
+    let seed_plan = host.launch(
+        RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
+            .with_env("OPENAI_API_KEY", "sk-test-matrix"),
+    );
     let mut seed = PtyHarness::spawn_named(&seed_plan, "send_confirm_seed")?;
     seed.enable_timing(runner.record_timing);
     if let Some(root) = &runner.artifact_root {
@@ -119,7 +174,7 @@ pub(super) fn run_send_confirm_handoff(
             let _ = seed.kill();
         }
         return Ok(ScenarioOutcome {
-            id: SEND_CONFIRM_HANDOFF_ID.into(),
+            id: host.id().into(),
             passed: false,
             message: format!("seed phase failed: {error:#}"),
             timing: seed.timing().clone(),
@@ -128,6 +183,8 @@ pub(super) fn run_send_confirm_handoff(
     }
 
     let (session_id, session_path) = config::find_latest_session(&home)?;
+    // A daemon that hosted the seed still holds the session it saved.
+    home.stop_daemon();
     // Keep stored provider openai so resume stays on gpt-5.5 while assistant
     // history carries anthropic-native blocks the runtime cannot replay.
     config::inject_non_replayable_provider_context(
@@ -135,11 +192,13 @@ pub(super) fn run_send_confirm_handoff(
         config::StoredProviderRewrite::Keep,
     )?;
 
-    let resume_plan = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
-        .with_env("OPENAI_API_KEY", "sk-test-matrix")
-        .with_arg("--resume")
-        .with_arg(&session_id);
-    let mut harness = PtyHarness::spawn_named(&resume_plan, SEND_CONFIRM_HANDOFF_ID)?;
+    let resume_plan = host.launch(
+        RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
+            .with_env("OPENAI_API_KEY", "sk-test-matrix")
+            .with_arg("--resume")
+            .with_arg(&session_id),
+    );
+    let mut harness = PtyHarness::spawn_named(&resume_plan, host.id())?;
     harness.enable_timing(runner.record_timing);
     if let Some(root) = &runner.artifact_root {
         harness.set_artifact_writer(ArtifactWriter::new(root));
@@ -197,7 +256,7 @@ pub(super) fn run_send_confirm_handoff(
 
     Ok(match result {
         Ok(()) => ScenarioOutcome {
-            id: SEND_CONFIRM_HANDOFF_ID.into(),
+            id: host.id().into(),
             passed: true,
             message: "ok".into(),
             timing: harness.timing().clone(),
@@ -208,7 +267,7 @@ pub(super) fn run_send_confirm_handoff(
                 let _ = harness.kill();
             }
             ScenarioOutcome {
-                id: SEND_CONFIRM_HANDOFF_ID.into(),
+                id: host.id().into(),
                 passed: false,
                 message: format!("{error:#}"),
                 timing: harness.timing().clone(),
