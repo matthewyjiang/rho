@@ -146,8 +146,9 @@ fn replayed_text_is_marked_until_the_replay_ends() {
 // Covers: a `/compact` turn is over once its job rests or the next prompt
 // arrives, replayed or live, so the TUI stops showing what follows as part
 // of it. A reset replays a rested turn's state as history, with no rest to
-// show, and a later turn's reply was dropped along with the `/compact`
-// reply. An automatic compaction starts no such turn.
+// show: a later turn's reply was dropped along with the `/compact` reply,
+// and a turn the TUI still showed busy must stay a `/compact` turn until the
+// replay's end rests it. An automatic compaction starts no such turn.
 // Owner: tui daemon session events
 #[test]
 fn a_compact_turn_is_over_when_its_job_rests_or_the_next_prompt_arrives() {
@@ -164,14 +165,36 @@ fn a_compact_turn_is_over_when_its_job_rests_or_the_next_prompt_arrives() {
     let attached = || Step::Attached(Vec::new(), JobState::Idle);
     let cases = [
         (
-            "replayed, the job rested",
+            "replayed to its rest, which the replay's end shows",
             vec![
                 Step::Reset,
                 attached(),
                 command(),
                 state(JobState::Completed),
+                Step::ReplayEnded,
             ],
-            vec![DaemonView::Clear, opened(true), DaemonView::CompactTurnOver],
+            vec![
+                DaemonView::Clear,
+                opened(true),
+                resting(Rest::Ready),
+                DaemonView::CompactTurnOver,
+            ],
+        ),
+        (
+            "replayed, a later turn follows its rest",
+            vec![
+                Step::Reset,
+                attached(),
+                command(),
+                state(JobState::Completed),
+                reply("m1", "later"),
+            ],
+            vec![
+                DaemonView::Clear,
+                opened(true),
+                DaemonView::CompactTurnOver,
+                text(StreamKind::Assistant, "later", true),
+            ],
         ),
         (
             "replayed, cut short of the rest",
