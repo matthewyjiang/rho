@@ -69,8 +69,12 @@ enum Reply {
 /// What the person did at the open prompt.
 enum Reaction {
     Answer(InputAnswer),
-    /// Cancelled the questions, which cancels the turn, as in process.
+    /// Cancelled a plan approval, which cancels the turn, as in process.
     CancelTurn,
+    /// Cancelled questions: dismisses them, then cancels the turn if one
+    /// runs. They may be a subagent's, which outlive the turn, so the
+    /// cancel alone would leave the subagent waiting.
+    DismissQuestions,
     /// The prompt closed without a reply: another client may answer.
     Nothing,
 }
@@ -161,9 +165,13 @@ impl App {
                 }
                 self.show_taken_daemon_views(terminal).await?;
             }
-            // Dismissed first: a subagent's question outlives the turn, so
-            // the cancel alone would leave its subagent waiting.
+            // The cancel withdraws the request.
             Some((id, Reaction::CancelTurn)) => {
+                self.daemon_answers.cancelled.insert(id);
+                self.cancel_daemon_turn().await;
+                return Ok(());
+            }
+            Some((id, Reaction::DismissQuestions)) => {
                 self.daemon_answers.cancelled.insert(id);
                 if let Some(session) = self.info.session.daemon.as_mut() {
                     session.answer(id, InputAnswer::Dismiss).await;
@@ -245,7 +253,12 @@ impl App {
                 })
             }
             Reply::Questions(reply) => {
-                questionnaire_reaction(reply.now_or_never()?, questions_answer)
+                match questionnaire_reaction(reply.now_or_never()?, questions_answer) {
+                    Reaction::CancelTurn => Reaction::DismissQuestions,
+                    reaction @ (Reaction::Answer(_)
+                    | Reaction::DismissQuestions
+                    | Reaction::Nothing) => reaction,
+                }
             }
         };
         let id = shown.id;
