@@ -1091,11 +1091,14 @@ fn side_chat_selection_copy_and_scrollbar_drag() {
     assert_pass("side_chat_pointer");
 }
 
-// Covers: hovering the statusline model field marks it, and clicking opens the model picker.
+// Covers: provider and model hover and click as one target that opens the
+// model picker; a reasoning click cycles the effort; a model without
+// reasoning paints no reasoning target.
 // Owner: interactive TUI
 #[test]
-fn statusline_model_hover_and_click_opens_picker() {
+fn statusline_model_and_reasoning_clicks() {
     assert_pass("statusline_model_click");
+    assert_pass("statusline_no_reasoning_click");
 }
 
 // Covers: hovering a composer attachment offers removal, and clicking removes it.
@@ -1412,8 +1415,8 @@ fn daemon_commands_match_the_in_process_palette_and_replies() {
     }
 }
 
-// Covers: with RHO_TUI_DAEMON=1, `/model`, the pin cycle and the model
-// picker behave as in process: the pinned and all views, pinning from the
+// Covers: with RHO_TUI_DAEMON=1, `/model`, the pin cycle, the model
+// picker and the statusline model and reasoning clicks behave as in process: the pinned and all views, pinning from the
 // picker, the prompt file a switch lands on, a refused switch, and the
 // reasoning level a cycle keeps or rounds, idle or queued behind a turn.
 // Owner: interactive TUI as a daemon client (#1667)
@@ -1423,6 +1426,7 @@ fn daemon_model_switches_match_the_in_process_tui() {
         "daemon_open_model_picker",
         "daemon_cycle_and_pinned_model_picker",
         "daemon_statusline_model_click",
+        "daemon_statusline_no_reasoning_click",
         "daemon_model_prompt_switch",
         "daemon_cycle_reasoning_idle",
         "daemon_cycle_reasoning_queued",

@@ -84,6 +84,9 @@ pub(in crate::tui) enum PointerAction {
     /// Run a slash command as if typed and submitted, e.g. from a clicked
     /// statusline field. Carries the full command text (`/permissions`).
     RunCommand(String),
+    /// Step the reasoning effort to the next level, like Shift+Tab, e.g.
+    /// from a clicked statusline reasoning field.
+    CycleReasoning,
 }
 
 impl InputUi {

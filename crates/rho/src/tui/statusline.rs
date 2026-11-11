@@ -91,8 +91,8 @@ pub(super) struct StatusLineState {
     /// names the gap instead of a model the session cannot reach.
     signed_in: bool,
     not_saved: bool,
-    /// Clickable field under the pointer; painted with a hover lift.
-    hovered: Option<FieldKey>,
+    /// Click target under the pointer; its fields paint with a hover lift.
+    hovered: Option<StatusClick>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -359,12 +359,12 @@ impl StatusLine {
             .find(|hit| hit.columns.contains(&column))
     }
 
-    /// Hover the clickable field painted at row-relative `column` of
+    /// Hover the click target painted at row-relative `column` of
     /// [`FIELDS_ROW`], or clear hover with `None`. A change repaints the row.
     pub(super) fn set_hovered_column(&mut self, column: Option<usize>) {
         let hovered = column
             .and_then(|column| self.hit_at(column))
-            .map(|hit| hit.key);
+            .map(|hit| hit.action);
         if self.state.hovered != hovered {
             self.state.hovered = hovered;
             self.invalidate();
