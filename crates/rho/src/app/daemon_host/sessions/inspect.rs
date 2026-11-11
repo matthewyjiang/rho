@@ -56,7 +56,8 @@ impl Sessions {
                 serde_json::to_value(runtime.compaction_report(&session.config()))
             }
             SessionReport::ProviderContext => {
-                serde_json::to_value(runtime.provider_context_report(&session.config()))
+                let auths = super::options::available_auths(runtime.credentials()).await;
+                serde_json::to_value(runtime.provider_context_report(&session.config(), &auths))
             }
             SessionReport::Hooks => {
                 let report = runtime.reload_hooks().map_err(|error| {

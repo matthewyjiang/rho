@@ -8,23 +8,26 @@
 //! and the send gate (`send_confirm::daemon`) asks before its next prompt
 //! instead.
 //!
-//! The dialog offers the model that produced the native context when the
-//! session may switch to it, and to continue. It does not offer to compact
-//! first, as in process: that summarizes on the source model and returns to
-//! this one, which the daemon has no single request for yet. The send gate
-//! still offers to compact before a send.
+//! The dialog offers what it does in process: the model that produced the
+//! native context when the session may switch to it, to compact on that
+//! model and then continue on this one, and to continue. The daemon applies
+//! a change sent while a turn holds the session once that turn ends, so
+//! "Compact, then continue" sends three requests in order: switch to the
+//! source model, `/compact`, and switch back. Unlike in process, the session
+//! returns to this model even when the compaction fails.
 
 use rho_protocol::{ModelRef, SessionChange, SessionReport};
 use rho_providers::{model::catalog::ModelSelection, provider::model_reference};
 
 use super::{
-    decision_from_value, ContextHandoffDecision, ContextHandoffImpact, ContextHandoffKind,
-    PendingContextHandoff,
+    decision_from_value, selection_matches_runtime, ContextHandoffDecision, ContextHandoffImpact,
+    ContextHandoffKind, PendingContextHandoff,
 };
 use crate::app::provider_context_report::ProviderContextReport;
+use crate::commands::CommandId;
 use crate::tui::{
     daemon_events::ReportRefusal, reasoning_metadata::ModelSwitchReasoningPolicy, App,
-    ComposerMode, Entry, InteractiveModelSelection,
+    ComposerMode, DefaultTerminal, Entry, InteractiveModelSelection, TurnPrompt,
 };
 
 impl App {
@@ -95,23 +98,20 @@ impl App {
             .source
             .as_ref()
             .map(|source| model_reference(&source.provider, &source.model));
-        // Only a model the session may switch to, as the daemon lists them.
-        let source_selection = report.source.as_ref().and_then(|source| {
-            self.daemon_options
-                .as_ref()?
-                .model
-                .available
-                .iter()
-                .any(|choice| {
-                    choice.model.provider == source.provider && choice.model.model == source.model
-                })
-                .then(|| daemon_selection(self, &source.provider, &source.model))
-        });
+        // Only a model the session may switch to, as the daemon says.
+        let source_selection = report
+            .source
+            .as_ref()
+            .filter(|_| report.source_selectable)
+            .map(|source| daemon_selection(self, &source.provider, &source.model));
         let impact = ContextHandoffImpact {
             source_label: source.unwrap_or_else(|| "session model".into()),
             target_label: model_reference(&self.info.runtime.provider, &self.info.runtime.model),
             omissions,
-            can_compact: false,
+            // As in process, compacting summarizes on the source model.
+            can_compact: source_selection.is_some()
+                && report.can_compact
+                && self.daemon_offers_built_in(CommandId::Compact),
             offer_use_source: source_selection.is_some(),
         };
         let choice = match impact.choice(ContextHandoffKind::LoadedSession) {
@@ -133,12 +133,13 @@ impl App {
     }
 
     /// Applies the person's answer: the session already runs on the model
-    /// the dialog named, so only a switch to the source model changes it.
-    /// The daemon's options say where a switch landed, or a row why not.
-    pub(super) fn resolve_daemon_context_handoff(
+    /// the dialog named, so continuing changes nothing. The daemon's options
+    /// say where a switch landed, or a row why not.
+    pub(super) async fn resolve_daemon_context_handoff(
         &mut self,
         value: Option<&str>,
         source_selection: Option<InteractiveModelSelection>,
+        terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         self.set_status("ready");
         let decision = value.map(|value| {
@@ -152,20 +153,83 @@ impl App {
                     ));
                     return Ok(());
                 };
-                self.configure_daemon(SessionChange::Model {
-                    model: ModelRef {
-                        provider: source.selection.provider,
-                        model: source.selection.model,
-                    },
-                    auth: None,
-                    setup: false,
-                })
+                self.configure_daemon(model_change(
+                    &source.selection.provider,
+                    &source.selection.model,
+                    /*auth*/ None,
+                ))
             }
-            // Not offered for a daemon session; see the module docs.
-            Some(ContextHandoffDecision::CompactThenContinue)
-            | Some(ContextHandoffDecision::ContinueDirect)
-            | None => Ok(()),
+            Some(ContextHandoffDecision::CompactThenContinue) => {
+                self.compact_then_continue_on_daemon(source_selection, terminal)
+                    .await
+            }
+            Some(ContextHandoffDecision::ContinueDirect) | None => Ok(()),
         }
+    }
+
+    /// Compacts on `source`, then continues on the model and auth the
+    /// session runs on now. The switch back goes once the daemon answered
+    /// `/compact`: one it started holds the switch until the compaction
+    /// ends, and one it refused lets the switch apply at once. A compaction
+    /// that cannot start while the session's MCP servers connect changes
+    /// nothing.
+    async fn compact_then_continue_on_daemon(
+        &mut self,
+        source: Option<InteractiveModelSelection>,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        if self.daemon_tool_sources_loading() {
+            // The daemon would start it only once they connected, and the
+            // TUI would wait for it meanwhile.
+            self.insert_entry(&Entry::Error(
+                "could not compact before continuing: the session's MCP servers are still connecting"
+                    .into(),
+            ));
+            return Ok(());
+        }
+        let runtime = &self.info.runtime;
+        let target = model_change(&runtime.provider, &runtime.model, Some(&runtime.auth));
+        let switched = source.filter(|source| !selection_matches_runtime(self, source));
+        if let Some(source) = &switched {
+            self.configure_daemon(model_change(
+                &source.selection.provider,
+                &source.selection.model,
+                /*auth*/ None,
+            ))?;
+        }
+        let compact = TurnPrompt::command("/compact".into(), "/compact".into());
+        let started = self.request_daemon_turn(&compact, &[]).await;
+        // Before anything can fail, so the session never stays on `source`.
+        if switched.is_some() {
+            self.configure_daemon(target)?;
+        }
+        self.show_taken_daemon_views(terminal).await?;
+        if let Err(error) = started {
+            let ended = error
+                .downcast_ref::<rho_protocol::ClientError>()
+                .and_then(rho_protocol::ClientError::turn_ended);
+            // A compaction that ended before it began has the daemon's own
+            // rows to say how.
+            if ended.is_none() {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not compact before continuing: {error:#}"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The daemon change that switches the session to `provider`/`model` on
+/// `auth`, or on the auth the daemon chooses.
+fn model_change(provider: &str, model: &str, auth: Option<&str>) -> SessionChange {
+    SessionChange::Model {
+        model: ModelRef {
+            provider: provider.to_owned(),
+            model: model.to_owned(),
+        },
+        auth: auth.map(str::to_owned),
+        setup: false,
     }
 }
 
