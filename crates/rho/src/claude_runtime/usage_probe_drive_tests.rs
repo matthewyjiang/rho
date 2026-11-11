@@ -85,27 +85,47 @@ fn window_percents(state: &RateLimitState) -> Vec<(&str, Option<f64>)> {
         .collect()
 }
 
-// Covers: the /usage drive sequence must parse a panel from a fake child.
+// Covers: the /usage drive sequence must parse a panel from a fake child,
+// with and without the 5-hour "Current session" window (Ultra has none).
 // Owner: OS or process
 #[test]
 fn fake_child_usage_panel_parses() {
-    let script = r#"
+    let cases = [
+        (
+            "session and week",
+            "Current session\n10% used\nResets in 1h\nCurrent week (all models)\n20% used\nResets in 2d",
+            vec![("five_hour", Some(0.10)), ("seven_day", Some(0.20))],
+        ),
+        (
+            // Captured from Claude Code on an Ultra plan.
+            "week only",
+            "Current week (all models)  27% used  Resets Nov 14, 7am (America/Los_Angeles)\n\
+             Current week (Fable)       32% used  Resets Nov 14, 6:59am (America/Los_Angeles)\n\
+             What's contributing to your usage?",
+            vec![("seven_day", Some(0.27)), ("seven_day_fable", Some(0.32))],
+        ),
+    ];
+    for (name, panel, expected) in cases {
+        let script = format!(
+            r#"
 printf '? for shortcuts\n❯ '
 buf=
 while IFS= read -r -n1 c; do
-  buf="${buf}${c}"
+  buf="${{buf}}${{c}}"
   case "$buf" in
     */usage*) break ;;
   esac
 done
-printf '\nCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\n'
+printf '\n'
+cat <<'PANEL'
+{panel}
+PANEL
 exec cat >/dev/null
-"#;
-    let state = run_child("/bin/bash", &["-c", script]).expect("fake /usage");
-    assert_eq!(
-        window_percents(&state),
-        vec![("five_hour", Some(0.10)), ("seven_day", Some(0.20))]
-    );
+"#
+        );
+        let state = run_child("/bin/bash", &["-c", &script]).expect(name);
+        assert_eq!(window_percents(&state), expected, "{name}");
+    }
 }
 
 // Covers: Down+Enter in one write confirms No and Claude exits.
@@ -162,8 +182,8 @@ while os.read(sys.stdin.fileno(), 1024):
 #[test]
 fn fake_child_grow_picks_up_late_fable() {
     let state = run_two_paint_child(
-        r"\033[2J\033[HCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n",
-        r"\033[2J\033[HCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n33%% used\nResets in 2d\n",
+        r"\033[2J\033[H❯ /usage\nCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n",
+        r"\033[2J\033[H❯ /usage\nCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n33%% used\nResets in 2d\n",
         |screen| matches!(screen, UsageScreen::Incomplete),
     )
     .expect("fake /usage");
@@ -185,8 +205,8 @@ fn fake_child_grow_picks_up_late_fable() {
 #[test]
 fn fake_child_completed_refresh_returns_current_percentages() {
     let state = run_two_paint_child(
-        r"\033[2J\033[HCurrent session\n0%% used\nCurrent week (all models)\n0%% used\nCurrent week (Fable)\n0%% used\nRefreshing…\n",
-        r"\033[2J\033[HCurrent session\n14%% used\nCurrent week (all models)\n27%% used\nCurrent week (Fable)\n38%% used\nEsc to cancel\n",
+        r"\033[2J\033[H❯ /usage\nCurrent session\n0%% used\nCurrent week (all models)\n0%% used\nCurrent week (Fable)\n0%% used\nRefreshing…\n",
+        r"\033[2J\033[H❯ /usage\nCurrent session\n14%% used\nCurrent week (all models)\n27%% used\nCurrent week (Fable)\n38%% used\nEsc to cancel\n",
         |screen| matches!(screen, UsageScreen::Refreshing),
     )
     .expect("fake /usage");
@@ -208,7 +228,7 @@ fn fake_child_refresh_failure_rejects_cached_windows() {
     let script = r#"
 printf '? for shortcuts\n'
 IFS= read -r command
-printf '\033[2J\033[HCurrent session\n10%% used\nCurrent week (all models)\n20%% used\nFailed to load usage data: response error\n'
+printf '\033[2J\033[H❯ /usage\nCurrent session\n10%% used\nCurrent week (all models)\n20%% used\nFailed to load usage data: response error\n'
 exec cat >/dev/null
 "#;
     let result = run_child("/bin/bash", &["-c", script]);
@@ -232,7 +252,7 @@ fn fake_child_unfinished_refresh_never_returns_live() {
             r#"
 printf '? for shortcuts\n'
 IFS= read -r command
-printf '\033[2J\033[HCurrent session\n0%% used\nCurrent week (all models)\n0%% used\nRefreshing…\n'
+printf '\033[2J\033[H❯ /usage\nCurrent session\n0%% used\nCurrent week (all models)\n0%% used\nRefreshing…\n'
 {ending}
 "#
         );

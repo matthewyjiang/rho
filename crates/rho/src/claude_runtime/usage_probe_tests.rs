@@ -86,7 +86,7 @@ Do you trust this folder?
 // Owner: pure unit
 #[test]
 fn usage_screen_classification() {
-    let windows = "Current session\n10% used\nCurrent week (all models)\n20% used\n";
+    let windows = "❯ /usage\nCurrent session\n10% used\nCurrent week (all models)\n20% used\n";
     let cases: Vec<(&str, String, &str)> = vec![
         ("prompt", "? for shortcuts\n❯ /usage".into(), "NoPanel"),
         ("spinner", format!("{windows}Refreshing…\n"), "Refreshing"),
@@ -97,9 +97,20 @@ fn usage_screen_classification() {
         ),
         ("complete", format!("{windows}Esc to cancel\n"), "Ready"),
         (
+            // Ultra plans have no "Current session" window.
+            "week only",
+            "❯ /usage\nCurrent week (all models)  27% used  Resets Nov 14, 7am (America/Los_Angeles)\nCurrent week (Fable)       32% used  Resets Nov 14, 6:59am (America/Los_Angeles)\nWhat's contributing to your usage?\n".into(),
+            "Ready",
+        ),
+        (
             // Captured from Claude 2.1.280 at the old 36-row probe size.
             "top scrolled off",
             "  Resets 9:09pm (America/Los_Angeles)\n  Current week (all models)\n  ██████   12% used\n  Resets Sep 26, 7:59am (America/Los_Angeles)\n  Current week (Fable)\n  █████████▌   19% used\n  Resets Sep 26, 7:59am (America/Los_Angeles)\n  Esc to cancel\n".into(),
+            "Clipped",
+        ),
+        (
+            "top scrolled off on a window boundary",
+            "\n  Current week (all models)\n  ██████   12% used\n  Resets Sep 26, 7:59am (America/Los_Angeles)\n  Esc to cancel\n".into(),
             "Clipped",
         ),
         (
