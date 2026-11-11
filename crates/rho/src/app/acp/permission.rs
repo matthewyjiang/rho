@@ -185,11 +185,14 @@ pub(super) fn plan_answer(outcome: &RequestPermissionOutcome) -> Option<InputAns
     let selected = match outcome {
         RequestPermissionOutcome::Cancelled => return None,
         RequestPermissionOutcome::Selected(selected) => selected,
-        _ => return Some(InputAnswer::KeepPlanning),
+        _ => return Some(InputAnswer::KeepPlanning { feedback: None }),
     };
     Some(match parse_mode_id(selected.option_id.0.as_ref()) {
-        Some(mode) => InputAnswer::ApprovePlan { mode: mode.into() },
-        None => InputAnswer::KeepPlanning,
+        Some(mode) => InputAnswer::ApprovePlan {
+            mode: mode.into(),
+            feedback: None,
+        },
+        None => InputAnswer::KeepPlanning { feedback: None },
     })
 }
 

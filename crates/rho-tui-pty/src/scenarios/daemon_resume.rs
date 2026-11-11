@@ -124,6 +124,12 @@ pub(super) fn run_daemon_resume(runner: &ScenarioRunner) -> Result<ScenarioOutco
     })
 }
 
+/// The environment that runs a scenario's TUI as a daemon client.
+pub(super) const DAEMON_ENV: &[(&str, &str)] = &[
+    ("RHO_TUI_DAEMON", "1"),
+    ("OPENAI_API_KEY", "sk-test-matrix"),
+];
+
 /// Config for a daemon-hosted fixture session whose tools run without
 /// asking.
 pub(super) fn write_daemon_config(home: &IsolatedHome) -> Result<()> {

@@ -1625,8 +1625,14 @@
           "type": "object"
         },
         {
-          "description": "Leave plan mode and carry out the plan in `mode`, one of the\nrequest's `modes`.",
+          "description": "Leave plan mode and carry out the plan in `mode`, one of the\nrequest's `modes`. The model reads `feedback` with the approval.",
           "properties": {
+            "feedback": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "kind": {
               "const": "approve_plan",
               "type": "string"
@@ -1642,8 +1648,14 @@
           "type": "object"
         },
         {
-          "description": "Stay in plan mode.",
+          "description": "Stay in plan mode. The model reads `feedback` as what to revise.",
           "properties": {
+            "feedback": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "kind": {
               "const": "keep_planning",
               "type": "string"

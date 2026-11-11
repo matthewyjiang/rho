@@ -8,6 +8,7 @@ mod assert_helpers;
 mod attach_picker;
 mod attach_view;
 mod background_agents;
+mod basic_steps;
 mod boundary_notifications;
 mod calibrated_context;
 mod changelog;
@@ -209,7 +210,6 @@ use startup::{
     STARTUP_FIRST_FRAME_SCENARIO, STARTUP_PROMPT_STREAM_EXIT_SCENARIO, STARTUP_STREAM_EXIT_SCENARIO,
 };
 use statusline::STATUSLINE_HIERARCHY_STEPS;
-use std::time::Duration;
 use steering::{
     QUEUE_FOLLOW_UP_DURING_TURN_SCENARIO, RETRACT_STEERING_DURING_TOOL_SCENARIO,
     STEER_APPEARS_IN_TRANSCRIPT_SCENARIO, STEER_DELIVERED_MARKER_SCENARIO,
@@ -245,161 +245,10 @@ const DEFAULT_SIZE: PtySize = PtySize {
 pub(super) const STARTUP: WaitTimeout = WaitTimeout::secs(20, "startup");
 pub(super) const STREAM: WaitTimeout = WaitTimeout::secs(20, "stream response");
 pub(super) const SETTLE: WaitTimeout = WaitTimeout::secs(10, "ui settle");
-
-const CANCEL_AND_RESUBMIT_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("start_delay"),
-    Step::SubmitText("fixture delay"),
-    Step::WaitText {
-        text: "partial assistant before cancellation",
-        timeout: STREAM,
-    },
-    Step::Phase("cancel"),
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "model interrupted",
-        timeout: STREAM,
-    },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(250),
-        timeout: SETTLE,
-    },
-    Step::Phase("resubmit"),
-    Step::SubmitText("hello after cancel"),
-    Step::WaitText {
-        text: "fixture response: hello after cancel",
-        timeout: STREAM,
-    },
-    Step::ExitCommand,
-];
-
-const RESIZE_DURING_STREAM_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("stream"),
-    Step::SubmitText("fixture stream"),
-    Step::WaitText {
-        text: "assistant stream part one",
-        timeout: STREAM,
-    },
-    Step::Phase("resize"),
-    Step::Resize { rows: 20, cols: 70 },
-    Step::Resize {
-        rows: 32,
-        cols: 120,
-    },
-    Step::Resize {
-        rows: 28,
-        cols: 100,
-    },
-    Step::WaitText {
-        text: "part two",
-        timeout: STREAM,
-    },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(200),
-        timeout: SETTLE,
-    },
-    Step::ExitCommand,
-];
-
-const SCROLL_DURING_STREAM_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("continuous_stream"),
-    Step::SubmitText("fixture scroll checkpoint"),
-    Step::WaitText {
-        text: "scroll checkpoint event 100",
-        timeout: STREAM,
-    },
-    Step::Phase("scroll_up"),
-    Step::Key(Key::PageUp),
-    Step::Key(Key::PageUp),
-    Step::WaitText {
-        text: "scroll checkpoint event 050",
-        timeout: WaitTimeout::millis(500, "scroll during stream"),
-    },
-    Step::Phase("return_bottom"),
-    Step::Key(Key::CtrlEnd),
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "model interrupted",
-        timeout: STREAM,
-    },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(250),
-        timeout: SETTLE,
-    },
-    Step::ExitCommand,
-];
-
-const TERMINAL_RESTORATION_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    // Entering the TUI enables alternate screen / mouse / paste modes.
-    Step::AssertRawContains("\u{1b}[?1049h"),
-    Step::ExitCommand,
-    Step::Phase("assert_restore"),
-    Step::Custom(assert_terminal_restored),
-];
-
-const PROGRESS_TOOL_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::SubmitText("fixture progress tool"),
-    Step::WaitText {
-        text: "deterministic fixture tool result",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "progress tool lifecycle complete",
-        timeout: STREAM,
-    },
-    Step::ExitCommand,
-];
-
-const CONCURRENT_PROGRESS_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::SubmitText("fixture concurrent progress"),
-    Step::WaitText {
-        text: "slow fixture progress one",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "fast fixture result",
-        timeout: STREAM,
-    },
-    Step::AssertText("slow fixture progress one"),
-    Step::WaitText {
-        text: "slow fixture result",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "concurrent progress complete in model order",
-        timeout: STREAM,
-    },
-    Step::ExitCommand,
-];
+use basic_steps::{
+    CANCEL_AND_RESUBMIT_STEPS, CONCURRENT_PROGRESS_STEPS, PROGRESS_TOOL_STEPS,
+    RESIZE_DURING_STREAM_STEPS, SCROLL_DURING_STREAM_STEPS, TERMINAL_RESTORATION_STEPS,
+};
 
 /// All registered scenarios.
 const ALL_SCENARIOS: &[Scenario] = &[
@@ -524,6 +373,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     config::SETTINGS_NEED_THE_DAEMON,
     plan_exit::APPROVE_SCENARIO,
+    #[cfg(unix)]
+    plan_exit::DAEMON_APPROVE_SCENARIO,
+    #[cfg(unix)]
+    init_command::DAEMON_INIT_PLAN_SCENARIO,
     plan_exit::GOAL_SCENARIO,
     plan_exit::IDLE_COMPLETION_SCENARIO,
     plan_exit::KEEP_SCENARIO,
@@ -990,5 +843,3 @@ mod fixture_release;
 use fixture_release::release_fixture;
 
 pub use dispatch::run_named;
-
-use assert_helpers::assert_terminal_restored;

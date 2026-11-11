@@ -245,6 +245,22 @@ fn init_preserves_existing_root_instructions_and_new_reloads_additions() {
     assert_pass("init_existing");
 }
 
+// Covers: with RHO_TUI_DAEMON=1, feedback typed with a plan approval
+// reaches the implementation turn the daemon runs.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_plan_exit_approve_carries_feedback() {
+    assert_pass("daemon_plan_exit_approve");
+}
+
+// Covers: with RHO_TUI_DAEMON=1, /init refused in plan mode says why once
+// and leaves the composer empty.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_init_refuses_plan_permission_mode() {
+    assert_pass("daemon_init_plan");
+}
+
 // Covers: Plan must reject /init before writing project instructions.
 // Owner: interactive TUI permission gating.
 #[test]

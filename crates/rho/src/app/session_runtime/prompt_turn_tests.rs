@@ -17,7 +17,7 @@ use crate::{
     permission::PermissionMode,
     session::Session as StoredSession,
     tools::{
-        plan_exit::{PlanExitHost, PlanPermissionAnswer},
+        plan_exit::{PlanExitDecision, PlanExitHost},
         sdk_registry::AppToolSet,
     },
 };
@@ -55,11 +55,13 @@ async fn plan_mode_runtime(
     built.tools = AppToolSet::disabled().with_plan_exit_host(config, PlanExitHost::Permission);
     let mut runtime = SessionRuntime::for_tests(built, SessionStorage::saved(stored), config);
     // Entering plan mode rebuilds the SDK runtime with the tools, as a
-    // host's mode change does.
+    // host's mode change does, and the session keeps the mode with its
+    // file from then on.
     runtime
         .set_permission_mode(PermissionMode::Plan, config)
         .await
         .unwrap();
+    runtime.keep_settings().unwrap();
     runtime
 }
 
@@ -75,7 +77,7 @@ enum Hosted {
 /// shows. With `cancel_before_handoff`, it cancels the prompt as it
 /// finishes showing the first turn, before the handoff.
 struct PlanView {
-    answer: PlanPermissionAnswer,
+    answer: PlanExitDecision,
     cancel_before_handoff: bool,
     hosted: Vec<Hosted>,
 }
@@ -87,14 +89,17 @@ impl TurnView for PlanView {
     ) -> (TurnIo, impl Future<Output = ()> + Send + use<'v>) {
         let (events, mut shown) = mpsc::unbounded_channel();
         let (controls, control) = mpsc::unbounded_channel();
-        let answer = self.answer;
+        let answer = self.answer.clone();
         let cancel =
             (self.cancel_before_handoff && self.hosted.is_empty()).then(|| runtime.handle());
         let hosted = &mut self.hosted;
         let showing = async move {
             while let Some(event) = shown.recv().await {
                 if let SessionEvent::PlanApprovalRequested { id, .. } = event {
-                    let _ = controls.send(TurnControl::AnswerPlan { id, answer });
+                    let _ = controls.send(TurnControl::AnswerPlan {
+                        id,
+                        answer: answer.clone(),
+                    });
                 }
             }
             hosted.push(Hosted::Turn);
@@ -142,19 +147,19 @@ async fn the_plan_handoff_follows_the_decision_and_the_turn() {
         permission_mode: PermissionMode::Bypass,
         ..Config::default()
     };
-    let approve = PlanPermissionAnswer::Approve(PermissionMode::AllowEdits);
+    let approve = || PlanExitDecision::approve(PermissionMode::AllowEdits);
     let cases = [
         (
             "no plan answered",
             vec![text("done")],
-            approve,
+            approve(),
             /*cancel_before_handoff*/ false,
             (vec![Hosted::Turn], "completed", PermissionMode::Plan),
         ),
         (
             "plan rejected",
             vec![propose_plan(), text("proposed")],
-            PlanPermissionAnswer::KeepPlanning,
+            PlanExitDecision::keep_planning(),
             false,
             (
                 vec![Hosted::Turn, Hosted::Kept],
@@ -166,7 +171,7 @@ async fn the_plan_handoff_follows_the_decision_and_the_turn() {
             // The scripted provider has no turn after the plan's answer.
             "turn failed after approval",
             vec![propose_plan()],
-            approve,
+            approve(),
             false,
             (
                 vec![Hosted::Turn, Hosted::Kept],
@@ -177,7 +182,7 @@ async fn the_plan_handoff_follows_the_decision_and_the_turn() {
         (
             "cancelled before the switch",
             vec![propose_plan(), text("proposed")],
-            approve,
+            approve(),
             true,
             (
                 vec![Hosted::Turn, Hosted::Kept],
@@ -189,7 +194,7 @@ async fn the_plan_handoff_follows_the_decision_and_the_turn() {
             // The implementation turn takes the last scripted reply.
             "approved and answered",
             vec![propose_plan(), text("proposed"), text("implemented")],
-            approve,
+            approve(),
             false,
             (
                 vec![

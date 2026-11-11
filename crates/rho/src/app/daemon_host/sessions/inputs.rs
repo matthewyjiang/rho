@@ -28,7 +28,7 @@ use tokio::sync::mpsc;
 use crate::{
     app::session_runtime::{ApprovalId, PlanApprovalId, SessionEvent, TurnControl},
     permission::{PermissionMode, DENIED_BY_USER},
-    tools::plan_exit::PlanPermissionAnswer,
+    tools::plan_exit::PlanExitDecision,
 };
 
 mod asks;
@@ -353,14 +353,16 @@ fn control_for(waiting: &Waiting, answer: InputAnswer) -> Result<TurnControl, Rp
         }
         Waiting::Plan { id, modes } => {
             let answer = match answer {
-                InputAnswer::ApprovePlan { mode } => {
+                InputAnswer::ApprovePlan { mode, feedback } => {
                     let mode = PermissionMode::try_from(mode)
                         .ok()
                         .filter(|mode| modes.contains(mode))
                         .ok_or_else(|| invalid("the plan approval does not offer that mode"))?;
-                    PlanPermissionAnswer::Approve(mode)
+                    PlanExitDecision::approve(mode).with_feedback(feedback)
                 }
-                InputAnswer::KeepPlanning => PlanPermissionAnswer::KeepPlanning,
+                InputAnswer::KeepPlanning { feedback } => {
+                    PlanExitDecision::keep_planning().with_feedback(feedback)
+                }
                 // Another kind of request's answer, or a kind a newer protocol
                 // adds.
                 _ => {

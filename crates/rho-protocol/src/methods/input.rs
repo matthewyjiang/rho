@@ -370,10 +370,17 @@ pub enum InputAnswer {
         reason: Option<String>,
     },
     /// Leave plan mode and carry out the plan in `mode`, one of the
-    /// request's `modes`.
-    ApprovePlan { mode: PermissionMode },
-    /// Stay in plan mode.
-    KeepPlanning,
+    /// request's `modes`. The model reads `feedback` with the approval.
+    ApprovePlan {
+        mode: PermissionMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        feedback: Option<String>,
+    },
+    /// Stay in plan mode. The model reads `feedback` as what to revise.
+    KeepPlanning {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        feedback: Option<String>,
+    },
     /// Answers keyed by question id: the values of the chosen choices, or
     /// the user's own text where a question allows it.
     Answers {
@@ -406,3 +413,7 @@ pub struct SessionHoldParams {
 /// request that closed is [`crate::ErrorCode::InputNotOpen`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionHoldResponse {}
+
+#[cfg(test)]
+#[path = "input_tests.rs"]
+mod tests;

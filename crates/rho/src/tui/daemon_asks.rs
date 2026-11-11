@@ -3,9 +3,8 @@
 //!
 //! - An approval is the approval prompt, and its decision the matching
 //!   answer.
-//! - A plan approval is the plan-approval questionnaire's decision
-//!   question, offering the request's modes this rho knows. The daemon
-//!   takes no feedback with it, so the feedback field is left out.
+//! - A plan approval is the plan-approval questionnaire, offering the
+//!   request's modes this rho knows; its feedback goes with the answer.
 //! - Questions are the questionnaire. A timeout's fallback answers show
 //!   with its countdown, but the form never submits them: the daemon does.
 
@@ -46,11 +45,9 @@ impl DaemonPrompt {
                     .iter()
                     .filter_map(|&mode| PermissionMode::try_from(mode).ok())
                     .collect();
-                let question = plan_exit::decision_question(&modes)
-                    .map_err(|error| error.to_string())?
-                    .with_help("Review the plan in the tool card above.");
-                let form = HostInputRequest::questionnaire("Plan approval", vec![question])
-                    .map_err(|error| error.to_string())?;
+                let form =
+                    plan_exit::questionnaire(&modes, "Review the plan in the tool card above.")
+                        .map_err(|error| error.to_string())?;
                 Ok(Self::PlanApproval { form, modes })
             }
             Ask::Question(ask) => questions(ask, request.timeout.as_ref())
@@ -77,18 +74,19 @@ pub(super) fn approval_answer(decision: ApprovalDecision) -> InputAnswer {
 
 /// The answer a plan approval's `response` gives: approve into the mode it
 /// chose when it is one of `modes`, the offered ones; otherwise keep
-/// planning, as the in-process tool decides.
+/// planning, as the in-process tool decides. Either carries the feedback
+/// the response gave.
 pub(super) fn plan_answer(response: &HostInputResponse, modes: &[PermissionMode]) -> InputAnswer {
-    let chosen = response
-        .answers()
-        .get(plan_exit::DECISION_QUESTION_ID)
-        .and_then(|answers| answers.first());
-    match modes
-        .iter()
-        .find(|mode| chosen.is_some_and(|chosen| chosen == mode.as_str()))
-    {
-        Some(&mode) => InputAnswer::ApprovePlan { mode: mode.into() },
-        None => InputAnswer::KeepPlanning,
+    let decision = plan_exit::questionnaire_decision(response, modes)
+        .unwrap_or_else(plan_exit::PlanExitDecision::keep_planning);
+    match decision.approved() {
+        Some(mode) => InputAnswer::ApprovePlan {
+            mode: mode.into(),
+            feedback: decision.feedback,
+        },
+        None => InputAnswer::KeepPlanning {
+            feedback: decision.feedback,
+        },
     }
 }
 
