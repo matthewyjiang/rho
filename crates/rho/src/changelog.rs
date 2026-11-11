@@ -76,7 +76,7 @@ pub fn bundled_current_display(current_version: &str) -> Result<ChangelogDisplay
 }
 
 /// Resolve `current_version` in `changelog`. A pre-release build such as
-/// `3.0.0-dev` gets a section only when it is released, so until then it
+/// `3.0.0-alpha.dev` gets a section only when it is released, so until then it
 /// shows the newest release notes it was built on.
 fn current_display(changelog: &str, current_version: &str) -> Result<ChangelogDisplay, String> {
     let (section, note) = if let Some(section) = section_for_version(changelog, current_version) {

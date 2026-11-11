@@ -461,8 +461,8 @@ pub(crate) fn release_tag_to_version(tag: &str) -> Option<String> {
 }
 
 /// Whether `candidate` is a later version than `current`, by semantic
-/// version precedence: a pre-release such as `3.0.0-dev` is older than
-/// `3.0.0` and newer than every `2.x`. Build metadata is ignored, and a
+/// version precedence: a pre-release such as `3.0.0-alpha.dev` is older
+/// than `3.0.0-beta.1` and `3.0.0`, and newer than every `2.x`. Build metadata is ignored, and a
 /// version that does not parse is never newer or older.
 pub(crate) fn version_is_newer(candidate: &str, current: &str) -> bool {
     let Some(candidate) = parse_version(candidate) else {
@@ -474,7 +474,7 @@ pub(crate) fn version_is_newer(candidate: &str, current: &str) -> bool {
     candidate > current
 }
 
-/// Whether `version` carries a pre-release tag, such as `3.0.0-dev`.
+/// Whether `version` carries a pre-release tag, such as `3.0.0-alpha.dev`.
 pub(crate) fn is_prerelease(version: &str) -> bool {
     parse_version(version).is_some_and(|version| matches!(version.stage, Stage::PreRelease(_)))
 }
@@ -590,9 +590,10 @@ mod tests {
         assert_eq!(release_tag_to_version("rho-providers-v3.0.0"), None);
     }
 
-    // Covers: a pre-release build such as 3.0.0-dev is not offered the last
-    // 2.x release as an update, is offered 3.0.0 once that ships, and is
-    // not newer or older than another build of the same version.
+    // Covers: a development build such as 3.0.0-alpha.dev is not offered
+    // the last 2.x release as an update, is offered the 3.0.0 betas and
+    // 3.0.0 once they ship, and is not newer or older than another build of
+    // the same version.
     // Owner: pure unit
     #[test]
     fn orders_versions_by_semantic_precedence() {
@@ -601,17 +602,20 @@ mod tests {
             ("0.13.0", "0.12.9", true),
             ("0.12.1", "0.12.1", false),
             ("0.12.0", "0.12.1", false),
-            ("2.33.1", "3.0.0-dev", false),
-            ("3.0.0-dev", "2.33.1", true),
-            ("3.0.0-dev", "3.0.0-dev", false),
-            ("3.0.0", "3.0.0-dev", true),
-            ("3.0.0-dev", "3.0.0", false),
+            ("2.33.1", "3.0.0-alpha.dev", false),
+            ("3.0.0-alpha.dev", "2.33.1", true),
+            ("3.0.0-alpha.dev", "3.0.0-alpha.dev", false),
+            ("3.0.0-beta", "3.0.0-alpha.dev", true),
+            ("3.0.0-beta.1", "3.0.0-alpha.dev", true),
+            ("3.0.0-alpha.dev", "3.0.0-beta.1", false),
+            ("3.0.0", "3.0.0-alpha.dev", true),
+            ("3.0.0-alpha.dev", "3.0.0", false),
             ("3.0.0-beta.10", "3.0.0-beta.2", true),
             ("3.0.0-beta.1", "3.0.0-beta", true),
             ("3.0.0-beta.1", "3.0.0-1", true),
-            ("3.0.0-dev+build.2", "3.0.0-dev+build.1", false),
-            ("not-a-version", "3.0.0-dev", false),
-            ("3.0.0-dev", "not-a-version", false),
+            ("3.0.0-beta+build.2", "3.0.0-beta+build.1", false),
+            ("not-a-version", "3.0.0-alpha.dev", false),
+            ("3.0.0-alpha.dev", "not-a-version", false),
         ];
         for (candidate, current, newer) in cases {
             assert_eq!(

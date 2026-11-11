@@ -28,7 +28,7 @@ class CargoReleaseBaselineTests(unittest.TestCase):
             ("1.1.1", "1.2.0", False),
             ("1.1.0", "1.1.1", False),
             ("1.2.0-rc.1", "1.1.1", True),
-            ("2.0.0-dev", "1.1.1", True),
+            ("2.0.0-alpha.dev", "1.1.1", True),
             ("3.0.0-dev", "1.1.1", False),
             ("1.1.1-dev", "1.1.1", False),
             ("1.1.1", "1.1.1-dev", False),
