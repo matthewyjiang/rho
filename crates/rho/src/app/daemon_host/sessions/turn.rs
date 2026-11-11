@@ -273,9 +273,6 @@ impl TurnTask {
             }
         };
         view.end(outcome, end);
-        if let Some(wake) = &session.idle_wake {
-            wake.turn_ended();
-        }
         // After the end, so the title follows the turn's events.
         if let Some(title) = title {
             tokio::spawn(report_title(Arc::downgrade(&session), title));
@@ -662,6 +659,10 @@ impl DaemonView {
             self.session.end_turn(self.turn.clone(), outcome, end);
         }
         self.ended = true;
+        // Here, so a turn whose task panicked frees the watcher too.
+        if let Some(wake) = &self.session.idle_wake {
+            wake.turn_ended();
+        }
         match start {
             Some(PromptStart::Began) => self.began(),
             Some(start @ PromptStart::Ended(_)) => self.tell_start(start),

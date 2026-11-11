@@ -137,29 +137,35 @@ async fn watch_results(
         background.clone().result_ready().await;
         // Only a turn that ends from here on frees the session again.
         turns_ended.borrow_and_update();
+        // Subscribed before the attempt, so no result that follows it is
+        // missed.
+        let another = background.next_result();
         let started = {
             let (Some(sessions), Some(session)) = (sessions.upgrade(), session.upgrade()) else {
                 return;
             };
             sessions.deliver_idle_results(&session, &background)
         };
-        // Subscribed before the turn can end, so no result is missed.
-        let another = background.next_result();
-        if turns_ended.changed().await.is_err() {
-            return;
-        }
-        if started && background.has_result() {
-            // The turn ended without taking the result: it failed first or
-            // was cancelled. Starting it again at once would loop, so the
-            // result waits for another turn's boundary or the next result.
-            tokio::select! {
-                changed = turns_ended.changed() => {
-                    if changed.is_err() {
-                        return;
-                    }
-                }
-                () = another => {}
+        if started {
+            if turns_ended.changed().await.is_err() {
+                return;
             }
+            if !background.has_result() {
+                continue;
+            }
+            // The turn ended without taking the result: it failed first or
+            // was cancelled. Starting it again at once would loop.
+        }
+        // Nothing to start now: a turn is under way or just took the
+        // result, or the start was refused. Look again once a turn ends or
+        // another result arrives.
+        tokio::select! {
+            changed = turns_ended.changed() => {
+                if changed.is_err() {
+                    return;
+                }
+            }
+            () = another => {}
         }
     }
 }

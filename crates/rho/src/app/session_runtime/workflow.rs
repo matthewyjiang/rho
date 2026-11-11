@@ -6,8 +6,9 @@
 //! run's result cannot be announced when it finishes. It reaches the model at the first
 //! boundary of a later prompt, through the same headless delivery as other
 //! background work. A host that starts turns itself, as the daemon does for
-//! the TUI, delivers it in a turn of its own once the run finishes. The run id goes into context now, so the model can check
-//! on it with the `workflow` tool in the meantime.
+//! the TUI, delivers it in a turn of its own once the run finishes. The run
+//! id goes into context now, so the model can check on it with the
+//! `workflow` tool in the meantime.
 
 use rho_sdk::{model::Message, CancellationToken, UserInput};
 
