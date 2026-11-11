@@ -96,7 +96,7 @@ mod unload;
 
 use super::settings::ConfigStore;
 use feed::{Attached, Feed};
-use idle_wake::IdleWake;
+use idle_wake::IdleWatch;
 use inputs::Inputs;
 pub(super) use open::session_environment;
 use open::{open_session, OpenWith, OpenedSession, Opening, Workspace};
@@ -193,7 +193,7 @@ struct LoadedSession {
     /// The session's side of the watcher that starts a turn when its
     /// background work finishes idle, when its client asked for that (see
     /// [`idle_wake`]).
-    idle_wake: Option<IdleWake>,
+    idle_wake: Option<IdleWatch>,
 }
 
 /// The state a session's turn lock guards.
@@ -404,7 +404,7 @@ impl LoadedSession {
         Self {
             id: runtime.session_id().clone(),
             wake: T3Wake::of(&runtime, wakes).map(tokio::sync::Mutex::new),
-            idle_wake: IdleWake::of(&runtime),
+            idle_wake: IdleWatch::of(&runtime),
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),
             live: Mutex::new(live),

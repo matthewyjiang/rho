@@ -24,7 +24,7 @@ use super::{t3_wake::Background, Entered, LoadedSession, OpenWith, Sessions, Tur
 use crate::app::session_runtime::{BackgroundWait, SessionRuntime};
 
 /// A session's side of its watcher.
-pub(super) struct IdleWake {
+pub(super) struct IdleWatch {
     background: Background,
     /// How many of the session's turns ended.
     turns_ended: watch::Sender<u64>,
@@ -32,7 +32,7 @@ pub(super) struct IdleWake {
     dropped: CancellationToken,
 }
 
-impl IdleWake {
+impl IdleWatch {
     /// The wake state of the session `runtime` runs, when the daemon wakes
     /// it.
     pub(super) fn of(runtime: &SessionRuntime) -> Option<Self> {
@@ -53,7 +53,7 @@ impl IdleWake {
     }
 }
 
-impl Drop for IdleWake {
+impl Drop for IdleWatch {
     fn drop(&mut self) {
         self.dropped.cancel();
     }
