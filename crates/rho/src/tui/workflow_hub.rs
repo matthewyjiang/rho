@@ -446,6 +446,9 @@ impl App {
                 let path = value
                     .strip_prefix(SOURCE_PREFIX)
                     .expect("prefix checked above");
+                if self.info.session.daemon.is_some() {
+                    return self.start_daemon_workflow_source(path, terminal).await;
+                }
                 self.start_workflow_source(path, BTreeMap::new(), agent)
                     .await
             }
@@ -491,7 +494,7 @@ impl App {
         }
     }
 
-    fn workflow_ops(&self) -> anyhow::Result<WorkflowOps> {
+    pub(super) fn workflow_ops(&self) -> anyhow::Result<WorkflowOps> {
         let path = self.info.services.config_repository.configured_path().ok();
         // The TUI's sessions run in this process's environment (#1659).
         WorkflowOps::open(
@@ -513,9 +516,15 @@ impl App {
         };
         match run.state.state.lifecycle {
             RunLifecycle::NeedsRecovery => {
-                // Recover in the background, then open the watch screen.
+                // Recover in the background; in process, then open the
+                // watch screen.
                 self.resume_workflow_run(run_id, /*recover_uncertain*/ true, terminal, agent)
                     .await?;
+                // The daemon recovers a daemon session's run once its prompt
+                // is through; the rail and the hub open it from there.
+                if self.info.session.daemon.is_some() {
+                    return Ok(());
+                }
                 let Some(run) = self.load_run_for_watch(parsed)? else {
                     return Ok(());
                 };
@@ -699,10 +708,14 @@ impl App {
     async fn run_workflow_plan(
         &mut self,
         plan_id: &str,
-        _terminal: &mut DefaultTerminal,
+        terminal: &mut DefaultTerminal,
         agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let plan_id = PlanId::from_str(plan_id)?;
+        if self.info.session.daemon.is_some() {
+            let command = discover::WorkflowLaunch::plan_command(plan_id);
+            return self.launch_daemon_workflow(command, terminal).await;
+        }
         let ops = self.workflow_ops()?;
         let plan = match ops.prepare_run_id(plan_id) {
             Ok(plan) => plan,
@@ -735,10 +748,14 @@ impl App {
         &mut self,
         run_id: &str,
         recover_uncertain: bool,
-        _terminal: &mut DefaultTerminal,
+        terminal: &mut DefaultTerminal,
         agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let run_id = RunId::from_str(run_id)?;
+        if self.info.session.daemon.is_some() {
+            let command = discover::WorkflowLaunch::resume_command(run_id, recover_uncertain);
+            return self.launch_daemon_workflow(command, terminal).await;
+        }
         let ops = self.workflow_ops()?;
         let run = match ops.load_run_id(run_id) {
             Ok(run) => run,

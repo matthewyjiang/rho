@@ -20,13 +20,13 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
     match command {
         // Session state the daemon owns, changed through the session's
         // options, and settings it saves through `rho/config/set`.
-        // In process, the settings commands say they need the daemon
-        // (`needs_daemon`).
+        // In process, `/advisor` says it needs the daemon (`needs_daemon`).
         CommandId::Model
         | CommandId::Permissions
         | CommandId::Fast
         | CommandId::Goal
-        | CommandId::Advisor => CommandRoute::Options,
+        | CommandId::Advisor
+        | CommandId::Codemode => CommandRoute::Options,
         // These commands are implemented by the daemon's prompt pipeline.
         CommandId::Init | CommandId::Compact => CommandRoute::Prompt,
         CommandId::Exit
@@ -69,14 +69,12 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         // The daemon opens the session these follow next.
         | CommandId::New
         | CommandId::Resume
-        | CommandId::Sessions => CommandRoute::Ui,
-        // The conversation tree and rewind need daemon methods, and
-        // code mode a setting the daemon does not take yet. The /workflow
-        // hub describes the wrong runtime, even when opened read-only.
-        | CommandId::Rewind
-        | CommandId::Tree
-        | CommandId::Codemode
-        | CommandId::Workflow => CommandRoute::Unavailable,
+        | CommandId::Sessions
+        // The hub lists the workspace's workflow store, which the daemon
+        // shares; a launch is a prompt the daemon runs.
+        | CommandId::Workflow => CommandRoute::Ui,
+        // The conversation tree and rewind need daemon methods.
+        CommandId::Rewind | CommandId::Tree => CommandRoute::Unavailable,
     }
 }
 

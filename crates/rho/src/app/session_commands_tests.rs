@@ -6,7 +6,7 @@ use super::{
     resolve, test_support::Fixture, BuiltInCommand, CommandScope, CommandSet, Hosting,
     PromptCommand,
 };
-use crate::app::session_runtime::AgentTask;
+use crate::app::{session_runtime::AgentTask, workflow_cli::discover::WorkflowLaunch};
 
 /// A host that runs every command.
 const ALL: CommandSet = CommandSet {
@@ -53,10 +53,11 @@ async fn resolved(text: &str, scope: &CommandScope<'_>, commands: CommandSet) ->
                 .collect(),
         },
         Ok(PromptCommand::Compact { instructions }) => Resolved::Compact(instructions),
-        Ok(PromptCommand::StartWorkflow(start)) => Resolved::Workflow {
+        Ok(PromptCommand::StartWorkflow(WorkflowLaunch::Source(start))) => Resolved::Workflow {
             file: start.workflow.relative_path,
             inputs: json!(start.inputs),
         },
+        Ok(PromptCommand::StartWorkflow(launch)) => panic!("unexpected launch {launch:?}"),
         Ok(PromptCommand::RunAsAgent(AgentTask {
             agent_id,
             model_override,

@@ -49,6 +49,9 @@ mod daemon_restart;
 mod daemon_resume;
 #[cfg(unix)]
 mod daemon_switch;
+// Starts a real command workflow, as `workflow_background` does.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+mod daemon_workflow;
 mod diff_viewer;
 mod dispatch;
 mod doctor;
@@ -682,6 +685,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_login::SCENARIO,
     #[cfg(unix)]
     daemon_reports::SCENARIO,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    daemon_workflow::SCENARIO,
     #[cfg(unix)]
     daemon_switch::SCENARIO,
     #[cfg(unix)]

@@ -1028,6 +1028,76 @@ async fn a_workflow_command_starts_its_run_without_a_model_turn() {
     assert_eq!(conversation(&latecomer.events), shown);
 }
 
+// Covers: the prompts the TUI's workflow hub sends start their runs in the
+// daemon too: `/workflow:plan/<plan id>` runs a saved plan as a child job,
+// and `/workflow:run/<run id>` drives that same run again under a second
+// job rather than starting another.
+// Owner: daemon session commands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_saved_plan_and_a_run_start_from_their_prompts() {
+    let sandbox = Sandbox::new();
+    let workflow = sandbox.workspace.join(".rho/workflows/daemon-run");
+    std::fs::create_dir_all(workflow.join("agents")).unwrap();
+    std::fs::write(workflow.join("workflow.star"), WORKFLOW).unwrap();
+    std::fs::write(workflow.join("agents/fixture.md"), WORKFLOW_AGENT).unwrap();
+    let planned = sandbox
+        .rho("fixed")
+        .args([
+            "workflow",
+            "plan",
+            ".rho/workflows/daemon-run/workflow.star",
+            "--output",
+            "json",
+        ])
+        .stdout(Stdio::piped())
+        .output()
+        .unwrap();
+    let planned: serde_json::Value = serde_json::from_slice(&planned.stdout)
+        .unwrap_or_else(|error| panic!("{error}: {planned:?}"));
+    let plan = planned["manifest"]["plan_id"].as_str().unwrap();
+    let client = sandbox.start_daemon("fixed").await;
+    let session = sandbox.new_session(&client).await;
+    let workflow_runs = async || -> Vec<(Option<String>, JobState)> {
+        let jobs = client.request::<JobList>(&JobListParams {}).await.unwrap();
+        jobs.jobs
+            .into_iter()
+            .filter(|job| job.kind == JobKind::Workflow)
+            .map(|job| (job.workflow_run, job.state))
+            .collect()
+    };
+
+    let from_plan = sandbox
+        .prompt_text(&client, &session, &format!("/workflow:plan/{plan}"))
+        .await;
+    let first = settled(&sandbox, &client, |job| job.kind == JobKind::Workflow).await;
+    let run = first.workflow_run.clone().expect("the job names its run");
+    settled_job(&sandbox, &client, &session).await;
+    let again = sandbox
+        .prompt_text(&client, &session, &format!("/workflow:run/{run}"))
+        .await;
+    sandbox
+        .poll_until("both drives to end", async || {
+            let runs = workflow_runs().await;
+            (runs.len() == 2 && runs.iter().all(|(_, state)| *state == JobState::Completed))
+                .then_some(())
+        })
+        .await;
+
+    assert_eq!(
+        (from_plan, again, workflow_runs().await),
+        (
+            Ok(()),
+            Ok(()),
+            vec![
+                (Some(run.clone()), JobState::Completed),
+                (Some(run), JobState::Completed)
+            ]
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
 // Covers: a turn cancelled through `rho/session/cancel` is recorded
 // cancelled; a turn the daemon's stop interrupts is recorded interrupted,
 // within `rho daemon stop`'s wait; a turn whose daemon died (`kill -9`) is

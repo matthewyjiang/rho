@@ -1,5 +1,6 @@
-//! `/workflow:<name>`: start a workspace workflow in the background and end
-//! the prompt without a model turn.
+//! `/workflow:<name>`, and the hub's `/workflow:plan/<id>` and
+//! `/workflow:run/<id>`: start a workflow run in the background and end the
+//! prompt without a model turn.
 //!
 //! Hosts such as ACP give the agent no way to start a turn on its own, so the
 //! run's result cannot be announced when it finishes. It reaches the model at the first
@@ -13,14 +14,14 @@ use super::{prompt_gate::ActiveWork, InsertedMessage, PromptScope, SessionRuntim
 use crate::{
     agent::{AgentCapabilities, ToolCapability},
     app::{
-        workflow_cli::{self, discover::StartCommand, WorkflowOps},
+        workflow_cli::{self, discover::WorkflowLaunch, WorkflowOps},
         workflow_runtime::RecoveryDecision,
     },
     config::Config,
     tools::workflow_tracker::start_context_prompts,
 };
 
-/// How a `/workflow:<name>` prompt ended.
+/// How a `/workflow:` prompt ended.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum WorkflowStart {
     /// Cancelled while planning; no run exists.
@@ -36,21 +37,20 @@ pub(crate) enum WorkflowStart {
 }
 
 impl SessionRuntime {
-    /// Plans `start` within `prompt`, launches its run, records the run id
-    /// in context, and saves the prompt. `display` is the command as the
-    /// user sent it.
+    /// Starts `launch`'s run within `prompt`, records the run id in
+    /// context, and saves the prompt. `display` is the command as the user
+    /// sent it.
     ///
-    /// A cancel stops planning. Once the run exists it keeps going: cancel
+    /// A cancel stops a source's planning; a saved plan and a run have none
+    /// to stop. Once the run exists it keeps going: cancel
     /// it with the `workflow` tool or the CLI, like any background run.
     pub(crate) async fn start_workflow(
         &mut self,
         prompt: &PromptScope,
         display: &UserInput,
-        start: StartCommand,
+        launch: WorkflowLaunch,
         process_config: &Config,
     ) -> anyhow::Result<WorkflowStart> {
-        let source = start.workflow.relative_path.clone();
-        let failed = |error: anyhow::Error| anyhow::anyhow!("could not start {source}: {error:#}");
         let cancel = CancellationToken::new();
         prompt.activate(ActiveWork::command(cancel.clone()));
 
@@ -62,26 +62,56 @@ impl SessionRuntime {
             Some(self.build.launch.config_path.clone()),
             &environment,
         )
-        .map_err(failed)?;
-        // The same ceiling the session's own workflow tool gives its runs.
-        let available_tools = AgentCapabilities::new(
-            self.built
-                .tools
-                .unfiltered_names()
-                .map(ToolCapability::parse)
-                .collect(),
-        );
-        let prepared = tokio::select! {
-            biased;
-            () = cancel.cancelled() => return Ok(WorkflowStart::Cancelled),
-            prepared = ops.prepare_local_json(
-                &start.workflow.absolute_path,
-                start.inputs,
-                process_config,
-                &available_tools,
-            ) => prepared.map_err(failed)?,
+        .map_err(|error| anyhow::anyhow!("could not open the workflow store: {error:#}"))?;
+        let (run, recovery) = match launch {
+            WorkflowLaunch::Source(start) => {
+                let source = start.workflow.relative_path.clone();
+                let failed =
+                    |error: anyhow::Error| anyhow::anyhow!("could not start {source}: {error:#}");
+                // The same ceiling the session's own workflow tool gives
+                // its runs.
+                let available_tools = AgentCapabilities::new(
+                    self.built
+                        .tools
+                        .unfiltered_names()
+                        .map(ToolCapability::parse)
+                        .collect(),
+                );
+                let prepared = tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => return Ok(WorkflowStart::Cancelled),
+                    prepared = ops.prepare_local_json(
+                        &start.workflow.absolute_path,
+                        start.inputs,
+                        process_config,
+                        &available_tools,
+                    ) => prepared.map_err(failed)?,
+                };
+                let run = ops.create_launch_run(&prepared).map_err(failed)?;
+                (run, RecoveryDecision::NormalResume)
+            }
+            WorkflowLaunch::Plan(plan) => {
+                let stored = ops
+                    .prepare_run_id(plan)
+                    .map_err(|error| anyhow::anyhow!("could not prepare plan: {error:#}"))?;
+                let run = ops
+                    .create_confirmed_run(&stored)
+                    .map_err(|error| anyhow::anyhow!("could not create run: {error:#}"))?;
+                (run, RecoveryDecision::NormalResume)
+            }
+            WorkflowLaunch::Resume {
+                run,
+                recover_uncertain,
+            } => {
+                let run = ops
+                    .load_run_id(run)
+                    .map_err(|error| anyhow::anyhow!("could not load run: {error:#}"))?;
+                let recovery = ops
+                    .prepare_resume(&run, recover_uncertain)
+                    .map_err(|error| anyhow::anyhow!("could not open run: {error:#}"))?;
+                (run, recovery)
+            }
         };
-        let run = ops.create_launch_run(&prepared).map_err(failed)?;
 
         let run_id = run.manifest.run_id.to_string();
         let workflow_name = run.graph.program.name.as_str().to_owned();
@@ -93,11 +123,13 @@ impl SessionRuntime {
             program_digest.clone(),
             Some(self.built.session.id().to_string()),
         ) {
-            anyhow::bail!("could not start {source}: run {run_id} is already running");
+            anyhow::bail!(
+                "could not start workflow {workflow_name}: run {run_id} is already running"
+            );
         }
         workflow_cli::spawn_background_run(
             run,
-            RecoveryDecision::NormalResume,
+            recovery,
             workflow_cli::BackgroundRun {
                 cwd: self.storage.cwd().to_path_buf(),
                 config_path: Some(self.build.launch.config_path.clone()),

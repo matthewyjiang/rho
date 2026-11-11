@@ -40,6 +40,13 @@ impl WorkflowPanel {
         self.rail.ingest(tracker.rail_summaries(session_id))
     }
 
+    /// Shows `runs`, which a daemon session's jobs name; nothing in this
+    /// process tracks them.
+    pub(super) fn ingest(&mut self, runs: Vec<WorkflowRailSummary>) -> bool {
+        self.source = None;
+        self.rail.ingest(runs)
+    }
+
     /// Delivery may drain notifications between a panel tick and a draw. Read
     /// the in-memory source again so rows leave in the delivery repaint.
     pub(super) fn refresh(&mut self) {

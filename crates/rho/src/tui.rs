@@ -63,6 +63,7 @@ mod daemon_gate;
 mod daemon_goal;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod daemon_inputs;
+mod daemon_jobs;
 mod daemon_login;
 mod daemon_options;
 mod daemon_prompt;
@@ -78,6 +79,7 @@ mod daemon_subagents;
 mod daemon_switch;
 mod daemon_transcript;
 mod daemon_turn;
+mod daemon_workflows;
 mod diff_pane;
 mod diff_viewer;
 mod divider;
@@ -669,7 +671,7 @@ struct App {
     daemon_option_requests: std::collections::VecDeque<rho_protocol::SessionChange>,
     daemon_title: Option<String>,
     /// The subagent rail's job-list polling for the daemon session.
-    daemon_rail: daemon_subagents::DaemonRail,
+    daemon_rail: daemon_jobs::DaemonRail,
     /// The interactive login the daemon runs for this TUI, if any.
     daemon_login: Option<daemon_login::DaemonLogin>,
     /// The daemon's settings, once read; `None` in process.

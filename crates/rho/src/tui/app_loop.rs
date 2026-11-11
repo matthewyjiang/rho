@@ -190,7 +190,7 @@ impl App {
                 || agent
                     .processes()
                     .is_some_and(crate::tools::process::ProcessManager::has_pending_notification)
-                || (self.info.session.daemon.is_some() && self.subagent_panel.is_active())
+                || self.daemon_rail.shows_runs()
                 || self.pending_subagent_questionnaire.is_some()
                 || self.subagent_inbox.has_queued_questionnaires()
                 || self.subagent_inbox.has_parent_action_requests();
@@ -679,7 +679,7 @@ impl App {
         // costs half-applied.
         let mut changed = self.refresh_exclusive_screen()?;
         // The daemon's jobs feed a daemon session's rail as they arrive
-        // (`daemon_subagents`); this process's manager has no runs of it.
+        // (`daemon_jobs`); this process's manager has no runs of it.
         let panel_changed = if self.info.session.daemon.is_some() {
             self.refresh_daemon_rail();
             false
@@ -692,9 +692,12 @@ impl App {
         }
         changed |= panel_changed;
         changed |= self.process_panel.update(agent.processes());
-        changed |= self
-            .workflow_panel
-            .update(agent.workflow_tracker(), agent.session_id().as_str());
+        // A daemon session's workflow rows arrive with its jobs too.
+        if self.info.session.daemon.is_none() {
+            changed |= self
+                .workflow_panel
+                .update(agent.workflow_tracker(), agent.session_id().as_str());
+        }
         changed |= self.refresh_todo_list(agent);
         // Fold terminal subagent/advisor costs on every panel refresh path (idle
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.

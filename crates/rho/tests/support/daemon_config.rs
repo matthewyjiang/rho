@@ -230,6 +230,53 @@ async fn a_change_is_saved_and_reaches_readers_and_a_loaded_sessions_next_turn()
     );
 }
 
+// Covers: `codemode.mode`, which `/codemode` writes, reaches a session
+// already loaded at its next turn: `only` stops offering the model the
+// direct tools it had, keeps `codemode`, and tells the session's clients.
+// Owner: daemon settings store.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_codemode_change_reaches_a_loaded_sessions_next_turn() {
+    let sandbox = Sandbox::new();
+    let client = sandbox.start_daemon("inspect").await;
+    let session = sandbox.new_session(&client).await;
+    let (follower, mut events) = sandbox.connect_following().await;
+    follower
+        .request::<SessionAttach>(&SessionAttachParams {
+            session: session.clone(),
+            after: None,
+            environment: sandbox.client_environment(),
+            setup: SessionSetup::default(),
+        })
+        .await
+        .unwrap();
+    sandbox.prompt(&client, &session).await.unwrap();
+    let (before, _) = next_turn(&mut events, &session).await;
+
+    let state = get(&client, ConfigNamespace::Agent).await;
+    set(
+        &client,
+        ConfigNamespace::Agent,
+        &state.revision,
+        vec![change("codemode.mode", SettingValue::Text("only".into()))],
+    )
+    .await
+    .unwrap();
+    sandbox.prompt(&client, &session).await.unwrap();
+    let (after, notices) = next_turn(&mut events, &session).await;
+
+    let offers = |tools: &[String], name: &str| tools.iter().any(|tool| tool == name);
+    assert_eq!(
+        (
+            (offers(&before, "read_file"), offers(&before, "codemode")),
+            (offers(&after, "read_file"), offers(&after, "codemode")),
+            notices.len(),
+        ),
+        ((true, true), (false, true), 1),
+        "before: {before:?}\nafter: {after:?}\nnotices: {notices:?}\nlog:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
 // Covers: a change against a stale revision is refused as a conflict, and
 // one with a bad value or an unknown key as invalid params naming them, as
 // is a credential store change, which must go through

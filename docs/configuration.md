@@ -116,7 +116,7 @@ Every change goes to the daemon, which writes the file and tells every client; a
 When a change applies:
 
 - Immediately: the Display settings, and concurrent agents.
-- From the next turn of each loaded session: advisor mode, the advisor model and reasoning, and auto compaction.
+- From the next turn of each loaded session: advisor mode, the advisor model and reasoning, auto compaction, and the codemode mode.
 - New sessions: everything else, including the default model, permission mode, edit tool, and web search. `/model`, `/permissions`, and `/fast` change the current session.
 - Restart: keybindings and the theme in `tui.toml`.
 

@@ -501,6 +501,9 @@ fn next_turn_settings_carry_every_next_turn_setting() {
 [behavior]
 advisor_mode = true
 
+[codemode]
+mode = "only"
+
 [compaction]
 auto_compact = false
 compact_threshold_percent = 70
@@ -543,6 +546,7 @@ reasoning = "high"
         super::NextTurnChanges {
             advisor: true,
             compaction: true,
+            codemode: true,
         }
     );
 }
@@ -568,6 +572,7 @@ fn next_turn_settings_take_only_what_changed_globally() {
     let changed = |advisor, compaction| super::NextTurnChanges {
         advisor,
         compaction,
+        codemode: false,
     };
 
     assert_eq!(

@@ -1,6 +1,7 @@
 //! A loaded session's config (#1720): the one it opened with, which each
 //! turn first brings up to date with the global settings that apply at a
-//! loaded session's next turn, the advisor and automatic compaction.
+//! loaded session's next turn: the advisor, automatic compaction, and the
+//! codemode mode.
 //!
 //! Lazy on purpose: an idle session pays nothing for a change, and the turn
 //! already holds the session's runtime to apply it.
@@ -84,6 +85,16 @@ impl LoadedSession {
                     notices.push(format!("could not apply the advisor settings: {error}"));
                     next.advisor_mode = current.advisor_mode;
                     restore_advisor_model(&mut next, &current);
+                }
+            }
+        }
+        if changes.codemode {
+            match runtime.set_codemode_mode(next.codemode.mode) {
+                Ok(notice) => notices.extend(notice),
+                Err(error) => {
+                    failed = true;
+                    notices.push(format!("could not apply the codemode mode: {error:#}"));
+                    next.codemode.mode = current.codemode.mode;
                 }
             }
         }

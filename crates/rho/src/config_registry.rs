@@ -467,7 +467,7 @@ static CODEMODE: Setting<Config, CodemodeMode> = Setting {
         None,
         "Codemode",
         "On keeps direct tools next to codemode; only hides them behind codemode.",
-        Apply::NextSession,
+        Apply::NextTurn,
     ),
     spec: (),
     get: |config| config.codemode.mode,
