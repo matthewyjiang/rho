@@ -270,3 +270,26 @@ fn a_switch_login_asked_for_keeps_logins_status_line() {
 
     assert_eq!(kept, vec![true, false, false]);
 }
+
+// Covers: a switch asked for before the daemon's first options report
+// arrived, as a pinned-model cycle right after launch, still says where it
+// landed when that first report already carries it.
+// Owner: tui daemon session options
+#[test]
+fn a_switch_carried_by_the_first_report_says_where_it_landed() {
+    let mut app = crate::tui::tests::test_app();
+    let switched = options_on("anthropic", "anthropic-api-key");
+    app.daemon_option_requests
+        .push_back(rho_protocol::SessionChange::Model {
+            model: switched.model.current.clone(),
+            auth: None,
+            setup: false,
+        });
+
+    app.show_daemon_options(switched);
+
+    assert_eq!(
+        app.last_status,
+        "model switched to anthropic/model with reasoning off"
+    );
+}

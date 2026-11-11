@@ -110,13 +110,12 @@ impl App {
         };
         self.info.set_reasoning(reasoning, source);
         // A switch this TUI asked for says where it landed, with the
-        // reasoning level the daemon gave the new model.
-        let switched = self.daemon_options.as_ref().is_some_and(|shown| {
-            shown.model.current != options.model.current
-                && self.daemon_option_requests.iter().any(|change| {
-                    matches!(change, SessionChange::Model { model, .. } if *model == options.model.current)
-                })
-        });
+        // reasoning level the daemon gave the new model. The daemon's first
+        // report can already carry one asked for before it arrived.
+        let switched = model_changed
+            && self.daemon_option_requests.iter().any(|change| {
+                matches!(change, SessionChange::Model { model, .. } if *model == options.model.current)
+            });
         // Login's own status line, which also names the stored credentials,
         // stays, as it does in process.
         let said_by_login =
