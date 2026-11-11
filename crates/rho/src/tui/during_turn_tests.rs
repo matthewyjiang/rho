@@ -1,11 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
 
-use crate::tui::ActivityPhase;
-
 use super::*;
 use crate::tui::{
-    goal::GoalState,
     inline_shell::{InlineShellMode, PendingShellTask},
     questionnaire::{QuestionnaireComposer, QuestionnaireResponseChannel},
     tests::test_app,
@@ -90,17 +87,9 @@ async fn running_escape_action_picks_one_owner() {
             expected: Some(RunningEscapeAction::AbortTurn),
         },
         Case {
-            name: "goal evaluation wait aborts",
+            name: "limits overlay intercepts",
             setup: |app| {
-                app.goal = Some(GoalState::new("tests pass".into()));
-                app.begin_cancellable_wait_ui(ActivityPhase::EvaluatingGoal);
-            },
-            expected: Some(RunningEscapeAction::AbortTurn),
-        },
-        Case {
-            name: "limits overlay intercepts during a wait",
-            setup: |app| {
-                app.begin_cancellable_wait_ui(ActivityPhase::EvaluatingGoal);
+                app.begin_provider_turn_ui();
                 app.start_limits_command();
             },
             expected: Some(RunningEscapeAction::FocusedComposer),
@@ -272,11 +261,6 @@ async fn empty_composer_abort_hint_follows_esc_policy() {
         Case {
             name: "provider turn",
             setup: |app| app.begin_provider_turn_ui(),
-            expected: true,
-        },
-        Case {
-            name: "cancellable wait",
-            setup: |app| app.begin_cancellable_wait_ui(ActivityPhase::EvaluatingGoal),
             expected: true,
         },
         Case {

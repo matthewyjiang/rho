@@ -2,8 +2,7 @@ use ratatui::text::Line;
 
 use super::super::{
     activity::ActivityStatus, app_state::SessionUiPhase, command_palette::slash_command_args,
-    commands, goal, paste_burst, tests::test_app, ActivityPhase, ChatMedia, ChatTextDocument,
-    TurnPrompt,
+    commands, paste_burst, tests::test_app, ActivityPhase, ChatMedia, ChatTextDocument, TurnPrompt,
 };
 use super::HeldTurn;
 
@@ -17,32 +16,25 @@ fn attached_document() -> ChatMedia {
     })
 }
 
-// Covers: status and early-return goal commands must not leave attachments in composer state.
+// Covers: a command that sends no prompt must not leave attachments in composer state.
 // Owner: slash-command submission ownership
 #[test]
-fn goal_commands_take_queued_media() {
-    let overlong = format!("/goal {}", "x".repeat(goal::MAX_GOAL_CHARS + 1));
-    for (case, command) in [
-        ("status", "/goal"),
-        ("clear", "/goal clear"),
-        ("resume", "/goal resume"),
-        ("invalid overlong", overlong.as_str()),
-    ] {
-        let mut app = test_app();
-        app.input_ui
-            .push_ready_attachment(attached_document(), None);
-        app.input_ui.set_text(command.to_owned());
-        let invocation = commands::parse_command(command).unwrap().unwrap();
+fn command_submission_takes_queued_media() {
+    let command = "/help";
+    let mut app = test_app();
+    app.input_ui
+        .push_ready_attachment(attached_document(), None);
+    app.input_ui.set_text(command.to_owned());
+    let invocation = commands::parse_command(command).unwrap().unwrap();
 
-        let submission = app.take_command_submission(
-            invocation,
-            TurnPrompt::standard(command.to_owned(), command.to_owned()),
-        );
+    let submission = app.take_command_submission(
+        invocation,
+        TurnPrompt::standard(command.to_owned(), command.to_owned()),
+    );
 
-        assert_eq!(submission.media_len(), 1, "{case}");
-        assert!(app.input_ui.attachments().is_empty(), "{case}");
-        assert!(app.input_ui.text().is_empty(), "{case}");
-    }
+    assert_eq!(submission.media_len(), 1);
+    assert!(app.input_ui.attachments().is_empty());
+    assert!(app.input_ui.text().is_empty());
 }
 
 fn held_turn(display: &str) -> HeldTurn {

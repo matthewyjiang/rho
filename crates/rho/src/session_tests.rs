@@ -117,8 +117,8 @@ fn separate_display_message_round_trips_for_resume_and_export() {
     let root = temp_session_root();
     let cwd = temp_cwd();
     let session = Session::create_in_root(&root, &cwd).unwrap();
-    let model_message = Message::user_text("internal goal-setting instructions");
-    let display_message = Message::user_text("/goal all tests pass");
+    let model_message = Message::user_text("expanded init instructions");
+    let display_message = Message::user_text("/init all tests pass");
     session
         .append_message_with_display(&model_message, &display_message)
         .unwrap();
@@ -130,17 +130,17 @@ fn separate_display_message_round_trips_for_resume_and_export() {
         Session::open_by_id_with_histories_in_root(&root, &cwd, session.id()).unwrap();
     assert!(matches!(
         &histories.model[0],
-        Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "internal goal-setting instructions")
+        Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "expanded init instructions")
     ));
     assert!(matches!(
         &histories.display[0],
-        Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "/goal all tests pass")
+        Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "/init all tests pass")
     ));
 
     let export = Session::export_by_id_in_root(&root, &cwd, session.id()).unwrap();
     assert!(matches!(
         &export.messages[0].message,
-        Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "/goal all tests pass")
+        Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "/init all tests pass")
     ));
 }
 

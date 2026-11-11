@@ -263,10 +263,6 @@ async fn failed_compaction_freezes_persistence_while_draining_queued_checkpoints
         }
 
         assert!(!interactive.is_run_active());
-        assert_eq!(
-            interactive.take_last_turn_display_commit(),
-            DisplayCommit::Checkpoint(vec![Message::user_text("continue")])
-        );
         assert_eq!(interactive.session_id().as_str(), storage.id());
         assert_eq!(interactive.sessions.storage().unwrap().id(), storage.id());
         if !rollback_fails {
@@ -346,10 +342,6 @@ async fn failed_snapshot_save_does_not_commit_turn_display() {
         .unwrap();
     while interactive.next_event().await.is_some() {}
     interactive.finish_run().await.unwrap();
-    assert_eq!(
-        interactive.take_last_turn_display_commit(),
-        DisplayCommit::Complete
-    );
     let durable_history = interactive.history();
 
     // Trigger the real snapshot/store identity guard without filesystem races or
@@ -368,10 +360,6 @@ async fn failed_snapshot_save_does_not_commit_turn_display() {
         .unwrap();
     while interactive.next_event().await.is_some() {}
     assert!(interactive.finish_run().await.is_err());
-    assert_eq!(
-        interactive.take_last_turn_display_commit(),
-        DisplayCommit::Unsaved
-    );
     assert_eq!(interactive.history(), durable_history);
     assert_eq!(interactive.session_id().as_str(), storage.id());
     let (_, histories) =

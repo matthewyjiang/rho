@@ -242,43 +242,13 @@ impl Background {
             .as_ref()
             .is_some_and(ProcessManager::has_pending_notification)
             || self.workflows.has_pending_notification(&self.session_id)
-            || self
-                .subagents
-                .as_ref()
-                .is_some_and(|subagents| subagents.has_pending_notification(&self.session_id))
-            || self.parent_action_waits()
-    }
-
-    /// Whether a subagent asked its parent to act and no turn told the model.
-    fn parent_action_waits(&self) -> bool {
-        self.subagents.as_ref().is_some_and(|subagents| {
-            subagents
-                .undelivered_notices(&self.session_id)
-                .iter()
-                .any(|notice| notice.delivery.requires_parent_action())
-        })
-    }
-
-    /// Whether a turn that must not run ahead of the session's subagents
-    /// has one to wait for: one still runs, and none asks its parent to act,
-    /// which only a turn can answer.
-    pub(super) fn subagents_hold_turn(&self) -> bool {
-        self.subagents
-            .as_ref()
-            .is_some_and(|subagents| subagents.has_running_for_session(&self.session_id))
-            && !self.parent_action_waits()
-    }
-
-    /// Resolves once [`Self::subagents_hold_turn`] is false.
-    pub(super) async fn subagents_released_turn(&self) {
-        loop {
-            // Subscribe before checking so a finish in between still wakes.
-            let another = self.next_result();
-            if !self.subagents_hold_turn() {
-                return;
-            }
-            another.await;
-        }
+            || self.subagents.as_ref().is_some_and(|subagents| {
+                subagents.has_pending_notification(&self.session_id)
+                    || subagents
+                        .undelivered_notices(&self.session_id)
+                        .iter()
+                        .any(|notice| notice.delivery.requires_parent_action())
+            })
     }
 
     /// Resolves once a result is waiting.

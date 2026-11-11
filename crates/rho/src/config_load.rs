@@ -230,6 +230,9 @@ pub(crate) fn resolve(
         .unwrap_or_default()
         .into_iter()
         .filter_map(|(id, entry)| {
+            if id == REMOVED_GOAL_JUDGE_ID {
+                return None;
+            }
             if catalog_entry_cannot_override(&id, &entry, &config.model_aliases) {
                 warnings.push(ConfigWarning::Normalized {
                     key: "internal_agents",
@@ -365,6 +368,12 @@ struct PartialInternalAgent {
     allow_threshold_percent: Option<u8>,
     reasoning: Option<ReasoningLevel>,
 }
+
+/// The internal agent that judged `/goal`, removed in Rho 3. Config files
+/// written before then may still hold its table, the 2.x full example's
+/// empty one included, so config load drops it without a warning instead of
+/// reading it as a catalog agent's entry.
+const REMOVED_GOAL_JUDGE_ID: &str = "goal-judge";
 
 /// Whether an entry for a catalog agent (an id Rho does not reserve, such
 /// as a plugin agent's) fails to name an explicit Rho provider and model.

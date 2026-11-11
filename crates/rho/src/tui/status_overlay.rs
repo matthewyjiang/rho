@@ -85,8 +85,6 @@ fn is_routine_status(message: &str) -> bool {
             | "compacting context"
             | "retrying provider response"
             | "rate limited · retrying"
-            | "evaluating goal"
-            | "goal retrying"
             | "loading models"
             | "refreshing model list"
             | "checking usage limits"

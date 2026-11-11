@@ -13,11 +13,9 @@
 //! request it read to completion.
 //!
 //! A permission mode change still waiting when an approved plan switches
-//! the mode is dropped, whichever turn of the run it was sent during: one
-//! run, as a `/goal` loop, holds the runtime across all its turns. The
-//! in-process TUI applies such a change at the end of the turn it was sent
-//! during, so the approval, at the end of the same or a later turn, sets
-//! the mode the session ends in either way.
+//! the mode is dropped. The in-process TUI applies such a change at the end
+//! of the turn it was sent during, so the approval, at the end of the same
+//! turn, sets the mode the session ends in either way.
 //!
 //! Only a loaded session takes a change: a client attaches first, which
 //! loads it. A change that applies is kept with the session's file, so a
@@ -78,9 +76,6 @@ impl Sessions {
         params: SessionConfigureParams,
     ) -> Result<SessionConfigureResponse, RpcError> {
         self.refuse_when_stopping()?;
-        if let wire::SessionChange::Goal { action } = params.change {
-            return self.configure_goal(params.session, action).await;
-        }
         // A model change that waits on a `/compact`, which the turn under
         // way or last done must be.
         let after_compaction = matches!(

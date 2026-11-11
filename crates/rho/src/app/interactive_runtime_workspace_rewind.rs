@@ -92,7 +92,6 @@ impl InteractiveRuntime {
             self.tools.checkpoint_tracker().discard_turn();
             return;
         };
-        self.runs.mark_display_committed();
         let outcome = match outcome {
             Ok(_) => CheckpointOutcome::Completed,
             Err(Error::Cancelled | Error::Interrupted { .. }) => CheckpointOutcome::Cancelled,

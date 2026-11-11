@@ -1,6 +1,4 @@
-use super::{
-    activity::ActivityPhase, App, Entry, HistoryScroll, InputSubmissionMode, InteractiveRuntime,
-};
+use super::{App, Entry, HistoryScroll, InputSubmissionMode, InteractiveRuntime};
 
 impl App {
     pub(super) fn is_ui_busy(&self) -> bool {
@@ -27,14 +25,6 @@ impl App {
 
     pub(super) fn begin_compact_ui(&mut self) {
         self.turn.enter_compact();
-    }
-
-    /// Busy UI for an interruptible wait that is not a provider run.
-    /// Enters a cancellable wait between turns, labeled by `phase` so the
-    /// spinner never shows the previous turn's stale activity.
-    pub(super) fn begin_cancellable_wait_ui(&mut self, phase: ActivityPhase) {
-        self.turn.set_activity_phase(phase);
-        self.turn.enter_cancellable_wait();
     }
 
     pub(super) fn end_busy_ui(&mut self) {

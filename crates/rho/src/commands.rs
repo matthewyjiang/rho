@@ -27,7 +27,6 @@ pub enum CommandId {
     Help,
     Compact,
     Copy,
-    Goal,
     Skills,
     Theme,
     Hooks,
@@ -119,19 +118,6 @@ pub enum CommandParseError {
     #[error("unknown command '/{0}'")]
     Unknown(String),
 }
-
-const GOAL_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
-    CommandArgumentChoice {
-        completion: "/goal resume",
-        usage: "/goal resume",
-        description: "verify and continue a blocked goal",
-    },
-    CommandArgumentChoice {
-        completion: "/goal clear",
-        usage: "/goal clear",
-        description: "stop and clear the current goal",
-    },
-];
 
 const REMEMBER_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[CommandArgumentChoice {
     completion: "/remember global",
@@ -342,13 +328,6 @@ pub static COMMANDS: &[CommandSpec] = &[
         usage: "/fast [on|off]",
         description: "toggle faster responses at a higher rate",
         argument_choices: FAST_ARGUMENT_CHOICES,
-    },
-    CommandSpec {
-        id: CommandId::Goal,
-        name: "goal",
-        usage: "/goal [condition|resume|clear]",
-        description: "show status or work until a condition is met",
-        argument_choices: GOAL_ARGUMENT_CHOICES,
     },
     CommandSpec {
         id: CommandId::Help,

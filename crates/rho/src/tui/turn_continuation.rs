@@ -1,8 +1,7 @@
 //! Successful turn completion owns follow-ups, regardless of the turn driver.
 //!
-//! Goal evaluation and idle background delivery only see the outcome after the
-//! queued follow-ups have run. Failed goal turns retain their driver's retry
-//! handling; cancellation and interruption never auto-continue.
+//! Idle background delivery only sees the outcome after the queued follow-ups
+//! have run. Failure, cancellation and interruption never auto-continue.
 
 use super::{App, DefaultTerminal, InteractiveRuntime, PromptTurnRequest, TurnOutcome};
 use crate::tui::send_confirm::{SendAuthorization, SendPayload};

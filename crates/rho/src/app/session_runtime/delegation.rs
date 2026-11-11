@@ -58,9 +58,6 @@ pub(super) struct Delegation {
     /// older ones only deliver.
     prompt_started: Instant,
     background_wait: BackgroundWait,
-    /// Whether a boundary of this prompt gave the model a child's request
-    /// that the parent act.
-    delivered_parent_action: bool,
     /// Display rows for each delivery offered to the runtime, when a host asked.
     displays: Option<mpsc::UnboundedSender<(UserInput, DisplayTranscript)>>,
 }
@@ -186,7 +183,6 @@ impl Delegation {
             workflows,
             prompt_started: Instant::now(),
             background_wait: wait,
-            delivered_parent_action: false,
             displays: None,
         })
     }
@@ -212,13 +208,6 @@ impl Delegation {
         // event pump notices cancellation in that same scheduling turn.
         let _ = futures_util::poll!(&mut service);
         result
-    }
-
-    /// Whether this prompt gave the model a child's request that the parent
-    /// act. The request is then delivered for good, though the child may
-    /// still wait for the answer if the prompt failed after it.
-    pub(super) fn delivered_parent_action(&self) -> bool {
-        self.delivered_parent_action
     }
 
     /// Ends this prompt but keeps its notice binding, with every notice not yet
@@ -308,7 +297,6 @@ impl Delegation {
             if notices_offered {
                 if let Some(subagents) = &mut self.subagents {
                     for notice in subagents.pending.drain(..) {
-                        self.delivered_parent_action |= notice.delivery.requires_parent_action();
                         notice.acknowledge();
                         subagents.permits.release_notice(&notice);
                     }

@@ -51,7 +51,7 @@ fn pure_legacy_replace_history_uses_display_not_model_replacement() {
             SessionEntry::Message {
                 timestamp: "101".into(),
                 message: Message::user_text("model prompt"),
-                display_message: Some(Box::new(Message::user_text("/goal model prompt"))),
+                display_message: Some(Box::new(Message::user_text("/init model prompt"))),
             },
             SessionEntry::Message {
                 timestamp: "102".into(),
@@ -76,11 +76,11 @@ fn pure_legacy_replace_history_uses_display_not_model_replacement() {
     assert_eq!(summary.message_count, 3);
     assert_eq!(
         summary.first_user_message.as_deref(),
-        Some("/goal model prompt")
+        Some("/init model prompt")
     );
     assert_eq!(
         summary.last_user_message.as_deref(),
-        Some("/goal model prompt")
+        Some("/init model prompt")
     );
     assert_eq!(summary.updated_at, 104);
     assert_eq!(summary.created_at, 100);

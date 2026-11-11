@@ -73,7 +73,7 @@ A later compaction updates the earlier summary instead of summarizing it again. 
 Two user messages stay verbatim outside the summary, each only if its estimate is at most 2,048 tokens:
 
 - The first user turn, kept ahead of the summary. A larger first turn is only summarized.
-- The latest user message, restated after the summary when it would otherwise fall outside the recent tail. This keeps the instruction for the current turn, such as a `/goal` prompt, when compaction runs in the middle of a long turn.
+- The latest user message, restated after the summary when it would otherwise fall outside the recent tail. This keeps the instruction for the current turn, when compaction runs in the middle of a long turn.
 
 If those messages are the only history left to remove, they are summarized too.
 

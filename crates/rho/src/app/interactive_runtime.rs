@@ -1,5 +1,4 @@
 use super::active_prompt::{ActivePrompt, PromptTransition};
-pub(crate) use super::interactive_run_controller::DisplayCommit;
 use std::{path::PathBuf, sync::Arc};
 
 use rho_sdk::{
@@ -375,9 +374,6 @@ impl InteractiveRuntime {
                     } else {
                         // Follow-up starts only once the compaction is durable.
                         self.diagnostics.compaction_committed();
-                        if self.sessions.storage().is_some() {
-                            self.runs.mark_display_checkpoint(display);
-                        }
                     }
                 }
                 Err(error) => {
@@ -489,11 +485,6 @@ impl InteractiveRuntime {
         self.refresh_context_usage();
         self.completed_runs = self.completed_runs.saturating_add(1);
         Ok(finished.outcome?)
-    }
-
-    /// A provider error can still commit accepted inputs; a failed save cannot.
-    pub(crate) fn take_last_turn_display_commit(&mut self) -> DisplayCommit {
-        self.runs.take_last_turn_display_commit()
     }
 
     pub(crate) fn reset(&mut self) -> anyhow::Result<()> {

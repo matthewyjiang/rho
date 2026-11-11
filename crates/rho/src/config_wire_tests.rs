@@ -136,7 +136,7 @@ fn rho_model(provider: &str, model: &str) -> SettingValue {
 #[test]
 fn agent_changes_touch_only_their_keys_and_can_repair_the_file() {
     let aliases = "\n[model.aliases]\nfast = \"openai/gpt-5.5\"\n";
-    let judge = "[internal_agents.goal-judge]\nreasoning = \"high\"\n";
+    let judge = "[internal_agents.compaction]\nreasoning = \"high\"\n";
     let broken = "[output]\nmax_output_bytes = 0\n";
     /// A case's name, file, changes, and what `applied` returns.
     type Case = (&'static str, String, Vec<SettingChange>, Written);

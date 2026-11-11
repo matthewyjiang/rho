@@ -31,7 +31,6 @@ impl CommandContext {
             | CommandId::Help
             | CommandId::Compact
             | CommandId::Copy
-            | CommandId::Goal
             | CommandId::Skills
             | CommandId::Theme
             | CommandId::Hooks

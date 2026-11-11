@@ -157,23 +157,8 @@ impl Feed {
 
     /// Tells attached clients the session's options are now `options`,
     /// unless they already are.
-    pub(super) fn update_options(&self, mut options: wire::SessionOptions) {
+    pub(super) fn update_options(&self, options: wire::SessionOptions) {
         let mut state = self.state();
-        // The goal controller changes independently of runtime settings. Never
-        // overwrite a concurrent clear with an older runtime snapshot.
-        options.goal.clone_from(&state.options.goal);
-        if state.options != options {
-            state.push(wire::SessionEvent::OptionsChanged {
-                options: Box::new(options),
-            });
-        }
-    }
-
-    /// Publish the goal under the same lock as runtime options and attach.
-    pub(super) fn update_goal(&self, goal: Option<Box<wire::SessionGoal>>) {
-        let mut state = self.state();
-        let mut options = state.options.clone();
-        options.goal = goal;
         if state.options != options {
             state.push(wire::SessionEvent::OptionsChanged {
                 options: Box::new(options),

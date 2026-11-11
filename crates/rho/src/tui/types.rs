@@ -14,7 +14,6 @@ use super::{
     login::SecretInput,
     markdown::{CodeFenceState, StreamLineStart},
     picker::UiPicker,
-    prompt_turn::FailedTurn,
     questionnaire::QuestionnaireComposer,
     stream::AppendOnlyStream,
     stream_pace::StreamPacer,
@@ -372,26 +371,9 @@ pub(super) enum TurnOutcome {
     Interrupted,
     /// User cancelled interactive work such as a questionnaire.
     Cancelled,
-    Failed(Box<FailedTurn>),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum TurnOutcomeKind {
-    Completed,
-    Interrupted,
-    Cancelled,
-    Failed,
-}
-
-impl TurnOutcome {
-    pub(super) fn kind(&self) -> TurnOutcomeKind {
-        match self {
-            Self::Completed => TurnOutcomeKind::Completed,
-            Self::Interrupted => TurnOutcomeKind::Interrupted,
-            Self::Cancelled => TurnOutcomeKind::Cancelled,
-            Self::Failed(_) => TurnOutcomeKind::Failed,
-        }
-    }
+    Failed {
+        message: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

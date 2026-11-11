@@ -1,4 +1,4 @@
-//! Plan proposals from composer, goal, and idle completion turns.
+//! Plan proposals from composer and idle completion turns.
 
 use rho_sdk::{
     model::{Message, ModelRequest, ModelResponse},
@@ -77,13 +77,8 @@ pub(super) fn intercept(
             )
         });
     }
-    let goal_proposal = prompt.contains("The user invoked Rho's `/goal` command")
-        && prompt.contains("Goal:\nfixture plan exit\n\n");
     let idle_proposal = prompt.contains("[agent notification]") && prompt.contains(CHILD_RESULT);
-    if matches!(prompt, PROMPT | LONG_PROMPT | FAIL_PROMPT | HELD_PROMPT)
-        || goal_proposal
-        || idle_proposal
-    {
+    if matches!(prompt, PROMPT | LONG_PROMPT | FAIL_PROMPT | HELD_PROMPT) || idle_proposal {
         return Some(if tool_result(request, CALL_ID).is_some() {
             if prompt == FAIL_PROMPT {
                 Err(ProviderError::new(

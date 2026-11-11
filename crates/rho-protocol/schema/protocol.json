@@ -3752,23 +3752,6 @@
           "type": "object"
         },
         {
-          "description": "Control the loaded session's goal without waiting for its turn.",
-          "properties": {
-            "action": {
-              "$ref": "#/$defs/SessionGoalAction"
-            },
-            "kind": {
-              "const": "goal",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "action"
-          ],
-          "type": "object"
-        },
-        {
           "description": "Add `text` to what the model reads from its next turn on, without a\nturn of its own, and save it with the session as a user row that\nreads `display`. Clients attached now see no event for it: the one\nthat sent it shows its own notice, and a later reset replays the\nrow. An empty `text` is [`crate::ErrorCode::InvalidParams`].",
           "properties": {
             "display": {
@@ -4500,140 +4483,6 @@
       ],
       "type": "object"
     },
-    "SessionGoal": {
-      "description": "A goal the loaded session keeps working on, independently of clients.",
-      "properties": {
-        "condition": {
-          "description": "The user's completion condition.",
-          "type": "string"
-        },
-        "evaluated_turns": {
-          "description": "Evaluations completed, not provider calls or SDK steps.",
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "human_steps": {
-          "description": "Remaining human-only work; empty while active.",
-          "items": {
-            "$ref": "#/$defs/SessionGoalStep"
-          },
-          "type": "array"
-        },
-        "last_reason": {
-          "description": "Why the last evaluation found the goal unmet or blocked.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "phase": {
-          "$ref": "#/$defs/SessionGoalPhase",
-          "description": "Whether the goal is working or waiting for the user."
-        },
-        "set_at": {
-          "description": "Unix time, in seconds, when the goal was set. Clients count the\ngoal's elapsed time from it.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "condition",
-        "phase",
-        "evaluated_turns",
-        "set_at",
-        "human_steps"
-      ],
-      "type": "object"
-    },
-    "SessionGoalAction": {
-      "description": "A goal lifecycle change, sent through `rho/session/configure`. Unlike\nmodel settings, these actions do not queue behind a running goal.",
-      "oneOf": [
-        {
-          "description": "Set a nonempty condition and start working. Refused while a turn runs.",
-          "properties": {
-            "condition": {
-              "type": "string"
-            },
-            "kind": {
-              "const": "set",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "condition"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "Disarm the loop immediately, cancelling evaluation or retry waits,\nbut not a model turn already running. Idempotent when no goal exists.",
-          "properties": {
-            "kind": {
-              "const": "clear",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "Verify a blocked goal's human steps, or continue an active goal.\nRefused while a turn runs or when there is no goal.",
-          "properties": {
-            "kind": {
-              "const": "resume",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "SessionGoalPhase": {
-      "anyOf": [
-        {
-          "enum": [
-            "active"
-          ],
-          "type": "string"
-        },
-        {
-          "const": "blocked",
-          "description": "Resume or a new user prompt verifies the previously blocked steps.",
-          "type": "string"
-        },
-        {
-          "description": "Any other value: one a later protocol minor adds.",
-          "type": "string",
-          "x-rho-other": true
-        }
-      ],
-      "description": "Whether the goal is working or waiting for external human-only steps."
-    },
-    "SessionGoalStep": {
-      "description": "One step the evaluator found outside the session's authority or capabilities.",
-      "properties": {
-        "action": {
-          "description": "What the user has to do.",
-          "type": "string"
-        },
-        "reason": {
-          "description": "Why the session cannot do it itself.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "action",
-        "reason"
-      ],
-      "type": "object"
-    },
     "SessionGrant": {
       "additionalProperties": false,
       "description": "What the turn a request starts may do through session control, the\n`sessions` tool and `rho mcp serve`: how deep the session sits among the\nsessions that started it, and the most it may do to others.\n\nThe request that opens or prompts a session names it\n([`super::SessionNewParams::grant`], [`super::SessionPromptParams::grant`]),\nand the daemon keeps it on the session's job\n([`super::JobSummary::grant`]), so it is the daemon's record, not the\ncaller's environment, that says what a session may do. The daemon sets\n`RHO_SESSION_DEPTH` and `RHO_SESSION_SCOPE` in the session's environment\nfrom it, replacing any the client's environment carries.\n\nIt bounds session control, not the session: the depth stops a runaway\nrecursion and the scope keeps a caller's limits on the sessions it\nstarts. Neither is a sandbox for a session that can run commands.\n\nUnknown fields are refused: a newer client's narrowing field must fail at\nan older daemon rather than be dropped and record a wider grant.",
@@ -5333,17 +5182,6 @@
             }
           ],
           "description": "Absent when the current model has no fast mode."
-        },
-        "goal": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SessionGoal"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The daemon-owned goal, absent after completion, clear, or cancel.\nKept while the session is loaded, not across daemon restarts."
         },
         "model": {
           "$ref": "#/$defs/ModelOptions"

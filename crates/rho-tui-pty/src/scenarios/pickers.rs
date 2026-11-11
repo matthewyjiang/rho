@@ -504,15 +504,14 @@ fn assert_narrow_agents_popup(harness: &mut PtyHarness) -> Result<()> {
 fn assert_narrow_detail_scrolled_to_end(harness: &mut PtyHarness) -> Result<()> {
     assert_narrow_agents_popup(harness)?;
     let screen = harness.screen().contents();
-    if !screen.contains(GOAL_JUDGE_PROMPT_TAIL) || screen.contains("Internal agent that evaluates")
-    {
+    if !screen.contains(COMPACTION_PROMPT_TAIL) || screen.contains("Internal agent that writes") {
         anyhow::bail!("narrow detail did not scroll to the end of the full prompt:\n{screen}");
     }
     Ok(())
 }
 
-/// Last word of the goal-judge prompt, unique within it.
-const GOAL_JUDGE_PROMPT_TAIL: &str = "Unmet.";
+/// Last word of the compaction prompt, unique within it.
+const COMPACTION_PROMPT_TAIL: &str = "reload.";
 
 pub(super) fn setup_invalid_user_agent(home: &IsolatedHome) -> Result<()> {
     setup_edit_user_agent(home)?;
@@ -557,9 +556,9 @@ pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
         text: "INTERNAL",
         timeout: SETTLE,
     },
-    Step::TypeIntoField("goal-judge"),
+    Step::TypeIntoField("compaction"),
     Step::WaitText {
-        text: "Internal agent that evaluates goal completion",
+        text: "Internal agent that writes text summaries",
         timeout: SETTLE,
     },
     Step::AssertText("↑↓"),
@@ -571,7 +570,7 @@ pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
         text: "Use conversation model",
         timeout: SETTLE,
     },
-    Step::AssertText("select model for goal-judge"),
+    Step::AssertText("select model for compaction"),
     Step::Key(Key::Esc),
     Step::WaitText {
         text: "Loaded agents",
@@ -588,14 +587,14 @@ pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
     Step::Key(Key::Right),
     Step::Key(Key::End),
     Step::WaitText {
-        text: GOAL_JUDGE_PROMPT_TAIL,
+        text: COMPACTION_PROMPT_TAIL,
         timeout: SETTLE,
     },
     Step::Custom(assert_narrow_detail_scrolled_to_end),
     // Home returns the focused detail pane to the title.
     Step::Key(Key::Home),
     Step::WaitText {
-        text: "Internal agent that evaluates goal",
+        text: "Internal agent that writes",
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),

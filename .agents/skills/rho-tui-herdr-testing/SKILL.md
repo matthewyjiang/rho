@@ -66,7 +66,6 @@ The fixture is available only in debug builds. Use these exact prompts:
 | `fixture input flood` | Emits renderable output events every 5 ms for two seconds to test input fairness under continuous output. |
 | `fixture stream failure` | Emits partial output and then returns a permanent provider failure. |
 | `fixture bulk one` or `fixture bulk two` | Produces 180 deterministic transcript lines for scrolling tests. |
-| `/goal fixture goal retry` | Fails retryably once and then succeeds with the original goal. |
 
 Compaction requests receive a fixed summary. Any other prompt receives `fixture response: <prompt>`.
 
