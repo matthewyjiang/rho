@@ -121,6 +121,34 @@ impl Service for StubHost {
         Err(no_sessions())
     }
 
+    async fn session_mcp_catalog(
+        &self,
+        _: rho_protocol::SessionMcpCatalogParams,
+    ) -> Result<rho_protocol::SessionMcpCatalog, RpcError> {
+        Err(no_sessions())
+    }
+
+    async fn session_mcp_resource(
+        &self,
+        _: rho_protocol::SessionMcpResourceParams,
+    ) -> Result<rho_protocol::SessionMcpResourceResponse, RpcError> {
+        Err(no_sessions())
+    }
+
+    async fn session_mcp_complete(
+        &self,
+        _: rho_protocol::SessionMcpCompleteParams,
+    ) -> Result<rho_protocol::SessionMcpCompleteResponse, RpcError> {
+        Err(no_sessions())
+    }
+
+    async fn observe_session(
+        &self,
+        _: rho_protocol::SessionObserveParams,
+    ) -> Result<(SessionAttachResponse, Subscription), RpcError> {
+        Err(no_sessions())
+    }
+
     async fn session_processes(
         &self,
         _: rho_protocol::SessionProcessesParams,

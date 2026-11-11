@@ -129,7 +129,6 @@ async fn a_newer_client_is_told_at_hello_what_restarting_the_daemon_would_cost()
                     version: env!("CARGO_PKG_VERSION").to_owned(),
                     pid: daemon.id(),
                 },
-                capabilities: Vec::new(),
             }),
         ),
         "daemon log:\n{}",

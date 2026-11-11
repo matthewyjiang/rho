@@ -15,7 +15,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rho_protocol::{DaemonInfo, FrameError, ServerInfo, Service, PROTOCOL_VERSION};
+use rho_protocol::{DaemonInfo, FrameError, Service, PROTOCOL_VERSION};
 use tokio::{
     net::{UnixListener, UnixStream},
     task::JoinSet,
@@ -231,12 +231,9 @@ impl BoundDaemon {
             started_at: _,
             lock,
         } = self;
-        let info = Arc::new(ServerInfo {
-            daemon: DaemonInfo {
-                version: env!("CARGO_PKG_VERSION").to_owned(),
-                pid: std::process::id(),
-            },
-            capabilities: Vec::new(),
+        let info = Arc::new(DaemonInfo {
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            pid: std::process::id(),
         });
         let uid = current_uid();
         let mut connections = JoinSet::new();
