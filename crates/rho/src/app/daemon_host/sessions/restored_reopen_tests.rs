@@ -28,14 +28,25 @@ enum Replayed {
     Answer(String),
 }
 
+/// What a client attaching to a reopened session is shown.
+#[derive(Debug, PartialEq)]
+struct Reopened {
+    replayed: Vec<Replayed>,
+    state: wire::JobState,
+    turn: Option<wire::TurnId>,
+}
+
 // Covers: a session whose conversation moved back to an earlier node of its
 // tree after a turn answered, then reopened from its job's record as after
-// an unload, replays the restored conversation alone. The record's last
-// answer is of a turn the conversation no longer holds, and a TUI appends a
-// replayed answer the rows before it did not show (#1818).
+// an unload, replays the restored conversation alone and attaches idle, as
+// its live stream said at the restore. The record's last answer is of a
+// turn the conversation no longer holds, and a TUI appends a replayed
+// answer the rows before it did not show (#1818); a `rho attach` told the
+// job completed that turn waits for its replayed end and reports it
+// missing.
 // Owner: daemon session reopening.
 #[tokio::test]
-async fn a_reopened_session_replays_no_answer_its_restore_left_behind() {
+async fn a_reopened_session_attaches_to_the_conversation_its_restore_left() {
     let (root, home) = (TempDir::new().unwrap(), TempDir::new().unwrap());
     let jobs = Arc::new(JobRegistry::open(JobStore::open(home.path()).unwrap()));
     let sessions = Sessions::new(jobs, home.path());
@@ -81,7 +92,8 @@ async fn a_reopened_session_replays_no_answer_its_restore_left_behind() {
         /*auths*/ &[],
     );
 
-    let replayed: Vec<_> = reopened
+    let attached = reopened.attach(/*after*/ None);
+    let replayed = reopened
         .reset_replay_for_tests()
         .into_iter()
         .filter_map(|event| match event {
@@ -96,5 +108,16 @@ async fn a_reopened_session_replays_no_answer_its_restore_left_behind() {
             _ => None,
         })
         .collect();
-    assert_eq!(replayed, vec![Replayed::User("first".into())]);
+    assert_eq!(
+        Reopened {
+            replayed,
+            state: attached.job,
+            turn: attached.turn,
+        },
+        Reopened {
+            replayed: vec![Replayed::User("first".into())],
+            state: wire::JobState::Idle,
+            turn: None,
+        }
+    );
 }

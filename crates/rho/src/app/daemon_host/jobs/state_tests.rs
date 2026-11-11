@@ -19,7 +19,7 @@ fn all_states() -> [JobState; 8] {
     ]
 }
 
-fn all_events() -> [JobEvent; 8] {
+fn all_events() -> [JobEvent; 9] {
     [
         JobEvent::TurnStarted,
         JobEvent::Admitted,
@@ -29,6 +29,7 @@ fn all_events() -> [JobEvent; 8] {
         JobEvent::TurnEnded(TurnEnd::Cancelled),
         JobEvent::TurnEnded(TurnEnd::Interrupted),
         JobEvent::TurnEnded(failed()),
+        JobEvent::ConversationMoved,
     ]
 }
 
@@ -36,19 +37,23 @@ fn all_events() -> [JobEvent; 8] {
 // any ended state, and capacity starts a queued run's, which nothing else
 // takes, so a run admitted after its job ended cannot revive it; a running turn opens
 // and settles input, and ends, with how it ended, from either, as a queued
-// run ends when it is stopped before it starts; everything else is refused
+// run ends when it is stopped before it starts; a conversation that moves
+// rests an idle or ended job idle; everything else is refused
 // with the pair named, including a second prompt on a running session, a
 // turn ending twice, and a session turn ending before it started.
 // Owner: daemon job state machine.
 #[test]
 fn events_move_a_job_through_exactly_the_turn_lifecycle() {
-    use JobEvent::{Admitted, InputOpened, InputSettled, TurnEnded, TurnStarted};
+    use JobEvent::{
+        Admitted, ConversationMoved, InputOpened, InputSettled, TurnEnded, TurnStarted,
+    };
     use JobState::{Ended, Idle, Queued, Running, WaitingForInput};
     let mut allowed = vec![
         (Idle, TurnStarted, Running),
         (Queued, Admitted, Running),
         (Running, InputOpened, WaitingForInput),
         (WaitingForInput, InputSettled, Running),
+        (Idle, ConversationMoved, Idle),
     ];
     for end in [
         TurnEnd::Completed,
@@ -57,6 +62,7 @@ fn events_move_a_job_through_exactly_the_turn_lifecycle() {
         failed(),
     ] {
         allowed.push((Ended(end.clone()), TurnStarted, Running));
+        allowed.push((Ended(end.clone()), ConversationMoved, Idle));
         allowed.push((Queued, TurnEnded(end.clone()), Ended(end.clone())));
         allowed.push((Running, TurnEnded(end.clone()), Ended(end.clone())));
         allowed.push((WaitingForInput, TurnEnded(end.clone()), Ended(end)));
