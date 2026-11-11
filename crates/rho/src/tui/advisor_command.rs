@@ -60,14 +60,14 @@ impl App {
     /// runtime's otherwise.
     pub(super) fn advisor_status(&self) -> AdvisorStatus {
         let Some(settings) = &self.daemon_settings else {
-            return AdvisorStatus::from_runtime(&self.info.runtime);
+            return AdvisorStatus::from_runtime(&self.info.runtime, self.model_names());
         };
         let model = match settings.value(
             SettingsNamespace::Agent,
             &SettingKey::new(ADVISOR_MODEL_KEY),
         ) {
             Some(SettingValue::Model(ModelSelection::Rho { provider, model })) => {
-                Some(rho_providers::provider::model_reference(provider, model))
+                Some(self.model_names().reference(provider, model))
             }
             Some(SettingValue::Model(ModelSelection::ClaudeCli { model })) => {
                 Some(rho_providers::provider::model_reference(

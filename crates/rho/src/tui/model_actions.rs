@@ -383,13 +383,15 @@ impl App {
         }) {
             Ok(()) => {
                 self.set_status(format!(
-                    "model switched to {provider_model} with reasoning {} and saved to config",
+                    "model switched to {} with reasoning {} and saved to config",
+                    self.model_names().reference(&provider, &model),
                     reasoning.effective
                 ));
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
-                    "model switched to {provider_model} with reasoning {} for this session, but saving config failed: {err}",
+                    "model switched to {} with reasoning {} for this session, but saving config failed: {err}",
+                    self.model_names().reference(&provider, &model),
                     reasoning.effective
                 )));
                 self.set_status("config save failed");
@@ -447,7 +449,7 @@ impl App {
         };
         let label = config
             .as_ref()
-            .map(crate::config::InternalAgentModelConfig::display_reference)
+            .map(|config| self.model_names().internal_agent(config))
             .unwrap_or_else(|| fallback.into());
         let previous = self.info.runtime.internal_agents.get(id).cloned();
         let save_result = match config {

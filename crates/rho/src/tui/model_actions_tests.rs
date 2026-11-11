@@ -302,8 +302,8 @@ async fn select_model_report_auto_edit_tool_follows_provider_change() {
 
 // Covers: a mid-session model switch remains visible in conversation history,
 // even when model-scoped assembly also rebuilds the system prompt. The notice
-// includes the catalog name when available. Empty conversations need no history
-// notice before their first request.
+// includes the catalog name when available, as does the status line. Empty
+// conversations need no history notice before their first request.
 // Owner: model switch context notice
 #[tokio::test]
 async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
@@ -404,6 +404,8 @@ async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
 
     // --- A started session is told, naming the new model with its catalog name ---
     let mut app = app_on_openai();
+    // Auto mode would replace the switch status with its classifier prompt.
+    app.info.runtime.permission_mode = crate::permission::PermissionMode::Bypass;
     let mut agent = test_edit_tool_runtime(EditTool::Auto).await;
     agent
         .append_user_context_with_display("first turn".into(), "first turn".into())
@@ -415,6 +417,11 @@ async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
     let _names = ModelDisplayNameCacheGuard::new();
     switch_to_anthropic(&mut app, &mut agent).await;
 
+    // The status line names the model it switched to by its catalog name.
+    assert_eq!(
+        app.last_status.split(" with reasoning").next(),
+        Some("model switched to Claude Fable 5")
+    );
     let text = history_text(&agent);
     let (stored, _) = model_switch_context(
         ModelSwitchKind::Conversation,
