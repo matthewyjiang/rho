@@ -17,6 +17,8 @@ A role bounds the capabilities a hello may declare: an `agent` may not declare `
 
 `rho/session/answer` and `rho/session/hold` are the only methods that need a capability (`answer`, which only a person's `frontend` connection may declare). Every other method is open to both roles, and that is intended: an `agent` connection may change the daemon's settings with `rho/config/set` and the other [settings](#settings) methods, and reconfigure a session with `rho/session/configure`. Agents legitimately tune the sessions they run, and since a role is declared, not authenticated, refusing these methods would stop no process that wanted to call them. Custom per-method permissions for connections may come later, after the beta ([#1810](https://github.com/matthewyjiang/rho/issues/1810)).
 
+A hello may also name the client's `build`: which wire it speaks, as an opaque string. While the protocol version stays at 0.1 until the beta, two builds of one version can speak different wires, and this tells them apart. The `rho-protocol` crate sends the hash of the schema it was built with, so two builds with the same schema have the same id; compare ids only for equality, since they have no order. When the hello names a build other than the daemon's, the daemon still accepts it, and its answer carries `skew`: requests may fail, and `skew.restart` says what restarting the daemon would cost at that moment, counted as for `VersionMismatch`, without the connecting client. A hello with no `build` gets no `skew`.
+
 A client and a daemon of different versions still have to read this much of each other, so it is held steady at every version, also while the protocol is unstable: the daemon reads `protocol` from a hello before anything else in it, and `protocol` and the `data` of `VersionMismatch` only ever gain optional fields.
 
 After the handshake the daemon runs a connection's requests concurrently and answers each one when it finishes, so responses can arrive out of order; pair them with their requests by id. Send a request that depends on another only after that one's response arrives.
@@ -27,7 +29,7 @@ When the client stops sending, the daemon answers every request it has already r
 
 | Method | Params | Result |
 | --- | --- | --- |
-| `rho/hello` | `protocol` (`{major, minor}`), `client` (`{name, version}`), `role` (`frontend` or `agent`), `capabilities` (optional; `answer`) | The daemon's `protocol` and `daemon` (`{version, pid}`). |
+| `rho/hello` | `protocol` (`{major, minor}`), `client` (`{name, version}`), `role` (`frontend` or `agent`), `capabilities` (optional; `answer`), `build` (optional) | The daemon's `protocol` and `daemon` (`{version, pid, build}`), and `skew` (`{restart}`) when the hello named another `build`. |
 | `rho/daemon/status` | | `pid`, `version`, `protocol`, `started_at`, `uptime_secs`, `jobs` (jobs queued, running, or waiting for input), `socket`, `credential_store`: the [credential store](#credential-store) the daemon keeps provider credentials in, and `upgrade`, present once the daemon's executable was replaced: the replacement's `version` and `waiting_for`, how many things the [upgrade](/daemon#upgrading-in-place) waits for: jobs in progress, logins under way, and sessions with work of their own. |
 | `rho/daemon/stop` | | `{}`; the daemon then shuts down as [described](/daemon#commands). |
 | `rho/daemon/restart` | | `{}`; the daemon then [re-executes in place](/daemon#upgrading-in-place), interrupting the turns under way. |
