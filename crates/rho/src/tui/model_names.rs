@@ -1,13 +1,16 @@
 //! How TUI chrome names a model: the catalog name a person recognizes
 //! (`Claude Opus 5.5`) when one is known, the model id otherwise.
 //!
-//! A daemon session's own labels come first, because they are the names its
-//! model picker shows. The local catalog answers for models the daemon does
-//! not offer and for in-process sessions. A model neither names keeps its id,
-//! never a name guessed from it.
+//! A daemon session's own labels decide for the models it offers, because they
+//! are the names its model picker shows. The local catalog answers for models
+//! the daemon does not offer and for in-process sessions. A model keeps its id
+//! when nothing names it or when its name is shared with another model from
+//! the same provider, never a name guessed from it.
 
 use rho_protocol::ModelChoice;
-use rho_providers::{model::display_name::model_display_name, provider::model_reference};
+use rho_providers::{
+    model::display_name::unambiguous_model_display_name, provider::model_reference,
+};
 
 use super::App;
 use crate::config::{InternalAgentModelConfig, InternalAgentTarget};
@@ -25,15 +28,20 @@ impl<'a> ModelNames<'a> {
         Self { offered }
     }
 
-    /// The display name of `provider/model`, or `None` when nothing names it.
+    /// The display name of `provider/model`, or `None` when the id should
+    /// show instead.
     pub(super) fn name(&self, provider: &str, model: &str) -> Option<String> {
-        self.offered
+        match self
+            .offered
             .iter()
             .find(|choice| choice.model.provider == provider && choice.model.model == model)
-            .map(|choice| choice.label.clone())
-            // The daemon labels a model no catalog names with its bare id.
-            .filter(|label| label != model)
-            .or_else(|| model_display_name(provider, model))
+        {
+            // The daemon labels a model with its bare id when no catalog names
+            // it, or when another model from its provider shares its name. The
+            // catalog would say no more in either case.
+            Some(choice) => (choice.label != model).then(|| choice.label.clone()),
+            None => unambiguous_model_display_name(provider, model),
+        }
     }
 
     /// The display name, or `provider/model` when nothing names it.
