@@ -27,13 +27,28 @@ fn install_fake(home: &IsolatedHome, script: &str) -> (FakeAcpPaths, String) {
     (fake, path)
 }
 
+/// Where the TUI runs the session.
+#[derive(Clone, Copy)]
+enum Host {
+    InProcess,
+    Daemon,
+}
+
 fn launch(home: &IsolatedHome, path: String, rows: u16, name: &str) -> PtyHarness {
-    let plan = RhoLaunchPlan::matrix(
+    launch_on(Host::InProcess, home, path, rows, name)
+}
+
+fn launch_on(host: Host, home: &IsolatedHome, path: String, rows: u16, name: &str) -> PtyHarness {
+    let mut plan = RhoLaunchPlan::matrix(
         PathBuf::from(env!("CARGO_BIN_EXE_rho")),
         home,
         PtySize { rows, cols: 120 },
     )
     .with_env("PATH", path);
+    match host {
+        Host::InProcess => {}
+        Host::Daemon => plan = plan.with_env("RHO_TUI_DAEMON", "1"),
+    }
     let mut harness = PtyHarness::spawn_named(&plan, name).unwrap();
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
@@ -197,9 +212,20 @@ fn fake_claude_runtime_end_to_end_success() {
 /// into the parent session total shown by `/info` after automatic delivery.
 #[test]
 fn fake_claude_background_cost_appears_in_info() {
+    background_cost_appears_in_info(Host::InProcess, "fake_claude_background_cost_info");
+}
+
+/// The same with the daemon running the session: the TUI reads the run's
+/// cost from its artifacts rather than from an in-process manager.
+#[test]
+fn fake_claude_background_cost_appears_in_info_daemon() {
+    background_cost_appears_in_info(Host::Daemon, "fake_claude_background_cost_info_daemon");
+}
+
+fn background_cost_appears_in_info(host: Host, name: &str) {
     let home = IsolatedHome::new().unwrap();
     let (_fake, path) = install_fake(&home, "success.json");
-    let mut harness = launch(&home, path, 36, "fake_claude_background_cost_info");
+    let mut harness = launch_on(host, &home, path, 36, name);
 
     harness
         .submit_text("fixture background claude agent")
