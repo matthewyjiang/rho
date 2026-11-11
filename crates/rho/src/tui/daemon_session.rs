@@ -281,13 +281,23 @@ mod unix {
     }
 
     /// Carries `changes` to `session`; one the daemon refuses keeps its
-    /// default.
-    async fn carry(link: &Link, session: &SessionId, changes: Vec<SessionChange>) {
+    /// default. Returns the session's options after the last change that
+    /// applied, if any did.
+    async fn carry(
+        link: &Link,
+        session: &SessionId,
+        changes: Vec<SessionChange>,
+    ) -> Option<SessionOptions> {
+        let mut options = None;
         for change in changes {
-            if let Err(refused) = configure_all(link, session, vec![change]).await {
-                tracing::warn!(error = %refused.error, "could not carry a setting to the new daemon session");
+            match configure_all(link, session, vec![change]).await {
+                Ok(changed) => options = changed.or(options),
+                Err(refused) => {
+                    tracing::warn!(error = %refused.error, "could not carry a setting to the new daemon session");
+                }
             }
         }
+        options
     }
 
     /// One daemon session the TUI follows.
@@ -370,7 +380,7 @@ mod unix {
                 environment: ClientEnvironment::of_this_process(),
                 setup: launch.setup.clone(),
             };
-            let response = match daemon.request::<SessionAttach>(&params).await {
+            let mut response = match daemon.request::<SessionAttach>(&params).await {
                 Ok(response) => response,
                 Err(error) => {
                     daemon.unroute(&id);
@@ -415,10 +425,16 @@ mod unix {
                     }
                 }
                 InitialSettings::Carried(carried) => {
-                    carry(&link, &id, changes_between(&response.options, &carried)).await;
-                    None
+                    carry(&link, &id, changes_between(&response.options, &carried)).await
                 }
             };
+            // The session's options are what the changes left, not what
+            // the attach answered before them: the chrome shows them, and
+            // a `/new` sent before the stream's own report of the changes
+            // is read carries them on.
+            if let Some(changed) = changed {
+                response.options = changed;
+            }
             // Routed before the reads, so no change after them is dropped.
             let config_changes = route_config(&daemon);
             let settings = load_settings(&link).await;
@@ -445,7 +461,7 @@ mod unix {
                 routed,
                 config_changes,
                 target,
-                options: Some(changed.unwrap_or_else(|| response.options.clone())),
+                options: Some(response.options.clone()),
                 events,
                 pending,
                 ended: false,
