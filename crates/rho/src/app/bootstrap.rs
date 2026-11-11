@@ -682,12 +682,6 @@ pub(super) fn host_capabilities(
     if role != AgentRole::InteractiveRoot {
         tools.remove(&ToolCapability::Questionnaire);
     }
-    #[cfg(debug_assertions)]
-    if std::env::var_os("RHO_TUI_TEST_MODE").as_deref() == Some(std::ffi::OsStr::new("matrix")) {
-        tools.insert(ToolCapability::Extension(
-            crate::tools::tui_fixture::NAME.into(),
-        ));
-    }
     tools
 }
 
