@@ -21,7 +21,9 @@
 //! woken through that host for background work too (see the daemon's
 //! `sessions::t3_wake`), so it gets [`BackgroundWait::HostWakes`]: running
 //! workflows and processes then never hold natural completion, and finished
-//! ones still deliver at every boundary.
+//! ones still deliver at every boundary. So it is for a session whose host
+//! starts a turn of its own when the work finishes, as the daemon does for
+//! the TUI ([`BackgroundWait::HostTurns`], `sessions::idle_wake`).
 
 use std::time::Instant;
 
@@ -64,15 +66,20 @@ pub(crate) enum BackgroundWait {
     HoldPrompt,
     /// The host wakes the idle session when the work finishes.
     HostWakes,
+    /// The host starts a turn on the idle session when the work finishes,
+    /// which delivers the result at its first boundary.
+    HostTurns,
 }
 
 impl BackgroundWait {
     /// How a session whose children `children` runs waits: a host that runs
-    /// them as its own threads wakes the session itself.
-    pub(super) fn of(children: super::ChildAgents) -> Self {
-        match children {
-            super::ChildAgents::InProcess => Self::HoldPrompt,
-            super::ChildAgents::HostThreads => Self::HostWakes,
+    /// them as its own threads wakes the session itself, whatever
+    /// `idle_turns` says.
+    pub(super) fn of(children: super::ChildAgents, idle_turns: super::IdleTurns) -> Self {
+        match (children, idle_turns) {
+            (super::ChildAgents::HostThreads, _) => Self::HostWakes,
+            (super::ChildAgents::InProcess, super::IdleTurns::Host) => Self::HostTurns,
+            (super::ChildAgents::InProcess, super::IdleTurns::Never) => Self::HoldPrompt,
         }
     }
 }
@@ -354,7 +361,7 @@ impl Delegation {
                         processes.has_live_started_since(self.prompt_started)
                     })
             }
-            BackgroundWait::HostWakes => false,
+            BackgroundWait::HostWakes | BackgroundWait::HostTurns => false,
         };
         subagents || finished || running
     }

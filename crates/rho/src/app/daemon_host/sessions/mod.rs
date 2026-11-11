@@ -72,6 +72,7 @@ mod cost;
 mod feed;
 mod goal;
 mod grant;
+mod idle_wake;
 mod inputs;
 mod inspect;
 mod mcp;
@@ -95,6 +96,7 @@ mod unload;
 
 use super::settings::ConfigStore;
 use feed::{Attached, Feed};
+use idle_wake::IdleWatch;
 use inputs::Inputs;
 pub(super) use open::session_environment;
 use open::{open_session, OpenWith, OpenedSession, Opening, Workspace};
@@ -140,6 +142,9 @@ pub(super) struct Sessions {
     /// Where the sessions' T3 wake watchers keep their files (see
     /// [`t3_wake`]).
     wakes: WakeDir,
+    /// This, for the tasks that start a turn on their own (see
+    /// [`idle_wake`]).
+    myself: Weak<Sessions>,
 }
 
 /// A session this daemon loaded.
@@ -185,6 +190,10 @@ struct LoadedSession {
     /// exactly when its host wakes it (see [`t3_wake`]). Only turns, which
     /// take the runtime one at a time, lock it.
     wake: Option<tokio::sync::Mutex<T3Wake>>,
+    /// The session's side of the watcher that starts a turn when its
+    /// background work finishes idle, when its client asked for that (see
+    /// [`idle_wake`]).
+    idle_wake: Option<IdleWatch>,
 }
 
 /// The state a session's turn lock guards.
@@ -395,6 +404,7 @@ impl LoadedSession {
         Self {
             id: runtime.session_id().clone(),
             wake: T3Wake::of(&runtime, wakes).map(tokio::sync::Mutex::new),
+            idle_wake: IdleWatch::of(&runtime),
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),
             live: Mutex::new(live),
@@ -529,10 +539,11 @@ impl Sessions {
     /// No sessions yet; their turns are recorded in `jobs`, and they keep
     /// their T3 wake watchers' files under `rho_home`, the daemon's Rho
     /// home.
-    pub(super) fn new(jobs: Arc<JobRegistry>, rho_home: &Path) -> Self {
+    pub(super) fn new(jobs: Arc<JobRegistry>, rho_home: &Path) -> Arc<Self> {
         let stopping = CancellationToken::new();
         let subagents = Subagents::new(Arc::clone(&jobs), stopping.clone());
-        Self {
+        Arc::new_cyclic(|myself| Self {
+            myself: Weak::clone(myself),
             settings: Arc::new(ConfigStore::new(rho_home, subagents.concurrency())),
             subagents,
             jobs,
@@ -541,7 +552,7 @@ impl Sessions {
             stopping,
             unloading: tokio::sync::RwLock::new(()),
             wakes: WakeDir::in_home(rho_home),
-        }
+        })
     }
 
     /// The daemon's settings.
@@ -681,6 +692,7 @@ impl Sessions {
                 Ok(()) => {
                     let entry = Arc::new(entry);
                     loaded.insert(session, Arc::clone(&entry));
+                    self.watch_idle_results(&entry);
                     return Ok(entry);
                 }
                 Err(error) => error,

@@ -119,6 +119,7 @@ fn session_new(
             mcp_servers: Vec::new(),
             without: passed.without,
             child_threads: ChildThreads::Daemon,
+            idle_wake: rho_protocol::IdleWake::Never,
         },
         parent: None,
         grant: None,

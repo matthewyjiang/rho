@@ -111,7 +111,7 @@ impl DaemonHost {
             socket,
             started_at,
             started: Instant::now(),
-            sessions: Arc::new(Sessions::new(Arc::clone(&jobs), rho_home)),
+            sessions: Sessions::new(Arc::clone(&jobs), rho_home),
             logins: Arc::new(Logins::new()),
             upgrades: Upgrades::default(),
             clients: AtomicU64::new(0),

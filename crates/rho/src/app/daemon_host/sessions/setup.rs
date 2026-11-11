@@ -19,14 +19,14 @@
 
 use std::path::Path;
 
-use rho_protocol::{ChildThreads, ErrorCode, RpcError, SessionPart, SessionSetup};
+use rho_protocol::{ChildThreads, ErrorCode, IdleWake, RpcError, SessionPart, SessionSetup};
 
 use super::open_failed;
 use crate::{
     added_dirs::{session_added_dirs, AddedDirs},
     app::{
         host_mcp::host_mcp_config,
-        session_runtime::{ChildAgents, LeftOut, QuestionSupport},
+        session_runtime::{ChildAgents, IdleTurns, LeftOut, QuestionSupport},
     },
     session::{Session as StoredSession, SessionPersistence},
     tools::mcp::config::McpConfig,
@@ -40,6 +40,9 @@ pub(super) struct Setup {
     pub(super) questions: QuestionSupport,
     /// Who runs its children: the host's threads when the request says so.
     pub(super) children: ChildAgents,
+    /// Whether the daemon starts a turn when its background work finishes
+    /// idle: when the request says so.
+    pub(super) idle_turns: IdleTurns,
     /// The directories it adds: those its file keeps that still exist, and
     /// the request's.
     pub(super) added_dirs: AddedDirs,
@@ -111,6 +114,10 @@ impl Setup {
             ChildThreads::Daemon => ChildAgents::InProcess,
             ChildThreads::Host => ChildAgents::HostThreads,
         };
+        let idle_turns = match requested.idle_wake {
+            IdleWake::Never => IdleTurns::Never,
+            IdleWake::Turn => IdleTurns::Host,
+        };
         let left_out = saved_left_out.union(asked);
         let added_dirs = saved_dirs.union(&root, &asked_dirs);
         Ok(Self {
@@ -119,6 +126,7 @@ impl Setup {
             left_out,
             questions,
             children,
+            idle_turns,
             added_dirs,
             persistence,
             host_mcp: host_mcp_config(&requested.mcp_servers),

@@ -2,7 +2,8 @@
 //! whose children run as the host's threads, which `rho acp --t3code` asks
 //! for).
 //!
-//! The daemon never starts a turn by itself, and T3 refuses a thread's own
+//! The daemon starts no turn by itself in such a session (it does where a
+//! client asks for it; see `idle_wake`), and T3 refuses a thread's own
 //! writes, such as `t3_thread_send`, once its run ends. T3 does wake a
 //! parent when a delegated task finishes, even after the parent's turn
 //! ended. So when a turn ends with background processes or workflows still
@@ -191,15 +192,34 @@ impl Background {
     }
 
     /// Whether a finished result is waiting for the model.
-    fn has_result(&self) -> bool {
+    pub(super) fn has_result(&self) -> bool {
         self.processes
             .as_ref()
             .is_some_and(ProcessManager::has_pending_notification)
             || self.workflows.has_pending_notification(&self.session_id)
     }
 
+    /// Resolves once a result arrives from now on, whatever waits already.
+    pub(super) fn next_result(&self) -> impl Future<Output = ()> {
+        // Subscribed here, not at the first poll.
+        let process_exit = self.processes.as_ref().map(ProcessManager::notified_owned);
+        let workflow_finish = self.workflows.notified_owned();
+        async move {
+            let process_exit = async move {
+                match process_exit {
+                    Some(exit) => exit.await,
+                    None => std::future::pending().await,
+                }
+            };
+            tokio::select! {
+                () = process_exit => {}
+                () = workflow_finish => {}
+            }
+        }
+    }
+
     /// Resolves once a result is waiting.
-    async fn result_ready(self) {
+    pub(super) async fn result_ready(self) {
         loop {
             // Subscribe before checking so a finish in between still wakes.
             let process_exit = self.processes.as_ref().map(ProcessManager::notified_owned);
@@ -226,7 +246,7 @@ impl T3Wake {
     /// `dir`, when its host wakes it.
     pub(super) fn of(runtime: &SessionRuntime, dir: &WakeDir) -> Option<Self> {
         match runtime.background_wait() {
-            BackgroundWait::HoldPrompt => None,
+            BackgroundWait::HoldPrompt | BackgroundWait::HostTurns => None,
             BackgroundWait::HostWakes => Some(Self::new(dir.clone())),
         }
     }
