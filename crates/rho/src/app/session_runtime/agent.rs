@@ -268,6 +268,8 @@ impl SessionRuntime {
         tracing::debug!(previous = %self.agent.id(), agent = %bound.id(), "rebound session agent");
         self.agent = bound;
         self.built.tools.bind_recall(self.storage.file());
+        // The rebuilt tools hold new subagents.
+        self.send_child_questions_to_host();
         Ok(())
     }
 }

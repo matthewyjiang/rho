@@ -195,6 +195,12 @@ pub(crate) struct SessionRuntime {
     reopen_notice: Option<String>,
     /// Child notice binding kept between prompts, since children outlive them.
     held_notices: Option<HeldNotices>,
+    /// Where the questions of the session's subagents go when the host
+    /// takes them itself (see [`Self::host_takes_child_questions`]);
+    /// `None` while each prompt takes them for its own run.
+    child_questions: Option<
+        tokio::sync::mpsc::Sender<crate::app::subagent_host_input::SubagentHostInputRequest>,
+    >,
     /// Whether the session's saves record its settings for a reopen.
     settings: SettingsPolicy,
     /// Set once checkpoint storage failed or filled: later turns take no
@@ -235,6 +241,7 @@ impl SessionRuntime {
             unsaved_compaction: false,
             reopen_notice,
             held_notices: None,
+            child_questions: None,
             settings,
             checkpoints_paused: false,
         }
@@ -329,6 +336,47 @@ impl SessionRuntime {
     /// with its first prompt.
     pub(crate) fn is_saved(&self) -> bool {
         self.storage.file().is_some()
+    }
+
+    /// Tells the session's hooks what it does, for a host that reports
+    /// what happens outside a prompt.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn hooks(&self) -> rho_sdk::hooks::HookDispatcher {
+        self.built.runtime.hooks()
+    }
+
+    /// Hands the host the questions the session's subagents ask from now
+    /// on, whether or not a prompt runs, as the in-process TUI's inbox
+    /// takes them: a subagent outlives the prompt that started it, and may
+    /// ask long after. `None`, and nothing changes, when nobody can be
+    /// asked or the session starts no subagents. Call once.
+    // Only the daemon, unix-only so far, takes them itself (#1665).
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn host_takes_child_questions(
+        &mut self,
+    ) -> Option<
+        tokio::sync::mpsc::Receiver<crate::app::subagent_host_input::SubagentHostInputRequest>,
+    > {
+        match self.build.host.questions {
+            QuestionSupport::Available => {}
+            QuestionSupport::Unavailable => return None,
+        }
+        self.built.tools.subagents()?;
+        let (sender, receiver) = tokio::sync::mpsc::channel(
+            crate::app::subagent_host_input::SubagentHostInputBridge::QUEUE_CAPACITY,
+        );
+        self.child_questions = Some(sender);
+        self.send_child_questions_to_host();
+        Some(receiver)
+    }
+
+    /// Points the session's subagents, as its tools hold them now, at the
+    /// host's question queue, when the host takes their questions.
+    fn send_child_questions_to_host(&self) {
+        if let (Some(sender), Some(manager)) = (&self.child_questions, self.built.tools.subagents())
+        {
+            manager.bind_host_input_to(sender.clone());
+        }
     }
 
     /// Whether running background work holds a prompt open, or the host

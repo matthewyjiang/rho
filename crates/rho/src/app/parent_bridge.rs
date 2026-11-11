@@ -48,6 +48,12 @@ impl<T> ParentBridge<T> {
         receiver
     }
 
+    /// Installs `sender` as the parent's side, for a parent that keeps one
+    /// receiver across several bridges. Replaces any previous binding.
+    pub(crate) fn bind_parent_to(&self, sender: mpsc::Sender<T>) {
+        *self.sender_slot() = Some(sender);
+    }
+
     /// Drops the parent binding so later child sends fail closed.
     pub(crate) fn unbind_parent(&self) {
         *self.sender_slot() = None;

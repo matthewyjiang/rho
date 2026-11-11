@@ -167,10 +167,13 @@ impl SubagentManager {
         self.executor.host_input().unbind_parent();
     }
 
-    /// How many questionnaires of this manager's children the parent took
-    /// and has not answered, and each change of that.
-    pub(crate) fn open_questions(&self) -> tokio::sync::watch::Receiver<usize> {
-        self.executor.host_input().open()
+    /// Sends the questionnaires of this manager's children to `sender`,
+    /// for a host that takes them whether or not a turn runs.
+    pub(crate) fn bind_host_input_to(
+        &self,
+        sender: tokio::sync::mpsc::Sender<SubagentHostInputRequest>,
+    ) {
+        self.executor.host_input().bind_parent_to(sender);
     }
 
     /// Atomically replaces the notice binding, retaining in-flight channel notices.

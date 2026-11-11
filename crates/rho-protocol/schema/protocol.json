@@ -1586,7 +1586,7 @@
         },
         {
           "const": "turn",
-          "description": "The daemon starts a turn that gives the model the result, as the\nterminal UI does. A prompt's turn ends while the work it started\nruns on, unless a subagent's question waits for an answer. A\nsubagent's request that its parent act starts such a turn too; its\ninformational messages go with the session's next provider request.\nFor a client that follows the session's events and shows a turn it\ndid not send. A session whose host runs its children\n([`ChildThreads::Host`]) is woken through that host instead.",
+          "description": "The daemon starts a turn that gives the model the result, as the\nterminal UI does. A prompt's turn ends while the work it started\nruns on. A subagent's request that its parent act starts such a\nturn too; its\ninformational messages go with the session's next provider request.\nFor a client that follows the session's events and shows a turn it\ndid not send. A session whose host runs its children\n([`ChildThreads::Host`]) is woken through that host instead.",
           "type": "string"
         }
       ]

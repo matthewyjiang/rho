@@ -13,6 +13,7 @@ use super::{
     },
     background_agents::{
         BACKGROUND_AGENT_AUTO_DELIVERY_STEPS, BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
+        LATE_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
     },
     quiet_subagent::{
         COMPLETION_AFTER_NEW_SCENARIO, QUIET_SUBAGENT_SCENARIO, RUNNING_NOTICES_SCENARIO,
@@ -63,6 +64,17 @@ pub(super) const BACKGROUND_AGENT_QUESTIONNAIRE: Scenario = in_daemon(
         "Answer a questionnaire raised by a background agent and deliver its completion",
         DEFAULT_SIZE,
         BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
+        /*smoke*/ false,
+    ),
+);
+
+pub(super) const LATE_BACKGROUND_AGENT_QUESTIONNAIRE: Scenario = in_daemon(
+    "daemon_late_background_agent_questionnaire",
+    &Scenario::new(
+        "",
+        "Answer a questionnaire a background agent raises after its parent's turn ended",
+        DEFAULT_SIZE,
+        LATE_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
         /*smoke*/ false,
     ),
 );

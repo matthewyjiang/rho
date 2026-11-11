@@ -119,8 +119,8 @@ pub enum IdleWake {
     Never,
     /// The daemon starts a turn that gives the model the result, as the
     /// terminal UI does. A prompt's turn ends while the work it started
-    /// runs on, unless a subagent's question waits for an answer. A
-    /// subagent's request that its parent act starts such a turn too; its
+    /// runs on. A subagent's request that its parent act starts such a
+    /// turn too; its
     /// informational messages go with the session's next provider request.
     /// For a client that follows the session's events and shows a turn it
     /// did not send. A session whose host runs its children

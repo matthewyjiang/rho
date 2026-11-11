@@ -69,8 +69,12 @@ enum Reply {
 /// What the person did at the open prompt.
 enum Reaction {
     Answer(InputAnswer),
-    /// Cancelled the questions, which cancels the turn, as in process.
+    /// Cancelled a plan approval, which cancels the turn, as in process.
     CancelTurn,
+    /// Cancelled questions: dismisses them, then cancels the turn if one
+    /// runs. They may be a subagent's, which outlive the turn, so the
+    /// cancel alone would leave the subagent waiting.
+    DismissQuestions,
     /// The prompt closed without a reply: another client may answer.
     Nothing,
 }
@@ -167,6 +171,17 @@ impl App {
                 self.cancel_daemon_turn().await;
                 return Ok(());
             }
+            Some((id, Reaction::DismissQuestions)) => {
+                self.daemon_answers.cancelled.insert(id);
+                if let Some(session) = self.info.session.daemon.as_mut() {
+                    session.answer(id, InputAnswer::Dismiss).await;
+                }
+                if self.daemon_turn_runs() {
+                    self.cancel_daemon_turn().await;
+                    return Ok(());
+                }
+                self.show_taken_daemon_views(terminal).await?;
+            }
             Some((_, Reaction::Nothing)) => {}
         }
         // Run on every event, so requests a failed cancel left waiting
@@ -175,6 +190,23 @@ impl App {
             self.show_next_daemon_input().await;
         }
         Ok(())
+    }
+
+    /// [`Self::answer_daemon_input`] while no turn runs, when the open
+    /// prompt is a subagent's question. Returns whether the prompt shown
+    /// changed.
+    pub(super) async fn answer_idle_daemon_input(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<bool> {
+        if self.info.session.daemon.is_none() {
+            return Ok(false);
+        }
+        let shown = |app: &Self| app.daemon_answers.shown.as_ref().map(|shown| shown.id);
+        let before = shown(self);
+        self.answer_daemon_input(terminal, /*cancelling*/ false)
+            .await?;
+        Ok(shown(self) != before)
     }
 
     /// Holds the open request once the person touched its form, which
@@ -221,7 +253,12 @@ impl App {
                 })
             }
             Reply::Questions(reply) => {
-                questionnaire_reaction(reply.now_or_never()?, questions_answer)
+                match questionnaire_reaction(reply.now_or_never()?, questions_answer) {
+                    Reaction::CancelTurn => Reaction::DismissQuestions,
+                    reaction @ (Reaction::Answer(_)
+                    | Reaction::DismissQuestions
+                    | Reaction::Nothing) => reaction,
+                }
             }
         };
         let id = shown.id;
@@ -230,8 +267,16 @@ impl App {
     }
 
     /// Opens the oldest waiting request's prompt while none is open. One
-    /// the TUI cannot show says so, and is left to other clients.
+    /// the TUI cannot show says so, and is left to other clients. With no
+    /// turn running, a subagent's question waits for a plain, empty
+    /// composer, as an in-process one does, and shows once the loop finds
+    /// one: it must not replace a draft or an open picker.
     async fn show_next_daemon_input(&mut self) {
+        let composer_free = matches!(self.input_ui.composer(), ComposerMode::Input)
+            && !self.input_ui.has_pending_draft();
+        if !self.daemon_turn_runs() && !composer_free {
+            return;
+        }
         while self.daemon_answers.shown.is_none() {
             let Some(request) = self.daemon_answers.waiting.pop_front() else {
                 return;

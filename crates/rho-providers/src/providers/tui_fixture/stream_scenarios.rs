@@ -183,7 +183,22 @@ pub(super) async fn intercept(
                 }),
             ))
         }
-        "fixture child questionnaire" | "fixture delayed child questionnaire"
+        // The parent's turn ends at once; the child asks only once released.
+        "fixture late background questionnaire"
+            if tool_result(request, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID).is_none() =>
+        {
+            Some(completed_tool_call(
+                BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID,
+                "agent",
+                serde_json::json!({
+                    "agent_id": "worker",
+                    "prompt": "fixture gated child questionnaire",
+                }),
+            ))
+        }
+        "fixture child questionnaire"
+        | "fixture delayed child questionnaire"
+        | "fixture gated child questionnaire"
             if tool_result(request, QUESTIONNAIRE_CALL_ID).is_none() =>
         {
             Some(child_questionnaire(prompt, request).await)
@@ -493,6 +508,13 @@ async fn child_questionnaire(
 ) -> Result<ModelResponse, ProviderError> {
     if prompt == "fixture delayed child questionnaire" {
         fixture_sleep(&request.cancellation, Duration::from_secs(1)).await?;
+    }
+    if prompt == "fixture gated child questionnaire" {
+        super::release::wait_for_release_or_cancel(
+            ".rho-fixture-release-child-questionnaire",
+            &request.cancellation,
+        )
+        .await?;
     }
     completed_tool_call(
         QUESTIONNAIRE_CALL_ID,
