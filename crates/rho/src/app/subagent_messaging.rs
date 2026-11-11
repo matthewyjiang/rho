@@ -222,6 +222,8 @@ struct NoticeBinding {
 pub(crate) struct SubagentNoticeBridge {
     binding: Arc<Mutex<Option<NoticeBinding>>>,
     pending: Arc<Mutex<Vec<SubagentNotice>>>,
+    /// Notified each time a notice is accepted.
+    posted: Arc<tokio::sync::Notify>,
     capacity: usize,
 }
 
@@ -248,8 +250,31 @@ impl SubagentNoticeBridge {
         Self {
             binding: Arc::new(Mutex::new(None)),
             pending: Arc::new(Mutex::new(Vec::new())),
+            posted: Arc::new(tokio::sync::Notify::new()),
             capacity: NOTICE_QUEUE_CAPACITY,
         }
+    }
+
+    /// Resolves once a notice is accepted from now on.
+    // Only the daemon, unix-only so far, wakes an idle parent (#1665).
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn posted(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        Arc::clone(&self.posted).notified_owned()
+    }
+
+    /// The accepted notices for parent session `session_id` that no turn
+    /// delivered and no status read showed.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn undelivered(&self, session_id: &str) -> Vec<SubagentNotice> {
+        self.pending
+            .lock()
+            .expect("pending notice receipts")
+            .iter()
+            .filter(|notice| {
+                notice.parent_session_id.as_str() == session_id && !notice.is_acknowledged()
+            })
+            .cloned()
+            .collect()
     }
 
     /// Installs the parent receiver and a fresh permit generation.
@@ -359,6 +384,7 @@ impl SubagentNoticeBridge {
                 mpsc::error::TrySendError::Closed(_) => NoticePostError::Unbound,
             }
         })?;
+        self.posted.notify_waiters();
         Ok(())
     }
 

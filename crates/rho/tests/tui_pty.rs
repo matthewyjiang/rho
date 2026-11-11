@@ -1551,12 +1551,78 @@ fn daemon_tui_switches_the_session_it_follows() {
     assert_pass("daemon_switch");
 }
 
-// Covers: a daemon session's subagent shows on the following TUI's rail,
-// and `/attach` opens its transcript.
+// Covers: with RHO_TUI_DAEMON=1, a turn that starts a subagent ends while
+// the subagent runs, its card and messages read as in process, and its rail
+// row opens the attach view.
 // Owner: interactive TUI as a daemon client (#1667)
 #[test]
-fn daemon_subagent_shows_on_the_rail_and_attaches() {
-    assert_pass("daemon_subagent_rail");
+fn daemon_turn_ends_while_its_subagents_run() {
+    for scenario in [
+        "daemon_agent_prompt_streaming",
+        "daemon_agent_messages",
+        "daemon_subagent_rail_mouse",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: with RHO_TUI_DAEMON=1, the daemon gives the idle session a
+// subagent's result in a turn of its own, also after /new, and a subagent's
+// question outlives the reply of the turn that started it.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_delivers_subagent_results_to_the_idle_session() {
+    for scenario in [
+        "daemon_background_agent_auto_delivery",
+        "daemon_background_agent_questionnaire",
+        "daemon_subagent_completion_after_new",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: with RHO_TUI_DAEMON=1, a subagent's informational notices start
+// no turn and buy no provider request, its action request does, and a
+// delivered notice leaves the streamed reply before it whole.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_quiet_subagent_notices_wait_for_a_turn() {
+    for scenario in [
+        "daemon_quiet_subagent_notices",
+        "daemon_quiet_subagent_running_notices",
+        "daemon_streaming_boundary_notice",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: with RHO_TUI_DAEMON=1, /attach lists a daemon session's running
+// subagents, opens and cycles the in-place view, and shows a parent's
+// message there once applied.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_attach_opens_a_daemon_sessions_subagents() {
+    for scenario in [
+        "daemon_attach_picker",
+        "daemon_attach_view_from_command",
+        "daemon_attach_view_cycle",
+        "daemon_attach_parent_message",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: with RHO_TUI_DAEMON=1, the attach view badges an approval of the
+// parent's running turn, and Ctrl-C leaves it mid-turn and quits after.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_attach_view_follows_the_parents_turn() {
+    for scenario in [
+        "daemon_attach_view_parent_approval",
+        "daemon_attach_view_quit_restores",
+    ] {
+        assert_pass(scenario);
+    }
 }
 
 // Covers: MCP inventory belongs to the daemon session even when the new client's

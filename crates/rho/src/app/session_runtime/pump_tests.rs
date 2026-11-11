@@ -412,6 +412,7 @@ async fn a_subagents_question_is_answered_through_the_turn() {
         answer: Ok(rho_sdk::HostInputResponse::new().answer("go", ["yes"])),
     });
     let answer = answered.await.expect("the answer reaches the subagent");
+    let answer_told = harness.next().await;
 
     let (asked, abandoned_id, abandoned) = child_question();
     harness.child_questions.send(asked).await.unwrap();
@@ -433,6 +434,7 @@ async fn a_subagents_question_is_answered_through_the_turn() {
             answer
                 .ok()
                 .and_then(|answer| answer.answers().get("go").cloned()),
+            answer_told,
             abandoned_ask,
             given_up,
             second,
@@ -443,6 +445,7 @@ async fn a_subagents_question_is_answered_through_the_turn() {
         (
             [Seen::Notice, Seen::QuestionAsked(answered_id)],
             Some(vec!["yes".to_owned()]),
+            Seen::Notice,
             [Seen::Notice, Seen::QuestionAsked(abandoned_id.clone())],
             Seen::QuestionWithdrawn(abandoned_id),
             [Seen::Notice, Seen::QuestionAsked(open_id.clone())],

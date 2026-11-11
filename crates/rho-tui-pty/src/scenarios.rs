@@ -54,6 +54,8 @@ mod daemon_resume;
 #[cfg(unix)]
 mod daemon_rewind;
 #[cfg(unix)]
+mod daemon_subagents;
+#[cfg(unix)]
 mod daemon_switch;
 #[cfg(unix)]
 mod daemon_tree;
@@ -596,7 +598,35 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     daemon_switch::SCENARIO,
     #[cfg(unix)]
-    subagent_rail::DAEMON_SUBAGENT_RAIL_SCENARIO,
+    daemon_subagents::AGENT_PROMPT_STREAMING,
+    #[cfg(unix)]
+    daemon_subagents::AGENT_MESSAGES,
+    #[cfg(unix)]
+    daemon_subagents::BACKGROUND_AGENT_AUTO_DELIVERY,
+    #[cfg(unix)]
+    daemon_subagents::BACKGROUND_AGENT_QUESTIONNAIRE,
+    #[cfg(unix)]
+    daemon_subagents::SUBAGENT_RAIL_MOUSE,
+    #[cfg(unix)]
+    daemon_subagents::QUIET_SUBAGENT_NOTICES,
+    #[cfg(unix)]
+    daemon_subagents::QUIET_SUBAGENT_RUNNING_NOTICES,
+    #[cfg(unix)]
+    daemon_subagents::STREAMING_BOUNDARY_NOTICE,
+    #[cfg(unix)]
+    daemon_subagents::SUBAGENT_COMPLETION_AFTER_NEW,
+    #[cfg(unix)]
+    daemon_subagents::ATTACH_PICKER,
+    #[cfg(unix)]
+    daemon_subagents::ATTACH_PARENT_MESSAGE,
+    #[cfg(unix)]
+    daemon_subagents::ATTACH_VIEW_FROM_COMMAND,
+    #[cfg(unix)]
+    daemon_subagents::ATTACH_VIEW_CYCLE,
+    #[cfg(unix)]
+    daemon_subagents::ATTACH_VIEW_PARENT_APPROVAL,
+    #[cfg(unix)]
+    daemon_subagents::ATTACH_VIEW_QUIT_RESTORES,
     #[cfg(unix)]
     daemon_restart::SCENARIO,
     #[cfg(unix)]

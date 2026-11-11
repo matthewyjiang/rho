@@ -250,9 +250,10 @@ impl SessionRuntime {
         // Plan approvals belong to the tool set, which outlives this prompt
         // and is swapped by an agent rebind, so they are handed back after.
         let mut plan_approvals = self.built.tools.take_plan_permission_requests();
-        // Bound for this run, which stays open while the session's
-        // subagents work, and only when a person can be asked: a subagent
-        // of an unbound parent gets no questionnaire tool.
+        // Bound for this run, and only when a person can be asked: a
+        // subagent of an unbound parent gets no questionnaire tool. The run
+        // stays open while its subagents work, or, where the host starts
+        // turns of its own, while one of them has a question open.
         let mut child_questions = match self.build.host.questions {
             QuestionSupport::Available => self
                 .built

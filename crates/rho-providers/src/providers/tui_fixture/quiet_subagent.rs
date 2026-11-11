@@ -3,7 +3,7 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use rho_sdk::{
-    model::{ModelRequest, ModelResponse},
+    model::{ContentBlock, Message, ModelRequest, ModelResponse},
     ProviderError, ProviderErrorKind, Retryability,
 };
 
@@ -146,11 +146,13 @@ pub(super) async fn intercept(
         }
         return Some(completed("quiet child dispatched"));
     }
-    if prompt.ends_with("fixture quiet request count") {
+    if let Some(opening) =
+        opening_input(request).filter(|input| input.contains("fixture quiet request count"))
+    {
         return Some(completed(format!(
             "quiet extra requests={} carried notices={}",
             PARENT_REQUESTS.load(Ordering::SeqCst),
-            prompt.matches(FIRST).count(),
+            opening.matches(FIRST).count(),
         )));
     }
     if prompt.contains(FIRST) || prompt.contains(SECOND) || prompt.contains(ACTION) {
@@ -173,12 +175,51 @@ pub(super) async fn intercept(
     None
 }
 
+/// What opens the turn this request starts: the human prompt and whatever
+/// was delivered with it. An in-process TUI folds queued notices into the
+/// prompt; a daemon session delivers them as a boundary input after it.
+/// `None` once the turn has replied or called a tool.
+fn opening_input(request: &ModelRequest<'_>) -> Option<String> {
+    let prompt = request
+        .messages
+        .iter()
+        .rposition(|message| matches!(message, Message::User(_)))?;
+    let mut input = String::new();
+    for message in &request.messages[prompt..] {
+        match message {
+            Message::User(content) | Message::BoundaryInput(content) => {
+                for block in content {
+                    if let ContentBlock::Text(text) = block {
+                        input.push_str(text);
+                        input.push('\n');
+                    }
+                }
+            }
+            Message::Assistant(_)
+            | Message::EnrichedAssistant(_)
+            | Message::AbortedAssistant(_)
+            | Message::ToolResult(_) => return None,
+            Message::System(_)
+            | Message::CompactionSummary(_)
+            | Message::ModelContext(_)
+            | Message::ReasoningShift(_) => {}
+        }
+    }
+    Some(input)
+}
+
 #[cfg(unix)]
 async fn barrier(stage: &str, request: &ModelRequest<'_>) -> Result<(), ProviderError> {
-    let socket = tokio::net::UnixDatagram::bind(format!(".quiet-child-{stage}.sock"))
-        .map_err(|error| ProviderError::interrupted(format!("quiet barrier bind: {error}")))?;
+    // In the scenario's workspace, which is not where a daemon runs.
+    let socket = tokio::net::UnixDatagram::bind(super::release::workspace_path(&format!(
+        ".quiet-child-{stage}.sock"
+    )))
+    .map_err(|error| ProviderError::interrupted(format!("quiet barrier bind: {error}")))?;
     socket
-        .send_to(stage.as_bytes(), ".quiet-parent-pty.sock")
+        .send_to(
+            stage.as_bytes(),
+            super::release::workspace_path(".quiet-parent-pty.sock"),
+        )
         .await
         .map_err(|error| ProviderError::interrupted(format!("quiet barrier ready: {error}")))?;
     let mut command = [0_u8; 1];

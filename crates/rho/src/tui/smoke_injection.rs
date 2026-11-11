@@ -20,11 +20,7 @@ pub(super) fn quiet_notice_boundary(queued: usize) {
             static LAST_ACKNOWLEDGED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
         }
         LAST_ACKNOWLEDGED.with(|last| {
-            acknowledge_notice_boundary(
-                queued,
-                last,
-                std::path::Path::new(".quiet-parent-pty.sock"),
-            );
+            acknowledge_notice_boundary(queued, last, &crate::app::quiet_notice_signal::socket());
         });
     }
     #[cfg(not(unix))]
@@ -44,15 +40,9 @@ fn acknowledge_notice_boundary(
         last.set(0);
         return;
     }
-    let send = || -> std::io::Result<()> {
-        let socket = std::os::unix::net::UnixDatagram::unbound()?;
-        socket.set_nonblocking(true)?;
-        socket.send_to(format!("boundary:{queued}").as_bytes(), path)?;
-        Ok(())
-    };
     // A full or retired observer must never stall or crash the TUI. Retry an
     // unsent state at the next boundary; suppress duplicates only after success.
-    if send().is_ok() {
+    if crate::app::quiet_notice_signal::send(queued, path).is_ok() {
         last.set(queued);
     }
 }

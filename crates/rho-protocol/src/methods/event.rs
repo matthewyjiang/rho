@@ -187,6 +187,11 @@ pub enum SessionEvent {
         /// The same body as plain text, for clients that show text as is.
         plain: String,
         tone: CardTone,
+        /// The card as Rho's TUI draws it, when it is a notification: its
+        /// sender and recipient, preview, and what expanding it shows.
+        /// Clients that draw their own cards ignore it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display: Option<Box<crate::display::NotificationCard>>,
     },
     /// Something to tell the user that is not part of the conversation.
     Notice { text: String },

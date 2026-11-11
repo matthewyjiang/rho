@@ -122,6 +122,8 @@ impl Updates {
                 markdown,
                 plain,
                 tone,
+                // The TUI's drawing of it; ACP clients draw their own.
+                display: _,
             } => vec![self.card(title, markdown, plain, *tone)],
             SessionEvent::Notice { text } => vec![self.notice(text)],
             SessionEvent::State { .. }

@@ -7,7 +7,7 @@ use std::{
 
 use rho_tui_pty::{IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan, WaitTimeout};
 
-use super::attach_view;
+use super::{attach_view, SessionHost};
 
 fn find_journal(root: &Path) -> Option<PathBuf> {
     for entry in std::fs::read_dir(root).ok()?.flatten() {
@@ -28,15 +28,27 @@ fn find_journal(root: &Path) -> Option<PathBuf> {
 // Owner: delegated-run/attach product contract (not a synthetic journal fixture).
 #[test]
 fn delegated_argument_previews_live_and_replay() {
+    delegated_argument_previews(SessionHost::InProcess);
+}
+
+// Covers: with RHO_TUI_DAEMON=1, the attach view follows a run the daemon
+// hosts as it does one in process.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_delegated_argument_previews_live_and_replay() {
+    delegated_argument_previews(SessionHost::Daemon);
+}
+
+fn delegated_argument_previews(host: SessionHost) {
     let home = IsolatedHome::new().unwrap();
-    let plan = RhoLaunchPlan::matrix(
+    let plan = host.launch(RhoLaunchPlan::matrix(
         PathBuf::from(env!("CARGO_BIN_EXE_rho")),
         &home,
         PtySize {
             rows: 40,
             cols: 110,
         },
-    );
+    ));
     let wait = WaitTimeout::secs(10, "delegated argument stream");
     let mut parent = PtyHarness::spawn_named(&plan, "preview_parent").unwrap();
     parent.wait_for_text("gpt-5.5", wait).unwrap();

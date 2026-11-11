@@ -988,7 +988,7 @@ fn background_cards_carry_plain_text_and_tone() {
     let tool_set = AppToolSet::disabled();
     let mut live = live(&tool_set);
     let applied = SessionEvent::BoundaryApplied {
-        transcript: DisplayTranscript(vec![DisplayRow::Notification(Box::new(card))]),
+        transcript: DisplayTranscript(vec![DisplayRow::Notification(Box::new(card.clone()))]),
     };
     assert_eq!(
         live.map(&applied),
@@ -997,6 +997,7 @@ fn background_cards_carry_plain_text_and_tone() {
             markdown: "exited 1\nfailed\n\n```text\nboom\n```".into(),
             plain: "exited 1\nfailed\n\nboom".into(),
             tone: CardTone::Error,
+            display: Some(Box::new(card)),
         }]
     );
 }
