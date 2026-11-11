@@ -45,19 +45,22 @@ const LEGACY_TRANSCRIPT: &str = r#"{"type":"session","version":2,"id":"22222222-
 
 fn setup(home: &IsolatedHome) -> Result<()> {
     write_daemon_config(home)?;
+    // Rho keys sessions by the resolved workspace, which differs from the
+    // temp path where it runs through a symlink, as /var does on macOS.
+    let workspace_dir = fs::canonicalize(&home.workspace).context("resolve the workspace")?;
     write_seed_session(
         home,
-        &home.workspace,
-        &home.workspace,
+        &workspace_dir,
+        &workspace_dir,
         CURRENT_ID,
         &[CURRENT_PROMPT],
     )?;
-    let workspace = home.workspace.to_str().context("workspace path is UTF-8")?;
+    let workspace = workspace_dir.to_str().context("workspace path is UTF-8")?;
     let workspace = serde_json::to_string(workspace)?;
     fs::write(
         home.home
             .join(".rho/sessions")
-            .join(workspace_key(&home.workspace))
+            .join(workspace_key(&workspace_dir))
             .join(format!("200_{LEGACY_ID}.jsonl")),
         LEGACY_TRANSCRIPT.replace("\"WORKSPACE\"", &workspace),
     )
