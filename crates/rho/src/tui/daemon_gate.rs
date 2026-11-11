@@ -49,19 +49,20 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Export
         | CommandId::Title
         | CommandId::Remember
-        | CommandId::Side => CommandRoute::Ui,
+        | CommandId::Side
+        // The daemon opens the session these follow next.
+        | CommandId::New
+        | CommandId::Resume
+        | CommandId::Sessions => CommandRoute::Ui,
         // Session navigation and deletion need daemon methods;
         // provider/auth editors and agents still own in-process state.
         // Hubs (/workflow, /attach) likewise describe the wrong runtime,
         // even when opened read-only.
         CommandId::AddDir
-        | CommandId::New
         | CommandId::Login
         | CommandId::Logout
         | CommandId::RefreshModels
-        | CommandId::Resume
         | CommandId::Rewind
-        | CommandId::Sessions
         | CommandId::Tree
         | CommandId::Context
         | CommandId::Hooks

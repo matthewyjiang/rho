@@ -30,7 +30,7 @@ mod reasoning;
 
 pub(crate) use commands::available_commands;
 pub(crate) use models::resolve_model;
-pub(crate) use reasoning::reasoning_from_wire;
+pub(crate) use reasoning::{reasoning_from_wire, reasoning_to_wire};
 
 /// `runtime`'s options now: the choices `process_config` gives it, the
 /// models of `available_auths` (the credential store's

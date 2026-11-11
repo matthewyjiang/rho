@@ -1226,6 +1226,14 @@ fn daemon_session_takes_context_added_without_a_turn() {
     assert_pass("daemon_session_context");
 }
 
+// Covers: `/new`, `/resume`, and the `--resume` picker switch the daemon
+// session the TUI follows; a launch flag's setting carries into `/new`.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_tui_switches_the_session_it_follows() {
+    assert_pass("daemon_switch");
+}
+
 // Covers: an unported command refuses visibly and the next prompt still runs.
 // Owner: interactive TUI daemon command boundary.
 #[test]

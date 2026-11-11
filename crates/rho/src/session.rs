@@ -296,10 +296,16 @@ impl Session {
 
     /// Resolves a resume prefix without opening the session or taking its
     /// writer lease. Daemon clients leave opening to the daemon.
-    #[cfg(unix)]
     pub(crate) fn resolve_id(cwd: &Path, id_prefix: &str) -> anyhow::Result<String> {
+        Ok(Self::resolve_target(cwd, id_prefix)?.id)
+    }
+
+    /// [`Self::resolve_id`] with the workspace the session belongs to,
+    /// which is another project's when the prefix matched none here.
+    pub(crate) fn resolve_target(cwd: &Path, id_prefix: &str) -> anyhow::Result<SessionTarget> {
         let root = session_root()?;
-        Ok(SessionStore::new(&root, cwd).resolve(id_prefix)?.id)
+        let resolved = SessionStore::new(&root, cwd).resolve(id_prefix)?;
+        Ok(SessionTarget::new(resolved.id, resolved.cwd))
     }
 
     /// Opens one exact workspace-scoped session without falling back to another workspace.

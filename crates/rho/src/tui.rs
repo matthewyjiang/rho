@@ -72,6 +72,7 @@ mod daemon_session;
 mod daemon_settings;
 #[cfg(unix)]
 mod daemon_settings_read;
+mod daemon_switch;
 mod daemon_transcript;
 mod daemon_turn;
 mod diff_pane;
@@ -514,7 +515,7 @@ pub struct ApplicationServices {
 pub(crate) use attachment::translate_run_event;
 pub(crate) use daemon_session::DaemonSession;
 #[cfg(unix)]
-pub(crate) use daemon_session::DaemonTarget;
+pub(crate) use daemon_session::{DaemonLaunch, DaemonTarget, InitialSettings};
 pub(crate) use exit_receipt::{print_exit_receipt, ExitReceipt};
 pub use herdr_resume::ResumeLaunchOptions;
 

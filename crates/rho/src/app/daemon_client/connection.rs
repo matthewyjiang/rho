@@ -1,4 +1,6 @@
-//! This process's one connection to the rho daemon.
+//! One connection of this process to the rho daemon. Most frontends hold
+//! one; the TUI opens another for the session it switches to, then drops
+//! the old one.
 //!
 //! Every session the client attaches attaches on the same connection: the
 //! daemon keeps one attachment per session, not per connection. The

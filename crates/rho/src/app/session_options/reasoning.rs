@@ -34,7 +34,7 @@ pub(super) fn reasoning_options(
     }
 }
 
-fn reasoning_to_wire(level: ReasoningLevel) -> wire::ReasoningLevel {
+pub(crate) fn reasoning_to_wire(level: ReasoningLevel) -> wire::ReasoningLevel {
     match level {
         ReasoningLevel::Off => wire::ReasoningLevel::Off,
         ReasoningLevel::Minimal => wire::ReasoningLevel::Minimal,
