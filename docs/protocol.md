@@ -105,12 +105,14 @@ A prompt with no blocks gets `InvalidParams`, as does one with an image whose `d
 | --- | --- |
 | `additional_directories` | Directories outside the workspace its tools may use, as `--add-dir` adds them: absolute paths to existing directories. Any other entry gets `InvalidParams`, naming it, and the session does not open. |
 | `mcp_servers` | MCP servers the client provides, connected next to those in config; one replaces a config server of the same name. Each has a `transport`: `stdio`, with `name`, `command`, and optional `args` (a list of strings) and `env`, or `http`, with `name`, `url`, and optional `headers`; `env` and `headers` are objects of strings, by name. The daemon connects plain HTTP only to this machine and never lets these servers sample the model. An entry it cannot connect is left out, and still replaces the config server of its name; when a name repeats, the last entry wins. |
-| `without` | Parts of the session left out: `tools`, `system_prompt`, or `subagents`, as `--no-tools`, `--no-system-prompt`, and `--no-subagents` leave them out, or `questions`, for a client that cannot show questions: the session then has no questionnaire tool and declines an MCP server's question. A part this daemon does not know gets `InvalidParams`. |
+| `without` | Parts of the session left out: `tools`, `system_prompt`, or `subagents`, as `--no-tools`, `--no-system-prompt`, and `--no-subagents` leave them out, or `questions`, for a client that cannot show questions: the session then has no questionnaire tool and declines an MCP server's question; or `saving`, as `--no-save`: the session has no file (below). A part this daemon does not know gets `InvalidParams`. |
 | `child_threads` | Who runs the children its `agent` tool starts: `daemon`, the default, as subagents of the session, or `host`, as the client's host's own threads, which `rho acp --t3code` asks for. With `host`, the session's `agent` and `agents` tools delegate through the `delegate_task`, `task_status`, and `task_cancel` tools of an MCP server named `t3-code` in `mcp_servers`; while one of them is missing, every `agent` call fails rather than run the child in the daemon. |
 
 The session keeps its directories and the parts it leaves out, other than `questions`, in its file, so they outlast the daemon unloading it. A prompt or attach that reopens a saved session opens it with the directories it saved that still exist and the parts it saved as left out, plus those its own `setup` names: a later client can narrow a session further, never widen it. MCP servers, `questions`, and `child_threads` belong to the client, since a server's `env` and `headers` may hold secrets and `host` child threads go through the client's MCP server: the daemon never saves them, so a reopened session has only those of the attach that reopens it, and none when a prompt reopens it, since a prompt carries no setup. A saved directory that no longer exists is dropped, and the daemon logs a warning naming it. A session `rho run` or `rho acp` saved keeps what their `--no-*` flags left out the same way; one the TUI started leaves nothing out.
 
 That guarantee holds across the daemon's reopens, so it covers `rho acp` sessions, which run in the daemon. The TUI, which opens a session file in its own process, keeps what a session saved but does not save its own `--no-*` flags; it becomes a daemon client in [#1667](https://github.com/matthewyjiang/rho/issues/1667).
+
+A new session opened without `saving` lives in the daemon's memory alone, and so do its job's record and those of the jobs it starts: `rho/session/list` never lists it, the daemon keeps it while a client follows it or it has work under way and discards it once it sits idle, and a daemon restart loses it. `saving` is read when a session opens: a request that reopens a saved session without it gets `InvalidParams`.
 
 ## Following a session
 
@@ -227,7 +229,7 @@ A session's `options` are what a frontend shows as its settings and command menu
 
 | `kind` | Fields | Change |
 | --- | --- | --- |
-| `model` | `model` (`{provider, model}`) | Switches to one of `model.available`, keeping the reasoning level; a model that cannot keep it is refused. |
+| `model` | `model` (`{provider, model}`), optionally `auth` | Switches to one of `model.available`, keeping the reasoning level; a model that cannot keep it is refused. `auth` names the auth profile to run the model on, as `--auth` does; one the model's provider does not take is `InvalidParams`. Without it, the session keeps its auth when the provider takes it, else uses one that has credentials. |
 | `reasoning` | `level` | Spends one of `reasoning.available` on later turns. |
 | `fast_mode` | `enabled` | Turns fast mode on, for a model that has it, or off. |
 | `permission_mode` | `mode` | Gates later turns' tool calls with `mode`. |

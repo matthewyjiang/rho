@@ -11,7 +11,7 @@ use std::{
 
 use super::{
     state::TransitionRefused, unix_now, Admission, JobEvent, JobId, JobRecord, JobState, JobStore,
-    JobSubject, TurnEnd, TurnRecord,
+    JobSubject, Keeping, TurnEnd, TurnRecord,
 };
 use crate::caller_context::CallerContext;
 
@@ -159,18 +159,26 @@ impl JobRegistry {
         registry
     }
 
-    /// Adds `record` and writes its file. Fails when the file cannot be
-    /// written, and then the job is not added: a job the daemon could not
-    /// record would vanish at its next restart.
+    /// Adds `record` and writes its file, unless it or the job that started
+    /// it is kept in memory alone. Fails when the file cannot be written,
+    /// and then the job is not added: a job the daemon could not record
+    /// would vanish at its next restart.
     pub(in crate::app::daemon_host) fn register(
         &self,
-        record: JobRecord,
+        mut record: JobRecord,
     ) -> Result<(), RegisterError> {
         let mut jobs = self.lock();
         if self.closed.load(Ordering::Relaxed) {
             return Err(RegisterError::Closed);
         }
-        self.store.write(&record)?;
+        let parent = record.parent.as_ref().and_then(|parent| jobs.get(parent));
+        if parent.is_some_and(|parent| parent.keeping == Keeping::MemoryOnly) {
+            record.keeping = Keeping::MemoryOnly;
+        }
+        match record.keeping {
+            Keeping::Stored => self.store.write(&record)?,
+            Keeping::MemoryOnly => {}
+        }
         if record.state.in_progress() {
             self.started.fetch_add(1, Ordering::Relaxed);
         }
@@ -389,10 +397,13 @@ impl JobRegistry {
         // Deleted under the lock every write takes, so no write of the job
         // races the delete and writes its record back.
         let mut jobs = self.lock();
-        if jobs.remove(id).is_none() {
+        let Some(removed) = jobs.remove(id) else {
+            return;
+        };
+        self.changed.notify_waiters();
+        if removed.keeping == Keeping::MemoryOnly {
             return;
         }
-        self.changed.notify_waiters();
         if let Err(error) = self.store.remove(id) {
             tracing::error!(job = %id, %error, "could not delete job record");
         }
@@ -460,10 +471,13 @@ fn apply(record: &mut JobRecord, event: JobEvent) -> Result<(), TransitionRefuse
     Ok(())
 }
 
-/// Writes `record`'s file. A transition that cannot be written still
+/// Writes `record`'s file, if it has one. A transition that cannot be written still
 /// applies in memory: the job goes on, and its next transition rewrites the
 /// file; until then a restarted daemon sees the job one step behind.
 fn persist(store: &JobStore, record: &JobRecord) {
+    if record.keeping == Keeping::MemoryOnly {
+        return;
+    }
     if let Err(error) = store.write(record) {
         tracing::error!(job = %record.id, state = %record.state, %error, "could not write job record");
     }

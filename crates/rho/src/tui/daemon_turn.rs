@@ -161,8 +161,11 @@ impl App {
                     let cancelling = matches!(control, Ok(StreamControl::Interrupt));
                     self.answer_daemon_input(terminal, cancelling).await?;
                     match control {
-                        // Quitting leaves the turn to the daemon.
-                        Ok(StreamControl::Interrupt) if self.should_quit => {}
+                        // Quitting leaves the turn to the daemon, unless
+                        // nothing could follow it again: a session with no
+                        // file cannot be resumed, so its turn ends here.
+                        Ok(StreamControl::Interrupt)
+                            if self.should_quit && !self.info.session.no_save => {}
                         Ok(StreamControl::Interrupt) => self.cancel_daemon_turn().await,
                         Ok(
                             StreamControl::Continue

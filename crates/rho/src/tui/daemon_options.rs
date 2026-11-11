@@ -158,7 +158,7 @@ impl App {
             return Ok(());
         };
         match model_choice(&options.model, reference) {
-            Ok(model) => self.configure_daemon(SessionChange::Model { model }),
+            Ok(model) => self.configure_daemon(SessionChange::Model { model, auth: None }),
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("could not switch model: {error}")));
                 Ok(())
@@ -196,7 +196,7 @@ impl App {
             .iter()
             .rev()
             .find_map(|change| match change {
-                SessionChange::Model { model } => Some(model),
+                SessionChange::Model { model, .. } => Some(model),
                 _ => None,
             })
             .unwrap_or(&options.model.current);
@@ -210,7 +210,7 @@ impl App {
             (CycleDirection::Backward, None) => available.len() - 1,
         };
         let model = available[next].model.clone();
-        self.configure_daemon(SessionChange::Model { model })
+        self.configure_daemon(SessionChange::Model { model, auth: None })
     }
 
     pub(super) fn cycle_daemon_reasoning(&mut self) -> anyhow::Result<()> {

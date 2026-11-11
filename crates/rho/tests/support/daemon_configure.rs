@@ -214,6 +214,59 @@ async fn a_change_reaches_attached_clients_and_the_next_turn() {
     );
 }
 
+// Covers: a model change that names an auth moves the session to it, as
+// `--auth` asks, and one the model does not run on is invalid params and
+// changes nothing.
+// Owner: daemon session settings.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_model_change_runs_the_session_on_the_auth_it_names() {
+    let sandbox = Sandbox::new();
+    let client = sandbox.start_daemon("inspect").await;
+    // The session runs on `xai-oauth`; its client also holds an xAI key.
+    let environment = sandbox
+        .isolated
+        .command_env()
+        .into_iter()
+        .chain([("XAI_API_KEY".into(), "sk-test".into())])
+        .collect();
+    let opened = client
+        .request::<SessionNew>(&SessionNewParams {
+            cwd: sandbox.workspace.clone(),
+            environment,
+            agent: None,
+            setup: SessionSetup::default(),
+            parent: None,
+            grant: None,
+        })
+        .await
+        .unwrap();
+    let on_auth = |auth: &str| SessionChange::Model {
+        model: opened.options.model.current.clone(),
+        auth: Some(auth.to_owned()),
+    };
+
+    let refused = configure(&client, &opened.session, on_auth("codex")).await;
+    let moved = configure(&client, &opened.session, on_auth("xai-api-key")).await;
+
+    assert_eq!(
+        (
+            opened.options.model.auth.as_str(),
+            refused,
+            moved.map(|options| options.model.auth),
+        ),
+        (
+            "xai-oauth",
+            Err(RpcError::new(
+                ErrorCode::InvalidParams,
+                "model 'xai/grok-fixture' does not run on auth 'codex'",
+            )),
+            Ok("xai-api-key".to_owned()),
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
 // Covers: a change sent while a turn runs waits for the turn's end, then
 // applies and answers, rather than being refused; a delete meanwhile sees
 // the queued change; and a prompt sent once the turn ended starts a turn

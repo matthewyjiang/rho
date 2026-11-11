@@ -12,9 +12,7 @@
 //!
 //! [`App::reset_session_view`] is also the in-process `/new`'s reset.
 
-use super::{
-    daemon_session::DaemonTarget, App, ComposerMode, DefaultTerminal, InputSubmissionMode,
-};
+use super::{daemon_launch::DaemonTarget, App, ComposerMode, DefaultTerminal, InputSubmissionMode};
 use crate::session::Session;
 
 impl App {
@@ -101,6 +99,11 @@ impl App {
         // An id lookup can find a session saved under another project;
         // refused before the daemon opens it.
         self.ensure_this_project(&target.cwd)?;
+        // It runs as the agent it was saved as, so a launch that named an
+        // agent resumes only that agent's sessions, as at startup.
+        if let Some(definition) = &self.info.session.resume_launch.definition {
+            Session::validate_agent_definition_identity_of(&target, definition)?;
+        }
         let short = super::session_picker::short_session_id(&target.id);
         self.switch_daemon_session(
             DaemonTarget::Resume(rho_protocol::SessionId::new(target.id)),

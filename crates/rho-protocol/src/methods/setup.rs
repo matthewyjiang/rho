@@ -50,8 +50,9 @@ pub struct SessionSetup {
     /// Parts of the session left out, as `rho`'s `--no-tools`,
     /// `--no-system-prompt`, and `--no-subagents` leave them out, and
     /// questions a client cannot show. The session saves all but
-    /// [`SessionPart::Questions`]; a reopen leaves out the saved parts and
-    /// these.
+    /// [`SessionPart::Questions`] and [`SessionPart::Saving`]; a reopen
+    /// leaves out the saved parts and these, except
+    /// [`SessionPart::Saving`], which only a new session takes.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub without: BTreeSet<SessionPart>,
     /// Who runs the children the session's `agent` tool starts: the daemon,
@@ -113,6 +114,13 @@ pub enum SessionPart {
     /// model: which connections may answer a request is decided by the
     /// [`crate::ClientCapability::Answer`] each declared, not by this.
     Questions,
+    /// The session's file, as with `--no-save`: the session lives in the
+    /// daemon's memory alone. The daemon keeps it while a client follows it
+    /// or it has work under way, and discards it once it sits idle, as it
+    /// does a session that took no prompt; a daemon restart loses it. Only
+    /// a new session takes this: reopening a saved one without its file is
+    /// [`crate::ErrorCode::InvalidParams`].
+    Saving,
 }
 
 /// An MCP server a client provides, by how the daemon reaches it.

@@ -307,6 +307,11 @@ impl SessionRuntime {
         }
     }
 
+    /// Whether the session keeps a file at all, or lives in memory alone.
+    pub(crate) fn persistence(&self) -> crate::session::SessionPersistence {
+        self.storage.persistence()
+    }
+
     /// Whether the session has saved its file yet: a new session saves it
     /// with its first prompt.
     pub(crate) fn is_saved(&self) -> bool {

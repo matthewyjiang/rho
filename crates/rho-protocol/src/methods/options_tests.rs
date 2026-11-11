@@ -17,8 +17,23 @@ fn every_session_change_round_trips_through_its_wire_form() {
                     provider: "openai".into(),
                     model: "gpt-5.5".into(),
                 },
+                auth: None,
             },
             json!({"kind": "model", "model": {"provider": "openai", "model": "gpt-5.5"}}),
+        ),
+        (
+            SessionChange::Model {
+                model: ModelRef {
+                    provider: "openai".into(),
+                    model: "gpt-5.5".into(),
+                },
+                auth: Some("codex".into()),
+            },
+            json!({
+                "kind": "model",
+                "model": {"provider": "openai", "model": "gpt-5.5"},
+                "auth": "codex",
+            }),
         ),
         (
             SessionChange::Reasoning {

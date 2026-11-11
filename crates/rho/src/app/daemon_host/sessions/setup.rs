@@ -9,6 +9,8 @@
 //! That holds across daemon reopens only: the TUI keeps an existing record
 //! but does not record its own `--no-*` flags, until it becomes a daemon
 //! client (#1667).
+//! A new session opened without saving has no file, so none of this is kept
+//! and no request can reopen it.
 //! The opening client owns its MCP servers, whose `env` and `headers` may
 //! hold secrets, whether it shows questions, and whether its own threads
 //! run the session's children, which goes with the MCP server they go
@@ -26,7 +28,7 @@ use crate::{
         host_mcp::host_mcp_config,
         session_runtime::{ChildAgents, LeftOut, QuestionSupport},
     },
-    session::Session as StoredSession,
+    session::{Session as StoredSession, SessionPersistence},
     tools::mcp::config::McpConfig,
 };
 
@@ -43,6 +45,8 @@ pub(super) struct Setup {
     pub(super) added_dirs: AddedDirs,
     /// The opening client's MCP servers.
     pub(super) host_mcp: McpConfig,
+    /// Whether it has a file: not when the request leaves saving out.
+    pub(super) persistence: SessionPersistence,
     /// Whether the request adds to what the session's file keeps, so a
     /// reopen saves at once rather than lose it to an unload before the
     /// next turn saves.
@@ -82,12 +86,19 @@ impl Setup {
         };
         let mut asked = LeftOut::default();
         let mut questions = QuestionSupport::Available;
+        let mut persistence = SessionPersistence::Saved;
         for part in &requested.without {
             match part {
                 SessionPart::Tools => asked.tools = true,
                 SessionPart::SystemPrompt => asked.system_prompt = true,
                 SessionPart::Subagents => asked.subagents = true,
                 SessionPart::Questions => questions = QuestionSupport::Unavailable,
+                SessionPart::Saving if saved.is_some() => {
+                    return Err(invalid(
+                        "a saved session cannot be reopened without saving; open a new one",
+                    ))
+                }
+                SessionPart::Saving => persistence = SessionPersistence::Ephemeral,
                 // `SessionPart` is `#[non_exhaustive]`, so the arm is
                 // required: a part from a later protocol minor that this
                 // daemon does not know fails here as invalid params.
@@ -109,6 +120,7 @@ impl Setup {
             questions,
             children,
             added_dirs,
+            persistence,
             host_mcp: host_mcp_config(&requested.mcp_servers),
         })
     }

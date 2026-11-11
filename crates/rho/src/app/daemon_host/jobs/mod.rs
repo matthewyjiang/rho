@@ -163,6 +163,22 @@ pub(super) struct JobRecord {
     /// its key (#1777).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) turn: Option<TurnRecord>,
+    /// Whether the record has a file. Never read from one: a record a file
+    /// holds is kept.
+    #[serde(skip)]
+    pub(super) keeping: Keeping,
+}
+
+/// Where a job's record lives.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Keeping {
+    /// In the store, so later daemons know the job.
+    #[default]
+    Stored,
+    /// In this daemon's memory alone, as the job of a session opened
+    /// without saving is, and the jobs it starts: a turn's outcome holds
+    /// its answer, which must not reach disk.
+    MemoryOnly,
 }
 
 /// One turn of a session job, as its record keeps it.
@@ -267,6 +283,7 @@ impl JobRecord {
             updated_at: now,
             outcome: None,
             turn: None,
+            keeping: Keeping::Stored,
         }
     }
 }

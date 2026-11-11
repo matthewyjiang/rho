@@ -3314,6 +3314,13 @@
         {
           "description": "Switch to `model`, one of [`ModelOptions::available`]. The session\nkeeps its reasoning level, or refuses a model that cannot.",
           "properties": {
+            "auth": {
+              "description": "The auth profile to run `model` on, as `--auth` names one: a\nprofile `model`'s provider takes. When absent, the session keeps\nits auth if the provider takes it, else picks one that has\ncredentials.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "kind": {
               "const": "model",
               "type": "string"
@@ -4636,6 +4643,11 @@
           "const": "questions",
           "description": "Questions to the user: the session has no questionnaire tool, and an\nMCP server's question is declined, for a client that cannot show\n[`crate::Ask::Question`]. It only shapes what the session offers its\nmodel: which connections may answer a request is decided by the\n[`crate::ClientCapability::Answer`] each declared, not by this.",
           "type": "string"
+        },
+        {
+          "const": "saving",
+          "description": "The session's file, as with `--no-save`: the session lives in the\ndaemon's memory alone. The daemon keeps it while a client follows it\nor it has work under way, and discards it once it sits idle, as it\ndoes a session that took no prompt; a daemon restart loses it. Only\na new session takes this: reopening a saved one without its file is\n[`crate::ErrorCode::InvalidParams`].",
+          "type": "string"
         }
       ]
     },
@@ -4766,7 +4778,7 @@
           "type": "array"
         },
         "without": {
-          "description": "Parts of the session left out, as `rho`'s `--no-tools`,\n`--no-system-prompt`, and `--no-subagents` leave them out, and\nquestions a client cannot show. The session saves all but\n[`SessionPart::Questions`]; a reopen leaves out the saved parts and\nthese.",
+          "description": "Parts of the session left out, as `rho`'s `--no-tools`,\n`--no-system-prompt`, and `--no-subagents` leave them out, and\nquestions a client cannot show. The session saves all but\n[`SessionPart::Questions`] and [`SessionPart::Saving`]; a reopen\nleaves out the saved parts and these, except\n[`SessionPart::Saving`], which only a new session takes.",
           "items": {
             "$ref": "#/$defs/SessionPart"
           },

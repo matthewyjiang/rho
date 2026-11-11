@@ -639,6 +639,81 @@ async fn child_threads_follow_the_client_that_opened_the_session() {
     );
 }
 
+// Covers: a session opened without saving runs its turn and leaves no file,
+// where one opened plainly is listed once its turn saved it; the daemon
+// discards it once it sits idle, so a prompt finds no session; and a saved
+// session cannot be reopened without saving.
+// Owner: daemon session setup.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_opened_without_saving_leaves_no_file() {
+    let sandbox = Sandbox::new();
+    let client = sandbox
+        .start_daemon_with("fixed", &["--unload-idle-after", "200ms"])
+        .await;
+    let unsaved = SessionSetup {
+        without: BTreeSet::from([SessionPart::Saving]),
+        ..SessionSetup::default()
+    };
+    // Each prompted as it opens: one that sits unprompted is discarded.
+    let mut opened = Vec::new();
+    let mut answered = Vec::new();
+    for setup in [SessionSetup::default(), unsaved.clone()] {
+        let session = new_session(&sandbox, &client, None, setup).await.unwrap();
+        let (outcome, _events) = turn(&sandbox, &client, &session, "hello").await;
+        answered.push(matches!(outcome, TurnOutcome::Answered { .. }));
+        opened.push(session);
+    }
+    let [kept, ephemeral] = <[SessionId; 2]>::try_from(opened).unwrap();
+    let listed: Vec<_> = client
+        .request::<SessionList>(&SessionListParams::default())
+        .await
+        .unwrap()
+        .sessions
+        .into_iter()
+        .map(|listed| listed.session)
+        .collect();
+    // Unloaded, so the attach reopens it, which is when a setup applies.
+    sandbox.wait_unloaded(&kept, /*times*/ 1).await;
+    let (reopener, _notifications) = sandbox.connect_following().await;
+    let reopened = reopener
+        .request::<SessionAttach>(&SessionAttachParams {
+            setup: unsaved,
+            ..attach(&sandbox, &kept)
+        })
+        .await
+        .map(|_| ())
+        .map_err(|error| match error {
+            ClientError::Rpc { error, .. } => error.error_code(),
+            error => panic!("session/attach failed outside the protocol: {error}"),
+        });
+    sandbox
+        .poll_until("the daemon to discard the idle session", async || {
+            sandbox
+                .isolated
+                .daemon_log()
+                .lines()
+                .any(|line| {
+                    line.contains("discarded unsaved idle session")
+                        && line.contains(ephemeral.as_str())
+                })
+                .then_some(())
+        })
+        .await;
+    let prompted = sandbox.prompt(&client, &ephemeral).await;
+
+    assert_eq!(
+        (answered, listed, reopened, prompted),
+        (
+            vec![true, true],
+            vec![kept],
+            Err(Some(ErrorCode::InvalidParams)),
+            Err(Some(ErrorCode::SessionNotFound)),
+        ),
+        "log:\n{}",
+        sandbox.isolated.daemon_log()
+    );
+}
+
 // Covers: `rho/session/new` fails, registering no job, when its client asks
 // for what the session cannot have: an additional directory that is not an
 // absolute path is invalid params, and an agent the workspace does not

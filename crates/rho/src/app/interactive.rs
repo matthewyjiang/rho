@@ -133,7 +133,7 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
     let daemon = match SessionHost::from_env() {
         SessionHost::InProcess => None,
         SessionHost::Daemon => {
-            Some(daemon::open(cli, &config, &startup_session, &cwd, &added_dirs).await?)
+            Some(daemon::open(cli, &config, &agent, &startup_session, &cwd, &added_dirs).await?)
         }
     };
     let open_resume_picker = matches!(startup_session, StartupSession::Picker);
