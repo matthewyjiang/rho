@@ -655,6 +655,47 @@
       ],
       "description": "How a prompt runs a command."
     },
+    "CompactionCounts": {
+      "description": "A completed compaction's context before and after it, as rho counts\nthem: messages, and locally estimated tokens. A compaction that removed\nnothing reports the same counts on both sides.",
+      "properties": {
+        "cost_usd_micros": {
+          "description": "What the compaction itself cost, when the session prices it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "current_messages": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "current_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "previous_messages": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "previous_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "previous_messages",
+        "current_messages",
+        "previous_tokens",
+        "current_tokens"
+      ],
+      "type": "object"
+    },
     "CompactionId": {
       "description": "Identifies one context compaction; every [`SessionEvent::Compaction`]\nwith the same id reports on it.",
       "type": "string"
@@ -663,6 +704,17 @@
       "anyOf": [
         {
           "properties": {
+            "trigger": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CompactionTrigger"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "What started it. Absent from a daemon that does not say."
+            },
             "type": {
               "const": "started",
               "type": "string"
@@ -675,13 +727,18 @@
         },
         {
           "properties": {
+            "counts": {
+              "$ref": "#/$defs/CompactionCounts",
+              "description": "The context before and after."
+            },
             "type": {
               "const": "completed",
               "type": "string"
             }
           },
           "required": [
-            "type"
+            "type",
+            "counts"
           ],
           "type": "object"
         },
@@ -730,6 +787,26 @@
         }
       ],
       "description": "Where a compaction is. Every status but `started` ends it."
+    },
+    "CompactionTrigger": {
+      "anyOf": [
+        {
+          "const": "command",
+          "description": "A `/compact` prompt: the turn runs the compaction and no model\nrequest, and its reply says again what the compaction did.",
+          "type": "string"
+        },
+        {
+          "const": "automatic",
+          "description": "The session, within a model turn: the context reached its threshold,\nor a request overflowed the model's window.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What started a compaction."
     },
     "ConfigCategory": {
       "description": "A settings page; [`SettingSpec::category`] names its `id`.",
@@ -4859,6 +4936,11 @@
         {
           "const": "hooks",
           "description": "The session's hooks, read again from their files, and their recent\nactivity.",
+          "type": "string"
+        },
+        {
+          "const": "compaction",
+          "description": "The session's compaction settings as token counts, what its\ncompactions removed, and what the latest one did and cost.",
           "type": "string"
         }
       ]

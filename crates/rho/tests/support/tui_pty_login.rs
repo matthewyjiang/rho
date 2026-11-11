@@ -703,3 +703,56 @@ fn rho_login_without_a_session_bus_falls_back_to_the_file_store_it_offers() {
         "{config}"
     );
 }
+
+// Covers: with RHO_TUI_DAEMON=1, a session that started signed out takes a
+// login another process saved since, such as `rho login` in another
+// terminal, at its first prompt, which the provider then answers.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_signed_out_session_answers_after_an_outside_login() {
+    const KEY: &str = "test-outside-key";
+    let home = IsolatedHome::new().unwrap();
+    let address = super::key_checking_provider::spawn_provider(std::sync::Arc::new(
+        std::sync::Mutex::new(KEY.to_owned()),
+    ));
+    std::fs::write(
+        &home.config_path,
+        format!(
+            r#"web_search.mode = "off"
+
+[model]
+provider = "mock"
+model = "mock-model"
+auth = "mock-api-key"
+
+[providers.custom.mock]
+base_url = "http://{address}/v1"
+
+[behavior]
+credential_store = "file"
+"#
+        ),
+    )
+    .unwrap();
+    let mut plan = ollama_plan(&home, SessionHost::Daemon);
+    // The turn must reach the provider, not the matrix fixture.
+    plan.env.retain(|(key, _)| key != "RHO_TUI_TEST_MODE");
+    let mut harness = PtyHarness::spawn_named(&plan, "daemon_outside_login").unwrap();
+    harness
+        .wait_for_text("Not signed in", WaitTimeout::secs(20, "starts signed out"))
+        .unwrap();
+
+    // What `rho login mock` saves to the file store; it needs a terminal.
+    rho_providers::credentials::CredentialStore::set_secret(
+        &rho_providers::credentials::FileCredentialStore::with_rho_home(home.rho_home()).unwrap(),
+        "provider:mock:api-key",
+        KEY,
+    )
+    .unwrap();
+
+    harness.submit_text("hello").unwrap();
+    harness
+        .wait_for_text("answered", WaitTimeout::secs(20, "first prompt answered"))
+        .unwrap();
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}

@@ -36,6 +36,23 @@ impl CompactionDisplayFacts {
         }
     }
 
+    /// The counts a daemon session reports for a completed compaction.
+    pub(super) fn from_wire(counts: rho_protocol::CompactionCounts) -> Self {
+        Self {
+            previous_messages: usize::try_from(counts.previous_messages).unwrap_or(usize::MAX),
+            current_messages: usize::try_from(counts.current_messages).unwrap_or(usize::MAX),
+            previous_tokens: counts.previous_tokens,
+            current_tokens: counts.current_tokens,
+            cost_usd_micros: counts.cost_usd_micros,
+        }
+    }
+
+    /// Whether the compaction left fewer messages or tokens, as
+    /// [`crate::compaction::outcome_reduced_context`] decides for an outcome.
+    fn reduced_context(self) -> bool {
+        self.current_messages < self.previous_messages || self.removed_tokens() > 0
+    }
+
     pub(super) fn removed_tokens(self) -> u64 {
         self.previous_tokens.saturating_sub(self.current_tokens)
     }
@@ -56,8 +73,14 @@ pub(super) enum CompactionUiOutcome {
 
 impl CompactionUiOutcome {
     pub(super) fn from_sdk_outcome(outcome: &rho_sdk::CompactionOutcome) -> Self {
-        if crate::compaction::outcome_reduced_context(outcome) {
-            Self::Completed(CompactionDisplayFacts::from_outcome(outcome))
+        Self::from_facts(CompactionDisplayFacts::from_outcome(outcome))
+    }
+
+    /// A compaction that ran to its end: completed when it reduced the
+    /// context, unchanged otherwise.
+    pub(super) fn from_facts(facts: CompactionDisplayFacts) -> Self {
+        if facts.reduced_context() {
+            Self::Completed(facts)
         } else {
             Self::unchanged()
         }

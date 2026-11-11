@@ -520,7 +520,7 @@ async fn compact(
     let started = {
         let mut live = view.session.live();
         let mut shown = vec![live.shown_prompt(display, &InsertedMessage::Unreplayed)];
-        shown.extend(live.compaction_started());
+        shown.extend(live.compaction_started(wire::CompactionTrigger::Command));
         shown
     };
     view.session.feed.publish(started);

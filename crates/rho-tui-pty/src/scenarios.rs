@@ -676,6 +676,15 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_model::CYCLE_REASONING_IDLE,
     #[cfg(unix)]
     daemon_model::CYCLE_REASONING_QUEUED,
+    compact::COMPACT_COMPLETES,
+    #[cfg(unix)]
+    compact::DAEMON_COMPACT_COMPLETES,
+    #[cfg(unix)]
+    compact::DAEMON_TYPE_DURING_COMPACT,
+    #[cfg(unix)]
+    compact::DAEMON_SUBMIT_DURING_COMPACT,
+    #[cfg(unix)]
+    calibrated_context::DAEMON_SCENARIO,
     #[cfg(unix)]
     daemon_mcp_startup::CONNECTING,
     #[cfg(unix)]

@@ -33,7 +33,26 @@ pub(super) const SCENARIO: Scenario = Scenario::new(
     /*smoke*/ false,
 );
 
-pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
+/// The same lifecycle with the daemon holding the session.
+#[cfg(unix)]
+pub(super) const DAEMON_SCENARIO: Scenario = Scenario {
+    id: "daemon_calibrated_context_auto_compact",
+    description:
+        "Retain a daemon session's calibrated idle usage, auto-compact on the next prompt, and repeat after resume",
+    env: super::daemon_resume::DAEMON_ENV,
+    ..SCENARIO
+};
+
+/// Whether `name` is one of this module's scenarios, which `run` drives.
+pub(super) fn owns(name: &str) -> bool {
+    #[cfg(unix)]
+    if name == DAEMON_SCENARIO.id {
+        return true;
+    }
+    name == SCENARIO.id
+}
+
+pub(super) fn run(runner: &ScenarioRunner, scenario: &Scenario) -> Result<ScenarioOutcome> {
     let home = IsolatedHome::new()?;
     let mut config = fs::read_to_string(&home.config_path)?;
     config.push_str(
@@ -44,15 +63,17 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         home.home.join(".rho/models.toml"),
         "[models.\"openai/gpt-5.5\"]\nusable_context_window = 131072\n",
     )?;
-    let plan = RhoLaunchPlan::matrix(&runner.binary, &home, SCENARIO.size)
+    let mut plan = RhoLaunchPlan::matrix(&runner.binary, &home, scenario.size)
         .with_env("OPENAI_API_KEY", "sk-test-matrix")
         .with_arg("--no-system-prompt")
         .with_arg("--no-tools");
+    for (key, value) in scenario.env {
+        plan = plan.with_env(*key, *value);
+    }
     let mut timing = TimingSummary::default();
     let result = (|| -> Result<()> {
-        let mut plan = plan;
         for phase in ["fresh", "resumed"] {
-            let mut harness = PtyHarness::spawn_named(&plan, format!("{}_{}", SCENARIO.id, phase))?;
+            let mut harness = PtyHarness::spawn_named(&plan, format!("{}_{}", scenario.id, phase))?;
             harness.enable_timing(runner.record_timing);
             if let Some(root) = &runner.artifact_root {
                 harness.set_artifact_writer(ArtifactWriter::new(root));
@@ -133,7 +154,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         Ok(())
     })();
     Ok(ScenarioOutcome {
-        id: SCENARIO.id.into(),
+        id: scenario.id.into(),
         passed: result.is_ok(),
         message: result
             .as_ref()

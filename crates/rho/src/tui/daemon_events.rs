@@ -28,22 +28,39 @@ use std::{collections::HashMap, time::Duration};
 
 use rho_protocol::{
     display::{Presentation, ToolCard, ToolCardStatus},
-    CompactionStatus, ContentBlock, InputRequest, InputRequestId, JobState, LoginId, LoginOutcome,
-    LoginPrompt, MessageId, PlanEntry, PlanStatus, Replay, RetryReason, SessionEvent, SteerId,
-    ToolCallId as WireCallId, ToolCallUpdate, ToolStatus, TurnId, TurnOutcome,
+    CompactionStatus, CompactionTrigger, ContentBlock, InputRequest, InputRequestId, JobState,
+    LoginId, LoginOutcome, LoginPrompt, MessageId, PlanEntry, PlanStatus, Replay, RetryReason,
+    SessionEvent, SteerId, ToolCallId as WireCallId, ToolCallUpdate, ToolStatus, TurnId,
+    TurnOutcome,
 };
 use rho_sdk::{ProviderErrorKind, ProviderStreamResetReason, SteeringId, ToolCallId};
 
 use super::{
     activity::ProviderRetryHint,
-    compaction_display::{
-        cancelled_card, compaction_call_id, failed_card, running_card, unchanged_card,
-    },
+    compaction_display::{CompactionDisplayFacts, CompactionUiOutcome},
     daemon_inputs::{AnswerRefusal, OpenInputs},
     transcript_events::final_answer_delta,
     FinalAnswerDelta, StreamKind,
 };
 use crate::tools::todo::{TodoItem, TodoList, TodoStatus};
+
+/// Why the daemon did not answer a report.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ReportRefusal {
+    pub(super) message: String,
+    /// The session was in a turn or a change: the report can be read once
+    /// that ends.
+    pub(super) busy: bool,
+}
+
+impl From<String> for ReportRefusal {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            busy: false,
+        }
+    }
+}
 
 /// One change to what the TUI shows of a daemon session.
 #[derive(Clone, Debug, PartialEq)]
@@ -75,6 +92,17 @@ pub(super) enum DaemonView {
         call: ToolCallId,
         presentation: Presentation,
     },
+    /// A compaction started: its card opens. `command` when a `/compact`
+    /// prompt started it, so the turn is the compaction.
+    CompactionStarted {
+        command: bool,
+    },
+    /// The compaction under way ended: its card closes, and the status
+    /// line says how.
+    CompactionEnded(CompactionUiOutcome),
+    /// The turn a `/compact` prompt started is over, live or replayed:
+    /// what follows shows as any turn's does.
+    CompactTurnOver,
     /// The session's checklist, replacing the last; `None` while it has none.
     Plan(Option<TodoList>),
     /// How full the model's context is.
@@ -94,7 +122,7 @@ pub(super) enum DaemonView {
     /// A report the person asked for, as the daemon presents it.
     Report {
         report: rho_protocol::SessionReport,
-        result: Result<serde_json::Value, String>,
+        result: Result<serde_json::Value, ReportRefusal>,
     },
     /// What the interactive login the TUI started in the daemon did.
     Login(LoginUpdate),
@@ -193,6 +221,7 @@ pub(super) struct DaemonEvents {
     running: HashMap<WireCallId, ToolCard>,
     /// Why a turn failed, which that turn's `failed` job state shows.
     failure: Option<(TurnId, String)>,
+    compact_turn: CompactTurn,
     /// Where the replay under way ends, as its attach answered: the job's
     /// state, and the turn it is of. `None` once the replay is over.
     replay_end: Option<(JobState, Option<TurnId>)>,
@@ -200,6 +229,20 @@ pub(super) struct DaemonEvents {
     /// only events the TUI has yet to see.
     reset: bool,
     inputs: OpenInputs,
+}
+
+/// Where a turn that a `/compact` prompt started stands, from its
+/// compaction starting until the TUI is told the turn is over
+/// ([`DaemonView::CompactTurnOver`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum CompactTurn {
+    #[default]
+    None,
+    UnderWay,
+    /// Its job rested in a reset's history, which shows no rest. The TUI
+    /// may still show the turn busy, so it is over only once the replay's
+    /// end rests it, or something later in the replay follows it.
+    RestedUnshown,
 }
 
 impl DaemonEvents {
@@ -241,8 +284,17 @@ impl DaemonEvents {
         let mut views: Vec<_> = self
             .replay_end
             .take()
-            .map(|(state, turn)| self.turn(state, turn.as_ref()))
+            .map(|(state, turn)| {
+                let rest = self.turn(state, turn.as_ref());
+                // After the rest, which a `/compact` turn the TUI still
+                // shows busy rests on as its compaction ended.
+                let over = (!in_progress(state))
+                    .then(|| self.compact_turn_over())
+                    .flatten();
+                std::iter::once(rest).chain(over)
+            })
             .into_iter()
+            .flatten()
             .collect();
         views.extend(self.inputs.end_replay());
         views
@@ -264,15 +316,29 @@ impl DaemonEvents {
 
     /// What `event` changes.
     pub(super) fn map(&mut self, event: SessionEvent) -> Vec<DaemonView> {
+        // Whatever a replay holds after a `/compact` turn's unshown rest
+        // comes after that turn.
+        let mut views: Vec<_> = (self.compact_turn == CompactTurn::RestedUnshown)
+            .then(|| self.compact_turn_over())
+            .flatten()
+            .into_iter()
+            .collect();
+        views.extend(self.map_event(event));
+        views
+    }
+
+    fn map_event(&mut self, event: SessionEvent) -> Vec<DaemonView> {
         match event {
             SessionEvent::UserMessage { content, steer, .. } => {
                 self.end_messages();
-                let mut views: Vec<_> = steer
-                    .as_ref()
-                    .and_then(steering_id)
-                    .map(DaemonView::SteerApplied)
-                    .into_iter()
-                    .collect();
+                // A replay cut short of the turn's end still ends it here.
+                let mut views: Vec<_> = self.compact_turn_over().into_iter().collect();
+                views.extend(
+                    steer
+                        .as_ref()
+                        .and_then(steering_id)
+                        .map(DaemonView::SteerApplied),
+                );
                 let text = user_text(&content);
                 if !text.is_empty() {
                     views.push(DaemonView::User(text));
@@ -302,7 +368,13 @@ impl DaemonEvents {
                 },
                 DaemonView::Spend(cost_usd_micros),
             ],
-            SessionEvent::Compaction { status, .. } => vec![compaction(status)],
+            SessionEvent::Compaction { status, .. } => {
+                let views = compaction(status);
+                if matches!(views[..], [DaemonView::CompactionStarted { command: true }]) {
+                    self.compact_turn = CompactTurn::UnderWay;
+                }
+                views
+            }
             SessionEvent::ResponseDiscarded => {
                 // What the provider streamed stays; the retry's text starts
                 // new messages below this notice.
@@ -347,19 +419,31 @@ impl DaemonEvents {
                 DaemonView::Notice(format!("session titled: {title}")),
                 DaemonView::Title(title),
             ],
-            SessionEvent::State { state, turn } => match &self.replay_end {
-                // A reset's is history, unless it is of the turn the
-                // replay ends under way, which shows busy from where its
-                // rows start; the replay's end says the rest. A tail's is
-                // news, as live.
-                Some((end, under_way))
-                    if self.reset
-                        && !(in_progress(*end) && in_progress(state) && turn == *under_way) =>
-                {
-                    Vec::new()
+            SessionEvent::State { state, turn } => {
+                let mut views = match &self.replay_end {
+                    // A reset's is history, unless it is of the turn the
+                    // replay ends under way, which shows busy from where its
+                    // rows start; the replay's end says the rest. A tail's is
+                    // news, as live.
+                    Some((end, under_way))
+                        if self.reset
+                            && !(in_progress(*end) && in_progress(state) && turn == *under_way) =>
+                    {
+                        Vec::new()
+                    }
+                    Some(_) | None => vec![self.turn(state, turn.as_ref())],
+                };
+                if !in_progress(state) && self.compact_turn == CompactTurn::UnderWay {
+                    if views.is_empty() {
+                        self.compact_turn = CompactTurn::RestedUnshown;
+                    } else {
+                        // After the rest, which a `/compact` turn rests on
+                        // as its compaction ended.
+                        views.extend(self.compact_turn_over());
+                    }
                 }
-                Some(_) | None => vec![self.turn(state, turn.as_ref())],
-            },
+                views
+            }
             SessionEvent::InputRequested { request } => {
                 self.inputs.requested(*request).into_iter().collect()
             }
@@ -373,6 +457,12 @@ impl DaemonEvents {
             // `Unknown`, or an event a newer daemon sends.
             _ => Vec::new(),
         }
+    }
+
+    /// Ends the `/compact` turn under way, if any.
+    fn compact_turn_over(&mut self) -> Option<DaemonView> {
+        (std::mem::take(&mut self.compact_turn) != CompactTurn::None)
+            .then_some(DaemonView::CompactTurnOver)
     }
 
     /// Whether a turn runs once the job is in `state`, of turn `turn`, as
@@ -575,29 +665,27 @@ fn todo_list(entries: &[PlanEntry]) -> Option<TodoList> {
     (!todos.is_empty()).then_some(TodoList { todos })
 }
 
-/// The compaction card the in-process TUI shows for `status`. The daemon
-/// reports no counts, so a completed one says only that it compacted; its
-/// `/compact` reply says what it did.
-fn compaction(status: CompactionStatus) -> DaemonView {
-    let call = compaction_call_id();
-    let card = match status {
-        CompactionStatus::Started => {
-            return DaemonView::ToolRunning {
-                call,
-                card: running_card(),
-            }
+/// The compaction card and status line the in-process TUI shows for
+/// `status`.
+fn compaction(status: CompactionStatus) -> Vec<DaemonView> {
+    let outcome = match status {
+        CompactionStatus::Started { trigger } => {
+            return vec![DaemonView::CompactionStarted {
+                command: trigger == Some(CompactionTrigger::Command),
+            }]
         }
-        CompactionStatus::Completed => unchanged_card("context compacted"),
-        CompactionStatus::Cancelled => cancelled_card(),
-        CompactionStatus::Failed { error } => failed_card(error),
+        CompactionStatus::Completed { counts } => {
+            CompactionUiOutcome::from_facts(CompactionDisplayFacts::from_wire(counts))
+        }
+        CompactionStatus::Cancelled => CompactionUiOutcome::Cancelled,
+        CompactionStatus::Failed { error } => CompactionUiOutcome::failed(error),
         // `Unknown`, or a status a newer daemon sends: every status but
         // `started` ends the compaction.
-        _ => unchanged_card("compaction ended"),
+        _ => CompactionUiOutcome::Unchanged {
+            detail: "compaction ended".into(),
+        },
     };
-    DaemonView::ToolFinished {
-        call,
-        presentation: card.into(),
-    }
+    vec![DaemonView::CompactionEnded(outcome)]
 }
 
 /// The in-process TUI's hint for a retry for `reason`, which reads as the

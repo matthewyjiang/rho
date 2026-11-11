@@ -21,6 +21,8 @@ mod claude_runtime;
 mod composer_unicode;
 #[path = "support/tui_pty_cursor_runtime.rs"]
 mod cursor_runtime;
+#[path = "support/key_checking_provider.rs"]
+mod key_checking_provider;
 #[path = "support/tui_pty_login.rs"]
 mod login;
 
@@ -497,12 +499,37 @@ fn submit_during_compact() {
     assert_pass("submit_during_compact");
 }
 
+// Covers: a completed /compact shows its card with the token reduction and
+// nothing else, and says the context compacted.
+// Owner: interactive TUI
+#[test]
+fn compact_completes() {
+    assert_pass("compact_completes");
+}
+
 // Covers: idle usage calibration must survive into the next prompt's visible
 // auto-compaction, including fresh provider usage after a real session resume.
 // Owner: interactive TUI lifecycle, not SDK estimation policy.
 #[test]
 fn calibrated_context_auto_compacts_after_idle_and_resume() {
     assert_pass("calibrated_context_auto_compact");
+}
+
+// Covers: with RHO_TUI_DAEMON=1, compaction behaves as in process: /compact
+// keeps the composer live and cancels on Esc, a prompt sent during it starts
+// once it ends, a completed one shows its card alone, and calibrated usage
+// auto-compacts the next prompt.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_compaction_matches_the_in_process_tui() {
+    for scenario in [
+        "daemon_type_during_compact",
+        "daemon_submit_during_compact",
+        "daemon_compact_completes",
+        "daemon_calibrated_context_auto_compact",
+    ] {
+        assert_pass(scenario);
+    }
 }
 
 #[test]

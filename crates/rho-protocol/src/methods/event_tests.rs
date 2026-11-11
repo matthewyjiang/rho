@@ -302,16 +302,42 @@ fn every_session_event_round_trips_through_its_wire_form() {
         (
             SessionEvent::Compaction {
                 id: CompactionId::new("c1"),
-                status: CompactionStatus::Started,
+                status: CompactionStatus::Started {
+                    trigger: Some(CompactionTrigger::Command),
+                },
             },
-            json!({"type": "compaction", "id": "c1", "status": {"type": "started"}}),
+            json!({
+                "type": "compaction",
+                "id": "c1",
+                "status": {"type": "started", "trigger": "command"},
+            }),
         ),
         (
             SessionEvent::Compaction {
                 id: CompactionId::new("c1"),
-                status: CompactionStatus::Completed,
+                status: CompactionStatus::Completed {
+                    counts: CompactionCounts {
+                        previous_messages: 12,
+                        current_messages: 3,
+                        previous_tokens: 9000,
+                        current_tokens: 1200,
+                        cost_usd_micros: None,
+                    },
+                },
             },
-            json!({"type": "compaction", "id": "c1", "status": {"type": "completed"}}),
+            json!({
+                "type": "compaction",
+                "id": "c1",
+                "status": {
+                    "type": "completed",
+                    "counts": {
+                        "previous_messages": 12,
+                        "current_messages": 3,
+                        "previous_tokens": 9000,
+                        "current_tokens": 1200,
+                    },
+                },
+            }),
         ),
         (
             SessionEvent::Compaction {

@@ -5,9 +5,9 @@ use std::{
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    CardTone, CompactionStatus, ContentBlock, Location, MessageId, PlanEntry, PlanStatus,
-    RetryReason, SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolContent, ToolKind,
-    ToolStatus,
+    CardTone, CompactionStatus, CompactionTrigger, ContentBlock, Location, MessageId, PlanEntry,
+    PlanStatus, RetryReason, SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolContent,
+    ToolKind, ToolStatus,
 };
 use rho_sdk::{
     tool::{ToolFileChange, ToolMetadata, ToolOutput, ToolProgress},
@@ -599,12 +599,12 @@ fn compactions_always_end() {
     for (name, drive, ended) in cases {
         let tool_set = AppToolSet::disabled();
         let mut live = live(&tool_set);
-        let mapped = match drive {
-            Drive::Run(events) => map_all(&mut live, &events),
+        let (trigger, mapped) = match drive {
+            Drive::Run(events) => (CompactionTrigger::Automatic, map_all(&mut live, &events)),
             Drive::HostFailed(error) => {
-                let mut mapped = live.compaction_started();
+                let mut mapped = live.compaction_started(CompactionTrigger::Command);
                 mapped.extend(live.compaction_ended(CompactionEnd::Failed(error.into())));
-                mapped
+                (CompactionTrigger::Command, mapped)
             }
         };
         let id = match mapped.first() {
@@ -617,7 +617,12 @@ fn compactions_always_end() {
         };
         assert_eq!(
             mapped,
-            vec![compaction(CompactionStatus::Started), compaction(ended)],
+            vec![
+                compaction(CompactionStatus::Started {
+                    trigger: Some(trigger),
+                }),
+                compaction(ended)
+            ],
             "{name}"
         );
     }

@@ -10,12 +10,21 @@ use super::{
     activity::ActivityPhase,
     compact_work::ReadyFollowUp,
     daemon_events::{DaemonView, Rest, TurnState},
-    event_adapter::ViewModelEvent,
+    event_adapter::{compact_finished_event, compact_started_event, ViewModelEvent},
     program_status::ProgramStatus,
     settings_screen::SettingsUpdate,
     App, DefaultTerminal, Entry, HerdrState, StreamKind, ToolEntry,
 };
 use rho_protocol::display::Presentation;
+
+/// A turn of the followed daemon session that a `/compact` prompt started:
+/// the turn is the compaction, and shows as the in-process TUI shows one.
+#[derive(Default)]
+pub(super) struct DaemonCompactTurn {
+    /// How its compaction ended, as the status line says it; the turn rests
+    /// on it.
+    rest_status: Option<&'static str>,
+}
 
 impl App {
     /// Applies what the followed daemon session changed.
@@ -32,6 +41,9 @@ impl App {
                     self.finish_streams();
                     self.insert_entry(&Entry::User(text));
                 }
+                // A `/compact` turn's only text is its reply, which says
+                // again what the card shows.
+                DaemonView::Text { .. } if self.daemon_compact_turn.is_some() => {}
                 // A running turn's text goes through the stream an
                 // in-process turn's does, which holds, paces and previews
                 // it as `output_streaming` says. History, and a turn this
@@ -99,6 +111,22 @@ impl App {
                         },
                         terminal,
                     )?;
+                }
+                DaemonView::CompactionStarted { command } => {
+                    if command {
+                        self.begin_daemon_compact_turn();
+                    }
+                    self.handle_agent_event(compact_started_event(), terminal)?;
+                    self.set_status("compacting context");
+                }
+                DaemonView::CompactTurnOver => self.daemon_compact_turn = None,
+                DaemonView::CompactionEnded(outcome) => {
+                    let status = outcome.status_label();
+                    self.handle_agent_event(compact_finished_event(outcome), terminal)?;
+                    self.set_status(status);
+                    if let Some(turn) = &mut self.daemon_compact_turn {
+                        turn.rest_status = Some(status);
+                    }
                 }
                 DaemonView::Plan(list) => {
                     self.set_todo_list(list);
@@ -235,6 +263,22 @@ impl App {
         }
     }
 
+    /// Starts showing the turn under way as the in-process TUI shows
+    /// `/compact`, which is no turn there: the card alone, without the
+    /// command's row, which the daemon sent just before the compaction
+    /// started.
+    fn begin_daemon_compact_turn(&mut self) {
+        self.daemon_compact_turn = Some(DaemonCompactTurn::default());
+        if matches!(self.history.last(), Some(Entry::User(_))) {
+            let index = self.history.len() - 1;
+            self.history.entries_mut().pop();
+            self.history.invalidate_from(index);
+            if let Some(start) = self.turn.current_turn_start() {
+                self.turn.set_current_turn_start(Some(start.min(index)));
+            }
+        }
+    }
+
     /// Empties the transcript for a reset replay. A turn that shows busy
     /// keeps its chrome and clock, but its rows are gone: the replay's
     /// running state places its start again, as a first attach does.
@@ -247,6 +291,7 @@ impl App {
         self.set_todo_list(None);
         self.drop_daemon_inputs();
         self.turn.set_current_turn_start(None);
+        self.daemon_compact_turn = None;
     }
 
     /// The busy chrome of a turn that started, unless it shows already. A
@@ -281,6 +326,7 @@ impl App {
         // closing rows, and nothing of it outlasts the turn.
         self.finish_streams();
         self.reset_streams();
+        let compact_turn = self.daemon_compact_turn.take();
         // The daemon withdrew the turn's own requests before it said the
         // turn ended. A prompt still open is a subagent's question, which
         // outlives the turn.
@@ -293,6 +339,7 @@ impl App {
             return;
         }
         self.daemon_rail.turn_ended();
+        self.daemon_turn_rested_for_info();
         // Read before `stop_loading` clears the turn clock.
         let worked = self.turn.elapsed_at(Instant::now());
         if matches!(rest, Rest::Interrupted) {
@@ -304,7 +351,8 @@ impl App {
         let (status, settled) = match rest {
             Rest::Ready => {
                 self.end_provider_turn_ui();
-                if let Some(worked) = worked {
+                // In process `/compact` is no turn, so it shows no footer.
+                if let Some(worked) = worked.filter(|_| compact_turn.is_none()) {
                     self.attach_turn_worked(worked);
                 }
                 let status = if self.pending.has_follow_ups() {
@@ -339,7 +387,11 @@ impl App {
         };
         self.turn.stop_loading();
         self.turn.set_current_turn_start(None);
-        if let Some(status) = status {
+        // A `/compact` turn rests as its compaction ended.
+        let compaction_status = compact_turn
+            .and_then(|turn| turn.rest_status)
+            .map(str::to_owned);
+        if let Some(status) = compaction_status.or(status) {
             self.set_status(status);
         }
         self.settled_program_status = settled;
