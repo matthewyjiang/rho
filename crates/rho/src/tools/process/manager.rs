@@ -495,8 +495,18 @@ impl ProcessManager {
     /// Host UI only. Unlike [`Self::poll_bounded`], this does not wait, mark a
     /// terminal process observed, or consume an agent-visible cursor.
     pub(crate) fn host_view(&self, id: &str) -> Result<super::HostProcessView, String> {
+        self.host_view_from(id, /*cursor*/ 0)
+    }
+
+    /// [`Self::host_view`] with only the retained chunks from `cursor` on,
+    /// for a host that keeps the earlier ones itself.
+    pub(crate) fn host_view_from(
+        &self,
+        id: &str,
+        cursor: u64,
+    ) -> Result<super::HostProcessView, String> {
         let rec = self.get(id)?;
-        let snapshot = snapshot(&rec, 0);
+        let snapshot = snapshot(&rec, cursor);
         let record = rec.lock().unwrap();
         let (elapsed_seconds, quiet_seconds) = record.host_timing();
         Ok(super::HostProcessView {

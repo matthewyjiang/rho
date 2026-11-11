@@ -117,6 +117,13 @@ macro_rules! hosts_no_sessions {
             Err(no_such_session())
         }
 
+        async fn session_processes(
+            &self,
+            _: SessionProcessesParams,
+        ) -> Result<SessionProcessesResponse, RpcError> {
+            Err(no_such_session())
+        }
+
         async fn inspect_session(
             &self,
             _: SessionInspectParams,

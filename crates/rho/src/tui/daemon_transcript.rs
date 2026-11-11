@@ -167,6 +167,9 @@ impl App {
                 DaemonView::Report { report, result } => self.show_daemon_report(report, result),
                 DaemonView::Login(update) => self.show_daemon_login(update, terminal).await?,
                 DaemonView::Jobs(jobs) => self.show_daemon_jobs(jobs),
+                DaemonView::Processes { asked, result } => {
+                    self.show_daemon_processes(asked, result);
+                }
                 DaemonView::SettingsLoaded(Ok(settings)) => {
                     self.show_daemon_settings(SettingsUpdate::Loaded(settings));
                 }

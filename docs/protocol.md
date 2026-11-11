@@ -42,6 +42,7 @@ When the client stops sending, the daemon answers every request it has already r
 | `rho/session/answer` | `session`, `request`, `answer` | Answers one of the turn's open input requests ([below](#answering-a-turn-s-requests)) and returns `{}` once the daemon has handed the answer to the turn. Needs the `answer` capability. |
 | `rho/session/configure` | `session`, `change` | Changes one of a loaded session's settings for its later turns and returns its `options` ([below](#changing-a-session-s-settings)). |
 | `rho/session/mcp` | `session` | Reads a loaded session's MCP server inventory without waiting for its active turn ([below](#session-mcp-inventory)). |
+| `rho/session/processes` | `session`, `output`? | Reads a loaded session's background processes, and one's retained output, without waiting for its active turn ([below](#session-processes)). |
 | `rho/session/inspect` | `session`, `report` | Reads a report about a loaded session between its turns: `context` (what fills the context window, by source), `hooks` (its hooks, read again from their files, and their recent activity), or `compaction` (its compaction settings as token counts, what its compactions removed, and what the latest one did and cost). The `report` it answers with is presentation data whose shape follows the rho version. A session in a turn is `SessionBusy`; an unloaded one `SessionNotLoaded`. |
 | `rho/session/hold` | `session`, `request` | Stops an open input request's timeout, so it waits for an answer ([below](#timeouts)), and returns `{}`. Needs the `answer` capability. |
 | `rho/session/list` | `cwd`?, `cursor`?, `limit`? | One page of the saved sessions, newest first: `sessions` and, when more follow, `next_cursor` ([below](#listing-renaming-and-deleting-sessions)). |
@@ -83,6 +84,15 @@ What a session runs, and what its job states mean, is described in [Sessions and
 - `servers`: configured servers, including disabled and failed entries. Each has its qualified `identity`, `enabled`, startup `status` (`connected`, `connecting`, `disabled`, `invalid_config`, `failed`, `timed_out`, or `not_loaded`), exported `tool_count`, and human-readable `detail`.
 
 Details include transport, startup errors, exported tools, tools added or withdrawn since startup, the last failed keepalive ping, current MCP prompt commands, and resource counts. Treat `detail` as presentation text, not a machine-readable contract. `status` describes startup; subsequent reachability is reported in the details. Reissue the request for a fresh snapshot; no inventory subscription is created. It reads shared maintenance handles rather than locking the runtime, so a running model turn or a queued configure does not delay it.
+
+### Session processes
+
+`rho/session/processes` returns the background processes the named loaded session's `process` tool started, as they are now. It neither loads the session nor changes anything the session's model sees: a read does not mark a result seen or move the cursor the model polls with. An unloaded session gets `SessionNotLoaded`; an unknown id gets `SessionNotFound`. Reissue the request to refresh; no subscription is created, and a running turn does not delay it.
+
+- `processes`: the processes still running and those that ended whose result the model has not been given yet, oldest first. Each has its `id`, `command`, `state` (`starting`, `running`, `exited`, `terminated`, `timed_out`, or `failed_to_start`), `elapsed_seconds`, `quiet_seconds` since its last output while it runs, and its `exit_code` once it ended with one.
+- `output`: present when the request's `output` named a `process` the session still knows. It holds the `process` as it is now, also after it left `processes`, and the retained `chunks` from the request's `from` cursor on, each with its `cursor`, `stream` (`stdout` or `stderr`), and `text`.
+
+To follow a process's output, send `from: 0` first, then each answer's `next_cursor`. The session retains a bounded amount of output: `first_cursor` is the oldest chunk it still holds, so above 0 earlier output was evicted, and a client drops the chunks it holds below it.
 
 ### Content blocks
 

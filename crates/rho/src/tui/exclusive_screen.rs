@@ -63,6 +63,13 @@ impl ExclusiveOccupant {
         }
     }
 
+    pub(super) fn peek_view(&self) -> Option<&ProcessPeekView> {
+        match self {
+            Self::Peek { view } => Some(view),
+            Self::Session | Self::Setup(_) | Self::Attach { .. } => None,
+        }
+    }
+
     pub(super) fn peek_view_mut(&mut self) -> Option<&mut ProcessPeekView> {
         match self {
             Self::Peek { view } => Some(view),

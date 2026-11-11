@@ -1327,6 +1327,21 @@ fn pending_input_stays_below_the_activity_rail() {
     assert_pass("pending_input_below_activity");
 }
 
+// Covers: with RHO_TUI_DAEMON=1, a process the daemon's session started
+// stays on the rail after its turn, opens in peek, and sits above pending
+// input, as in process.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_process_rail_shows_the_sessions_processes() {
+    for scenario in [
+        "daemon_process_rail",
+        "daemon_process_rail_peek",
+        "daemon_pending_input_below_activity",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
 // Covers: with RHO_TUI_DAEMON=1, resuming a saved session follows it in the
 // daemon and shows its prompt, tool card, and answer as the in-process TUI did.
 // Owner: interactive TUI as a daemon client (#1667)

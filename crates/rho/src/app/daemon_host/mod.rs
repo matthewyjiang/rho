@@ -320,6 +320,13 @@ impl Service for DaemonHost {
         self.sessions.hold(params).await
     }
 
+    async fn session_processes(
+        &self,
+        params: rho_protocol::SessionProcessesParams,
+    ) -> Result<rho_protocol::SessionProcessesResponse, RpcError> {
+        self.sessions.processes(params).await
+    }
+
     async fn session_mcp(
         &self,
         params: rho_protocol::SessionMcpParams,
