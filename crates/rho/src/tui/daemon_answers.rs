@@ -267,8 +267,16 @@ impl App {
     }
 
     /// Opens the oldest waiting request's prompt while none is open. One
-    /// the TUI cannot show says so, and is left to other clients.
+    /// the TUI cannot show says so, and is left to other clients. With no
+    /// turn running, a subagent's question waits for a plain, empty
+    /// composer, as an in-process one does, and shows once the loop finds
+    /// one: it must not replace a draft or an open picker.
     async fn show_next_daemon_input(&mut self) {
+        let composer_free = matches!(self.input_ui.composer(), ComposerMode::Input)
+            && !self.input_ui.has_pending_draft();
+        if !self.daemon_turn_runs() && !composer_free {
+            return;
+        }
         while self.daemon_answers.shown.is_none() {
             let Some(request) = self.daemon_answers.waiting.pop_front() else {
                 return;
