@@ -51,6 +51,19 @@ pub(crate) fn named_window_keys(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// True when window body lines (`% used`, `Resets ...`) appear before the
+/// first window header, which means the panel top scrolled off the viewport.
+pub(crate) fn starts_mid_window(text: &str) -> bool {
+    let lines: Vec<String> = text.lines().map(strip_box_drawing).collect();
+    let line_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let first_header = find_headers(&line_refs)
+        .first()
+        .map_or(line_refs.len(), |hit| hit.line);
+    line_refs[..first_header].iter().any(|line| {
+        parse_used_percent(line).is_some() || line.to_ascii_lowercase().starts_with("resets")
+    })
+}
+
 fn find_headers(lines: &[&str]) -> Vec<HeaderHit> {
     let mut hits = Vec::new();
     for (line, text) in lines.iter().enumerate() {
