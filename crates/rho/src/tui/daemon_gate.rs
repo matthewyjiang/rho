@@ -199,6 +199,19 @@ impl App {
             .any(|spec| self.daemon_prompt_command_available(spec.name))
     }
 
+    /// Whether the daemon's session lists the skill `name`, or lists no
+    /// skill at all: a session with the skill tool lists the built-in ones,
+    /// so that one has no skill tool, and the daemon says so.
+    pub(super) fn daemon_may_load_skill(&self, name: &str) -> bool {
+        let mut skills = self
+            .daemon_options
+            .iter()
+            .flat_map(|options| &options.commands)
+            .filter(|command| command.kind == rho_protocol::CommandKind::Skill)
+            .peekable();
+        skills.peek().is_none() || skills.any(|skill| skill.name == name)
+    }
+
     /// Dynamic commands must be sent verbatim, not expanded with the local
     /// workflow, MCP, template or skill runtime.
     pub(super) fn daemon_prompt_command_available(&self, name: &str) -> bool {

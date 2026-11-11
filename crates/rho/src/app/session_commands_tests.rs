@@ -148,6 +148,21 @@ async fn resolve_routes_prompts_to_commands() {
             Resolved::Rejected,
         ),
         (
+            "agent creator with a pasted multiline request",
+            "/agents create\nreview the parser\nread only",
+            Resolved::Rejected,
+        ),
+        (
+            "skill picked as a slash command before a pasted body",
+            "/$demo\nreview this\nand this",
+            turn("/$demo\nreview this\nand this", &["demo"]),
+        ),
+        (
+            "other multiline commands stay prose",
+            "/model\ngpt-5",
+            turn("/model\ngpt-5", &[]),
+        ),
+        (
             "mcp prompt missing arguments",
             "/mcp:docs:search",
             Resolved::Rejected,

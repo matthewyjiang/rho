@@ -260,6 +260,11 @@ impl App {
                     // `/skill:<name>` goes as the daemon's `/$<name>`, which
                     // loads the skill or says why the session cannot.
                     if let Some(skill) = name.strip_prefix("skill:") {
+                        if !self.daemon_may_load_skill(skill) {
+                            self.clear_submitted_input();
+                            self.report_unknown_command(&name);
+                            return Ok(());
+                        }
                         turn = TurnPrompt::command(turn.model, turn.display)
                             .with_skill(skill.to_owned());
                     } else if !self.daemon_prompt_command_available(&name) {

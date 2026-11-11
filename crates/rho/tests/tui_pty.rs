@@ -697,7 +697,8 @@ fn mermaid_flowchart_survives_narrow_and_restored_panes() {
 }
 
 // Covers: a bare /skill command loads the skill before the model responds, and
-// the loaded SKILL.md stays behind a collapsed card until Ctrl+O expands it.
+// the loaded SKILL.md stays behind a collapsed card until Ctrl+O expands it;
+// an unknown skill is reported as an unknown command.
 // Owner: interactive TUI
 #[test]
 fn bare_skill_command_starts_a_model_turn() {
@@ -737,6 +738,13 @@ fn bare_skill_command(host: SessionHost) {
 
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+    harness.submit_text("/skill:missing-skill").unwrap();
+    harness
+        .wait_for_text(
+            "unknown command '/skill:missing-skill'",
+            WaitTimeout::secs(10, "unknown skill"),
+        )
         .unwrap();
     harness.submit_text("/skill:test-skill").unwrap();
     harness
