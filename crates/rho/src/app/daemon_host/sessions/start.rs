@@ -17,12 +17,12 @@ use tokio::sync::watch;
 
 use super::{
     super::{
-        jobs::{JobState, StartTurnError, TurnRecord},
+        jobs::{JobRecord, JobState, StartTurnError, TurnRecord},
         subagents::TurnBudget,
         wire::state_event,
     },
-    being_deleted, ended_early, grant, stopping, Hold, KeyedTurn, LoadedSession, OpenWith,
-    PromptStart, Queued, Sessions, TurnKind, TurnLimit, TurnSlot, TurnTask,
+    being_deleted, ended_early, grant, stopping, Hold, LoadedSession, OpenWith, PromptStart,
+    Queued, Sessions, TurnKind, TurnLimit, TurnSlot, TurnTask,
 };
 use crate::{
     app::{prompt_content, session_runtime::SessionRuntime},
@@ -274,6 +274,28 @@ impl Sessions {
             budget,
             start,
         }))
+    }
+}
+
+/// A turn a prompt naming `key` started, as a prompt sent again with the
+/// key finds it.
+pub(super) struct KeyedTurn {
+    key: IdempotencyKey,
+    id: rho_protocol::TurnId,
+    /// How the turn began, once it has.
+    start: tokio::sync::watch::Receiver<PromptStart>,
+}
+
+impl KeyedTurn {
+    /// The turn job `job` last ran, as an earlier daemon or an earlier load
+    /// recorded it, if a prompt naming a key started it and it began: one
+    /// that did not begin ran nothing, so its key starts a turn again.
+    pub(super) fn recorded(job: &JobRecord) -> Option<Self> {
+        let TurnRecord { id, key, began } = job.turn.clone()?;
+        let key = key.filter(|_| began)?;
+        // The sender is dropped: the turn began, and nothing changes that.
+        let (_, start) = tokio::sync::watch::channel(PromptStart::Began);
+        Some(Self { key, id, start })
     }
 }
 

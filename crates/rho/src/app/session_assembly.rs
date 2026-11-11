@@ -69,6 +69,9 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub environment: crate::session_environment::SessionEnvironment,
     /// Where delegated agents take capacity, and who else hears of them.
     pub subagent_pool: crate::app::subagent_pool::SubagentPool,
+    /// Whether `process start` offers `keep_warm`: only under a host that
+    /// runs a cache warmer.
+    pub process_keep_warm: crate::tools::process::KeepWarmOffer,
     /// Adds caller-owned tools after shared assembly.
     pub extend_tools: ExtendTools,
     /// Host instructions retained across model-specific behavioral replacement.
@@ -208,6 +211,7 @@ where
         added_dirs,
         environment,
         subagent_pool,
+        process_keep_warm,
         extend_tools,
         system_prompt_suffix,
         approval,
@@ -282,8 +286,7 @@ where
         diagnostics,
         agent,
         added_dirs,
-        // Automation, ACP, side chats, and subagents run no cache warmer.
-        process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
+        process_keep_warm,
         environment: environment.clone(),
         subagent_pool,
     })

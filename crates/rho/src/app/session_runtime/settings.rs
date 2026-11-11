@@ -99,6 +99,10 @@ impl SessionRuntime {
             let _ = session.set_reasoning_level(current);
             return Err(error.into());
         }
+        self.build
+            .host
+            .cache_warming
+            .reasoning_changed(&self.built.provider.identity());
         Ok(())
     }
 

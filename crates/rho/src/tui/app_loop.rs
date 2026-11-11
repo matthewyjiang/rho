@@ -741,6 +741,7 @@ impl App {
         self.usage.usage_before_current_run = None;
         self.usage.run_usage.clear();
         self.usage.extra = Default::default();
+        self.usage.daemon_spend = None;
         self.usage.latest_usage = None;
         self.usage.model_performance.clear();
         self.usage.cache_stats.reset();

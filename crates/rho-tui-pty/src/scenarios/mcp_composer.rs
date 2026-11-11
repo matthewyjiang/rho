@@ -94,20 +94,13 @@ fn accept_highlighted_row(harness: &mut PtyHarness) -> Result<()> {
     harness.inject_key(&Key::Enter)
 }
 
-/// Waits for the server's answer to the finished value `al`.
-///
-/// Suggestions are cached per typed value, and each key typed hides the rows
-/// until its own answer lands. When the TUI lags the paced typing, the screen
-/// can still show the rows answered for `a` once typing ends, and the frame
-/// for `l` then clears them. The rows alone cannot tell the two answers apart,
-/// so wait for a frame whose composer already shows `al`: frames are whole,
-/// and the only rows such a frame can show are the answer to `al`.
-fn wait_for_completions_of_al(harness: &mut PtyHarness) -> Result<()> {
-    harness.wait_for_screen("completions of \"al\"", SETTLE, |screen| {
-        screen
-            .rows_text()
-            .iter()
-            .any(|row| row.trim_end() == "> /mcp:fixture:greet al")
+/// Both suggestions for `al` in one frame. Choices are cached by the exact
+/// typed value, so a frame drawn before `l` can show the answer for `a`, and
+/// the palette then empties while `al` is asked. The echo pins the frame to
+/// `al`.
+fn wait_for_both_suggestions(harness: &mut PtyHarness) -> Result<()> {
+    harness.wait_for_screen("both suggestions for `al`", SETTLE, |screen| {
+        screen.contains_text("/mcp:fixture:greet al")
             && screen.contains_text("alice-from-server")
             && screen.contains_text("alfred-from-server")
     })
@@ -154,7 +147,7 @@ const MCP_COMPOSER_STEPS: &[Step] = &[
     },
     Step::Phase("complete_prompt_argument"),
     Step::TypeText("/mcp:fixture:greet al"),
-    Step::Custom(wait_for_completions_of_al),
+    Step::Custom(wait_for_both_suggestions),
     Step::Custom(complete_highlighted_row),
     Step::WaitText {
         text: "/mcp:fixture:greet alice-from-server",

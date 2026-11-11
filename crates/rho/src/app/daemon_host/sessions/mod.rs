@@ -52,7 +52,7 @@ use rho_sdk::{CancellationToken, SessionId};
 use super::{
     jobs::{
         Admission, JobEvent, JobId, JobRecord, JobRegistry, Keeping, RegisterError, SessionJob,
-        TurnEnd, TurnRecord,
+        TurnEnd,
     },
     subagents::Subagents,
     wire::{session_to_wire, state_event},
@@ -66,6 +66,7 @@ use crate::{
 };
 
 mod budget;
+mod cache_warm;
 mod catalog;
 mod child_questions;
 mod configure;
@@ -98,6 +99,7 @@ mod unload;
 mod workflows;
 
 use super::settings::ConfigStore;
+use cache_warm::KeepWarm;
 use child_questions::ChildQuestions;
 use feed::{Attached, Feed};
 use idle_wake::IdleWatch;
@@ -106,7 +108,7 @@ pub(super) use open::session_environment;
 use open::{open_session, OpenWith, OpenedSession, Opening, Workspace};
 use queued::Queued;
 use reopen::ReopenLocks;
-use start::Entered;
+use start::{Entered, KeyedTurn};
 use t3_wake::{T3Wake, WakeDir};
 use turn::{PromptStart, TurnLimit, TurnTask};
 use unload::Residency;
@@ -206,6 +208,10 @@ struct LoadedSession {
     /// The session's side of the watcher that takes its subagents'
     /// questions, when a person can be asked (see [`child_questions`]).
     child_questions: Option<ChildQuestions>,
+    /// The session's side of the watcher that keeps its provider prompt
+    /// cache warm, when its `process` tool offers that (see
+    /// [`cache_warm`]).
+    cache_warm: Option<KeepWarm>,
 }
 
 /// The state a session's turn lock guards.
@@ -240,28 +246,6 @@ struct TurnSlot {
     /// reduced the conversation, which a
     /// [`rho_protocol::SessionChange::ModelAfterCompaction`] waits for.
     compacted_prompt: Option<u64>,
-}
-
-/// A turn a prompt naming `key` started, as a prompt sent again with the
-/// key finds it.
-struct KeyedTurn {
-    key: rho_protocol::IdempotencyKey,
-    id: rho_protocol::TurnId,
-    /// How the turn began, once it has.
-    start: tokio::sync::watch::Receiver<PromptStart>,
-}
-
-impl KeyedTurn {
-    /// The turn job `job` last ran, as an earlier daemon or an earlier load
-    /// recorded it, if a prompt naming a key started it and it began: one
-    /// that did not begin ran nothing, so its key starts a turn again.
-    fn recorded(job: &JobRecord) -> Option<Self> {
-        let TurnRecord { id, key, began } = job.turn.clone()?;
-        let key = key.filter(|_| began)?;
-        // The sender is dropped: the turn began, and nothing changes that.
-        let (_, start) = tokio::sync::watch::channel(PromptStart::Began);
-        Some(Self { key, id, start })
-    }
 }
 
 /// What a session's turn runs, as far as a prompt sent meanwhile goes.
@@ -428,6 +412,7 @@ impl LoadedSession {
             id: runtime.session_id().clone(),
             wake: T3Wake::of(&runtime, wakes).map(tokio::sync::Mutex::new),
             idle_wake: IdleWatch::of(&runtime),
+            cache_warm: KeepWarm::of(&runtime),
             child_questions: ChildQuestions::of(&mut runtime),
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),
@@ -695,6 +680,7 @@ impl Sessions {
                     let entry = Arc::new(entry);
                     loaded.insert(session, Arc::clone(&entry));
                     self.watch_idle_results(&entry);
+                    self.watch_cache_warm(&entry);
                     self.watch_child_questions(&entry);
                     if let Some(loaded) = tool_sources {
                         tool_sources::attach_when_loaded(&entry, loaded);
