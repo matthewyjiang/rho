@@ -6,7 +6,22 @@ Change day-to-day settings from the TUI with `/config`, `/model`, `/login`, and 
 
 Secrets are never stored in config. See [authentication and models](/authentication-and-models).
 
-Unknown keys in any of these files are a load error, so typos and settings from an older layout fail loudly. A value outside its range is an error too, naming the key, the limit, and the value you set; Rho does not clamp. Every bad key is reported at once.
+Unknown keys in any of these files are a load error, so typos fail loudly. A value outside its range is an error too, naming the key, the limit, and the value you set; Rho does not clamp. Every bad key is reported at once.
+
+## Upgrading from Rho 2.x
+
+Rho 2.x kept everything in `config.toml`. When Rho 3.0 starts and finds 2.x keys in `config.toml`, it rewrites the file to the 3.0 layout and prints what it moved. The check runs at every start, so a 2.x key added by hand later is rewritten the same way, with a new backup:
+
+- `[display]` settings, `behavior.check_for_updates`, and `keybindings.editing_mode` move to `clients/tui.toml`.
+- `display.theme` and the `[keybindings]` chords move to `tui.toml`.
+- Top-level keys such as `provider`, `model`, and `permission_mode` move into their tables in `config.toml`.
+- Plaintext `web_search_*_api_key` values move to the credential store.
+- Web-search `hosted` and `provider` become `mode` and `backend`. The 2.x native-only pair (`hosted = true`, `provider = "disabled"`) becomes `mode = "off"`, because 3.0 cannot search natively without also enabling a backend.
+- `edit_tool = "hashline"` becomes `"str_replace"`, and the retired `behavior.experimental_workspace_rewind` key is removed.
+
+Before Rho rewrites a file, it copies the file beside itself as `<name>.2x.bak`, for example `config.toml.2x.bak`. An existing backup is never replaced. The backup of a file that held plaintext web-search keys still holds them, so delete it once the upgrade looks right. A value already set in `tui.toml` or `clients/tui.toml` wins over the 2.x value. Comments and key order are kept for keys that stay.
+
+Only keys Rho 2.x wrote are rewritten. A key that neither version knows stays in the file and is still a load error.
 
 `--save` and the daemon's settings writes (behind `/config`) rewrite only the settings that changed. Comments, key order, formatting, and tables Rho does not manage stay as you wrote them. A save that would leave an invalid file, such as a compaction target at or above the threshold, is refused and writes nothing.
 
@@ -347,7 +362,7 @@ Built-in providers have no per-provider override. They use this table unless you
 | `xai` | `str_replace` | First-party agent tooling uses string replace |
 | all others | `str_replace` | Rho default when no first-party match is known |
 
-Pinned values stay fixed across provider changes. A change from `/config` applies to new sessions. Auto also switches live when you change providers mid-session. Rho 3.0 removed the legacy `hashline` format: a config that still sets `edit_tool = "hashline"`, globally or on a custom provider, is a load error. Format details: [Edit formats](/tools-workspace/edit-format).
+Pinned values stay fixed across provider changes. A change from `/config` applies to new sessions. Auto also switches live when you change providers mid-session. Rho 3.0 removed the legacy `hashline` format. The [2.x upgrade](#upgrading-from-rho-2x) rewrites `edit_tool = "hashline"` to `"str_replace"` at startup, globally and on a custom provider. Format details: [Edit formats](/tools-workspace/edit-format).
 
 ## Behavior
 

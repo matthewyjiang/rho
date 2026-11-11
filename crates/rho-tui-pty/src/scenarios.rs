@@ -19,6 +19,7 @@ mod compact;
 mod composer_unicode;
 mod composer_vim;
 mod config;
+mod config_2x_upgrade;
 mod context_overlay;
 mod continue_latest;
 mod conversation_tree;
@@ -619,6 +620,9 @@ const ALL_SCENARIOS: &[Scenario] = &[
     model_prompts::MODEL_PROMPTS_SCENARIO,
     model_cycle_reasoning::IDLE,
     model_cycle_reasoning::QUEUED,
+    config_2x_upgrade::IN_PROCESS,
+    #[cfg(unix)]
+    config_2x_upgrade::DAEMON,
     permission_cycle::IDLE,
     permission_cycle::REMAPPED,
     permission_cycle::QUEUED,

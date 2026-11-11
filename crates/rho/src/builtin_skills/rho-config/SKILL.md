@@ -39,7 +39,7 @@ For project onboarding, `/init` surveys the repository and creates or updates `A
 
 ## Where settings live
 
-Rho stores agent settings at `~/.rho/config.toml` by default, every key inside a table (`[model]`, `[behavior]`, `[compaction]`, `[output]`, `[web_search]`, …); a top-level key or a 2.x key is a load error. The TUI reads its own display and composer settings from `~/.rho/clients/tui.toml` (top-level keys) and its theme and `[keybindings]` from `~/.rho/tui.toml`. Out-of-range values are errors, not clamped. `RHO_HOME` overrides the config directory; `rho --config <path>` loads and saves a specific file. Restart-only settings are the values the running process used at startup, so a config edit does not take effect until rho starts again. Some settings apply live; say which one you are recommending.
+Rho stores agent settings at `~/.rho/config.toml` by default, every key inside a table (`[model]`, `[behavior]`, `[compaction]`, `[output]`, `[web_search]`, …); a top-level key or an unknown key is a load error. A `config.toml` saved by rho 2.x is rewritten to this layout at startup, with the original kept as `config.toml.2x.bak`. The TUI reads its own display and composer settings from `~/.rho/clients/tui.toml` (top-level keys) and its theme and `[keybindings]` from `~/.rho/tui.toml`. Out-of-range values are errors, not clamped. `RHO_HOME` overrides the config directory; `rho --config <path>` loads and saves a specific file. Restart-only settings are the values the running process used at startup, so a config edit does not take effect until rho starts again. Some settings apply live; say which one you are recommending.
 
 ## The four ways to configure
 

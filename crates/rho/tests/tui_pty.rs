@@ -178,6 +178,17 @@ fn permission_cycle_is_session_only() {
     }
 }
 
+// Covers: a home whose config.toml rho 2.x wrote starts, in process and as
+// a daemon client, with its display and keybinding settings still applied
+// and the original kept as a backup.
+// Owner: interactive startup through PTY
+#[test]
+fn a_2x_config_starts_and_keeps_its_tui_settings() {
+    for scenario in ["config_2x_upgrade", "daemon_config_2x_upgrade"] {
+        assert_pass(scenario);
+    }
+}
+
 // Covers: repeated presses queue from the pending mode, not the active mode,
 // and cancellation applies the last queued policy before the next idle press.
 // Owner: interactive queued permission shortcut through PTY
