@@ -427,11 +427,14 @@ impl App {
     /// Hand the most recently held turn back to the composer, so `esc` unwinds
     /// prompts newest first instead of leaving them to run. Does nothing unless
     /// the composer is empty, so it cannot overwrite something the person has
-    /// started typing since. A workflow the hub started is cancelled instead:
-    /// the composer never held its command.
+    /// started typing since. A workflow the hub started is cancelled instead,
+    /// whatever the composer holds: the composer never held its command.
     fn take_back_held_turn(&mut self) {
-        if !self.input_ui.text().is_empty() || !self.input_ui.attachments().is_empty() {
-            return;
+        let composer_in_use =
+            !self.input_ui.text().is_empty() || !self.input_ui.attachments().is_empty();
+        match self.held_turns.back().map(|held| held.origin) {
+            Some(HeldOrigin::Composer) if composer_in_use => return,
+            Some(HeldOrigin::Composer | HeldOrigin::WorkflowHub) | None => {}
         }
         let Some(HeldTurn {
             turn,

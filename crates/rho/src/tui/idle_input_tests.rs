@@ -74,6 +74,31 @@ fn esc_takes_back_held_turns_newest_first() {
     assert_eq!(app.held_turns.len(), 1);
 }
 
+// Covers: esc must cancel a workflow launch the hub is holding even while
+// the composer holds a draft, which it leaves alone, since the launch has
+// no text to hand back; an older composer hold then stays held.
+// Owner: idle input key handling
+#[test]
+fn esc_cancels_a_held_hub_launch_over_a_draft() {
+    let mut app = test_app();
+    app.held_turns.push_back(held_turn("typed"));
+    app.held_turns.push_back(HeldTurn {
+        origin: super::HeldOrigin::WorkflowHub,
+        ..held_turn("/workflow:build")
+    });
+    app.input_ui.set_text("draft".to_owned());
+
+    app.take_back_held_turn();
+    app.take_back_held_turn();
+
+    let held: Vec<_> = app
+        .held_turns
+        .iter()
+        .map(|held| held.turn.display.as_str())
+        .collect();
+    assert_eq!((app.input_ui.text(), held), ("draft", vec!["typed"]));
+}
+
 fn line_text(line: &Line<'_>) -> String {
     line.spans
         .iter()
