@@ -61,7 +61,7 @@ fn next_choice<T: Copy + PartialEq>(current: T, available: &[T]) -> Option<T> {
 
 fn model_picker(options: &SessionOptions) -> UiPicker {
     UiPicker::models(
-        "Select model",
+        "select model",
         options
             .model
             .available
@@ -82,6 +82,18 @@ fn model_picker(options: &SessionOptions) -> UiPicker {
 
 impl App {
     pub(super) fn show_daemon_options(&mut self, options: SessionOptions) {
+        // The session runs on another provider or auth than the one last
+        // read as signed out: the launch config's at first, since a resumed
+        // session keeps its own, and after a switch the one it left. What
+        // it runs on now is not known to lack credentials, and the daemon
+        // says so at the prompt if it does.
+        let runtime = &self.info.runtime;
+        let model_changed = runtime.provider != options.model.current.provider
+            || runtime.model != options.model.current.model;
+        if runtime.provider != options.model.current.provider || runtime.auth != options.model.auth
+        {
+            self.info.services.auth_unavailable = None;
+        }
         self.info
             .runtime
             .provider
@@ -119,6 +131,12 @@ impl App {
         .map(|(metadata, _)| metadata);
         self.daemon_options = Some(options);
         self.refresh_open_config_page();
+        // First-run setup's model step opened on the model the session had:
+        // one it moved to since, as after signing in to another provider,
+        // is the one Enter should confirm.
+        if model_changed && self.setup_step() == Some(super::setup_screen::SetupStep::ChooseModel) {
+            self.show_setup_model_picker();
+        }
     }
 
     pub(super) fn configure_daemon(&mut self, change: SessionChange) -> anyhow::Result<()> {
@@ -147,6 +165,17 @@ impl App {
 
     /// The session's model page, which re-renders as the session's
     /// options change, opened from `/model` or `/config`.
+    /// Whether a daemon session's first launch has a model to choose: its
+    /// own, signed in, or another auth's. Its picker always lists the
+    /// current model, so an empty picker cannot say there is none.
+    pub(super) fn daemon_setup_can_choose_model(&self) -> bool {
+        self.setup_state().signed_in
+            || self
+                .daemon_options
+                .as_ref()
+                .is_some_and(|options| options.model.available.len() > 1)
+    }
+
     pub(super) fn daemon_model_picker(&self) -> Option<UiPicker> {
         let mut picker = model_picker(self.daemon_options.as_ref()?);
         picker.select_badged();
@@ -158,7 +187,18 @@ impl App {
             return Ok(());
         };
         match model_choice(&options.model, reference) {
-            Ok(model) => self.configure_daemon(SessionChange::Model { model, auth: None }),
+            Ok(model) => {
+                let asked = self.daemon_option_requests.len();
+                self.configure_daemon(SessionChange::Model { model, auth: None })?;
+                // First-run setup ends with its model, once the daemon was
+                // asked for it: a change that could not be sent leaves the
+                // step open under its error. One the daemon then refuses
+                // shows as an error row in the session.
+                if self.daemon_option_requests.len() > asked {
+                    self.finish_setup_screen();
+                }
+                Ok(())
+            }
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("could not switch model: {error}")));
                 Ok(())

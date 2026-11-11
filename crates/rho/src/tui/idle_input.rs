@@ -240,6 +240,16 @@ impl App {
 
         match self.parse_input_command() {
             Ok(Some(invocation)) => {
+                // A command the daemon runs as a prompt needs credentials
+                // as any prompt does: held for `/login` the same way.
+                if self.info.session.daemon.is_some()
+                    && super::daemon_gate::command_route(invocation.id)
+                        == super::daemon_gate::CommandRoute::Prompt
+                    && self.daemon_prompt_command_available(&invocation.name)
+                    && self.daemon_prompt_needs_login()
+                {
+                    return self.offer_login_instead_of_turn(turn);
+                }
                 let submission = self.take_command_submission(invocation, turn);
                 self.execute_command(submission, terminal, agent).await?;
                 return Ok(());
@@ -251,6 +261,9 @@ impl App {
                         self.clear_submitted_input();
                         self.daemon_command_unavailable(&name);
                         return Ok(());
+                    }
+                    if self.daemon_prompt_needs_login() {
+                        return self.offer_login_instead_of_turn(turn);
                     }
                     let media = self
                         .input_ui
@@ -297,8 +310,12 @@ impl App {
         }
 
         // A daemon session runs the turn: it loads the skills the prompt
-        // mentions and owns sign-in, tools, and compaction.
+        // mentions and owns tools and compaction. A prompt it could only
+        // refuse for want of credentials offers `/login` first.
         if self.info.session.daemon.is_some() {
+            if self.daemon_prompt_needs_login() {
+                return self.offer_login_instead_of_turn(turn);
+            }
             let media = self
                 .input_ui
                 .take_ready_media()

@@ -102,17 +102,19 @@ impl App {
     /// that can already list models skips a login that is done. The named
     /// entries override that so either step can be opened on demand.
     pub(super) fn start_setup_screen(&mut self, terminal: &mut super::DefaultTerminal) {
-        // First-run setup is not ported: the daemon-owned session's options
-        // already supply the model, and `/login` signs in through the daemon.
-        if self.info.session.daemon.is_some() {
-            return;
-        }
         let Some(entry) = self.info.services.first_run else {
             return;
         };
         let step = match entry {
             SetupEntry::SignIn => SetupStep::SignIn,
             SetupEntry::ChooseModel => SetupStep::ChooseModel,
+            SetupEntry::Auto if self.info.session.daemon.is_some() => {
+                if self.daemon_setup_can_choose_model() {
+                    SetupStep::ChooseModel
+                } else {
+                    SetupStep::SignIn
+                }
+            }
             SetupEntry::Auto if self.setup_model_picker().is_some() => SetupStep::ChooseModel,
             SetupEntry::Auto => SetupStep::SignIn,
         };
@@ -196,7 +198,7 @@ impl App {
         let _ = terminal.draw(|frame| self.draw(frame));
     }
 
-    fn show_setup_model_picker(&mut self) {
+    pub(super) fn show_setup_model_picker(&mut self) {
         let Some(picker) = self.setup_model_picker() else {
             // Nothing to choose between: keep the configured model rather than
             // showing an empty step. Setup is gone, so the composer must

@@ -5,10 +5,13 @@
 //! browser, which opens here.
 //!
 //! Unlike in process, a login does not swap the running provider: the
-//! daemon's sessions pick the credential up at their next prompt, and a
-//! logout of the profile in use shows as that prompt's authentication
-//! error. Nor does it make the session's provider and model the config's
-//! defaults: only the default provider's auth profile follows a login.
+//! daemon's sessions pick the credential up at their next prompt. A
+//! logout of the profile in use marks the session signed out here, so the
+//! header says so and a prompt offers `/login` rather than failing; that
+//! is this TUI's reading of the shared credential store, checked again
+//! before each prompt it would hold back. A login does not make the
+//! session's provider and model the config's defaults either: only the
+//! default provider's auth profile follows it.
 //! A login its provider cannot confirm (Ollama Cloud's device key) is
 //! saved by the daemon as soon as it is shown, so it reads as finished
 //! before the person approves it.
@@ -17,10 +20,13 @@ use rho_protocol::{LoginId, LoginOutcome, SessionChange};
 use rho_providers::{
     auth::{
         browser::{self, BrowserAvailability},
-        login_dispatch::InteractiveLoginMode,
+        login_dispatch::{InteractiveLoginMode, ProviderAuthentication},
         login_prompt::LoginPrompt,
     },
-    model::catalog::LoginTarget,
+    model::{
+        catalog::{self, LoginTarget},
+        registry,
+    },
 };
 
 use super::{
@@ -223,6 +229,47 @@ impl App {
         self.daemon_login.is_some()
     }
 
+    /// Marks the session signed out when the logout of `target` left its
+    /// auth without credentials, which the header hints, the statusline,
+    /// and a prompt's detour to `/login` follow (`setup_state`). Reports
+    /// whether it did.
+    fn mark_signed_out_after_logout(&mut self, target: &LoginTarget) -> bool {
+        let runtime = &self.info.runtime;
+        if runtime.provider != target.provider
+            || runtime.auth != target.auth
+            || self.session_auth_has_credentials()
+        {
+            return false;
+        }
+        self.info.services.auth_unavailable =
+            Some(registry::missing_credentials_error(&target.provider).to_string());
+        true
+    }
+
+    fn session_auth_has_credentials(&self) -> bool {
+        ProviderAuthentication::has_credentials(
+            self.credential_store.as_ref(),
+            &self.info.runtime.auth,
+        )
+        .unwrap_or(false)
+    }
+
+    /// Whether a prompt should be held for `/login` rather than sent: the
+    /// session reads as signed out and the store, read again, still has
+    /// nothing for its auth. A login made elsewhere since, such as
+    /// `rho login` in another terminal, lets the prompt through.
+    pub(super) fn daemon_prompt_needs_login(&mut self) -> bool {
+        if self.setup_state().signed_in {
+            return false;
+        }
+        AppCredentialStore::reread_external_logins();
+        if self.session_auth_has_credentials() {
+            self.info.services.auth_unavailable = None;
+            return false;
+        }
+        true
+    }
+
     /// Has the daemon sign out of `target` and reports it.
     pub(super) async fn sign_out_of_daemon(&mut self, target: &LoginTarget) -> anyhow::Result<()> {
         match self.daemon_session().sign_out(&target.auth).await {
@@ -230,7 +277,14 @@ impl App {
                 AppCredentialStore::reread_external_logins();
                 self.refresh_available_auths();
                 self.insert_entry(&Entry::Notice(format!("logged out of {}", target.provider)));
-                self.set_status("logout complete");
+                if self.mark_signed_out_after_logout(target) {
+                    self.insert_entry(&Entry::Notice(
+                        super::login::ACTIVE_PROVIDER_SIGNED_OUT.into(),
+                    ));
+                    self.set_status(super::login::NO_PROVIDER_STATUS);
+                } else {
+                    self.set_status("logout complete");
+                }
             }
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -263,22 +317,55 @@ impl App {
         }
         let in_use =
             target.provider == self.info.runtime.provider && target.auth == self.info.runtime.auth;
-        self.set_status(if target.auth == rho_providers::provider::KEYLESS_AUTH {
-            format!(
+        // A signed-out session moves to the provider just signed in to, as
+        // it does in process. Asked for, the switch counts as made: the
+        // daemon builds the provider from the credential it just saved,
+        // and says so in the session if it cannot.
+        if in_use {
+            self.info.services.auth_unavailable = None;
+        }
+        let switched_to = if in_use || self.setup_state().signed_in {
+            None
+        } else {
+            Some(catalog::default_model_for_provider(&target.provider))
+        };
+        let status = match switched_to {
+            Some(Some(model)) => {
+                let reference = rho_providers::provider::model_reference(&target.provider, &model);
+                let asked = self.daemon_option_requests.len();
+                self.configure_daemon(SessionChange::Model {
+                    model: rho_protocol::ModelRef {
+                        provider: target.provider.clone(),
+                        model,
+                    },
+                    auth: Some(target.auth.clone()),
+                })?;
+                if self.daemon_option_requests.len() > asked {
+                    self.info.services.auth_unavailable = None;
+                }
+                format!(
+                    "stored credentials for {} and selected {reference}",
+                    target.provider
+                )
+            }
+            Some(None) => format!(
+                "stored credentials for {}, but no cached models are available. Run /refresh-models before switching to it.",
+                target.provider
+            ),
+            None if target.auth == rho_providers::provider::KEYLESS_AUTH => format!(
                 "{} is ready. Switch models with /model when you want to use it.",
                 target.provider
-            )
-        } else if in_use {
-            format!(
+            ),
+            None if in_use => format!(
                 "stored credentials for {}; the session uses them from its next prompt",
                 target.provider
-            )
-        } else {
-            format!(
+            ),
+            None => format!(
                 "stored credentials for {}. Switch models with /model when you want to use it.",
                 target.provider
-            )
-        });
+            ),
+        };
+        self.set_status(status);
         self.announce_held_prompt_after_login();
         self.advance_setup_screen_after_login(terminal);
         self.report_resting_herdr_state().await;
