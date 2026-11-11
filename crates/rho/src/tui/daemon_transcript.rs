@@ -39,7 +39,14 @@ impl App {
                 DaemonView::InputsReset => self.drop_daemon_inputs(),
                 DaemonView::User(text) => {
                     self.finish_streams();
-                    self.insert_entry(&Entry::User(text));
+                    // The hub's own prompt has no row, as in process.
+                    if self
+                        .daemon_hub_launch
+                        .take_if(|sent| *sent == text)
+                        .is_none()
+                    {
+                        self.insert_entry(&Entry::User(text));
+                    }
                 }
                 // A `/compact` turn's only text is its reply, which says
                 // again what the card shows.

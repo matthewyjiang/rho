@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use rho_protocol::{JobState, JobSummary, TurnOutcome};
+use rho_protocol::{JobSummary, TurnOutcome};
 
 use super::{
     daemon_jobs::may_still_change,
@@ -57,20 +57,24 @@ impl App {
     }
 
     /// Sends `turn`, a workflow launch. The prompt is the hub's spelling,
-    /// not something to type: it stays out of the input history, and a
-    /// prompt that could not be sent is reported without touching the
-    /// composer's draft.
+    /// not something to type: it stays out of the input history, the user
+    /// message the daemon shows for it gets no row, and a prompt that could
+    /// not be sent is reported without touching the composer's draft. A
+    /// session reopened later replays the prompt as the daemon saved it.
     pub(super) async fn send_daemon_workflow(
         &mut self,
         turn: TurnPrompt,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        self.daemon_hub_launch = Some(turn.display.clone());
         let sent = self.request_daemon_turn(&turn, &[]).await;
         // Why the prompt found no attachment shows first.
         self.show_taken_daemon_views(terminal).await?;
         let Err(error) = sent else {
             return Ok(());
         };
+        // No turn began, so no user message comes back.
+        self.daemon_hub_launch = None;
         let ended = error
             .downcast_ref::<rho_protocol::ClientError>()
             .and_then(rho_protocol::ClientError::turn_ended);
@@ -128,10 +132,10 @@ impl App {
         Ok(())
     }
 
-    /// Puts `jobs`, the followed session's workflow jobs worth showing at
-    /// `now` (Unix seconds), on the workflow rail: one row for each run,
-    /// from the newest job that drives it, since a run resumed has a job
-    /// for each drive. A run whose saved state cannot be read has no row.
+    /// Puts `jobs`, the followed session's workflow jobs at `now` (Unix
+    /// seconds), on the workflow rail: one row for each run still being
+    /// driven (see [`live_drives`]). A run whose saved state cannot be read
+    /// has no row.
     pub(super) fn show_daemon_workflows(&mut self, jobs: &[&JobSummary], now: u64) {
         if jobs.is_empty() {
             self.daemon_rail.workflows = WorkflowRuns::default();
@@ -142,17 +146,11 @@ impl App {
             self.daemon_rail.workflows.ops = self.workflow_ops().ok();
         }
         let runs = &mut self.daemon_rail.workflows;
-        let rows = newest_drives(jobs)
+        let rows = live_drives(jobs)
             .into_iter()
             .filter_map(|(run, job)| {
-                let until = if may_still_change(job.state) {
-                    now
-                } else {
-                    job.updated_at
-                };
                 Some(WorkflowRailSummary {
-                    failed: job.state == JobState::Failed,
-                    elapsed_seconds: until.saturating_sub(job.created_at),
+                    elapsed_seconds: now.saturating_sub(job.created_at),
                     ..runs.progress(run)?
                 })
             })
@@ -189,9 +187,13 @@ impl WorkflowRuns {
     }
 }
 
-/// Each run `jobs` drive with the job that began driving it last, in the
-/// order the runs first appear.
-fn newest_drives<'a>(jobs: &[&'a JobSummary]) -> Vec<(RunId, &'a JobSummary)> {
+/// Each run `jobs` still drive with the job driving it, in the order the
+/// runs first appear. A run resumed has a job for each drive, and the one
+/// that began last says where the run is. A run whose drive ended has no
+/// row: the daemon gives the session its result in a turn, at once when the
+/// session is idle, and nothing tells this process when, so the row leaves
+/// as the run ends instead of with the result, as it does in process.
+fn live_drives<'a>(jobs: &[&'a JobSummary]) -> Vec<(RunId, &'a JobSummary)> {
     let mut drives: Vec<(RunId, &JobSummary)> = Vec::new();
     for job in jobs {
         let Some(run) = job
@@ -207,6 +209,7 @@ fn newest_drives<'a>(jobs: &[&'a JobSummary]) -> Vec<(RunId, &'a JobSummary)> {
             None => drives.push((run, job)),
         }
     }
+    drives.retain(|(_, job)| may_still_change(job.state));
     drives
 }
 
