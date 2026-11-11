@@ -2,9 +2,18 @@
 //! each goes to the session's request queue, and what it answers with
 //! arrives as a view.
 
-use super::{DaemonSession, LOST};
+use super::{DaemonSession, ToolSources, LOST};
 
 impl DaemonSession {
+    /// Whether the session's MCP servers still connect, so a prompt waits.
+    pub(in crate::tui) fn tool_sources_loading(&self) -> bool {
+        self.tool_sources == ToolSources::Loading
+    }
+
+    pub(in crate::tui) fn tool_sources_loaded(&mut self) {
+        self.tool_sources = ToolSources::Loaded;
+    }
+
     /// Request live inventory without waiting for the active turn.
     pub(in crate::tui) fn request_mcp(&self) -> anyhow::Result<()> {
         if self.ended {

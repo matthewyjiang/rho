@@ -27,6 +27,9 @@ pub(crate) struct PromptScope {
     cancellation: CancellationToken,
     handle: SessionHandle,
     generation: PromptGeneration,
+    /// Whether the prompt's start attached the session's deferred tool
+    /// sources, which changed its tool list.
+    attached_tool_sources: bool,
 }
 
 impl PromptScope {
@@ -37,7 +40,14 @@ impl PromptScope {
             cancellation,
             handle: handle.clone(),
             generation,
+            attached_tool_sources: false,
         }
+    }
+
+    /// Whether the session's tool list changed as the prompt started,
+    /// because its deferred tool sources attached then.
+    pub(crate) fn attached_tool_sources(&self) -> bool {
+        self.attached_tool_sources
     }
 
     /// Trips when the prompt is cancelled before its first run starts, and
@@ -69,7 +79,8 @@ impl Drop for PromptScope {
 
 impl SessionRuntime {
     /// Starts a prompt: refuses it while a compaction's rewrite is unsaved,
-    /// opens the window in which a cancel reaches it, and renews credentials
+    /// opens the window in which a cancel reaches it, waits for tool
+    /// sources the session still loads, and renews credentials
     /// a logout or a refused request left stale. Hold the returned scope
     /// for the whole prompt and pass it to each of the prompt's calls.
     pub(crate) async fn begin_prompt(
@@ -79,7 +90,16 @@ impl SessionRuntime {
         if self.unsaved_compaction {
             return Err(super::UnsavedCompaction.into());
         }
-        let scope = PromptScope::begin(&self.handle);
+        let mut scope = PromptScope::begin(&self.handle);
+        // The prompt's tools must be there before it runs. A cancel stops
+        // the wait, and the prompt then ends as cancelled.
+        if let Some(loaded) = self.tool_sources_loaded() {
+            tokio::select! {
+                () = scope.cancellation().cancelled() => {}
+                () = loaded => {}
+            }
+        }
+        scope.attached_tool_sources = self.attach_loaded_tool_sources(process_config).await?;
         let renewed = self.renew_stale_credentials(process_config).await;
         // With nothing to renew from, as after a logout, the renewal's read
         // cached the miss in the OS store, and the login that fixes it may

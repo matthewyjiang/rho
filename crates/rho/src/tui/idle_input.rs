@@ -379,7 +379,7 @@ impl App {
             .await
     }
 
-    fn hold_turn(
+    pub(super) fn hold_turn(
         &mut self,
         turn: TurnPrompt,
         media: Vec<ChatMedia>,
@@ -465,10 +465,15 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        if self.input_ui.composer().blocks_held_turn_start() {
+        // A daemon session may be running a turn another client or a
+        // background result started; the held one waits for it to end.
+        if self.input_ui.composer().blocks_held_turn_start()
+            || (self.info.session.daemon.is_some() && self.is_ui_busy())
+        {
             return Ok(false);
         }
-        if !self.first_held_turn_is_releasable(agent.tool_sources_pending(), agent.is_compacting())
+        if !self
+            .first_held_turn_is_releasable(self.tool_sources_pending(agent), agent.is_compacting())
         {
             return Ok(false);
         }
@@ -484,8 +489,13 @@ impl App {
         if self.held_turns.is_empty() {
             self.clear_tool_sources_loading_activity();
         }
-        self.run_turn_sequence_held(turn, media, paste_segments, terminal, agent)
-            .await?;
+        if self.info.session.daemon.is_some() {
+            self.submit_daemon_turn(turn, media, paste_segments, terminal)
+                .await?;
+        } else {
+            self.run_turn_sequence_held(turn, media, paste_segments, terminal, agent)
+                .await?;
+        }
         Ok(true)
     }
 
@@ -509,7 +519,7 @@ impl App {
         {
             return self.start_next_daemon_follow_up(terminal).await;
         }
-        if agent.is_compacting() || agent.tool_sources_pending() {
+        if agent.is_compacting() || self.tool_sources_pending(agent) {
             return Ok(false);
         }
         if self.input_ui.composer().blocks_held_turn_start() {

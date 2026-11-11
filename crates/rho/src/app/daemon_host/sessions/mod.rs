@@ -91,6 +91,7 @@ mod t3_wake;
 mod test_events;
 #[cfg(test)]
 mod test_sessions;
+mod tool_sources;
 mod turn;
 mod unload;
 
@@ -675,6 +676,7 @@ impl Sessions {
     ) -> Result<Arc<LoadedSession>, RpcError> {
         let session = opened.runtime.session_id().clone();
         let auths = options::available_auths(opened.runtime.credentials()).await;
+        let tool_sources = opened.runtime.tool_sources_loaded();
         let entry = LoadedSession::new(
             job.job(),
             Arc::clone(&self.jobs),
@@ -693,6 +695,9 @@ impl Sessions {
                     let entry = Arc::new(entry);
                     loaded.insert(session, Arc::clone(&entry));
                     self.watch_idle_results(&entry);
+                    if let Some(loaded) = tool_sources {
+                        tool_sources::attach_when_loaded(&entry, loaded);
+                    }
                     return Ok(entry);
                 }
                 Err(error) => error,

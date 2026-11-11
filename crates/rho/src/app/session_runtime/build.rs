@@ -19,7 +19,7 @@ use crate::{
         },
         subagent_messaging::NoticePoster,
         subagent_pool::SubagentPool,
-        tools_prompt::{McpSamplingSupport, ToolSourceAttach},
+        tools_prompt::{McpSamplingSupport, ToolSourceAttach, ToolSourceLoad},
     },
     config::Config,
     credential_store::AppCredentialStore,
@@ -88,6 +88,10 @@ pub(crate) struct HostCapabilities {
     pub(crate) parent_notices: Option<Arc<dyn NoticePoster>>,
     /// Whether the host runs the session or only reads what it saved.
     pub(crate) session_use: SessionUse,
+    /// When a session the host runs loads its MCP servers and OpenAPI
+    /// sources: deferred, its prompts wait for them. A rebind loads its
+    /// own inline, since it runs within a prompt.
+    pub(crate) tool_sources: ToolSourceLoad,
 }
 
 /// Whether a host runs a session or only reads what it saved.
@@ -117,6 +121,7 @@ impl HostCapabilities {
             approvals: ApprovalPolicy::Unattended(approvals),
             parent_notices: None,
             session_use: SessionUse::Run,
+            tool_sources: ToolSourceLoad::Inline,
         }
     }
 }
@@ -257,6 +262,7 @@ pub(super) async fn build_session(
     config: &Config,
     workspace: &Path,
     added_dirs: &AddedDirs,
+    tool_source_load: ToolSourceLoad,
     session_options: impl FnOnce(Arc<dyn ModelProvider>) -> anyhow::Result<SessionOptions>,
 ) -> anyhow::Result<(BuiltSession, SessionPermission)> {
     ensure_auto_classifier_model(config, build.host.environment.credentials().as_ref())?;
@@ -296,6 +302,7 @@ pub(super) async fn build_session(
             SessionUse::Run => ToolSourceAttach::Connect,
             SessionUse::Read => ToolSourceAttach::None,
         },
+        tool_source_load,
         hook_start: match build.host.session_use {
             SessionUse::Run => HookStart::Start,
             SessionUse::Read => HookStart::Skip,

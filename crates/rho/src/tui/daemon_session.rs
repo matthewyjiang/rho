@@ -81,7 +81,7 @@ mod unix {
         daemon_events::{DaemonEvents, DaemonView, LoginUpdate, Rest, TurnState},
         daemon_inputs::AnswerRefusal,
         daemon_options::setting_name,
-        daemon_requests::{DaemonRequests, Target},
+        daemon_requests::{DaemonRequests, Target, ToolSources},
         daemon_settings::DaemonSettings,
         daemon_settings_read::{load_settings, route_config, settings_loaded},
     };
@@ -261,6 +261,8 @@ mod unix {
         reattach: Option<Reattach>,
         /// The events of the interactive login under way, if any.
         logins: Option<mpsc::UnboundedReceiver<LoginEvent>>,
+        /// Whether the session's MCP servers still connect.
+        tool_sources: ToolSources,
     }
 
     impl DaemonSession {
@@ -357,6 +359,7 @@ mod unix {
             // Routed before the reads, so no change after them is dropped.
             let config_changes = route_config(&daemon);
             let settings = load_settings(&link).await;
+            let tool_sources = ToolSources::read(&link, &id).await;
             let (target, requests) = watch::channel(Target::Attached {
                 link,
                 session: id.clone(),
@@ -384,9 +387,10 @@ mod unix {
                 events,
                 pending,
                 ended: false,
-                requests: Some(DaemonRequests::new(requests)),
+                requests: Some(DaemonRequests::new(requests, tool_sources)),
                 reattach: None,
                 logins: None,
+                tool_sources,
             };
             session.pending.push(settings_loaded(settings));
             for change in queued {

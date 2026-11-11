@@ -87,6 +87,9 @@ pub(super) enum DaemonView {
     Options(Box<rho_protocol::SessionOptions>),
     /// On-demand inventory response; ignored if the person closed the picker.
     McpInventory(Result<Box<rho_protocol::SessionMcpInventory>, String>),
+    /// The session's MCP servers stopped connecting, so a held prompt may
+    /// go.
+    ToolSourcesLoaded,
     /// A report the person asked for, as the daemon presents it.
     Report {
         report: rho_protocol::SessionReport,

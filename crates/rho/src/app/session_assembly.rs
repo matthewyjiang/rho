@@ -48,6 +48,7 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub mcp_elicitation: crate::tools::mcp::McpElicitationSupport,
     pub mcp_sampling: McpSamplingSupport,
     pub tool_source_attach: super::tools_prompt::ToolSourceAttach,
+    pub tool_source_load: super::tools_prompt::ToolSourceLoad,
     /// Whether the session starts its workspace's hooks.
     pub hook_start: HookStart,
     /// Whether the session must sign in to its model.
@@ -122,6 +123,8 @@ pub(super) struct BuiltSession {
     pub prompt_template: Option<crate::prompt::ModelPromptTemplate>,
     pub prompt: super::active_prompt::ActivePrompt,
     pub diagnostics: RuntimeDiagnostics,
+    /// The tool sources still loading, when the session defers them.
+    pub tool_sources: Option<super::tools_prompt::DeferredToolSources>,
 }
 
 impl BuiltSession {
@@ -178,6 +181,7 @@ where
         mcp_elicitation,
         mcp_sampling,
         tool_source_attach,
+        tool_source_load,
         hook_start,
         sign_in,
         mcp_authorization,
@@ -221,6 +225,7 @@ where
         tools: tool_set,
         mut prompt,
         mut prompt_template,
+        pending_tool_sources,
         ..
     } = assemble_tools_and_prompt(ToolsAndPromptOptions {
         config,
@@ -238,7 +243,10 @@ where
         tool_source_attach,
         mcp_authorization,
         await_catalog_names: false,
-        defer_tool_sources: false,
+        defer_tool_sources: match tool_source_load {
+            super::tools_prompt::ToolSourceLoad::Inline => false,
+            super::tools_prompt::ToolSourceLoad::Deferred => true,
+        },
         diagnostics,
         agent,
         added_dirs,
@@ -248,6 +256,8 @@ where
         subagent_pool,
     })
     .await?;
+    // Wrapped at once, so a failure below stops the load as it drops.
+    let tool_sources = pending_tool_sources.map(super::tools_prompt::DeferredToolSources::follow);
     let tool_set = extend_tools(tool_set);
     if let Some(suffix) = system_prompt_suffix {
         let retained = format!("\n\n{suffix}");
@@ -362,6 +372,7 @@ where
             prompt_template,
             prompt,
             diagnostics: diagnostics.clone(),
+            tool_sources,
         },
         workspace_root,
         session_writes,

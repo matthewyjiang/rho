@@ -397,6 +397,21 @@ fn mcp_hold_take_back_returns_the_prompt() {
     assert_pass("mcp_hold_take_back");
 }
 
+// Covers: with RHO_TUI_DAEMON=1, MCP startup behaves as in process: /mcp
+// reports a connecting server, a turn held during connect starts once the
+// servers settle, and Esc takes a held turn back.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_mcp_startup_matches_the_in_process_tui() {
+    for scenario in [
+        "daemon_mcp_connecting",
+        "daemon_mcp_connect_release",
+        "daemon_mcp_hold_take_back",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
 #[test]
 fn smoke_cancel_and_resubmit() {
     assert_pass("cancel_and_resubmit");

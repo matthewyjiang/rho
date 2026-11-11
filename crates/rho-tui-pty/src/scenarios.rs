@@ -40,6 +40,8 @@ mod daemon_login;
 #[cfg(unix)]
 mod daemon_mcp;
 #[cfg(unix)]
+mod daemon_mcp_startup;
+#[cfg(unix)]
 mod daemon_model;
 #[cfg(unix)]
 mod daemon_options;
@@ -605,6 +607,12 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_model::CYCLE_REASONING_IDLE,
     #[cfg(unix)]
     daemon_model::CYCLE_REASONING_QUEUED,
+    #[cfg(unix)]
+    daemon_mcp_startup::CONNECTING,
+    #[cfg(unix)]
+    daemon_mcp_startup::HOLD_TAKE_BACK,
+    #[cfg(unix)]
+    daemon_mcp_startup::CONNECT_RELEASE,
     #[cfg(unix)]
     daemon_config::DAEMON_CONFIG,
     #[cfg(unix)]
