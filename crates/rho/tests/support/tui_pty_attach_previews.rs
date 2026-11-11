@@ -98,6 +98,16 @@ fn delegated_argument_previews(host: SessionHost) {
 
     // Replay the finished run from its durable journal.
     super::acp_e2e::wait_for_terminal_result(journal.parent().unwrap(), Duration::from_secs(10));
+    // The result's delivery turn takes the terminal as it starts and ends,
+    // which closes a picker opened meanwhile.
+    parent
+        .wait_for_screen("the result's delivery turn ended", wait, |screen| {
+            screen
+                .contents()
+                .rsplit_once("streamed write completed successfully")
+                .is_some_and(|(_, after)| after.contains("Worked for"))
+        })
+        .unwrap();
     attach_view::open(&mut parent, wait);
     parent
         .wait_for_text("streamed write completed successfully", wait)

@@ -412,7 +412,7 @@ impl PtyHarness {
 
     /// Wait until `met` holds for the reconstructed screen. For conditions the
     /// named waits cannot express, such as one row's text or a pair of rows.
-    pub(crate) fn wait_for_screen(
+    pub fn wait_for_screen(
         &mut self,
         what: &str,
         timeout: WaitTimeout,
