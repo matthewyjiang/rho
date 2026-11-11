@@ -176,6 +176,7 @@ impl App {
                     // A result reaches the model between its messages, so
                     // what the stream still holds was said before it.
                     self.finish_streams();
+                    self.daemon_result_delivered(&card);
                     self.insert_entry(&Entry::Tool(ToolEntry::new(
                         Presentation::Notification(card),
                         /*expanded*/ false,
