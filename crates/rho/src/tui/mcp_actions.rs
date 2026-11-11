@@ -7,6 +7,9 @@ impl App {
         &mut self,
         result: Result<Box<rho_protocol::SessionMcpInventory>, String>,
     ) {
+        if self.apply_doctor_mcp(result.as_deref().map_err(String::as_str)) {
+            return;
+        }
         let open = matches!(self.input_ui.composer(), ComposerMode::Picker(picker) if picker.is_mcp_inventory());
         match result {
             Ok(inventory) if open => {

@@ -17,7 +17,7 @@ use crate::{
     cli::Cli,
     credential_store::AppCredentialStore,
     doctor::{
-        build_report, plan_probes, probe_checks, run_probe, text_report, DoctorInputs,
+        build_report, plan_probes, probe_checks, run_probe, text_report, DoctorInputs, DoctorMcp,
         DoctorProbeGate, DoctorProbeId, DoctorProbeOutcome, DoctorReport, DoctorSection,
         DoctorSummary, HerdrProbe,
     },
@@ -79,7 +79,7 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
         session_root: &rho_home.join("sessions"),
         herdr: HerdrProbe::from_reporter(&HerdrReporter::from_env()),
         clipboard: &clipboard,
-        mcp_report: &mcp_report,
+        mcp: DoctorMcp::Summary(mcp_report.summary()),
         plugins_report: &discovery.report,
         permission_screen: config
             .internal_agent_model(crate::permission_classifier::DECISION_SCREEN_ID),

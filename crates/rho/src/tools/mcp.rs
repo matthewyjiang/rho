@@ -44,8 +44,8 @@ pub(crate) use catalog::{
 pub(crate) use elicitation::McpElicitationSupport;
 pub(crate) use oauth::McpAuthorizationMode;
 pub(crate) use report::{
-    McpLoadMode, McpServerReport, McpServerStatus, McpSessionReport, McpToolReport,
-    McpTransportSummary,
+    McpLoadMode, McpServerReport, McpServerStatus, McpSessionReport, McpSessionSummary,
+    McpToolReport, McpTransportSummary,
 };
 pub(crate) use roots::McpRoots;
 pub(crate) use sampling::{McpSamplingBridge, McpSamplingModel};

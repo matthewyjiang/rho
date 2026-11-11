@@ -163,7 +163,8 @@ const MCP_CONNECT_RELEASE_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
-fn setup_mcp(home: &IsolatedHome) -> Result<()> {
+/// A disabled server and one whose command does not exist, so it fails.
+pub(super) fn setup_mcp(home: &IsolatedHome) -> Result<()> {
     let existing = fs::read_to_string(&home.config_path).context("read isolated config")?;
     fs::write(
         &home.config_path,
