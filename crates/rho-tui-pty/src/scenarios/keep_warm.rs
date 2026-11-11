@@ -5,7 +5,9 @@
 
 use anyhow::Result;
 
-use super::{daemon_resume::DAEMON_ENV, DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
+#[cfg(unix)]
+use super::daemon_resume::DAEMON_ENV;
+use super::{DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
 use crate::{
     env::IsolatedHome,
     harness::WaitTimeout,
