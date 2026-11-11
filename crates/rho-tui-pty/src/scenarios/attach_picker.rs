@@ -18,10 +18,7 @@ pub(super) const ATTACH_PICKER_STEPS: &[Step] = &[
         text: "subagent rail fixture dispatched",
         timeout: STREAM,
     },
-    Step::WaitText {
-        text: "worker",
-        timeout: SETTLE,
-    },
+    Step::Custom(super::subagent_rail::wait_for_worker_row),
     Step::Phase("open_attach_picker"),
     Step::SubmitText("/attach"),
     Step::WaitText {

@@ -15,16 +15,44 @@ use crate::{
     PtyHarness,
 };
 
+/// Whether `line` is the rail row of a subagent running as `role`. The
+/// agent tool's card names the role too, before the rail lists the run.
+fn is_rail_row(line: &str, role: &str) -> bool {
+    ["└ ◉ ", "├ ◉ ", "└ ", "├ "]
+        .iter()
+        .any(|branch| line.contains(&format!("{branch}{role}")))
+}
+
+/// Waits until the rail lists a subagent running as `role`. `/attach`
+/// offers only runs the rail lists, and a daemon session's rail learns of a
+/// run from the daemon's jobs, after the card that started it shows.
+fn wait_for_rail_row(harness: &mut PtyHarness, role: &'static str) -> Result<()> {
+    harness.wait_for_screen("the subagent's rail row", super::SETTLE, |screen| {
+        screen
+            .rows_text()
+            .iter()
+            .any(|line| is_rail_row(line, role))
+    })
+}
+
+pub(super) fn wait_for_worker_row(harness: &mut PtyHarness) -> Result<()> {
+    wait_for_rail_row(harness, "worker")
+}
+
+pub(super) fn wait_for_explorer_row(harness: &mut PtyHarness) -> Result<()> {
+    wait_for_rail_row(harness, "explorer")
+}
+
 fn active_subagent_row(harness: &mut PtyHarness) -> Result<u16> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         harness.pump(Duration::from_millis(20));
-        if let Some(row) = harness.screen().rows_text().iter().position(|line| {
-            line.contains("└ ◉ worker")
-                || line.contains("├ ◉ worker")
-                || line.contains("└ worker")
-                || line.contains("├ worker")
-        }) {
+        if let Some(row) = harness
+            .screen()
+            .rows_text()
+            .iter()
+            .position(|line| is_rail_row(line, "worker"))
+        {
             return Ok(row as u16 + 1);
         }
         if Instant::now() >= deadline {
@@ -93,56 +121,3 @@ pub(super) const SUBAGENT_RAIL_MOUSE_SCENARIO: Scenario = Scenario::new(
     SUBAGENT_RAIL_MOUSE_STEPS,
     /*smoke*/ false,
 );
-
-#[cfg(unix)]
-fn wait_for_subagent_row(harness: &mut PtyHarness) -> Result<()> {
-    active_subagent_row(harness).map(|_| ())
-}
-
-// Covers: a daemon session's subagent shows on the rail of the TUI that
-// follows it, and `/attach` opens that run's transcript, though the run
-// lives in the daemon and not in this process.
-// Owner: interactive TUI as a daemon client
-#[cfg(unix)]
-pub(super) const DAEMON_SUBAGENT_RAIL_SCENARIO: Scenario = Scenario::new(
-    "daemon_subagent_rail",
-    "Show a daemon session's subagent on the rail and attach to it",
-    DEFAULT_SIZE,
-    &[
-        Step::Phase("startup"),
-        Step::WaitText {
-            text: "gpt-5.5",
-            timeout: STARTUP,
-        },
-        Step::Phase("spawn_long_running_subagent"),
-        Step::SubmitText("fixture subagent rail"),
-        Step::WaitText {
-            text: "subagent rail fixture dispatched",
-            timeout: STREAM,
-        },
-        Step::Custom(wait_for_subagent_row),
-        Step::Phase("attach_from_picker"),
-        Step::SubmitText("/attach"),
-        Step::WaitText {
-            text: "attach subagent",
-            timeout: STREAM,
-        },
-        Step::Key(crate::keys::Key::Enter),
-        Step::WaitText {
-            text: "q back",
-            timeout: STREAM,
-        },
-        Step::Key(crate::keys::Key::Esc),
-        Step::WaitTextGone {
-            text: "q back",
-            timeout: STREAM,
-        },
-        Step::ExitCommand,
-    ],
-    /*smoke*/ false,
-)
-.with_setup(super::daemon_resume::write_daemon_config)
-.with_env(&[
-    ("RHO_TUI_DAEMON", "1"),
-    ("OPENAI_API_KEY", "sk-test-matrix"),
-]);

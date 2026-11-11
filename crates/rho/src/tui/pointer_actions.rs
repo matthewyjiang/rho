@@ -45,6 +45,7 @@ impl App {
                     self.execute_command(submission, terminal, agent).await?;
                 }
             }
+            PointerAction::CycleReasoning => self.cycle_reasoning(agent).await?,
         }
         Ok(())
     }
@@ -68,6 +69,15 @@ impl App {
                 if let Some(invocation) = self.pointer_command(&text) {
                     self.execute_command_during_turn(invocation, terminal)
                         .await?;
+                }
+            }
+            // The daemon queues the change behind the turn. In process the
+            // provider is in use until the turn ends, as for Shift+Tab.
+            PointerAction::CycleReasoning => {
+                if self.info.session.daemon.is_some() {
+                    self.cycle_daemon_reasoning()?;
+                } else {
+                    self.set_status("reasoning can change after this turn");
                 }
             }
         }

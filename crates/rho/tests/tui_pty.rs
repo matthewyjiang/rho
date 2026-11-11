@@ -253,7 +253,9 @@ fn remember_appends_instructions_without_model_turn() {
 // interrupt the interactive session. Owner: interactive TUI lifecycle.
 #[test]
 fn model_prompt_switch_and_invalid_file_recovery() {
-    assert_pass("model_prompt_switch");
+    for scenario in ["model_prompt_switch", "model_prompt_before_first_prompt"] {
+        assert_pass(scenario);
+    }
 }
 
 // Covers: /init must target the root, /new must reload it without changing the
@@ -682,6 +684,17 @@ fn limits_overlay_opens_and_dismisses() {
 #[test]
 fn doctor_overlay_opens_and_dismisses() {
     assert_pass("doctor_overlay");
+}
+
+// Covers: the /doctor MCP row reports the session's servers in process and,
+// with RHO_TUI_DAEMON=1, the daemon session's servers rather than the
+// client's, with the same row.
+// Owner: interactive TUI (#1685)
+#[test]
+fn doctor_reports_the_session_mcp_servers() {
+    assert_pass("doctor_mcp");
+    #[cfg(unix)]
+    assert_pass("daemon_doctor_mcp");
 }
 
 // Covers: /hooks must open a single-pane overlay with the spawn contract, and
@@ -1116,11 +1129,14 @@ fn side_chat_selection_copy_and_scrollbar_drag() {
     assert_pass("side_chat_pointer");
 }
 
-// Covers: hovering the statusline model field marks it, and clicking opens the model picker.
+// Covers: provider and model hover and click as one target that opens the
+// model picker; a reasoning click cycles the effort; a model without
+// reasoning paints no reasoning target.
 // Owner: interactive TUI
 #[test]
-fn statusline_model_hover_and_click_opens_picker() {
+fn statusline_model_and_reasoning_clicks() {
     assert_pass("statusline_model_click");
+    assert_pass("statusline_no_reasoning_click");
 }
 
 // Covers: hovering a composer attachment offers removal, and clicking removes it.
@@ -1153,6 +1169,20 @@ fn screen_text_selection_copies_composer_text() {
 #[test]
 fn background_agent_questionnaire_is_answered_in_parent_tui() {
     assert_pass("background_agent_questionnaire");
+}
+
+// Covers: a subagent that asks after its parent's turn ended still reaches
+// the person, and its answer the subagent, in process and on a daemon
+// session, with no parent turn in between.
+// Owner: interactive delegated-questionnaire routing (PTY)
+#[test]
+fn late_background_agent_questionnaire_is_answered_while_idle() {
+    for scenario in [
+        "late_background_agent_questionnaire",
+        "daemon_late_background_agent_questionnaire",
+    ] {
+        assert_pass(scenario);
+    }
 }
 
 // Covers: completed reasoning can be revealed and hidden retroactively, in zen
@@ -1437,10 +1467,11 @@ fn daemon_commands_match_the_in_process_palette_and_replies() {
     }
 }
 
-// Covers: with RHO_TUI_DAEMON=1, `/model`, the pin cycle and the model
-// picker behave as in process: the pinned and all views, pinning from the
-// picker, the prompt file a switch lands on, a refused switch, and the
-// reasoning level a cycle keeps or rounds, idle or queued behind a turn.
+// Covers: with RHO_TUI_DAEMON=1, `/model`, the pin cycle, the model
+// picker and the statusline model and reasoning clicks behave as in
+// process: the pinned and all views, pinning from the picker, the prompt
+// file a switch lands on, a refused switch, and the reasoning level a cycle
+// keeps or rounds, idle or queued behind a turn.
 // Owner: interactive TUI as a daemon client (#1667)
 #[test]
 fn daemon_model_switches_match_the_in_process_tui() {
@@ -1448,7 +1479,9 @@ fn daemon_model_switches_match_the_in_process_tui() {
         "daemon_open_model_picker",
         "daemon_cycle_and_pinned_model_picker",
         "daemon_statusline_model_click",
+        "daemon_statusline_no_reasoning_click",
         "daemon_model_prompt_switch",
+        "daemon_model_prompt_before_first_prompt",
         "daemon_cycle_reasoning_idle",
         "daemon_cycle_reasoning_queued",
     ] {
@@ -1591,12 +1624,78 @@ fn daemon_tui_switches_the_session_it_follows() {
     assert_pass("daemon_switch");
 }
 
-// Covers: a daemon session's subagent shows on the following TUI's rail,
-// and `/attach` opens its transcript.
+// Covers: with RHO_TUI_DAEMON=1, a turn that starts a subagent ends while
+// the subagent runs, its card and messages read as in process, and its rail
+// row opens the attach view.
 // Owner: interactive TUI as a daemon client (#1667)
 #[test]
-fn daemon_subagent_shows_on_the_rail_and_attaches() {
-    assert_pass("daemon_subagent_rail");
+fn daemon_turn_ends_while_its_subagents_run() {
+    for scenario in [
+        "daemon_agent_prompt_streaming",
+        "daemon_agent_messages",
+        "daemon_subagent_rail_mouse",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: with RHO_TUI_DAEMON=1, the daemon gives the idle session a
+// subagent's result in a turn of its own, also after /new, and a subagent's
+// question outlives the reply of the turn that started it.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_delivers_subagent_results_to_the_idle_session() {
+    for scenario in [
+        "daemon_background_agent_auto_delivery",
+        "daemon_background_agent_questionnaire",
+        "daemon_subagent_completion_after_new",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: with RHO_TUI_DAEMON=1, a subagent's informational notices start
+// no turn and buy no provider request, its action request does, and a
+// delivered notice leaves the streamed reply before it whole.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_quiet_subagent_notices_wait_for_a_turn() {
+    for scenario in [
+        "daemon_quiet_subagent_notices",
+        "daemon_quiet_subagent_running_notices",
+        "daemon_streaming_boundary_notice",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: with RHO_TUI_DAEMON=1, /attach lists a daemon session's running
+// subagents, opens and cycles the in-place view, and shows a parent's
+// message there once applied.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_attach_opens_a_daemon_sessions_subagents() {
+    for scenario in [
+        "daemon_attach_picker",
+        "daemon_attach_view_from_command",
+        "daemon_attach_view_cycle",
+        "daemon_attach_parent_message",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: with RHO_TUI_DAEMON=1, the attach view badges an approval of the
+// parent's running turn, and Ctrl-C leaves it mid-turn and quits after.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_attach_view_follows_the_parents_turn() {
+    for scenario in [
+        "daemon_attach_view_parent_approval",
+        "daemon_attach_view_quit_restores",
+    ] {
+        assert_pass(scenario);
+    }
 }
 
 // Covers: MCP inventory belongs to the daemon session even when the new client's

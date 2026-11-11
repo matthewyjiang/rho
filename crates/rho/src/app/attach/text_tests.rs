@@ -68,6 +68,7 @@ fn text_output_streams_the_conversation_and_tells_the_rest_on_stderr() {
             markdown: "exited 1\n\n```text\nboom\n```".into(),
             plain: "exited 1\n\nboom".into(),
             tone: CardTone::Error,
+            display: None,
         },
         chunk("Done."),
         SessionEvent::TurnEnded {

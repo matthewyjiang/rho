@@ -105,21 +105,25 @@ impl ChildThreads {
     }
 }
 
-/// What the daemon does when a session's background work (a workflow run
-/// or a background process) finishes while none of its turns runs. The
-/// daemon reads it, so it has no `Unknown`.
+/// What the daemon does when a session's background work (a subagent, a
+/// workflow run or a background process) finishes while none of its turns
+/// runs. The daemon reads it, so it has no `Unknown`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum IdleWake {
     /// Nothing. A prompt's turn stays open until the background work it
-    /// started finishes, so its result reaches the model within that turn;
-    /// a result of older work waits for the session's next prompt.
+    /// started and every subagent of the session finish, so the result
+    /// reaches the model within that turn; a result of older work waits
+    /// for the session's next prompt.
     #[default]
     Never,
     /// The daemon starts a turn that gives the model the result, as the
     /// terminal UI does. A prompt's turn ends while the work it started
-    /// runs on. For a client that follows the session's events and shows a
-    /// turn it did not send. A session whose host runs its children
+    /// runs on. A subagent's request that its parent act starts such a
+    /// turn too; its
+    /// informational messages go with the session's next provider request.
+    /// For a client that follows the session's events and shows a turn it
+    /// did not send. A session whose host runs its children
     /// ([`ChildThreads::Host`]) is woken through that host instead.
     Turn,
 }

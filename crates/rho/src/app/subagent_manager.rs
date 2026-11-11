@@ -98,6 +98,8 @@ pub struct SubagentNotification {
 pub struct SubagentManager {
     inner: Arc<Mutex<HashMap<String, AgentEntry>>>,
     executor: AgentExecutor,
+    /// Notified each time a run of this manager ends.
+    ended: Arc<tokio::sync::Notify>,
     parent: Arc<Mutex<ParentBinding>>,
     /// Hears of each run this manager starts, when the host shares its
     /// pool (see `subagent_pool`).
@@ -138,6 +140,7 @@ impl SubagentManager {
                 SubagentHostInputBridge::new(),
                 SubagentNoticeBridge::new(),
             ),
+            ended: Arc::new(tokio::sync::Notify::new()),
             parent: Arc::new(Mutex::new(ParentBinding {
                 placement: subagent::RunPlacement::parentless(),
                 workspace: None,
@@ -162,6 +165,15 @@ impl SubagentManager {
 
     pub(crate) fn unbind_host_input(&self) {
         self.executor.host_input().unbind_parent();
+    }
+
+    /// Sends the questionnaires of this manager's children to `sender`,
+    /// for a host that takes them whether or not a turn runs.
+    pub(crate) fn bind_host_input_to(
+        &self,
+        sender: tokio::sync::mpsc::Sender<SubagentHostInputRequest>,
+    ) {
+        self.executor.host_input().bind_parent_to(sender);
     }
 
     /// Atomically replaces the notice binding, retaining in-flight channel notices.
@@ -305,6 +317,7 @@ impl SubagentManager {
         if let Some(observer) = &self.observer {
             observer.subagent_started(StartedSubagent::of(id.clone(), cwd.to_path_buf(), &handle));
         }
+        let mut ending = handle.clone();
         self.inner.lock().expect("delegated registry lock").insert(
             id.clone(),
             AgentEntry {
@@ -323,6 +336,12 @@ impl SubagentManager {
                 cost_accounted: false,
             },
         );
+        // Once the run is registered, so whoever the notice wakes finds it.
+        let ended = Arc::clone(&self.ended);
+        tokio::spawn(async move {
+            ending.wait().await;
+            ended.notify_waiters();
+        });
         Ok((id, directory.join(subagent::LOG_FILE_NAME)))
     }
 
@@ -495,6 +514,42 @@ impl SubagentManager {
             .expect("delegated registry lock")
             .values()
             .any(|entry| entry.session_id == session_id && !entry.observed)
+    }
+
+    /// Whether a finished child of session `session_id` waits to be
+    /// delivered. Running children are excluded: a host that wakes the
+    /// idle session sleeps on [`Self::parent_wake`].
+    // Only the daemon, unix-only so far, wakes an idle parent (#1665).
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn has_pending_notification(&self, session_id: &str) -> bool {
+        self.inner
+            .lock()
+            .expect("delegated registry lock")
+            .iter()
+            .any(|(id, entry)| {
+                entry.session_id == session_id && !entry.observed && entry.snapshot(id).done
+            })
+    }
+
+    /// The notices children queued for session `session_id` that no turn
+    /// delivered.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn undelivered_notices(&self, session_id: &str) -> Vec<SubagentNotice> {
+        self.executor.notices().undelivered(session_id)
+    }
+
+    /// Resolves once a child ends or queues a notice from now on, whatever
+    /// waits already: the two things that can give an idle parent a turn.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn parent_wake(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let ended = Arc::clone(&self.ended).notified_owned();
+        let posted = self.executor.notices().posted();
+        async move {
+            tokio::select! {
+                () = ended => {}
+                () = posted => {}
+            }
+        }
     }
 
     /// Waits for any current child to finish without marking its result delivered.

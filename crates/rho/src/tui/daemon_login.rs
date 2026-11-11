@@ -454,6 +454,7 @@ impl App {
                 self.configure_daemon(SessionChange::Model {
                     model: model.clone(),
                     auth: Some(target.auth.clone()),
+                    setup: false,
                 })?;
                 if self.daemon_option_requests.len() > asked {
                     self.info.services.auth_unavailable = None;

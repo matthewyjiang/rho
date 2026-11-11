@@ -134,6 +134,7 @@ fn a_saved_conversation_replays_messages_calls_and_cards() {
                 markdown: "all good".into(),
                 plain: "all good".into(),
                 tone: CardTone::Neutral,
+                display: None,
             },
             saved_agent(saved_id(4, 0), "Found a.rs."),
         ]

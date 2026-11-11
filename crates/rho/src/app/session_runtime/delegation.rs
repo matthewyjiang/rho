@@ -23,7 +23,10 @@
 //! workflows and processes then never hold natural completion, and finished
 //! ones still deliver at every boundary. So it is for a session whose host
 //! starts a turn of its own when the work finishes, as the daemon does for
-//! the TUI ([`BackgroundWait::HostTurns`], `sessions::idle_wake`).
+//! the TUI ([`BackgroundWait::HostTurns`], `sessions::idle_wake`). There a
+//! prompt does not wait for its running subagents either, and a child's
+//! informational notices alone buy no provider request: they wait for the
+//! next one, in this prompt or a later turn.
 
 use std::time::Instant;
 
@@ -67,7 +70,8 @@ pub(crate) enum BackgroundWait {
     /// The host wakes the idle session when the work finishes.
     HostWakes,
     /// The host starts a turn on the idle session when the work finishes,
-    /// which delivers the result at its first boundary.
+    /// a subagent included, or a child asks the parent to act. The turn
+    /// delivers the result at its first boundary.
     HostTurns,
 }
 
@@ -222,7 +226,7 @@ impl Delegation {
     async fn respond(&mut self, request: BoundaryInputRequest) {
         let boundary = request.boundary();
         let mut notices_open = true;
-        let (receipt, mut reservation) = loop {
+        let (receipt, mut reservation, notices_offered) = loop {
             // Subscribe before collecting so a finish between the snapshot
             // and the wait below still wakes it.
             let process_exit = self.processes.as_ref().map(ProcessManager::notified_owned);
@@ -230,17 +234,28 @@ impl Delegation {
             {
                 let _delivery = crate::app::notification_delivery::lock();
                 let batch = self.collect();
-                if batch.has_results()
+                let due = batch.has_results()
                     || self.subagents.as_ref().is_some_and(|subagents| {
                         subagents
                             .pending
                             .iter()
                             .any(|notice| notice.delivery.requires_parent_action())
                     })
-                    || boundary == InputBoundary::BeforeProvider
-                    || !self.has_outstanding_work()
-                {
-                    let input = self.render(&batch).map(|(model, display)| {
+                    || boundary == InputBoundary::BeforeProvider;
+                if due || !self.has_outstanding_work() {
+                    // With nothing due, the prompt is about to end. Where the
+                    // host starts later turns, notices wait for one of them.
+                    let notices_offered = due
+                        || match self.background_wait {
+                            BackgroundWait::HoldPrompt | BackgroundWait::HostWakes => true,
+                            BackgroundWait::HostTurns => false,
+                        };
+                    let rendered = if notices_offered {
+                        self.render(&batch)
+                    } else {
+                        None
+                    };
+                    let input = rendered.map(|(model, display)| {
                         let input = UserInput::text(model);
                         if let Some(sink) = &self.displays {
                             // Queued before the reply, so its rows wait for
@@ -249,7 +264,7 @@ impl Delegation {
                         }
                         input
                     });
-                    break (request.respond(input), batch);
+                    break (request.respond(input), batch, notices_offered);
                 }
             }
             let process_exit = async move {
@@ -279,10 +294,12 @@ impl Delegation {
         };
         if receipt.await {
             reservation.commit();
-            if let Some(subagents) = &mut self.subagents {
-                for notice in subagents.pending.drain(..) {
-                    notice.acknowledge();
-                    subagents.permits.release_notice(&notice);
+            if notices_offered {
+                if let Some(subagents) = &mut self.subagents {
+                    for notice in subagents.pending.drain(..) {
+                        notice.acknowledge();
+                        subagents.permits.release_notice(&notice);
+                    }
                 }
             }
         }
@@ -343,11 +360,16 @@ impl Delegation {
 
     /// Work whose result could still arrive and should hold natural completion.
     fn has_outstanding_work(&self) -> bool {
-        let subagents = self.subagents.as_ref().is_some_and(|subagents| {
-            subagents
-                .manager
-                .has_active_or_pending_notification(&self.session_id)
-        });
+        let subagents = match self.background_wait {
+            BackgroundWait::HoldPrompt | BackgroundWait::HostWakes => {
+                self.subagents.as_ref().is_some_and(|subagents| {
+                    subagents
+                        .manager
+                        .has_active_or_pending_notification(&self.session_id)
+                })
+            }
+            BackgroundWait::HostTurns => false,
+        };
         let finished = self.workflows.has_pending_notification(&self.session_id)
             || self
                 .processes

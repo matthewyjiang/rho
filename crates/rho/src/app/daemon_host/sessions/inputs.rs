@@ -1,8 +1,9 @@
 //! A session's open input requests (#1660): the approvals, plan approvals,
-//! and questions its turn waits on a person for, in the daemon rather than
-//! in any client.
+//! and questions its turn waits on a person for, and the questions its
+//! subagents ask (see `child_questions`), in the daemon rather than in any
+//! client.
 //!
-//! The turn opens and withdraws requests through its events; any client
+//! Whoever asks opens and withdraws requests through its events; any client
 //! answers one with `rho/session/answer`. The first answer takes the
 //! request out, so a later one finds it gone. Nothing answers a request
 //! because a client left: one with nobody attached stays open until someone
@@ -15,6 +16,7 @@
 
 use std::{
     collections::{btree_map::Entry, BTreeMap},
+    sync::{Arc, PoisonError},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -30,6 +32,8 @@ use crate::{
     permission::{PermissionMode, DENIED_BY_USER},
     tools::plan_exit::PlanExitDecision,
 };
+
+use super::{super::jobs::JobEvent, LoadedSession};
 
 mod asks;
 
@@ -58,12 +62,24 @@ pub(super) struct Inputs {
 /// One open request, and where its answer goes. The runtime's ids are
 /// unique only within the model turn that asked, which `control` names.
 struct Open {
-    /// The asking model turn's answer channel.
+    /// The answer channel of whoever asked.
     control: mpsc::UnboundedSender<TurnControl>,
+    asker: Asker,
     waiting: Waiting,
     /// What the turn gets if the request times out; `None` when it has no
     /// timeout or a client held it.
     timeout: Option<TurnControl>,
+}
+
+/// Whose request it is, which says what ends it unanswered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Asker {
+    /// The turn under way: its end withdraws the request, and the job
+    /// waits for input while it is open.
+    Turn,
+    /// A subagent, which outlives the turn that started it: only the
+    /// subagent withdraws the request, and no turn waits on it.
+    Subagent,
 }
 
 /// A request as the runtime knows it, with what checking an answer needs.
@@ -95,7 +111,7 @@ impl Inputs {
 
     /// Whether the turn waits on a person.
     pub(super) fn waiting(&self) -> bool {
-        !self.open.is_empty()
+        self.open.values().any(|open| open.asker == Asker::Turn)
     }
 
     /// What attached clients learn of the changes since the last call.
@@ -118,10 +134,11 @@ impl Inputs {
         }
     }
 
-    /// Opens or withdraws the request `event` names, if any, for the model
-    /// turn whose answers go to `control`, at `now`.
+    /// Opens or withdraws the request `event` names, if any, for `asker`,
+    /// whose answers go to `control`, at `now`.
     pub(super) fn note(
         &mut self,
+        asker: Asker,
         control: &mpsc::UnboundedSender<TurnControl>,
         event: &SessionEvent,
         now: SystemTime,
@@ -203,6 +220,7 @@ impl Inputs {
             id,
             Open {
                 control: control.clone(),
+                asker,
                 waiting,
                 timeout,
             },
@@ -236,11 +254,16 @@ impl Inputs {
         }
     }
 
-    /// Takes out every open request, for a turn that ended. Its runtime
-    /// settles each before it ends, so this finds some only when the turn
-    /// failed or its task stopped.
-    pub(super) fn withdraw_all(&mut self) {
-        for id in std::mem::take(&mut self.open).into_keys() {
+    /// Takes out every request the turn opened, for a turn that ended. Its
+    /// runtime settles each before it ends, so this finds some only when
+    /// the turn failed or its task stopped.
+    pub(super) fn withdraw_turn(&mut self) {
+        let (ended, kept) = std::mem::take(&mut self.open)
+            .into_iter()
+            .partition(|(_, open)| open.asker == Asker::Turn);
+        self.open = kept;
+        let ended: BTreeMap<_, _> = ended;
+        for id in ended.into_keys() {
             self.events.push(resolved(id, Resolution::Withdrawn));
         }
     }
@@ -296,6 +319,34 @@ impl Inputs {
         self.events.push(resolved(id, Resolution::Answered));
         self.answers.push((control, answer));
         Ok(())
+    }
+}
+
+impl LoadedSession {
+    /// Changes the session's open input requests with `change`, tells
+    /// attached clients what it opened and resolved, moves the job between
+    /// running and waiting for input to match, and only then hands the
+    /// turns the answers it accepted. All under the requests' lock, so
+    /// clients see requests open and close, and the job's state follow
+    /// them, in the order they happened, and before anything the turn does
+    /// with an answer. Starts the timeouts the change opened.
+    pub(super) fn change_inputs<T>(self: &Arc<Self>, change: impl FnOnce(&mut Inputs) -> T) -> T {
+        // A panic mid-change leaves the requests as they were or with one
+        // request moved, which the turn's end clears.
+        let mut inputs = self.inputs.lock().unwrap_or_else(PoisonError::into_inner);
+        let was_waiting = inputs.waiting();
+        let result = change(&mut inputs);
+        self.feed.publish(inputs.take_events());
+        match (was_waiting, inputs.waiting()) {
+            (false, true) => self.record(JobEvent::InputOpened),
+            (true, false) => self.record(JobEvent::InputSettled),
+            (false, false) | (true, true) => {}
+        }
+        inputs.send_answers();
+        for (id, after) in inputs.take_timeouts() {
+            tokio::spawn(super::time_out(Arc::downgrade(self), id, after));
+        }
+        result
     }
 }
 

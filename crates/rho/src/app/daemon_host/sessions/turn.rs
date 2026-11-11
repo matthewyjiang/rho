@@ -21,8 +21,13 @@ use tokio::{
 };
 
 use super::{
-    super::jobs::TurnEnd, budget, cost, inputs::Inputs, options::available_auths, saved_replay,
-    start::StartedTurn, LoadedSession,
+    super::jobs::TurnEnd,
+    budget, cost,
+    inputs::{Asker, Inputs},
+    options::available_auths,
+    saved_replay,
+    start::StartedTurn,
+    LoadedSession,
 };
 use crate::{
     app::{
@@ -678,7 +683,7 @@ impl DaemonView {
             }
         };
         // A turn that ended waits for nothing.
-        self.session.change_inputs(Inputs::withdraw_all);
+        self.session.change_inputs(Inputs::withdraw_turn);
         {
             // See `prompt`: the next turn's `running` cannot come before this.
             let _turn = self.session.turn();
@@ -758,8 +763,9 @@ impl DaemonView {
             if matches!(event, SessionEvent::MessageInserted(_)) {
                 self.began();
             }
-            self.session
-                .change_inputs(|inputs| inputs.note(&control, &event, SystemTime::now()));
+            self.session.change_inputs(|inputs| {
+                inputs.note(Asker::Turn, &control, &event, SystemTime::now())
+            });
         }
     }
 }

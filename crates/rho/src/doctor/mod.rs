@@ -19,7 +19,7 @@ use std::path::Path;
 
 use rho_providers::{auth::login_dispatch::ProviderAuthentication, credentials::CredentialStore};
 
-pub(crate) use checks::HerdrProbe;
+pub(crate) use checks::{mcp_check, HerdrProbe};
 pub(crate) use daemon_store::{daemon_store_check, DaemonStore};
 pub(crate) use probes::{
     plan_probes, probe_checks, run_probe, DoctorProbeGate, DoctorProbeId, DoctorProbeOutcome,
@@ -28,10 +28,42 @@ pub(crate) use report::{
     DoctorCheck, DoctorCheckId, DoctorReport, DoctorSection, DoctorStatus, DoctorSummary,
 };
 
+use rho_protocol::SessionMcpInventory;
+
 use crate::{
     clipboard::ClipboardDoctorReport, config::InternalAgentModelConfig, plugins::PluginLoadReport,
-    tools::mcp::McpSessionReport,
+    tools::mcp::McpSessionSummary,
 };
+
+/// The session's MCP servers, as the MCP row reports them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DoctorMcp {
+    Summary(McpSessionSummary),
+    /// A daemon session's servers, still on their way. The host replaces
+    /// the row with [`mcp_check`] through [`DoctorReport::replace_checks`]
+    /// once they arrive.
+    Reading,
+    /// Why a daemon session's servers could not be read, as the whole
+    /// hint: the host's error already names what failed.
+    Unreadable(String),
+}
+
+impl DoctorMcp {
+    /// The answer to a read of a daemon session's inventory.
+    pub(crate) fn of_inventory(inventory: Result<&SessionMcpInventory, &str>) -> Self {
+        match inventory {
+            Ok(inventory) => McpSessionSummary::of_inventory(inventory).map_or_else(
+                || {
+                    Self::Unreadable(
+                        "the daemon reports an MCP mode this client does not know".into(),
+                    )
+                },
+                Self::Summary,
+            ),
+            Err(error) => Self::Unreadable(error.to_owned()),
+        }
+    }
+}
 
 /// Everything the instant checks need, borrowed from the host.
 pub(crate) struct DoctorInputs<'a> {
@@ -44,7 +76,7 @@ pub(crate) struct DoctorInputs<'a> {
     pub(crate) session_root: &'a Path,
     pub(crate) herdr: HerdrProbe,
     pub(crate) clipboard: &'a ClipboardDoctorReport,
-    pub(crate) mcp_report: &'a McpSessionReport,
+    pub(crate) mcp: DoctorMcp,
     pub(crate) plugins_report: &'a PluginLoadReport,
     /// The permission screen's configured model, when it is not the classifier's.
     pub(crate) permission_screen: Option<&'a InternalAgentModelConfig>,
@@ -93,7 +125,7 @@ pub(crate) fn build_report(inputs: DoctorInputs<'_>) -> DoctorReport {
         checks::PathKind::Directory,
     ));
     rows.extend(checks::clipboard_checks(inputs.clipboard));
-    rows.push(checks::mcp_check(inputs.mcp_report));
+    rows.push(checks::mcp_check(&inputs.mcp));
     rows.push(checks::plugins_check(inputs.plugins_report));
     DoctorReport::from_checks(rows)
 }

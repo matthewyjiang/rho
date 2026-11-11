@@ -34,6 +34,8 @@ mod daemon_context;
 #[cfg(unix)]
 mod daemon_detach;
 #[cfg(unix)]
+mod daemon_doctor;
+#[cfg(unix)]
 mod daemon_goal;
 #[cfg(unix)]
 mod daemon_login;
@@ -55,6 +57,8 @@ mod daemon_restart;
 mod daemon_resume;
 #[cfg(unix)]
 mod daemon_rewind;
+#[cfg(unix)]
+mod daemon_subagents;
 #[cfg(unix)]
 mod daemon_switch;
 #[cfg(unix)]
@@ -149,6 +153,7 @@ use attach_view::{
 };
 use background_agents::{
     BACKGROUND_AGENT_AUTO_DELIVERY_STEPS, BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
+    LATE_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
 };
 use changelog::CHANGELOG_STEPS;
 use command_palette::{
@@ -159,7 +164,7 @@ use command_palette::{
 use compact::{SUBMIT_DURING_COMPACT_STEPS, TYPE_DURING_COMPACT_STEPS};
 use config::{setup_auto_without_classifier, AUTO_PERMISSION_MODE_STARTUP_STEPS};
 use conversation_tree::CONVERSATION_TREE_STEPS;
-use doctor::DOCTOR_OVERLAY_SCENARIO;
+use doctor::{DOCTOR_MCP_SCENARIO, DOCTOR_OVERLAY_SCENARIO};
 use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
 use edit_diff::EDIT_DIFF_SCENARIO;
 use file_palette::FILE_PATH_AUTOCOMPLETE_SCENARIO;
@@ -381,6 +386,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     panel_pointer::PANEL_POINTER_SCENARIO,
     panel_pointer::SIDE_POINTER_SCENARIO,
     status_clicks::STATUSLINE_MODEL_CLICK_SCENARIO,
+    status_clicks::STATUSLINE_NO_REASONING_CLICK_SCENARIO,
     status_clicks::ATTACHMENT_CLICK_REMOVE_SCENARIO,
     Scenario::new(
         "supervised_approval",
@@ -480,6 +486,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO,
     LIMITS_OVERLAY_SCENARIO,
     DOCTOR_OVERLAY_SCENARIO,
+    DOCTOR_MCP_SCENARIO,
     spend::SPEND_OVERLAY_SCENARIO,
     context_overlay::CONTEXT_OVERLAY_SCENARIO,
     SIDE_OVERLAY_SCENARIO,
@@ -598,13 +605,43 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     daemon_switch::SCENARIO,
     #[cfg(unix)]
-    subagent_rail::DAEMON_SUBAGENT_RAIL_SCENARIO,
+    daemon_subagents::AGENT_PROMPT_STREAMING,
+    #[cfg(unix)]
+    daemon_subagents::AGENT_MESSAGES,
+    #[cfg(unix)]
+    daemon_subagents::BACKGROUND_AGENT_AUTO_DELIVERY,
+    #[cfg(unix)]
+    daemon_subagents::BACKGROUND_AGENT_QUESTIONNAIRE,
+    #[cfg(unix)]
+    daemon_subagents::SUBAGENT_RAIL_MOUSE,
+    #[cfg(unix)]
+    daemon_subagents::QUIET_SUBAGENT_NOTICES,
+    #[cfg(unix)]
+    daemon_subagents::QUIET_SUBAGENT_RUNNING_NOTICES,
+    #[cfg(unix)]
+    daemon_subagents::STREAMING_BOUNDARY_NOTICE,
+    #[cfg(unix)]
+    daemon_subagents::SUBAGENT_COMPLETION_AFTER_NEW,
+    #[cfg(unix)]
+    daemon_subagents::ATTACH_PICKER,
+    #[cfg(unix)]
+    daemon_subagents::ATTACH_PARENT_MESSAGE,
+    #[cfg(unix)]
+    daemon_subagents::ATTACH_VIEW_FROM_COMMAND,
+    #[cfg(unix)]
+    daemon_subagents::ATTACH_VIEW_CYCLE,
+    #[cfg(unix)]
+    daemon_subagents::ATTACH_VIEW_PARENT_APPROVAL,
+    #[cfg(unix)]
+    daemon_subagents::ATTACH_VIEW_QUIT_RESTORES,
     #[cfg(unix)]
     daemon_restart::SCENARIO,
     #[cfg(unix)]
     daemon_goal::SCENARIO,
     #[cfg(unix)]
     daemon_mcp::SCENARIO,
+    #[cfg(unix)]
+    daemon_doctor::SCENARIO,
     #[cfg(unix)]
     daemon_prompt::DAEMON_PROMPT_SCENARIO,
     #[cfg(unix)]
@@ -624,7 +661,11 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     daemon_model::STATUSLINE_MODEL_CLICK,
     #[cfg(unix)]
+    daemon_model::STATUSLINE_NO_REASONING_CLICK,
+    #[cfg(unix)]
     daemon_model::MODEL_PROMPTS,
+    #[cfg(unix)]
+    daemon_model::MODEL_PROMPT_BEFORE_FIRST_PROMPT,
     #[cfg(unix)]
     daemon_model::CYCLE_REASONING_IDLE,
     #[cfg(unix)]
@@ -675,6 +716,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     .with_setup(setup_pinned_models)
     .with_env(OPENAI_AND_XAI_KEY_ENV),
     model_prompts::MODEL_PROMPTS_SCENARIO,
+    model_prompts::BEFORE_FIRST_PROMPT_SCENARIO,
     model_cycle_reasoning::IDLE,
     model_cycle_reasoning::QUEUED,
     config_2x_upgrade::IN_PROCESS,
@@ -897,6 +939,15 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     ADVISOR_MISSING_MODEL_SCENARIO,
     ADVISOR_REVIEW_SCENARIO,
+    Scenario::new(
+        "late_background_agent_questionnaire",
+        "Answer a questionnaire a background agent raises after its parent's turn ended",
+        DEFAULT_SIZE,
+        LATE_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
+        false,
+    ),
+    #[cfg(unix)]
+    daemon_subagents::LATE_BACKGROUND_AGENT_QUESTIONNAIRE,
     Scenario::new(
         "background_agent_questionnaire",
         "Answer a questionnaire raised by a background agent and deliver its completion",

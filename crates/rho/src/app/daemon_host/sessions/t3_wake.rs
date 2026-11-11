@@ -34,7 +34,10 @@ use rho_sdk::{
 use tokio::task::JoinHandle;
 
 use crate::{
-    app::session_runtime::{BackgroundWait, CommandRejected, SessionRuntime, SessionTools},
+    app::{
+        session_runtime::{BackgroundWait, CommandRejected, SessionRuntime, SessionTools},
+        subagent_manager::SubagentManager,
+    },
     tools::{agent::HostContract, process::ProcessManager, workflow_tracker::WorkflowRunTracker},
 };
 
@@ -148,6 +151,9 @@ pub(super) struct Background {
     session_id: String,
     processes: Option<ProcessManager>,
     workflows: WorkflowRunTracker,
+    /// The session's subagents, when the host's own turns deliver them
+    /// (see [`Self::with_subagents`]).
+    subagents: Option<SubagentManager>,
 }
 
 impl Background {
@@ -156,6 +162,45 @@ impl Background {
             session_id,
             processes: tools.processes().cloned(),
             workflows: tools.workflow_tracker().clone(),
+            subagents: None,
+        }
+    }
+
+    /// Counts the session's subagents too: one that finished, and a
+    /// child's request that the parent act, are results. For a session
+    /// whose prompts do not wait for their subagents
+    /// (`BackgroundWait::HostTurns`).
+    pub(super) fn with_subagents(mut self, tools: SessionTools<'_>) -> Self {
+        self.subagents = tools.subagents().cloned();
+        self
+    }
+
+    /// Resolves once a result arrives from now on, whatever waits already.
+    /// A child's informational notice resolves it too, though it is no
+    /// result: callers look again with [`Self::has_result`].
+    pub(super) fn next_result(&self) -> impl Future<Output = ()> {
+        // Subscribed here, not at the first poll.
+        let process_exit = self.processes.as_ref().map(ProcessManager::notified_owned);
+        let workflow_finish = self.workflows.notified_owned();
+        let subagent = self.subagents.as_ref().map(SubagentManager::parent_wake);
+        async move {
+            let process_exit = async move {
+                match process_exit {
+                    Some(exit) => exit.await,
+                    None => std::future::pending().await,
+                }
+            };
+            let subagent = async move {
+                match subagent {
+                    Some(wake) => wake.await,
+                    None => std::future::pending().await,
+                }
+            };
+            tokio::select! {
+                () = process_exit => {}
+                () = workflow_finish => {}
+                () = subagent => {}
+            }
         }
     }
 
@@ -197,46 +242,30 @@ impl Background {
             .as_ref()
             .is_some_and(ProcessManager::has_pending_notification)
             || self.workflows.has_pending_notification(&self.session_id)
-    }
-
-    /// Resolves once a result arrives from now on, whatever waits already.
-    pub(super) fn next_result(&self) -> impl Future<Output = ()> {
-        // Subscribed here, not at the first poll.
-        let process_exit = self.processes.as_ref().map(ProcessManager::notified_owned);
-        let workflow_finish = self.workflows.notified_owned();
-        async move {
-            let process_exit = async move {
-                match process_exit {
-                    Some(exit) => exit.await,
-                    None => std::future::pending().await,
-                }
-            };
-            tokio::select! {
-                () = process_exit => {}
-                () = workflow_finish => {}
-            }
-        }
+            || self.subagents.as_ref().is_some_and(|subagents| {
+                subagents.has_pending_notification(&self.session_id)
+                    || subagents
+                        .undelivered_notices(&self.session_id)
+                        .iter()
+                        .any(|notice| notice.delivery.requires_parent_action())
+            })
     }
 
     /// Resolves once a result is waiting.
     pub(super) async fn result_ready(self) {
         loop {
             // Subscribe before checking so a finish in between still wakes.
-            let process_exit = self.processes.as_ref().map(ProcessManager::notified_owned);
-            let workflow_finish = self.workflows.notified_owned();
+            let another = self.next_result();
             if self.has_result() {
                 return;
             }
-            let process_exit = async move {
-                match process_exit {
-                    Some(exit) => exit.await,
-                    None => std::future::pending().await,
-                }
-            };
-            tokio::select! {
-                () = process_exit => {}
-                () = workflow_finish => {}
+            #[cfg(debug_assertions)]
+            if let Some(subagents) = &self.subagents {
+                crate::app::quiet_notice_signal::parent_looked(
+                    subagents.undelivered_notices(&self.session_id).len(),
+                );
             }
+            another.await;
         }
     }
 }

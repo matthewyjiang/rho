@@ -10,6 +10,9 @@ pub fn open(parent: &mut PtyHarness, wait: WaitTimeout) {
     parent.wait_for_text("attach subagent", wait).unwrap();
     parent.inject_key(&Key::Ctrl('r')).unwrap();
     parent.wait_for_text("running only", wait).unwrap();
+    // Enter on an empty list only closes the picker, so wait for a selected
+    // run: the picker draws its card's `TASK` heading for nothing else.
+    parent.wait_for_text("TASK", wait).unwrap();
     parent.inject_key(&Key::Enter).unwrap();
     parent.wait_for_text("q back", wait).unwrap();
 }

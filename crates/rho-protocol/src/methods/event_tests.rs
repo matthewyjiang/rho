@@ -383,6 +383,7 @@ fn every_session_event_round_trips_through_its_wire_form() {
                 markdown: "**ok**".into(),
                 plain: "ok".into(),
                 tone: CardTone::Error,
+                display: None,
             },
             json!({
                 "type": "card",

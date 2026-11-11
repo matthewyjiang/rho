@@ -77,6 +77,29 @@ pub(super) const MODEL_PROMPTS_SCENARIO: Scenario = Scenario::new(
 .with_setup(setup)
 .with_env(OPENAI_AND_XAI_KEY_ENV);
 
+/// A model chosen before the session's first prompt names its prompt file,
+/// as a switch later in the session does.
+pub(super) const BEFORE_FIRST_PROMPT_SCENARIO: Scenario = Scenario::new(
+    "model_prompt_before_first_prompt",
+    "Name the prompt file of a model chosen before the first prompt",
+    DEFAULT_SIZE,
+    &[
+        Step::WaitText {
+            text: "gpt-5.5",
+            timeout: STARTUP,
+        },
+        Step::SubmitText("/model xai/grok-4.6"),
+        Step::WaitText {
+            text: "replacement.md",
+            timeout: SETTLE,
+        },
+        Step::ExitCommand,
+    ],
+    /*smoke*/ false,
+)
+.with_setup(setup)
+.with_env(OPENAI_AND_XAI_KEY_ENV);
+
 fn setup(home: &IsolatedHome) -> Result<()> {
     setup_pinned_models(home)?;
     let directory = home.home.join(".rho/model-prompts");

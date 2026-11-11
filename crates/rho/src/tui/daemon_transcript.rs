@@ -13,8 +13,9 @@ use super::{
     event_adapter::{compact_finished_event, compact_started_event, ViewModelEvent},
     program_status::ProgramStatus,
     settings_screen::SettingsUpdate,
-    App, DefaultTerminal, Entry, HerdrState, StreamKind,
+    App, DefaultTerminal, Entry, HerdrState, StreamKind, ToolEntry,
 };
+use rho_protocol::display::Presentation;
 
 /// A turn of the followed daemon session that a `/compact` prompt started:
 /// the turn is the compaction, and shows as the in-process TUI shows one.
@@ -199,6 +200,18 @@ impl App {
                 // Held until the message under way ends, as in process: a
                 // notice such as a new title does not break into a reply.
                 DaemonView::Notice(text) => self.insert_entry(&Entry::Notice(text)),
+                DaemonView::Card(card) => {
+                    // A result reaches the model between its messages, so
+                    // what the stream still holds was said before it.
+                    self.finish_streams();
+                    self.daemon_result_delivered(&card);
+                    self.insert_entry(&Entry::Tool(ToolEntry::new(
+                        Presentation::Notification(card),
+                        /*expanded*/ false,
+                        /*image*/ None,
+                        /*started_at*/ None,
+                    )));
+                }
                 DaemonView::Error(text) => {
                     self.finish_streams();
                     self.insert_entry(&Entry::Error(text));
@@ -299,8 +312,7 @@ impl App {
         self.turn.start_loading();
     }
 
-    /// Ends the busy chrome as the turn rested `rest`, closing any input
-    /// request's prompt still open. Cards still running
+    /// Ends the busy chrome as the turn rested `rest`. Cards still running
     /// stay in the transcript as interrupted, as a replay of a turn the
     /// daemon never closed leaves them; a session already at rest only
     /// tidies those.
@@ -315,9 +327,9 @@ impl App {
         self.finish_streams();
         self.reset_streams();
         let compact_turn = self.daemon_compact_turn.take();
-        // A turn withdraws its requests before it ends, so any prompt still
-        // open is one the TUI can no longer follow.
-        self.drop_daemon_inputs();
+        // The daemon withdrew the turn's own requests before it said the
+        // turn ended. A prompt still open is a subagent's question, which
+        // outlives the turn.
         for entry in self.turn.interrupted_tool_entries() {
             self.insert_entry(&Entry::Tool(entry));
         }

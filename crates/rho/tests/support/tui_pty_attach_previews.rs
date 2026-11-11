@@ -7,7 +7,7 @@ use std::{
 
 use rho_tui_pty::{IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan, WaitTimeout};
 
-use super::attach_view;
+use super::{attach_view, SessionHost};
 
 fn find_journal(root: &Path) -> Option<PathBuf> {
     for entry in std::fs::read_dir(root).ok()?.flatten() {
@@ -28,15 +28,27 @@ fn find_journal(root: &Path) -> Option<PathBuf> {
 // Owner: delegated-run/attach product contract (not a synthetic journal fixture).
 #[test]
 fn delegated_argument_previews_live_and_replay() {
+    delegated_argument_previews(SessionHost::InProcess);
+}
+
+// Covers: with RHO_TUI_DAEMON=1, the attach view follows a run the daemon
+// hosts as it does one in process.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_delegated_argument_previews_live_and_replay() {
+    delegated_argument_previews(SessionHost::Daemon);
+}
+
+fn delegated_argument_previews(host: SessionHost) {
     let home = IsolatedHome::new().unwrap();
-    let plan = RhoLaunchPlan::matrix(
+    let plan = host.launch(RhoLaunchPlan::matrix(
         PathBuf::from(env!("CARGO_BIN_EXE_rho")),
         &home,
         PtySize {
             rows: 40,
             cols: 110,
         },
-    );
+    ));
     let wait = WaitTimeout::secs(10, "delegated argument stream");
     let mut parent = PtyHarness::spawn_named(&plan, "preview_parent").unwrap();
     parent.wait_for_text("gpt-5.5", wait).unwrap();
@@ -86,6 +98,16 @@ fn delegated_argument_previews_live_and_replay() {
 
     // Replay the finished run from its durable journal.
     super::acp_e2e::wait_for_terminal_result(journal.parent().unwrap(), Duration::from_secs(10));
+    // The result's delivery turn takes the terminal as it starts and ends,
+    // which closes a picker opened meanwhile.
+    parent
+        .wait_for_screen("the result's delivery turn ended", wait, |screen| {
+            screen
+                .contents()
+                .rsplit_once("streamed write completed successfully")
+                .is_some_and(|(_, after)| after.contains("Worked for"))
+        })
+        .unwrap();
     attach_view::open(&mut parent, wait);
     parent
         .wait_for_text("streamed write completed successfully", wait)

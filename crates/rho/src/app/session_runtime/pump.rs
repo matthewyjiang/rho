@@ -33,7 +33,7 @@ use super::{
     QuestionSupport,
 };
 use crate::{
-    app::subagent_host_input::SubagentHostInputRequest,
+    app::subagent_host_input::{OpenChildQuestions, SubagentHostInputRequest},
     display_transcript::DisplayTranscript,
     tools::plan_exit::{PlanExitDecision, PlanPermissionReceiver, PlanPermissionRequest},
 };
@@ -156,15 +156,10 @@ struct Pending {
     approvals: BTreeMap<ApprovalId, PendingApproval>,
     plans: BTreeMap<PlanApprovalId, oneshot::Sender<PlanExitDecision>>,
     questions: BTreeSet<HostInputId>,
-    /// Where each open subagent question's answer goes. Dropping one tells
-    /// the subagent nobody will answer.
-    child_questions: BTreeMap<HostInputId, ChildReply>,
+    child_questions: OpenChildQuestions,
     next_approval: u64,
     next_plan: u64,
 }
-
-/// Takes a subagent's answer to its question.
-type ChildReply = oneshot::Sender<Result<HostInputResponse, rho_sdk::Error>>;
 
 /// Runs the turn's sources until the run's events end and no approval waits
 /// on the host. Fails only when the host reports it could not deliver
@@ -282,28 +277,18 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                 if cancelled {
                     continue;
                 }
-                let SubagentHostInputRequest {
-                    run_id,
-                    agent_id,
-                    parent_session_id: _,
-                    request,
-                    response,
-                } = asked;
-                io.emit(SessionEvent::Notice {
-                    text: format!("agent {run_id} ({agent_id}) asks: {}", request.title()),
-                });
+                let (notice, request) = pending.child_questions.open(asked);
+                io.emit(SessionEvent::Notice { text: notice });
                 io.emit(SessionEvent::QuestionAsked {
                     id: request.id().clone(),
                     call_id: None,
                     request: request.clone(),
                 });
                 hooks.question_requested(session, &request);
-                pending.child_questions.insert(request.id().clone(), response);
             }
 
             // Its subagent stopped waiting, as one the parent stopped does.
-            id = abandoned_child_question(&mut pending.child_questions) => {
-                pending.child_questions.remove(&id);
+            id = pending.child_questions.abandoned() => {
                 io.emit(SessionEvent::QuestionWithdrawn { id });
             }
 
@@ -346,18 +331,8 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
                 Some(TurnControl::AnswerQuestion { id, answer }) => {
                     if pending.questions.remove(&id) {
                         events.answer(id, answer);
-                    } else if let Some(reply) = pending.child_questions.remove(&id) {
-                        let _ = reply.send(answer.map_err(|refusal| rho_sdk::Error::Interrupted {
-                            message: match refusal {
-                                HostInputRefusal::Declined => {
-                                    "delegated questionnaire declined by user"
-                                }
-                                // `Dismissed`, or a refusal added later.
-                                _ => "delegated questionnaire cancelled by user",
-                            }
-                            .into(),
-                            source: None,
-                        }));
+                    } else if let Some(notice) = pending.child_questions.answer(&id, answer) {
+                        io.emit(SessionEvent::Notice { text: notice });
                     }
                 }
                 Some(TurnControl::HostFailed { message }) => return Err(anyhow::Error::msg(message)),
@@ -380,27 +355,13 @@ pub(super) async fn pump(sources: PumpSources<'_>, io: &mut TurnIo) -> anyhow::R
 
 /// Stops waiting on every open question, the run's and its subagents'.
 fn withdraw_questions(pending: &mut Pending, io: &TurnIo) {
-    let children = std::mem::take(&mut pending.child_questions).into_keys();
+    let children = pending.child_questions.drop_all();
     for id in std::mem::take(&mut pending.questions)
         .into_iter()
         .chain(children)
     {
         io.emit(SessionEvent::QuestionWithdrawn { id });
     }
-}
-
-/// The pending child question whose subagent no longer waits for an
-/// answer; never resolves while every subagent waits.
-async fn abandoned_child_question(pending: &mut BTreeMap<HostInputId, ChildReply>) -> HostInputId {
-    std::future::poll_fn(|context| {
-        for (id, reply) in pending.iter_mut() {
-            if reply.poll_closed(context).is_ready() {
-                return std::task::Poll::Ready(id.clone());
-            }
-        }
-        std::task::Poll::Pending
-    })
-    .await
 }
 
 async fn next_child_question(

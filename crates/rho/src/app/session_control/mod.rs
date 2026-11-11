@@ -206,7 +206,11 @@ impl SessionControl {
             self.daemon
                 .request::<SessionConfigure>(&SessionConfigureParams {
                     session: opened.session.clone(),
-                    change: SessionChange::Model { model, auth: None },
+                    change: SessionChange::Model {
+                        model,
+                        auth: None,
+                        setup: true,
+                    },
                 })
                 .await?;
         }

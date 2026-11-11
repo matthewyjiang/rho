@@ -173,7 +173,9 @@ fn questionnaire_completion(
     let prompt = last_user_text(request).unwrap_or_default();
     if matches!(
         prompt.as_str(),
-        "fixture child questionnaire" | "fixture delayed child questionnaire"
+        "fixture child questionnaire"
+            | "fixture delayed child questionnaire"
+            | "fixture gated child questionnaire"
     ) {
         if result.content.contains("blue") {
             return completed(format!(

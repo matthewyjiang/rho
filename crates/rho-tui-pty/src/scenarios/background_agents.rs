@@ -141,3 +141,57 @@ pub(super) const BACKGROUND_AGENT_QUESTIONNAIRE_STEPS: &[Step] = &[
     },
     Step::ExitCommand,
 ];
+
+fn release_child_questionnaire(harness: &mut crate::PtyHarness) -> Result<()> {
+    super::release_fixture(harness, ".rho-fixture-release-child-questionnaire")
+}
+
+// Covers: a subagent that asks after its parent's turn ended must still
+// reach the person, and its answer must reach the subagent, without a
+// parent turn in between.
+// Owner: interactive delegated-questionnaire routing. The scenario above
+// holds the parent's turn open until the form shows.
+pub(super) const LATE_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("parent_turn_ends_before_the_child_asks"),
+    Step::SubmitText("fixture late background questionnaire"),
+    Step::WaitText {
+        text: "background questionnaire agent dispatched: agent",
+        timeout: STREAM,
+    },
+    // The completion footer proves the parent turn ended before the release.
+    Step::WaitText {
+        text: "Worked for",
+        timeout: STREAM,
+    },
+    Step::Phase("answer_child_questionnaire_while_idle"),
+    Step::Custom(release_child_questionnaire),
+    Step::WaitText {
+        text: "asks: Background questionnaire",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "Choose one color",
+        timeout: STREAM,
+    },
+    Step::Key(Key::Down),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "answered questionnaire for agent",
+        timeout: STREAM,
+    },
+    Step::Phase("automatic_completion_delivery"),
+    Step::WaitText {
+        text: "background agent questionnaire completion received (delivery 1)",
+        timeout: STREAM,
+    },
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(250),
+        timeout: SETTLE,
+    },
+    Step::ExitCommand,
+];

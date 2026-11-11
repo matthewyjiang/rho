@@ -19,6 +19,7 @@ use rho_providers::{
 use super::{
     plural_suffix,
     report::{DoctorCheck, DoctorCheckId, DoctorStatus},
+    DoctorMcp,
 };
 use crate::{
     antigravity_runtime::auth::{AntigravityProbeError, AntigravityStatus},
@@ -28,7 +29,7 @@ use crate::{
     cursor_runtime::auth::{CursorAuthError, CursorAuthStatus, CursorProbeSnapshot},
     herdr::HerdrReporter,
     plugins::{PluginLoadReport, PluginLoadSummary},
-    tools::mcp::{McpLoadMode, McpSessionReport},
+    tools::mcp::{McpLoadMode, McpSessionSummary},
 };
 
 pub(super) const CLAUDE_AUTH_LABEL: &str = "Claude Code authentication";
@@ -471,8 +472,20 @@ pub(super) fn herdr_check(probe: HerdrProbe) -> DoctorCheck {
     }
 }
 
-pub(super) fn mcp_check(report: &McpSessionReport) -> DoctorCheck {
-    let summary = report.summary();
+/// The MCP row: `checking` until a daemon session's servers arrive.
+pub(crate) fn mcp_check(mcp: &DoctorMcp) -> DoctorCheck {
+    let id = DoctorCheckId::Mcp;
+    let label = "MCP";
+    match mcp {
+        DoctorMcp::Summary(summary) => mcp_summary_check(summary),
+        DoctorMcp::Reading => DoctorCheck::new(id, label, DoctorStatus::Checking, "checking"),
+        DoctorMcp::Unreadable(error) => {
+            DoctorCheck::new(id, label, DoctorStatus::Warn, "unknown").with_hint(error.as_str())
+        }
+    }
+}
+
+fn mcp_summary_check(summary: &McpSessionSummary) -> DoctorCheck {
     let id = DoctorCheckId::Mcp;
     let label = "MCP";
     if !summary.configured {
