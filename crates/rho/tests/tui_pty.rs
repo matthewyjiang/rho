@@ -971,19 +971,40 @@ fn disabled_skill_command(host: SessionHost) {
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
+// Covers: a goal is judged only after its delegated run reported, in process
+// and on a daemon session, whose prompts end while their subagents run.
+// Owner: goal loop (TUI in process, daemon goal controller) (PTY)
 #[test]
 fn goal_waits_for_subagents_before_evaluation() {
-    assert_pass("goal_waits_for_subagents");
+    for scenario in [
+        "goal_waits_for_subagents",
+        "daemon_goal_waits_for_subagents",
+    ] {
+        assert_pass(scenario);
+    }
 }
 
+// Covers: a goal waiting on a subagent's question is judged after its answer
+// and the subagent's result, in process and on a daemon session.
+// Owner: goal loop and delegated-questionnaire routing (PTY)
 #[test]
 fn goal_answers_background_agent_questionnaire_while_waiting() {
-    assert_pass("goal_questionnaire");
+    for scenario in ["goal_questionnaire", "daemon_goal_questionnaire"] {
+        assert_pass(scenario);
+    }
 }
 
+// Covers: a failed goal turn is retried only after its delegated run
+// reported, in process and on a daemon session.
+// Owner: goal loop (TUI in process, daemon goal controller) (PTY)
 #[test]
 fn goal_waits_for_subagents_before_retrying() {
-    assert_pass("goal_waits_for_subagents_during_retry");
+    for scenario in [
+        "goal_waits_for_subagents_during_retry",
+        "daemon_goal_waits_for_subagents_during_retry",
+    ] {
+        assert_pass(scenario);
+    }
 }
 
 // Covers: full prompt expansion survives streaming and launch while collapsed

@@ -51,6 +51,11 @@ impl IdleWatch {
         }
     }
 
+    /// The session's background work, whose results its turns deliver.
+    pub(super) fn background(&self) -> &Background {
+        &self.background
+    }
+
     /// Call once a turn's end is recorded, so the session can start
     /// another.
     pub(super) fn turn_ended(&self) {

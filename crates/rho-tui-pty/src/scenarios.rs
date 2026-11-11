@@ -650,6 +650,12 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     daemon_subagents::ATTACH_VIEW_QUIT_RESTORES,
     #[cfg(unix)]
+    daemon_subagents::GOAL_WAITS_FOR_SUBAGENTS,
+    #[cfg(unix)]
+    daemon_subagents::GOAL_QUESTIONNAIRE,
+    #[cfg(unix)]
+    daemon_subagents::GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY,
+    #[cfg(unix)]
     daemon_restart::SCENARIO,
     #[cfg(unix)]
     daemon_restart_mcp::SCENARIO,
