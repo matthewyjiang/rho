@@ -490,9 +490,9 @@ async fn stop(paths: &DaemonPaths) -> anyhow::Result<()> {
         // An incompatible daemon cannot take requests. SIGTERM triggers the
         // same graceful shutdown, so the version-mismatch advice to run
         // `rho daemon restart`, which stops it this way, still works.
-        Err(daemon::ConnectError::Handshake(ClientError::VersionMismatch(_))) => {
-            daemon::terminate_recorded_daemon(paths)?.ok_or(daemon::ConnectError::NotRunning)?
-        }
+        Err(daemon::ConnectError::Handshake(
+            ClientError::VersionMismatch(_) | ClientError::UnreadableHello(_),
+        )) => daemon::terminate_recorded_daemon(paths)?.ok_or(daemon::ConnectError::NotRunning)?,
         Err(error) => return Err(error.into()),
     };
     match daemon::wait_until_released(paths, DAEMON_STOP_TIMEOUT).await? {
@@ -530,7 +530,9 @@ async fn restart(paths: &DaemonPaths) -> anyhow::Result<()> {
             );
             return Ok(());
         }
-        Err(daemon::ConnectError::Handshake(ClientError::VersionMismatch(_))) => {
+        Err(daemon::ConnectError::Handshake(
+            ClientError::VersionMismatch(_) | ClientError::UnreadableHello(_),
+        )) => {
             stop(paths).await?;
             let started = connect().await?;
             println!("rho daemon started (pid {})", started.hello.daemon.pid);

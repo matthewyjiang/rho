@@ -84,6 +84,15 @@ pub enum ClientError {
     /// restarting it would cost.
     #[error("{0}")]
     VersionMismatch(VersionMismatch),
+    /// The daemon answered `rho/hello` in a form this client cannot read,
+    /// so it is another build, one whose handshake differs. It cannot take
+    /// a request from this client, and is stopped as an incompatible one is.
+    #[error(
+        "rho daemon is another build, whose answer to rho/hello this client cannot read ({0}); \
+         restart this client if it is the older one, or run `rho daemon restart` to replace \
+         the daemon, which interrupts its work in progress"
+    )]
+    UnreadableHello(serde_json::Error),
     /// The daemon answered with an error. A `null`-id error (the daemon
     /// could not read a line) fails every pending request this way.
     #[error("rho daemon rejected {method}: {error}")]
@@ -135,6 +144,8 @@ impl Client {
     /// hello names this crate's [`BuildId`], so the answer's
     /// [`HelloResponse::skew`] says whether the daemon is another build.
     ///
+    /// A daemon whose answer this client cannot read yields
+    /// [`ClientError::UnreadableHello`].
     /// An incompatible daemon yields [`ClientError::VersionMismatch`], whether
     /// the daemon rejects the hello or reports an incompatible version.
     ///
@@ -191,6 +202,9 @@ impl Client {
                     Some(mismatch) => ClientError::VersionMismatch(mismatch),
                     None => ClientError::Rpc { method, error },
                 });
+            }
+            Err(ClientError::DecodeResult { method: _, source }) => {
+                return Err(ClientError::UnreadableHello(source))
             }
             Err(error) => return Err(error),
         };

@@ -109,7 +109,7 @@ async fn handshake_maps_incompatible_daemons_to_version_mismatch() {
                     },
                 },
             }),
-            mismatch(newer, VersionFix::UpdateClient, None),
+            Some(mismatch(newer, VersionFix::UpdateClient, None)),
         ),
         (
             json!({
@@ -126,7 +126,7 @@ async fn handshake_maps_incompatible_daemons_to_version_mismatch() {
                     },
                 },
             }),
-            mismatch(older, VersionFix::RestartDaemon, Some(in_use)),
+            Some(mismatch(older, VersionFix::RestartDaemon, Some(in_use))),
         ),
         (
             json!({
@@ -138,7 +138,19 @@ async fn handshake_maps_incompatible_daemons_to_version_mismatch() {
                     "capabilities": [],
                 },
             }),
-            mismatch(newer, VersionFix::UpdateClient, None),
+            Some(mismatch(newer, VersionFix::UpdateClient, None)),
+        ),
+        // A daemon of this version from before hellos named a build.
+        (
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocol": PROTOCOL_VERSION,
+                    "daemon": {"version": "9.0.0", "pid": 1},
+                },
+            }),
+            None,
         ),
     ];
     for (reply, expected) in cases {
@@ -157,10 +169,12 @@ async fn handshake_maps_incompatible_daemons_to_version_mismatch() {
             .err()
             .expect("mismatch");
 
-        match error {
-            ClientError::VersionMismatch(mismatch) => assert_eq!(mismatch, expected),
-            other => panic!("expected a version mismatch, got {other:?}"),
-        }
+        let mismatch = match error {
+            ClientError::VersionMismatch(mismatch) => Some(mismatch),
+            ClientError::UnreadableHello(_) => None,
+            other => panic!("expected an incompatible daemon, got {other:?}"),
+        };
+        assert_eq!(mismatch, expected);
         daemon.await.unwrap();
     }
 }
