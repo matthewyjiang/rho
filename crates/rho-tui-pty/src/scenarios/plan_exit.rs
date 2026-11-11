@@ -118,6 +118,29 @@ fn submit_bypass_feedback(harness: &mut PtyHarness) -> Result<()> {
     submit_typed_feedback(harness, "bypass")
 }
 
+/// Runs bare `/permissions` and checks it reports plan. In process it prints
+/// the mode with its usage; a daemon client opens the mode picker on the mode
+/// in force, which Esc closes without a change.
+fn probe_plan_mode(harness: &mut PtyHarness) -> Result<()> {
+    harness.submit_text("/permissions")?;
+    if !harness.follows_daemon() {
+        return harness.wait_for_text("permission mode: plan. usage:", STREAM);
+    }
+    const PICKER: &str = "Permission mode · Type to search";
+    harness.wait_for_text(PICKER, STREAM)?;
+    let rows = harness.screen().rows_text();
+    let selected = rows
+        .iter()
+        .find(|row| row.contains("selected"))
+        .context("permission picker marks no mode selected")?;
+    ensure!(
+        selected.contains("Plan"),
+        "permission picker opened on another mode: {selected}"
+    );
+    harness.inject_key(&Key::Esc)?;
+    harness.wait_for_text_gone(PICKER, SETTLE)
+}
+
 fn wait_for_dispatch_turn(harness: &mut PtyHarness) -> Result<()> {
     wait_for_turn_completion_after(harness, "fixture plan background dispatched")
 }
@@ -225,11 +248,7 @@ pub(super) const IDLE_COMPLETION_SCENARIO: Scenario = Scenario::new(
         Step::Custom(wait_for_dispatch_turn),
         // Confirm the idle command path before releasing the child. During-
         // turn /permissions is unavailable, so an in-turn delivery cannot pass.
-        Step::SubmitText("/permissions"),
-        Step::WaitText {
-            text: "permission mode: plan. usage:",
-            timeout: STREAM,
-        },
+        Step::Custom(probe_plan_mode),
         Step::Custom(release_plan_child),
         Step::WaitText {
             text: "Plan ready. How should Rho continue?",
@@ -349,11 +368,7 @@ pub(super) const KEEP_SCENARIO: Scenario = Scenario::new(
             timeout: STREAM,
         },
         // The boundary receipt guarantees the proposal turn is idle.
-        Step::SubmitText("/permissions"),
-        Step::WaitText {
-            text: "permission mode: plan. usage:",
-            timeout: STREAM,
-        },
+        Step::Custom(probe_plan_mode),
         Step::Custom(assert_still_planning),
         Step::ExitCommand,
         Step::Custom(assert_no_implementation),

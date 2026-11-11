@@ -526,4 +526,12 @@ pub(super) const SETTINGS_NEED_THE_DAEMON: Scenario = Scenario::new(
     ],
     /*smoke*/ false,
 )
-.with_env(OPENAI_KEY_ENV);
+.with_env(IN_PROCESS_ENV);
+
+/// Keeps the TUI in process even when a run forces every launch into the
+/// daemon: a later `RHO_TUI_DAEMON` pair wins. The in-process TUI still
+/// ships (Windows runs no daemon), so its answers keep their coverage.
+const IN_PROCESS_ENV: &[(&str, &str)] = &[
+    ("OPENAI_API_KEY", "fixture-openai-key"),
+    ("RHO_TUI_DAEMON", "0"),
+];
