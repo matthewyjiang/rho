@@ -105,7 +105,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
 
         harness.set_phase("daemon_signs_out");
         harness.submit_text("/logout vllm")?;
-        harness.wait_for_text("logged out of vllm", SETTLE)?;
+        harness.wait_for_text("deleted stored credentials for vllm", SETTLE)?;
 
         harness.set_phase("daemon_login_cancelled");
         start_fixture_login(&mut harness)?;

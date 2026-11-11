@@ -789,20 +789,11 @@ impl App {
                     }
                 };
                 self.refresh_available_auths();
-                let env_active = ProviderAuthentication::has_environment_override(&target.auth);
-                let message = if env_active {
-                    format!(
-                        "deleted stored credentials for {}, but an env override is still active",
-                        target.provider
-                    )
-                } else if forgot_login {
-                    format!("logged out of {}", target.provider)
-                } else if deleted {
-                    format!("deleted stored credentials for {}", target.provider)
-                } else {
-                    format!("no stored credentials for {} were present", target.provider)
+                let removed = RemovedLogin {
+                    forgot_login,
+                    deleted,
                 };
-                self.insert_entry(&Entry::Notice(message));
+                self.insert_entry(&Entry::Notice(removed.notice(&target)));
                 if self.invalidate_active_provider_if_needed(&target, forgot_login, agent) {
                     self.insert_entry(&Entry::Notice(ACTIVE_PROVIDER_SIGNED_OUT.into()));
                 }
@@ -862,6 +853,33 @@ impl App {
             }
         }
         true
+    }
+}
+
+/// What a logout of a login target removed.
+pub(super) struct RemovedLogin {
+    /// It removed an endpoint login (Ollama); see
+    /// [`App::forget_endpoint_login`].
+    pub(super) forgot_login: bool,
+    /// It deleted stored credentials.
+    pub(super) deleted: bool,
+}
+
+impl RemovedLogin {
+    /// The transcript notice for this logout of `target`.
+    pub(super) fn notice(&self, target: &LoginTarget) -> String {
+        let provider = &target.provider;
+        if ProviderAuthentication::has_environment_override(&target.auth) {
+            format!(
+                "deleted stored credentials for {provider}, but an env override is still active"
+            )
+        } else if self.forgot_login {
+            format!("logged out of {provider}")
+        } else if self.deleted {
+            format!("deleted stored credentials for {provider}")
+        } else {
+            format!("no stored credentials for {provider} were present")
+        }
     }
 }
 
