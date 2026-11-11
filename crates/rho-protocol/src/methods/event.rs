@@ -166,8 +166,18 @@ pub enum SessionEvent {
     },
     /// The provider discarded the response it was streaming, and the run
     /// asks for it again. What was sent of it cannot be taken back; the
-    /// retried response starts new messages (#1670).
+    /// retried response starts new messages (#1670). A
+    /// [`Self::ProviderRetry`] saying why follows.
     ResponseDiscarded,
+    /// The turn asks the provider again, and why. Says what the turn is
+    /// doing until its next event; a stream reset sends
+    /// [`Self::ResponseDiscarded`] first.
+    ProviderRetry {
+        reason: RetryReason,
+        /// How long the provider said to wait before the next request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry_after_ms: Option<u64>,
+    },
     /// A titled card the session shows outside the conversation, such as a
     /// background result.
     Card {
@@ -366,6 +376,30 @@ pub enum CompactionStatus {
     Failed {
         error: String,
     },
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+/// Why a turn asks the provider again ([`SessionEvent::ProviderRetry`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum RetryReason {
+    /// The provider limited the rate of requests.
+    RateLimit,
+    /// Another failure that may pass, such as a server error.
+    ProviderError,
+    /// The provider's response was malformed.
+    InvalidResponse,
+    /// The request overflowed the model's context; the turn compacts it
+    /// first.
+    ContextOverflow,
+    /// One request failed and the provider sends it again; no response was
+    /// discarded.
+    RequestFailed,
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]

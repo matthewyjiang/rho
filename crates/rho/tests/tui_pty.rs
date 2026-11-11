@@ -1229,6 +1229,54 @@ fn daemon_streaming_controls_hold_and_reveal_output() {
     assert_pass("daemon_streaming_controls");
 }
 
+// Covers: a rate-limited provider request shows the retry's status while
+// the retried request runs, then its reply.
+// Owner: interactive TUI
+#[test]
+fn provider_retry_shows_its_status_then_the_reply() {
+    assert_pass("provider_retry");
+}
+
+// Covers: with RHO_TUI_DAEMON=1, the daemon turn's provider retry shows the
+// same status as an in-process turn's.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_provider_retry_shows_its_status_then_the_reply() {
+    assert_pass("daemon_provider_retry");
+}
+
+// Covers: the provider's own web search shows as a finished card with its
+// query.
+// Owner: interactive TUI
+#[test]
+fn web_search_activity_shows_a_finished_card() {
+    assert_pass("web_search_activity");
+}
+
+// Covers: with RHO_TUI_DAEMON=1, the daemon turn's provider web search
+// shows the same finished card as an in-process turn's.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_web_search_activity_shows_a_finished_card() {
+    assert_pass("daemon_web_search_activity");
+}
+
+// Covers: a turn the provider failed with a diagnostic shows the
+// diagnostic.
+// Owner: interactive TUI
+#[test]
+fn provider_diagnostic_shows_on_a_failed_turn() {
+    assert_pass("provider_diagnostic");
+}
+
+// Covers: with RHO_TUI_DAEMON=1, the daemon's failed turn shows the
+// provider's diagnostic as an in-process turn does.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_provider_diagnostic_shows_on_a_failed_turn() {
+    assert_pass("daemon_provider_diagnostic");
+}
+
 // Covers: with RHO_TUI_DAEMON=1, deleting a session the TUI just left,
 // which the daemon still holds open, goes through the daemon.
 // Owner: interactive TUI as a daemon client (#1667)

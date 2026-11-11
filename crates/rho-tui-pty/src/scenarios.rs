@@ -104,6 +104,7 @@ mod reasoning_output;
 mod remember;
 mod resume_delete;
 mod resume_scrollback;
+mod run_events;
 mod runtime_info;
 mod send_confirm;
 mod sessions_hub;
@@ -276,6 +277,15 @@ const ALL_SCENARIOS: &[Scenario] = &[
     STREAMING_CONTROLS_SCENARIO,
     #[cfg(unix)]
     streaming_controls::DAEMON_STREAMING_CONTROLS_SCENARIO,
+    run_events::PROVIDER_RETRY_SCENARIO,
+    #[cfg(unix)]
+    run_events::DAEMON_PROVIDER_RETRY_SCENARIO,
+    run_events::WEB_SEARCH_ACTIVITY_SCENARIO,
+    #[cfg(unix)]
+    run_events::DAEMON_WEB_SEARCH_ACTIVITY_SCENARIO,
+    run_events::PROVIDER_DIAGNOSTIC_SCENARIO,
+    #[cfg(unix)]
+    run_events::DAEMON_PROVIDER_DIAGNOSTIC_SCENARIO,
     AGENT_PROMPT_SCENARIO,
     Scenario::new(
         "cancel_and_resubmit",

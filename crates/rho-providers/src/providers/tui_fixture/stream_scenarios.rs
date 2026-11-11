@@ -1,6 +1,9 @@
 //! Exact-match streaming prompt table for matrix mode.
 
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
+};
 
 use rho_sdk::{
     model::{ContentBlock, ModelEvent, ModelRequest, ModelResponse, ToolCall},
@@ -201,6 +204,14 @@ pub(super) async fn intercept(
         }
         "fixture scroll checkpoint" => Some(stream_scroll_checkpoint(request, events).await),
         "fixture stream failure" => Some(stream_failure(request, events).await),
+        "fixture web search" => Some(stream_web_search(events).await),
+        "fixture provider diagnostic" => Some(Err(ProviderError::new(
+            ProviderErrorKind::Other,
+            "deterministic provider failure with a diagnostic",
+            Retryability::Permanent,
+        )
+        .with_diagnostic("fixture diagnostic detail"))),
+        "fixture provider retry" => Some(provider_retry(request, events).await),
         "fixture bulk one" | "fixture bulk two" => Some(stream_bulk(prompt, events).await),
         _ => None,
     }
@@ -631,6 +642,47 @@ async fn stream_failure(
         "deterministic forced stream termination",
         Retryability::Permanent,
     ))
+}
+
+async fn stream_web_search(events: &ProviderEventSender) -> Result<ModelResponse, ProviderError> {
+    events
+        .send(ModelEvent::WebSearch("fixture search query".into()))
+        .await?;
+    let reply = "web search reply";
+    events.send(ModelEvent::OutputDelta(reply.into())).await?;
+    completed(reply)
+}
+
+/// Requests of `fixture provider retry`: each even one is a turn's first,
+/// each odd one its retry. Per process, which in a daemon is the daemon's.
+static PROVIDER_RETRY_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+
+/// Fails a turn's first request as rate limited, so the run retries it, and
+/// holds the retry until the scenario releases it, so the retry's status
+/// stays on screen until then.
+async fn provider_retry(
+    request: &ModelRequest<'_>,
+    events: &ProviderEventSender,
+) -> Result<ModelResponse, ProviderError> {
+    // Released by rho-tui-pty/src/scenarios/run_events.rs once the retry
+    // shows.
+    const RELEASE_MARKER: &str = ".rho-fixture-release-provider-retry";
+    if PROVIDER_RETRY_REQUESTS
+        .fetch_add(1, Ordering::SeqCst)
+        .is_multiple_of(2)
+    {
+        super::release::consume_release(RELEASE_MARKER)?;
+        // No retry-after, so the status says it retries without a countdown.
+        return Err(ProviderError::new(
+            ProviderErrorKind::RateLimit,
+            "deterministic rate limit",
+            Retryability::Retryable,
+        ));
+    }
+    super::release::wait_for_release_or_cancel(RELEASE_MARKER, &request.cancellation).await?;
+    let reply = "reply after provider retry";
+    events.send(ModelEvent::OutputDelta(reply.into())).await?;
+    completed(reply)
 }
 
 async fn stream_bulk(

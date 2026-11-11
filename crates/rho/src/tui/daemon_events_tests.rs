@@ -1,17 +1,17 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     display::{Presentation, ToolCard, ToolCardStatus, ToolFamily, ToolHeader},
     AnswerStop, ApprovalAsk, ApprovalSource, Ask, Choice, ContentBlock, InputAnswer, InputRequest,
     InputRequestId, InputTimeout, JobState, MessageId, Operation, PathScope, Question, QuestionAsk,
-    Replay, Resolution, Selection, SessionEvent, SteerId, ToolCallId as WireCallId, ToolCallUpdate,
-    ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome,
+    Replay, Resolution, RetryReason, Selection, SessionEvent, SteerId, ToolCallId as WireCallId,
+    ToolCallUpdate, ToolStatus, TurnError, TurnErrorKind, TurnId, TurnOutcome,
 };
-use rho_sdk::{SteeringId, ToolCallId};
+use rho_sdk::{ProviderErrorKind, ProviderStreamResetReason, SteeringId, ToolCallId};
 
 use super::{DaemonEvents, DaemonView, Rest, TurnState};
-use crate::tui::{daemon_inputs::AnswerRefusal, StreamKind};
+use crate::tui::{activity::ProviderRetryHint, daemon_inputs::AnswerRefusal, StreamKind};
 
 // Covers: context tokens and cumulative spend have different meanings; a
 // later unknown price must clear spend rather than reusing the prior total.
@@ -140,6 +140,50 @@ fn replayed_text_is_marked_until_the_replay_ends() {
     events.end_replay();
 
     assert_eq!((during, replayed(events.map(chunk("m2")))), (true, false));
+}
+
+// Covers: a live retry says why as the in-process TUI's retry hint does, a
+// request the provider only sends again says just that it retries, and a
+// replayed retry, which is history, changes nothing.
+// Owner: tui daemon session events
+#[test]
+fn a_live_retry_says_why_and_a_replayed_one_nothing() {
+    let retry = |reason, retry_after_ms| SessionEvent::ProviderRetry {
+        reason,
+        retry_after_ms,
+    };
+    let hint = |reason| DaemonView::Retrying(Some(ProviderRetryHint { reason }));
+    let mut events = DaemonEvents::default();
+    events.replay(Replay::Reset);
+    events.attached(Vec::new(), JobState::Running, Some(TurnId::new(TURN)));
+    let replayed = events.map(retry(RetryReason::RateLimit, None));
+    events.end_replay();
+    let live: Vec<_> = [
+        retry(RetryReason::RateLimit, Some(5_000)),
+        retry(RetryReason::ProviderError, None),
+        retry(RetryReason::RequestFailed, None),
+    ]
+    .into_iter()
+    .flat_map(|event| events.map(event))
+    .collect();
+
+    assert_eq!(
+        (replayed, live),
+        (
+            Vec::new(),
+            vec![
+                hint(ProviderStreamResetReason::RetryableFailure {
+                    kind: ProviderErrorKind::RateLimit,
+                    retry_after: Some(Duration::from_secs(5)),
+                }),
+                hint(ProviderStreamResetReason::RetryableFailure {
+                    kind: ProviderErrorKind::Other,
+                    retry_after: None,
+                }),
+                DaemonView::Retrying(None),
+            ]
+        )
+    );
 }
 
 fn user(text: &str) -> Step {

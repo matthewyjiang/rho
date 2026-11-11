@@ -7,13 +7,14 @@ use std::{
 
 use rho_protocol::{
     display::Presentation, CompactionId, CompactionStatus, ContentBlock, Location, MessageId,
-    PlanEntry, SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolContent, ToolKind,
-    ToolStatus,
+    PlanEntry, RetryReason, SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolContent,
+    ToolKind, ToolStatus,
 };
 use rho_sdk::{
     model,
     tool::{ToolMetadata, ToolOutput},
-    CompactionOutcome, ContextEstimate, RunEvent, SteeringId, ToolCompletion, UserInput,
+    CompactionOutcome, ContextEstimate, ProviderErrorKind, ProviderStreamResetReason, RunEvent,
+    SteeringId, ToolCompletion, UserInput,
 };
 
 use super::{
@@ -24,7 +25,7 @@ use super::{
 };
 use crate::{
     app::{
-        interactive_presenter::InteractiveToolPresenter,
+        interactive_presenter::{hosted_activity_card, InteractiveToolPresenter},
         session_runtime::{context_window, InsertedMessage, SessionEvent, SessionTools},
     },
     session::tree::ProjectedMessage,
@@ -65,6 +66,10 @@ const UNFINISHED_COMPACTION: &str = "compaction ended without a result";
 /// while the provider still streams its arguments, with the card they draw
 /// so far, and keeps its id once it starts; a discarded response closes the
 /// calls it opened that way as failed.
+///
+/// Each time the run asks the provider again, a provider retry says why. A
+/// tool the provider ran itself, such as its web search, shows as a call
+/// that opens finished.
 ///
 /// The session's checklist goes out as a plan whenever a finished tool
 /// changed it. Each model step reports its context fill as usage, as do a
@@ -487,7 +492,7 @@ impl LiveEvents {
                 // directly or inside code mode.
                 finished.into_iter().chain(self.plan_change()).collect()
             }
-            RunEvent::ProviderStreamReset { .. } => {
+            RunEvent::ProviderStreamReset { reason, .. } => {
                 // The retried response proposes its calls again, and streams
                 // them again: the cards its streamed arguments opened close.
                 self.proposed.clear();
@@ -495,9 +500,15 @@ impl LiveEvents {
                 let discarded = self.fail_pending();
                 discarded
                     .into_iter()
-                    .chain([WireEvent::ResponseDiscarded])
+                    .chain([WireEvent::ResponseDiscarded, provider_retry(reason)])
                     .collect()
             }
+            RunEvent::ProviderRequestRetry => vec![WireEvent::ProviderRetry {
+                reason: RetryReason::RequestFailed,
+                retry_after_ms: None,
+            }],
+            RunEvent::WebSearch { detail } => vec![hosted_activity("web_search", detail)],
+            RunEvent::HostedToolActivity { name, detail } => vec![hosted_activity(name, detail)],
             RunEvent::ToolCallUpdated {
                 index,
                 id,
@@ -525,17 +536,17 @@ impl LiveEvents {
             RunEvent::HostInputRequested { .. } | RunEvent::ToolHostInputRequested { .. } => {
                 Vec::new()
             }
-            // Retries, diagnostics and model-call metrics land as later
-            // minors.
+            // The daemon tells the failed turn's clients the diagnostic
+            // itself (`sessions::turn`), unless the turn failed to
+            // authenticate: it may echo a credential, and this event does
+            // not say which failure it is from.
+            RunEvent::ProviderDiagnostic { .. } => Vec::new(),
+            // Model-call metrics land as a later minor.
             // The daemon reports usage counted mid-response itself
             // ([`Self::streamed_usage`]).
             RunEvent::UsageUpdated { .. }
             | RunEvent::ProviderContextUpdated { .. }
-            | RunEvent::ProviderDiagnostic { .. }
-            | RunEvent::WebSearch { .. }
-            | RunEvent::ProviderRequestRetry
             | RunEvent::ModelCallCompleted { .. }
-            | RunEvent::HostedToolActivity { .. }
             | RunEvent::ProviderServiceTierFallback { .. } => Vec::new(),
             // RunEvent is non_exhaustive; a newer SDK's events wait for the
             // wire to carry them.
@@ -827,6 +838,50 @@ fn output_content(output: &ToolOutput, cwd: &Path) -> Vec<ToolContent> {
         );
     }
     content
+}
+
+/// The retry that follows a stream reset for `reason`.
+fn provider_retry(reason: &ProviderStreamResetReason) -> WireEvent {
+    let (reason, retry_after) = match reason {
+        ProviderStreamResetReason::RetryableFailure {
+            kind: ProviderErrorKind::RateLimit,
+            retry_after,
+        } => (RetryReason::RateLimit, *retry_after),
+        ProviderStreamResetReason::RetryableFailure { retry_after, .. } => {
+            (RetryReason::ProviderError, *retry_after)
+        }
+        ProviderStreamResetReason::InvalidResponse => (RetryReason::InvalidResponse, None),
+        ProviderStreamResetReason::ContextOverflow => (RetryReason::ContextOverflow, None),
+        // `ProviderStreamResetReason` is non-exhaustive. A reason a newer
+        // SDK adds is still the provider failing a request, and a client
+        // that shows it so says no more than it knows.
+        _ => (RetryReason::ProviderError, None),
+    };
+    WireEvent::ProviderRetry {
+        reason,
+        retry_after_ms: retry_after.map(|wait| u64::try_from(wait.as_millis()).unwrap_or(u64::MAX)),
+    }
+}
+
+/// Hosted tool `name`'s activity, which the provider ran itself, as a call
+/// that opens finished with `detail` and the card the TUI draws for it. Its
+/// id is fresh: no provider call or saved row has one like it, and the run
+/// never updates it.
+fn hosted_activity(name: &str, detail: &str) -> WireEvent {
+    let kind = match name {
+        "web_search" | "x_search" => ToolKind::Search,
+        _ => ToolKind::Other,
+    };
+    let id = ToolCallId::new(format!("hosted-{}", uuid::Uuid::new_v4()));
+    let text = detail.trim();
+    WireEvent::tool_call(ToolCallUpdate {
+        title: Some(name.to_owned()),
+        kind: Some(kind),
+        status: Some(ToolStatus::Completed),
+        content: (!text.is_empty()).then(|| vec![text_content(text)]),
+        display: Some(Presentation::Card(hosted_activity_card(name, detail))),
+        ..status_update(id, /*status*/ None)
+    })
 }
 
 /// The wire id of the message `inserted` names: the one a replay gives its

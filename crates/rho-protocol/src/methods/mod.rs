@@ -101,8 +101,8 @@ pub use daemon::{
 };
 pub use event::{
     CardTone, CompactionId, CompactionStatus, ContentBlock, Cursor, IdempotencyKey, Location,
-    MessageId, PlanEntry, PlanStatus, Seq, SessionEvent, SteerId, StreamId, ToolCallId,
-    ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnId,
+    MessageId, PlanEntry, PlanStatus, RetryReason, Seq, SessionEvent, SteerId, StreamId,
+    ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnId,
 };
 pub use goal::{SessionGoal, SessionGoalAction, SessionGoalPhase, SessionGoalStep};
 pub use grant::{GrantAccess, GrantWorkspaces, SessionGrant};

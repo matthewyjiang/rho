@@ -1,14 +1,18 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use pretty_assertions::assert_eq;
 use rho_protocol::{
     CardTone, CompactionStatus, ContentBlock, Location, MessageId, PlanEntry, PlanStatus,
-    SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
+    RetryReason, SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolContent, ToolKind,
+    ToolStatus,
 };
 use rho_sdk::{
     tool::{ToolFileChange, ToolMetadata, ToolOutput, ToolProgress},
-    ContextEstimate, ProviderStreamResetReason, Revision, RunEvent, ToolCompletion, ToolExecution,
-    UserInput,
+    ContextEstimate, ProviderErrorKind, ProviderStreamResetReason, Revision, RunEvent,
+    ToolCompletion, ToolExecution, UserInput,
 };
 
 use super::{CompactionEnd, LiveEvents};
@@ -639,6 +643,10 @@ fn a_discarded_response_drops_what_it_proposed() {
         without_display(map_all(&mut live, &events)),
         vec![
             WireEvent::ResponseDiscarded,
+            WireEvent::ProviderRetry {
+                reason: RetryReason::InvalidResponse,
+                retry_after_ms: None,
+            },
             WireEvent::tool_call(ToolCallUpdate {
                 title: Some("tool".into()),
                 kind: Some(ToolKind::Other),
@@ -650,6 +658,107 @@ fn a_discarded_response_drops_what_it_proposed() {
             }),
         ]
     );
+}
+
+// Covers: each time the run asks the provider again, clients hear why and
+// how long the provider said to wait, after the discarded response when a
+// stream reset discarded one.
+// Owner: session event live mapping
+#[test]
+fn a_retry_says_why() {
+    let reset = |reason| {
+        SessionEvent::Run(RunEvent::ProviderStreamReset {
+            reason,
+            detail: "retry".into(),
+        })
+    };
+    let retry = |reason, retry_after_ms| WireEvent::ProviderRetry {
+        reason,
+        retry_after_ms,
+    };
+    let cases = [
+        (
+            "request failed",
+            SessionEvent::Run(RunEvent::ProviderRequestRetry),
+            vec![retry(RetryReason::RequestFailed, None)],
+        ),
+        (
+            "rate limited",
+            reset(ProviderStreamResetReason::RetryableFailure {
+                kind: ProviderErrorKind::RateLimit,
+                retry_after: Some(Duration::from_secs(5)),
+            }),
+            vec![
+                WireEvent::ResponseDiscarded,
+                retry(RetryReason::RateLimit, Some(5_000)),
+            ],
+        ),
+        (
+            "other failure",
+            reset(ProviderStreamResetReason::RetryableFailure {
+                kind: ProviderErrorKind::Unavailable,
+                retry_after: None,
+            }),
+            vec![
+                WireEvent::ResponseDiscarded,
+                retry(RetryReason::ProviderError, None),
+            ],
+        ),
+        (
+            "context overflow",
+            reset(ProviderStreamResetReason::ContextOverflow),
+            vec![
+                WireEvent::ResponseDiscarded,
+                retry(RetryReason::ContextOverflow, None),
+            ],
+        ),
+    ];
+    for (case, event, expected) in cases {
+        let tool_set = AppToolSet::disabled();
+        assert_eq!(live(&tool_set).map(&event), expected, "{case}");
+    }
+}
+
+// Covers: a tool the provider ran itself shows as a call that opens
+// finished with its detail, each under an id of its own.
+// Owner: session event live mapping
+#[test]
+fn hosted_tool_activity_opens_finished_calls() {
+    let tool_set = AppToolSet::disabled();
+    let mut live = live(&tool_set);
+    let events = [
+        SessionEvent::Run(RunEvent::WebSearch {
+            detail: " rho docs ".into(),
+        }),
+        SessionEvent::Run(RunEvent::HostedToolActivity {
+            name: "code_interpreter".into(),
+            detail: String::new(),
+        }),
+    ];
+    let mut ids = Vec::new();
+    let mut shown = Vec::new();
+    for event in map_all(&mut live, &events) {
+        let WireEvent::ToolCall(mut update) = event else {
+            panic!("hosted activity maps only to tool calls");
+        };
+        ids.push(std::mem::replace(&mut update.id, ToolCallId::new("hosted")));
+        assert!(update.display.take().is_some(), "{update:?} has no card");
+        shown.push(*update);
+    }
+    let finished = |title: &str, kind, content| ToolCallUpdate {
+        title: Some(title.into()),
+        kind: Some(kind),
+        content,
+        ..card("hosted", ToolStatus::Completed, Vec::new())
+    };
+    assert_eq!(
+        shown,
+        vec![
+            finished("web_search", ToolKind::Search, Some(vec![text("rho docs")])),
+            finished("code_interpreter", ToolKind::Other, None),
+        ]
+    );
+    assert_ne!(ids[0], ids[1]);
 }
 
 // Covers: a call opens while the provider still streams its arguments, once

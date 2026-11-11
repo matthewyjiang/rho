@@ -9,9 +9,9 @@
 //! unfinished as `failed`,
 //! so a conversation reads the same whether a client watched it live or
 //! received it replayed, apart from how its text was chunked. Only live
-//! turns report usage, compactions, discarded responses, and steers' ids
-//! and deliveries; saved rows hold none, and the daemon tells titles
-//! itself.
+//! turns report usage, compactions, discarded responses, provider retries,
+//! the provider's hosted tools, and steers' ids and deliveries; saved rows
+//! hold none, and the daemon tells titles itself.
 //!
 //! [`outcome`] says how a turn ended, for the daemon's clients and
 //! `rho run` alike.

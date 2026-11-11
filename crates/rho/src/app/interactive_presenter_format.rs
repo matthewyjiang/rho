@@ -107,6 +107,32 @@ pub(crate) fn call_header(
     with_summary_primary(&kind, metadata, card).header
 }
 
+/// The finished card of hosted tool `name`, which the provider ran itself,
+/// such as `web_search`, with `detail` from its activity: a verb-only
+/// header, then the detail when present, then "finished". The header keeps
+/// operator-heavy queries out of `verb(primary)` parens and gives every
+/// hosted lookup the same chrome. Hosted lookups return no result body to
+/// the client, so the "finished" fact keeps the card from being a bare
+/// header.
+pub(crate) fn hosted_activity_card(name: &str, detail: &str) -> ToolCard {
+    let family = match name {
+        // Hosted X Search is a network lookup too.
+        "web_search" | "x_search" => ToolFamily::Web,
+        _ => ToolFamily::Default,
+    };
+    let mut card = ToolCard::new(ToolCardStatus::Ok, family, ToolHeader::call(name, None));
+    let detail = detail.trim();
+    if !detail.is_empty() {
+        card.push_fact(ToolFact::Text {
+            text: detail.to_owned(),
+        });
+    }
+    card.push_fact(ToolFact::Meta {
+        text: "finished".into(),
+    });
+    card
+}
+
 /// Live tool-call argument preview while the provider is still streaming
 /// JSON. Builds from the arguments alone and must not read files:
 /// [`call_header`] runs it for every ACP tool call. `trailing_line` says

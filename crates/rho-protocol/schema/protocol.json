@@ -3167,6 +3167,41 @@
       "description": "Result of [`DAEMON_RESTART`]: the daemon has begun restarting. It detaches\nevery attached client as [`crate::DetachReason::Restarting`], finishes\nin-flight responses, closes connections, records the turns it interrupts\nas interrupted, and re-executes its executable as the same process. A\nclient that connects meanwhile waits until the restarted daemon answers.",
       "type": "object"
     },
+    "RetryReason": {
+      "anyOf": [
+        {
+          "const": "rate_limit",
+          "description": "The provider limited the rate of requests.",
+          "type": "string"
+        },
+        {
+          "const": "provider_error",
+          "description": "Another failure that may pass, such as a server error.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_response",
+          "description": "The provider's response was malformed.",
+          "type": "string"
+        },
+        {
+          "const": "context_overflow",
+          "description": "The request overflowed the model's context; the turn compacts it\nfirst.",
+          "type": "string"
+        },
+        {
+          "const": "request_failed",
+          "description": "One request failed and the provider sends it again; no response was\ndiscarded.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "Why a turn asks the provider again ([`SessionEvent::ProviderRetry`])."
+    },
     "SecretMap": {
       "additionalProperties": {
         "type": "string"
@@ -3885,7 +3920,7 @@
           "type": "object"
         },
         {
-          "description": "The provider discarded the response it was streaming, and the run\nasks for it again. What was sent of it cannot be taken back; the\nretried response starts new messages (#1670).",
+          "description": "The provider discarded the response it was streaming, and the run\nasks for it again. What was sent of it cannot be taken back; the\nretried response starts new messages (#1670). A\n[`Self::ProviderRetry`] saying why follows.",
           "properties": {
             "type": {
               "const": "response_discarded",
@@ -3894,6 +3929,32 @@
           },
           "required": [
             "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The turn asks the provider again, and why. Says what the turn is\ndoing until its next event; a stream reset sends\n[`Self::ResponseDiscarded`] first.",
+          "properties": {
+            "reason": {
+              "$ref": "#/$defs/RetryReason"
+            },
+            "retry_after_ms": {
+              "description": "How long the provider said to wait before the next request.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "provider_retry",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "reason"
           ],
           "type": "object"
         },

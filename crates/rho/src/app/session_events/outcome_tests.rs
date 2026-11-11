@@ -10,7 +10,7 @@ use rho_sdk::{
 };
 use serde_json::json;
 
-use super::{finished, turn_error};
+use super::{diagnostic_notice, finished, turn_error};
 
 /// The outcome of a scripted run whose one model step is `response`,
 /// limited to `max_steps` steps when given.
@@ -129,6 +129,45 @@ fn a_failure_is_classified_by_type_and_hides_authentication_text() {
             },
             "{error:#}"
         );
+    }
+}
+
+// Covers: a failed turn shows its provider's diagnostic, unless the turn
+// failed to authenticate, whose diagnostic may echo a credential.
+// Owner: turn outcome on the wire.
+#[test]
+fn a_diagnostic_shows_unless_authentication_failed() {
+    let provider = |kind, diagnostic: Option<&str>| {
+        let error =
+            rho_sdk::ProviderError::new(kind, "provider failed", rho_sdk::Retryability::Permanent);
+        let error = match diagnostic {
+            Some(diagnostic) => error.with_diagnostic(diagnostic),
+            None => error,
+        };
+        anyhow::Error::new(rho_sdk::Error::Provider(error)).context("the turn failed")
+    };
+    let cases = [
+        (
+            "provider failure",
+            provider(rho_sdk::ProviderErrorKind::Other, Some("upstream said 500")),
+            Some("provider diagnostic:\nupstream said 500"),
+        ),
+        (
+            "authentication failure",
+            provider(
+                rho_sdk::ProviderErrorKind::Authentication,
+                Some("token fixture-secret rejected"),
+            ),
+            None,
+        ),
+        (
+            "no diagnostic",
+            provider(rho_sdk::ProviderErrorKind::Other, None),
+            None,
+        ),
+    ];
+    for (case, error, expected) in cases {
+        assert_eq!(diagnostic_notice(&error).as_deref(), expected, "{case}");
     }
 }
 
