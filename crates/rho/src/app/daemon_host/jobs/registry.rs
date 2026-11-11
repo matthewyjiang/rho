@@ -99,11 +99,19 @@ pub(in crate::app::daemon_host) struct Moved {
 }
 
 impl JobRecord {
-    /// Where the job is now.
+    /// Where the job is now. An idle job is of no turn, even one that
+    /// keeps its last turn's record after its conversation moved.
     pub(in crate::app::daemon_host) fn moved(&self) -> Moved {
+        let turn = match self.state {
+            JobState::Idle => None,
+            JobState::Queued
+            | JobState::Running
+            | JobState::WaitingForInput
+            | JobState::Ended(_) => self.turn.as_ref().map(|turn| turn.id.clone()),
+        };
         Moved {
             state: self.state.clone(),
-            turn: self.turn.as_ref().map(|turn| turn.id.clone()),
+            turn,
         }
     }
 }
@@ -391,18 +399,22 @@ impl JobRegistry {
         Ok(record.moved())
     }
 
-    /// Forgets how job `id`'s last turn ended, once the session's
-    /// conversation moved to a point of its tree that may not hold that
-    /// turn, so a later daemon that reopens the session does not tell its
-    /// clients an answer the conversation lacks. The job keeps its state
-    /// and the turn's id, which a prompt sent again with its key still
-    /// finds.
-    pub(in crate::app::daemon_host) fn forget_outcome(&self, id: &JobId) {
+    /// Rests job `id` idle, without its last turn's outcome, once the
+    /// session's conversation moved to a point of its tree that may not
+    /// hold that turn, so a later daemon that reopens the session neither
+    /// tells its clients an answer the conversation lacks nor that the turn
+    /// ended. The job keeps the turn's record, which a prompt sent again
+    /// with its key still finds.
+    pub(in crate::app::daemon_host) fn conversation_moved(
+        &self,
+        id: &JobId,
+    ) -> Result<(), TransitionError> {
         let mut jobs = self.lock();
-        if let Some(record) = jobs.get_mut(id).filter(|record| record.outcome.is_some()) {
-            record.outcome = None;
-            persist(&self.store, record);
-        }
+        let record = jobs.get_mut(id).ok_or(UnknownJob)?;
+        apply(record, JobEvent::ConversationMoved)?;
+        persist(&self.store, record);
+        self.changed.notify_waiters();
+        Ok(())
     }
 
     /// Forgets job `id` and deletes its record. A record that cannot be
@@ -476,9 +488,9 @@ impl JobRegistry {
 /// Moves `record` on by `event`. An ended turn forgets the last one's
 /// outcome; [`JobRegistry::end_turn`] then records its own.
 fn apply(record: &mut JobRecord, event: JobEvent) -> Result<(), TransitionRefused> {
-    let ends_turn = matches!(event, JobEvent::TurnEnded(_));
+    let drops_outcome = matches!(event, JobEvent::TurnEnded(_) | JobEvent::ConversationMoved);
     record.state = record.state.after(event)?;
-    if ends_turn {
+    if drops_outcome {
         record.outcome = None;
     }
     record.updated_at = unix_now();

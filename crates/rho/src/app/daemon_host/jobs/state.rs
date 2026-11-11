@@ -4,8 +4,10 @@
 //! before its first prompt, `running` while a turn runs,
 //! `waiting_for_input` while that turn waits on an approval, a plan
 //! approval, or a question, and then how the turn ended. A new prompt
-//! starts the next turn from any ended state. `interrupted` is how a turn
-//! ends when its daemon stops before the turn does. The turns of a session
+//! starts the next turn from any ended state. A session whose conversation
+//! moves to another point of its tree rests `idle` again, since its last
+//! turn may not be part of the conversation any more. `interrupted` is how
+//! a turn ends when its daemon stops before the turn does. The turns of a session
 //! another job started (#1714) are `queued` for capacity in the daemon-wide
 //! budget before they run, as subagent runs are.
 //!
@@ -73,6 +75,9 @@ pub(in crate::app::daemon_host) enum JobEvent {
     /// Nothing the turn asked is open any more.
     InputSettled,
     TurnEnded(TurnEnd),
+    /// The session's conversation moved to another point of its tree while
+    /// no turn was under way.
+    ConversationMoved,
 }
 
 /// An event the job's state does not allow.
@@ -89,7 +94,10 @@ impl JobState {
         &self,
         event: JobEvent,
     ) -> Result<Self, TransitionRefused> {
-        use JobEvent::{Admitted, InputOpened, InputSettled, TurnEnded, TurnQueued, TurnStarted};
+        use JobEvent::{
+            Admitted, ConversationMoved, InputOpened, InputSettled, TurnEnded, TurnQueued,
+            TurnStarted,
+        };
         use JobState::{Ended, Idle, Queued, Running, WaitingForInput};
         match (self, event) {
             (Idle | Ended(_), TurnStarted) => Ok(Running),
@@ -98,10 +106,11 @@ impl JobState {
             (Running, InputOpened) => Ok(WaitingForInput),
             (WaitingForInput, InputSettled) => Ok(Running),
             (Queued | Running | WaitingForInput, TurnEnded(end)) => Ok(Ended(end)),
+            (Idle | Ended(_), ConversationMoved) => Ok(Idle),
             (
                 Idle | Queued | Running | WaitingForInput | Ended(_),
                 event @ (TurnStarted | TurnQueued | Admitted | InputOpened | InputSettled
-                | TurnEnded(_)),
+                | TurnEnded(_) | ConversationMoved),
             ) => Err(TransitionRefused {
                 from: self.clone(),
                 event,
@@ -148,6 +157,7 @@ impl std::fmt::Display for JobEvent {
             Self::InputOpened => "input_opened",
             Self::InputSettled => "input_settled",
             Self::TurnEnded(_) => "turn_ended",
+            Self::ConversationMoved => "conversation_moved",
         })
     }
 }
