@@ -79,6 +79,13 @@ impl App {
                         self.daemon_command_unavailable(&invocation.name);
                         return Ok(());
                     }
+                    // `/compact` is no send: in process it passes no
+                    // confirmation either.
+                    if invocation.id == CommandId::Compact {
+                        return self
+                            .send_daemon_command(turn, media, paste_segments, terminal)
+                            .await;
+                    }
                     return self
                         .submit_daemon_turn(turn, media, paste_segments, terminal)
                         .await;

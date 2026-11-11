@@ -32,6 +32,10 @@ pub enum SessionReport {
     /// The session's compaction settings as token counts, what its
     /// compactions removed, and what the latest one did and cost.
     Compaction,
+    /// The provider-native context in the session's conversation that its
+    /// model cannot be sent, the model that produced it, and whether
+    /// compacting could summarize the conversation first.
+    ProviderContext,
 }
 
 /// Result of [`SESSION_INSPECT`].

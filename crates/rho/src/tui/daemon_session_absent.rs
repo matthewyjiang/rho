@@ -47,6 +47,12 @@ impl DaemonSession {
         match *self {}
     }
 
+    pub(in crate::tui) async fn provider_context(
+        &self,
+    ) -> anyhow::Result<crate::app::provider_context_report::ProviderContextReport> {
+        match *self {}
+    }
+
     pub(in crate::tui) async fn save_key(
         &self,
         _auth: &str,

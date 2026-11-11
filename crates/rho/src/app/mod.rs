@@ -55,6 +55,7 @@ mod parent_steering;
 mod plugins_cli;
 mod policy;
 mod prompt_content;
+pub(crate) mod provider_context_report;
 mod provider_controller;
 #[cfg(all(debug_assertions, unix))]
 pub(crate) mod quiet_notice_signal;

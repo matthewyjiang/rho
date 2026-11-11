@@ -230,11 +230,21 @@ credential_store = "file"
     }
 }
 
-impl Drop for IsolatedHome {
-    fn drop(&mut self) {
+impl IsolatedHome {
+    /// Stops the sandbox's daemon, if one runs. A daemon keeps the sessions
+    /// it loaded and the config it started with, so a scenario that rewrites
+    /// either on disk calls this first; the next rho process then starts a
+    /// daemon that reads them again.
+    pub(crate) fn stop_daemon(&self) {
         // rho runs no daemon off Unix.
         #[cfg(unix)]
         crate::daemon::stop(self);
+    }
+}
+
+impl Drop for IsolatedHome {
+    fn drop(&mut self) {
+        self.stop_daemon();
     }
 }
 

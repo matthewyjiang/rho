@@ -452,16 +452,9 @@ const ALL_SCENARIOS: &[Scenario] = &[
         /*smoke*/ false,
     ),
     // Custom multi-process scenario: see send_confirm::run_send_confirm_handoff.
-    Scenario::new(
-        send_confirm::SEND_CONFIRM_HANDOFF_ID,
-        "Confirm a send whose conversation holds unreplayable native context",
-        PtySize {
-            rows: 16,
-            cols: 100,
-        },
-        &[],
-        /*smoke*/ false,
-    ),
+    send_confirm::SCENARIO,
+    #[cfg(unix)]
+    send_confirm::DAEMON_SCENARIO,
     codemode_stream::CODEMODE_CARD_SCENARIO,
     codemode_stream::CODEMODE_LARGE_SCRIPT_SCENARIO,
     #[cfg(unix)]

@@ -63,6 +63,23 @@ impl DaemonSession {
             .inspect(report)
     }
 
+    /// Reads what of the conversation the session's model cannot be sent,
+    /// now: the send that asks waits on the answer, so it does not go
+    /// through the request queue. The daemon refuses during a turn.
+    pub(in crate::tui) async fn provider_context(
+        &self,
+    ) -> anyhow::Result<crate::app::provider_context_report::ProviderContextReport> {
+        let answer = self
+            .attached_link()
+            .await?
+            .request::<rho_protocol::methods::SessionInspect>(&rho_protocol::SessionInspectParams {
+                session: self.id.clone(),
+                report: rho_protocol::SessionReport::ProviderContext,
+            })
+            .await?;
+        Ok(serde_json::from_value(answer.report)?)
+    }
+
     /// Ask for the daemon's jobs without waiting for the active turn;
     /// they arrive as `DaemonView::Jobs`.
     pub(in crate::tui) fn request_jobs(&self) -> anyhow::Result<()> {

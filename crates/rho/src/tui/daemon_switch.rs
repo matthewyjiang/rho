@@ -117,6 +117,7 @@ impl App {
         )
         .await?;
         self.set_status(format!("resumed session {short}"));
+        self.request_daemon_context_handoff();
         Ok(())
     }
 }

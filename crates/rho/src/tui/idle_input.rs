@@ -25,10 +25,17 @@ pub(super) struct HeldTurn {
 
 /// Where a held turn came from, which decides how it is sent once its wait
 /// is over and what `esc` does with it meanwhile.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum HeldOrigin {
     /// The composer: `esc` hands the prompt back to it.
     Composer,
+    /// The composer, for a prompt to a daemon session the person confirmed
+    /// for this model before it was held (`send_confirm::daemon`): released,
+    /// it is asked about again only if the session's model changed since.
+    Confirmed(rho_sdk::model::ModelIdentity),
+    /// A command of a daemon session that is no send to confirm, as
+    /// `/compact`: `esc` hands it back to the composer.
+    Command,
     /// The workflow hub of a daemon session, whose launch is a prompt the
     /// person never typed: `esc` cancels it.
     WorkflowHub,
@@ -439,9 +446,19 @@ impl App {
     fn take_back_held_turn(&mut self) {
         let composer_in_use =
             !self.input_ui.text().is_empty() || !self.input_ui.attachments().is_empty();
-        match self.held_turns.back().map(|held| held.origin) {
-            Some(HeldOrigin::Composer) if composer_in_use => return,
-            Some(HeldOrigin::Composer | HeldOrigin::WorkflowHub) | None => {}
+        match self.held_turns.back().map(|held| &held.origin) {
+            Some(HeldOrigin::Composer | HeldOrigin::Confirmed(_) | HeldOrigin::Command)
+                if composer_in_use =>
+            {
+                return
+            }
+            Some(
+                HeldOrigin::Composer
+                | HeldOrigin::Confirmed(_)
+                | HeldOrigin::Command
+                | HeldOrigin::WorkflowHub,
+            )
+            | None => {}
         }
         let Some(HeldTurn {
             turn,
@@ -453,12 +470,13 @@ impl App {
             return;
         };
         match origin {
-            HeldOrigin::Composer => self.restore_pending_prompt(QueuedPrompt {
-                prompt: turn.model,
-                display_prompt: turn.display,
-                paste_segments,
-                media,
-            }),
+            HeldOrigin::Composer | HeldOrigin::Confirmed(_) | HeldOrigin::Command => self
+                .restore_pending_prompt(QueuedPrompt {
+                    prompt: turn.model,
+                    display_prompt: turn.display,
+                    paste_segments,
+                    media,
+                }),
             HeldOrigin::WorkflowHub => {}
         }
         if !self.held_turns.is_empty() {
@@ -532,14 +550,25 @@ impl App {
         if self.held_turns.is_empty() {
             self.clear_tool_sources_loading_activity();
         }
-        if origin == HeldOrigin::WorkflowHub {
-            self.send_daemon_workflow(turn, terminal).await?;
-        } else if self.info.session.daemon.is_some() {
-            self.submit_daemon_turn(turn, media, paste_segments, terminal)
-                .await?;
-        } else {
-            self.run_turn_sequence_held(turn, media, paste_segments, terminal, agent)
-                .await?;
+        match origin {
+            HeldOrigin::WorkflowHub => self.send_daemon_workflow(turn, terminal).await?,
+            HeldOrigin::Command => {
+                self.send_daemon_command(turn, media, paste_segments, terminal)
+                    .await?;
+            }
+            HeldOrigin::Confirmed(model) => {
+                let submission =
+                    SendSubmission::turn(turn, media, paste_segments).approve_for(model);
+                self.submit_daemon_submission(submission, terminal).await?;
+            }
+            HeldOrigin::Composer if self.info.session.daemon.is_some() => {
+                self.submit_daemon_turn(turn, media, paste_segments, terminal)
+                    .await?;
+            }
+            HeldOrigin::Composer => {
+                self.run_turn_sequence_held(turn, media, paste_segments, terminal, agent)
+                    .await?;
+            }
         }
         Ok(true)
     }
