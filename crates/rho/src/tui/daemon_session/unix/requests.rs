@@ -2,16 +2,25 @@
 //! each goes to the session's request queue, and what it answers with
 //! arrives as a view.
 
-use super::{DaemonSession, ToolSources, LOST};
+use super::{DaemonSession, Target, ToolSources, LOST};
 
 impl DaemonSession {
     /// Whether the session's MCP servers still connect, so a prompt waits.
+    /// While the daemon restarts nobody knows yet: the restarted one
+    /// connects them again, so a prompt waits until the session attached
+    /// there and read them.
     pub(in crate::tui) fn tool_sources_loading(&self) -> bool {
         self.tool_sources == ToolSources::Loading
+            || matches!(*self.target.borrow(), Target::Reconnecting)
     }
 
+    /// The servers connected. Not while a restarted daemon connects them
+    /// again: the watch that started before the restart may say so late,
+    /// and only the one after it knows.
     pub(in crate::tui) fn tool_sources_loaded(&mut self) {
-        self.tool_sources = ToolSources::Loaded;
+        if self.reconnecting.is_none() {
+            self.tool_sources = ToolSources::Loaded;
+        }
     }
 
     /// Request live inventory without waiting for the active turn.

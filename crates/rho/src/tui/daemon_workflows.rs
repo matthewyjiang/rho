@@ -11,7 +11,12 @@ use std::collections::HashMap;
 
 use rho_protocol::{JobState, JobSummary, TurnOutcome};
 
-use super::{daemon_jobs::may_still_change, turn_prompt::TurnPrompt, App, DefaultTerminal, Entry};
+use super::{
+    daemon_jobs::may_still_change,
+    idle_input::{HeldOrigin, HeldTurn},
+    turn_prompt::TurnPrompt,
+    App, DefaultTerminal, Entry,
+};
 use crate::{
     app::workflow_cli::{
         discover::{discover_workflow_sources, DiscoveredWorkflow},
@@ -23,9 +28,9 @@ use crate::{
 
 impl App {
     /// Sends `command`, a `/workflow:` prompt, for the daemon to start its
-    /// run. The prompt is the hub's spelling, not something to type: it
-    /// stays out of the input history, and a prompt that could not be sent
-    /// is reported without touching the composer's draft.
+    /// run. The daemon starts it only once the session's MCP servers
+    /// connected, and the TUI would wait for it meanwhile: until they
+    /// have, the launch is held, as a prompt is.
     pub(super) async fn launch_daemon_workflow(
         &mut self,
         command: String,
@@ -33,6 +38,33 @@ impl App {
     ) -> anyhow::Result<()> {
         self.input_ui.set_composer(super::ComposerMode::Input);
         let turn = TurnPrompt::command(command.clone(), command);
+        if self
+            .info
+            .session
+            .daemon
+            .as_ref()
+            .is_some_and(super::DaemonSession::tool_sources_loading)
+        {
+            self.hold(HeldTurn {
+                turn,
+                media: Vec::new(),
+                paste_segments: Vec::new(),
+                origin: HeldOrigin::WorkflowHub,
+            });
+            return Ok(());
+        }
+        self.send_daemon_workflow(turn, terminal).await
+    }
+
+    /// Sends `turn`, a workflow launch. The prompt is the hub's spelling,
+    /// not something to type: it stays out of the input history, and a
+    /// prompt that could not be sent is reported without touching the
+    /// composer's draft.
+    pub(super) async fn send_daemon_workflow(
+        &mut self,
+        turn: TurnPrompt,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
         let sent = self.request_daemon_turn(&turn, &[]).await;
         // Why the prompt found no attachment shows first.
         self.show_taken_daemon_views(terminal).await?;
