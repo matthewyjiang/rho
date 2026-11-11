@@ -636,7 +636,7 @@ async fn compact_reports_its_compaction_and_answers_with_the_result() {
                 ..
             } => Some("compaction_started"),
             SessionEvent::Compaction {
-                status: CompactionStatus::Completed,
+                status: CompactionStatus::Completed { .. },
                 ..
             } => Some("compaction_completed"),
             SessionEvent::Compaction { .. } => Some("compaction_unfinished"),

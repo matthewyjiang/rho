@@ -86,6 +86,19 @@ impl App {
         }
     }
 
+    /// Fills the Compaction section of an open overlay with what the daemon
+    /// answered.
+    pub(super) fn apply_info_compaction(
+        &mut self,
+        report: Result<crate::app::compaction_report::CompactionReport, String>,
+    ) {
+        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() else {
+            return;
+        };
+        overlay.info.set_compaction(report);
+        overlay.panel.pointer.clear_selection();
+    }
+
     fn spawn_info_tree_read(&mut self, session_id: String) {
         let cwd = self.info.runtime.cwd.clone();
         self.tasks.spawn_blocking(
@@ -145,7 +158,8 @@ impl App {
             .await;
     }
 
-    /// Start the session-tree read skipped while a turn was writing the tree.
+    /// Start the session-tree read skipped while a turn was writing the tree,
+    /// and a daemon session's compaction read, which a turn refuses.
     pub(super) fn start_deferred_info_tree(&mut self) -> bool {
         if !self.info_tree_deferred || self.is_ui_busy() {
             return false;
@@ -157,6 +171,7 @@ impl App {
         ) {
             return false;
         }
+        self.request_daemon_info_compaction();
         let Some(session_id) = self.current_session_id() else {
             return false;
         };

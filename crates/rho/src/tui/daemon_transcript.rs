@@ -10,7 +10,7 @@ use super::{
     activity::ActivityPhase,
     compact_work::ReadyFollowUp,
     daemon_events::{DaemonView, Rest, TurnState},
-    event_adapter::ViewModelEvent,
+    event_adapter::{compact_finished_event, ViewModelEvent},
     program_status::ProgramStatus,
     settings_screen::SettingsUpdate,
     App, DefaultTerminal, Entry, HerdrState, StreamKind,
@@ -98,6 +98,12 @@ impl App {
                         },
                         terminal,
                     )?;
+                }
+                DaemonView::CompactionEnded(outcome) => {
+                    let status = outcome.status_label();
+                    self.handle_agent_event(compact_finished_event(outcome), terminal)?;
+                    self.set_status(status);
+                    self.daemon_compaction_rest = Some((status, self.history.len()));
                 }
                 DaemonView::Plan(list) => {
                     self.set_todo_list(list);
@@ -269,6 +275,13 @@ impl App {
         // closing rows, and nothing of it outlasts the turn.
         self.finish_streams();
         self.reset_streams();
+        // A turn that showed nothing after its compaction ended was the
+        // compaction, as `/compact` is: how that ended is how it rests.
+        let compaction_rest = self
+            .daemon_compaction_rest
+            .take()
+            .filter(|(_, rows)| *rows == self.history.len())
+            .map(|(status, _)| status.to_owned());
         // A turn withdraws its requests before it ends, so any prompt still
         // open is one the TUI can no longer follow.
         self.drop_daemon_inputs();
@@ -327,7 +340,7 @@ impl App {
         };
         self.turn.stop_loading();
         self.turn.set_current_turn_start(None);
-        if let Some(status) = status {
+        if let Some(status) = compaction_rest.or(status) {
             self.set_status(status);
         }
         self.settled_program_status = settled;

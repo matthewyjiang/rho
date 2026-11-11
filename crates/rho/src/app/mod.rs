@@ -15,6 +15,7 @@ pub(crate) mod boundary_results;
 mod classifier_eval;
 mod cli_config;
 mod compaction_eval;
+pub(crate) mod compaction_report;
 pub(crate) mod config_repository;
 pub(crate) mod context_report;
 pub(crate) mod conversation_switch;

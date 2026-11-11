@@ -149,6 +149,7 @@ impl App {
             daemon_option_requests: std::collections::VecDeque::new(),
             daemon_login_selected: None,
             daemon_title: None,
+            daemon_compaction_rest: None,
             awaited_daemon_report: None,
             daemon_rail: Default::default(),
             daemon_login: None,

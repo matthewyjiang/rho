@@ -14,8 +14,8 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
         .iter()
         .find(|scenario| scenario.id == name)
         .ok_or_else(|| anyhow::anyhow!("unknown scenario '{name}'"))?;
-    if name == calibrated_context::SCENARIO.id {
-        return calibrated_context::run(runner);
+    if calibrated_context::owns(name) {
+        return calibrated_context::run(runner, scenario);
     }
     if workflow::is_workflow_scenario(name) {
         return workflow::run(runner, name);

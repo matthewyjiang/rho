@@ -369,7 +369,10 @@ pub enum ContentBlock {
 #[non_exhaustive]
 pub enum CompactionStatus {
     Started,
-    Completed,
+    Completed {
+        /// The context before and after.
+        counts: CompactionCounts,
+    },
     /// The turn was cancelled before the compaction finished.
     Cancelled,
     /// It failed, or the run ended before it reported a result.
@@ -381,6 +384,20 @@ pub enum CompactionStatus {
     #[serde(other)]
     #[schemars(extend("x-rho-other" = true))]
     Unknown,
+}
+
+/// A completed compaction's context before and after it, as rho counts
+/// them: messages, and locally estimated tokens. A compaction that removed
+/// nothing reports the same counts on both sides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CompactionCounts {
+    pub previous_messages: u64,
+    pub current_messages: u64,
+    pub previous_tokens: u64,
+    pub current_tokens: u64,
+    /// What the compaction itself cost, when the session prices it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd_micros: Option<u64>,
 }
 
 /// Why a turn asks the provider again ([`SessionEvent::ProviderRetry`]).

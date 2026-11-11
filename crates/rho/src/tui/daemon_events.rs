@@ -37,7 +37,7 @@ use rho_sdk::{ProviderErrorKind, ProviderStreamResetReason, SteeringId, ToolCall
 use super::{
     activity::ProviderRetryHint,
     compaction_display::{
-        cancelled_card, compaction_call_id, failed_card, running_card, unchanged_card,
+        compaction_call_id, running_card, CompactionDisplayFacts, CompactionUiOutcome,
     },
     daemon_inputs::{AnswerRefusal, OpenInputs},
     transcript_events::final_answer_delta,
@@ -75,6 +75,9 @@ pub(super) enum DaemonView {
         call: ToolCallId,
         presentation: Presentation,
     },
+    /// The compaction under way ended: its card closes, and the status
+    /// line says how.
+    CompactionEnded(CompactionUiOutcome),
     /// The session's checklist, replacing the last; `None` while it has none.
     Plan(Option<TodoList>),
     /// How full the model's context is.
@@ -298,7 +301,7 @@ impl DaemonEvents {
                 },
                 DaemonView::Spend(cost_usd_micros),
             ],
-            SessionEvent::Compaction { status, .. } => vec![compaction(status)],
+            SessionEvent::Compaction { status, .. } => compaction(status),
             SessionEvent::ResponseDiscarded => {
                 // What the provider streamed stays; the retry's text starts
                 // new messages below this notice.
@@ -559,29 +562,32 @@ fn todo_list(entries: &[PlanEntry]) -> Option<TodoList> {
     (!todos.is_empty()).then_some(TodoList { todos })
 }
 
-/// The compaction card the in-process TUI shows for `status`. The daemon
-/// reports no counts, so a completed one says only that it compacted; its
-/// `/compact` reply says what it did.
-fn compaction(status: CompactionStatus) -> DaemonView {
+/// The compaction card and status line the in-process TUI shows for
+/// `status`.
+fn compaction(status: CompactionStatus) -> Vec<DaemonView> {
     let call = compaction_call_id();
-    let card = match status {
+    let outcome = match status {
         CompactionStatus::Started => {
-            return DaemonView::ToolRunning {
-                call,
-                card: running_card(),
-            }
+            return vec![
+                DaemonView::ToolRunning {
+                    call,
+                    card: running_card(),
+                },
+                DaemonView::Status("compacting context".into()),
+            ]
         }
-        CompactionStatus::Completed => unchanged_card("context compacted"),
-        CompactionStatus::Cancelled => cancelled_card(),
-        CompactionStatus::Failed { error } => failed_card(error),
+        CompactionStatus::Completed { counts } => {
+            CompactionUiOutcome::from_facts(CompactionDisplayFacts::from_wire(counts))
+        }
+        CompactionStatus::Cancelled => CompactionUiOutcome::Cancelled,
+        CompactionStatus::Failed { error } => CompactionUiOutcome::failed(error),
         // `Unknown`, or a status a newer daemon sends: every status but
         // `started` ends the compaction.
-        _ => unchanged_card("compaction ended"),
+        _ => CompactionUiOutcome::Unchanged {
+            detail: "compaction ended".into(),
+        },
     };
-    DaemonView::ToolFinished {
-        call,
-        presentation: card.into(),
-    }
+    vec![DaemonView::CompactionEnded(outcome)]
 }
 
 /// The in-process TUI's hint for a retry for `reason`, which reads as the

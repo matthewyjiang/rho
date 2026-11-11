@@ -16,6 +16,7 @@ use super::{
     theme::Theme,
     usage_cost::format_token_count as count,
 };
+use crate::presentation::number::grouped;
 use crate::usage::report::{
     SpendGroup, SpendRange, SpendReport, SpendTotals, Timeline, TimelineUnit, Valuation,
 };
@@ -255,18 +256,6 @@ fn money(micros: u64) -> String {
     }
     let cents = micros.saturating_add(5_000) / 10_000;
     format!("${}.{:02}", grouped(cents / 100), cents % 100)
-}
-
-fn grouped(value: u64) -> String {
-    let digits = value.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    out
 }
 
 fn plural(value: u64, noun: &str) -> String {

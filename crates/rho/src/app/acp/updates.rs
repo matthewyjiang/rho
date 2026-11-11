@@ -317,7 +317,9 @@ fn compaction_update(
     let id = CompactionId::new(id.as_str());
     let update = match status {
         wire::CompactionStatus::Started => CompactionUpdate::new(id, CompactionStatus::InProgress),
-        wire::CompactionStatus::Completed => CompactionUpdate::new(id, CompactionStatus::Completed),
+        wire::CompactionStatus::Completed { .. } => {
+            CompactionUpdate::new(id, CompactionStatus::Completed)
+        }
         wire::CompactionStatus::Cancelled => CompactionUpdate::new(id, CompactionStatus::Cancelled),
         wire::CompactionStatus::Failed { error } => {
             CompactionUpdate::new(id, CompactionStatus::Failed).error(error.clone())

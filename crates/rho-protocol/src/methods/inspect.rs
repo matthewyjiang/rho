@@ -29,6 +29,9 @@ pub enum SessionReport {
     /// The session's hooks, read again from their files, and their recent
     /// activity.
     Hooks,
+    /// The session's compaction settings as token counts, what its
+    /// compactions removed, and what the latest one did and cost.
+    Compaction,
 }
 
 /// Result of [`SESSION_INSPECT`].

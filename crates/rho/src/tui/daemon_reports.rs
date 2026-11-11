@@ -5,6 +5,10 @@
 //! [`App::awaited_daemon_report`] names the report asked for last, and a
 //! prompt or a switch to another session stops the wait, so an answer that
 //! arrives after the person moved on is dropped.
+//!
+//! `/info` reads its Compaction section the same way, into the overlay it
+//! already opened: no one waits on that answer, so it changes no status and
+//! is dropped once the overlay closed.
 
 use rho_protocol::SessionReport;
 
@@ -15,6 +19,7 @@ fn name(report: SessionReport) -> &'static str {
     match report {
         SessionReport::Context => "context",
         SessionReport::Hooks => "hooks",
+        SessionReport::Compaction => "compaction",
         // `SessionReport` is non-exhaustive; the TUI asks only for the above.
         _ => "report",
     }
@@ -41,12 +46,30 @@ impl App {
         }
     }
 
+    /// Asks the daemon for the Compaction section of the `/info` overlay
+    /// just opened on a daemon session. In a turn the daemon would refuse,
+    /// so the caller asks once the turn ended.
+    pub(super) fn request_daemon_info_compaction(&mut self) {
+        let Some(session) = self.info.session.daemon.as_ref() else {
+            return;
+        };
+        if let Err(error) = session.inspect(SessionReport::Compaction) {
+            self.apply_info_compaction(Err(error.to_string()));
+        }
+    }
+
     /// Opens the overlay for a report the daemon answered with.
     pub(super) fn show_daemon_report(
         &mut self,
         report: SessionReport,
         result: Result<serde_json::Value, String>,
     ) {
+        if report == SessionReport::Compaction {
+            self.apply_info_compaction(result.and_then(|value| {
+                serde_json::from_value(value).map_err(|error| error.to_string())
+            }));
+            return;
+        }
         // An answer to a report the person asked for before another, or
         // before moving on, is not what they wait on.
         if self.awaited_daemon_report != Some(report) {

@@ -6,9 +6,9 @@ use std::{
 };
 
 use rho_protocol::{
-    display::Presentation, CompactionId, CompactionStatus, ContentBlock, Location, MessageId,
-    PlanEntry, RetryReason, SessionEvent as WireEvent, ToolCallId, ToolCallUpdate, ToolContent,
-    ToolKind, ToolStatus,
+    display::Presentation, CompactionCounts, CompactionId, CompactionStatus, ContentBlock,
+    Location, MessageId, PlanEntry, RetryReason, SessionEvent as WireEvent, ToolCallId,
+    ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
 };
 use rho_sdk::{
     model,
@@ -644,7 +644,15 @@ impl LiveEvents {
             CompactionEnd::Completed(outcome) => (
                 // A completion whose start was not seen still gets an id.
                 Some(self.compaction.take().unwrap_or_else(fresh_compaction_id)),
-                CompactionStatus::Completed,
+                CompactionStatus::Completed {
+                    counts: CompactionCounts {
+                        previous_messages: outcome.previous_messages() as u64,
+                        current_messages: outcome.current_messages() as u64,
+                        previous_tokens: outcome.previous_tokens(),
+                        current_tokens: outcome.current_tokens(),
+                        cost_usd_micros: outcome.cost_usd_micros(),
+                    },
+                },
                 // The compacted context's fill, as ACP reports it.
                 Some(outcome.current_tokens()),
             ),
