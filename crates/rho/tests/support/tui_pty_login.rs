@@ -526,7 +526,7 @@ fn ollama_is_refreshed_and_listed_after_login(host: SessionHost) {
     harness
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "restart"))
         .unwrap();
-    expect_no_ollama_model_listed(&mut harness, host, "ollama list dropped");
+    expect_no_ollama_model_listed(&mut harness, "ollama list dropped");
 
     // A keyless login is still a login, so /logout ollama signs it out.
     keyless_ollama_login_lists_its_model(&mut harness, &ollama_base);
@@ -542,7 +542,7 @@ fn ollama_is_refreshed_and_listed_after_login(host: SessionHost) {
             WaitTimeout::secs(10, "fresh transcript"),
         )
         .unwrap();
-    expect_no_ollama_model_listed(&mut harness, host, "logout drops the ollama list");
+    expect_no_ollama_model_listed(&mut harness, "logout drops the ollama list");
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
     let config = std::fs::read_to_string(&home.config_path).unwrap();
     assert!(
@@ -579,26 +579,24 @@ fn ollama_is_refreshed_and_listed_after_login(host: SessionHost) {
 
 /// Opens `/model` and checks it lists no model of the fake Ollama server.
 /// In process nothing else is cached, so the picker does not open; a daemon
-/// session's picker always offers the session's own model.
-fn expect_no_ollama_model_listed(harness: &mut PtyHarness, host: SessionHost, what: &'static str) {
+/// session's picker always offers the session's own model. Asks the harness
+/// which one runs, so it holds when a run forces every launch into the daemon.
+fn expect_no_ollama_model_listed(harness: &mut PtyHarness, what: &'static str) {
     harness.submit_text("/model").unwrap();
-    match host {
-        SessionHost::InProcess => {
-            harness
-                .wait_for_text("no cached provider models", WaitTimeout::secs(10, what))
-                .unwrap();
-        }
-        SessionHost::Daemon => {
-            harness
-                .wait_for_text("select model", WaitTimeout::secs(10, what))
-                .unwrap();
-            let screen = harness.screen().contents();
-            assert!(!screen.contains("llama-pty"), "{what}:\n{screen}");
-            harness.inject_key(&Key::Esc).unwrap();
-            harness
-                .wait_for_text_gone("select model", WaitTimeout::secs(5, "picker closed"))
-                .unwrap();
-        }
+    if harness.follows_daemon() {
+        harness
+            .wait_for_text("select model", WaitTimeout::secs(10, what))
+            .unwrap();
+        let screen = harness.screen().contents();
+        assert!(!screen.contains("llama-pty"), "{what}:\n{screen}");
+        harness.inject_key(&Key::Esc).unwrap();
+        harness
+            .wait_for_text_gone("select model", WaitTimeout::secs(5, "picker closed"))
+            .unwrap();
+    } else {
+        harness
+            .wait_for_text("no cached provider models", WaitTimeout::secs(10, what))
+            .unwrap();
     }
 }
 

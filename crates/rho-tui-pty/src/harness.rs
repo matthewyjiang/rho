@@ -127,6 +127,12 @@ impl PtyHarness {
         })
     }
 
+    /// Whether the TUI under test follows a daemon session. See
+    /// [`crate::env::follows_daemon`].
+    pub fn follows_daemon(&self) -> bool {
+        crate::env::follows_daemon(&self.env)
+    }
+
     pub fn enable_timing(&mut self, enabled: bool) {
         self.record_timing = enabled;
     }

@@ -300,6 +300,19 @@ impl RhoLaunchPlan {
     }
 }
 
+/// Whether a rho launched with `env` follows a daemon session: rho reads
+/// `RHO_TUI_DAEMON` and follows the daemon only when it is `1`. A later pair
+/// wins, as it does when the pairs are applied to the child in order.
+///
+/// Scenarios that expect different text per host ask this rather than assume
+/// their own host, so they hold when a run forces every launch into the daemon.
+pub(crate) fn follows_daemon(env: &[(String, String)]) -> bool {
+    env.iter()
+        .rev()
+        .find(|(key, _)| key == "RHO_TUI_DAEMON")
+        .is_some_and(|(_, value)| value == "1")
+}
+
 /// Baseline env pairs that form the complete child environment for isolated runs.
 pub fn default_clean_env() -> Vec<(String, String)> {
     let mut env = vec![
