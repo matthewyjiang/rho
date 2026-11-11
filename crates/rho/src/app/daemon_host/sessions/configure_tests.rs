@@ -64,6 +64,7 @@ async fn a_prompt_sent_while_a_change_waits_runs_after_it() {
     assert!(futures_util::poll!(configure.as_mut()).is_pending());
     let queued = session.turn().hold;
     let prompt = sessions.prompt(SessionPromptParams {
+        author: rho_protocol::PromptAuthor::Person,
         session: session_to_wire(session.id.clone()),
         content: vec![ContentBlock::Text {
             text: "hello".into(),

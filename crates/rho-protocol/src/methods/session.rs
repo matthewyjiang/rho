@@ -223,6 +223,39 @@ pub struct SessionPromptParams {
     /// An empty key is [`crate::ErrorCode::InvalidParams`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<IdempotencyKey>,
+    /// Who the prompt speaks for; absent, the person.
+    #[serde(default, skip_serializing_if = "PromptAuthor::is_person")]
+    pub author: PromptAuthor,
+}
+
+/// Who a prompt speaks for, which decides whether the daemon keeps it as a
+/// user message. Protocol minors may add authors.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum PromptAuthor {
+    /// The person: the daemon saves the prompt as their message and shows
+    /// it to attached clients.
+    #[default]
+    Person,
+    /// The client, sending a command on the person's behalf, as a workflow
+    /// hub's start is: the daemon runs it without saving or showing a user
+    /// message for it. Only a `/workflow:` start may come from the client;
+    /// any other prompt ends before it began, as a command the session
+    /// cannot run does.
+    Client,
+    /// An author a newer client sends that this daemon does not know; the
+    /// prompt is refused as [`crate::ErrorCode::InvalidParams`]. Clients
+    /// never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+impl PromptAuthor {
+    fn is_person(&self) -> bool {
+        *self == Self::Person
+    }
 }
 
 /// The `data` of a [`crate::ErrorCode::ProjectTrustMismatch`] error: the
