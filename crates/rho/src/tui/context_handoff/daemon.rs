@@ -156,6 +156,7 @@ impl App {
                 self.configure_daemon(model_change(
                     &source.selection.provider,
                     &source.selection.model,
+                    /*auth*/ None,
                 ))
             }
             Some(ContextHandoffDecision::CompactThenContinue) => {
@@ -166,31 +167,42 @@ impl App {
         }
     }
 
-    /// Compacts on `source`, then continues on the model the session runs on
-    /// now. The switch back goes once `/compact` started, so the daemon
-    /// applies it after the compaction; a compaction it cannot start keeps
-    /// the session on this model.
+    /// Compacts on `source`, then continues on the model and auth the
+    /// session runs on now. The switch back goes once the daemon answered
+    /// `/compact`: one it started holds the switch until the compaction
+    /// ends, and one it refused lets the switch apply at once. A compaction
+    /// that cannot start while the session's MCP servers connect changes
+    /// nothing.
     async fn compact_then_continue_on_daemon(
         &mut self,
         source: Option<InteractiveModelSelection>,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
-        let target = model_change(&self.info.runtime.provider, &self.info.runtime.model);
+        if self.daemon_tool_sources_loading() {
+            // The daemon would start it only once they connected, and the
+            // TUI would wait for it meanwhile.
+            self.insert_entry(&Entry::Error(
+                "could not compact before continuing: the session's MCP servers are still connecting"
+                    .into(),
+            ));
+            return Ok(());
+        }
+        let runtime = &self.info.runtime;
+        let target = model_change(&runtime.provider, &runtime.model, Some(&runtime.auth));
         let switched = source.filter(|source| !selection_matches_runtime(self, source));
         if let Some(source) = &switched {
             self.configure_daemon(model_change(
                 &source.selection.provider,
                 &source.selection.model,
+                /*auth*/ None,
             ))?;
         }
         let compact = TurnPrompt::command("/compact".into(), "/compact".into());
-        let started = if self.daemon_tool_sources_loading() {
-            Err(anyhow::anyhow!(
-                "the session's MCP servers are still connecting"
-            ))
-        } else {
-            self.request_daemon_turn(&compact, &[]).await
-        };
+        let started = self.request_daemon_turn(&compact, &[]).await;
+        // Before anything can fail, so the session never stays on `source`.
+        if switched.is_some() {
+            self.configure_daemon(target)?;
+        }
         self.show_taken_daemon_views(terminal).await?;
         if let Err(error) = started {
             let ended = error
@@ -204,22 +216,19 @@ impl App {
                 )));
             }
         }
-        if switched.is_some() {
-            self.configure_daemon(target)?;
-        }
         Ok(())
     }
 }
 
-/// The daemon change that switches the session to `provider`/`model`, on
-/// the auth the daemon chooses.
-fn model_change(provider: &str, model: &str) -> SessionChange {
+/// The daemon change that switches the session to `provider`/`model` on
+/// `auth`, or on the auth the daemon chooses.
+fn model_change(provider: &str, model: &str, auth: Option<&str>) -> SessionChange {
     SessionChange::Model {
         model: ModelRef {
             provider: provider.to_owned(),
             model: model.to_owned(),
         },
-        auth: None,
+        auth: auth.map(str::to_owned),
         setup: false,
     }
 }
