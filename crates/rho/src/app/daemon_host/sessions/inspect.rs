@@ -52,6 +52,9 @@ impl Sessions {
         let runtime = runtime.as_ref().ok_or_else(not_loaded)?;
         let report = match params.report {
             SessionReport::Context => serde_json::to_value(runtime.context_report()),
+            SessionReport::Compaction => {
+                serde_json::to_value(runtime.compaction_report(&session.config()))
+            }
             SessionReport::Hooks => {
                 let report = runtime.reload_hooks().map_err(|error| {
                     RpcError::new(ErrorCode::InternalError, format!("{error:#}"))

@@ -8,6 +8,7 @@ use rho_protocol::display::{
 
 pub(crate) mod checklist;
 pub(crate) mod diff;
+pub(crate) mod number;
 pub(crate) mod workflow;
 
 /// Incoming parent text, with delivery details supplied by the runtime owner.

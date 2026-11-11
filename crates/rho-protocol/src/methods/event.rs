@@ -373,19 +373,56 @@ pub enum ContentBlock {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CompactionStatus {
-    Started,
-    Completed,
+    Started {
+        /// What started it. Absent from a daemon that does not say.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trigger: Option<CompactionTrigger>,
+    },
+    Completed {
+        /// The context before and after.
+        counts: CompactionCounts,
+    },
     /// The turn was cancelled before the compaction finished.
     Cancelled,
     /// It failed, or the run ended before it reported a result.
-    Failed {
-        error: String,
-    },
+    Failed { error: String },
     /// A value a newer daemon sends that this crate does not know; daemons
     /// never send it.
     #[serde(other)]
     #[schemars(extend("x-rho-other" = true))]
     Unknown,
+}
+
+/// What started a compaction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CompactionTrigger {
+    /// A `/compact` prompt: the turn runs the compaction and no model
+    /// request, and its reply says again what the compaction did.
+    Command,
+    /// The session, within a model turn: the context reached its threshold,
+    /// or a request overflowed the model's window.
+    Automatic,
+    /// A value a newer daemon sends that this crate does not know; daemons
+    /// never send it.
+    #[serde(other)]
+    #[schemars(extend("x-rho-other" = true))]
+    Unknown,
+}
+
+/// A completed compaction's context before and after it, as rho counts
+/// them: messages, and locally estimated tokens. A compaction that removed
+/// nothing reports the same counts on both sides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CompactionCounts {
+    pub previous_messages: u64,
+    pub current_messages: u64,
+    pub previous_tokens: u64,
+    pub current_tokens: u64,
+    /// What the compaction itself cost, when the session prices it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd_micros: Option<u64>,
 }
 
 /// Why a turn asks the provider again ([`SessionEvent::ProviderRetry`]).

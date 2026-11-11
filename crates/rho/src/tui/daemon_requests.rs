@@ -40,7 +40,10 @@ use rho_protocol::{
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
-use super::{daemon_events::DaemonView, daemon_options::change_failure};
+use super::{
+    daemon_events::{DaemonView, ReportRefusal},
+    daemon_options::change_failure,
+};
 use crate::app::daemon_client::Link;
 
 enum Request {
@@ -266,10 +269,15 @@ impl DaemonRequests {
                             })
                             .await;
                         let result = match answer {
-                            Some((_, answer)) => answer
-                                .map(|answer| answer.report)
-                                .map_err(|error| error.to_string()),
-                            None => Err(LOST.to_owned()),
+                            Some((_, answer)) => {
+                                answer
+                                    .map(|answer| answer.report)
+                                    .map_err(|error| ReportRefusal {
+                                        busy: error.error_code() == Some(ErrorCode::SessionBusy),
+                                        message: error.to_string(),
+                                    })
+                            }
+                            None => Err(LOST.to_owned().into()),
                         };
                         let _ = control_views.send(DaemonView::Report { report, result });
                     }
