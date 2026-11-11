@@ -30,9 +30,14 @@ impl App {
         program_status_support: super::program_status::ProgramStatusSupport,
     ) -> Self {
         // Matrix mode is debug-only (matrix_enabled is always false in release).
+        // Its in-process sessions keep logins in memory. A daemon session's
+        // TUI reads the store the daemon writes, as it does outside tests.
         #[cfg(debug_assertions)]
         if smoke_injection::matrix_enabled() {
             smoke_injection::seed_matrix_model_cache();
+        }
+        #[cfg(debug_assertions)]
+        if smoke_injection::matrix_enabled() && info.session.daemon.is_none() {
             return Self::new_with_credentials(
                 info,
                 Arc::new(rho_providers::credentials::MemoryCredentialStore::default()),

@@ -19,12 +19,10 @@ pub(super) mod relay_wire;
 mod secret;
 pub(super) mod store_choice;
 
-#[cfg(unix)]
-use rho_providers::provider::{resolve_auth_mode, ProviderAuthKind};
 use rho_providers::{
     auth::login_dispatch::{AuthenticationError, AuthenticationMethod, ProviderAuthentication},
     model::catalog,
-    provider::provider_descriptor,
+    provider::{provider_descriptor, resolve_auth_mode, ProviderAuthKind},
 };
 
 use crate::cli::Command;
@@ -118,9 +116,10 @@ pub(super) async fn run(
 /// the provider approved it, or a key it checked is saved. An Ollama Cloud
 /// device key is saved as soon as the user is asked to approve it at
 /// ollama.com, and nothing reports the approval, so an ACP host, which
-/// takes a finished sign-in as signed in, does not offer it.
-#[cfg(unix)]
-pub(super) fn confirms_sign_in(auth: &str) -> bool {
+/// takes a finished sign-in as signed in, does not offer it, and a TUI
+/// following a daemon session asks for it only once the user says they
+/// approved (`tui/daemon_login.rs`).
+pub(crate) fn confirms_sign_in(auth: &str) -> bool {
     !matches!(
         resolve_auth_mode(auth).map(|(_, mode)| mode.auth_kind),
         Some(ProviderAuthKind::OllamaDeviceKey { .. })

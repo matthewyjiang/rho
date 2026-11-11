@@ -28,7 +28,10 @@ impl App {
         terminal: &mut DefaultTerminal,
         _agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if self.info.session.daemon.is_some() {
+        // A login its provider cannot confirm is shown from here instead,
+        // so the daemon, which records one as soon as it runs, is asked
+        // only on Enter (`record_daemon_login`).
+        if self.info.session.daemon.is_some() && crate::app::confirms_sign_in(&target.auth) {
             return self
                 .start_daemon_login(target, provider_label, mode, terminal)
                 .await;
@@ -119,6 +122,9 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            return self.record_daemon_login(terminal).await;
+        }
         let Some(target) = self.record_confirmed_login().await else {
             return Ok(());
         };

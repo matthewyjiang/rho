@@ -81,6 +81,7 @@ pub(crate) mod workflow_runtime;
 pub(crate) use agent_binding::relaunch_config;
 pub use automation::{AutomationExit, AutomationInterrupted};
 pub use bootstrap::run;
+pub(crate) use login::confirms_sign_in;
 pub(crate) use session_mcp::session_mcp_inventory;
 pub(crate) use session_options::reasoning_from_wire;
 pub(crate) use subagent_manager::SubagentManager;

@@ -13,8 +13,10 @@
 //! session's provider and model the config's defaults either: only the
 //! default provider's auth profile follows it.
 //! A login its provider cannot confirm (Ollama Cloud's device key) is
-//! saved by the daemon as soon as it is shown, so it reads as finished
-//! before the person approves it.
+//! recorded by the daemon as soon as the daemon runs it. So this process
+//! shows its prompt (`login_pending.rs`), which records nothing, and has
+//! the daemon run the login only on Enter: Esc before that is a real
+//! cancel, as it is in process.
 
 use rho_protocol::{LoginId, LoginOutcome, SessionChange};
 use rho_providers::{
@@ -30,8 +32,8 @@ use rho_providers::{
 };
 
 use super::{
-    daemon_events::LoginUpdate, login_presentation, App, ComposerMode, DefaultTerminal, Entry,
-    PendingLoginComposer, PendingLoginFinish,
+    daemon_events::LoginUpdate, login::RemovedLogin, login_presentation, App, ComposerMode,
+    DefaultTerminal, Entry, PendingLoginComposer, PendingLoginFinish,
 };
 use crate::credential_store::AppCredentialStore;
 
@@ -39,9 +41,18 @@ use crate::credential_store::AppCredentialStore;
 pub(super) struct DaemonLogin {
     id: LoginId,
     target: LoginTarget,
-    provider_label: &'static str,
+    prompt: PromptSource,
     /// Esc asked the daemon to cancel it; its end has not arrived yet.
     cancelling: bool,
+}
+
+/// Who shows the prompt of a login the daemon runs.
+enum PromptSource {
+    /// The daemon's prompt is shown when it arrives, under this label.
+    Daemon { provider_label: &'static str },
+    /// This process showed it before asking the daemon, whose copy is
+    /// dropped: the person already confirmed it.
+    ShownHere,
 }
 
 impl App {
@@ -113,7 +124,7 @@ impl App {
                 self.daemon_login = Some(DaemonLogin {
                     id,
                     target,
-                    provider_label,
+                    prompt: PromptSource::Daemon { provider_label },
                     cancelling: false,
                 });
                 self.show_daemon_login(first, terminal).await
@@ -123,6 +134,52 @@ impl App {
                     "could not start the {provider_label} login: {error:#}"
                 )));
                 self.set_status("login failed");
+                Ok(())
+            }
+        }
+    }
+
+    /// Enter on a login the provider cannot confirm, whose prompt this
+    /// process showed: the daemon runs the login, which records it at
+    /// once, and its end finishes the login here
+    /// ([`Self::show_daemon_login`]). A refusal keeps the pending login
+    /// open, so Enter retries.
+    pub(super) async fn record_daemon_login(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        let ComposerMode::InteractivePending(pending) = self.input_ui.composer() else {
+            return Ok(());
+        };
+        // A second Enter while the daemon records the first.
+        if self.daemon_login.is_some() {
+            return Ok(());
+        }
+        let (target, finish) = (pending.target.clone(), pending.finish.clone());
+        self.set_status(format!("recording the {} login", target.provider));
+        terminal.draw(|frame| self.draw(frame))?;
+        // The provider has one flow, so the daemon ignores this one.
+        let flow = rho_protocol::LoginFlow::default();
+        match self
+            .daemon_session_mut()
+            .start_login(&target.auth, flow)
+            .await
+        {
+            Ok((id, first)) => {
+                self.daemon_login = Some(DaemonLogin {
+                    id,
+                    target,
+                    prompt: PromptSource::ShownHere,
+                    cancelling: false,
+                });
+                self.show_daemon_login(first, terminal).await
+            }
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!("could not record login: {error:#}")));
+                self.set_status(format!(
+                    "login failed · {}",
+                    login_presentation::login_key_hint(&finish)
+                ));
                 Ok(())
             }
         }
@@ -140,7 +197,11 @@ impl App {
         };
         match update {
             LoginUpdate::Prompt { login: id, prompt } if id == login.id => {
-                let (target, provider_label) = (login.target.clone(), login.provider_label);
+                let provider_label = match login.prompt {
+                    PromptSource::Daemon { provider_label } => provider_label,
+                    PromptSource::ShownHere => return Ok(()),
+                };
+                let target = login.target.clone();
                 let prompt = match prompt.user_code {
                     Some(code) => LoginPrompt::device_code(
                         prompt.url,
@@ -270,13 +331,39 @@ impl App {
         true
     }
 
+    /// What a logout of `target` removes, as this process reads the store
+    /// and the config before the daemon changes them: the daemon's answer
+    /// does not say.
+    fn login_to_remove(&self, target: &LoginTarget) -> RemovedLogin {
+        let forgot_login = rho_providers::provider::provider_descriptor(&target.provider)
+            .is_some_and(|descriptor| {
+                descriptor.collects_login_endpoint()
+                    && self
+                        .info
+                        .services
+                        .config_repository
+                        .load()
+                        .is_ok_and(|config| !config.providers.awaits_endpoint_login(*descriptor))
+            });
+        let deleted = ProviderAuthentication::has_stored_credentials(
+            self.credential_store.as_ref(),
+            &target.auth,
+        )
+        .unwrap_or(false);
+        RemovedLogin {
+            forgot_login,
+            deleted,
+        }
+    }
+
     /// Has the daemon sign out of `target` and reports it.
     pub(super) async fn sign_out_of_daemon(&mut self, target: &LoginTarget) -> anyhow::Result<()> {
+        let removed = self.login_to_remove(target);
         match self.daemon_session().sign_out(&target.auth).await {
             Ok(()) => {
                 AppCredentialStore::reread_external_logins();
                 self.refresh_available_auths();
-                self.insert_entry(&Entry::Notice(format!("logged out of {}", target.provider)));
+                self.insert_entry(&Entry::Notice(removed.notice(target)));
                 if self.mark_signed_out_after_logout(target) {
                     self.insert_entry(&Entry::Notice(
                         super::login::ACTIVE_PROVIDER_SIGNED_OUT.into(),
