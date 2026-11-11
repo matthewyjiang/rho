@@ -12,9 +12,12 @@
 //! when its client disconnects meanwhile: the protocol server runs every
 //! request it read to completion.
 //!
-//! A permission mode change queued behind a turn whose approved plan
-//! switched the mode is dropped: the approval names the mode the
-//! implementation runs in, as in the in-process TUI.
+//! A permission mode change still waiting when an approved plan switches
+//! the mode is dropped, whichever turn of the run it was sent during: one
+//! run, as a `/goal` loop, holds the runtime across all its turns. The
+//! in-process TUI applies such a change at the end of the turn it was sent
+//! during, so the approval, at the end of the same or a later turn, sets
+//! the mode the session ends in either way.
 //!
 //! Only a loaded session takes a change: a client attaches first, which
 //! loads it. A change that applies is kept with the session's file, so a

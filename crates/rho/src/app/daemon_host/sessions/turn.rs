@@ -790,8 +790,8 @@ impl TurnView for DaemonView {
         let notice = match report {
             PlanReport::Kept { notice } => Some(wire::SessionEvent::Notice { text: notice }),
             PlanReport::Switched => {
-                // Before the implementation turn starts, so only a change
-                // queued during the proposal sees the switch.
+                // Before the implementation turn starts, so a change queued
+                // during it still applies afterwards.
                 session.turn().plan_switches += 1;
                 None
             }

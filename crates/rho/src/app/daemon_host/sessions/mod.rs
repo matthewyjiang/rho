@@ -219,8 +219,8 @@ struct TurnSlot {
     hold: Option<Hold>,
     /// How many approved plans have switched the session's permission mode.
     /// The approval names the implementation turn's mode, so a mode change
-    /// queued before it is dropped, as an in-process turn drops a cycle
-    /// queued during the proposal (see `configure`).
+    /// still waiting for the runtime when one lands is dropped (see
+    /// `configure`).
     plan_switches: u64,
 }
 

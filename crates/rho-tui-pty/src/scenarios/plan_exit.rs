@@ -454,9 +454,10 @@ pub(super) const DAEMON_GOAL_SCENARIO: Scenario = in_daemon(
 );
 
 // Covers: a plan proposed from a delegated child's completion hands off to
-// implementation. The daemon holds the prompt open until its children finish
-// (it has no idle wake), so the completion arrives in that prompt rather than
-// in an idle turn, and the idle-only `/permissions` probe does not apply.
+// implementation. The daemon holds the prompt open while a subagent runs (its
+// idle wake covers only workflows and processes), so the completion arrives
+// in that prompt rather than in an idle turn, and the idle-only
+// `/permissions` probe does not apply.
 // Owner: interactive TUI as a daemon client (#1667)
 #[cfg(unix)]
 pub(super) const DAEMON_DELEGATED_COMPLETION_SCENARIO: Scenario = Scenario::new(
