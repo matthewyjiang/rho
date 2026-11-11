@@ -64,19 +64,18 @@ impl App {
                 } => {
                     // Replayed into a running turn, as a reattach's tail
                     // is: what the stream still holds came before it.
-                    if self.turn.is_provider_turn() {
+                    let streaming = self.turn.is_provider_turn();
+                    if streaming {
                         self.finish_streams();
-                        // A chunk that continues the message leaves the
-                        // stream its fence and wrap state for the live
-                        // text that follows.
-                        if opens {
-                            self.reset_streams();
-                        }
                     }
-                    if opens {
-                        self.open_transcript_row(kind.entry(text));
-                    } else {
-                        self.push_transcript_entry(kind.entry(text));
+                    match (opens, streaming) {
+                        (true, true) => {
+                            self.reset_streams();
+                            self.open_transcript_row(kind.entry(text));
+                        }
+                        (true, false) => self.open_transcript_row(kind.entry(text)),
+                        (false, true) => self.continue_stream_with_replayed(kind, &text),
+                        (false, false) => self.push_transcript_entry(kind.entry(text)),
                     }
                 }
                 DaemonView::ToolRunning { call, card } => {
@@ -141,9 +140,7 @@ impl App {
                 DaemonView::SettingsChanged(changed) => {
                     self.show_daemon_settings(SettingsUpdate::Changed(changed));
                 }
-                DaemonView::ConfigureFinished => {
-                    self.daemon_option_requests.pop_front();
-                }
+                DaemonView::ConfigureFinished => self.finish_daemon_option_request(),
                 DaemonView::Turn(state) => self.show_daemon_turn(state).await,
                 DaemonView::SteerApplied(id) => {
                     // The user row that follows shows it.
@@ -170,6 +167,17 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Writes `text`, replayed, as more of the message the running turn's
+    /// stream of `kind` shows. It goes through that stream, whole and at
+    /// once, so the stream's fence, wrap, and emitted text account for it
+    /// when live text continues the message.
+    fn continue_stream_with_replayed(&mut self, kind: StreamKind, text: &str) {
+        self.streams.stream_mut(kind).push_delta(text);
+        if let Some(fragment) = self.streams.stream_mut(kind).finish() {
+            self.insert_stream_fragment(fragment, kind);
+        }
     }
 
     /// Appends `entry` as a row of its own, even after a row of its kind

@@ -333,15 +333,17 @@ impl App {
             Some(Some(model)) => {
                 let reference = rho_providers::provider::model_reference(&target.provider, &model);
                 let asked = self.daemon_option_requests.len();
+                let model = rho_protocol::ModelRef {
+                    provider: target.provider.clone(),
+                    model,
+                };
                 self.configure_daemon(SessionChange::Model {
-                    model: rho_protocol::ModelRef {
-                        provider: target.provider.clone(),
-                        model,
-                    },
+                    model: model.clone(),
                     auth: Some(target.auth.clone()),
                 })?;
                 if self.daemon_option_requests.len() > asked {
                     self.info.services.auth_unavailable = None;
+                    self.daemon_login_selected = Some(model);
                 }
                 format!(
                     "stored credentials for {} and selected {reference}",

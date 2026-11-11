@@ -784,6 +784,52 @@ fn a_held_streamed_card_goes_out_when_the_host_asks() {
     assert_eq!(live.held_previews(), Vec::new());
 }
 
+// Covers: a card held back for more arguments goes out before the text
+// that follows its call, so a pause partway through that text finds
+// nothing to send between two chunks of one message, which would split
+// the row a client shows it in (#1818).
+// Owner: session event live mapping
+#[test]
+fn a_held_card_goes_out_before_the_text_that_follows_its_call() {
+    let tool_set = AppToolSet::disabled();
+    let mut live = live(&tool_set);
+    let streamed = |arguments: &str| {
+        SessionEvent::Run(RunEvent::ToolCallUpdated {
+            index: 0,
+            id: Some("call-1".to_owned()),
+            name: Some("bash".to_owned()),
+            arguments_delta: arguments.to_owned(),
+        })
+    };
+    map_all(&mut live, &[streamed(r#"{"command":"l"#), streamed("s")]);
+
+    let first = map_all(&mut live, &[delta("Hel")]);
+    let paused = live.held_previews();
+    let second = map_all(&mut live, &[delta("lo")]);
+
+    let shape: Vec<_> = first
+        .iter()
+        .chain(&second)
+        .map(|event| match event {
+            WireEvent::ToolCall(_) => "card",
+            WireEvent::AgentMessageChunk { .. } => "chunk",
+            _ => "other",
+        })
+        .collect();
+    let messages: Vec<_> = first
+        .iter()
+        .chain(&second)
+        .filter_map(|event| match event {
+            WireEvent::AgentMessageChunk { message, .. } => Some(message),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        (shape, paused, messages[0] == messages[1]),
+        (vec!["card", "chunk", "chunk"], Vec::new(), true)
+    );
+}
+
 // Covers: a host that prices a streaming response gets the step's context
 // fill again, and none before any step reported one.
 // Owner: session event live mapping

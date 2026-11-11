@@ -123,7 +123,11 @@ impl App {
                     matches!(change, SessionChange::Model { model, .. } if *model == options.model.current)
                 })
         });
-        if switched {
+        // Login's own status line, which also names the stored credentials,
+        // stays, as it does in process.
+        let said_by_login =
+            switched && self.daemon_login_selected.take().as_ref() == Some(&options.model.current);
+        if switched && !said_by_login {
             self.set_status(format!(
                 "model switched to {} with reasoning {reasoning}",
                 rho_providers::provider::model_reference(
@@ -156,6 +160,19 @@ impl App {
         // is the one Enter should confirm.
         if model_changed && self.setup_step() == Some(super::setup_screen::SetupStep::ChooseModel) {
             self.show_setup_model_picker();
+        }
+    }
+
+    /// The oldest change this TUI asked the daemon for finished, applied or
+    /// refused. Login's note of the model it asked for goes with its
+    /// request: a switch that landed has shown by now, and one the daemon
+    /// refused must not quiet a later `/model` to the same model.
+    pub(super) fn finish_daemon_option_request(&mut self) {
+        let finished = self.daemon_option_requests.pop_front();
+        if let Some(SessionChange::Model { model, .. }) = &finished {
+            if self.daemon_login_selected.as_ref() == Some(model) {
+                self.daemon_login_selected = None;
+            }
         }
     }
 

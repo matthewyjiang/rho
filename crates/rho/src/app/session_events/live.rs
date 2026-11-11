@@ -328,6 +328,18 @@ impl LiveEvents {
             // A user message ends any message.
             self.message = None;
         }
+        // Text after a call's arguments says they stopped growing, so a
+        // card held for more of them goes out before the text. Left to the
+        // host's pause, it would land between two chunks of one message
+        // and split the row clients show it in.
+        let held = match event {
+            SessionEvent::Run(
+                RunEvent::AssistantTextDelta { .. }
+                | RunEvent::ReasoningDelta { .. }
+                | RunEvent::ReasoningSummaryDelta { .. },
+            ) => self.held_previews(),
+            _ => Vec::new(),
+        };
         let events = match event {
             SessionEvent::MessageInserted(inserted) => {
                 self.user_message(inserted).into_iter().collect()
@@ -361,7 +373,7 @@ impl LiveEvents {
         }) {
             self.message = None;
         }
-        late_steers.into_iter().chain(events).collect()
+        late_steers.into_iter().chain(held).chain(events).collect()
     }
 
     /// The prompt as the user message the turn saved. Nothing when no
@@ -732,7 +744,8 @@ impl LiveEvents {
 
     /// The cards of streamed calls held back for their arguments to grow
     /// ([`StreamedPreview`]). A host calls this when the stream pauses, so
-    /// what the model wrote last shows without waiting for more.
+    /// what the model wrote last shows without waiting for more. A card
+    /// ends the open message, as any event but a chunk does.
     pub(crate) fn held_previews(&mut self) -> Vec<WireEvent> {
         let held: Vec<usize> = self
             .previews
@@ -740,9 +753,15 @@ impl LiveEvents {
             .filter(|(_, preview)| preview.unsent.is_some())
             .map(|(index, _)| *index)
             .collect();
-        held.into_iter()
+        let cards: Vec<_> = held
+            .into_iter()
             .flat_map(|index| self.send_preview(index))
-            .collect()
+            .collect();
+        if !cards.is_empty() {
+            // Called outside [`Self::map`] too.
+            self.message = None;
+        }
+        cards
     }
 
     /// Whether [`Self::held_previews`] has a card to send.
