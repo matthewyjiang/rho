@@ -161,11 +161,18 @@ impl App {
                 }
                 self.show_taken_daemon_views(terminal).await?;
             }
-            // The cancel withdraws the request.
+            // Dismissed first: a subagent's question outlives the turn, so
+            // the cancel alone would leave its subagent waiting.
             Some((id, Reaction::CancelTurn)) => {
                 self.daemon_answers.cancelled.insert(id);
-                self.cancel_daemon_turn().await;
-                return Ok(());
+                if let Some(session) = self.info.session.daemon.as_mut() {
+                    session.answer(id, InputAnswer::Dismiss).await;
+                }
+                if self.daemon_turn_runs() {
+                    self.cancel_daemon_turn().await;
+                    return Ok(());
+                }
+                self.show_taken_daemon_views(terminal).await?;
             }
             Some((_, Reaction::Nothing)) => {}
         }
@@ -175,6 +182,23 @@ impl App {
             self.show_next_daemon_input().await;
         }
         Ok(())
+    }
+
+    /// [`Self::answer_daemon_input`] while no turn runs, when the open
+    /// prompt is a subagent's question. Returns whether the prompt shown
+    /// changed.
+    pub(super) async fn answer_idle_daemon_input(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<bool> {
+        if self.info.session.daemon.is_none() {
+            return Ok(false);
+        }
+        let shown = |app: &Self| app.daemon_answers.shown.as_ref().map(|shown| shown.id);
+        let before = shown(self);
+        self.answer_daemon_input(terminal, /*cancelling*/ false)
+            .await?;
+        Ok(shown(self) != before)
     }
 
     /// Holds the open request once the person touched its form, which

@@ -8,7 +8,7 @@ use rho_protocol::{self as wire, ErrorCode, InputAnswer, InputRequestId, Resolut
 use rho_sdk::{ApprovalDecision, HostInputRefusal, HostInputResponse, HostInputSource};
 use tokio::sync::mpsc;
 
-use super::Inputs;
+use super::{Asker, Inputs};
 use crate::{
     app::{
         daemon_host::sessions::test_events::{
@@ -28,7 +28,7 @@ fn open(
     event: &SessionEvent,
 ) -> (InputRequestId, mpsc::UnboundedReceiver<TurnControl>) {
     let (control, answers) = mpsc::unbounded_channel();
-    inputs.note(&control, event, UNIX_EPOCH);
+    inputs.note(Asker::Turn, &control, event, UNIX_EPOCH);
     (opened(inputs).id, answers)
 }
 
@@ -194,6 +194,36 @@ fn a_request_hands_the_turn_only_the_answers_it_takes() {
     }
 }
 
+// Covers: a subagent's question is not the turn's: the turn's end leaves
+// it open, and no turn waits on it, so the job does not wait for input.
+// Owner: daemon input requests.
+#[test]
+fn a_subagents_question_outlives_the_turn() {
+    let mut inputs = Inputs::new(/*question_timeout*/ None);
+    let (turns, _turn) = open(&mut inputs, &approval(0));
+    let (control, _answers) = mpsc::unbounded_channel();
+    inputs.note(Asker::Subagent, &control, &question("q"), UNIX_EPOCH);
+    let subagents = opened(&mut inputs).id;
+
+    inputs.withdraw_turn();
+
+    assert_eq!(
+        (
+            inputs.take_events(),
+            inputs.waiting(),
+            inputs.answer(subagents, InputAnswer::Decline).is_ok(),
+        ),
+        (
+            vec![wire::SessionEvent::InputResolved {
+                id: turns,
+                resolution: Resolution::Withdrawn,
+            }],
+            false,
+            true,
+        )
+    );
+}
+
 // Covers: the first answer takes the request, so a second client's answer,
 // or one to a request the turn withdrew, is refused as not open and reaches
 // no turn; the answer reaches its turn only once it is sent, after clients
@@ -214,7 +244,7 @@ fn only_the_first_answer_to_an_open_request_wins() {
     // withdrawal of a request with the same runtime id closes nothing.
     let (other_turn, _) = mpsc::unbounded_channel();
     let (asking_turn, _) = mpsc::unbounded_channel();
-    inputs.note(&asking_turn, &question("q"), UNIX_EPOCH);
+    inputs.note(Asker::Turn, &asking_turn, &question("q"), UNIX_EPOCH);
     let reasked = opened(&mut inputs);
 
     let first = inputs
@@ -223,9 +253,19 @@ fn only_the_first_answer_to_an_open_request_wins() {
     let second = inputs
         .answer(approved, InputAnswer::Deny { reason: None })
         .map_err(code);
-    inputs.note(&other_turn, &approval_withdrawn(0), UNIX_EPOCH);
-    inputs.note(&other_turn, &question_withdrawn("q"), UNIX_EPOCH);
-    inputs.note(&asking_turn, &question_withdrawn("q"), UNIX_EPOCH);
+    inputs.note(Asker::Turn, &other_turn, &approval_withdrawn(0), UNIX_EPOCH);
+    inputs.note(
+        Asker::Turn,
+        &other_turn,
+        &question_withdrawn("q"),
+        UNIX_EPOCH,
+    );
+    inputs.note(
+        Asker::Turn,
+        &asking_turn,
+        &question_withdrawn("q"),
+        UNIX_EPOCH,
+    );
     let to_withdrawn = inputs
         .answer(reasked.id, InputAnswer::Decline)
         .map_err(code);
@@ -325,7 +365,7 @@ fn only_a_question_with_fallback_answers_times_out() {
     for (case, question_timeout, event, expected) in cases {
         let mut inputs = Inputs::new(question_timeout);
         let (control, _turn) = mpsc::unbounded_channel();
-        inputs.note(&control, &event, UNIX_EPOCH);
+        inputs.note(Asker::Turn, &control, &event, UNIX_EPOCH);
         let request = opened(&mut inputs);
 
         assert_eq!(

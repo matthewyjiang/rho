@@ -1130,6 +1130,20 @@ fn background_agent_questionnaire_is_answered_in_parent_tui() {
     assert_pass("background_agent_questionnaire");
 }
 
+// Covers: a subagent that asks after its parent's turn ended still reaches
+// the person, and its answer the subagent, in process and on a daemon
+// session, with no parent turn in between.
+// Owner: interactive delegated-questionnaire routing (PTY)
+#[test]
+fn late_background_agent_questionnaire_is_answered_while_idle() {
+    for scenario in [
+        "late_background_agent_questionnaire",
+        "daemon_late_background_agent_questionnaire",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
 // Covers: completed reasoning can be revealed and hidden retroactively, in zen
 // mode too. Owner: interactive TUI
 #[test]

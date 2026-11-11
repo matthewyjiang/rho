@@ -151,6 +151,7 @@ use attach_view::{
 };
 use background_agents::{
     BACKGROUND_AGENT_AUTO_DELIVERY_STEPS, BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
+    LATE_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
 };
 use changelog::CHANGELOG_STEPS;
 use command_palette::{
@@ -918,6 +919,15 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     ADVISOR_MISSING_MODEL_SCENARIO,
     ADVISOR_REVIEW_SCENARIO,
+    Scenario::new(
+        "late_background_agent_questionnaire",
+        "Answer a questionnaire a background agent raises after its parent's turn ended",
+        DEFAULT_SIZE,
+        LATE_BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
+        false,
+    ),
+    #[cfg(unix)]
+    daemon_subagents::LATE_BACKGROUND_AGENT_QUESTIONNAIRE,
     Scenario::new(
         "background_agent_questionnaire",
         "Answer a questionnaire raised by a background agent and deliver its completion",

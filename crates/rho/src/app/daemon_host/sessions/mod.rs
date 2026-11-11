@@ -67,6 +67,7 @@ use crate::{
 
 mod budget;
 mod catalog;
+mod child_questions;
 mod configure;
 mod cost;
 mod feed;
@@ -96,6 +97,7 @@ mod turn;
 mod unload;
 
 use super::settings::ConfigStore;
+use child_questions::ChildQuestions;
 use feed::{Attached, Feed};
 use idle_wake::IdleWatch;
 use inputs::Inputs;
@@ -185,7 +187,8 @@ struct LoadedSession {
     /// Turns the runtime's events into the feed's; only the turn under way
     /// and its steers use it, each briefly and never across an await.
     live: Mutex<LiveEvents>,
-    /// The input requests the turn under way has open (#1660).
+    /// The input requests the turn under way and the session's subagents
+    /// have open (#1660).
     inputs: Mutex<Inputs>,
     /// The watchers that wake the idle session through its host, present
     /// exactly when its host wakes it (see [`t3_wake`]). Only turns, which
@@ -195,6 +198,9 @@ struct LoadedSession {
     /// background work finishes idle, when its client asked for that (see
     /// [`idle_wake`]).
     idle_wake: Option<IdleWatch>,
+    /// The session's side of the watcher that takes its subagents'
+    /// questions, when a person can be asked (see [`child_questions`]).
+    child_questions: Option<ChildQuestions>,
 }
 
 /// The state a session's turn lock guards.
@@ -399,7 +405,7 @@ impl LoadedSession {
         settings: &Arc<ConfigStore>,
     ) -> Self {
         let OpenedSession {
-            runtime,
+            mut runtime,
             config,
             global,
             environment,
@@ -411,6 +417,7 @@ impl LoadedSession {
             id: runtime.session_id().clone(),
             wake: T3Wake::of(&runtime, wakes).map(tokio::sync::Mutex::new),
             idle_wake: IdleWatch::of(&runtime),
+            child_questions: ChildQuestions::of(&mut runtime),
             handle: runtime.handle(),
             workspace: runtime.workspace_root().to_path_buf(),
             live: Mutex::new(live),
@@ -438,32 +445,6 @@ impl LoadedSession {
                 plan_switches: 0,
             }),
         }
-    }
-
-    /// Changes the session's open input requests with `change`, tells
-    /// attached clients what it opened and resolved, moves the job between
-    /// running and waiting for input to match, and only then hands the
-    /// turns the answers it accepted. All under the requests' lock, so
-    /// clients see requests open and close, and the job's state follow
-    /// them, in the order they happened, and before anything the turn does
-    /// with an answer. Starts the timeouts the change opened.
-    fn change_inputs<T>(self: &Arc<Self>, change: impl FnOnce(&mut Inputs) -> T) -> T {
-        // A panic mid-change leaves the requests as they were or with one
-        // request moved, which the turn's end clears.
-        let mut inputs = self.inputs.lock().unwrap_or_else(PoisonError::into_inner);
-        let was_waiting = inputs.waiting();
-        let result = change(&mut inputs);
-        self.feed.publish(inputs.take_events());
-        match (was_waiting, inputs.waiting()) {
-            (false, true) => self.record(JobEvent::InputOpened),
-            (true, false) => self.record(JobEvent::InputSettled),
-            (false, false) | (true, true) => {}
-        }
-        inputs.send_answers();
-        for (id, after) in inputs.take_timeouts() {
-            tokio::spawn(time_out(Arc::downgrade(self), id, after));
-        }
-        result
     }
 
     /// Records that the turn, queued for capacity, has its slot: `running`
@@ -701,6 +682,7 @@ impl Sessions {
                     let entry = Arc::new(entry);
                     loaded.insert(session, Arc::clone(&entry));
                     self.watch_idle_results(&entry);
+                    self.watch_child_questions(&entry);
                     if let Some(loaded) = tool_sources {
                         tool_sources::attach_when_loaded(&entry, loaded);
                     }

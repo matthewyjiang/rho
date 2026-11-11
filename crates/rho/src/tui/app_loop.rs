@@ -153,6 +153,8 @@ impl App {
             needs_redraw |= self
                 .poll_subagent_questionnaires(agent.session_id())
                 .await?;
+            // A daemon session's subagent may ask while no turn runs.
+            needs_redraw |= self.answer_idle_daemon_input(terminal).await?;
             // Subscribe before draining so an exit between drain and wait is not lost.
             let process_exit = agent
                 .processes()

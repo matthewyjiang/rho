@@ -267,8 +267,7 @@ impl App {
         self.turn.start_loading();
     }
 
-    /// Ends the busy chrome as the turn rested `rest`, closing any input
-    /// request's prompt still open. Cards still running
+    /// Ends the busy chrome as the turn rested `rest`. Cards still running
     /// stay in the transcript as interrupted, as a replay of a turn the
     /// daemon never closed leaves them; a session already at rest only
     /// tidies those.
@@ -282,9 +281,9 @@ impl App {
         // closing rows, and nothing of it outlasts the turn.
         self.finish_streams();
         self.reset_streams();
-        // A turn withdraws its requests before it ends, so any prompt still
-        // open is one the TUI can no longer follow.
-        self.drop_daemon_inputs();
+        // The daemon withdrew the turn's own requests before it said the
+        // turn ended. A prompt still open is a subagent's question, which
+        // outlives the turn.
         for entry in self.turn.interrupted_tool_entries() {
             self.insert_entry(&Entry::Tool(entry));
         }
