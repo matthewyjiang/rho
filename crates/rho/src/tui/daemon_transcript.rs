@@ -25,8 +25,8 @@ pub(super) struct DaemonCompactTurn {
     /// How its compaction ended, as the status line says it; the turn rests
     /// on it.
     rest_status: Option<&'static str>,
-    /// Whether its compaction compacted the conversation.
-    compacted: bool,
+    /// Whether its compaction reduced the conversation, once it ended.
+    compacted: Option<bool>,
 }
 
 impl App {
@@ -145,7 +145,7 @@ impl App {
                     self.set_status(status);
                     if let Some(turn) = &mut self.daemon_compact_turn {
                         turn.rest_status = Some(status);
-                        turn.compacted = compacted;
+                        turn.compacted = Some(compacted);
                     }
                 }
                 DaemonView::Plan(list) => {
@@ -429,7 +429,7 @@ impl App {
         };
         self.turn.stop_loading();
         self.turn.set_current_turn_start(None);
-        let compacted = compact_turn.as_ref().is_some_and(|turn| turn.compacted);
+        let compacted = compact_turn.as_ref().and_then(|turn| turn.compacted);
         // A `/compact` turn rests as its compaction ended.
         let compaction_status = compact_turn
             .and_then(|turn| turn.rest_status)

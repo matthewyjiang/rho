@@ -150,7 +150,7 @@ impl App {
             daemon_login_selected: None,
             daemon_title: None,
             daemon_compact_turn: None,
-            daemon_compact_handoff: None,
+            daemon_compact_handoff: false,
             daemon_hub_launch: None,
             info_compaction_read: Default::default(),
             awaited_daemon_report: None,

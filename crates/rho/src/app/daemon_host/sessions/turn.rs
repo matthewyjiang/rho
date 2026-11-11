@@ -532,6 +532,14 @@ async fn compact(
     // not wait for the compaction.
     view.began();
     let compacted = runtime.compact(scope, instructions).await;
+    if compacted.as_ref().is_ok_and(|outcome| {
+        outcome
+            .as_ref()
+            .is_some_and(crate::compaction::outcome_reduced_context)
+    }) {
+        let mut turn = view.session.turn();
+        turn.compacted_prompt = Some(turn.prompts);
+    }
     let end = match &compacted {
         Ok(Some(outcome)) => CompactionEnd::Completed(outcome),
         Ok(None) => CompactionEnd::Cancelled,

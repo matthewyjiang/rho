@@ -683,9 +683,10 @@ struct App {
     /// Set while the daemon session's turn is a `/compact`; see
     /// `daemon_transcript`.
     daemon_compact_turn: Option<daemon_transcript::DaemonCompactTurn>,
-    /// The switch back "Compact, then continue" sends once the `/compact`
-    /// it started compacted; see `context_handoff::daemon`.
-    daemon_compact_handoff: Option<rho_protocol::SessionChange>,
+    /// Whether a "Compact, then continue" waits for the `/compact` it
+    /// started, to say whether the session kept the source model; see
+    /// `context_handoff::daemon`.
+    daemon_compact_handoff: bool,
     /// The `/workflow:` prompt the hub sent the daemon session whose user
     /// message has not come back yet, at most until the turn under way
     /// ends or another session is followed; see `daemon_workflows`.
