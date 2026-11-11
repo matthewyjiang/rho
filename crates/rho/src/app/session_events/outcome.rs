@@ -42,16 +42,30 @@ pub(crate) fn turn_error(error: &anyhow::Error, provider: &str, auth: &str) -> T
 /// The notice that shows a failed turn's provider diagnostic, as the
 /// in-process TUI shows it: `None` when no provider error in `error`'s chain
 /// has one, or when the turn failed to authenticate, since the provider's
-/// details may echo credentials.
+/// details may echo credentials ([`withheld_diagnostic`]).
 pub(crate) fn diagnostic_notice(error: &anyhow::Error) -> Option<String> {
     if failure_kind(error) == TurnErrorKind::Authentication {
         return None;
     }
-    let diagnostic = error.chain().find_map(|cause| match cause.downcast_ref() {
+    let diagnostic = provider_diagnostic(error)?;
+    Some(format!("provider diagnostic:\n{diagnostic}"))
+}
+
+/// The provider diagnostic [`diagnostic_notice`] keeps from clients: that of
+/// a turn that failed to authenticate. For the host's own log only, where
+/// the person running the daemon can read why the provider refused.
+pub(crate) fn withheld_diagnostic(error: &anyhow::Error) -> Option<&str> {
+    (failure_kind(error) == TurnErrorKind::Authentication)
+        .then(|| provider_diagnostic(error))
+        .flatten()
+}
+
+/// The diagnostic of the provider error in `error`'s chain, if it has one.
+fn provider_diagnostic(error: &anyhow::Error) -> Option<&str> {
+    error.chain().find_map(|cause| match cause.downcast_ref() {
         Some(rho_sdk::Error::Provider(provider)) => provider.diagnostic(),
         _ => None,
-    })?;
-    Some(format!("provider diagnostic:\n{diagnostic}"))
+    })
 }
 
 /// `error` and its causes, each said once: an error whose message already

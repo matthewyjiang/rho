@@ -287,13 +287,22 @@ impl TurnTask {
 /// The error a turn that failed with `error` on `runtime` reports. Logged
 /// whole, to the daemon's own log only: the error it reports hides an
 /// authentication failure's text, which may echo credentials, from clients.
-/// The provider's diagnostic, if it may show one, goes to clients first.
+/// The provider's diagnostic goes to clients first if it may show; one an
+/// authentication failure withholds is logged here instead, so it can be
+/// read somewhere.
 fn failure(
     session: &LoadedSession,
     runtime: &SessionRuntime,
     error: &anyhow::Error,
 ) -> wire::TurnError {
     tracing::warn!(job = %session.job, error = format!("{error:#}"), "a turn failed");
+    if let Some(diagnostic) = outcome::withheld_diagnostic(error) {
+        tracing::warn!(
+            job = %session.job,
+            diagnostic,
+            "the provider's diagnostic for the failed authentication, withheld from clients"
+        );
+    }
     session
         .feed
         .publish(outcome::diagnostic_notice(error).map(|text| wire::SessionEvent::Notice { text }));
