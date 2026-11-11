@@ -3,21 +3,21 @@ use std::fs;
 use pretty_assertions::assert_eq;
 use rho_providers::model::{Message, ModelIdentity};
 
-use super::super::{tree::SessionTree, Session, SESSION_VERSION};
+use super::super::{persistence::MIN_SESSION_VERSION, tree::SessionTree, Session, SESSION_VERSION};
 
 // Covers: fresh delegated rebinding commits its identity, the root's it
-// replaces, and initial state together for current/legacy headers, survives
+// replaces, and initial state together for every supported header, survives
 // resume and later appends, and cannot rewrite history.
 // Owner: session agent identity.
 #[test]
 fn fresh_agent_identity_rewrite_preserves_append_and_resume() {
-    for version in 1..=SESSION_VERSION {
+    for version in MIN_SESSION_VERSION..=SESSION_VERSION {
         let root = tempfile::tempdir().unwrap();
         let cwd = tempfile::tempdir().unwrap();
         let session =
             Session::create_in_root_with_agent(root.path(), cwd.path(), "root", "old").unwrap();
-        // A legacy session with no conversation can still receive its first
-        // delegated binding. Its new snapshot must use a readable tree format.
+        // An older-format session with no conversation can still receive its
+        // first delegated binding. Its new snapshot must use a readable format.
         let mut header = super::read_header(&session.path).unwrap();
         let super::SessionEntry::Session {
             version: stored_version,

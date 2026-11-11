@@ -4,9 +4,24 @@ use rho_providers::model::{AssistantMessage, ProviderContextBlock};
 use serde_json::json;
 use std::fs::OpenOptions;
 
-const SESSION_V1: &str = include_str!("session/fixtures/session-v1.jsonl");
-const SESSION_V2: &str = include_str!("session/fixtures/session-v2.jsonl");
-const SESSION_V3: &str = include_str!("session/fixtures/session-v3.jsonl");
+// v1-3 files were written by rho 0.4.0 through 1.10.x; rho 3 refuses them.
+const PRE_TREE_SESSIONS: [(u32, &str, &str); 3] = [
+    (
+        1,
+        "11111111-1111-4111-8111-111111111111",
+        include_str!("session/fixtures/session-v1.jsonl"),
+    ),
+    (
+        2,
+        "22222222-2222-4222-8222-222222222222",
+        include_str!("session/fixtures/session-v2.jsonl"),
+    ),
+    (
+        3,
+        "33333333-3333-4333-8333-333333333333",
+        include_str!("session/fixtures/session-v3.jsonl"),
+    ),
+];
 // v4 and v5 store the same transcript: full display rows vs model references.
 const SESSION_V4: &str = include_str!("session/fixtures/session-v4.jsonl");
 const SESSION_V5: &str = include_str!("session/fixtures/session-v5.jsonl");
@@ -15,39 +30,6 @@ const DISPLAY_FIXTURE_ID: &str = "44444444-4444-4444-8444-444444444444";
 #[test]
 fn every_supported_application_session_fixture_restores_as_a_snapshot() {
     let cases = [
-        (
-            1,
-            "11111111-1111-4111-8111-111111111111",
-            SESSION_V1,
-            4,
-            1,
-            1,
-            "rho:migrated-v1",
-            2,
-            4,
-        ),
-        (
-            2,
-            "22222222-2222-4222-8222-222222222222",
-            SESSION_V2,
-            4,
-            1,
-            3,
-            "rho:fixture-session",
-            2,
-            3,
-        ),
-        (
-            3,
-            "33333333-3333-4333-8333-333333333333",
-            SESSION_V3,
-            2,
-            0,
-            0,
-            "rho:delta-fixture",
-            2,
-            2,
-        ),
         (
             4,
             DISPLAY_FIXTURE_ID,
@@ -107,28 +89,6 @@ fn every_supported_application_session_fixture_restores_as_a_snapshot() {
     }
 }
 
-#[test]
-fn v1_session_migrates_on_atomic_snapshot_save_without_losing_display_history() {
-    let (_root, _cwd, session) =
-        session_from_fixture("11111111-1111-4111-8111-111111111111", SESSION_V1);
-    let snapshot = session
-        .snapshot_for_resume(
-            ModelIdentity::new("target", "api", "model"),
-            "rho:migrated-v1".into(),
-        )
-        .unwrap();
-
-    session.save_snapshot(&snapshot, &[]).unwrap();
-
-    let entries = read_entries(session.path()).unwrap();
-    let saved = entries.last().unwrap();
-    assert!(matches!(saved, SessionEntry::Node { node }
-        if matches!(node.transition, StoredStateTransition::Snapshot { snapshot: ref stored }
-            if stored.schema_version() == rho_sdk::SESSION_SNAPSHOT_SCHEMA_VERSION
-                && stored.compaction() == snapshot.compaction())
-            && node.display_messages.is_empty()));
-}
-
 // Covers: model references must restore exactly the transcript full rows stored,
 // for tree projection (resume, export, picker) and search evidence alike.
 // Owner: session persistence; the fixtures pin both on-disk formats.
@@ -176,12 +136,6 @@ fn saves_follow_the_display_row_format_of_the_file_header() {
     use display_rows::{DisplayRowFormat, StoredDisplayRow};
 
     for (id, fixture, format) in [
-        // Legacy files upgrade to explicit tree records, still with full rows.
-        (
-            "33333333-3333-4333-8333-333333333333",
-            SESSION_V3,
-            DisplayRowFormat::Inline,
-        ),
         (DISPLAY_FIXTURE_ID, SESSION_V4, DisplayRowFormat::Inline),
         (DISPLAY_FIXTURE_ID, SESSION_V5, DisplayRowFormat::ModelRefs),
     ] {
@@ -239,7 +193,7 @@ fn rejects_sessions_from_unsupported_or_malformed_versions() {
         ),
         (
             "malformed",
-            "{\"type\":\"session\",\"version\":2,\"id\":\"malformed\",\"timestamp\":\"1\",\"cwd\":\"/tmp\"}\n{\"type\":\"snapshot\",\"timestamp\":\"2\",\"snapshot\":{}}\n".into(),
+            "{\"type\":\"session\",\"version\":5,\"id\":\"malformed\",\"timestamp\":\"1\",\"cwd\":\"/tmp\"}\n{\"type\":\"node\",\"timestamp\":\"2\"}\n".into(),
             "missing field",
         ),
     ] {
@@ -252,11 +206,57 @@ fn rejects_sessions_from_unsupported_or_malformed_versions() {
     }
 }
 
+// Covers: a session written by rho before 1.11 fails to open with an error
+// naming the release that still opens it, instead of a parse error, while
+// listings and id lookups (the daemon's path) still find it.
+// Owner: session persistence; the fixtures are real v1-3 files.
+#[test]
+fn pre_tree_sessions_fail_to_open_with_the_release_that_opens_them() {
+    for (version, id, fixture) in PRE_TREE_SESSIONS {
+        let root = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let dir = session_dir_in_root(root.path(), cwd.path());
+        fs::create_dir_all(&dir).unwrap();
+        let mut lines = fixture.lines();
+        let mut header: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+        header["cwd"] = cwd.path().to_string_lossy().into_owned().into();
+        let transcript = std::iter::once(header.to_string())
+            .chain(lines.map(str::to_owned))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(
+            dir.join(format!("100_{id}.jsonl")),
+            format!("{transcript}\n"),
+        )
+        .unwrap();
+
+        let listed = Session::list_in_root(root.path(), cwd.path(), SessionListing::Everything)
+            .unwrap()
+            .into_iter()
+            .map(|summary| (summary.id.clone(), summary.has_messages()))
+            .collect::<Vec<_>>();
+        pretty_assertions::assert_eq!(listed, [(id.to_owned(), false)], "v{version}");
+        pretty_assertions::assert_eq!(
+            persistence::SessionStore::workspace_of(root.path(), id).unwrap(),
+            Some(cwd.path().to_path_buf()),
+            "v{version}"
+        );
+
+        let error = Session::open_by_id_in_root(root.path(), cwd.path(), &id[..8]).unwrap_err();
+        pretty_assertions::assert_eq!(
+            error
+                .downcast_ref::<persistence::PreTreeSession>()
+                .map(|error| error.version),
+            Some(version),
+            "{error:#}"
+        );
+    }
+}
+
 #[test]
 fn rejects_snapshot_delta_without_matching_base_revision() {
-    let corrupted = SESSION_V3.replacen("\"base_revision\":1", "\"base_revision\":0", 1);
-    let (_root, _cwd, session) =
-        session_from_fixture("33333333-3333-4333-8333-333333333333", &corrupted);
+    let corrupted = SESSION_V4.replacen("\"base_revision\":1", "\"base_revision\":0", 1);
+    let (_root, _cwd, session) = session_from_fixture(DISPLAY_FIXTURE_ID, &corrupted);
 
     let error = session
         .snapshot_for_resume(
@@ -420,7 +420,7 @@ fn failed_snapshot_save_retains_the_previous_complete_revision() {
         .append(true)
         .open(session.path())
         .unwrap()
-        .write_all(b"{\"type\":\"snapshot\"")
+        .write_all(b"{\"type\":\"node\"")
         .unwrap();
     let restored = session
         .snapshot_for_resume(identity.clone(), "rho:fallback".into())

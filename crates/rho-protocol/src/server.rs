@@ -36,8 +36,7 @@ use crate::{
         SessionObserve, SessionObserveParams, SessionProcessesParams, SessionProcessesResponse,
         SessionPromptParams, SessionPromptResponse, SessionRenameParams, SessionRenameResponse,
         SessionSteerParams, SessionSteerResponse, SessionUnsteerParams, SessionUnsteerResponse,
-        AUTH_LOGIN, CONFIG_GET, HELLO, SESSION_ATTACH, SESSION_DETACH, SESSION_MCP_CATALOG,
-        SESSION_MCP_COMPLETE, SESSION_MCP_RESOURCE, SESSION_OBSERVE,
+        AUTH_LOGIN, CONFIG_GET, HELLO, SESSION_ATTACH, SESSION_DETACH, SESSION_OBSERVE,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -172,38 +171,26 @@ pub trait Service: SettingsService + Send + Sync {
     ) -> impl Future<Output = Result<SessionMcpInventory, RpcError>> + Send;
 
     /// Handles `rho/session/mcp/catalog`: list the prompts and resources the
-    /// loaded session's MCP servers offer, without waiting for a turn. A
-    /// service that does not serve it answers `MethodNotFound`, as a daemon
-    /// from before the method does.
+    /// loaded session's MCP servers offer, without waiting for a turn.
     fn session_mcp_catalog(
         &self,
         params: SessionMcpCatalogParams,
-    ) -> impl Future<Output = Result<SessionMcpCatalog, RpcError>> + Send {
-        let _ = params;
-        std::future::ready(Err(not_served(SESSION_MCP_CATALOG)))
-    }
+    ) -> impl Future<Output = Result<SessionMcpCatalog, RpcError>> + Send;
 
     /// Handles `rho/session/mcp/resource`: read one resource from one of the
-    /// loaded session's MCP servers, without waiting for a turn. Unserved,
-    /// it answers as [`Self::session_mcp_catalog`] does.
+    /// loaded session's MCP servers, without waiting for a turn.
     fn session_mcp_resource(
         &self,
         params: SessionMcpResourceParams,
-    ) -> impl Future<Output = Result<SessionMcpResourceResponse, RpcError>> + Send {
-        let _ = params;
-        std::future::ready(Err(not_served(SESSION_MCP_RESOURCE)))
-    }
+    ) -> impl Future<Output = Result<SessionMcpResourceResponse, RpcError>> + Send;
 
     /// Handles `rho/session/mcp/complete`: ask one of the loaded session's
     /// MCP servers for values of a prompt argument, without waiting for a
-    /// turn. Unserved, it answers as [`Self::session_mcp_catalog`] does.
+    /// turn.
     fn session_mcp_complete(
         &self,
         params: SessionMcpCompleteParams,
-    ) -> impl Future<Output = Result<SessionMcpCompleteResponse, RpcError>> + Send {
-        let _ = params;
-        std::future::ready(Err(not_served(SESSION_MCP_COMPLETE)))
-    }
+    ) -> impl Future<Output = Result<SessionMcpCompleteResponse, RpcError>> + Send;
 
     /// Handles `rho/session/processes`: read the loaded session's background
     /// processes, and one's retained output, without waiting for a turn.
@@ -233,15 +220,11 @@ pub trait Service: SettingsService + Send + Sync {
     /// Handles `rho/session/observe`: subscribe this connection to the
     /// session's events as [`Self::attach_session`] does, without loading a
     /// session that is not loaded; the connection forwards them the same
-    /// way. A service that does not serve it answers `MethodNotFound`, as a
-    /// daemon from before the method does.
+    /// way.
     fn observe_session(
         &self,
         params: SessionObserveParams,
-    ) -> impl Future<Output = Result<(SessionAttachResponse, Subscription), RpcError>> + Send {
-        let _ = params;
-        std::future::ready(Err(not_served(SESSION_OBSERVE)))
-    }
+    ) -> impl Future<Output = Result<(SessionAttachResponse, Subscription), RpcError>> + Send;
 
     /// Answers `rho/session/list`: a page of the saved sessions a person
     /// can resume.
@@ -313,13 +296,6 @@ pub trait Service: SettingsService + Send + Sync {
         &self,
         params: AuthChooseStoreParams,
     ) -> impl Future<Output = Result<AuthChooseStoreResponse, RpcError>> + Send;
-}
-
-/// What the daemon reports in its `rho/hello` response.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ServerInfo {
-    pub daemon: DaemonInfo,
-    pub capabilities: Vec<String>,
 }
 
 /// Messages queued for the connection's writer, written in queue order.
@@ -401,7 +377,7 @@ pub const CLOSE_GRACE: Duration = Duration::from_secs(1);
 /// Outside a Tokio runtime, because each request runs in a spawned task.
 pub async fn serve_connection<S, Svc>(
     stream: S,
-    info: &ServerInfo,
+    info: &DaemonInfo,
     service: Arc<Svc>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), FrameError>
@@ -449,7 +425,7 @@ where
 /// `outbox` on return lets the writer finish.
 async fn read_requests<R, Svc>(
     mut reader: MessageReader<R>,
-    info: &ServerInfo,
+    info: &DaemonInfo,
     service: Arc<Svc>,
     outbox: Outbox,
     shutdown: impl Future<Output = ()>,
@@ -662,7 +638,7 @@ impl Connection {
         &mut self,
         method: &str,
         params: Option<Value>,
-        info: &ServerInfo,
+        info: &DaemonInfo,
         refused_newer: impl FnOnce(ProtocolVersion) -> RestartCost,
     ) -> Result<Route, RpcError> {
         match (&*self, method) {
@@ -687,8 +663,7 @@ impl Connection {
                 let (declared, client) = Declared::accept(decode_params::<Hello>(params)?)?;
                 let response = encode_result::<Hello>(&HelloResponse {
                     protocol: PROTOCOL_VERSION,
-                    daemon: info.daemon.clone(),
-                    capabilities: info.capabilities.clone(),
+                    daemon: info.clone(),
                 })?;
                 *self = Self::Ready(declared);
                 Ok(Route::Hello { response, client })
@@ -759,12 +734,6 @@ impl Drop for Responder {
             "the daemon failed while handling this request",
         )));
     }
-}
-
-/// What a service answers for a method it does not serve, as a daemon from
-/// before the method does.
-fn not_served(method: &str) -> RpcError {
-    RpcError::new(ErrorCode::MethodNotFound, format!("{method} is not served"))
 }
 
 /// Decodes `M`'s params. Absent params decode like `{}`, so params-less

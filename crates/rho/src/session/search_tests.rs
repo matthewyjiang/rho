@@ -205,7 +205,7 @@ fn indexed_evidence_tracks_source_changes_without_mutating_transcripts() {
     );
 
     let tail = serde_json::to_string(
-        &json!({"type":"message","message":{"User":[{"Text":"tailneedle"}]}}),
+        &json!({"type":"node","display_messages":[{"message":{"User":[{"Text":"tailneedle"}]}}]}),
     )
     .unwrap();
     let mut file = fs::OpenOptions::new()
@@ -623,18 +623,16 @@ fn focused_read_preserves_errors_and_expands_unicode_match_windows() {
 // replacements, hidden reasoning or provider state. One table owns extraction.
 #[test]
 fn display_record_formats_preserve_roles_and_visible_omissions() {
-    for kind in ["node", "snapshot", "snapshot_delta"] {
-        let record = json!({"type":kind,"display_messages":[{"message":{"EnrichedAssistant":{
-            "content":[{"Text":"answer"},{"Thinking":"secret"}],"provider_context":["secret"]}}}]});
-        assert_eq!(
-            search_evidence::Extractor::default()
-                .extract(&record, 16)
-                .into_iter()
-                .map(|evidence| (evidence.role, evidence.text, evidence.omitted_blocks))
-                .collect::<Vec<_>>(),
-            vec![("assistant".into(), "answer".into(), 1)]
-        );
-    }
+    let record = json!({"type":"node","display_messages":[{"message":{"EnrichedAssistant":{
+        "content":[{"Text":"answer"},{"Thinking":"secret"}],"provider_context":["secret"]}}}]});
+    assert_eq!(
+        search_evidence::Extractor::default()
+            .extract(&record, 16)
+            .into_iter()
+            .map(|evidence| (evidence.role, evidence.text, evidence.omitted_blocks))
+            .collect::<Vec<_>>(),
+        vec![("assistant".into(), "answer".into(), 1)]
+    );
     // The sessions tool's own calls and results (here split across records)
     // would make every later search find its predecessors.
     let call = |id: &str, name: &str| json!({"ToolCall":{"id":id,"name":name,"arguments":{}}});
@@ -657,7 +655,7 @@ fn display_record_formats_preserve_roles_and_visible_omissions() {
             ("tool_result".into(), "out".into())
         ]
     );
-    for kind in ["session", "replace_history", "set_leaf", "upgrade"] {
+    for kind in ["session", "set_leaf"] {
         assert_eq!(
             search_evidence::Extractor::default().extract(
                 &json!({"type":kind,"messages":[{"User":[{"Text":"secret"}]}]}),

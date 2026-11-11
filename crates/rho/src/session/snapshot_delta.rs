@@ -137,12 +137,6 @@ impl StoredSnapshotDelta {
         })
     }
 
-    pub(super) fn restore(&self, previous: &SessionSnapshot) -> anyhow::Result<SessionSnapshot> {
-        let mut replay = SnapshotReplay::new(previous, previous.history().to_vec());
-        self.apply(&mut replay)?;
-        Ok(replay.into_snapshot())
-    }
-
     /// Validates even no-op deltas before appending. Returns whether any state
     /// changed, including provider, metadata and cache identity at equal revision.
     pub(super) fn apply(&self, replay: &mut SnapshotReplay) -> anyhow::Result<bool> {

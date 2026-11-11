@@ -1649,13 +1649,6 @@
     "HelloResponse": {
       "description": "Result of [`HELLO`].",
       "properties": {
-        "capabilities": {
-          "description": "Optional features this daemon supports. Protocol minors add names\nhere from major 1 on; none is defined yet.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
         "daemon": {
           "$ref": "#/$defs/DaemonInfo"
         },
@@ -1666,8 +1659,7 @@
       },
       "required": [
         "protocol",
-        "daemon",
-        "capabilities"
+        "daemon"
       ],
       "type": "object"
     },

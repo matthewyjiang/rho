@@ -133,9 +133,6 @@ pub struct HelloResponse {
     /// client's.
     pub protocol: ProtocolVersion,
     pub daemon: DaemonInfo,
-    /// Optional features this daemon supports. Protocol minors add names
-    /// here from major 1 on; none is defined yet.
-    pub capabilities: Vec<String>,
 }
 
 /// Params of [`DAEMON_STATUS`].
