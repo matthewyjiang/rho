@@ -49,11 +49,7 @@ impl Extractor {
     /// rather than pretending it is all part of the current conversation branch.
     pub(super) fn extract(&mut self, record: &Value, offset: u64) -> Vec<Evidence> {
         let messages: Vec<&Value> = match record["type"].as_str() {
-            Some("message") => vec![record
-                .get("display_message")
-                .filter(|value| !value.is_null())
-                .unwrap_or(&record["message"])],
-            Some("node" | "snapshot" | "snapshot_delta") => {
+            Some("node") => {
                 // Version 5 rows may name a message of this record's own
                 // transition instead of repeating it (see `display_rows`).
                 // Search is best effort: a dangling index reads as JSON null

@@ -210,8 +210,8 @@ impl Session {
         *agent_fingerprint = Some(fingerprint.to_owned());
         *agent_role = SessionAgentRole::Delegated;
         if initial_snapshot.is_some() {
-            // A header-only legacy file has no history to migrate. Its new
-            // root snapshot uses the current explicit-tree representation.
+            // A header-only file has no history to migrate, so its new root
+            // snapshot can use the current format.
             *version = SESSION_VERSION;
         }
 

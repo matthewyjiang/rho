@@ -298,7 +298,7 @@ fn inserts_interrupted_tool_results_on_load() {
 #[test]
 fn tolerates_only_truncated_final_json() {
     for (tail, should_load) in [
-        (b"{\"type\":\"message\"".as_slice(), true),
+        (b"{\"type\":\"node\"".as_slice(), true),
         (b"{not json}\n".as_slice(), false),
         (b"{not json}".as_slice(), false),
     ] {
@@ -505,30 +505,11 @@ fn write_session_file(root: &Path, cwd: &Path, id: &str, timestamp: u64, prompts
     let dir = session_dir_in_root(root, cwd);
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("{timestamp}_{id}.jsonl"));
-    let mut entries = vec![SessionEntry::Session {
-        version: 3,
-        id: id.into(),
-        timestamp: timestamp.to_string(),
-        cwd: cwd.to_path_buf(),
-        agent_id: None,
-        agent_fingerprint: None,
-        agent_role: crate::session::agent_identity::SessionAgentRole::Root,
-        launch_agent: None,
-        origin: None,
-        parent_session: None,
-    }];
-    entries.extend(prompts.iter().map(|prompt| SessionEntry::Message {
-        timestamp: timestamp.to_string(),
-        message: Message::user_text(*prompt),
-        display_message: None,
-    }));
-    let contents = entries
-        .into_iter()
-        .map(|entry| serde_json::to_string(&entry).unwrap())
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-    fs::write(path, contents).unwrap();
+    fs::write(
+        path,
+        super::persistence::test_transcript(cwd, id, timestamp, prompts),
+    )
+    .unwrap();
 }
 
 #[test]

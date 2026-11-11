@@ -410,9 +410,9 @@ fn index_file(
     let header_bytes = reader.read_line(&mut line)? as u64;
     let header: serde_json::Value = serde_json::from_str(&line)?;
     anyhow::ensure!(header["type"] == "session", "missing session header");
-    let version = header["version"].as_u64().unwrap_or(1);
+    let version = header["version"].as_u64().unwrap_or(0);
     anyhow::ensure!(
-        (1..=u64::from(super::persistence::SESSION_VERSION)).contains(&version),
+        super::persistence::SUPPORTED_SESSION_VERSIONS.contains(&version),
         "unsupported session format {version}"
     );
     anyhow::ensure!(

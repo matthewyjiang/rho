@@ -69,6 +69,8 @@ mod daemon_subagents;
 mod daemon_switch;
 #[cfg(unix)]
 mod daemon_tree;
+#[cfg(unix)]
+mod pre_tree_session;
 // Starts a real command workflow, as `workflow_background` does.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod daemon_workflow;
@@ -575,6 +577,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     #[cfg(unix)]
     daemon_resume::SCENARIO,
+    #[cfg(unix)]
+    pre_tree_session::SCENARIO,
     #[cfg(unix)]
     daemon_detach::SCENARIO,
     #[cfg(unix)]

@@ -30,7 +30,7 @@ pub(super) fn setup_sessions_hub(home: &IsolatedHome) -> Result<()> {
         &foreign_cwd,
         &foreign_cwd,
         "11111111-0000-4000-8000-000000000001",
-        "foreign workspace target",
+        &["foreign workspace target"],
     )?;
 
     let launch_cwd = std::env::current_dir().context("read launch workspace")?;
@@ -39,7 +39,7 @@ pub(super) fn setup_sessions_hub(home: &IsolatedHome) -> Result<()> {
         &launch_cwd,
         &foreign_cwd,
         "22222222-0000-4000-8000-000000000002",
-        "misplaced foreign workspace target",
+        &["misplaced foreign workspace target"],
     )?;
 
     let deleted_cwd = home.path().join("deleted-workspace");
@@ -48,42 +48,60 @@ pub(super) fn setup_sessions_hub(home: &IsolatedHome) -> Result<()> {
         &deleted_cwd,
         &deleted_cwd,
         "33333333-0000-4000-8000-000000000003",
-        "orphaned workspace target",
+        &["orphaned workspace target"],
     )?;
     Ok(())
 }
 
+/// Writes a format 5 session `id` under `physical_cwd`'s workspace whose
+/// history is `texts` as user prompts, one node per prompt.
 pub(super) fn write_seed_session(
     home: &IsolatedHome,
     physical_cwd: &Path,
     recorded_cwd: &Path,
     id: &str,
-    text: &str,
+    texts: &[&str],
 ) -> Result<PathBuf> {
     let session_dir = home
         .home
         .join(".rho/sessions")
         .join(workspace_key(physical_cwd));
     fs::create_dir_all(&session_dir).context("create seeded session directory")?;
-    let header = json!({
+    let mut transcript = json!({
         "type": "session",
-        "version": 3,
+        "version": 5,
         "id": id,
         "timestamp": "1",
         "cwd": recorded_cwd,
-    });
-    let message = json!({
-        "type": "message",
-        "timestamp": "2",
-        "message": {"User": [{"Text": text}]},
-    });
+    })
+    .to_string()
+        + "\n";
+    let mut history = Vec::new();
+    for (index, text) in texts.iter().enumerate() {
+        history.push(json!({"User": [{"Text": text}]}));
+        let node = json!({
+            "type": "node",
+            "id": format!("seed-{index}"),
+            "parent_id": index.checked_sub(1).map(|parent| format!("seed-{parent}")),
+            "timestamp": (index + 2).to_string(),
+            "kind": "commit",
+            "transition": {"type": "snapshot", "snapshot": {
+                "schema_version": 3,
+                "session_id": id,
+                "revision": index + 1,
+                "history": history,
+                "provider": {"provider": "seed", "api": "seed", "model": "seed"},
+            }},
+            "display_messages": [{"model": index}],
+        });
+        transcript.push_str(&format!("{node}\n"));
+    }
     let path = session_dir.join(format!("1_{id}.jsonl"));
-    fs::write(&path, format!("{header}\n{message}\n"))
-        .context("write seeded session transcript")?;
+    fs::write(&path, transcript).context("write seeded session transcript")?;
     Ok(path)
 }
 
-fn workspace_key(cwd: &Path) -> String {
+pub(super) fn workspace_key(cwd: &Path) -> String {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
     let display = cwd.to_string_lossy();

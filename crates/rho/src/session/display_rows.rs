@@ -23,7 +23,7 @@ pub(super) const MODEL_REF_VERSION: u32 = 5;
 /// How a session file stores display rows; fixed by its header version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DisplayRowFormat {
-    /// Versions 1-4: every row repeats its timestamp and full message.
+    /// Version 4: every row repeats its timestamp and full message.
     Inline,
     /// Version 5: rows identical to a message of the same node reference it.
     ModelRefs,

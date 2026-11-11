@@ -9,7 +9,7 @@ use rusqlite::{params, Connection};
 use tempfile::TempDir;
 
 use super::super::persistence::{
-    session_dir_in_root, session_file_stats, workspace_key, SessionEntry, SessionStore,
+    session_dir_in_root, session_file_stats, workspace_key, SessionStore,
 };
 use super::super::{SessionIndexRecord, SessionSummary};
 use super::{
@@ -607,28 +607,7 @@ fn write_test_session(
 }
 
 fn session_transcript_contents(cwd: &Path, id: &str, created_at: u64, prompt: &str) -> String {
-    let header = SessionEntry::Session {
-        version: 3,
-        id: id.into(),
-        timestamp: created_at.to_string(),
-        cwd: cwd.to_path_buf(),
-        agent_id: None,
-        agent_fingerprint: None,
-        agent_role: crate::session::agent_identity::SessionAgentRole::Root,
-        launch_agent: None,
-        origin: None,
-        parent_session: None,
-    };
-    let message = SessionEntry::Message {
-        timestamp: created_at.to_string(),
-        message: Message::user_text(prompt),
-        display_message: None,
-    };
-    format!(
-        "{}\n{}\n",
-        serde_json::to_string(&header).unwrap(),
-        serde_json::to_string(&message).unwrap()
-    )
+    super::super::persistence::test_transcript(cwd, id, created_at, &[prompt])
 }
 
 fn test_index_record(id: &str, path: &str, first_user: &str) -> SessionIndexRecord {

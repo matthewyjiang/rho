@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt, fs,
-    io::{BufRead, BufReader, Seek},
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
 };
 
@@ -11,8 +11,6 @@ use uuid::Uuid;
 
 #[path = "tree_items.rs"]
 mod items;
-#[path = "tree_legacy.rs"]
-mod legacy;
 #[path = "tree_restore.rs"]
 mod restore;
 
@@ -20,9 +18,8 @@ pub(crate) use items::{SessionTreeItem, SessionTreeItemKind};
 
 use super::display_rows::{DisplayRowFormat, StoredDisplayRow};
 use super::persistence::{
-    next_revision, parse_timestamp, resume_normalized_history, session_id_from_path,
-    validate_session_version, PersistedSessionState, SessionEntry, StoredDisplayMessage,
-    EXPLICIT_TREE_VERSION, SESSION_VERSION,
+    parse_timestamp, session_id_from_path, validate_session_version, PersistedSessionState,
+    SessionEntry, StoredDisplayMessage, SESSION_VERSION,
 };
 use super::snapshot_delta::StoredSnapshotDelta;
 use super::{SessionIndexRecord, SessionOrigin, SessionSummary, SessionTarget};
@@ -67,10 +64,6 @@ impl NodeId {
 
     pub(crate) fn as_str(&self) -> &str {
         &self.0
-    }
-
-    fn legacy(offset: u64) -> Self {
-        Self(format!("legacy:{offset:016x}"))
     }
 }
 
@@ -175,7 +168,6 @@ impl SessionNode {
 pub(crate) struct NodeFacts {
     pub(crate) revision: Revision,
     pub(crate) model_len: usize,
-    pub(crate) has_snapshot: bool,
     pub(crate) compaction: CompactionState,
 }
 
@@ -184,7 +176,6 @@ impl NodeFacts {
         Self {
             revision: state.revision,
             model_len: state.model.len(),
-            has_snapshot: state.snapshot.is_some(),
             compaction: state.compaction.clone(),
         }
     }
@@ -257,7 +248,6 @@ pub(crate) struct SessionTree {
     created_at: Option<u64>,
     updated_at: Option<u64>,
     version: Option<u32>,
-    upgraded: bool,
     /// Cached count of parent nodes with more than one child, maintained in
     /// `insert_restored_node` so `facts()` avoids scanning every child list.
     branch_count: usize,
@@ -287,12 +277,10 @@ impl SessionTree {
         let mut reader = BufReader::new(file);
         let mut tree = Self::default();
         let expected_session_id = session_id_from_path(path);
-        let mut legacy_state = PersistedSessionState::default();
         let mut line = String::new();
 
         loop {
             line.clear();
-            let offset = reader.stream_position()?;
             if reader.read_line(&mut line)? == 0 {
                 break;
             }
@@ -306,12 +294,7 @@ impl SessionTree {
                 Err(error) => return Err(error.into()),
             };
             visit(&entry)?;
-            tree.apply_entry(
-                entry,
-                offset,
-                &mut legacy_state,
-                expected_session_id.as_deref(),
-            )?;
+            tree.apply_entry(entry, expected_session_id.as_deref())?;
         }
         tree.ensure_active_state()?;
         tree.validate_active_leaf()?;
@@ -462,17 +445,7 @@ impl SessionTree {
     }
 
     pub(crate) fn effective_format_version(&self) -> u32 {
-        if self.upgraded {
-            EXPLICIT_TREE_VERSION
-        } else {
-            self.version.unwrap_or(SESSION_VERSION)
-        }
-    }
-
-    pub(crate) fn needs_upgrade_marker(&self) -> bool {
-        self.version
-            .is_some_and(|version| version < EXPLICIT_TREE_VERSION)
-            && !self.upgraded
+        self.version.unwrap_or(SESSION_VERSION)
     }
 
     /// Row encoding for nodes in this file. The header version fixes it, so
@@ -481,13 +454,8 @@ impl SessionTree {
         DisplayRowFormat::for_version(self.effective_format_version())
     }
 
-    fn is_explicit_tree_version(&self) -> bool {
-        self.version
-            .is_some_and(|version| version >= EXPLICIT_TREE_VERSION)
-    }
-
     pub(crate) fn apply_explicit_node(&mut self, node: SessionNode) -> anyhow::Result<()> {
-        self.require_explicit_phase("node")?;
+        self.require_header("node")?;
         if let Some(ts) = parse_timestamp(&node.timestamp) {
             self.observe_timestamp(ts);
         }
@@ -501,35 +469,50 @@ impl SessionTree {
         target_id: NodeId,
         timestamp_str: &str,
     ) -> anyhow::Result<()> {
-        self.require_explicit_phase("set_leaf")?;
+        self.require_header("set_leaf")?;
         if let Some(ts) = parse_timestamp(timestamp_str) {
             self.observe_timestamp(ts);
         }
         self.set_active_leaf(target_id)
     }
 
-    pub(crate) fn apply_upgrade(
-        &mut self,
-        active_leaf_id: NodeId,
-        timestamp_str: &str,
-    ) -> anyhow::Result<()> {
-        if self.is_explicit_tree_version() {
-            anyhow::bail!("explicit tree session cannot contain a legacy upgrade marker");
-        }
-        if self.version.is_none() {
-            anyhow::bail!("legacy upgrade marker appears before the session header");
-        }
-        if self.upgraded {
-            anyhow::bail!("session contains more than one legacy upgrade marker");
-        }
-        if self.active_leaf_id.as_ref() != Some(&active_leaf_id) {
-            anyhow::bail!("legacy upgrade marker must target the current virtual leaf");
-        }
-        if let Some(ts) = parse_timestamp(timestamp_str) {
-            self.observe_timestamp(ts);
-        }
-        self.upgraded = true;
-        Ok(())
+    /// The index record of a file whose header is valid but predates the tree
+    /// format: its header facts with no transcript. Indexing it lets id
+    /// lookups find the file, so opening it fails with [`PreTreeSession`]
+    /// instead of reporting no such session; pickers skip it as empty.
+    ///
+    /// [`PreTreeSession`]: super::persistence::PreTreeSession
+    pub(super) fn pre_tree_summary_record(
+        path: &Path,
+        fallback_cwd: &Path,
+    ) -> anyhow::Result<SessionIndexRecord> {
+        let header = BufReader::new(fs::File::open(path)?)
+            .lines()
+            .next()
+            .transpose()?
+            .ok_or_else(|| anyhow::anyhow!("session file is empty"))?;
+        let SessionEntry::Session {
+            version,
+            id,
+            timestamp,
+            cwd,
+            origin,
+            parent_session,
+            ..
+        } = serde_json::from_str(&header)?
+        else {
+            anyhow::bail!("session file does not start with session metadata");
+        };
+        let tree = Self {
+            session_id: Some(id),
+            cwd: Some(cwd),
+            origin,
+            parent_session,
+            created_at: parse_timestamp(&timestamp),
+            version: Some(version),
+            ..Self::default()
+        };
+        tree.summary_record(path, fallback_cwd)
     }
 
     pub(crate) fn summary_record(
@@ -600,8 +583,6 @@ impl SessionTree {
     fn apply_entry(
         &mut self,
         entry: SessionEntry,
-        offset: u64,
-        legacy_state: &mut PersistedSessionState,
         expected_session_id: Option<&str>,
     ) -> anyhow::Result<()> {
         if let Some(ts) = parse_timestamp(entry.event_timestamp()) {
@@ -637,57 +618,22 @@ impl SessionTree {
                 }
             }
             SessionEntry::Node { node } => {
-                self.require_explicit_phase("node")?;
+                self.require_header("node")?;
                 self.insert_explicit_node(node)?;
             }
             SessionEntry::SetLeaf { target_id, .. } => {
-                self.require_explicit_phase("set_leaf")?;
+                self.require_header("set_leaf")?;
                 self.set_active_leaf(target_id)?;
-            }
-            SessionEntry::Upgrade { active_leaf_id, .. } => {
-                if self.is_explicit_tree_version() {
-                    anyhow::bail!("explicit tree session cannot contain a legacy upgrade marker");
-                }
-                if self.version.is_none() {
-                    anyhow::bail!("legacy upgrade marker appears before the session header");
-                }
-                if self.upgraded {
-                    anyhow::bail!("session contains more than one legacy upgrade marker");
-                }
-                if self.active_leaf_id.as_ref() != Some(&active_leaf_id) {
-                    anyhow::bail!("legacy upgrade marker must target the current virtual leaf");
-                }
-                self.upgraded = true;
-            }
-            legacy @ (SessionEntry::Message { .. }
-            | SessionEntry::ReplaceHistory { .. }
-            | SessionEntry::Snapshot { .. }
-            | SessionEntry::SnapshotDelta { .. }) => {
-                if self.version.is_none() {
-                    anyhow::bail!("legacy record appears before the session header");
-                }
-                if self.is_explicit_tree_version() || self.upgraded {
-                    anyhow::bail!("legacy record appears in the explicit tree phase");
-                }
-                self.apply_legacy_entry(legacy, offset, legacy_state)?;
             }
         }
         Ok(())
     }
 
-    fn require_explicit_phase(&self, record: &str) -> anyhow::Result<()> {
-        match (self.version, self.upgraded) {
-            (Some(EXPLICIT_TREE_VERSION..), _) | (Some(1..=3), true) => Ok(()),
-            (Some(_), false) => {
-                anyhow::bail!("explicit {record} record appears before the legacy upgrade marker")
-            }
-            (Some(version), true) => {
-                anyhow::bail!("unsupported upgraded session version {version}")
-            }
-            (None, _) => {
-                anyhow::bail!("explicit {record} record appears before the session header")
-            }
+    fn require_header(&self, record: &str) -> anyhow::Result<()> {
+        if self.version.is_none() {
+            anyhow::bail!("{record} record appears before the session header");
         }
+        Ok(())
     }
 
     fn state_from_snapshot(
@@ -781,14 +727,4 @@ impl SessionTree {
             (None, Some(_)) => anyhow::bail!("materialized state exists without an active leaf"),
         }
     }
-}
-
-fn snapshot_less_parent_state_changed(
-    snapshot: &SessionSnapshot,
-    parent: &PersistedSessionState,
-) -> bool {
-    resume_normalized_history(snapshot.history().to_vec())
-        != resume_normalized_history(parent.model.clone())
-        || snapshot.compaction() != &parent.compaction
-        || snapshot.revision() != parent.revision
 }

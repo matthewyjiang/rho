@@ -1410,6 +1410,14 @@ fn daemon_resume_shows_the_saved_conversation() {
     assert_pass("daemon_resume");
 }
 
+// Covers: a pre-1.11 session file is refused naming rho 2.x when resumed, and
+// leaves the resume picker working, in process and as a daemon client.
+// Owner: session persistence, through both TUI hosts
+#[test]
+fn pre_tree_session_is_refused_naming_the_release_that_opens_it() {
+    assert_pass("pre_tree_session");
+}
+
 // Covers: quit during a daemon turn leaves it running and prints a usable
 // resume hint for a new saved session, but not an untouched session.
 // Owner: interactive daemon session lifecycle
