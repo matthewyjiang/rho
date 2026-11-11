@@ -194,7 +194,7 @@ The daemon is not supported on Windows yet ([#1665](https://github.com/matthewyj
 
 ## Logs
 
-When the daemon runs under systemd with stderr connected to the journal (`JOURNAL_STREAM` matches stderr), it logs to stderr and journald records it. Otherwise it appends to `~/.rho/logs/daemon.log` (`$RHO_HOME/logs/daemon.log` with `RHO_HOME`). When a turn fails to authenticate, clients are told only how to log in, and the provider's own diagnostic is logged here as a warning. It may echo credentials, so treat the log as private; the daemon creates the file readable only by you (mode 0600).
+When the daemon runs under systemd with stderr connected to the journal (`JOURNAL_STREAM` matches stderr), it logs to stderr and journald records it. Otherwise it appends to `~/.rho/logs/daemon.log` (`$RHO_HOME/logs/daemon.log` with `RHO_HOME`). When a turn fails to authenticate, clients are told only how to log in, and the provider's own diagnostic is logged here as a warning. It may echo credentials, so treat the log as private. The daemon creates the file readable only by you (mode 0600). Under journald that mode does not apply: anyone who can read your journal can read the diagnostic, and the journal keeps it by its own retention rules.
 
 `RHO_LOG` sets the log filter with the same syntax as for other rho commands, for example `rho=debug`. The daemon defaults to `info`.
 
