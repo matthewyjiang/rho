@@ -175,7 +175,9 @@ fn transcript_events_map_to_acp_updates() {
             plain,
             SessionEvent::Compaction {
                 id: wire::CompactionId::new("compaction-1"),
-                status: wire::CompactionStatus::Started,
+                status: wire::CompactionStatus::Started {
+                    trigger: Some(wire::CompactionTrigger::Command),
+                },
             },
             vec![],
         ),

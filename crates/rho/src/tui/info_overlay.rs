@@ -111,6 +111,7 @@ impl App {
     /// Drop the refresh tasks. Called once the overlay has left the composer.
     fn end_info_overlay(&mut self) {
         self.info_tree_deferred = false;
+        self.info_compaction_read = Default::default();
         self.abort_info_refresh();
     }
 
@@ -158,8 +159,7 @@ impl App {
             .await;
     }
 
-    /// Start the session-tree read skipped while a turn was writing the tree,
-    /// and a daemon session's compaction read, which a turn refuses.
+    /// Start the session-tree read skipped while a turn was writing the tree.
     pub(super) fn start_deferred_info_tree(&mut self) -> bool {
         if !self.info_tree_deferred || self.is_ui_busy() {
             return false;
@@ -171,7 +171,6 @@ impl App {
         ) {
             return false;
         }
-        self.request_daemon_info_compaction();
         let Some(session_id) = self.current_session_id() else {
             return false;
         };

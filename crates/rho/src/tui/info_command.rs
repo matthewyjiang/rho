@@ -211,10 +211,7 @@ impl App {
         };
         self.show_info_overlay(info);
         self.start_info_refresh();
-        // In a turn the daemon refuses the read; the idle poll asks then.
-        if !self.info_tree_deferred {
-            self.request_daemon_info_compaction();
-        }
+        self.open_daemon_info_compaction();
         Ok(())
     }
 }

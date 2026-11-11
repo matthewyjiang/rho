@@ -100,9 +100,10 @@ pub use daemon::{
     StopResponse, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, HELLO,
 };
 pub use event::{
-    CardTone, CompactionCounts, CompactionId, CompactionStatus, ContentBlock, Cursor,
-    IdempotencyKey, Location, MessageId, PlanEntry, PlanStatus, RetryReason, Seq, SessionEvent,
-    SteerId, StreamId, ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus, TurnId,
+    CardTone, CompactionCounts, CompactionId, CompactionStatus, CompactionTrigger, ContentBlock,
+    Cursor, IdempotencyKey, Location, MessageId, PlanEntry, PlanStatus, RetryReason, Seq,
+    SessionEvent, SteerId, StreamId, ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
+    TurnId,
 };
 pub use goal::{SessionGoal, SessionGoalAction, SessionGoalPhase, SessionGoalStep};
 pub use grant::{GrantAccess, GrantWorkspaces, SessionGrant};

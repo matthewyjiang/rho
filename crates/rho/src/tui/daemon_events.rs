@@ -28,22 +28,39 @@ use std::{collections::HashMap, time::Duration};
 
 use rho_protocol::{
     display::{Presentation, ToolCard, ToolCardStatus},
-    CompactionStatus, ContentBlock, InputRequest, InputRequestId, JobState, LoginId, LoginOutcome,
-    LoginPrompt, MessageId, PlanEntry, PlanStatus, Replay, RetryReason, SessionEvent, SteerId,
-    ToolCallId as WireCallId, ToolCallUpdate, ToolStatus, TurnId, TurnOutcome,
+    CompactionStatus, CompactionTrigger, ContentBlock, InputRequest, InputRequestId, JobState,
+    LoginId, LoginOutcome, LoginPrompt, MessageId, PlanEntry, PlanStatus, Replay, RetryReason,
+    SessionEvent, SteerId, ToolCallId as WireCallId, ToolCallUpdate, ToolStatus, TurnId,
+    TurnOutcome,
 };
 use rho_sdk::{ProviderErrorKind, ProviderStreamResetReason, SteeringId, ToolCallId};
 
 use super::{
     activity::ProviderRetryHint,
-    compaction_display::{
-        compaction_call_id, running_card, CompactionDisplayFacts, CompactionUiOutcome,
-    },
+    compaction_display::{CompactionDisplayFacts, CompactionUiOutcome},
     daemon_inputs::{AnswerRefusal, OpenInputs},
     transcript_events::final_answer_delta,
     FinalAnswerDelta, StreamKind,
 };
 use crate::tools::todo::{TodoItem, TodoList, TodoStatus};
+
+/// Why the daemon did not answer a report.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ReportRefusal {
+    pub(super) message: String,
+    /// The session was in a turn or a change: the report can be read once
+    /// that ends.
+    pub(super) busy: bool,
+}
+
+impl From<String> for ReportRefusal {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            busy: false,
+        }
+    }
+}
 
 /// One change to what the TUI shows of a daemon session.
 #[derive(Clone, Debug, PartialEq)]
@@ -75,6 +92,11 @@ pub(super) enum DaemonView {
         call: ToolCallId,
         presentation: Presentation,
     },
+    /// A compaction started: its card opens. `command` when a `/compact`
+    /// prompt started it, so the turn is the compaction.
+    CompactionStarted {
+        command: bool,
+    },
     /// The compaction under way ended: its card closes, and the status
     /// line says how.
     CompactionEnded(CompactionUiOutcome),
@@ -97,7 +119,7 @@ pub(super) enum DaemonView {
     /// A report the person asked for, as the daemon presents it.
     Report {
         report: rho_protocol::SessionReport,
-        result: Result<serde_json::Value, String>,
+        result: Result<serde_json::Value, ReportRefusal>,
     },
     /// What the interactive login the TUI started in the daemon did.
     Login(LoginUpdate),
@@ -565,16 +587,11 @@ fn todo_list(entries: &[PlanEntry]) -> Option<TodoList> {
 /// The compaction card and status line the in-process TUI shows for
 /// `status`.
 fn compaction(status: CompactionStatus) -> Vec<DaemonView> {
-    let call = compaction_call_id();
     let outcome = match status {
-        CompactionStatus::Started => {
-            return vec![
-                DaemonView::ToolRunning {
-                    call,
-                    card: running_card(),
-                },
-                DaemonView::Status("compacting context".into()),
-            ]
+        CompactionStatus::Started { trigger } => {
+            return vec![DaemonView::CompactionStarted {
+                command: trigger == Some(CompactionTrigger::Command),
+            }]
         }
         CompactionStatus::Completed { counts } => {
             CompactionUiOutcome::from_facts(CompactionDisplayFacts::from_wire(counts))

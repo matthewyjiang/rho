@@ -302,9 +302,15 @@ fn every_session_event_round_trips_through_its_wire_form() {
         (
             SessionEvent::Compaction {
                 id: CompactionId::new("c1"),
-                status: CompactionStatus::Started,
+                status: CompactionStatus::Started {
+                    trigger: Some(CompactionTrigger::Command),
+                },
             },
-            json!({"type": "compaction", "id": "c1", "status": {"type": "started"}}),
+            json!({
+                "type": "compaction",
+                "id": "c1",
+                "status": {"type": "started", "trigger": "command"},
+            }),
         ),
         (
             SessionEvent::Compaction {

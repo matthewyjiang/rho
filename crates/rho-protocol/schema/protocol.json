@@ -704,6 +704,17 @@
       "anyOf": [
         {
           "properties": {
+            "trigger": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CompactionTrigger"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "What started it. Absent from a daemon that does not say."
+            },
             "type": {
               "const": "started",
               "type": "string"
@@ -776,6 +787,26 @@
         }
       ],
       "description": "Where a compaction is. Every status but `started` ends it."
+    },
+    "CompactionTrigger": {
+      "anyOf": [
+        {
+          "const": "command",
+          "description": "A `/compact` prompt: the turn runs the compaction and no model\nrequest, and its reply says again what the compaction did.",
+          "type": "string"
+        },
+        {
+          "const": "automatic",
+          "description": "The session, within a model turn: the context reached its threshold,\nor a request overflowed the model's window.",
+          "type": "string"
+        },
+        {
+          "description": "Any other value: one a later protocol minor adds.",
+          "type": "string",
+          "x-rho-other": true
+        }
+      ],
+      "description": "What started a compaction."
     },
     "ConfigCategory": {
       "description": "A settings page; [`SettingSpec::category`] names its `id`.",

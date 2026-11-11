@@ -677,10 +677,11 @@ struct App {
     /// over it.
     daemon_login_selected: Option<rho_protocol::ModelRef>,
     daemon_title: Option<String>,
-    /// How the daemon session's last compaction ended, as its status line
-    /// says it, and the transcript's length then, until the turn rests; see
+    /// Set while the daemon session's turn is a `/compact`; see
     /// `daemon_transcript`.
-    daemon_compaction_rest: Option<(&'static str, usize)>,
+    daemon_compact_turn: Option<daemon_transcript::DaemonCompactTurn>,
+    /// The open `/info` overlay's read of the daemon session's compaction.
+    info_compaction_read: daemon_reports::InfoCompactionRead,
     /// The report the person last asked the daemon for and still waits on;
     /// see `daemon_reports`.
     awaited_daemon_report: Option<rho_protocol::SessionReport>,

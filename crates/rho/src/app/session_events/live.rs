@@ -6,9 +6,9 @@ use std::{
 };
 
 use rho_protocol::{
-    display::Presentation, CompactionCounts, CompactionId, CompactionStatus, ContentBlock,
-    Location, MessageId, PlanEntry, RetryReason, SessionEvent as WireEvent, ToolCallId,
-    ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
+    display::Presentation, CompactionCounts, CompactionId, CompactionStatus, CompactionTrigger,
+    ContentBlock, Location, MessageId, PlanEntry, RetryReason, SessionEvent as WireEvent,
+    ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
 };
 use rho_sdk::{
     model,
@@ -515,7 +515,9 @@ impl LiveEvents {
                 name,
                 arguments_delta,
             } => self.streamed_call(*index, id.as_deref(), name.as_deref(), arguments_delta),
-            RunEvent::CompactionStarted { .. } => self.compaction_started(),
+            RunEvent::CompactionStarted { .. } => {
+                self.compaction_started(CompactionTrigger::Automatic)
+            }
             RunEvent::CompactionCompleted { outcome, .. } => {
                 self.compaction_ended(CompactionEnd::Completed(outcome))
             }
@@ -625,14 +627,16 @@ impl LiveEvents {
 
     /// A compaction starting: the run's automatic one, or one a host runs
     /// between turns, such as `/compact`, which emits no run events.
-    pub(crate) fn compaction_started(&mut self) -> Vec<WireEvent> {
+    pub(crate) fn compaction_started(&mut self, trigger: CompactionTrigger) -> Vec<WireEvent> {
         let id = fresh_compaction_id();
         self.compaction = Some(id.clone());
         // Called outside [`Self::map`] too: a compaction ends any message.
         self.message = None;
         vec![WireEvent::Compaction {
             id,
-            status: CompactionStatus::Started,
+            status: CompactionStatus::Started {
+                trigger: Some(trigger),
+            },
         }]
     }
 

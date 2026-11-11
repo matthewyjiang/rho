@@ -129,7 +129,7 @@ impl<O: Write, E: Write> TextView<O, E> {
     /// shows as the turn's end.
     fn compaction(&mut self, status: &CompactionStatus) -> io::Result<()> {
         match status {
-            CompactionStatus::Started => self.block("• compact context\n"),
+            CompactionStatus::Started { .. } => self.block("• compact context\n"),
             CompactionStatus::Failed { .. } => self.block("• compact context failed\n"),
             CompactionStatus::Completed { .. } | CompactionStatus::Cancelled => Ok(()),
             // `CompactionStatus` is non-exhaustive.

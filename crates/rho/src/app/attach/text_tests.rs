@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use rho_protocol::{
-    AnswerStop, CardTone, CompactionId, CompactionStatus, ContentBlock, MessageId, SessionEvent,
-    ToolCallId, ToolCallUpdate, ToolStatus, TurnId, TurnOutcome,
+    AnswerStop, CardTone, CompactionId, CompactionStatus, CompactionTrigger, ContentBlock,
+    MessageId, SessionEvent, ToolCallId, ToolCallUpdate, ToolStatus, TurnId, TurnOutcome,
 };
 
 use super::TextView;
@@ -57,7 +57,9 @@ fn text_output_streams_the_conversation_and_tells_the_rest_on_stderr() {
             text: "retrying the request".into(),
         },
         SessionEvent::ResponseDiscarded,
-        compaction(CompactionStatus::Started),
+        compaction(CompactionStatus::Started {
+            trigger: Some(CompactionTrigger::Automatic),
+        }),
         compaction(CompactionStatus::Failed {
             error: "provider unavailable".into(),
         }),

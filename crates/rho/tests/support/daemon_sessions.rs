@@ -632,7 +632,7 @@ async fn compact_reports_its_compaction_and_answers_with_the_result() {
         .filter_map(|(_, event)| match event {
             SessionEvent::UserMessage { .. } => Some("user_message"),
             SessionEvent::Compaction {
-                status: CompactionStatus::Started,
+                status: CompactionStatus::Started { .. },
                 ..
             } => Some("compaction_started"),
             SessionEvent::Compaction {

@@ -3,13 +3,35 @@
 //! The daemon scenarios reuse the in-process steps unchanged: what `/compact`
 //! shows and how it queues must not depend on which side runs the session.
 
-#[cfg(unix)]
-use crate::scenario::Scenario;
-use crate::{harness::WaitTimeout, keys::Key, scenario::Step};
+use anyhow::{ensure, Context, Result};
+
+use crate::{
+    harness::{PtyHarness, WaitTimeout},
+    keys::Key,
+    scenario::{Scenario, Step},
+};
 
 #[cfg(unix)]
-use super::{daemon_resume::DAEMON_ENV, DEFAULT_SIZE};
-use super::{fixture_release::release_compact_fixture, STARTUP, STREAM};
+use super::daemon_resume::DAEMON_ENV;
+use super::{fixture_release::release_compact_fixture, DEFAULT_SIZE, STARTUP, STREAM};
+
+pub(super) const COMPACT_COMPLETES: Scenario = Scenario::new(
+    "compact_completes",
+    "A completed /compact shows its card alone and says the context compacted",
+    DEFAULT_SIZE,
+    COMPACT_COMPLETES_STEPS,
+    /*smoke*/ false,
+);
+
+#[cfg(unix)]
+pub(super) const DAEMON_COMPACT_COMPLETES: Scenario = Scenario::new(
+    "daemon_compact_completes",
+    "A daemon session's completed /compact shows as the in-process one does",
+    DEFAULT_SIZE,
+    COMPACT_COMPLETES_STEPS,
+    /*smoke*/ false,
+)
+.with_env(DAEMON_ENV);
 
 #[cfg(unix)]
 pub(super) const DAEMON_TYPE_DURING_COMPACT: Scenario = Scenario::new(
@@ -101,3 +123,72 @@ pub(super) const SUBMIT_DURING_COMPACT_STEPS: &[Step] = &[
     },
     Step::CtrlCExit,
 ];
+
+/// The prompt sent once `/compact` ended, whose row bounds what it showed.
+const AFTER_COMPACT: &str = "after the compact";
+
+const COMPACT_COMPLETES_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("seed_history"),
+    Step::SubmitText("fixture calibrated context history fresh"),
+    Step::WaitText {
+        text: "Calibration history ready: fresh.",
+        timeout: STREAM,
+    },
+    Step::SubmitText("fixture calibrated context history resumed"),
+    Step::WaitText {
+        text: "Calibration history ready: resumed.",
+        timeout: STREAM,
+    },
+    Step::Phase("compact"),
+    Step::SubmitText("/compact"),
+    Step::WaitText {
+        text: "context compacted",
+        timeout: STREAM,
+    },
+    Step::Phase("next_turn"),
+    Step::SubmitText(AFTER_COMPACT),
+    Step::WaitText {
+        text: "fixture response: after the compact",
+        timeout: STREAM,
+    },
+    Step::Custom(compact_showed_its_card_alone),
+    Step::CtrlCExit,
+];
+
+/// Between the seed turn's footer and the next prompt, `/compact` left its
+/// card with the token reduction and nothing else: no row for the command,
+/// no reply repeating the card, and no footer of its own. Run once the next
+/// turn answered, so anything `/compact` would still show is on screen.
+fn compact_showed_its_card_alone(harness: &mut PtyHarness) -> Result<()> {
+    let screen = harness.screen().contents();
+    let rows = harness.screen().rows_text();
+    let next_prompt = rows
+        .iter()
+        .position(|row| row.trim() == AFTER_COMPACT)
+        .with_context(|| format!("the next prompt's row is missing:\n{screen}"))?;
+    let seed_footer = rows[..next_prompt]
+        .iter()
+        .rposition(|row| row.contains("Worked for"))
+        .with_context(|| format!("the seed turn's footer is missing:\n{screen}"))?;
+    let shown: Vec<_> = rows[seed_footer + 1..next_prompt]
+        .iter()
+        .map(|row| row.trim())
+        .filter(|row| !row.is_empty() && !row.starts_with("session titled:"))
+        .collect();
+    ensure!(
+        matches!(
+            shown.as_slice(),
+            [header, tokens, messages]
+                if header.ends_with("compact")
+                    && tokens.contains('→') && tokens.contains("tokens") && tokens.contains('−')
+                    && messages.contains("messages")
+        ),
+        "/compact showed more or less than its card: {shown:#?}\n{screen}"
+    );
+    Ok(())
+}
