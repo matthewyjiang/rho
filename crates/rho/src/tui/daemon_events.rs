@@ -70,8 +70,12 @@ pub(super) enum DaemonView {
     Clear,
     /// Drop input prompts before rebuilding them from a tail replay.
     InputsReset,
-    /// A user message, as the transcript shows it.
-    User(String),
+    /// A user message, as the transcript shows it. `replayed` when it is
+    /// history, not a prompt the daemon just took.
+    User {
+        text: String,
+        replayed: bool,
+    },
     /// More of the agent's reply or reasoning. `opens` starts a new
     /// transcript row, as a new message does, instead of extending the last.
     /// `replayed` text was said before this TUI followed: history, to
@@ -128,6 +132,12 @@ pub(super) enum DaemonView {
     Login(LoginUpdate),
     /// The daemon's jobs, asked for to refresh the subagent rail.
     Jobs(Result<Vec<rho_protocol::JobSummary>, String>),
+    /// The session's processes, asked for to refresh the process rail, and
+    /// the output `asked` for the peek view.
+    Processes {
+        asked: Option<rho_protocol::ProcessOutputParams>,
+        result: Result<rho_protocol::SessionProcessesResponse, String>,
+    },
     /// The daemon's settings, read once the session attached and again on
     /// each reconnect, or why they could not be read.
     SettingsLoaded(Result<Box<super::daemon_settings::DaemonSettings>, String>),
@@ -341,7 +351,10 @@ impl DaemonEvents {
                 );
                 let text = user_text(&content);
                 if !text.is_empty() {
-                    views.push(DaemonView::User(text));
+                    views.push(DaemonView::User {
+                        text,
+                        replayed: self.replay_end.is_some(),
+                    });
                 }
                 views
             }

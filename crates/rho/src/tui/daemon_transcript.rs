@@ -37,9 +37,18 @@ impl App {
             match view {
                 DaemonView::Clear => self.clear_daemon_transcript(),
                 DaemonView::InputsReset => self.drop_daemon_inputs(),
-                DaemonView::User(text) => {
+                DaemonView::User { text, replayed } => {
                     self.finish_streams();
-                    self.insert_entry(&Entry::User(text));
+                    // The hub's own prompt has no row, as in process. A
+                    // replayed row is history, whatever it reads.
+                    let hub_launch = !replayed
+                        && self
+                            .daemon_hub_launch
+                            .take_if(|sent| *sent == text)
+                            .is_some();
+                    if !hub_launch {
+                        self.insert_entry(&Entry::User(text));
+                    }
                 }
                 // A `/compact` turn's only text is its reply, which says
                 // again what the card shows.
@@ -167,6 +176,9 @@ impl App {
                 DaemonView::Report { report, result } => self.show_daemon_report(report, result),
                 DaemonView::Login(update) => self.show_daemon_login(update, terminal).await?,
                 DaemonView::Jobs(jobs) => self.show_daemon_jobs(jobs),
+                DaemonView::Processes { asked, result } => {
+                    self.show_daemon_processes(asked, result);
+                }
                 DaemonView::SettingsLoaded(Ok(settings)) => {
                     self.show_daemon_settings(SettingsUpdate::Loaded(settings));
                 }
@@ -344,6 +356,10 @@ impl App {
         if !self.turn.is_provider_turn() {
             return;
         }
+        // A hub start whose prompt never came back hides no later prompt.
+        // Only a turn's own end says so: a rest that tidies an idle session
+        // may show between the hub's send and its prompt coming back.
+        self.daemon_hub_launch = None;
         self.daemon_rail.turn_ended();
         self.daemon_turn_rested_for_info();
         // Read before `stop_loading` clears the turn clock.

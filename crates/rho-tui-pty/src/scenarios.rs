@@ -932,6 +932,12 @@ const ALL_SCENARIOS: &[Scenario] = &[
     PROCESS_RAIL_SCENARIO,
     PROCESS_RAIL_PEEK_SCENARIO,
     PENDING_INPUT_BELOW_ACTIVITY_SCENARIO,
+    #[cfg(unix)]
+    process_rail::DAEMON_PROCESS_RAIL_SCENARIO,
+    #[cfg(unix)]
+    process_rail::DAEMON_PROCESS_RAIL_PEEK_SCENARIO,
+    #[cfg(unix)]
+    process_rail::DAEMON_PENDING_INPUT_BELOW_ACTIVITY_SCENARIO,
     Scenario::new(
         "tool_card_hover",
         "Lift tool-card text on hover and expand the card on click",

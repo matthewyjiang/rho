@@ -92,6 +92,22 @@ impl DaemonSession {
             .request_jobs()
     }
 
+    /// Ask for the session's processes, and one's output from a cursor on,
+    /// without waiting for the active turn; they arrive as
+    /// `DaemonView::Processes`.
+    pub(in crate::tui) fn request_processes(
+        &self,
+        output: Option<rho_protocol::ProcessOutputParams>,
+    ) -> anyhow::Result<()> {
+        if self.ended {
+            anyhow::bail!(LOST);
+        }
+        self.requests
+            .as_ref()
+            .expect("attached session has requests")
+            .request_processes(output)
+    }
+
     /// A blocking delete of saved sessions through the daemon, which can
     /// let go of one it holds open: one answer per id, in order. For the
     /// blocking pool only, never a runtime thread.

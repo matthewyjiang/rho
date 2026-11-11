@@ -72,6 +72,14 @@ impl ProcessPanel {
             .map_err(|error| anyhow::anyhow!("{error}"))
     }
 
+    /// The row of `process_id`, when the rail has one.
+    pub(super) fn process(&self, process_id: &str) -> Option<&LiveProcessSummary> {
+        self.rail
+            .items()
+            .iter()
+            .find(|process| process.process_id == process_id)
+    }
+
     pub(super) fn ingest(&mut self, processes: Vec<LiveProcessSummary>) -> bool {
         self.rail.ingest(processes)
     }

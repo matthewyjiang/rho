@@ -67,6 +67,7 @@ mod daemon_jobs;
 mod daemon_launch;
 mod daemon_login;
 mod daemon_options;
+mod daemon_processes;
 mod daemon_prompt;
 mod daemon_reports;
 #[cfg(unix)]
@@ -681,6 +682,10 @@ struct App {
     /// Set while the daemon session's turn is a `/compact`; see
     /// `daemon_transcript`.
     daemon_compact_turn: Option<daemon_transcript::DaemonCompactTurn>,
+    /// The `/workflow:` prompt the hub sent the daemon session whose user
+    /// message has not come back yet, at most until the turn under way
+    /// ends or another session is followed; see `daemon_workflows`.
+    daemon_hub_launch: Option<String>,
     /// The open `/info` overlay's read of the daemon session's compaction.
     info_compaction_read: daemon_reports::InfoCompactionRead,
     /// The report the person last asked the daemon for and still waits on;

@@ -81,6 +81,7 @@ mod next_turn;
 mod observe;
 mod open;
 mod options;
+mod processes;
 mod queued;
 mod reopen;
 mod setup;
@@ -182,6 +183,9 @@ struct LoadedSession {
     feed: Feed,
     /// Shared inventory handles; reads never wait for the active turn.
     mcp: Mutex<crate::app::session_mcp::SessionMcp>,
+    /// The session's background processes, when it may run any; reads
+    /// never wait for the active turn.
+    processes: Mutex<Option<crate::tools::process::ProcessManager>>,
     /// Goal lifecycle shared with control requests while the runtime is busy.
     goal: Mutex<goal::GoalControl>,
     /// Turns the runtime's events into the feed's; only the turn under way
@@ -422,6 +426,7 @@ impl LoadedSession {
             workspace: runtime.workspace_root().to_path_buf(),
             live: Mutex::new(live),
             mcp: Mutex::new(crate::app::session_mcp::SessionMcp::of(&runtime)),
+            processes: Mutex::new(runtime.tools().processes().cloned()),
             feed,
             goal: Mutex::default(),
             job,
