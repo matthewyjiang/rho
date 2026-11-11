@@ -56,6 +56,8 @@ mod daemon_reports;
 #[cfg(unix)]
 mod daemon_restart;
 #[cfg(unix)]
+mod daemon_restart_mcp;
+#[cfg(unix)]
 mod daemon_resume;
 #[cfg(unix)]
 mod daemon_rewind;
@@ -68,12 +70,17 @@ mod daemon_tree;
 // Starts a real command workflow, as `workflow_background` does.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod daemon_workflow;
+// Starts a real command workflow too.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+mod daemon_workflow_hold;
 mod diff_viewer;
 mod dispatch;
 mod doctor;
 mod document_attachment;
 mod edit_diff;
 mod fast_discovery;
+#[cfg(unix)]
+mod fifo;
 mod file_palette;
 mod first_run;
 mod goal;
@@ -604,6 +611,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     no_save::DAEMON_NO_SAVE_SESSION_SCENARIO,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     daemon_workflow::SCENARIO,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    daemon_workflow_hold::SCENARIO,
     #[cfg(unix)]
     daemon_switch::SCENARIO,
     #[cfg(unix)]
@@ -638,6 +647,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_subagents::ATTACH_VIEW_QUIT_RESTORES,
     #[cfg(unix)]
     daemon_restart::SCENARIO,
+    #[cfg(unix)]
+    daemon_restart_mcp::SCENARIO,
     #[cfg(unix)]
     daemon_goal::SCENARIO,
     #[cfg(unix)]

@@ -93,6 +93,7 @@ mod unix {
     mod auth;
     mod initial_settings;
     mod requests;
+    mod tool_sources;
 
     use initial_settings::{carry, changes_between, configure_all, Refused};
 
@@ -122,6 +123,9 @@ mod unix {
         /// this connection's subscription nor the TUI's registration.
         config_changes: mpsc::UnboundedReceiver<ConfigChangedParams>,
         settings: anyhow::Result<DaemonSettings>,
+        /// Whether the session's MCP servers connect, read again: the
+        /// restarted daemon starts them again.
+        tool_sources: ToolSources,
     }
 
     /// Attaching a session again once the daemon restarted.
@@ -161,6 +165,7 @@ mod unix {
                 Ok(response) => Ok(Reattached {
                     response,
                     relinked: Some(Relinked {
+                        tool_sources: ToolSources::read(&link, &params.session).await,
                         link,
                         routed,
                         session: params.session,
@@ -192,6 +197,7 @@ mod unix {
                         Ok(Reattached {
                             response,
                             relinked: Some(Relinked {
+                                tool_sources: ToolSources::read(&link, &session).await,
                                 link,
                                 routed,
                                 session,
@@ -263,6 +269,9 @@ mod unix {
         logins: Option<mpsc::UnboundedReceiver<LoginEvent>>,
         /// Whether the session's MCP servers still connect.
         tool_sources: ToolSources,
+        /// The watch of them connecting again after a daemon restart; while
+        /// it runs, only it says they have.
+        reconnecting: Option<tool_sources::Reconnecting>,
     }
 
     impl DaemonSession {
@@ -391,6 +400,7 @@ mod unix {
                 reattach: None,
                 logins: None,
                 tool_sources,
+                reconnecting: None,
             };
             session.pending.push(settings_loaded(settings));
             for change in queued {
@@ -477,6 +487,10 @@ mod unix {
                 Some(update) = auth::next_login(&mut self.logins) => {
                     views.push(DaemonView::Login(update));
                 }
+                () = tool_sources::connected(&mut self.reconnecting) => {
+                    self.tool_sources = ToolSources::Loaded;
+                    views.push(DaemonView::ToolSourcesLoaded);
+                }
             }
             // A settings change that arrived meanwhile rides along, so a
             // streaming turn's events never hold it back.
@@ -527,6 +541,7 @@ mod unix {
                         session,
                         config_changes,
                         settings,
+                        tool_sources,
                     }) = relinked
                     {
                         // A session with no file that took a prompt: the
@@ -543,6 +558,21 @@ mod unix {
                         }));
                         self.id = session.clone();
                         self.routed = routed;
+                        // A prompt waits again while the restarted daemon
+                        // connects the session's servers again.
+                        self.reconnecting = match tool_sources {
+                            ToolSources::Loading => Some(tool_sources::Reconnecting::watch(
+                                Arc::clone(&link),
+                                session.clone(),
+                            )),
+                            ToolSources::Loaded => None,
+                        };
+                        if self.tool_sources == ToolSources::Loading
+                            && tool_sources == ToolSources::Loaded
+                        {
+                            views.push(DaemonView::ToolSourcesLoaded);
+                        }
+                        self.tool_sources = tool_sources;
                         self.target.send_replace(Target::Attached { link, session });
                     }
                     self.position.reattached(&response);

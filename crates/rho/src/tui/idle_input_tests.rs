@@ -50,6 +50,7 @@ fn held_turn(display: &str) -> HeldTurn {
         turn: TurnPrompt::standard(display.to_owned(), display.to_owned()),
         media: Vec::new(),
         paste_segments: Vec::new(),
+        origin: super::HeldOrigin::Composer,
     }
 }
 

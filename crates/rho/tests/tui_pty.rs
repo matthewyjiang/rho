@@ -1304,6 +1304,15 @@ fn daemon_restart_keeps_the_tui_following_its_session() {
     assert_pass("daemon_restart");
 }
 
+// Covers: with RHO_TUI_DAEMON=1, a prompt sent while a restarted daemon
+// connects the session's MCP servers again is held, as at startup, and
+// runs once they have.
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_restart_holds_a_prompt_while_mcp_connects_again() {
+    assert_pass("daemon_restart_mcp");
+}
+
 // Covers: a goal set from the TUI lives in the daemon session: a TUI that
 // reopens the session after quitting sees it blocked and resumes it.
 // Owner: daemon goal controller and the TUI as its client (#1667)
@@ -1553,6 +1562,17 @@ fn daemon_saves_and_deletes_a_key_for_the_tui() {
 #[test]
 fn daemon_runs_the_workflow_the_hub_starts() {
     assert_pass("daemon_workflow");
+}
+
+// Covers: with RHO_TUI_DAEMON=1, a workflow the hub starts during MCP
+// connect is held, Esc cancels it, and one still held starts once the
+// servers connected.
+// Owner: interactive TUI as a daemon client
+// Requires the verified-handle workflow command adapter; other platforms fail closed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn daemon_holds_a_hub_workflow_start_during_mcp_connect() {
+    assert_pass("daemon_workflow_hold");
 }
 
 // Covers: with RHO_TUI_DAEMON=1, a turn ends while the workflow its tools

@@ -10,8 +10,13 @@ impl DaemonSession {
         self.tool_sources == ToolSources::Loading
     }
 
+    /// The servers connected. Not while a restarted daemon connects them
+    /// again: the watch that started before the restart may say so late,
+    /// and only the one after it knows.
     pub(in crate::tui) fn tool_sources_loaded(&mut self) {
-        self.tool_sources = ToolSources::Loaded;
+        if self.reconnecting.is_none() {
+            self.tool_sources = ToolSources::Loaded;
+        }
     }
 
     /// Request live inventory without waiting for the active turn.
