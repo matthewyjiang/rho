@@ -177,3 +177,52 @@ fn vacuum_returns_deleted_session_pages_to_the_filesystem() {
         1
     );
 }
+
+// Covers: evidence an older schema indexed from a session whose header is
+// format 1-3 must not stay searchable once rho refuses to open that session,
+// even though the file's size and mtime still match the cached stamp.
+// Owner: search index SQLite migration.
+#[test]
+fn schema_upgrade_drops_evidence_from_pre_tree_sessions() {
+    let root = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
+    session
+        .append_message(&Message::user_text("pretreeneedle"))
+        .unwrap();
+    let cancellation = CancellationToken::new();
+    let matches = |connection: &Connection| {
+        connection
+            .query_row(
+                "select count(*) from evidence_fts where evidence_fts match 'pretreeneedle'",
+                [],
+                |row| row.get::<_, usize>(0),
+            )
+            .unwrap()
+    };
+    let mut connection = open(root.path()).unwrap();
+    refresh(&mut connection, root.path(), false, &cancellation).unwrap();
+    assert_eq!(matches(&connection), 1);
+
+    // The cache an earlier rho 3 left: schema 4, with evidence from a file
+    // whose header (same size, same mtime) declares format 2.
+    let modified = fs::metadata(session.path()).unwrap().modified().unwrap();
+    let transcript = fs::read_to_string(session.path()).unwrap();
+    fs::write(
+        session.path(),
+        transcript.replacen("\"version\":5", "\"version\":2", 1),
+    )
+    .unwrap();
+    fs::File::options()
+        .write(true)
+        .open(session.path())
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    connection.pragma_update(None, "user_version", 4).unwrap();
+    drop(connection);
+
+    let mut connection = open(root.path()).unwrap();
+    refresh(&mut connection, root.path(), false, &cancellation).unwrap();
+    assert_eq!(matches(&connection), 0);
+}

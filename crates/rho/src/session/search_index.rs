@@ -52,7 +52,7 @@ pub(super) fn open(root: &Path) -> anyhow::Result<Connection> {
     Ok(database.into_connection())
 }
 
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, thiserror::Error)]
 enum OpenError {
@@ -105,8 +105,9 @@ fn migrate(connection: &mut Connection) -> Result<(), OpenError> {
     if version > 0 {
         // Version 1 anchors identified positions without binding their contents;
         // version 2 indexed the sessions tool's own calls and results; version 3
-        // did not mark the sessions person-facing scopes leave out. Discard the
-        // derived evidence and cursor to rebuild with current extraction.
+        // did not mark the sessions person-facing scopes leave out; version 4
+        // held evidence from format 1-3 sessions, which no longer open. Discard
+        // the derived evidence and cursor to rebuild with current extraction.
         let marks_person_facing: bool = transaction.query_row(
             "select exists(select 1 from pragma_table_info('files') where name='person_facing')",
             [],
@@ -410,9 +411,9 @@ fn index_file(
     let header_bytes = reader.read_line(&mut line)? as u64;
     let header: serde_json::Value = serde_json::from_str(&line)?;
     anyhow::ensure!(header["type"] == "session", "missing session header");
-    let version = header["version"].as_u64().unwrap_or(1);
+    let version = header["version"].as_u64().unwrap_or(0);
     anyhow::ensure!(
-        (1..=u64::from(super::persistence::SESSION_VERSION)).contains(&version),
+        super::persistence::SUPPORTED_SESSION_VERSIONS.contains(&version),
         "unsupported session format {version}"
     );
     anyhow::ensure!(

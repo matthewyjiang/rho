@@ -1,7 +1,4 @@
-use std::{fs::OpenOptions, io::Write};
-
 use anyhow::{ensure, Context, Result};
-use serde_json::json;
 
 use crate::{
     env::IsolatedHome,
@@ -34,16 +31,14 @@ pub(super) const SESSIONS_TOOL_SCENARIO: Scenario = Scenario::new(
 .with_setup(setup);
 
 fn setup(home: &IsolatedHome) -> Result<()> {
-    let path = write_seed_session(home, &home.workspace, &home.workspace, SESSION_ID, EVIDENCE)?;
     // A following anchor is not a continuation of this passage. A full read
     // must not claim "more available" merely because next_anchor is populated.
-    writeln!(
-        OpenOptions::new().append(true).open(path)?,
-        "{}",
-        json!({
-            "type": "message", "timestamp": "3",
-            "message": {"User": [{"Text": "a separate historical passage"}]},
-        }),
+    write_seed_session(
+        home,
+        &home.workspace,
+        &home.workspace,
+        SESSION_ID,
+        &[EVIDENCE, "a separate historical passage"],
     )?;
     Ok(())
 }

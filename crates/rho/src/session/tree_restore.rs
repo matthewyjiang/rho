@@ -5,8 +5,8 @@ use rho_sdk::SessionSnapshot;
 use super::super::snapshot_delta::{SnapshotDeltaBase, SnapshotReplay};
 
 use super::{
-    snapshot_less_parent_state_changed, LoadedNode, NodeId, PersistedSessionState, SessionNode,
-    SessionNodeKind, StoredDisplayMessage, StoredSnapshotDelta, StoredStateTransition,
+    LoadedNode, NodeId, PersistedSessionState, SessionNode, SessionNodeKind, StoredDisplayMessage,
+    StoredSnapshotDelta, StoredStateTransition,
 };
 
 #[cfg(test)]
@@ -55,19 +55,8 @@ impl super::SessionTree {
                     })?
                     .facts()
                     .clone();
-                let parent_snapshot = self.parent_snapshot(parent_id)?;
                 let snapshot = snapshot.as_ref().clone();
-                let state_changed = match parent_snapshot.as_ref() {
-                    Some(parent_snapshot) => snapshot != **parent_snapshot,
-                    // Message-only v1 parents keep restored state without a
-                    // complete snapshot. A full snapshot child may restate that
-                    // current revision when materializing the explicit tree,
-                    // including resume-time history normalization.
-                    None => {
-                        let parent_state = self.reconstruct_state(parent_id)?;
-                        snapshot_less_parent_state_changed(&snapshot, &parent_state)
-                    }
-                };
+                let state_changed = snapshot != *self.parent_snapshot(parent_id)?;
                 if state_changed && snapshot.revision() <= parent_facts.revision {
                     anyhow::bail!(
                         "node '{}' changed state without advancing parent revision {}",
@@ -105,9 +94,6 @@ impl super::SessionTree {
             anyhow::anyhow!("node '{}' names missing parent '{parent_id}'", node.id)
         })?;
         let parent_facts = parent.facts().clone();
-        if !parent_facts.has_snapshot {
-            anyhow::bail!("parent '{parent_id}' has no complete snapshot");
-        }
         if node.kind == SessionNodeKind::Compaction {
             anyhow::bail!("compaction node '{}' must store a full snapshot", node.id);
         }
@@ -153,7 +139,6 @@ impl super::SessionTree {
         let facts = super::NodeFacts {
             revision: replay.snapshot.header.revision(),
             model_len: replay.snapshot.history.len(),
-            has_snapshot: true,
             compaction: replay.snapshot.header.compaction().clone(),
         };
         replay.display.extend(node.display_messages.iter().cloned());
@@ -162,8 +147,8 @@ impl super::SessionTree {
 
     /// The active leaf's complete snapshot as the base for the next delta,
     /// whether materialized or still a pending replay. `None` when there is no
-    /// leaf, the leaf has no complete snapshot (message-only v1 state), or a
-    /// `set_leaf` left it unmaterialized; saves then write a full snapshot.
+    /// leaf or a `set_leaf` left it unmaterialized; saves then write a full
+    /// snapshot.
     pub(in crate::session) fn active_delta_base(&self) -> Option<SnapshotDeltaBase<'_>> {
         if let Some(replay) = &self.active_replay {
             return Some(replay.snapshot.delta_base());
@@ -211,15 +196,6 @@ impl super::SessionTree {
     ) -> anyhow::Result<PersistedSessionState> {
         let snapshot = self.reconstruct_snapshot(target_id)?;
         let mut state = self.state_from_snapshot(snapshot, &[])?;
-        // Message-only v1 nodes store a synthetic snapshot on the transition
-        // that was never serialized. They must not look like a delta base.
-        if !self
-            .nodes
-            .get(target_id)
-            .is_some_and(|node| node.facts().has_snapshot)
-        {
-            state.snapshot = None;
-        }
         state.display = self.accumulated_display(target_id)?;
         Ok(state)
     }
@@ -243,20 +219,17 @@ impl super::SessionTree {
     pub(super) fn parent_snapshot(
         &self,
         parent_id: &NodeId,
-    ) -> anyhow::Result<Option<Cow<'_, SessionSnapshot>>> {
-        let parent = self
-            .nodes
-            .get(parent_id)
-            .ok_or_else(|| anyhow::anyhow!("session tree is missing node '{parent_id}'"))?;
-        if !parent.facts.has_snapshot {
-            return Ok(None);
-        }
+    ) -> anyhow::Result<Cow<'_, SessionSnapshot>> {
         if self.active_leaf_id.as_ref() == Some(parent_id) {
-            if let Some(state) = &self.active_state {
-                return Ok(state.snapshot.as_ref().map(Cow::Borrowed));
+            if let Some(snapshot) = self
+                .active_state
+                .as_ref()
+                .and_then(|state| state.snapshot.as_ref())
+            {
+                return Ok(Cow::Borrowed(snapshot));
             }
         }
-        Ok(Some(Cow::Owned(self.reconstruct_snapshot(parent_id)?)))
+        Ok(Cow::Owned(self.reconstruct_snapshot(parent_id)?))
     }
 
     /// Sequential load reuses the leaf display vec. Branches rebuild from tails.

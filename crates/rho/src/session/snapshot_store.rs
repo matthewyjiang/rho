@@ -122,10 +122,8 @@ impl Session {
                 cost_usd_micros: None,
             })
         });
-        // Force a full snapshot if compaction changed or if upgrading a legacy (< v4)
-        // session. Legacy sessions and compacted baselines do not share delta continuity
-        // with their predecessor.
-        let transition = if compaction_changed || tree.needs_upgrade_marker() {
+        // A compacted baseline shares no delta continuity with its predecessor.
+        let transition = if compaction_changed {
             StoredStateTransition::Snapshot {
                 snapshot: Box::new(snapshot.clone()),
             }

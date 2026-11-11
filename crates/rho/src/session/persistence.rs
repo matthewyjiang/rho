@@ -19,7 +19,6 @@ use rho_sdk::{CompactionState, Revision, SessionSnapshot};
 
 use super::agent_identity::{SavedAgent, SessionAgentRole};
 use super::append_cursor::AppendCursor;
-use super::snapshot_delta::StoredSnapshotDelta;
 use super::tree::{NodeId, ProjectedMessage, SessionNode};
 use super::{
     index, Session, SessionHistories, SessionIndexRecord, SessionOrigin, SessionProvenance,
@@ -37,14 +36,17 @@ pub(super) use super::layout::{
     SESSION_TRANSCRIPT_FILE_NAME,
 };
 
-const MIN_SESSION_VERSION: u32 = 1;
-/// First version whose files hold only explicit tree records. Versions 1-3
-/// are legacy logs that switch to tree records after an upgrade marker.
-pub(super) const EXPLICIT_TREE_VERSION: u32 = 4;
+/// Oldest session version this binary opens: the first whose files hold only
+/// explicit tree records (rho 1.11, #474). Versions 1-3 were written by rho
+/// 0.4.0 through 1.10.x and open only in rho 2.x.
+pub(super) const MIN_SESSION_VERSION: u32 = 4;
 /// Version written to new session headers. Version 5 node display rows may
 /// reference same-node model messages (`display_rows::MODEL_REF_VERSION`);
 /// older binaries reject the header instead of misreading rows.
 pub(super) const SESSION_VERSION: u32 = 5;
+/// Header versions this binary opens, as the search index reads them.
+pub(super) const SUPPORTED_SESSION_VERSIONS: std::ops::RangeInclusive<u64> =
+    MIN_SESSION_VERSION as u64..=SESSION_VERSION as u64;
 #[derive(Clone, Debug)]
 pub(super) struct ResolvedSession {
     pub(super) id: String,
@@ -248,26 +250,6 @@ pub(super) enum SessionEntry {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent_session: Option<SessionTarget>,
     },
-    Message {
-        timestamp: String,
-        message: Message,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        display_message: Option<Box<Message>>,
-    },
-    ReplaceHistory {
-        timestamp: String,
-        messages: Vec<Message>,
-    },
-    Snapshot {
-        timestamp: String,
-        snapshot: Box<SessionSnapshot>,
-        display_messages: Vec<StoredDisplayMessage>,
-    },
-    SnapshotDelta {
-        timestamp: String,
-        delta: Box<StoredSnapshotDelta>,
-        display_messages: Vec<StoredDisplayMessage>,
-    },
     Node {
         #[serde(flatten)]
         node: SessionNode,
@@ -276,23 +258,15 @@ pub(super) enum SessionEntry {
         timestamp: String,
         target_id: NodeId,
     },
-    Upgrade {
-        timestamp: String,
-        active_leaf_id: NodeId,
-    },
 }
 
 impl SessionEntry {
     /// Event timestamp used for summary `updated_at` / `created_at` accumulation.
     pub(crate) fn event_timestamp(&self) -> &str {
         match self {
-            SessionEntry::Session { timestamp, .. }
-            | SessionEntry::Message { timestamp, .. }
-            | SessionEntry::ReplaceHistory { timestamp, .. }
-            | SessionEntry::Snapshot { timestamp, .. }
-            | SessionEntry::SnapshotDelta { timestamp, .. }
-            | SessionEntry::SetLeaf { timestamp, .. }
-            | SessionEntry::Upgrade { timestamp, .. } => timestamp,
+            SessionEntry::Session { timestamp, .. } | SessionEntry::SetLeaf { timestamp, .. } => {
+                timestamp
+            }
             SessionEntry::Node { node } => node.timestamp.as_str(),
         }
     }
@@ -310,43 +284,17 @@ impl Session {
         self.append_entry_unlocked(&mut cursor, entry)
     }
 
-    /// Appends a tree-mutating entry, emitting a legacy upgrade marker first when
-    /// the tree still needs one. This is the only path for `Node` / `SetLeaf`.
+    /// Appends a tree-mutating entry. This is the only path for `Node` /
+    /// `SetLeaf`.
     ///
     /// The in-memory tree is updated before the file write so a rejected node
-    /// never remains in the transcript. When a marker is required, the marker
-    /// and entry are written as one append so a failed entry write cannot leave
-    /// a bare upgrade marker on disk.
+    /// never remains in the transcript.
     pub(super) fn append_tree_entry(
         &self,
         cursor: &mut AppendCursor,
         tree: &mut super::tree::SessionTree,
         entry: SessionEntry,
     ) -> anyhow::Result<()> {
-        match &entry {
-            SessionEntry::Node { .. } | SessionEntry::SetLeaf { .. } => {}
-            SessionEntry::Session { .. }
-            | SessionEntry::Message { .. }
-            | SessionEntry::ReplaceHistory { .. }
-            | SessionEntry::Snapshot { .. }
-            | SessionEntry::SnapshotDelta { .. }
-            | SessionEntry::Upgrade { .. } => {
-                anyhow::bail!("append_tree_entry only accepts Node or SetLeaf entries");
-            }
-        }
-        let upgrade = if tree.needs_upgrade_marker() {
-            let active_leaf_id = tree.active_leaf_id().cloned().ok_or_else(|| {
-                anyhow::anyhow!("legacy session has no state node to upgrade from")
-            })?;
-            let upgrade_ts = timestamp();
-            tree.apply_upgrade(active_leaf_id.clone(), &upgrade_ts)?;
-            Some(SessionEntry::Upgrade {
-                timestamp: upgrade_ts,
-                active_leaf_id,
-            })
-        } else {
-            None
-        };
         match &entry {
             SessionEntry::Node { node } => tree.apply_explicit_node(node.clone())?,
             SessionEntry::SetLeaf {
@@ -356,21 +304,11 @@ impl Session {
                 tree.apply_set_leaf(target_id.clone(), timestamp)?;
                 tree.ensure_active_state()?;
             }
-            SessionEntry::Session { .. }
-            | SessionEntry::Message { .. }
-            | SessionEntry::ReplaceHistory { .. }
-            | SessionEntry::Snapshot { .. }
-            | SessionEntry::SnapshotDelta { .. }
-            | SessionEntry::Upgrade { .. } => {
+            SessionEntry::Session { .. } => {
                 anyhow::bail!("append_tree_entry only accepts Node or SetLeaf entries");
             }
         }
-        if let Some(upgrade) = upgrade.as_ref() {
-            self.write_jsonl_entries(cursor, &[upgrade, &entry])?;
-        } else {
-            self.write_jsonl_entry(cursor, &entry)?;
-        }
-        Ok(())
+        self.write_jsonl_entry(cursor, &entry)
     }
 
     pub(super) fn append_entry_unlocked(
@@ -392,19 +330,8 @@ impl Session {
         cursor: &mut AppendCursor,
         entry: &SessionEntry,
     ) -> anyhow::Result<()> {
-        self.write_jsonl_entries(cursor, &[entry])
-    }
-
-    fn write_jsonl_entries(
-        &self,
-        cursor: &mut AppendCursor,
-        entries: &[&SessionEntry],
-    ) -> anyhow::Result<()> {
-        let mut serialized = Vec::new();
-        for entry in entries {
-            serde_json::to_writer(&mut serialized, entry)?;
-            serialized.push(b'\n');
-        }
+        let mut serialized = serde_json::to_vec(entry)?;
+        serialized.push(b'\n');
         let mut options = OpenOptions::new();
         options.create(true).read(true).append(true);
         #[cfg(unix)]
@@ -495,7 +422,7 @@ impl Session {
     #[cfg(test)]
     pub(super) fn append_replaced_history(&self, messages: &[Message]) -> anyhow::Result<()> {
         let mut state = read_session_state(&self.path)?;
-        apply_legacy_history_replacement(&mut state, messages.to_vec())?;
+        apply_history_replacement(&mut state, messages.to_vec())?;
         let provider = state.snapshot.as_ref().map_or_else(
             || ModelIdentity::new("test", "test", "test"),
             |snapshot| snapshot.provider().clone(),
@@ -614,7 +541,9 @@ pub(super) fn read_session_state(path: &Path) -> anyhow::Result<PersistedSession
         .unwrap_or_default())
 }
 
-pub(super) fn apply_legacy_history_replacement(
+/// Replaces the model history as a compaction would, for test sessions.
+#[cfg(test)]
+fn apply_history_replacement(
     state: &mut PersistedSessionState,
     messages: Vec<Message>,
 ) -> anyhow::Result<()> {
@@ -642,7 +571,8 @@ pub(super) fn apply_legacy_history_replacement(
     Ok(())
 }
 
-pub(super) fn next_revision(revision: Revision) -> anyhow::Result<Revision> {
+#[cfg(test)]
+fn next_revision(revision: Revision) -> anyhow::Result<Revision> {
     revision
         .checked_next()
         .ok_or_else(|| anyhow::anyhow!("session revision is exhausted"))
@@ -678,9 +608,20 @@ fn visit_entries(
     }
 }
 
+/// A session file whose header predates rho 1.11's tree format. Callers
+/// surface it as is: it names the release that still opens the file.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "this session was created by rho before 1.11 (session format v{version}) and can't be opened in rho 3; open it with rho 2.x"
+)]
+pub(crate) struct PreTreeSession {
+    pub(crate) version: u32,
+}
+
 pub(super) fn validate_session_version(version: u32, path: &Path) -> anyhow::Result<()> {
     match version {
         MIN_SESSION_VERSION..=SESSION_VERSION => Ok(()),
+        1..MIN_SESSION_VERSION => Err(PreTreeSession { version }.into()),
         _ => {
             eprintln!(
                 "warning: skipping session {} with unsupported version {version} (maximum supported: {SESSION_VERSION})",
@@ -689,6 +630,58 @@ pub(super) fn validate_session_version(version: u32, path: &Path) -> anyhow::Res
             anyhow::bail!("unsupported session version {version}")
         }
     }
+}
+
+/// A current-format transcript for session `id` in `cwd`: its header, then
+/// one root node whose history is `prompts` as user messages, if any.
+#[cfg(test)]
+pub(super) fn test_transcript(cwd: &Path, id: &str, created_at: u64, prompts: &[&str]) -> String {
+    use super::display_rows::StoredDisplayRow;
+    use super::tree::{SessionNodeKind, StoredStateTransition};
+
+    let header = SessionEntry::Session {
+        version: SESSION_VERSION,
+        id: id.into(),
+        timestamp: created_at.to_string(),
+        cwd: cwd.to_path_buf(),
+        agent_id: None,
+        agent_fingerprint: None,
+        agent_role: SessionAgentRole::Root,
+        launch_agent: None,
+        origin: None,
+        parent_session: None,
+    };
+    let mut entries = vec![header];
+    if !prompts.is_empty() {
+        let history = prompts
+            .iter()
+            .map(|prompt| Message::user_text(*prompt))
+            .collect::<Vec<_>>();
+        let snapshot = SessionSnapshot::new(
+            SessionId::from_string(id.to_owned()).expect("test session id"),
+            Revision::from_u64(1),
+            history,
+            ModelIdentity::new("test", "test", "test"),
+            CompactionState::default(),
+        );
+        entries.push(SessionEntry::Node {
+            node: SessionNode {
+                id: NodeId::new(),
+                parent_id: None,
+                timestamp: created_at.to_string(),
+                kind: SessionNodeKind::Commit,
+                compaction_facts: None,
+                display_messages: (0..prompts.len()).map(StoredDisplayRow::Model).collect(),
+                transition: StoredStateTransition::Snapshot {
+                    snapshot: Box::new(snapshot),
+                },
+            },
+        });
+    }
+    entries
+        .iter()
+        .map(|entry| serde_json::to_string(entry).expect("serialize test entry") + "\n")
+        .collect()
 }
 
 #[cfg(test)]
@@ -701,11 +694,20 @@ pub(super) fn read_entries(path: &Path) -> anyhow::Result<Vec<SessionEntry>> {
     Ok(entries)
 }
 
+/// The index record of the session file at `path`. A file from before the
+/// tree format gets a header-only record; see
+/// [`super::tree::SessionTree::pre_tree_summary_record`].
 pub(super) fn summarize_session_file(
     path: &Path,
     fallback_cwd: &Path,
 ) -> anyhow::Result<SessionIndexRecord> {
-    summarize_session_file_with_tree(path, fallback_cwd).map(|(record, _)| record)
+    match summarize_session_file_with_tree(path, fallback_cwd) {
+        Ok((record, _)) => Ok(record),
+        Err(error) if error.is::<PreTreeSession>() => {
+            super::tree::SessionTree::pre_tree_summary_record(path, fallback_cwd)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn summarize_session_file_with_tree(
@@ -806,21 +808,6 @@ fn normalize_loaded_history_by<T>(
         }
         index = insert_at + added;
     }
-}
-
-/// History after the same resume normalization `snapshot_for_resume` applies.
-///
-/// TODO(rho-sdk-release): call SessionSnapshot::sanitize_history and delete this
-/// local copy when `crates/rho/Cargo.toml` moves off `rho-sdk = "4.0.0"`.
-/// Keep `resume_normalized_history_matches_sdk_sanitize_history` until then.
-pub(crate) fn resume_normalized_history(history: Vec<Message>) -> Vec<Message> {
-    let mut history = insert_interrupted_tool_placeholders(history);
-    for message in &mut history {
-        if let Message::AbortedAssistant(assistant) = message {
-            assistant.reasoning.clear();
-        }
-    }
-    history
 }
 
 /// Collapses id-prefix matches to at most one, erroring on an ambiguous prefix.
