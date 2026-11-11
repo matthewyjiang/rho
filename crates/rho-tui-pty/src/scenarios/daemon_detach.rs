@@ -2,7 +2,7 @@
 
 use anyhow::{ensure, Result};
 
-use super::{config, daemon_resume::write_daemon_config, DEFAULT_SIZE, STARTUP, STREAM};
+use super::{config, daemon_resume::write_daemon_config, DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
 use crate::{
     artifacts::ArtifactWriter,
     env::{IsolatedHome, RhoLaunchPlan},
@@ -18,9 +18,10 @@ pub(super) const SCENARIO: Scenario = Scenario::new(
     /*smoke*/ false,
 );
 
-// Covers: quitting must not cancel a daemon turn; a newly saved session's
-// receipt must identify the session the user can resume, while an untouched
-// session must not advertise a nonexistent saved conversation.
+// Covers: quitting must not cancel a daemon turn, and reopening it mid-reply
+// shows it responding; a newly saved session's receipt must identify the
+// session the user can resume, while an untouched session must not
+// advertise a nonexistent saved conversation.
 // Owner: interactive daemon session lifecycle
 pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
     let home = IsolatedHome::new()?;
@@ -60,7 +61,20 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         let short_id: String = session_id.chars().take(8).collect();
         harness.assert_raw_contains(format!("rho --resume {short_id}").as_bytes())?;
 
-        // Release only after the first TUI exited. Cancellation on quit would
+        // Reopened mid-reply, the turn shows busy and responding, as it did
+        // before the quit, and quitting again leaves it running.
+        harness = spawn(&plan.clone().with_arg("--resume").with_arg(&short_id))?;
+        harness.set_phase("reopen_running_turn");
+        harness.wait_for_text("reply waiting for release", STREAM)?;
+        harness.wait_for_text("responding ·", SETTLE)?;
+        harness.submit_text("/exit")?;
+        let code = harness.wait_for_exit(STARTUP)?;
+        ensure!(
+            code == 0,
+            "reopened running session exited with code {code}"
+        );
+
+        // Release only after the TUIs exited. Cancellation on quit would
         // leave no completed reply for the resumed client to see.
         super::fixture_release::release_fixture(&mut harness, ".rho-fixture-release-reply")?;
         harness = spawn(&plan.clone().with_arg("--resume").with_arg(&short_id))?;
