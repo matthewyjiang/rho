@@ -244,9 +244,6 @@ impl App {
     }
 
     pub(super) fn toggle_selected_model_favorite(&mut self) -> anyhow::Result<()> {
-        if self.info.session.daemon.is_some() {
-            return Ok(());
-        }
         let (value, filter) = match self.input_ui.composer() {
             ComposerMode::Picker(picker) if picker.is_model_list() => (
                 picker

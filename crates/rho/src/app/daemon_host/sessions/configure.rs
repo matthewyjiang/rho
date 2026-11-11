@@ -115,12 +115,17 @@ impl Sessions {
         let applied = match applied {
             // The session keeps a setting with its file from its first
             // change on.
-            Ok(Applied::Setting) => runtime.keep_settings().map_err(|error| {
-                RpcError::new(
-                    ErrorCode::InternalError,
-                    format!("could not save the session's settings: {error:#}"),
-                )
-            }),
+            Ok(Applied::Setting { notice }) => {
+                session
+                    .feed
+                    .publish(notice.map(|text| wire::SessionEvent::Notice { text }));
+                runtime.keep_settings().map_err(|error| {
+                    RpcError::new(
+                        ErrorCode::InternalError,
+                        format!("could not save the session's settings: {error:#}"),
+                    )
+                })
+            }
             // What it saved joins the transcript a reset replays; no turn's
             // end would move it there before the next prompt. The turn
             // before it stops replaying its end, as when a turn follows.
@@ -159,8 +164,9 @@ impl Sessions {
 
 /// What applying a change left to do.
 enum Applied {
-    /// A setting changed, which the session now keeps.
-    Setting,
+    /// A setting changed, which the session now keeps, with a notice to
+    /// tell the session's clients now.
+    Setting { notice: Option<String> },
     /// Rows may have been saved, which the transcript takes, with a notice
     /// to tell the session's clients now.
     Rows { notice: Option<String> },
@@ -294,13 +300,30 @@ impl Change {
             }
             Self::Model { model, auth } => {
                 let selection = model_selection(runtime, &model, auth.as_deref(), auths)?;
-                runtime.switch_model(&selection, config).await
+                let previous = runtime.current_model();
+                return runtime
+                    .switch_model(&selection, config)
+                    .await
+                    .map(|()| {
+                        let current = runtime.current_model();
+                        // The prompt follows the model alone: a change that
+                        // kept the model, as a launch naming the session's
+                        // own does, has no other prompt file to report.
+                        let moved = (current.provider, current.model)
+                            != (previous.provider, previous.model);
+                        Applied::Setting {
+                            notice: moved.then(|| runtime.model_prompt_notice()).flatten(),
+                        }
+                    })
+                    .map_err(setting_error);
             }
             Self::Reasoning(level) => runtime.set_reasoning_level(level, config),
             Self::FastMode { enabled } => runtime.set_fast_mode(enabled),
             Self::PermissionMode(mode) => runtime.set_permission_mode(mode, config).await,
         };
-        applied.map(|()| Applied::Setting).map_err(setting_error)
+        applied
+            .map(|()| Applied::Setting { notice: None })
+            .map_err(setting_error)
     }
 }
 

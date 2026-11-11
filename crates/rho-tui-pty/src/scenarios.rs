@@ -39,6 +39,8 @@ mod daemon_login;
 #[cfg(unix)]
 mod daemon_mcp;
 #[cfg(unix)]
+mod daemon_model;
+#[cfg(unix)]
 mod daemon_options;
 #[cfg(unix)]
 mod daemon_prompt;
@@ -586,6 +588,18 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_approval::DAEMON_APPROVAL_DENY_SCENARIO,
     #[cfg(unix)]
     daemon_options::PERMISSION_MODE,
+    #[cfg(unix)]
+    daemon_model::OPEN_MODEL_PICKER,
+    #[cfg(unix)]
+    daemon_model::CYCLE_AND_PINNED_MODEL_PICKER,
+    #[cfg(unix)]
+    daemon_model::STATUSLINE_MODEL_CLICK,
+    #[cfg(unix)]
+    daemon_model::MODEL_PROMPTS,
+    #[cfg(unix)]
+    daemon_model::CYCLE_REASONING_IDLE,
+    #[cfg(unix)]
+    daemon_model::CYCLE_REASONING_QUEUED,
     #[cfg(unix)]
     daemon_config::DAEMON_CONFIG,
     #[cfg(unix)]

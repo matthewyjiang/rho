@@ -32,12 +32,32 @@ impl App {
     /// then, prefer pinned and recompute on every open so a first-run picker
     /// that opened on all still shows pins after the user adds one.
     pub(super) fn resolved_model_picker_scope(&self) -> model_picker::ModelPickerScope {
-        model_picker::effective_model_picker_scope(
+        self.usable_model_picker_scope(
             self.model_picker_scope_override
                 .unwrap_or(model_picker::ModelPickerScope::Pinned),
-            &self.info.runtime.favorite_models,
-            &self.available_auths,
         )
+    }
+
+    /// `scope` as a picker can show it here: pinned only when a pin is
+    /// usable, among the models a daemon session offers or the signed-in
+    /// catalogue.
+    fn usable_model_picker_scope(
+        &self,
+        scope: model_picker::ModelPickerScope,
+    ) -> model_picker::ModelPickerScope {
+        let favorite_models = &self.info.runtime.favorite_models;
+        match &self.daemon_options {
+            Some(options) => model_picker::offered_model_picker_scope(
+                scope,
+                favorite_models,
+                &model_picker::offered_models(&options.model),
+            ),
+            None => model_picker::effective_model_picker_scope(
+                scope,
+                favorite_models,
+                &self.available_auths,
+            ),
+        }
     }
 
     pub(super) fn conversation_model_picker(&mut self) -> UiPicker {
@@ -106,9 +126,6 @@ impl App {
     }
 
     pub(super) fn toggle_model_picker_scope(&mut self) -> anyhow::Result<()> {
-        if self.info.session.daemon.is_some() {
-            return Ok(());
-        }
         let (value, filter) = match self.input_ui.composer() {
             ComposerMode::Picker(picker) if picker.is_model_list() => (
                 picker
@@ -125,12 +142,7 @@ impl App {
         self.refresh_available_auths();
         let current = self.resolved_model_picker_scope();
         let next = current.other();
-        if model_picker::effective_model_picker_scope(
-            next,
-            &self.info.runtime.favorite_models,
-            &self.available_auths,
-        ) != next
-        {
+        if self.usable_model_picker_scope(next) != next {
             self.set_status("no pinned models");
             return Ok(());
         }

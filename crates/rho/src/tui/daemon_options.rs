@@ -9,8 +9,7 @@ use rho_providers::model::favorites::CycleDirection;
 use super::{
     config_row::{permission_mode_picker, ConfigRow},
     settings_screen::ConfigPage,
-    App, CommandId, CommandInvocation, ComposerMode, Entry, PickerBadge, PickerBadgeTone,
-    PickerItem, UiPicker,
+    App, CommandId, CommandInvocation, ComposerMode, Entry, UiPicker,
 };
 use crate::{app::reasoning_from_wire, permission::PermissionMode};
 
@@ -54,30 +53,21 @@ pub(super) fn setting_name(change: &SessionChange) -> &'static str {
     }
 }
 
+/// How an error says `change` was not made: a model switch in the words the
+/// in-process TUI refuses one with.
+pub(super) fn change_failure(change: &SessionChange) -> String {
+    match change {
+        SessionChange::Model { model, .. } => format!(
+            "could not switch to {}",
+            rho_providers::provider::model_reference(&model.provider, &model.model)
+        ),
+        _ => format!("could not change the {}", setting_name(change)),
+    }
+}
+
 fn next_choice<T: Copy + PartialEq>(current: T, available: &[T]) -> Option<T> {
     let index = available.iter().position(|value| *value == current)?;
     available.get((index + 1) % available.len()).copied()
-}
-
-fn model_picker(options: &SessionOptions) -> UiPicker {
-    UiPicker::models(
-        "select model",
-        options
-            .model
-            .available
-            .iter()
-            .map(|choice| PickerItem {
-                badge: (choice.model == options.model.current).then_some(PickerBadge {
-                    text: "selected".into(),
-                    tone: PickerBadgeTone::Selected,
-                }),
-                ..PickerItem::new(
-                    choice.label.clone(),
-                    format!("{}/{}", choice.model.provider, choice.model.model),
-                )
-            })
-            .collect(),
-    )
 }
 
 /// What a change asked for mid-turn says when it has no wording of its own.
@@ -197,8 +187,8 @@ impl App {
                 self.daemon_option_requests.push_back(change);
             }
             Err(error) => self.insert_entry(&Entry::Error(format!(
-                "could not change the {}: {error}",
-                setting_name(&change)
+                "{}: {error}",
+                change_failure(&change)
             ))),
         }
         Ok(())
@@ -217,9 +207,30 @@ impl App {
                 .is_some_and(|options| options.model.available.len() > 1)
     }
 
+    /// The in-process model picker over the models the daemon offers:
+    /// pins, scope and badges are the TUI's own, as the pin list is.
     pub(super) fn daemon_model_picker(&self) -> Option<UiPicker> {
-        let mut picker = model_picker(self.daemon_options.as_ref()?);
-        picker.select_badged();
+        let options = self.daemon_options.as_ref()?;
+        let offered = super::model_picker::offered_models(&options.model);
+        let scope = self.resolved_model_picker_scope();
+        let picker = if self.is_provider_turn_ui() {
+            let pending =
+                self.daemon_option_requests
+                    .iter()
+                    .rev()
+                    .find_map(|change| match change {
+                        SessionChange::Model { model, .. } => Some(model),
+                        _ => None,
+                    });
+            super::model_picker::offered_model_picker_during_run(
+                &self.info.runtime,
+                pending,
+                offered,
+                scope,
+            )
+        } else {
+            super::model_picker::offered_model_picker(&self.info.runtime, offered, scope)
+        };
         Some(picker.with_config_page(ConfigPage::SessionModel))
     }
 
