@@ -671,6 +671,9 @@ struct App {
     daemon_options: Option<rho_protocol::SessionOptions>,
     daemon_option_requests: std::collections::VecDeque<rho_protocol::SessionChange>,
     daemon_title: Option<String>,
+    /// The report the person last asked the daemon for and still waits on;
+    /// see `daemon_reports`.
+    awaited_daemon_report: Option<rho_protocol::SessionReport>,
     /// The subagent rail's job-list polling for the daemon session.
     daemon_rail: daemon_jobs::DaemonRail,
     /// The interactive login the daemon runs for this TUI, if any.

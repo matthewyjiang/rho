@@ -79,6 +79,7 @@ impl App {
         self.sessions_hub_state.clear();
         self.daemon_option_requests.clear();
         self.daemon_title = None;
+        self.awaited_daemon_report = None;
         self.reset_daemon_rail();
         self.drop_daemon_login();
         self.reset_session_view(terminal)?;
