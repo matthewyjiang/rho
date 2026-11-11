@@ -47,6 +47,22 @@ fn workspace_rewind() {
     }
 }
 
+/// Where an inline scenario's session runs.
+#[derive(Clone, Copy)]
+enum SessionHost {
+    InProcess,
+    Daemon,
+}
+
+impl SessionHost {
+    fn launch(self, plan: RhoLaunchPlan) -> RhoLaunchPlan {
+        match self {
+            Self::InProcess => plan,
+            Self::Daemon => plan.with_env("RHO_TUI_DAEMON", "1"),
+        }
+    }
+}
+
 fn assert_pass(name: &str) {
     let outcome = run_named(&runner(), name).expect("scenario runner error");
     assert!(
@@ -685,6 +701,17 @@ fn mermaid_flowchart_survives_narrow_and_restored_panes() {
 // Owner: interactive TUI
 #[test]
 fn bare_skill_command_starts_a_model_turn() {
+    bare_skill_command(SessionHost::InProcess);
+}
+
+// Covers: the same with RHO_TUI_DAEMON=1, where the daemon loads the skill.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_bare_skill_command_starts_a_model_turn() {
+    bare_skill_command(SessionHost::Daemon);
+}
+
+fn bare_skill_command(host: SessionHost) {
     // The fixture model echoes only the final instruction line, so this line
     // can appear on screen only inside the expanded skill card.
     const EXPANDED_ONLY: &str = "Skill detail shown only in the expanded card.";
@@ -698,14 +725,14 @@ fn bare_skill_command_starts_a_model_turn() {
     .unwrap();
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
     // Tall enough that the expanded card and the reply both fit on screen.
-    let plan = RhoLaunchPlan::matrix(
+    let plan = host.launch(RhoLaunchPlan::matrix(
         binary,
         &home,
         PtySize {
             rows: 40,
             cols: 100,
         },
-    );
+    ));
     let mut harness = PtyHarness::spawn_named(&plan, "bare_skill_command").unwrap();
 
     harness
@@ -801,8 +828,21 @@ fn skill_mentions_complete_and_load_in_one_batch() {
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
+// Covers: /skill says why it cannot run for an agent without the skill tool.
+// Owner: interactive TUI
 #[test]
 fn skill_command_reports_when_skill_tool_is_disabled() {
+    disabled_skill_command(SessionHost::InProcess);
+}
+
+// Covers: the same with RHO_TUI_DAEMON=1, where the daemon refuses it.
+// Owner: interactive TUI as a daemon client (#1667)
+#[test]
+fn daemon_skill_command_reports_when_skill_tool_is_disabled() {
+    disabled_skill_command(SessionHost::Daemon);
+}
+
+fn disabled_skill_command(host: SessionHost) {
     let home = IsolatedHome::new().unwrap();
     let skill_dir = home.workspace.join(".agents/skills/test-skill");
     std::fs::create_dir_all(&skill_dir).unwrap();
@@ -812,15 +852,17 @@ fn skill_command_reports_when_skill_tool_is_disabled() {
     )
     .unwrap();
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
-    let plan = RhoLaunchPlan::matrix(
-        binary,
-        &home,
-        PtySize {
-            rows: 28,
-            cols: 100,
-        },
-    )
-    .with_arg("--no-tools");
+    let plan = host.launch(
+        RhoLaunchPlan::matrix(
+            binary,
+            &home,
+            PtySize {
+                rows: 28,
+                cols: 100,
+            },
+        )
+        .with_arg("--no-tools"),
+    );
     let mut harness = PtyHarness::spawn_named(&plan, "disabled_skill_command").unwrap();
 
     harness
@@ -1235,6 +1277,22 @@ fn daemon_streaming_controls_hold_and_reveal_output() {
 #[test]
 fn daemon_tui_deletes_a_session_the_daemon_holds() {
     assert_pass("daemon_delete_left_session");
+}
+
+// Covers: `/agents create` loads the creator skill, and an agent without the
+// creator's tools is told which it lacks, in process and with
+// RHO_TUI_DAEMON=1, where the daemon runs the creator.
+// Owner: interactive TUI agent creator
+#[test]
+fn agent_creator_starts_or_names_missing_tools() {
+    for scenario in [
+        "create_agent_command",
+        "create_agent_missing_tools",
+        "daemon_create_agent_command",
+        "daemon_create_agent_missing_tools",
+    ] {
+        assert_pass(scenario);
+    }
 }
 
 // Covers: with RHO_TUI_DAEMON=1, the palette completes a command's

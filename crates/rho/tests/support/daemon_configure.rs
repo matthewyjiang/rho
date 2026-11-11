@@ -130,7 +130,11 @@ async fn a_change_reaches_attached_clients_and_the_next_turn() {
         .filter(|command| command.kind == CommandKind::Slash)
         .map(|command| command.name.as_str())
         .partition(|name| name.starts_with("agent:"));
-    assert_eq!(built_ins, ["compact", "init"], "agents: {agents:?}");
+    assert_eq!(
+        built_ins,
+        ["compact", "create-agent", "init"],
+        "agents: {agents:?}"
+    );
     assert!(!agents.is_empty(), "the menu lists the workspace's agents");
     let (watcher, mut notifications) = sandbox.connect_following().await;
     let attached = watcher

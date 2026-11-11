@@ -29,7 +29,7 @@ use crate::{
         session_runtime::{AgentTask, CommandRejected, SessionRuntime, SessionTools},
         workflow_cli::discover::{self as workflows, WorkflowLaunch},
     },
-    commands::{init_turn, CommandId, CommandInvocation, CommandParseError},
+    commands::{create_agent_turn, init_turn, CommandId, CommandInvocation, CommandParseError},
     config::Config,
     permission::PermissionMode,
     prompt_templates,
@@ -47,6 +47,9 @@ pub(crate) enum BuiltInCommand {
     Compact,
     /// `/init`: a model turn that sets up the workspace's agent instructions.
     Init,
+    /// `/create-agent [request]` and `/agents create [request]`: a model
+    /// turn that guides the user to a new agent definition.
+    CreateAgent,
 }
 
 impl BuiltInCommand {
@@ -54,6 +57,7 @@ impl BuiltInCommand {
         match self {
             Self::Compact => CommandId::Compact,
             Self::Init => CommandId::Init,
+            Self::CreateAgent => CommandId::CreateAgent,
         }
     }
 }
@@ -208,6 +212,16 @@ fn built_in(
                 calls: vec![mention::load_call(init_turn::SKILL)],
             })
         }
+        Some(BuiltInCommand::CreateAgent) => {
+            let model_prompt = create_agent_turn::model_prompt(&invocation.args, |name| {
+                scope.tools.contains(name)
+            })
+            .map_err(|error| CommandRejected(error.to_string()))?;
+            Ok(PromptCommand::Turn {
+                input: replace_leading_text(input, model_prompt),
+                calls: vec![mention::load_call(create_agent_turn::SKILL)],
+            })
+        }
         None => Err(CommandRejected(format!(
             "could not run /{}: not available in {}",
             invocation.name, commands.sessions_label
@@ -305,9 +319,10 @@ async fn dynamic(
     // Spec-following clients send a picked `$skill` command as `/$skill`. It
     // loads first, then any skills mentioned after it.
     if let Some(skill) = name.strip_prefix('$') {
-        if scope.tools.contains(mention::SKILL_TOOL)
-            && scope.skills().iter().any(|known| known.name == skill)
-        {
+        if !scope.tools.contains(mention::SKILL_TOOL) {
+            return Err(CommandRejected(mention::NO_SKILL_TOOL.into()));
+        }
+        if scope.skills().iter().any(|known| known.name == skill) {
             return Ok(turn(input, &[skill], scope));
         }
     }

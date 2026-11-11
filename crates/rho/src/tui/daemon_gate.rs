@@ -27,7 +27,7 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Advisor
         | CommandId::Codemode => CommandRoute::Options,
         // These commands are implemented by the daemon's prompt pipeline.
-        CommandId::Init | CommandId::Compact => CommandRoute::Prompt,
+        CommandId::Init | CommandId::Compact | CommandId::CreateAgent => CommandRoute::Prompt,
         CommandId::Exit
         | CommandId::Theme
         | CommandId::Help
@@ -51,10 +51,8 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         | CommandId::Side
         // Reads run artifacts the daemon writes to the shared rho home.
         | CommandId::Attach
-        // Agent definitions are files; the daemon is told when they change,
-        // and the creator runs as a prompt in its session.
+        // Agent definitions are files; the daemon is told when they change.
         | CommandId::Agents
-        | CommandId::CreateAgent
         // Asked of the daemon's session: its reports, the directories its
         // tools reach, and the model lists its options are built from.
         | CommandId::Context
@@ -189,6 +187,16 @@ impl App {
         let notice = format!("/{name} is not available with RHO_TUI_DAEMON yet");
         self.insert_entry(&Entry::Notice(notice.clone()));
         self.set_status(notice);
+    }
+
+    /// Whether the daemon's session offers the built-in prompt command `id`
+    /// under any of its names: `/agents create` runs as the `/create-agent`
+    /// it lists.
+    pub(super) fn daemon_offers_built_in(&self, id: CommandId) -> bool {
+        crate::commands::COMMANDS
+            .iter()
+            .filter(|spec| spec.id == id)
+            .any(|spec| self.daemon_prompt_command_available(spec.name))
     }
 
     /// Dynamic commands must be sent verbatim, not expanded with the local

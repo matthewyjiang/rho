@@ -347,7 +347,7 @@ For a one-call model selection, a fresh session also accepts `/agent:<name> --mo
 
 When the active agent has the `skill` tool, the update also lists one `$<name>` command per discovered [skill](/skills), using the skill's description. Rho leaves out names a host would read as amounts, such as `$20k`.
 
-A turn that mentions known skills as whitespace-delimited `$<name>` tokens loads each of them before the first model request, following the TUI's [mention rule](/skills#load-a-skill-yourself). A prompt that starts with `/$<name>`, as a client that prefixes every picked command with `/` sends it, loads that skill first. Any currency symbol works as the sigil. Every mentioned skill loads once, in mention order, as one batch of `skill` tool calls, and the host sees one `tool_call` update per skill.
+A turn that mentions known skills as whitespace-delimited `$<name>` tokens loads each of them before the first model request, following the TUI's [mention rule](/skills#load-a-skill-yourself). A prompt that starts with `/$<name>`, as a client that prefixes every picked command with `/` sends it, loads that skill first; a session without the `skill` tool refuses it. Any currency symbol works as the sigil. Every mentioned skill loads once, in mention order, as one batch of `skill` tool calls, and the host sees one `tool_call` update per skill.
 
 ## MCP servers
 

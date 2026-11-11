@@ -10,7 +10,11 @@ use crate::app::{session_runtime::AgentTask, workflow_cli::discover::WorkflowLau
 
 /// A host that runs every command.
 const ALL: CommandSet = CommandSet {
-    built_ins: &[BuiltInCommand::Compact, BuiltInCommand::Init],
+    built_ins: &[
+        BuiltInCommand::Compact,
+        BuiltInCommand::Init,
+        BuiltInCommand::CreateAgent,
+    ],
     workflows: Hosting::Runs,
     agents: Hosting::Runs,
     sessions_label: "test sessions",
@@ -138,6 +142,11 @@ async fn resolve_routes_prompts_to_commands() {
             turn("use $demo please", &["demo"]),
         ),
         ("tui-only command", "/model gpt-5", Resolved::Rejected),
+        (
+            "agent creator without the tools it guides with",
+            "/agents create a reviewer",
+            Resolved::Rejected,
+        ),
         (
             "mcp prompt missing arguments",
             "/mcp:docs:search",
