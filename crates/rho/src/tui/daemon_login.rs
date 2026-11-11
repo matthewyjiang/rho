@@ -16,7 +16,11 @@
 //! recorded by the daemon as soon as the daemon runs it. So this process
 //! shows its prompt (`login_pending.rs`), which records nothing, and has
 //! the daemon run the login only on Enter: Esc before that is a real
-//! cancel, as it is in process.
+//! cancel, as it is in process. The prompt shown here names this process's
+//! device key, and the daemon records its own, which is the same file only
+//! when both resolve one key directory (`OLLAMA_DEVICE_KEY_DIR`, else each
+//! process's `~/.ollama`). So the daemon's prompt is compared with the one
+//! shown, and shown too when it names another key.
 
 use rho_protocol::{LoginId, LoginOutcome, SessionChange};
 use rho_providers::{
@@ -29,6 +33,7 @@ use rho_providers::{
         catalog::{self, LoginTarget},
         registry,
     },
+    provider::{resolve_auth_mode, ProviderAuthKind},
 };
 
 use super::{
@@ -50,9 +55,10 @@ pub(super) struct DaemonLogin {
 enum PromptSource {
     /// The daemon's prompt is shown when it arrives, under this label.
     Daemon { provider_label: &'static str },
-    /// This process showed it before asking the daemon, whose copy is
-    /// dropped: the person already confirmed it.
-    ShownHere,
+    /// This process showed it, at `url`, before asking the daemon, whose
+    /// copy is dropped when it names the same URL: the person already
+    /// confirmed that one.
+    ShownHere { url: String },
 }
 
 impl App {
@@ -156,6 +162,7 @@ impl App {
             return Ok(());
         }
         let (target, finish) = (pending.target.clone(), pending.finish.clone());
+        let url = pending.prompt.copyable_url().to_string();
         self.set_status(format!("recording the {} login", target.provider));
         terminal.draw(|frame| self.draw(frame))?;
         // The provider has one flow, so the daemon ignores this one.
@@ -169,7 +176,7 @@ impl App {
                 self.daemon_login = Some(DaemonLogin {
                     id,
                     target,
-                    prompt: PromptSource::ShownHere,
+                    prompt: PromptSource::ShownHere { url },
                     cancelling: false,
                 });
                 self.show_daemon_login(first, terminal).await
@@ -197,9 +204,21 @@ impl App {
         };
         match update {
             LoginUpdate::Prompt { login: id, prompt } if id == login.id => {
-                let provider_label = match login.prompt {
-                    PromptSource::Daemon { provider_label } => provider_label,
-                    PromptSource::ShownHere => return Ok(()),
+                let provider_label = match &login.prompt {
+                    PromptSource::Daemon { provider_label } => *provider_label,
+                    PromptSource::ShownHere { url } => {
+                        // The daemon recorded the login it prompts for. A
+                        // prompt at another URL names a key the person has
+                        // not approved, which is the one its sessions sign
+                        // with.
+                        if *url != prompt.url {
+                            self.insert_entry(&Entry::Error(format!(
+                                "the rho daemon signs in with a different device key than the one shown above; approve it too: {}",
+                                prompt.url
+                            )));
+                        }
+                        return Ok(());
+                    }
                 };
                 let target = login.target.clone();
                 let prompt = match prompt.user_code {
@@ -345,11 +364,16 @@ impl App {
                         .load()
                         .is_ok_and(|config| !config.providers.awaits_endpoint_login(*descriptor))
             });
-        let deleted = ProviderAuthentication::has_stored_credentials(
-            self.credential_store.as_ref(),
-            &target.auth,
-        )
-        .unwrap_or(false);
+        // A keyless profile counts as having credentials, but a logout
+        // finds none of its own to delete.
+        let keyless = resolve_auth_mode(&target.auth)
+            .is_some_and(|(_, mode)| matches!(mode.auth_kind, ProviderAuthKind::None));
+        let deleted = !keyless
+            && ProviderAuthentication::has_stored_credentials(
+                self.credential_store.as_ref(),
+                &target.auth,
+            )
+            .unwrap_or(false);
         RemovedLogin {
             forgot_login,
             deleted,
@@ -358,6 +382,9 @@ impl App {
 
     /// Has the daemon sign out of `target` and reports it.
     pub(super) async fn sign_out_of_daemon(&mut self, target: &LoginTarget) -> anyhow::Result<()> {
+        // The OS store caches reads, misses included, and the daemon may
+        // have saved this login since the last one.
+        AppCredentialStore::reread_external_logins();
         let removed = self.login_to_remove(target);
         match self.daemon_session().sign_out(&target.auth).await {
             Ok(()) => {
