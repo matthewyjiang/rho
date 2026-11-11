@@ -285,6 +285,13 @@ impl App {
                         return Ok(());
                     }
                     if self.daemon_prompt_needs_login() {
+                        // The held text is what Enter sends after login, so
+                        // a template is held expanded, as in process. The
+                        // daemon expands one it is sent as typed.
+                        let trailing = slash_command_args(&turn.model).trim().to_string();
+                        if let Some(prompt) = self.resolve_prompt_template(&name, &trailing) {
+                            turn = TurnPrompt::standard(prompt.clone(), prompt);
+                        }
                         return self.offer_login_instead_of_turn(turn);
                     }
                     let media = self
