@@ -84,6 +84,20 @@ fn send_confirm_handoff() {
     }
 }
 
+// Covers: resuming a session that needs a context handoff under Auto with no
+// classifier model opens the handoff, then the classifier gate, in process
+// and when the daemon holds the session.
+// Owner: interactive TUI (PTY).
+#[test]
+fn auto_permission_mode_recovered_handoff() {
+    for scenario in [
+        "auto_permission_mode_recovered_handoff",
+        "daemon_auto_permission_mode_recovered_handoff",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
 // Covers: review a long plan and preserve approval feedback in model history.
 // Owner: interactive UX (PTY).
 #[test]

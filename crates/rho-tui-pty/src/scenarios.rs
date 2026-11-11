@@ -442,17 +442,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     )
     .with_setup(setup_auto_without_classifier)
     .with_env(OPENAI_KEY_ENV),
-    // Custom multi-process scenario: see config::run_auto_recovered_handoff.
-    Scenario::new(
-        config::AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID,
-        "Resume a session under Auto without a classifier and force the model pick",
-        PtySize {
-            rows: 16,
-            cols: 100,
-        },
-        &[],
-        /*smoke*/ false,
-    ),
+    // Custom multi-process scenarios: see config::run_auto_recovered_handoff.
+    config::AUTO_RECOVERED_HANDOFF_SCENARIO,
+    #[cfg(unix)]
+    config::DAEMON_AUTO_RECOVERED_HANDOFF_SCENARIO,
     // Custom multi-process scenario: see send_confirm::run_send_confirm_handoff.
     send_confirm::SCENARIO,
     #[cfg(unix)]

@@ -267,7 +267,23 @@ pub(super) async fn build_session(
     tool_source_load: ToolSourceLoad,
     session_options: impl FnOnce(Arc<dyn ModelProvider>) -> anyhow::Result<SessionOptions>,
 ) -> anyhow::Result<(BuiltSession, SessionPermission)> {
-    ensure_auto_classifier_model(config, build.host.environment.credentials().as_ref())?;
+    let credentials = build.host.environment.credentials();
+    match build.run.role {
+        // A daemon session opens in Auto without a classifier model, as an
+        // in-process TUI session does: the classifier denies every gated tool
+        // until a client picks a model and sets Auto again.
+        SessionRole::Daemon => {
+            if config.permission_mode == crate::permission::PermissionMode::Auto {
+                crate::permission_classifier::check_screen_config(config, credentials.as_ref())?;
+            }
+        }
+        SessionRole::Interactive
+        | SessionRole::Run
+        | SessionRole::Subagent { .. }
+        | SessionRole::WorkflowNode => {
+            ensure_auto_classifier_model(config, credentials.as_ref())?;
+        }
+    }
     // A session request can follow a terminal login another process saved,
     // even when startup itself succeeded without credentials.
     AppCredentialStore::reread_external_logins();

@@ -124,7 +124,18 @@ impl Sessions {
         let applied = if superseded {
             Ok(Applied::Superseded)
         } else {
-            change.apply(runtime, &session.config(), &auths).await
+            match change {
+                Change::PermissionMode(_) => {
+                    let config = session.config_for_permission_change().await;
+                    let applied = change.apply(runtime, &config, &auths).await;
+                    // Only a mode the session took keeps the models it read.
+                    if applied.is_ok() {
+                        session.keep_config(config);
+                    }
+                    applied
+                }
+                _ => change.apply(runtime, &session.config(), &auths).await,
+            }
         };
         let applied = match applied {
             // The session keeps a setting with its file from its first
@@ -339,7 +350,7 @@ impl Change {
             }
             Self::Reasoning(level) => runtime.set_reasoning_level(level, config),
             Self::FastMode { enabled } => runtime.set_fast_mode(enabled),
-            Self::PermissionMode(mode) => runtime.set_permission_mode(mode, config).await,
+            Self::PermissionMode(mode) => runtime.reapply_permission_mode(mode, config).await,
         };
         applied
             .map(|()| Applied::Setting { notice: None })

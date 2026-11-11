@@ -1,7 +1,8 @@
 //! A loaded session's config (#1720): the one it opened with, which each
 //! turn first brings up to date with the global settings that apply at a
 //! loaded session's next turn: the advisor, automatic compaction, and the
-//! codemode mode.
+//! codemode mode. A permission-mode change takes the permission
+//! classifier's models the same way.
 //!
 //! Lazy on purpose: an idle session pays nothing for a change, and the turn
 //! already holds the session's runtime to apply it.
@@ -10,8 +11,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use super::LoadedSession;
 use crate::{
+    agent::PERMISSION_CLASSIFIER_AGENT_ID,
     app::session_runtime::SessionRuntime,
     config::Config,
+    permission_classifier::DECISION_SCREEN_ID,
     tools::advisor::{advisor_available, advisor_model},
 };
 
@@ -113,6 +116,33 @@ impl LoadedSession {
             applied: if failed { applied } else { global },
         };
         next
+    }
+
+    /// The config a permission-mode change reads: the session's, with the
+    /// permission classifier's models of the global config as it is now. A
+    /// classifier picked after the session opened then runs when a client
+    /// sets Auto; [`Self::keep_config`] keeps it once the mode applied.
+    pub(super) async fn config_for_permission_change(&self) -> Arc<Config> {
+        let Ok(global) = self.settings.agent_config().await else {
+            return self.config();
+        };
+        let mut next = (*self.config()).clone();
+        for id in [PERMISSION_CLASSIFIER_AGENT_ID, DECISION_SCREEN_ID] {
+            match global.internal_agents.get(id) {
+                Some(selection) => {
+                    next.internal_agents.insert(id.into(), selection.clone());
+                }
+                None => {
+                    next.internal_agents.remove(id);
+                }
+            }
+        }
+        Arc::new(next)
+    }
+
+    /// Makes `config` the one the session's turns and rebuilds read.
+    pub(super) fn keep_config(&self, config: Arc<Config>) {
+        self.lock_config().config = config;
     }
 
     /// Nothing panics while holding the lock, so a poisoned one is still

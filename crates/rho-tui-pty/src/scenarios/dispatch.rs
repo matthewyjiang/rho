@@ -20,8 +20,8 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     if workflow::is_workflow_scenario(name) {
         return workflow::run(runner, name);
     }
-    if config::is_auto_recovered_handoff_scenario(name) {
-        return config::run_auto_recovered_handoff(runner);
+    if let Some(host) = config::auto_recovered_handoff_scenario(name) {
+        return config::run_auto_recovered_handoff(runner, host);
     }
     if let Some(host) = send_confirm::send_confirm_scenario(name) {
         return send_confirm::run_send_confirm_handoff(runner, host);
