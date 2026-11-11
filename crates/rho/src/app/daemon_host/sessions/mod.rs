@@ -73,6 +73,7 @@ mod feed;
 mod goal;
 mod grant;
 mod inputs;
+mod inspect;
 mod mcp;
 mod next_turn;
 mod observe;

@@ -56,6 +56,12 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         // and the creator runs as a prompt in its session.
         | CommandId::Agents
         | CommandId::CreateAgent
+        // Asked of the daemon's session: its reports, the directories its
+        // tools reach, and the model lists its options are built from.
+        | CommandId::Context
+        | CommandId::Hooks
+        | CommandId::AddDir
+        | CommandId::RefreshModels
         // The daemon opens the session these follow next.
         | CommandId::New
         | CommandId::Resume
@@ -64,14 +70,10 @@ pub(super) fn command_route(command: CommandId) -> CommandRoute {
         // provider/auth editors and the advisor still own in-process
         // state. The /workflow hub likewise describes the wrong runtime,
         // even when opened read-only.
-        CommandId::AddDir
         | CommandId::Login
         | CommandId::Logout
-        | CommandId::RefreshModels
         | CommandId::Rewind
         | CommandId::Tree
-        | CommandId::Context
-        | CommandId::Hooks
         | CommandId::Codemode
         | CommandId::Workflow => CommandRoute::Unavailable,
     }

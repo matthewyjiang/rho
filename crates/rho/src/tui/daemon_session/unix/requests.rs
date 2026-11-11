@@ -30,6 +30,21 @@ impl DaemonSession {
             .goal(action)
     }
 
+    /// Ask for a report on the session, which arrives as
+    /// `DaemonView::Report`; the daemon refuses during a turn.
+    pub(in crate::tui) fn inspect(
+        &self,
+        report: rho_protocol::SessionReport,
+    ) -> anyhow::Result<()> {
+        if self.ended {
+            anyhow::bail!(LOST);
+        }
+        self.requests
+            .as_ref()
+            .expect("attached session has requests")
+            .inspect(report)
+    }
+
     /// Ask for the daemon's jobs without waiting for the active turn;
     /// they arrive as `DaemonView::Jobs`.
     pub(in crate::tui) fn request_jobs(&self) -> anyhow::Result<()> {

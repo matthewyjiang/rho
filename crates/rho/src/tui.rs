@@ -65,6 +65,7 @@ mod daemon_goal;
 mod daemon_inputs;
 mod daemon_options;
 mod daemon_prompt;
+mod daemon_reports;
 #[cfg(unix)]
 mod daemon_requests;
 mod daemon_session;

@@ -28,6 +28,13 @@ impl DaemonSession {
         match *self {}
     }
 
+    pub(in crate::tui) fn inspect(
+        &self,
+        _report: rho_protocol::SessionReport,
+    ) -> anyhow::Result<()> {
+        match *self {}
+    }
+
     pub(in crate::tui) fn request_jobs(&self) -> anyhow::Result<()> {
         match *self {}
     }

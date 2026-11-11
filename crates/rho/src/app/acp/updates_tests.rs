@@ -365,6 +365,7 @@ fn session_options(mode: wire::PermissionMode, fast: bool) -> wire::SessionOptio
         },
         commands: Vec::new(),
         goal: None,
+        added_dirs: Vec::new(),
     }
 }
 

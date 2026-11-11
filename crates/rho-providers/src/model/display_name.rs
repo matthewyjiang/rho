@@ -101,12 +101,19 @@ pub(crate) fn forget_provider_display_names(provider: &str) {
     cache.generation += 1;
 }
 
-/// Drops resolved names so a test can write a catalog row and read it back.
-#[doc(hidden)]
-pub fn clear_model_display_name_cache_for_tests() {
+/// Drops every resolved name, misses included, so the next lookup reads
+/// the catalogs again. For a process that learns another process rewrote
+/// them, as a daemon does when a client refreshed the model lists.
+pub fn forget_model_display_names() {
     let mut cache = cache().write().expect("model name cache");
     cache.names.clear();
     cache.generation += 1;
+}
+
+/// Drops resolved names so a test can write a catalog row and read it back.
+#[doc(hidden)]
+pub fn clear_model_display_name_cache_for_tests() {
+    forget_model_display_names();
 }
 
 /// Clears the process-global display-name cache on enter and drop.

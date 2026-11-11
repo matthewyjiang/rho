@@ -77,7 +77,7 @@ pub(super) enum Control {
     /// tells the host what changed, then answers, so the host hears the
     /// update before the response, and only once even when the daemon's
     /// `OptionsChanged` arrived first.
-    Options(SessionOptions, oneshot::Sender<()>),
+    Options(Box<SessionOptions>, oneshot::Sender<()>),
     /// Answered once the pump handled everything routed before it, so a
     /// response sent after the answer follows the updates sent before it.
     Flush(oneshot::Sender<()>),
@@ -596,7 +596,7 @@ impl Adapter {
             .await
             .map_err(|error| daemon::daemon_error(&error))?;
         let (told, heard) = oneshot::channel();
-        let control = Control::Options(response.options.clone(), told);
+        let control = Control::Options(Box::new(response.options.clone()), told);
         // A session closed meanwhile has no host to tell.
         if live.deliver(&link, control).await.is_ok() {
             let _ = heard.await;

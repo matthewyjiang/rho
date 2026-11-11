@@ -7,6 +7,10 @@ impl App {
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.info.session.daemon.is_some() {
+            self.request_daemon_report(rho_protocol::SessionReport::Hooks);
+            return Ok(());
+        }
         match agent.reload_hooks() {
             Ok(report) => self.show_hooks_report(report),
             Err(error) => {

@@ -40,6 +40,8 @@ mod daemon_options;
 #[cfg(unix)]
 mod daemon_prompt;
 #[cfg(unix)]
+mod daemon_reports;
+#[cfg(unix)]
 mod daemon_restart;
 #[cfg(unix)]
 mod daemon_resume;
@@ -674,6 +676,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_detach::SCENARIO,
     #[cfg(unix)]
     daemon_context::SCENARIO,
+    #[cfg(unix)]
+    daemon_reports::SCENARIO,
     #[cfg(unix)]
     daemon_switch::SCENARIO,
     #[cfg(unix)]

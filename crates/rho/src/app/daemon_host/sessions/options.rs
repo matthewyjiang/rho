@@ -38,7 +38,7 @@ impl LoadedSession {
 
 impl Sessions {
     /// Refreshes every loaded session's options after a credential write
-    /// changed the models they may switch to. Each refresh waits in its own
+    /// or a refreshed model list changed the models they may switch to. Each refresh waits in its own
     /// task for the session's runtime, so a session in a turn or a
     /// configure refreshes once it lets the runtime go, even when its own
     /// refresh there read the auths before the write. The runtime's lock

@@ -16,6 +16,8 @@
 //! loads it. A change that applies is kept with the session's file, so a
 //! session the daemon unloads while idle reopens with it.
 
+use std::path::PathBuf;
+
 use rho_protocol::{
     self as wire, ErrorCode, RpcError, SessionConfigureParams, SessionConfigureResponse,
 };
@@ -26,7 +28,7 @@ use super::{being_deleted, options::available_auths, queued::Queued, stopping, H
 use crate::{
     app::{
         session_options::{reasoning_from_wire, resolve_model},
-        session_runtime::{SessionRuntime, SettingChangeError},
+        session_runtime::{AddDirError, SessionRuntime, SettingChangeError},
     },
     config::Config,
     permission::PermissionMode,
@@ -40,6 +42,8 @@ enum Change {
     PermissionMode(PermissionMode),
     Context { text: String, display: String },
     AgentCatalog,
+    AddDirectory(PathBuf),
+    ModelCatalog,
 }
 
 impl Sessions {
@@ -109,8 +113,14 @@ impl Sessions {
                 // Told live first; a later reset replays the saved rows.
                 session
                     .feed
-                    .publish(notice.map(|text| wire::SessionEvent::Notice { text: text.into() }));
+                    .publish(notice.map(|text| wire::SessionEvent::Notice { text }));
                 super::turn::save_transcript(&session, runtime);
+                Ok(())
+            }
+            Ok(Applied::SharedOptions) => {
+                // Each session's, once its runtime is free; this one's
+                // also follow below.
+                self.refresh_all_options().await;
                 Ok(())
             }
             Err(error) => Err(error),
@@ -129,7 +139,9 @@ enum Applied {
     Setting,
     /// Rows may have been saved, which the transcript takes, with a notice
     /// to tell the session's clients now.
-    Rows { notice: Option<&'static str> },
+    Rows { notice: Option<String> },
+    /// What every loaded session's options show was read again.
+    SharedOptions,
 }
 
 impl Change {
@@ -148,6 +160,11 @@ impl Change {
             }
             wire::SessionChange::Context { text, display } => Ok(Self::Context { text, display }),
             wire::SessionChange::AgentCatalog => Ok(Self::AgentCatalog),
+            wire::SessionChange::AddDirectory { path } if !path.is_absolute() => {
+                Err(invalid("the directory to add must be an absolute path"))
+            }
+            wire::SessionChange::AddDirectory { path } => Ok(Self::AddDirectory(path)),
+            wire::SessionChange::ModelCatalog => Ok(Self::ModelCatalog),
             // A change of a later protocol minor fails to decode before it
             // gets here; the arm keeps the match open to new variants.
             _ => Err(invalid("unknown change")),
@@ -175,13 +192,34 @@ impl Change {
             Self::AgentCatalog => {
                 return runtime
                     .sync_agent_catalog()
-                    .map(|notice| Applied::Rows { notice })
+                    .map(|notice| Applied::Rows {
+                        notice: notice.map(str::to_owned),
+                    })
                     .map_err(|error| {
                         RpcError::new(
                             ErrorCode::InternalError,
                             format!("could not read the agent definitions: {error:#}"),
                         )
                     })
+            }
+            Self::AddDirectory(path) => {
+                // Canonical, as the session compares the roots it has.
+                let dir = crate::added_dirs::resolve(&path, runtime.cwd(), /*home*/ None)
+                    .map_err(|error| invalid(format!("{error:#}")))?;
+                let notice = format!("added directory {}", crate::paths::display(&dir));
+                return match runtime.add_dir(dir, config).await {
+                    Ok(()) => Ok(Applied::Rows {
+                        notice: Some(notice),
+                    }),
+                    Err(error @ AddDirError::Covered { .. }) => Err(invalid(error.to_string())),
+                    Err(AddDirError::Change(error)) => Err(setting_error(error)),
+                };
+            }
+            Self::ModelCatalog => {
+                // Names this process resolved, or failed to, before the
+                // client rewrote the catalogs.
+                rho_providers::model::forget_model_display_names();
+                return Ok(Applied::SharedOptions);
             }
             Self::Model(model) => {
                 let selection = model_selection(runtime, &model, auths)?;

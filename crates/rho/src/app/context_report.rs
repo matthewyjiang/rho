@@ -9,11 +9,13 @@
 use std::collections::{BTreeMap, HashMap};
 
 use rho_sdk::{ContextBreakdown, ContextItem};
+use serde::{Deserialize, Serialize};
 
 use crate::prompt::{PromptSource, PromptSourceKind};
 
 /// What the header total is based on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum ContextBasis {
     /// The last provider-reported prompt plus local estimates for later additions.
     ProviderCalibrated,
@@ -21,7 +23,7 @@ pub(crate) enum ContextBasis {
     LocalEstimate,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ContextRow {
     pub(crate) label: String,
     /// Secondary text such as a source path or a schema count.
@@ -29,14 +31,14 @@ pub(crate) struct ContextRow {
     pub(crate) tokens: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ContextGroup {
-    pub(crate) label: &'static str,
+    pub(crate) label: String,
     pub(crate) tokens: u64,
     pub(crate) rows: Vec<ContextRow>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ContextReport {
     /// Total for the next request, calibrated when the basis says so.
     pub(crate) tokens: u64,
@@ -63,6 +65,23 @@ struct Buckets {
     request_context: u64,
     /// Items from a newer SDK without their own row yet.
     other: u64,
+}
+
+/// Each MCP tool a session's model sees, by exported name, with the
+/// identity of the server it comes from.
+pub(crate) fn mcp_tool_servers(
+    report: &crate::tools::mcp::McpSessionReport,
+) -> HashMap<String, String> {
+    report
+        .servers
+        .iter()
+        .flat_map(|server| {
+            server
+                .tools()
+                .iter()
+                .map(|tool| (tool.exported_name.clone(), server.identity.clone()))
+        })
+        .collect()
 }
 
 impl ContextReport {
@@ -182,7 +201,7 @@ fn group(label: &'static str, rows: Vec<ContextRow>) -> Option<ContextGroup> {
     let rows: Vec<_> = rows.into_iter().filter(|row| row.tokens > 0).collect();
     let tokens = rows.iter().map(|row| row.tokens).sum();
     (tokens > 0).then_some(ContextGroup {
-        label,
+        label: label.into(),
         tokens,
         rows,
     })

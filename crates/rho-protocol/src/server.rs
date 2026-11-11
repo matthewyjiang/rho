@@ -13,6 +13,7 @@ use tokio::{
 };
 
 use crate::server_settings::{self, SettingsService};
+use crate::server_streams::{attach, login, AttachRequest};
 use crate::{
     declared::{hello_protocol, Declared},
     forward::Forwarders,
@@ -30,18 +31,18 @@ use crate::{
         SessionCancelParams, SessionCancelResponse, SessionConfigure, SessionConfigureParams,
         SessionConfigureResponse, SessionDelete, SessionDeleteParams, SessionDeleteResponse,
         SessionDetach, SessionDetachParams, SessionDetachResponse, SessionHold, SessionHoldParams,
-        SessionHoldResponse, SessionId, SessionList, SessionListParams, SessionListResponse,
-        SessionMcp, SessionMcpInventory, SessionMcpParams, SessionNew, SessionNewParams,
-        SessionNewResponse, SessionObserve, SessionObserveParams, SessionPrompt,
-        SessionPromptParams, SessionPromptResponse, SessionRename, SessionRenameParams,
-        SessionRenameResponse, SessionSteer, SessionSteerParams, SessionSteerResponse,
-        SessionUnsteer, SessionUnsteerParams, SessionUnsteerResponse, Status, Stop,
-        AUTH_CHOOSE_STORE, AUTH_KEY, AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT,
-        CONFIG_GET, CONFIG_REGISTER, CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART, DAEMON_STATUS,
-        DAEMON_STOP, HELLO, JOB_LIST, SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL,
-        SESSION_CONFIGURE, SESSION_DELETE, SESSION_DETACH, SESSION_HOLD, SESSION_LIST, SESSION_MCP,
-        SESSION_NEW, SESSION_OBSERVE, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER,
-        SESSION_UNSTEER,
+        SessionHoldResponse, SessionId, SessionInspect, SessionInspectParams,
+        SessionInspectResponse, SessionList, SessionListParams, SessionListResponse, SessionMcp,
+        SessionMcpInventory, SessionMcpParams, SessionNew, SessionNewParams, SessionNewResponse,
+        SessionObserve, SessionObserveParams, SessionPrompt, SessionPromptParams,
+        SessionPromptResponse, SessionRename, SessionRenameParams, SessionRenameResponse,
+        SessionSteer, SessionSteerParams, SessionSteerResponse, SessionUnsteer,
+        SessionUnsteerParams, SessionUnsteerResponse, Status, Stop, AUTH_CHOOSE_STORE, AUTH_KEY,
+        AUTH_LIST, AUTH_LOGIN, AUTH_LOGIN_CANCEL, AUTH_LOGOUT, CONFIG_GET, CONFIG_REGISTER,
+        CONFIG_SCHEMA, CONFIG_SET, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, HELLO, JOB_LIST,
+        SESSION_ANSWER, SESSION_ATTACH, SESSION_CANCEL, SESSION_CONFIGURE, SESSION_DELETE,
+        SESSION_DETACH, SESSION_HOLD, SESSION_INSPECT, SESSION_LIST, SESSION_MCP, SESSION_NEW,
+        SESSION_OBSERVE, SESSION_PROMPT, SESSION_RENAME, SESSION_STEER, SESSION_UNSTEER,
     },
     subscription::Subscription,
     DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
@@ -174,6 +175,13 @@ pub trait Service: SettingsService + Send + Sync {
         &self,
         params: SessionMcpParams,
     ) -> impl Future<Output = Result<SessionMcpInventory, RpcError>> + Send;
+
+    /// Handles `rho/session/inspect`: read a report about the loaded
+    /// session between its turns, refusing while one runs.
+    fn inspect_session(
+        &self,
+        params: SessionInspectParams,
+    ) -> impl Future<Output = Result<SessionInspectResponse, RpcError>> + Send;
 
     /// Handles `rho/session/attach`: subscribe this connection to the
     /// session's events (see [`crate::subscription()`]). The connection sends
@@ -621,6 +629,7 @@ enum ServiceCall {
     HoldSession(SessionHoldParams),
     ConfigureSession(SessionConfigureParams),
     SessionMcp(SessionMcpParams),
+    InspectSession(SessionInspectParams),
     ListSessions(SessionListParams),
     RenameSession(SessionRenameParams),
     DeleteSession(SessionDeleteParams),
@@ -726,6 +735,7 @@ impl ServiceCall {
                 decode_params::<SessionConfigure>(params).map(Self::ConfigureSession)
             }
             SESSION_MCP => decode_params::<SessionMcp>(params).map(Self::SessionMcp),
+            SESSION_INSPECT => decode_params::<SessionInspect>(params).map(Self::InspectSession),
             SESSION_LIST => decode_params::<SessionList>(params).map(Self::ListSessions),
             SESSION_RENAME => decode_params::<SessionRename>(params).map(Self::RenameSession),
             SESSION_DELETE => decode_params::<SessionDelete>(params).map(Self::DeleteSession),
@@ -757,6 +767,7 @@ impl ServiceCall {
             | Self::AnswerSession(SessionAnswerParams { session, .. })
             | Self::HoldSession(SessionHoldParams { session, .. })
             | Self::SessionMcp(SessionMcpParams { session, .. })
+            | Self::InspectSession(SessionInspectParams { session, .. })
             | Self::ConfigureSession(SessionConfigureParams { session, .. })
             | Self::RenameSession(SessionRenameParams { session, .. }) => Some(session),
             Self::Status
@@ -816,6 +827,9 @@ impl ServiceCall {
             Self::SessionMcp(params) => {
                 encode_result::<SessionMcp>(&service.session_mcp(params).await?)
             }
+            Self::InspectSession(params) => {
+                encode_result::<SessionInspect>(&service.inspect_session(params).await?)
+            }
             Self::ListSessions(params) => {
                 encode_result::<SessionList>(&service.list_sessions(params).await?)
             }
@@ -851,70 +865,6 @@ impl ServiceCall {
                 encode_result::<ConfigSet>(&service.set_config(params).await?)
             }
         }
-    }
-}
-
-/// A request that subscribes the connection to a session's events.
-enum AttachRequest {
-    Attach(SessionAttachParams),
-    Observe(SessionObserveParams),
-}
-
-/// Answers an attach or observe through `responder`, then forwards the
-/// session's events through `forwarders`.
-async fn attach<Svc: Service>(
-    service: &Svc,
-    request: AttachRequest,
-    responder: Responder,
-    forwarders: &Arc<Forwarders>,
-) {
-    let (session, attached) = match request {
-        AttachRequest::Attach(params) => {
-            (params.session.clone(), service.attach_session(params).await)
-        }
-        AttachRequest::Observe(params) => (
-            params.session.clone(),
-            service.observe_session(params).await,
-        ),
-    };
-    // Both answer with an attach's response.
-    let attached = attached.and_then(|(response, subscription)| {
-        Ok((encode_result::<SessionAttach>(&response)?, subscription))
-    });
-    match attached {
-        Ok((result, subscription)) => {
-            let outbox = responder.outbox.clone();
-            forwarders.attach(session, subscription, outbox, move || {
-                responder.send(Ok(result));
-            });
-        }
-        Err(error) => responder.send(Err(error)),
-    }
-}
-
-/// Answers a login through `responder`, then forwards the login's prompt
-/// and end through `forwarders`.
-async fn login<Svc: Service>(
-    service: &Svc,
-    params: AuthLoginParams,
-    responder: Responder,
-    forwarders: &Arc<Forwarders>,
-) {
-    let started = service.login(params).await.and_then(|(response, stream)| {
-        Ok((
-            response.login.clone(),
-            encode_result::<AuthLogin>(&response)?,
-            stream,
-        ))
-    });
-    match started {
-        Ok((login, result, stream)) => {
-            let outbox = responder.outbox.clone();
-            forwarders.relay_login(login, stream, outbox, move || {
-                responder.send(Ok(result));
-            });
-        }
-        Err(error) => responder.send(Err(error)),
     }
 }
 

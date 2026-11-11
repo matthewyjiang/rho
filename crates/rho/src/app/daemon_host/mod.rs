@@ -327,6 +327,13 @@ impl Service for DaemonHost {
         self.sessions.mcp(params).await
     }
 
+    async fn inspect_session(
+        &self,
+        params: rho_protocol::SessionInspectParams,
+    ) -> Result<rho_protocol::SessionInspectResponse, RpcError> {
+        self.sessions.inspect(params).await
+    }
+
     async fn configure_session(
         &self,
         params: SessionConfigureParams,

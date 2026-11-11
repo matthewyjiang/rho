@@ -44,6 +44,17 @@ impl App {
         self.refresh_model_lists(provider_picker::ALL_REFRESHABLE_PROVIDERS, terminal)
             .await?;
         let written = self.refresh_models_dev_catalog(terminal, agent).await?;
+        if self.info.session.daemon.is_some() {
+            // The lists are files the daemon shares; its sessions' options
+            // are built from them.
+            self.configure_daemon(rho_protocol::SessionChange::ModelCatalog)?;
+            // Options that did not change bring no event to recompute it.
+            self.model_metadata = super::reasoning_metadata::cached_metadata(
+                &self.info.runtime.provider,
+                &self.info.runtime.model,
+            )
+            .map(|(metadata, _)| metadata);
+        }
         if written > 0 {
             self.set_status("model refresh complete");
         }

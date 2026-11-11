@@ -117,6 +117,13 @@ macro_rules! hosts_no_sessions {
             Err(no_such_session())
         }
 
+        async fn inspect_session(
+            &self,
+            _: SessionInspectParams,
+        ) -> Result<SessionInspectResponse, RpcError> {
+            Err(no_such_session())
+        }
+
         async fn configure_session(
             &self,
             _: SessionConfigureParams,
@@ -815,6 +822,7 @@ impl Service for AttachService {
                 },
                 commands: Vec::new(),
                 goal: None,
+                added_dirs: Vec::new(),
             },
         };
         Ok((response, subscription))

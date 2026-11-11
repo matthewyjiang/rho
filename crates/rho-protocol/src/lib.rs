@@ -75,6 +75,7 @@ pub mod methods;
 pub mod schema;
 mod server;
 mod server_settings;
+mod server_streams;
 mod subscription;
 mod version;
 
@@ -136,7 +137,8 @@ pub use methods::{
     SESSION_RENAME,
 };
 pub use methods::{
-    SessionMcpInventory, SessionMcpMode, SessionMcpParams, SessionMcpServer, SessionMcpStatus,
+    SessionInspectParams, SessionInspectResponse, SessionMcpInventory, SessionMcpMode,
+    SessionMcpParams, SessionMcpServer, SessionMcpStatus, SessionReport, SESSION_INSPECT,
     SESSION_MCP,
 };
 pub use server::{serve_connection, ServerInfo, Service, CLOSE_GRACE};
