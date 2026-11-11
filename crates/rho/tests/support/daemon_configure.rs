@@ -247,6 +247,7 @@ async fn a_model_change_runs_the_session_on_the_auth_it_names() {
     let on_auth = |auth: &str| SessionChange::Model {
         model: opened.options.model.current.clone(),
         auth: Some(auth.to_owned()),
+        setup: false,
     };
 
     let refused = configure(&client, &opened.session, on_auth("codex")).await;

@@ -48,6 +48,7 @@ impl LaunchChange {
                         on
                     },
                     auth: Some(auth),
+                    setup: true,
                 }
             }
         }

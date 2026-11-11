@@ -214,6 +214,7 @@ fn a_daemon_switch_names_the_model_it_landed_on() {
             .push_back(rho_protocol::SessionChange::Model {
                 model: switched.model.current.clone(),
                 auth: None,
+                setup: false,
             });
 
         app.show_daemon_options(switched);

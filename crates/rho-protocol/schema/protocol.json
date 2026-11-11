@@ -3389,6 +3389,10 @@
             },
             "model": {
               "$ref": "#/$defs/ModelRef"
+            },
+            "setup": {
+              "description": "Whether the change sets the session up as it opens, as a launch\nflag or a host's setup does, rather than switching its model.\nA switch that moves the session to another model tells its\nclients which prompt file it now runs on, in a\n[`super::SessionEvent::Notice`]; a setup change does not.",
+              "type": "boolean"
             }
           },
           "required": [
