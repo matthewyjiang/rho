@@ -12,6 +12,7 @@ mod compact;
 mod docs_demo;
 mod edit;
 mod init;
+mod keep_warm;
 mod plan_exit;
 mod quiet_subagent;
 mod release;
@@ -91,6 +92,11 @@ impl ModelProvider for TuiFixtureProvider {
         self.identity.clone()
     }
 
+    /// So keep-warm scenarios can ping; the fixture's replies are short anyway.
+    fn honors_max_output_tokens(&self) -> bool {
+        true
+    }
+
     fn send_turn<'a>(&'a self, request: ModelRequest<'a>) -> ProviderFuture<'a> {
         Box::pin(async move { fixture_response(&request) })
     }
@@ -130,6 +136,9 @@ async fn fixture_stream(
     events: ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
     let prompt = last_user_text(&request).unwrap_or_default();
+    if let Some(response) = keep_warm::intercept(&prompt, &request, &events).await {
+        return response;
+    }
     if let Some(response) = agent_config::intercept(&prompt, &request) {
         return response;
     }

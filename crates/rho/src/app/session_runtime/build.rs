@@ -92,6 +92,8 @@ pub(crate) struct HostCapabilities {
     /// sources: deferred, its prompts wait for them. A rebind loads its
     /// own inline, since it runs within a prompt.
     pub(crate) tool_sources: ToolSourceLoad,
+    /// Whether the host keeps the provider prompt cache warm.
+    pub(crate) cache_warming: CacheWarming,
 }
 
 /// Whether a host runs a session or only reads what it saved.
@@ -124,6 +126,69 @@ impl HostCapabilities {
             parent_notices: None,
             session_use: SessionUse::Run(SignIn::Required),
             tool_sources: ToolSourceLoad::Inline,
+            cache_warming: CacheWarming::None,
+        }
+    }
+}
+
+/// Whether the session's host runs a cache warmer (see
+/// [`crate::cache_warm`]), which decides whether `process start` offers
+/// `keep_warm`. The host chooses as the session opens, so a rebuilt tool
+/// set offers what the first one did.
+#[derive(Clone, Debug)]
+pub(crate) enum CacheWarming {
+    /// Nothing warms the cache, so `keep_warm` stays hidden.
+    None,
+    /// The host warms the cache while a `keep_warm` process holds it. The
+    /// route says whether the session's current model can be pinged, which
+    /// the session keeps up to date as its provider changes.
+    // Only the daemon, unix-only so far, warms a session it runs (#1665).
+    #[cfg_attr(not(unix), allow(dead_code))]
+    Host(crate::tools::process::CacheWarmRoute),
+}
+
+impl CacheWarming {
+    /// What `process start` offers under this host.
+    pub(super) fn offer(&self) -> crate::tools::process::KeepWarmOffer {
+        match self {
+            Self::None => crate::tools::process::KeepWarmOffer::Hidden,
+            Self::Host(route) => crate::tools::process::KeepWarmOffer::Offered(route.clone()),
+        }
+    }
+
+    /// Records that `provider` is the session's model from now on: whether
+    /// it can send a capped ping, and that its cache holds nothing of the
+    /// session yet.
+    pub(super) fn bind(&self, provider: &dyn rho_sdk::provider::ModelProvider) {
+        match self {
+            Self::None => {}
+            Self::Host(route) => {
+                route.set_supported(provider.honors_max_output_tokens());
+                route.prefix_dropped();
+            }
+        }
+    }
+
+    /// Records a reasoning level change on `model`. Where effort is part of
+    /// the cached prefix, the next request rewrites it, as after a model
+    /// switch.
+    pub(super) fn reasoning_changed(&self, model: &rho_sdk::model::ModelIdentity) {
+        match self {
+            Self::None => {}
+            Self::Host(route) => {
+                if !rho_providers::providers::openai::reasoning_change_preserves_prefix(model) {
+                    route.prefix_dropped();
+                }
+            }
+        }
+    }
+
+    /// The route the host's warmer reads, when it runs one.
+    #[cfg(unix)]
+    pub(crate) fn route(&self) -> Option<&crate::tools::process::CacheWarmRoute> {
+        match self {
+            Self::None => None,
+            Self::Host(route) => Some(route),
         }
     }
 }
@@ -339,6 +404,7 @@ pub(super) async fn build_session(
         added_dirs,
         environment: build.host.environment.clone(),
         subagent_pool: build.host.subagent_pool.clone(),
+        process_keep_warm: build.host.cache_warming.offer(),
         extend_tools: |mut tools: AppToolSet| {
             if let Some(poster) = &build.host.parent_notices {
                 tools.add_bundle(crate::tools::message_parent_bundle(Arc::clone(poster)));
@@ -360,6 +426,7 @@ pub(super) async fn build_session(
         session_options,
     })
     .await?;
+    build.host.cache_warming.bind(built.provider.as_ref());
     let permission = SessionPermission {
         mode: config.permission_mode,
         writes: session_writes,

@@ -92,6 +92,7 @@ mod hover_clicks;
 mod init_command;
 mod inline_choice_click;
 mod inline_shell;
+mod keep_warm;
 mod limits;
 mod line_editor;
 mod login;
@@ -872,6 +873,12 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ATTACH_VIEW_CYCLE_SCENARIO,
     ATTACH_VIEW_PARENT_APPROVAL_SCENARIO,
     ATTACH_VIEW_QUIT_RESTORES_SCENARIO,
+    keep_warm::KEEP_WARM_PINGS_SCENARIO,
+    keep_warm::KEEP_WARM_OFF_SCENARIO,
+    #[cfg(unix)]
+    keep_warm::DAEMON_KEEP_WARM_PINGS_SCENARIO,
+    #[cfg(unix)]
+    keep_warm::DAEMON_KEEP_WARM_OFF_SCENARIO,
     PROCESS_RAIL_SCENARIO,
     PROCESS_RAIL_PEEK_SCENARIO,
     PENDING_INPUT_BELOW_ACTIVITY_SCENARIO,

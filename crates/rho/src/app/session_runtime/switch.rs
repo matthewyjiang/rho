@@ -116,6 +116,7 @@ impl SessionRuntime {
             },
             SwitchNotice::SessionMessage,
         )?;
+        self.build.host.cache_warming.bind(provider.as_ref());
         self.built.provider = provider;
         self.credentials.mark_read(read);
         if let Some(prompt) = prepared_prompt {

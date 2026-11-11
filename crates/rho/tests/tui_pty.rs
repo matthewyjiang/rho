@@ -1337,6 +1337,28 @@ fn pending_input_stays_below_the_activity_rail() {
     assert_pass("pending_input_below_activity");
 }
 
+// Covers: `behavior.keep_cache_warm` in process: a `keep_warm` process holds
+// the cache, pings follow the cache's schedule, stop on a miss, and are
+// totalled, and with the setting off `process start` offers no `keep_warm`.
+// Owner: interactive UX (PTY)
+#[test]
+fn keep_warm_pings_the_prompt_cache_while_a_process_holds_it() {
+    for scenario in ["keep_warm_pings", "keep_warm_off"] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: the same with RHO_TUI_DAEMON=1, where the daemon's session owns
+// the hold, the schedule, and the pings, and the TUI shows what it reports.
+// Owner: interactive TUI as a daemon client
+#[cfg(unix)]
+#[test]
+fn daemon_keep_warm_pings_the_prompt_cache_while_a_process_holds_it() {
+    for scenario in ["daemon_keep_warm_pings", "daemon_keep_warm_off"] {
+        assert_pass(scenario);
+    }
+}
+
 // Covers: with RHO_TUI_DAEMON=1, a process the daemon's session started
 // stays on the rail after its turn, opens in peek, and sits above pending
 // input, as in process.

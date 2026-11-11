@@ -160,11 +160,13 @@ impl App {
                     // The daemon's figure includes the response under way,
                     // so the local estimate of its output starts over.
                     self.usage.live_stream.clear();
-                    self.usage.cumulative_usage = Some(rho_providers::model::ModelUsage {
-                        cost_usd_micros,
-                        ..Default::default()
-                    });
+                    self.usage.daemon_spend = Some(cost_usd_micros);
+                    self.sync_daemon_main_cost();
                 }
+                DaemonView::CacheWarm {
+                    warming,
+                    cost_usd_micros,
+                } => self.show_daemon_cache_warm(warming, cost_usd_micros),
                 DaemonView::Title(title) => self.daemon_title = Some(title),
                 DaemonView::Options(options) => self.show_daemon_options(*options),
                 DaemonView::McpInventory(result) => self.show_daemon_mcp(result),

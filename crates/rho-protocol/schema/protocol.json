@@ -503,6 +503,28 @@
       ],
       "description": "A concurrency budget jobs wait on, named for the setting that sizes it.\nProtocol minors may add budgets."
     },
+    "CacheWarmProgress": {
+      "description": "How far a keep-warm has come since the session's last model request.",
+      "properties": {
+        "max_pings": {
+          "description": "The most the daemon sends before it lets the cache expire.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pings": {
+          "description": "Pings sent since that request.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pings",
+        "max_pings"
+      ],
+      "type": "object"
+    },
     "CardTone": {
       "anyOf": [
         {
@@ -4380,6 +4402,39 @@
           "required": [
             "type",
             "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The daemon's keep-warm of the session's provider prompt cache\nchanged: it started or stopped warming, sent a ping, or a ping\ncost something. Sent only for a session whose `process` tool offers\n`keep_warm`. Why warming stopped early is a [`Self::Notice`].",
+          "properties": {
+            "cost_usd_micros": {
+              "description": "What the session's pings have cost since the daemon loaded it\nor its conversation last moved, in millionths of a US dollar.\n[`Self::Usage`]'s cost counts the pings too: a client that shows\nthem apart takes this out of the latest usage cost. Absent while\nno ping had a price.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "cache_warm",
+              "type": "string"
+            },
+            "warming": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CacheWarmProgress"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The pings sent, while the daemon warms the cache: a process\nholds it and no turn runs. Absent otherwise."
+            }
+          },
+          "required": [
+            "type"
           ],
           "type": "object"
         },

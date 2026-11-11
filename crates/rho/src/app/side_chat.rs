@@ -252,6 +252,8 @@ async fn assemble_side_session(launch: &SideChatLaunch) -> anyhow::Result<BuiltS
         added_dirs: &launch.added_dirs,
         environment: Default::default(),
         subagent_pool: crate::app::subagent_pool::SubagentPool::Own,
+        // A side chat starts no process the session would idle on.
+        process_keep_warm: crate::tools::process::KeepWarmOffer::Hidden,
         extend_tools: std::convert::identity,
         system_prompt_suffix: None,
         approval: |_: ApprovalInputs| {

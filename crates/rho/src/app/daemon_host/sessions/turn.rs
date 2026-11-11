@@ -343,6 +343,7 @@ pub(super) async fn restart_transcript(session: &LoadedSession, runtime: &Sessio
         tracing::warn!(job = %session.job, %error, "could not rest the job after its conversation moved");
     }
     session.feed.restart(saved.unwrap_or_default());
+    session.cache_warm_conversation_moved();
     let rests = wire::SessionEvent::State {
         state: wire::JobState::Idle,
         turn: None,
@@ -514,6 +515,10 @@ async fn compact(
     // not wait for the compaction.
     view.began();
     let compacted = runtime.compact(scope, instructions).await;
+    // A compaction that was cancelled or failed left the prefix as it was.
+    if let (Ok(Some(_)), Some(keep)) = (&compacted, &view.session.cache_warm) {
+        keep.prefix_rewritten();
+    }
     if compacted.as_ref().is_ok_and(|outcome| {
         outcome
             .as_ref()
@@ -704,6 +709,9 @@ impl DaemonView {
         if let Some(wake) = &self.session.idle_wake {
             wake.turn_ended();
         }
+        if let Some(keep) = &self.session.cache_warm {
+            keep.turn_ended();
+        }
         match start {
             Some(PromptStart::Began) => self.began(),
             Some(start @ PromptStart::Ended(_)) => self.tell_start(start),
@@ -770,6 +778,18 @@ impl DaemonView {
             };
             let wire = cost.priced(&event, wire, &self.session.id).await;
             self.session.feed.publish(wire);
+            if let Some(keep) = &self.session.cache_warm {
+                match &event {
+                    SessionEvent::RunStarted => keep.run_started(),
+                    SessionEvent::Run(RunEvent::ModelCallCompleted { metrics, .. }) => {
+                        keep.model_call_completed(metrics);
+                    }
+                    SessionEvent::Run(RunEvent::CompactionCompleted { .. }) => {
+                        keep.prefix_rewritten();
+                    }
+                    _ => {}
+                }
+            }
             if matches!(event, SessionEvent::MessageInserted(_)) {
                 self.began();
             }

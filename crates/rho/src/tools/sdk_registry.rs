@@ -123,7 +123,7 @@ impl ToolSetOptions {
     }
 
     /// Advertises `keep_warm` on `process start`. Only a host that runs a
-    /// cache warmer (the interactive TUI) may offer it.
+    /// cache warmer (the in-process TUI, or the daemon) may offer it.
     pub(crate) fn process_keep_warm(mut self, offer: super::process::KeepWarmOffer) -> Self {
         self.process_keep_warm = offer;
         self

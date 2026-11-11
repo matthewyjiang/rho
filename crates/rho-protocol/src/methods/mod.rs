@@ -104,10 +104,10 @@ pub use daemon::{
     StopResponse, DAEMON_RESTART, DAEMON_STATUS, DAEMON_STOP, HELLO,
 };
 pub use event::{
-    CardTone, CompactionCounts, CompactionId, CompactionStatus, CompactionTrigger, ContentBlock,
-    Cursor, IdempotencyKey, Location, MessageId, PlanEntry, PlanStatus, RetryReason, Seq,
-    SessionEvent, SteerId, StreamId, ToolCallId, ToolCallUpdate, ToolContent, ToolKind, ToolStatus,
-    TurnId,
+    CacheWarmProgress, CardTone, CompactionCounts, CompactionId, CompactionStatus,
+    CompactionTrigger, ContentBlock, Cursor, IdempotencyKey, Location, MessageId, PlanEntry,
+    PlanStatus, RetryReason, Seq, SessionEvent, SteerId, StreamId, ToolCallId, ToolCallUpdate,
+    ToolContent, ToolKind, ToolStatus, TurnId,
 };
 pub use grant::{GrantAccess, GrantWorkspaces, SessionGrant};
 pub use input::{

@@ -12,21 +12,55 @@ pub(crate) enum KeepWarm {
     Unavailable,
 }
 
-/// Whether the session's bound model route can send a capped keep-warm ping.
+/// The session's bound model route, as keep-warm needs to know it: whether
+/// it can send a capped ping, and whether it still holds the prefix the last
+/// request cached.
 ///
-/// The interactive host owns it and updates it whenever it adopts a provider;
+/// The session's host owns it and updates it whenever the provider changes;
 /// `process start` reads it so the model is told whether warming will run.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct CacheWarmRoute(std::sync::Arc<std::sync::atomic::AtomicBool>);
+pub(crate) struct CacheWarmRoute(std::sync::Arc<RouteState>);
+
+#[derive(Debug, Default)]
+struct RouteState {
+    supported: std::sync::atomic::AtomicBool,
+    /// Bumped each time the route stops holding the cached prefix.
+    prefix_epoch: std::sync::atomic::AtomicU64,
+}
 
 impl CacheWarmRoute {
     pub(crate) fn set_supported(&self, supported: bool) {
         self.0
+            .supported
             .store(supported, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub(crate) fn is_supported(&self) -> bool {
-        self.0.load(std::sync::atomic::Ordering::Relaxed)
+        self.0.supported.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The route no longer holds the prefix the last request cached: the
+    /// provider was replaced, or a setting that is part of the prefix
+    /// changed. A warmer that reads [`Self::prefix_epoch`] starts over.
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "only the Unix daemon's warmer asks")
+    )]
+    pub(crate) fn prefix_dropped(&self) {
+        self.0
+            .prefix_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Changes whenever [`Self::prefix_dropped`] was called.
+    #[cfg_attr(
+        not(unix),
+        allow(dead_code, reason = "only the Unix daemon's warmer asks")
+    )]
+    pub(crate) fn prefix_epoch(&self) -> u64 {
+        self.0
+            .prefix_epoch
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
