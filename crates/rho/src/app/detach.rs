@@ -120,6 +120,8 @@ fn session_new(
             without: passed.without,
             child_threads: ChildThreads::Daemon,
             idle_wake: rho_protocol::IdleWake::Never,
+            // A run without a login exits as an authentication failure.
+            sign_in: rho_protocol::SignIn::Required,
         },
         parent: None,
         grant: None,
