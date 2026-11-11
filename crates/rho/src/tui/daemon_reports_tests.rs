@@ -16,18 +16,22 @@ fn only_the_awaited_report_opens_its_overlay() {
         "hooks": [],
         "recent_activity": [],
     });
-    let opened: Vec<_> = [Some(SessionReport::Hooks), Some(SessionReport::Context), None]
-        .into_iter()
-        .map(|awaited| {
-            let mut app = test_app();
-            app.awaited_daemon_report = awaited;
-            app.show_daemon_report(SessionReport::Hooks, Ok(hooks.clone()));
-            matches!(
-                app.input_ui.composer(),
-                ComposerMode::Panel(PanelOverlay::Hooks(_))
-            )
-        })
-        .collect();
+    let opened: Vec<_> = [
+        Some(SessionReport::Hooks),
+        Some(SessionReport::Context),
+        None,
+    ]
+    .into_iter()
+    .map(|awaited| {
+        let mut app = test_app();
+        app.awaited_daemon_report = awaited;
+        app.show_daemon_report(SessionReport::Hooks, Ok(hooks.clone()));
+        matches!(
+            app.input_ui.composer(),
+            ComposerMode::Panel(PanelOverlay::Hooks(_))
+        )
+    })
+    .collect();
 
     assert_eq!(opened, vec![true, false, false]);
 }

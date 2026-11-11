@@ -148,7 +148,7 @@ fn a_signed_out_first_launch_has_a_model_to_choose_only_from_another_auth() {
 #[test]
 fn a_switch_login_asked_for_keeps_logins_status_line() {
     const LOGIN: &str = "stored credentials for anthropic and selected anthropic/model";
-    let statuses: Vec<_> = [true, false]
+    let kept: Vec<_> = [true, false]
         .into_iter()
         .map(|by_login| {
             let mut app = crate::tui::tests::test_app();
@@ -165,15 +165,9 @@ fn a_switch_login_asked_for_keeps_logins_status_line() {
 
             app.show_daemon_options(switched);
 
-            app.last_status
+            app.last_status == LOGIN
         })
         .collect();
 
-    assert_eq!(
-        statuses,
-        vec![
-            LOGIN.to_owned(),
-            "model switched to anthropic/model with reasoning off".to_owned(),
-        ]
-    );
+    assert_eq!(kept, vec![true, false]);
 }

@@ -125,8 +125,8 @@ impl App {
         });
         // Login's own status line, which also names the stored credentials,
         // stays, as it does in process.
-        let said_by_login = switched
-            && self.daemon_login_selected.take().as_ref() == Some(&options.model.current);
+        let said_by_login =
+            switched && self.daemon_login_selected.take().as_ref() == Some(&options.model.current);
         if switched && !said_by_login {
             self.set_status(format!(
                 "model switched to {} with reasoning {reasoning}",

@@ -65,14 +65,13 @@ mod unix {
     use rho_protocol::ClientError;
     use rho_protocol::{
         methods::{
-            SessionAnswer, SessionAttach, SessionCancel, SessionConfigure, SessionHold, SessionNew,
-            SessionSteer, SessionUnsteer,
+            SessionAnswer, SessionAttach, SessionCancel, SessionHold, SessionNew, SessionSteer,
+            SessionUnsteer,
         },
         ClientEnvironment, ConfigChangedParams, ContentBlock, DetachReason, ErrorCode, InputAnswer,
         InputRequestId, JobState, SessionAnswerParams, SessionAttachParams, SessionAttachResponse,
-        SessionCancelParams, SessionChange, SessionConfigureParams, SessionHoldParams, SessionId,
-        SessionNewParams, SessionOptions, SessionSteerParams, SessionUnsteerParams, SteerId,
-        UnsteerOutcome,
+        SessionCancelParams, SessionChange, SessionHoldParams, SessionId, SessionNewParams,
+        SessionOptions, SessionSteerParams, SessionUnsteerParams, SteerId, UnsteerOutcome,
     };
     use rho_sdk::SteeringId;
     use tokio::sync::{mpsc, oneshot, watch};
@@ -92,7 +91,10 @@ mod unix {
     };
 
     mod auth;
+    mod initial_settings;
     mod requests;
+
+    use initial_settings::{carry, changes_between, configure_all, Refused};
 
     const LOST: &str = "lost the connection to the rho daemon";
 
@@ -130,37 +132,6 @@ mod unix {
         /// What opened the session, when it had saved nothing yet, and
         /// the options it ran with, which a new session in its place takes.
         opened: Option<(SessionNewParams, Option<SessionOptions>)>,
-    }
-
-    /// The changes that move a session from the options `from` to `to`, in
-    /// the order they apply: a model first, since it decides which
-    /// reasoning levels and fast mode the others may pick.
-    fn changes_between(from: &SessionOptions, to: &SessionOptions) -> Vec<SessionChange> {
-        let mut changes = Vec::new();
-        if from.model.current != to.model.current || from.model.auth != to.model.auth {
-            changes.push(SessionChange::Model {
-                model: to.model.current.clone(),
-                auth: Some(to.model.auth.clone()),
-            });
-        }
-        if let Some(reasoning) = to.reasoning.as_ref().filter(|reasoning| {
-            from.reasoning.as_ref().map(|from| from.current) != Some(reasoning.current)
-        }) {
-            changes.push(SessionChange::Reasoning {
-                level: reasoning.current,
-            });
-        }
-        let fast =
-            |options: &SessionOptions| options.fast_mode.as_ref().is_some_and(|fast| fast.enabled);
-        if fast(from) != fast(to) {
-            changes.push(SessionChange::FastMode { enabled: fast(to) });
-        }
-        if from.permission_mode.current != to.permission_mode.current {
-            changes.push(SessionChange::PermissionMode {
-                mode: to.permission_mode.current,
-            });
-        }
-        changes
     }
 
     impl Relink {
@@ -246,58 +217,6 @@ mod unix {
             }),
         );
         routed
-    }
-
-    /// A change the daemon refused, and why.
-    struct Refused {
-        change: SessionChange,
-        error: ClientError,
-    }
-
-    /// Applies `changes` to `session` in order, returning its options
-    /// after the last one that applied, or the first refusal.
-    async fn configure_all(
-        link: &Link,
-        session: &SessionId,
-        changes: Vec<SessionChange>,
-    ) -> Result<Option<SessionOptions>, Box<Refused>> {
-        let mut options = None;
-        for change in changes {
-            let params = SessionConfigureParams {
-                session: session.clone(),
-                change,
-            };
-            match link.request::<SessionConfigure>(&params).await {
-                Ok(response) => options = Some(response.options),
-                Err(error) => {
-                    return Err(Box::new(Refused {
-                        change: params.change,
-                        error,
-                    }))
-                }
-            }
-        }
-        Ok(options)
-    }
-
-    /// Carries `changes` to `session`; one the daemon refuses keeps its
-    /// default. Returns the session's options after the last change that
-    /// applied, if any did.
-    async fn carry(
-        link: &Link,
-        session: &SessionId,
-        changes: Vec<SessionChange>,
-    ) -> Option<SessionOptions> {
-        let mut options = None;
-        for change in changes {
-            match configure_all(link, session, vec![change]).await {
-                Ok(changed) => options = changed.or(options),
-                Err(refused) => {
-                    tracing::warn!(error = %refused.error, "could not carry a setting to the new daemon session");
-                }
-            }
-        }
-        options
     }
 
     /// One daemon session the TUI follows.
