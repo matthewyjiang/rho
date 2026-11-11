@@ -28,6 +28,8 @@ mod copy_output;
 #[cfg(unix)]
 mod daemon_approval;
 #[cfg(unix)]
+mod daemon_build_skew;
+#[cfg(unix)]
 mod daemon_config;
 #[cfg(unix)]
 mod daemon_context;
@@ -628,6 +630,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     daemon_restart::SCENARIO,
     #[cfg(unix)]
     daemon_restart_mcp::SCENARIO,
+    #[cfg(unix)]
+    daemon_build_skew::SCENARIO,
     #[cfg(unix)]
     daemon_mcp::SCENARIO,
     #[cfg(unix)]

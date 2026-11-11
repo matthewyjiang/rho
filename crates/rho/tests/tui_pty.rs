@@ -1407,6 +1407,15 @@ fn daemon_restart_keeps_the_tui_following_its_session() {
     assert_pass("daemon_restart");
 }
 
+// Covers: with RHO_TUI_DAEMON=1, a TUI whose daemon is another build of
+// its protocol version says so at launch, with what `rho daemon restart`
+// would interrupt (#1776).
+// Owner: interactive TUI as a daemon client
+#[test]
+fn daemon_build_skew_shows_at_launch() {
+    assert_pass("daemon_build_skew");
+}
+
 // Covers: with RHO_TUI_DAEMON=1, a prompt sent while a restarted daemon
 // connects the session's MCP servers again is held, as at startup, and
 // runs once they have.

@@ -39,9 +39,9 @@ use crate::{
         AUTH_LOGIN, CONFIG_GET, HELLO, SESSION_ATTACH, SESSION_DETACH, SESSION_OBSERVE,
     },
     subscription::Subscription,
-    DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message, MessageReader,
-    MessageWriter, ProtocolVersion, Request, RequestId, Response, RestartCost, RpcError,
-    VersionFix, VersionMismatch, PROTOCOL_VERSION,
+    BuildId, BuildSkew, DaemonInfo, DaemonStatus, ErrorCode, FrameError, HelloResponse, Message,
+    MessageReader, MessageWriter, ProtocolVersion, Request, RequestId, Response, RestartCost,
+    RpcError, VersionFix, VersionMismatch, PROTOCOL_VERSION,
 };
 
 /// The daemon's answers to post-handshake requests, one method per protocol
@@ -89,6 +89,15 @@ pub trait Service: SettingsService + Send + Sync {
     /// is not one of the clients a restart disconnects. It runs in the
     /// connection's read loop, so it must return without waiting.
     fn refused_newer(&self, client: ProtocolVersion) -> RestartCost;
+
+    /// Called when the handshake accepts `client`, whose hello names
+    /// `build`, another build than the daemon's ([`DaemonInfo::build`]).
+    /// Returns what restarting the daemon would cost now, which the answer
+    /// carries ([`HelloResponse::skew`]). It is called before
+    /// [`Self::hello`], so that client is not one of the clients a restart
+    /// disconnects. It runs in the connection's read loop, so it must
+    /// return without waiting.
+    fn skewed(&self, client: &ClientInfo, build: &BuildId) -> RestartCost;
 
     /// Answers `rho/daemon/status`.
     fn status(&self) -> impl Future<Output = DaemonStatus> + Send;
@@ -335,6 +344,8 @@ pub const CLOSE_GRACE: Duration = Duration::from_secs(1);
 ///
 /// Requests are read in order, and `rho/hello` is answered before the next
 /// line is read, so nothing reaches `service` until the handshake succeeds.
+/// A hello that names another build than `info`'s is accepted with a
+/// [`HelloResponse::skew`], whose cost comes from [`Service::skewed`].
 /// After it, each service request runs in its own task and is answered when
 /// it completes: a slow request does not hold up later ones, and responses
 /// may arrive out of order, paired with their requests by id. Every outgoing
@@ -465,8 +476,7 @@ where
         };
         let response = match Message::parse(&line) {
             Ok(Message::Request(Request { id, method, params })) => {
-                let refused_newer = |client| service.refused_newer(client);
-                match connection.route(&method, params, info, refused_newer) {
+                match connection.route(&method, params, info, &*service) {
                     Ok(Route::Hello { response, client }) => {
                         service.hello(&client);
                         // A connection's hello is accepted once.
@@ -630,16 +640,18 @@ impl Connection {
     ///
     /// A hello from an incompatible client is refused, which leaves the
     /// connection awaiting one. A refused newer client is told what
-    /// restarting this daemon would cost, from `refused_newer`. A hello
-    /// declaring a capability its role may not is refused too, and a method
-    /// that needs a capability the hello did not declare is refused before
-    /// its params are read, so the service never hears it ([`Declared`]).
+    /// restarting this daemon would cost, from [`Service::refused_newer`],
+    /// and so is an accepted client of another build than `info`'s, from
+    /// [`Service::skewed`]. A hello declaring a capability its role may not
+    /// is refused too, and a method that needs a capability the hello did
+    /// not declare is refused before its params are read, so the service
+    /// never hears it ([`Declared`]).
     fn route(
         &mut self,
         method: &str,
         params: Option<Value>,
         info: &DaemonInfo,
-        refused_newer: impl FnOnce(ProtocolVersion) -> RestartCost,
+        service: &impl Service,
     ) -> Result<Route, RpcError> {
         match (&*self, method) {
             (Self::AwaitingHello, HELLO) => {
@@ -650,7 +662,7 @@ impl Connection {
                 if let Some(mismatch) = VersionMismatch::between(PROTOCOL_VERSION, client) {
                     let mismatch = match mismatch.fix {
                         VersionFix::RestartDaemon => VersionMismatch {
-                            restart: Some(refused_newer(client)),
+                            restart: Some(service.refused_newer(client)),
                             ..mismatch
                         },
                         VersionFix::UpdateClient => mismatch,
@@ -660,10 +672,18 @@ impl Connection {
                             .with_data(encode(&mismatch)?),
                     );
                 }
-                let (declared, client) = Declared::accept(decode_params::<Hello>(params)?)?;
+                let hello = decode_params::<Hello>(params)?;
+                let build = hello.build.clone();
+                let (declared, client) = Declared::accept(hello)?;
+                let skew = build
+                    .filter(|build| *build != info.build)
+                    .map(|build| BuildSkew {
+                        restart: service.skewed(&client, &build),
+                    });
                 let response = encode_result::<Hello>(&HelloResponse {
                     protocol: PROTOCOL_VERSION,
                     daemon: info.clone(),
+                    skew,
                 })?;
                 *self = Self::Ready(declared);
                 Ok(Route::Hello { response, client })

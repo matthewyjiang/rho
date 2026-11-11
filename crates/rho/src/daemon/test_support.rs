@@ -5,10 +5,10 @@ use std::sync::Arc;
 use rho_protocol::{
     AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse, AuthListParams,
     AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
-    AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, ConfigGetParams, ConfigRegisterParams,
-    ConfigRegisterResponse, ConfigSchema, ConfigSetParams, ConfigSetResponse, ConfigWatch,
-    CredentialStoreKind, CredentialStoreStatus, DaemonStatus, ErrorCode, JobListResponse,
-    LoginStream, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
+    AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, BuildId, ConfigGetParams,
+    ConfigRegisterParams, ConfigRegisterResponse, ConfigSchema, ConfigSetParams, ConfigSetResponse,
+    ConfigWatch, CredentialStoreKind, CredentialStoreStatus, DaemonStatus, ErrorCode,
+    JobListResponse, LoginStream, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
     SessionAttachParams, SessionAttachResponse, SessionCancelParams, SessionCancelResponse,
     SessionConfigureParams, SessionConfigureResponse, SessionDeleteParams, SessionDeleteResponse,
     SessionHoldParams, SessionHoldResponse, SessionListParams, SessionListResponse,
@@ -35,6 +35,12 @@ impl StubHost {
     }
 }
 
+/// What restarting [`StubHost`] costs: nobody uses it.
+const UNUSED: rho_protocol::RestartCost = rho_protocol::RestartCost {
+    in_progress: 0,
+    clients: 0,
+};
+
 /// What [`StubHost`] reports, distinct from any real daemon's status.
 pub(super) fn test_status() -> DaemonStatus {
     DaemonStatus {
@@ -56,10 +62,11 @@ pub(super) fn test_status() -> DaemonStatus {
 
 impl Service for StubHost {
     fn refused_newer(&self, _: rho_protocol::ProtocolVersion) -> rho_protocol::RestartCost {
-        rho_protocol::RestartCost {
-            in_progress: 0,
-            clients: 0,
-        }
+        UNUSED
+    }
+
+    fn skewed(&self, _: &rho_protocol::ClientInfo, _: &BuildId) -> rho_protocol::RestartCost {
+        UNUSED
     }
 
     async fn restart(&self) {

@@ -15,7 +15,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rho_protocol::{DaemonInfo, FrameError, Service, PROTOCOL_VERSION};
+use rho_protocol::{BuildId, DaemonInfo, FrameError, Service, PROTOCOL_VERSION};
 use tokio::{
     net::{UnixListener, UnixStream},
     task::JoinSet,
@@ -234,6 +234,7 @@ impl BoundDaemon {
         let info = Arc::new(DaemonInfo {
             version: env!("CARGO_PKG_VERSION").to_owned(),
             pid: std::process::id(),
+            build: reported_build(),
         });
         let uid = current_uid();
         let mut connections = JoinSet::new();
@@ -316,6 +317,19 @@ impl BoundDaemon {
             }
         }
     }
+}
+
+/// The build this process reports as a daemon in every hello's answer: the
+/// one its protocol crate was built with. A debug build reports
+/// `RHO_TUI_TEST_BUILD_ID` instead when it is set, so a test can run a
+/// daemon of another build; an auto-started daemon gets it from the client
+/// that starts it, as it gets the other fixture variables.
+fn reported_build() -> BuildId {
+    #[cfg(debug_assertions)]
+    if let Ok(build) = std::env::var("RHO_TUI_TEST_BUILD_ID") {
+        return BuildId::new(build);
+    }
+    BuildId::of_this_crate()
 }
 
 /// Removes the socket and the info file, which no daemon serves any more.

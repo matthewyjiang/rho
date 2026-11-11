@@ -77,6 +77,53 @@ impl RestartCost {
     }
 }
 
+/// What the restart interrupts and whom it disconnects, as a clause that
+/// follows "which interrupts".
+impl fmt::Display for RestartCost {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            in_progress,
+            clients,
+        } = self;
+        match in_progress {
+            0 => formatter.write_str("nothing"),
+            count => write!(
+                formatter,
+                "{count} in progress (jobs, logins, or background work)"
+            ),
+        }?;
+        match clients {
+            0 => Ok(()),
+            1 => formatter.write_str(" and disconnects 1 other client"),
+            count => write!(formatter, " and disconnects {count} other clients"),
+        }
+    }
+}
+
+/// An accepted handshake from a client of another build than the daemon's
+/// ([`crate::BuildId`]). The two speak one protocol version, but their wires
+/// may differ, so a request may fail. The daemon sends it as
+/// [`crate::HelloResponse::skew`]; its `Display` is the notice for users.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct BuildSkew {
+    /// What restarting the daemon, which replaces it with the client's
+    /// build, would cost as the daemon accepted the client. That client is
+    /// not one of the clients it counts.
+    pub restart: RestartCost,
+}
+
+impl fmt::Display for BuildSkew {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "rho daemon runs a different build than this client, so requests may fail; \
+             restart this client if it is the older one, or run `rho daemon restart` to \
+             replace the daemon, which interrupts {}",
+            self.restart
+        )
+    }
+}
+
 /// An incompatible handshake. The daemon sends this as the `data` of a
 /// [`crate::ErrorCode::VersionMismatch`] error; its `Display` is the
 /// actionable message for users.
@@ -132,24 +179,9 @@ impl fmt::Display for VersionMismatch {
                     "rho daemon speaks protocol {daemon}, older than this client's {client}; \
                      run `rho daemon restart` to replace it, which interrupts "
                 )?;
-                let Some(RestartCost {
-                    in_progress,
-                    clients,
-                }) = restart
-                else {
-                    return formatter.write_str("its work in progress");
-                };
-                match in_progress {
-                    0 => formatter.write_str("nothing"),
-                    count => write!(
-                        formatter,
-                        "{count} in progress (jobs, logins, or background work)"
-                    ),
-                }?;
-                match clients {
-                    0 => Ok(()),
-                    1 => formatter.write_str(" and disconnects 1 other client"),
-                    count => write!(formatter, " and disconnects {count} other clients"),
+                match restart {
+                    Some(restart) => write!(formatter, "{restart}"),
+                    None => formatter.write_str("its work in progress"),
                 }
             }
             VersionFix::UpdateClient => write!(

@@ -25,7 +25,7 @@ use std::{
 use rho_protocol::{
     AuthChooseStoreParams, AuthChooseStoreResponse, AuthKeyParams, AuthKeyResponse, AuthListParams,
     AuthListResponse, AuthLoginCancelParams, AuthLoginCancelResponse, AuthLoginParams,
-    AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, ClientInfo, ConfigGetParams,
+    AuthLoginResponse, AuthLogoutParams, AuthLogoutResponse, BuildId, ClientInfo, ConfigGetParams,
     ConfigRegisterParams, ConfigRegisterResponse, ConfigSchema, ConfigSetParams, ConfigSetResponse,
     ConfigWatch, DaemonStatus, DetachReason, JobListResponse, LoginStream, PendingUpgrade,
     ProtocolVersion, RestartCost, RpcError, Service, SessionAnswerParams, SessionAnswerResponse,
@@ -172,6 +172,16 @@ impl DaemonHost {
         u64::try_from(self.jobs.in_progress() + self.work_outside_jobs()).unwrap_or(u64::MAX)
     }
 
+    /// What a restart would cost now: what an upgrade waits for, which
+    /// `status` reports pending, and the clients it would leave without a
+    /// daemon they can use.
+    fn restart_cost(&self) -> RestartCost {
+        RestartCost {
+            in_progress: self.in_progress(),
+            clients: self.clients.load(Ordering::Relaxed),
+        }
+    }
+
     /// Whether the daemon's stop, or restart, has begun.
     pub(super) fn stopping(&self) -> bool {
         self.shutdown.is_requested()
@@ -243,14 +253,8 @@ impl Service for DaemonHost {
         self.clients.fetch_sub(1, Ordering::Relaxed);
     }
 
-    /// What an upgrade waits for is what a restart interrupts, so a refused
-    /// newer client hears the count `status` reports pending, and how many
-    /// clients the restart would leave without a daemon they can use.
     fn refused_newer(&self, client: ProtocolVersion) -> RestartCost {
-        let cost = RestartCost {
-            in_progress: self.in_progress(),
-            clients: self.clients.load(Ordering::Relaxed),
-        };
+        let cost = self.restart_cost();
         // That client stops this daemon when the restart is free, so the
         // log says whether it may.
         tracing::info!(
@@ -259,6 +263,19 @@ impl Service for DaemonHost {
             clients = cost.clients,
             may_replace = cost.is_free(),
             "refused a client of a newer protocol"
+        );
+        cost
+    }
+
+    fn skewed(&self, client: &ClientInfo, build: &BuildId) -> RestartCost {
+        let cost = self.restart_cost();
+        tracing::info!(
+            client = %client.name,
+            version = %client.version,
+            %build,
+            in_progress = cost.in_progress,
+            clients = cost.clients,
+            "accepted a client of another build"
         );
         cost
     }

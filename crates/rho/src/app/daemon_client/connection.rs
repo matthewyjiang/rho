@@ -22,8 +22,9 @@ use std::{
 };
 
 use rho_protocol::{
-    methods::Method, Client, ClientError, ConfigChangedParams, DaemonInfo, DaemonNotification,
-    DetachReason, LoginId, LoginOutcome, LoginPrompt, Notifications, Seq, SessionEvent, SessionId,
+    methods::Method, BuildSkew, Client, ClientError, ConfigChangedParams, DaemonInfo,
+    DaemonNotification, DetachReason, LoginId, LoginOutcome, LoginPrompt, Notifications, Seq,
+    SessionEvent, SessionId,
 };
 use rho_sdk::CancellationToken;
 use tokio::sync::{mpsc, oneshot};
@@ -95,6 +96,8 @@ pub(crate) struct Link {
     client: Client,
     /// The daemon process the connection's hello reached.
     daemon: DaemonInfo,
+    /// Set when that daemon is another build than this process.
+    skew: Option<BuildSkew>,
     /// Cancelled by the router once the connection closed, after it handed
     /// every route [`Routed::Lost`].
     closed: CancellationToken,
@@ -143,6 +146,7 @@ impl Daemon {
         let link = Arc::new(Link {
             client,
             daemon: hello.daemon,
+            skew: hello.skew,
             closed,
             fences,
         });
@@ -210,6 +214,12 @@ impl Link {
     /// The daemon process this connection reached.
     pub(crate) fn daemon(&self) -> &DaemonInfo {
         &self.daemon
+    }
+
+    /// Set when the daemon this connection reached is another build than
+    /// this process: requests may fail, and it says what a restart costs.
+    pub(crate) fn skew(&self) -> Option<BuildSkew> {
+        self.skew
     }
 
     pub(crate) async fn request<M: Method>(

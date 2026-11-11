@@ -503,6 +503,23 @@
       ],
       "description": "A concurrency budget jobs wait on, named for the setting that sizes it.\nProtocol minors may add budgets."
     },
+    "BuildId": {
+      "description": "The wire schema a build speaks (#1776). While the protocol version stays\nat 0.1 until the beta, two builds of one version can still speak\ndifferent wires, and only this tells them apart at the handshake.\n\nIt changes when the wire schema, `schema/protocol.json`, changes in\nanything but its documentation and layout. It has no order: two ids say\nonly whether the builds differ, never which one is newer. Opaque to\nclients: compare it whole.",
+      "type": "string"
+    },
+    "BuildSkew": {
+      "description": "An accepted handshake from a client of another build than the daemon's\n([`crate::BuildId`]). The two speak one protocol version, but their wires\nmay differ, so a request may fail. The daemon sends it as\n[`crate::HelloResponse::skew`]; its `Display` is the notice for users.",
+      "properties": {
+        "restart": {
+          "$ref": "#/$defs/RestartCost",
+          "description": "What restarting the daemon, which replaces it with the client's\nbuild, would cost as the daemon accepted the client. That client is\nnot one of the clients it counts."
+        }
+      },
+      "required": [
+        "restart"
+      ],
+      "type": "object"
+    },
     "CacheWarmProgress": {
       "description": "How far a keep-warm has come since the session's last model request.",
       "properties": {
@@ -1289,6 +1306,10 @@
     "DaemonInfo": {
       "description": "The running daemon process.",
       "properties": {
+        "build": {
+          "$ref": "#/$defs/BuildId",
+          "description": "Which wire the daemon speaks."
+        },
         "pid": {
           "format": "uint32",
           "minimum": 0,
@@ -1301,7 +1322,8 @@
       },
       "required": [
         "version",
-        "pid"
+        "pid",
+        "build"
       ],
       "type": "object"
     },
@@ -1619,6 +1641,17 @@
     "HelloParams": {
       "description": "Params of [`HELLO`].",
       "properties": {
+        "build": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BuildId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Which wire the client speaks. One other than the daemon's gets\n[`HelloResponse::skew`]. A client not built from `rho-protocol` has\nno build id, sends none, and hears nothing about builds."
+        },
         "capabilities": {
           "description": "What the connection does, each of which its role must allow; one it\ndoes not is [`crate::ErrorCode::InvalidParams`], and the hello is\nrefused.",
           "items": {
@@ -1655,6 +1688,17 @@
         "protocol": {
           "$ref": "#/$defs/ProtocolVersion",
           "description": "The protocol the daemon speaks, which is compatible with the\nclient's."
+        },
+        "skew": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BuildSkew"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set when the hello named another build than the daemon's: requests\nmay fail, and this says what restarting the daemon would cost."
         }
       },
       "required": [

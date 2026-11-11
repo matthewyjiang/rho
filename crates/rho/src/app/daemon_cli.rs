@@ -490,9 +490,9 @@ async fn stop(paths: &DaemonPaths) -> anyhow::Result<()> {
         // An incompatible daemon cannot take requests. SIGTERM triggers the
         // same graceful shutdown, so the version-mismatch advice to run
         // `rho daemon restart`, which stops it this way, still works.
-        Err(daemon::ConnectError::Handshake(ClientError::VersionMismatch(_))) => {
-            daemon::terminate_recorded_daemon(paths)?.ok_or(daemon::ConnectError::NotRunning)?
-        }
+        Err(daemon::ConnectError::Handshake(
+            ClientError::VersionMismatch(_) | ClientError::UnreadableHello(_),
+        )) => daemon::terminate_recorded_daemon(paths)?.ok_or(daemon::ConnectError::NotRunning)?,
         Err(error) => return Err(error.into()),
     };
     match daemon::wait_until_released(paths, DAEMON_STOP_TIMEOUT).await? {
@@ -510,9 +510,10 @@ async fn stop(paths: &DaemonPaths) -> anyhow::Result<()> {
 /// `rho daemon restart`: asks the daemon to re-execute in place, then waits
 /// until the restarted daemon answers. A daemon of an incompatible protocol
 /// cannot take the request, so it is stopped and a new one started, as is
-/// one when none runs. So is a restarted daemon older than this `rho`: its
-/// executable is not the one this `rho` was installed as, as when an
-/// installer switched a symlink to a new version's directory.
+/// one when none runs. So is a restarted daemon older than this `rho`, or
+/// of another build: its executable is not the one this `rho` was
+/// installed as, as when an installer switched a symlink to a new version's
+/// directory, or a rebuilt `rho` sits at another path.
 #[cfg(unix)]
 async fn restart(paths: &DaemonPaths) -> anyhow::Result<()> {
     let daemon::Connection {
@@ -529,7 +530,9 @@ async fn restart(paths: &DaemonPaths) -> anyhow::Result<()> {
             );
             return Ok(());
         }
-        Err(daemon::ConnectError::Handshake(ClientError::VersionMismatch(_))) => {
+        Err(daemon::ConnectError::Handshake(
+            ClientError::VersionMismatch(_) | ClientError::UnreadableHello(_),
+        )) => {
             stop(paths).await?;
             let started = connect().await?;
             println!("rho daemon started (pid {})", started.hello.daemon.pid);
@@ -554,14 +557,18 @@ async fn restart(paths: &DaemonPaths) -> anyhow::Result<()> {
         Ok(Ok(restarted)) => {
             let daemon::Connection { hello, .. } = restarted;
             let daemon = hello.daemon;
-            if crate::update::version_is_newer(env!("CARGO_PKG_VERSION"), &daemon.version) {
+            let still = if crate::update::version_is_newer(env!("CARGO_PKG_VERSION"), &daemon.version)
+            {
+                Some(daemon.version.clone())
+            } else {
+                hello.skew.map(|_| format!("another build ({})", daemon.build))
+            };
+            if let Some(still) = still {
                 stop(paths).await?;
                 let started = connect().await?;
                 println!(
-                    "rho daemon restarted as this rho (pid {}, version {}); it was still {}",
-                    started.hello.daemon.pid,
-                    started.hello.daemon.version,
-                    daemon.version
+                    "rho daemon restarted as this rho (pid {}, version {}); it was still {still}",
+                    started.hello.daemon.pid, started.hello.daemon.version,
                 );
                 return Ok(());
             }
